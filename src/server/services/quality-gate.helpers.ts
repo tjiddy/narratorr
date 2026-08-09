@@ -14,11 +14,7 @@ interface ScanResult {
   channels?: number;
 }
 
-/**
- * Pure quality assessment: compares scan results against existing book data
- * and returns the decision reason (without the final action, which depends on
- * side-effect branches in the caller).
- */
+/** Pure scan-vs-library assessment; the caller owns the final side-effecting action. */
 // eslint-disable-next-line complexity -- linear quality assessment with null-guarded branches
 export function buildQualityAssessment(
   scanResult: ScanResult,
@@ -31,7 +27,7 @@ export function buildQualityAssessment(
     ? (newSizeBytes / (1024 * 1024)) / (newDurationSeconds / 3600)
     : null;
 
-  // Resolve existing book quality (cached — reused for duration delta below)
+  // Resolve once; duration and rate both reuse it.
   let existingMbPerHour: number | null = null;
   let existingCodec: string | null = null;
   let existingChannels: number | null = null;
@@ -41,7 +37,6 @@ export function buildQualityAssessment(
     if (existingInputs.sizeBytes && existingInputs.durationSeconds && existingInputs.durationSeconds > 0) {
       existingMbPerHour = (existingInputs.sizeBytes / (1024 * 1024)) / (existingInputs.durationSeconds / 3600);
     }
-    // Populate existing audio metadata (only for books with files on disk)
     if (book.path !== null) {
       existingCodec = book.audioCodec || null;
       existingChannels = book.audioChannels || null;
@@ -49,24 +44,16 @@ export function buildQualityAssessment(
     }
   }
 
-  // Downloaded duration (null when 0 — no valid duration)
   const downloadedDuration = newDurationSeconds > 0 ? newDurationSeconds : null;
 
-  // Check narrator match (skip for first imports — no existing file to protect).
-  // NOTE (#1650/#1652): this is the EXACT normalized-set-membership narrator
-  // compare — `downloadTokens.some(n => existingSet.has(n))` below — and is
-  // intentionally NOT the fuzzy `narratorsFuzzyMatch` (`similarity.ts`, 0.8 dice)
-  // path the match-job edition cap uses. Different contract: an upgrade decision
-  // against the operator's OWN existing files wants exact identity, not fuzzy
-  // tolerance. Do not unify the two without revisiting the upgrade contract.
+  // Upgrade protection requires exact normalized identity; do not use the fuzzy match-job comparator.
   let narratorMatch: boolean | null = null;
   let existingNarrator: string | null = null;
   let downloadNarrator: string | null = null;
-  // Use narrator array directly — no re-join+split to avoid punctuation heuristics
+  // Normalize stored narrators directly to avoid re-splitting punctuation.
   const existingNarratorNames = book?.narrators?.map(n => normalizeNarrator(n.name)).filter(n => n.length > 0) ?? [];
   if (book && book.path !== null && scanResult.tagNarrator && existingNarratorNames.length > 0) {
     const downloadTokens = tokenizeNarrators(scanResult.tagNarrator).map(normalizeNarrator).filter(n => n.length > 0);
-    // Skip if download tag produces no tokens after normalization (AC5)
     if (downloadTokens.length > 0) {
       existingNarrator = book.narrators!.map(n => n.name).join(', ');
       downloadNarrator = scanResult.tagNarrator;
@@ -78,14 +65,10 @@ export function buildQualityAssessment(
     }
   }
 
-  // Check duration delta (skip for placeholder books with no existing files)
   let durationDelta: number | null = null;
   if (book && book.path !== null && existingInputs) {
     if (existingInputs.durationSeconds && existingInputs.durationSeconds > 0 && newDurationSeconds > 0) {
-      // The ratio is still computed and persisted for telemetry (unchanged shape),
-      // but the HOLD decision moved to the shared absolute band (240s, #1854): both
-      // operands are already SECONDS, so no conversion. Δ within the band → no hold; beyond →
-      // held (inclusive at 90, matching every other duration-band call site).
+      // Persist relative delta for telemetry, but hold on the shared absolute-seconds tolerance.
       durationDelta = (newDurationSeconds - existingInputs.durationSeconds) / existingInputs.durationSeconds;
       if (!withinDurationTolerance(newDurationSeconds, existingInputs.durationSeconds)) {
         holdReasons.push('duration_delta');
@@ -93,7 +76,6 @@ export function buildQualityAssessment(
     }
   }
 
-  // Check if existing book has no quality data (only applies when book has files on disk)
   const noExistingQuality = existingMbPerHour === null;
   if (noExistingQuality && book && book.path !== null) {
     holdReasons.push('no_quality_data');

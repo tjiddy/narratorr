@@ -86,7 +86,6 @@ import type { DownloadRow } from '../services/types.js';
 
 type DownloadItem = { progress: number; status: 'downloading' | 'seeding' | 'paused' | 'completed' | 'error'; savePath: string; name: string; size: number; errorMessage?: string | undefined; downloadSpeed?: number | undefined };
 
-/** Handle a download that has been removed from the client externally. */
 async function handleMissingItem(
   db: Db,
   download: DownloadRow,
@@ -98,12 +97,7 @@ async function handleMissingItem(
 ): Promise<void> {
   log.warn({ id: download.id }, 'Download not found in client');
   const errorMessage = 'Download not found in download client';
-  // Client-side failure: poller writes only the `clientStatus` axis, GUARDED
-  // against the exact polled tuple (#1857 F14). A replacement that removed this
-  // row's external item between monitor selection and `getDownload` has already
-  // transitioned it to `(failed, idle)`; the guard then MISSES and we return
-  // BEFORE any failure/history/retry/recovery/notify side effect — so the missing-item
-  // path can't drive a competing download or delete the replaced row.
+  // Guard the polled tuple so a replacement suppresses every stale failure side effect.
   const landed = await transitionDownloadState(db, download.id, {
     expected: { clientStatus: download.clientStatus, pipelineStage: download.pipelineStage },
     clientStatus: 'failed',
@@ -136,7 +130,6 @@ async function handleMissingItem(
   );
 }
 
-/** Update progress, emit SSE events, handle status transitions. */
 async function processDownloadUpdate(
   db: Db,
   download: DownloadRow,
@@ -151,8 +144,7 @@ async function processDownloadUpdate(
 ): Promise<void> {
   const progress = item.progress / 100;
   const newStatus = mapDownloadStatus(item.status);
-  // Poller-owned rows are pipeline-idle, so the display status equals the client
-  // status — but derive it explicitly so the comparison stays correct.
+  // Compare derived display state even though monitored rows should be pipeline-idle.
   const oldDisplay = deriveDisplayStatus(download.clientStatus, download.pipelineStage);
 
   if (download.clientStatus !== newStatus) {
@@ -166,12 +158,7 @@ async function processDownloadUpdate(
   const resolvedOutputPath = await resolveOutputPath(download, item, remotePathMappingService, log, isCompletionTransition);
 
   const progressChanged = progress !== download.progress;
-  // Client poller writes ONLY the `clientStatus` axis (never `pipelineStage`),
-  // GUARDED against the exact polled tuple (#1857 F2). A cancel landing between
-  // this poll's client-state read and its write has already moved the row to
-  // `(failed, idle)`; the guard then MISSES, suppressing the stale progress/status
-  // write AND all its SSE / failure / completion side effects (a progress-only
-  // write on an unchanged row still matches its own tuple and lands as before).
+  // Guard the polled tuple so a concurrent cancel suppresses this stale write and its side effects.
   const landed = await transitionDownloadState(db, download.id, {
     expected: { clientStatus: download.clientStatus, pipelineStage: download.pipelineStage },
     clientStatus: newStatus,
@@ -190,7 +177,6 @@ async function processDownloadUpdate(
   await handleFailureTransition(db, download, newStatus, item.errorMessage, retryDeps, log, eventHistory, broadcaster);
   handleCompletionNotification(download, item, isCompleted, notifierService, log);
 
-  // Fire-and-forget quality gate + import for completed downloads (replaces handleBookStatusOnCompletion)
   if (isCompletionTransition && qualityGateOrchestrator) {
     fireAndForget(
       qualityGateOrchestrator.processOneDownload(download.id),
@@ -200,7 +186,7 @@ async function processDownloadUpdate(
   }
 }
 
-/** Resolve outputPath — on first poll or on completion transition (to overwrite stale incomplete paths). */
+// Completion may replace a path captured while the download was incomplete.
 async function resolveOutputPath(
   download: DownloadRow,
   item: DownloadItem,
@@ -218,19 +204,17 @@ async function resolveOutputPath(
       if (mappings.length > 0) {
         return applyPathMapping(fullPath, mappings);
       }
-      // Zero mappings — raw path is correct (no mapping to apply)
       return fullPath;
     } catch {
-      // Lookup failed — do NOT persist raw adapter path (trust model: skip persistence)
+      // A failed lookup makes the adapter path untrusted; do not persist it.
       log.debug({ id: download.id }, 'Remote path mapping lookup failed, skipping outputPath persistence');
       return undefined;
     }
   }
-  // No mapping service available — raw path is correct
+  // Without a mapping service, the adapter path is authoritative.
   return fullPath;
 }
 
-/** Emit SSE progress and status change events. Each emit is independent so a failure in one doesn't skip the rest. */
 function emitProgressEvents(
   download: DownloadRow,
   oldDisplay: DownloadStatus,
@@ -242,14 +226,12 @@ function emitProgressEvents(
 ): void {
   if (!download.bookId) return;
   safeEmit(broadcaster, 'download_progress', { download_id: download.id, book_id: download.bookId, percentage: progress, speed: downloadSpeed ?? null, eta: null }, log);
-  // Both endpoints are derived display statuses. For a poller-owned (pipeline-idle)
-  // row the new display equals `newStatus`; suppress the emit when unchanged.
+  // Compare display states; monitored rows are pipeline-idle.
   if (oldDisplay !== newStatus) {
     safeEmit(broadcaster, 'download_status_change', { download_id: download.id, book_id: download.bookId, old_status: oldDisplay, new_status: newStatus }, log);
   }
 }
 
-/** Handle failure status transitions with retry recovery. */
 async function handleFailureTransition(
   db: Db,
   download: DownloadRow,
@@ -274,7 +256,6 @@ async function handleFailureTransition(
   }
 }
 
-/** Send notification when a download completes. */
 function handleCompletionNotification(
   download: DownloadRow,
   item: DownloadItem,
@@ -297,7 +278,6 @@ function handleCompletionNotification(
   );
 }
 
-/** Blacklist a release on infrastructure error if retry deps are available. */
 async function blacklistOnInfraError(
   download: DownloadRow,
   retryDeps: MonitorRetryDeps | undefined,
@@ -319,12 +299,6 @@ async function blacklistOnInfraError(
   }
 }
 
-/**
- * Handle a failed download: blacklist the release (if infoHash present),
- * then attempt retry via retrySearch. Updates errorMessage on the download record.
- * Returns the retry outcome string.
- */
-/** Best-effort blacklist by infoHash (torrent) or guid (usenet). */
 async function blacklistRelease(
   blacklistService: BlacklistService,
   data: { downloadId: number; infoHash: string | null; guid: string | null; title: string; bookId: number; reason: 'bad_quality' | 'download_failed' | 'infrastructure_error'; blacklistType: 'temporary' | 'permanent' },
@@ -362,7 +336,6 @@ async function handleDownloadFailure(
   blacklistType: 'temporary' | 'permanent' = 'permanent',
   broadcaster?: EventBroadcasterService,
 ): Promise<string> {
-  // Check redownloadFailed setting — if disabled, skip blacklist and retry
   let redownloadFailed = true;
   try {
     const importSettings = await retryDeps.retrySearchDeps.settingsService.get('import');
@@ -379,7 +352,6 @@ async function handleDownloadFailure(
 
   await blacklistRelease(retryDeps.blacklistService, { downloadId, infoHash, guid, title, bookId, reason, blacklistType }, log);
 
-  // Attempt retry search
   try {
     const result = await retrySearch(bookId, retryDeps.retrySearchDeps);
 
@@ -387,7 +359,6 @@ async function handleDownloadFailure(
       case 'retried': {
         const attempt = retryDeps.retrySearchDeps.retryBudget.hasRemaining(bookId) ? 'within budget' : 'at limit';
         log.info({ downloadId, bookId, newDownloadId: result.download.id, attempt }, 'Retry search succeeded');
-        // errorMessage on new download will show retry progress — update old record before deletion
         await db.update(downloads).set({ errorMessage: `Retrying` }).where(eq(downloads.id, downloadId));
         return 'retried';
       }
@@ -396,10 +367,7 @@ async function handleDownloadFailure(
         await recoverBookStatus(db, bookId, downloadId, log, broadcaster);
         return 'exhausted';
       case 'already_active':
-        // Book already served by a grab blocker — a live download (a replacement's
-        // winner), a QG-eligible completed row, or a pending auto import job (#1861).
-        // Leave the failed row + errorMessage untouched and do NOT recoverBookStatus —
-        // the book keeps the blocker's status (#1857 AC17).
+        // Preserve the failed row and book status; the existing blocker owns the lifecycle.
         log.info({ downloadId, bookId }, 'Retry skipped — book already has a blocking download or import');
         return 'already_active';
       case 'no_candidates':
@@ -408,7 +376,7 @@ async function handleDownloadFailure(
         return 'no_candidates';
       case 'retry_error':
         await db.update(downloads).set({ errorMessage: 'Retry failed - will retry next cycle' }).where(eq(downloads.id, downloadId));
-        // Don't recover book status on retry_error — will try again next cycle
+        // Preserve status so the next monitor cycle can retry.
         return 'retry_error';
     }
   } catch (error: unknown) {
@@ -418,13 +386,7 @@ async function handleDownloadFailure(
   }
 }
 
-/**
- * Recover book status after a download fails.
- * If other active downloads exist for the same book, don't revert.
- * Otherwise restore the book's explicit pre-grab lifecycle (the failed download's
- * `bookStatusAtGrab` snapshot), never a path-inferred guess — a book that was
- * `failed`/`missing`/`searching` before the grab is restored to that exact state.
- */
+// Revert only when no other blocker exists, using the pre-grab snapshot rather than path inference.
 async function recoverBookStatus(
   db: Db,
   bookId: number,
@@ -432,7 +394,7 @@ async function recoverBookStatus(
   log: FastifyBaseLogger,
   broadcaster?: EventBroadcasterService,
 ): Promise<void> {
-  // Recovery guard: in-progress statuses plus 'completed' (pre-import pipeline awareness)
+  // Completed rows still block recovery while awaiting import.
   const otherActive = await db
     .select()
     .from(downloads)
@@ -450,7 +412,6 @@ async function recoverBookStatus(
   const [book] = await db.select().from(books).where(eq(books.id, bookId)).limit(1);
   if (!book) return;
 
-  // Explicit prior-state from the failed download's pre-grab snapshot.
   const [failedDownload] = await db
     .select({ bookStatusAtGrab: downloads.bookStatusAtGrab })
     .from(downloads)

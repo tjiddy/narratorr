@@ -18,9 +18,6 @@ function book(overrides: Partial<DiscoveredBook>): DiscoveredBook {
 }
 
 describe('isLibraryDbDuplicate (#1833/#1925)', () => {
-  // Exhaustive over every DuplicateReason value so the hook and page — which both import this
-  // one predicate — provably agree about DB-duplicate status. As of #1925 both remaining
-  // reasons (path/slug) are DB-backed, so the predicate is simply `isDuplicate`.
   const cases: Array<{ reason: DuplicateReason | undefined; isDuplicate: boolean; expected: boolean }> = [
     { reason: 'path', isDuplicate: true, expected: true },
     { reason: 'slug', isDuplicate: true, expected: true },

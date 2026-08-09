@@ -4,8 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { useForm } from 'react-hook-form';
 import { ToggleSwitch } from './ToggleSwitch';
 
-// NOTE: rendered bare on purpose — the component owns its wrapping <label> (the visible track's
-// click target). Call sites must NOT wrap it in another label; these tests mirror that contract.
+// Render bare: ToggleSwitch owns its click-target label.
 function RHFWrapper({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => void }) {
   const { register, formState: { isDirty } } = useForm({ defaultValues: { enabled: false } });
   onDirtyChange?.(isDirty);
@@ -68,9 +67,6 @@ describe('ToggleSwitch', () => {
     });
 
     it('clicking the visible TRACK toggles the checkbox (regression: bare toggles were click-dead)', async () => {
-      // The sr-only input is invisible; the track div is what users actually click. Before the
-      // component owned its label, a bare <ToggleSwitch /> rendered a track associated with
-      // nothing — clicks did nothing (shipped that way on Audio Tools / Post Processing).
       const onChange = vi.fn();
       render(<ToggleSwitch id="test" onChange={onChange} />);
       const input = screen.getByRole('checkbox');

@@ -3,7 +3,6 @@ import { parseOpf, parseOpfWithDiagnostics } from './opf-reader.js';
 import { generateOpf } from './opf-writer.js';
 import type { BookWithAuthor } from '../services/book.service.js';
 
-/** Wrap raw `<metadata>` children in a minimal OPF 2.0 package — mirrors `opf-writer.test.ts`. */
 function rawOpf(metadataInner: string): string {
   return [
     '<?xml version="1.0" encoding="utf-8"?>',
@@ -38,11 +37,7 @@ function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
 }
 
 describe('parseOpf — round-trip against generateOpf (AC14)', () => {
-  // Per `roundtrip-fixture-must-force-the-branch`: every assertion below is on a value that only a
-  // correct implementation can produce. TWO authors AND TWO narrators force the role-bucketing
-  // branch (a one-creator-each fixture passes against a reader that ignores `role` entirely); the
-  // `&`/`<`/`"`/`'` description forces entity handling; `seriesPosition: 0` forces the `!= null`
-  // guard rather than a truthiness check.
+  // Multiple creator roles, entity-heavy text, and position zero force the round-trip branches.
   const book = makeBook({
     title: 'Tiamat & the Wrath',
     subtitle: 'Book <Nine> of "The Expanse"',
@@ -67,10 +62,8 @@ describe('parseOpf — round-trip against generateOpf (AC14)', () => {
       subtitle: 'Book <Nine> of "The Expanse"',
       authors: ['James S. A. Corey', 'Ty Franck'],
       narrators: ['Jefferson Mays', "Erin O'Brien"],
-      // Verbatim, entity-unescaped, HTML NOT stripped — the deliberate divergence from ABS.
       description: 'Ships & stations <b>collide</b> — "the gate" won\'t hold.',
       publisher: 'Orbit & Co.',
-      // Raw `dc:date`, not ABS's 4-digit-year reduction.
       publishedDate: '2019-03-26',
       asin: 'B07HFB6L9L',
       isbn: '9780316332873',
@@ -81,9 +74,6 @@ describe('parseOpf — round-trip against generateOpf (AC14)', () => {
   });
 
   it('keeps authors and narrators in separate buckets (reds if the role filter is dropped)', () => {
-    // The branch-exclusive assertion: a reader that ignored `role` would put all four names in one
-    // bucket, which `toEqual` above would also catch — stated separately so the intent survives an
-    // edit to the fixture.
     expect(parsed!.authors).not.toContain('Jefferson Mays');
     expect(parsed!.narrators).not.toContain('James S. A. Corey');
   });
@@ -139,8 +129,7 @@ describe('parseOpf — role attribute shapes (AC3)', () => {
 });
 
 describe('parseOpf — attribute whitespace (AC5)', () => {
-  // htmlparser2 does NOT perform XML attribute-value normalisation, so the raw tab/newline reaches
-  // `attribs` intact; the reader has to trim explicitly.
+  // htmlparser2 leaves raw attribute whitespace for the reader to trim.
   it('trims raw tabs and newlines out of a meta content value', () => {
     const parsed = parseOpf(rawOpf('<meta name="calibre:series" content="\t Foo\n Bar \n"/>'));
     expect(parsed?.seriesName).toBe('Foo\n Bar');
@@ -164,8 +153,7 @@ describe('parseOpf — rejection table (AC2)', () => {
     ['a package with no metadata element at all', '<package><manifest/></package>'],
     ['a metadata holding only whitespace-valued elements', rawOpf('<dc:title>   </dc:title><dc:creator>  </dc:creator>')],
   ])('%s returns exactly null', (_label, xml) => {
-    // `toBeNull`, never merely falsy and never "all fields null" — an all-null OpfMetadata is not a
-    // permitted return value, so the two conforming-but-different implementations cannot both pass.
+    // An all-null OpfMetadata is not a permitted result.
     expect(parseOpf(xml)).toBeNull();
   });
 
@@ -305,7 +293,6 @@ describe('parseOpf — bounds (AC5)', () => {
       `<dc:identifier opf:scheme="${scheme}">${'x'.repeat(65)}</dc:identifier>`,
       '<dc:title>Anchor</dc:title>',
     ].join('')));
-    // Absent, NOT a 64-char prefix — a truncated identifier is a wrong identity.
     expect(parsed?.[scheme.toLowerCase() as 'asin' | 'isbn']).toBeNull();
   });
 });
@@ -316,7 +303,6 @@ describe('parseOpf — pipeline order (AC5, test 10a)', () => {
       `<dc:identifier opf:scheme="${scheme}">${'x'.repeat(65)}</dc:identifier>`,
       `<dc:identifier opf:scheme="${scheme}">B07HFB6L9L</dc:identifier>`,
     ].join('')));
-    // Reds against an implementation that lets the junk value take the first-usable slot.
     expect(parsed?.[scheme.toLowerCase() as 'asin' | 'isbn']).toBe('B07HFB6L9L');
   });
 
@@ -325,7 +311,6 @@ describe('parseOpf — pipeline order (AC5, test 10a)', () => {
       `<dc:title>${'a'.repeat(600)}</dc:title>`,
       '<dc:title>Short Second Title</dc:title>',
     ].join('')));
-    // Reds against an implementation that treats over-bound as unusable for scalars too.
     expect(parsed?.title).toBe('a'.repeat(512));
   });
 
@@ -335,13 +320,11 @@ describe('parseOpf — pipeline order (AC5, test 10a)', () => {
       `<dc:creator opf:role="aut">${shared}FIRST</dc:creator>`,
       `<dc:creator opf:role="aut">${shared}SECOND</dc:creator>`,
     ].join('')));
-    // Reds against deduplicate-before-truncate, which emits two byte-identical strings.
     expect(parsed?.authors).toEqual([shared]);
   });
 
   it('deduplicates BEFORE capping — 64 identical genres plus one unique yields two', () => {
     const subjects = `${'<dc:subject>Same</dc:subject>'.repeat(64)}<dc:subject>Different</dc:subject>`;
-    // Reds against cap-before-deduplicate, which would return one.
     expect(parseOpf(rawOpf(subjects))?.genres).toEqual(['Same', 'Different']);
   });
 });
@@ -374,7 +357,6 @@ describe('parseOpfWithDiagnostics (AC1 / AC5, test 10b)', () => {
   });
 
   it('emits no diagnostics for an in-bounds document, and parseOpf takes no logger', () => {
-    // The pure contract, exercised: one argument, no logger, no side channel.
     const xml = rawOpf('<dc:title>Fine</dc:title>');
     expect(parseOpfWithDiagnostics(xml).diagnostics).toEqual([]);
     expect(parseOpf(xml)?.title).toBe('Fine');
@@ -382,17 +364,7 @@ describe('parseOpfWithDiagnostics (AC1 / AC5, test 10b)', () => {
 });
 
 describe('parseOpf — XXE and entity-expansion fixtures, kept permanently (D6)', () => {
-  // These pass trivially today: htmlparser2 does no DTD or entity resolution, so XXE and
-  // billion-laughs are structurally unavailable rather than defended against. They exist so a future
-  // parser swap — which would silently reintroduce a file-read primitive into a process whose config
-  // directory holds `secret.key` — reds here instead of in production.
-  //
-  // Every row asserts the EXACT literal reference, matching the prior art at
-  // `core/epub/xml.test.ts:458,474`. A weaker "does not contain /etc/passwd content" shape is not
-  // enough: it passes on a host where the target is absent (every Windows dev box, every hardened
-  // container), and it passes for a parser that resolves the entity to something innocuous, drops it,
-  // or expands it only partially. `toBe` fails for all four of those and for the null return an
-  // entity-dropping parser would produce.
+  // Exact literal references pin htmlparser2's no-DTD/no-entity behavior against future parser swaps.
   it.each([
     [
       'a SYSTEM file entity',
@@ -430,11 +402,8 @@ describe('parseOpf — XXE and entity-expansion fixtures, kept permanently (D6)'
     const parsed = parseOpf(xml);
     const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
 
-    // The literal assertion is the control — one expansion step already fails it, so no
-    // size threshold can be satisfied by a partially-expanding parser.
     expect(parsed?.title).toBe('&lol8;');
-    // The timing bound is a separate liveness guard: a fully-expanding parser that never returns
-    // would otherwise hang the run rather than fail it.
+    // Separately bound liveness in case a future parser fully expands the payload.
     expect(elapsedMs).toBeLessThan(2_000);
   });
 });
@@ -464,7 +433,6 @@ describe('parseOpf — foreign (unmarked) sidecar (D5)', () => {
       subtitle: null,
       authors: ['An Author'],
       narrators: ['A Narrator'],
-      // Entity-unescaped, markup preserved — not stripped the way ABS's fetchDescription would.
       description: '<p>Blurb</p>',
       publisher: 'Calibre Press',
       publishedDate: '2021-05-04T00:00:00+00:00',

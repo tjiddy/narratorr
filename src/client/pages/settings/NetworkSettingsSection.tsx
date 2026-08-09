@@ -12,7 +12,6 @@ import { SettingsSection } from './SettingsSection';
 
 type NetworkFormData = z.infer<typeof networkFormSchema>;
 
-// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
 const CARD_LABEL = 'Network';
 
 export function NetworkSettingsSection() {
@@ -90,7 +89,7 @@ export function NetworkSettingsSection() {
             {errors.proxyUrl ? (
               <p className="text-sm text-destructive mt-1">{errors.proxyUrl.message}</p>
             ) : (
-              /* Load-bearing advisory — stays visible, deliberately NOT an InfoTip */
+              /* Load-bearing advisory: stays visible because the proxy alone has no effect. */
               <p className="text-sm text-amber-500 mt-2">
                 Has no effect on its own — you must also turn on <span className="font-medium">Route through proxy</span> for each indexer that should use it (Settings &gt; Indexers).
               </p>

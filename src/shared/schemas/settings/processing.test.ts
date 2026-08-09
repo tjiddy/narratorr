@@ -3,7 +3,6 @@ import { processingSettingsSchema } from './processing.js';
 
 describe('processingSettingsSchema — autoMergeDownloads (#1836)', () => {
   it('defaults autoMergeDownloads to false when absent from an older payload', () => {
-    // Older stored settings predate the toggle — the field is missing entirely.
     const result = processingSettingsSchema.parse({
       ffmpegPath: '/usr/bin/ffmpeg',
       outputFormat: 'm4b',

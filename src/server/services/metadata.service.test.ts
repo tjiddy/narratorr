@@ -23,7 +23,6 @@ const mockAudnexus = {
   getBook: vi.fn().mockResolvedValue(null),
   getBookDetailed: vi.fn().mockResolvedValue({ kind: 'not_found' }),
   getAuthor: vi.fn().mockResolvedValue(null),
-  // #1942 — the chapter-runtime lookup the corroborator bridges to.
   getChapterRuntime: vi.fn().mockResolvedValue({ kind: 'not_found' }),
 };
 
@@ -44,8 +43,7 @@ describe('MetadataService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    // Per-mock reset drains stale `*Once()` queues — `clearAllMocks` does not (see CLAUDE.md).
-    // Avoids `resetAllMocks` so the module-mock factories above stay intact.
+    // clearAllMocks leaves *Once queues; reset individual methods to preserve module factories.
     mockAudibleProvider.searchBooks.mockReset();
     mockAudibleProvider.searchSeries.mockReset();
     mockAudibleProvider.getBook.mockReset();
@@ -55,7 +53,6 @@ describe('MetadataService', () => {
     mockAudnexus.getBookDetailed.mockReset();
     mockAudnexus.getAuthor.mockReset();
     mockAudnexus.getChapterRuntime.mockReset();
-    // Reset mock return values
     mockAudibleProvider.searchBooks.mockResolvedValue({ books: [] });
     mockAudibleProvider.searchSeries.mockResolvedValue([]);
     mockAudibleProvider.getBook.mockResolvedValue(null);
@@ -266,7 +263,6 @@ describe('MetadataService', () => {
     });
 
     describe('podcast-derived authors/series filtering (#1020)', () => {
-      // AC4
       it('returns empty authors and series when every book is filtered as a podcast', async () => {
         mockAudibleProvider.searchBooks.mockResolvedValueOnce({
           books: [
@@ -291,7 +287,6 @@ describe('MetadataService', () => {
         expect(result.series).toEqual([]);
       });
 
-      // AC5
       it('derives authors and series only from the audiobook subset when results mix audiobooks and podcasts', async () => {
         mockAudibleProvider.searchBooks.mockResolvedValueOnce({
           books: [
@@ -316,7 +311,6 @@ describe('MetadataService', () => {
         expect(result.series).toEqual([{ name: 'Mistborn', asin: 'SER_MB', books: [] }]);
       });
 
-      // AC6
       it('keeps authors and series derived from books with contentDeliveryType === undefined (Audnexus fallback-to-keep)', async () => {
         mockAudibleProvider.searchBooks.mockResolvedValueOnce({
           books: [
@@ -367,7 +361,6 @@ describe('MetadataService', () => {
         });
 
         const result = await service.search('dedup');
-        // First occurrence wins: 'Shared Author' carries no asin, 'Shared Series' carries the asin from book #2.
         expect(result.authors).toEqual([
           { name: 'Shared Author' },
           { name: 'Other' },
@@ -542,12 +535,9 @@ describe('MetadataService', () => {
         expect(result.books).toEqual([
           { title: 'Real', authors: [{ name: 'A' }], series: [{ name: 'Real Series' }], narrators: ['Jim Dale'] },
         ]);
-        // Authors/series are derived from kept books only — Virtual Voice entries are gone.
         expect(result.authors).toEqual([{ name: 'A' }]);
         expect(result.series).toEqual([{ name: 'Real Series', books: [] }]);
       });
-
-      // ===== #993 — formatType surface + word-boundary matching =====
 
       it('filters abridged books via formatType surface', async () => {
         setRejectWords('Abridged');
@@ -612,8 +602,6 @@ describe('MetadataService', () => {
         const result = await serviceWithSettings.searchBooks('query');
         expect(result).toEqual(books);
       });
-
-      // ===== #1032 — pseudo-narrator markers filtered from rejectWords surface =====
 
       it('does NOT reject a book whose narrators include "full cast" literal (Audible Original ensemble)', async () => {
         setRejectWords('Full Cast');
@@ -821,7 +809,6 @@ describe('MetadataService', () => {
         expect(result.books).toEqual(allBooks);
       });
 
-      // ── AC5: real-world fixture for Eric (Terry Pratchett) ─────────────
       it('searchBooks: tag-pass against Eric multi-language fixture returns only english unabridged', async () => {
         setLanguages(['english'], 'Abridged');
         mockAudibleProvider.searchBooks.mockResolvedValueOnce({
@@ -839,7 +826,6 @@ describe('MetadataService', () => {
         ]);
       });
 
-      // ── AC5: Dark Forest fixture — only spanish edition exists, language filter clears all ─
       it('searchBooks: Dark Forest fixture (only spanish result) returns empty after language filter', async () => {
         setLanguages(['english']);
         mockAudibleProvider.searchBooks.mockResolvedValueOnce({
@@ -853,7 +839,6 @@ describe('MetadataService', () => {
       });
     });
 
-    // ── AC9: symmetric fail-open coverage across all four surfaces ────────
     describe('symmetric fail-open (#1004)', () => {
       const mockSettingsService = { get: vi.fn(), getAll: vi.fn(), set: vi.fn() };
       let serviceWithSettings: MetadataService;
@@ -863,7 +848,6 @@ describe('MetadataService', () => {
         serviceWithSettings = new MetadataService(inject<FastifyBaseLogger>(mockLog), undefined, mockSettingsService as never);
       });
 
-      // metadata slice fails — language + duration skipped, rejectWords still runs
       const stubMetadataFails = () => {
         mockSettingsService.get.mockImplementation((key: string) => {
           if (key === 'quality') return Promise.resolve({ rejectWords: 'Virtual Voice', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'none', searchImmediately: false });
@@ -872,7 +856,6 @@ describe('MetadataService', () => {
         });
       };
 
-      // quality slice fails — rejectWords skipped, language + duration still run
       const stubQualityFails = () => {
         mockSettingsService.get.mockImplementation((key: string) => {
           if (key === 'quality') return Promise.reject(new Error('DB unavailable'));
@@ -893,7 +876,6 @@ describe('MetadataService', () => {
         mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: fixture() });
 
         const result = await serviceWithSettings.searchBooks('query');
-        // rejectWords drops Knockoff; language + duration skipped (Spanish + Short remain)
         expect(result.map((b) => b.title)).toEqual(['Real', 'Spanish', 'Short']);
         expect(mockLog.warn).toHaveBeenCalled();
       });
@@ -903,7 +885,6 @@ describe('MetadataService', () => {
         mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: fixture() });
 
         const result = await serviceWithSettings.searchBooks('query');
-        // rejectWords skipped → Knockoff remains; language drops Spanish; duration drops Short
         expect(result.map((b) => b.title)).toEqual(['Real', 'Knockoff']);
         expect(mockLog.warn).toHaveBeenCalled();
       });
@@ -942,9 +923,6 @@ describe('MetadataService', () => {
         expect(result.books.map((b) => b.title)).toEqual(['Real', 'Knockoff']);
       });
 
-      // ── AC4: filterAuthorBooks behavior diff under metadata-slice failure ─
-      // Previously bailed early returning ALL books unfiltered. New symmetric model
-      // applies rejectWords still and skips only the metadata-dependent filters.
       it('getAuthorBooks: metadata-slice failure leaves rejectWords applied (behavior diff vs old early-bail)', async () => {
         stubMetadataFails();
         mockAudnexus.getAuthor.mockResolvedValueOnce({ name: 'Author', asin: 'B123' });
@@ -1054,7 +1032,6 @@ describe('MetadataService', () => {
           { title: 'Real', authors: [{ name: 'Real Author' }], series: [{ name: 'Real Series' }], duration: 768 },
           { title: 'Unknown', authors: [{ name: 'Unknown Author' }], series: [{ name: 'Unknown Series' }] },
         ]);
-        // Authors/series are derived from kept books — Knockoff is dropped.
         expect(result.authors).toEqual([
           { name: 'Real Author' },
           { name: 'Unknown Author' },
@@ -1108,7 +1085,6 @@ describe('MetadataService', () => {
       });
 
       it('returns unfiltered results when settings lookup throws (fail-open)', async () => {
-        // First call (rejectWords) succeeds, second call (min-duration) throws — exercise duration fail-open path
         mockSettingsService.get.mockImplementation((key: string) => {
           if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'none', searchImmediately: false });
           if (key === 'metadata') return Promise.reject(new Error('DB unavailable'));
@@ -1298,8 +1274,7 @@ describe('MetadataService', () => {
         title: 'A Podcast',
         contentDeliveryType: 'PodcastParent',
       });
-      // Distinct from the search-path filter message so log-grep can tell the
-      // two drop sites apart.
+      // Keep direct-lookup and search-path messages distinct for log-grep.
       const searchPathCalls = debugSpy.mock.calls.filter(
         ([, msg]) => msg === 'Dropping non-audiobook from search results',
       );
@@ -1381,7 +1356,6 @@ describe('MetadataService', () => {
       expect(await service.getBook('123')).toBeNull();
       expect(mockAudibleProvider.getBook).not.toHaveBeenCalled();
 
-      // getAuthor uses Audnexus, not Audible — should still work during Audible backoff
       const mockAuthor = { name: 'Test Author', asin: '123' };
       mockAudnexus.getAuthor.mockResolvedValueOnce(mockAuthor);
       expect(await service.getAuthor('123')).toEqual(mockAuthor);
@@ -1392,8 +1366,6 @@ describe('MetadataService', () => {
       mockAudnexus.getBook.mockRejectedValueOnce(new RateLimitError(60000, 'Audnexus'));
       await expect(service.enrichBook('B000FIRST')).rejects.toThrow(RateLimitError);
 
-      // A second lookup during the active backoff must also throw (not return
-      // null), and must NOT hit the provider again — the backoff is pre-emptive.
       await expect(service.enrichBook('B000SECOND')).rejects.toThrow(RateLimitError);
       expect(mockAudnexus.getBook).toHaveBeenCalledTimes(1);
     });
@@ -1421,7 +1393,6 @@ describe('MetadataService', () => {
     });
 
     it('handles enrichBook with empty ASIN string gracefully', async () => {
-      // Empty string ASIN — Audnexus should still be called (validation is caller's job)
       mockAudnexus.getBook.mockResolvedValueOnce(null);
 
       const result = await service.enrichBook('');
@@ -1635,7 +1606,6 @@ describe('MetadataService', () => {
     it('returns null directly without delegating to any provider', async () => {
       const result = await service.getSeries('999');
       expect(result).toBeNull();
-      // Should NOT call any provider method
       expect(mockAudibleProvider.getBook).not.toHaveBeenCalled();
     });
   });
@@ -1644,7 +1614,6 @@ describe('MetadataService', () => {
     it('still has Audible provider when no API keys are set', async () => {
       const minService = new MetadataService(inject<FastifyBaseLogger>(createMockLogger()));
 
-      // Audible is always available (no API key required)
       expect(minService.getProviders()).toHaveLength(1);
       expect(minService.getProviders()[0]!.type).toBe('audible');
     });
@@ -1682,7 +1651,6 @@ describe('MetadataService', () => {
       mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [] });
 
       await service.searchBooksForDiscovery('test query');
-      // Called with query and undefined options (provider applies its own default)
       expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('test query', undefined);
     });
 
@@ -1738,15 +1706,10 @@ describe('MetadataService', () => {
       const result = await service.getAuthor('B001TEST');
       expect(result).toBeNull();
 
-      // Subsequent call should be skipped due to rate limit
       const result2 = await service.getAuthor('B002TEST');
       expect(result2).toBeNull();
-      // getAuthor should only have been called once (second was skipped)
       expect(mockAudnexus.getAuthor).toHaveBeenCalledTimes(1);
-      // #1944 — the operator-visible signal must carry the finite window too. A `NaN`
-      // window pino-serialises to `null`, so the one log line that says this is
-      // happening would itself be misleading. Not the `ExactlyOnce` variant: the
-      // second, gated lookup emits its own 'Author lookup skipped' warn.
+      // A non-finite window serializes as null; this log must expose the finite retry interval.
       expect(mockLog.warn).toHaveBeenCalledWith(
         { provider: 'Audnexus', retryAfterMs: 30000 },
         'Provider rate limited',
@@ -1776,13 +1739,11 @@ describe('MetadataService', () => {
     let emptyService: MetadataService;
 
     beforeEach(() => {
-      // Temporarily empty the registry
       const saved = { ...mockFactories };
       for (const key of Object.keys(mockFactories)) {
         delete (mockFactories as Record<string, unknown>)[key];
       }
       emptyService = new MetadataService(inject<FastifyBaseLogger>(createMockLogger()));
-      // Restore registry for other tests
       Object.assign(mockFactories, saved);
     });
 
@@ -1854,7 +1815,6 @@ describe('MetadataService', () => {
     });
   });
 
-  // ── #229 Observability — debug logging ──────────────────────────────────
   describe('debug logging (#229)', () => {
     it('searchBooks() logs { query, provider, resultCount } at debug on completion', async () => {
       mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [{ title: 'A' }] });
@@ -1927,7 +1887,6 @@ describe('MetadataService', () => {
     });
   });
 
-  // ── #229 Observability — SearchBooksResult contract ─────────────────────
   describe('SearchBooksResult contract (#229)', () => {
     it('search() correctly unwraps .books from SearchBooksResult', async () => {
       mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [{ title: 'X' }] });
@@ -1984,18 +1943,12 @@ describe('MetadataService', () => {
     });
   });
 
-  // #1942 — the chapter-runtime bridge. These run against a REAL MetadataService
-  // (only the provider is mocked), so they prove the corroborator is genuinely
-  // wired to the service's shared throttle and provider-wide 429 backoff rather
-  // than reaching Audnexus on its own.
+  // Use the real service to exercise its shared throttle and provider-wide Audnexus backoff.
   describe('getChapterRuntimeSeconds bridge (#1942/#2168)', () => {
     const ASIN = 'B00CXXEX8W';
-    /**
-     * Fablehaven's live record has no trimmable tail, so the trim contributes
-     * nothing and both references carry the full sum (#2168 AC30).
-     */
+    // Fablehaven's live fixture has no trimmable tail, so full and trimmed totals match.
     const FABLEHAVEN_OK = { kind: 'ok', runtimeLengthMs: 33219490, isAccurate: true, trimmedRuntimeMs: 33219490, trimmedChapterCount: 0 } as const;
-    /** "No usable runtime" is the EMPTY pair — never a bare `undefined` return. */
+    // No usable runtime is {}, never undefined.
     const NONE = {};
 
     it('#2168 — a trimmed record bridges BOTH references through in SECONDS', async () => {
@@ -2022,11 +1975,9 @@ describe('MetadataService', () => {
         'Provider rate limited',
       );
 
-      // The gate is provider-wide, not per-ASIN: the very next Audnexus lookup
-      // (a different call, a different ASIN) is skipped without a request.
+      // Backoff is provider-wide, not per method or ASIN.
       await expect(service.getAuthor('B001H6UJO8')).resolves.toBeNull();
       expect(mockAudnexus.getAuthor).not.toHaveBeenCalled();
-      // And the chapter path itself does not re-request during the window...
       await service.getChapterRuntimeSeconds('B_OTHER');
       expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(1);
     });
@@ -2036,19 +1987,12 @@ describe('MetadataService', () => {
 
       await service.getChapterRuntimeSeconds(ASIN);
 
-      // A NaN window leaves `Date.now() + NaN` = NaN, which `isRateLimited` reads
-      // as "not limited" — so the provider WOULD be retried immediately. The
-      // adapter guarantees finite windows; this pins the failure signature so a
-      // regression there surfaces here as an un-gated retry.
+      // Date.now() + NaN disables the gate, so a bad adapter window causes an immediate retry.
       await service.getChapterRuntimeSeconds('B_OTHER');
       expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(2);
     });
 
-    // The backoff deadline is `Date.now() + retryAfterMs`, so a real-time sleep
-    // can only ever approximate the transition. Freezing Date (and ONLY Date —
-    // `toFake: ['Date']` leaves the throttle's and the runner's real timers alone)
-    // lets the window be stepped exactly, pinning both sides of the boundary
-    // instead of just "eventually expired".
+    // Fake only Date: real timers stay live while the exact deadline remains deterministic.
     describe('backoff window expiry, frozen clock', () => {
       const NOW = Date.parse('2026-07-25T12:00:00.000Z');
 
@@ -2063,18 +2007,15 @@ describe('MetadataService', () => {
         await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
         expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(1);
 
-        // 1ms short of the deadline — still gated, no request.
         vi.setSystemTime(NOW + 59_999);
         await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
         expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(1);
 
-        // Exactly at the deadline — the gate releases and the provider is retried.
         vi.setSystemTime(NOW + 60_000);
         mockAudnexus.getChapterRuntime.mockResolvedValue(FABLEHAVEN_OK);
         await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual({ fullSeconds: 33219.49, trimmedSeconds: 33219.49 });
         expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(2);
 
-        // ...and the promotion settles, so a fourth lookup issues no request.
         await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual({ fullSeconds: 33219.49, trimmedSeconds: 33219.49 });
         expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(2);
       });
@@ -2087,8 +2028,6 @@ describe('MetadataService', () => {
         mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'not_found' });
 
         await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
-        // Two real requests for the SAME ASIN: the 429 is transient, so it left no
-        // settled verdict for the post-window call to short-circuit against.
         expect(mockAudnexus.getChapterRuntime.mock.calls).toEqual([[ASIN], [ASIN]]);
       });
     });
@@ -2149,7 +2088,7 @@ describe('MetadataService', () => {
       const result = await service.lookupForFixMatch('B_NEW');
       expect(result.kind).toBe('ok');
       if (result.kind === 'ok') {
-        expect(result.book.title).toBe('New Title'); // Audible authoritative
+        expect(result.book.title).toBe('New Title'); // Audible remains authoritative.
         expect(result.book.seriesPrimary?.asin).toBe('SERIES_ID');
         expect(result.book.genres).toEqual(['Fantasy']);
         expect(result.book.isbn).toBe('9781234567890');
@@ -2247,7 +2186,6 @@ describe('MetadataService', () => {
   });
 });
 
-// ===== #1545 — shared reject-words predicate (add gate ⇔ search filter lockstep) =====
 describe('isRejectedByWords (shared predicate)', () => {
   const book = (overrides?: Partial<BookMetadata>): BookMetadata =>
     ({ title: 'Clean Title', authors: [{ name: 'Real Author' }], ...overrides }) as BookMetadata;
@@ -2279,13 +2217,9 @@ describe('isRejectedByWords (shared predicate)', () => {
 
   it('does NOT reject when the word matches only a pseudo-narrator (stripped from surface)', () => {
     expect(isRejectedByWords(book({ narrators: ['full cast'] }), 'Full Cast')).toBe(false);
-    // …but a real narrator containing the phrase IS rejected.
     expect(isRejectedByWords(book({ narrators: ['GraphicAudio Full Cast'] }), 'Full Cast')).toBe(true);
   });
 
-  // Lockstep: the search filter (via the public searchBooks path) and the predicate
-  // must agree on the same fixture + reject list — the search keeps exactly the books
-  // the predicate does not reject.
   it('agrees with the search filter: searchBooks keeps exactly the books the predicate does not reject', async () => {
     const REJECT = 'Virtual Voice';
     const fixtures: BookMetadata[] = [
@@ -2307,12 +2241,10 @@ describe('isRejectedByWords (shared predicate)', () => {
 
     const expectedKept = fixtures.filter((b) => !isRejectedByWords(b, REJECT));
     expect(kept).toEqual(expectedKept);
-    // Sanity: the partition is non-trivial (one dropped, two kept).
     expect(kept).toHaveLength(2);
   });
 });
 
-// ── #1622 resolveBook — shared ASIN-fast-path → search-fallback resolver ──
 describe('MetadataService.resolveBook', () => {
   let service: MetadataService;
   let mockLog: ReturnType<typeof createMockLogger>;
@@ -2341,12 +2273,12 @@ describe('MetadataService.resolveBook', () => {
   });
 
   it('ASIN present but enrichBook returns null → falls back to search → returns validated candidate', async () => {
-    mockAudnexus.getBook.mockResolvedValueOnce(null); // print/Kindle ASIN 404s on Audnexus
+    mockAudnexus.getBook.mockResolvedValueOnce(null);
     mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [audiobook] });
 
     const result = await service.resolveBook({ asin: '1338589016', title: 'The Way of Kings', author: 'Brandon Sanderson' });
 
-    expect(result).toEqual(audiobook); // carries the real audiobook ASIN it found
+    expect(result).toEqual(audiobook);
     expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('The Way of Kings Brandon Sanderson');
   });
 
@@ -2379,7 +2311,6 @@ describe('MetadataService.resolveBook', () => {
 
   it('ASIN miss + non-matching top candidate → validation rejects → null', async () => {
     mockAudnexus.getBook.mockResolvedValueOnce(null);
-    // Wrong author → matchPassesValidation rejects.
     mockAudibleProvider.searchBooks.mockResolvedValueOnce({
       books: [{ title: 'The Way of Kings', authors: [{ name: 'Some Romance Author' }], asin: 'B_WRONG' }],
     });
@@ -2397,12 +2328,11 @@ describe('MetadataService.resolveBook', () => {
   });
 
   it('#1629: validates beyond books[0] — a later candidate is returned when the top one fails', async () => {
-    // applyBookFilters preserves provider order (no relevance rank), so the
-    // resolver must scan a top-N window, not just books[0].
+    // Filters preserve provider order, so resolution must scan a top-N window rather than trust books[0].
     mockAudibleProvider.searchBooks.mockResolvedValueOnce({
       books: [
-        { title: 'The Way of Kings', authors: [{ name: 'Some Romance Author' }], asin: 'B_WRONG' }, // fails author check
-        audiobook, // passes
+        { title: 'The Way of Kings', authors: [{ name: 'Some Romance Author' }], asin: 'B_WRONG' },
+        audiobook,
       ],
     });
 
@@ -2415,16 +2345,12 @@ describe('MetadataService.resolveBook', () => {
 
     const result = await service.resolveBook({ title: 'The Way of Kings', author: '   ' });
 
-    // Query carries the title only (no trailing whitespace), and the near-exact
-    // title clears the no-author path.
     expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('The Way of Kings');
     expect(result).toEqual(audiobook);
   });
 
   it('#1629: a 0.70–0.84 title-only match is rejected → null (no fuzzy ASIN to write back)', async () => {
-    // 'The Lost Hero' vs 'The Last Hero' → dice ≈ 0.83: clears the loose 0.7 gate
-    // but not the stricter no-author 0.85 gate, so no ASIN is returned to be
-    // written back onto the row by any of the three writeback surfaces.
+    // Dice is about 0.83: above the general 0.70 gate but below the no-author 0.85 gate.
     mockAudibleProvider.searchBooks.mockResolvedValueOnce({
       books: [{ title: 'The Last Hero', authors: [{ name: 'Whoever' }], asin: 'B_FUZZY' }],
     });
@@ -2442,15 +2368,12 @@ describe('MetadataService.resolveBook', () => {
   });
 
   it('F1/B5: ASIN path propagates the rate limit even when Audnexus is ALREADY in backoff (not treated as a miss)', async () => {
-    // Trip the Audnexus backoff window via a fresh 429.
     mockAudnexus.getBook.mockRejectedValueOnce(new RateLimitError(60000, 'Audnexus'));
     await expect(
       service.resolveBook({ asin: 'B0AUDIO', title: 'The Way of Kings', author: 'Brandon Sanderson' }),
     ).rejects.toBeInstanceOf(RateLimitError);
 
-    // Audnexus is now in an active backoff. A subsequent resolve must STILL
-    // throw rather than fall through to search and return a `null` no-match —
-    // and must not hit either provider (pre-emptive backoff, no fallback search).
+    // Active backoff must throw before either provider runs; it is not an ASIN miss.
     mockAudnexus.getBook.mockClear();
     mockAudibleProvider.searchBooks.mockClear();
     await expect(
@@ -2461,7 +2384,7 @@ describe('MetadataService.resolveBook', () => {
   });
 
   it('F5: provider RateLimitError on the FALLBACK SEARCH path → re-throws (NOT swallowed to [] / null)', async () => {
-    mockAudnexus.getBook.mockResolvedValueOnce(null); // miss → fall back to search
+    mockAudnexus.getBook.mockResolvedValueOnce(null);
     mockAudibleProvider.searchBooks.mockRejectedValueOnce(new RateLimitError(30000, 'Audible.com'));
 
     await expect(
@@ -2476,18 +2399,17 @@ describe('MetadataService.resolveBook', () => {
   });
 
   it('#1628: provider TransientError on the FALLBACK SEARCH path → re-throws (NOT swallowed to [] / null)', async () => {
-    mockAudnexus.getBook.mockResolvedValueOnce(null); // miss → fall back to search
+    mockAudnexus.getBook.mockResolvedValueOnce(null);
     mockAudibleProvider.searchBooks.mockRejectedValueOnce(new TransientError('Audible.com', 'HTTP 503'));
 
-    // A transient provider failure must be distinguishable from a real no-match:
-    // it propagates so callers leave the book pending, not `failed`.
+    // Propagation lets callers keep the book pending instead of recording a no-match.
     await expect(
       service.resolveBook({ asin: 'B_DEAD', title: 'The Way of Kings', author: 'Brandon Sanderson' }),
     ).rejects.toBeInstanceOf(TransientError);
   });
 
   it('#1628: a generic Error on the FALLBACK SEARCH path → re-throws (any caught fallback error is transient)', async () => {
-    mockAudnexus.getBook.mockResolvedValueOnce(null); // miss → fall back to search
+    mockAudnexus.getBook.mockResolvedValueOnce(null);
     mockAudibleProvider.searchBooks.mockRejectedValueOnce(new Error('Network error'));
 
     await expect(
@@ -2497,22 +2419,20 @@ describe('MetadataService.resolveBook', () => {
 
   it('#1628: an empty fallback search result is still a no-match → null (NOT a throw)', async () => {
     mockAudnexus.getBook.mockResolvedValueOnce(null);
-    mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [] }); // provider responded, genuinely zero books
+    mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [] });
 
     const result = await service.resolveBook({ asin: 'B_DEAD', title: 'Obscure', author: 'Nobody' });
     expect(result).toBeNull();
   });
 
   it('#1628: a fallback RateLimitError records the backoff (setRateLimited) so a later resolve is pre-empted', async () => {
-    mockAudnexus.getBook.mockResolvedValue(null); // always miss → fall back to search
+    mockAudnexus.getBook.mockResolvedValue(null);
     mockAudibleProvider.searchBooks.mockRejectedValueOnce(new RateLimitError(60000, 'Audible.com'));
 
     await expect(
       service.resolveBook({ asin: 'B_DEAD', title: 'The Way of Kings', author: 'Brandon Sanderson' }),
     ).rejects.toBeInstanceOf(RateLimitError);
 
-    // The fallback catch must call setRateLimited before re-throwing, so the next
-    // resolve is pre-empted by the active backoff without hitting the provider.
     mockAudibleProvider.searchBooks.mockClear();
     await expect(
       service.resolveBook({ title: 'Words of Radiance', author: 'Brandon Sanderson' }),
@@ -2522,15 +2442,7 @@ describe('MetadataService.resolveBook', () => {
 });
 
 describe('narrator-placeholder vocabulary subset consistency (#1657)', () => {
-  // PSEUDO_NARRATORS (the reject-word strip in this service) and
-  // NARRATOR_PLACEHOLDERS (the fuzzy-match no-signal vocabulary, the single home
-  // in src/core/utils/similarity.ts) are two DISTINCT decisions that overlap.
-  // The reject-word strip is intentionally NARROWER — a strict subset. Pinning
-  // that subset relationship here means adding a junk value to the shared core
-  // vocabulary can never make the two paths silently disagree; widening
-  // PSEUDO_NARRATORS to the full set (a runtime change, out of scope for #1657)
-  // would still satisfy the subset, but the explicit current-value assertion
-  // below guards that the reject-word set stays its current 3 values.
+  // Reject-word pseudo narrators are intentionally narrower than the fuzzy-match no-signal vocabulary.
 
   it('PSEUDO_NARRATORS ⊆ NARRATOR_PLACEHOLDERS (every reject-word marker is a known placeholder)', () => {
     for (const marker of PSEUDO_NARRATORS) {

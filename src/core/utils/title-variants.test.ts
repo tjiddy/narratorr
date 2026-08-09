@@ -10,45 +10,32 @@ import {
 } from './title-variants.js';
 import type { Variant } from './title-variants.js';
 
-/**
- * The EFFECTIVE segment set: `titleSegments` normalized and empty-dropped. This
- * is the ONLY representation the ladder's segment budget divides (#2104 D3) —
- * the raw list is not, because `colonSegments` keeps punctuation-only text that
- * `normalizeTitleForVariantMatch` then erases.
- */
+/** Normalizes raw segments and drops empty folds; this is the ladder's segment budget. */
 function effectiveSegments(title: string): string[] {
   return titleSegments(title).map(normalizeTitleForVariantMatch).filter((s) => s.length > 0);
 }
 
-/** Every `raw` in a well-formed variant set is non-empty and already collapsed/lowercased. */
 function assertWellFormed(variants: Variant[]): void {
   for (const v of variants) {
     expect(v.raw).not.toBe('');
     expect(v.raw).toBe(v.raw.trim());
     expect(v.raw).toBe(v.raw.toLowerCase());
   }
-  // Deduped on the collapsed key — no `raw` appears twice.
   expect(new Set(variants.map((v) => v.raw)).size).toBe(variants.length);
 }
 
 describe('normalizeTitleForVariantMatch', () => {
-  // The colon is a SEPARATOR now, not a truncation point (#2096). The pre-#2096
-  // normalizer returned 'foo' here, which is exactly the Chapterhouse defect.
   it('treats `:` as a separator instead of truncating', () => {
     expect(normalizeTitleForVariantMatch('Foo: A Tale of Two Cities')).toBe('foo a tale of two cities');
     expect(normalizeTitleForVariantMatch('Chapterhouse: Dune')).toBe('chapterhouse dune');
   });
 
-  // The generic paren/bracket strip moved to the DERIVED axis (`titleVariants`),
-  // so the scalar form retains the annotation text.
   it('retains generic parenthetical/bracket text (that axis is derived, not scalar)', () => {
     expect(normalizeTitleForVariantMatch('Foundation (1951)')).toBe('foundation 1951');
     expect(normalizeTitleForVariantMatch('Foundation [1951]')).toBe('foundation 1951');
   });
 
-  // AC7: the edition tail is load-bearing in the SCALAR normalizer. Demote it to
-  // the derived axis and both sides of 'Foo (Audio)' ≡ 'Foo (Unabridged)' become
-  // DERIVED forms, which the asymmetric rule forbids from pairing.
+  // Edition tails must fold on full forms; derived-only folds cannot pair asymmetrically.
   it('strips Unabridged / Audio / Audible edition tails in the scalar form', () => {
     expect(normalizeTitleForVariantMatch('Foo (Unabridged)')).toBe('foo');
     expect(normalizeTitleForVariantMatch('Foo (Audio)')).toBe('foo');
@@ -76,30 +63,15 @@ describe('normalizeTitleForVariantMatch', () => {
   });
 });
 
-/**
- * `titleSegments` (#2104 D19) — the segment primitive, a pure composition of the
- * two folds `titleVariants` already runs (`stripParentheticals` then
- * `colonSegments`). This suite owns only GENERATOR-observable facts: the raw
- * segment list, the effective set derived from it, and what the emitted tags do
- * and do not reveal. Ladder ADMISSION is a server-side policy and its assertions
- * live in `src/server/services/search-query-ladder.test.ts`.
- */
+// This suite covers generator segments; ladder admission stays in search-query-ladder tests.
 describe('titleSegments', () => {
   it('splits the PAREN-STRIPPED base on qualifying colons, and its effective set is the count that matters', () => {
     const title = 'star wars: the high republic: Light of the Jedi (New Order Series)';
-    // Raw: the parenthetical is gone before segmentation, so its text never
-    // becomes a segment and its (absent here) colon could never shear one.
     expect(titleSegments(title)).toEqual(['star wars', ' the high republic', ' Light of the Jedi  ']);
-    // `E.length` is the `segmentCount` the ladder's budget divides — NOT the raw
-    // length. They agree here only because no segment normalizes away.
     expect(effectiveSegments(title)).toEqual(['star wars', 'the high republic', 'light of the jedi']);
   });
 
   it('keeps punctuation-only segments raw — they are exactly what the effective set drops', () => {
-    // Each pair is (raw length, effective length). The divergence is the whole
-    // reason the ladder counts the effective set: `colonSegments` keeps any
-    // segment with non-whitespace text, `normalizeTitleForVariantMatch` erases
-    // punctuation-only text.
     const cases: Array<[string, number, number]> = [
       ['Star Wars: ---: The High Republic: Haunted Starlight', 4, 3],
       ['---: Alpha: Beta: Gamma', 4, 3],
@@ -113,11 +85,6 @@ describe('titleSegments', () => {
   });
 
   it('exposes a count neither the emitted tags nor their maximum can recover', () => {
-    // Generator dedup makes the emitted `n` values NON-DENSE: five raw segments
-    // (three effective) all collapse onto the same `alpha beta gamma` text, so
-    // the largest tag emitted is `prefix(3)`. Neither 5 nor 3 is readable from
-    // the tag set — which is why D19 exports the segmenter instead of letting
-    // the ladder infer a budget from `max(emitted n) + 1`.
     const title = '---: Alpha: Beta: Gamma: ---';
     expect(titleSegments(title)).toHaveLength(5);
     expect(effectiveSegments(title)).toEqual(['alpha', 'beta', 'gamma']);
@@ -133,37 +100,18 @@ describe('titleSegments', () => {
     expect(titleSegments('   ')).toEqual([]);
   });
 
-  // T12 / #2109 AC6 — `titleSegments` is explicitly NOT clamped. It is documented
-  // as returning the EXACT base slices the generator derives from, so silently
-  // capping it would break that contract (and the ladder's `effective` count with
-  // it). It is already linear, and `admitVariants` only admits unfloored `full`
-  // variants once the derived axis is empty, so no inconsistency arises.
   it('is NOT clamped — returns the full raw segment list past the generator cap (T12)', () => {
-    // 2400 chars / 300 segments: well past both MAX_VARIANT_TITLE_LENGTH and
-    // MAX_VARIANT_SEGMENTS, which `titleVariants` degrades on and this does not.
     const segments = titleSegments('ab: '.repeat(600));
     expect(segments).toHaveLength(300);
     expect(effectiveSegments('ab: '.repeat(600))).toHaveLength(300);
   });
 });
 
-/**
- * #2104 AC30 — `titleSegments` is the ONE export this module gains. Everything
- * else #2096 froze here stays exactly as it was, so a consumer of the generator
- * cannot quietly become a co-owner of it.
- *
- * Sorted before comparison: a module namespace in native Node ESM sorts its own
- * keys, but under Vitest a dynamic import resolves through Vite's SSR transform
- * to an ordinary object in SOURCE order. Sorting is ordering-agnostic and
- * asserts exactly the property under test — the SET of exports.
- */
+/** Pins the export set; sort because Vite preserves source order while native ESM sorts keys. */
 describe('public export surface (#2104 AC30)', () => {
   it('exports exactly the #2096 surface plus titleSegments', async () => {
     const ns = await import('./title-variants.js');
-    // #2109 AC11 — a deliberate TWO-name addition for the AC5 clamp constants,
-    // and nothing else. `applyCommonFolds` (AC8) stays private: the extraction
-    // is internal DRY, not a new contract, and keeping it unexported is what
-    // leaves this assertion a meaningful signal.
+    // applyCommonFolds must remain private.
     expect(Object.keys(ns).sort()).toEqual([
       'MAX_VARIANT_SEGMENTS',
       'MAX_VARIANT_TITLE_LENGTH',
@@ -177,8 +125,6 @@ describe('public export surface (#2104 AC30)', () => {
 });
 
 describe('titleVariants', () => {
-  // AC5 — the full worked array. Pins membership, tags, `parensStripped` flags
-  // and the G4 total order end to end in one assertion.
   it('emits the full ordered array for a deep-franchise title (AC5)', () => {
     expect(titleVariants('star wars: the high republic: Light of the Jedi (New Order Series)')).toEqual([
       { raw: 'star wars the high republic light of the jedi new order series', tag: 'full', parensStripped: false, lossy: false },
@@ -191,16 +137,7 @@ describe('titleVariants', () => {
     ]);
   });
 
-  // AC2 / G1 — parens are stripped BEFORE colon segmentation, so a colon living
-  // inside a parenthetical can never shear a segment. The literal cross product
-  // this guards against would emit `prefix(1) = 'the spiral path world of warcraft'`.
-  //
-  // Scope note: the assertion is over the DERIVED variants. G1 gives the
-  // parens-INTACT string exactly one variant — the FULL normalized form — and
-  // that form retains its parenthetical text by construction (the same fixture
-  // pair below pins `the high republic` surviving in the parens-intact full).
-  // AC2's prose says "no variant"; taken literally that contradicts G1 and the
-  // Star Wars fixture, so the precise property is asserted here instead.
+  // Assert only derived variants; the intact full must retain parenthetical text.
   it('never shears a colon that lives inside a parenthetical (AC2 / G1)', () => {
     const variants = titleVariants('The Spiral Path (World of Warcraft: Traveler, Book 2)');
     assertWellFormed(variants);
@@ -209,46 +146,28 @@ describe('titleVariants', () => {
     for (const v of derived) {
       expect(v.raw).not.toContain('world of warcraft');
     }
-    // No sheared variant exists at all: the paren-stripped base has no colon.
     expect(derived.map((v) => v.raw)).toEqual(['the spiral path']);
     expect(variants.filter((v) => v.raw.includes('world of warcraft'))).toEqual([
       { raw: 'the spiral path world of warcraft traveler book 2', tag: 'full', parensStripped: false, lossy: false },
     ]);
   });
 
-  /**
-   * #2109 (a) — the strip is a depth-counting SCAN, so it is agnostic to whether
-   * the groups are balanced or nested. The regex form it replaced matched only
-   * balanced, non-nested groups, which meant a single missing `)` — an ordinary
-   * truncation artefact in community-edited metadata — let the parenthetical's
-   * text AND its colon back into the derived axis, emitting exactly the sheared
-   * `prefix(1)` that G1 exists to forbid.
-   *
-   * Every exclusion below is scoped to the DERIVED axis (`parensStripped: true`)
-   * for the reason the G1 control above already states: G1 mandates that the
-   * parens-INTACT `full` retain its parenthetical text, so a global exclusion
-   * would be unsatisfiable by any correct implementation. Each case therefore
-   * asserts the intact `full` is still present and byte-identical to today's.
-   */
+  // Depth scanning must keep unbalanced or nested groups from leaking colons into derived forms.
   describe('balanced-agnostic paren stripping (#2109 AC1-AC3)', () => {
     const UNTERMINATED = 'The Spiral Path (World of Warcraft: Traveler, Book 2';
     const TERMINATED = 'The Spiral Path (World of Warcraft: Traveler, Book 2)';
 
-    // T1 — the G1 shear an unterminated group used to produce.
     it('strips an unterminated group to end-of-string (T1)', () => {
       const variants = titleVariants(UNTERMINATED);
       assertWellFormed(variants);
 
       const derived = variants.filter((v) => v.parensStripped);
       expect(derived.map((v) => v.raw)).toEqual(['the spiral path']);
-      // `world of warcraft` survives ONLY in the parens-intact full (G1).
       expect(variants.filter((v) => v.raw.includes('world of warcraft'))).toEqual([
         { raw: 'the spiral path world of warcraft traveler book 2', tag: 'full', parensStripped: false, lossy: false },
       ]);
     });
 
-    // T2 — AC2 as a RELATION rather than a literal: the missing `)` may change
-    // the parens-intact full, and nothing else.
     it('derives the same set from an unterminated group as from its balanced twin (T2)', () => {
       const strippedOf = (title: string): string[] =>
         titleVariants(title).filter((v) => v.parensStripped).map((v) => v.raw);
@@ -256,8 +175,6 @@ describe('titleVariants', () => {
       expect(strippedOf(UNTERMINATED)).toEqual(['the spiral path']);
     });
 
-    // T3 — a nested group strips as ONE unit. The regex form closed at the first
-    // `)`, so `Qux` and the inner colon leaked into the derived axis.
     it('strips nested groups as a single unit (T3)', () => {
       const variants = titleVariants('Foo (Bar (Baz): Qux) Quux');
       assertWellFormed(variants);
@@ -270,8 +187,6 @@ describe('titleVariants', () => {
       expect(variants.find((v) => v.tag === 'full' && !v.parensStripped)!.raw).toBe('foo bar baz qux quux');
     });
 
-    // T4 — the fabricated-title form of the same defect: `dune edition` is a
-    // title no edition of Dune has ever carried.
     it('does not fabricate a title from a nested group (T4)', () => {
       const variants = titleVariants('Dune (Deluxe (2nd) Edition: Annotated)');
       assertWellFormed(variants);
@@ -281,15 +196,12 @@ describe('titleVariants', () => {
       expect(variants.find((v) => v.tag === 'full' && !v.parensStripped)!.raw).toBe('dune deluxe 2nd edition annotated');
     });
 
-    // T5 — depth floors at 0, so a stray closer is inert: it folds to a space
-    // exactly as the regex form left it.
     it.each([['Foo) Bar'], ['Foo] Bar']])('leaves a stray closer inert in %j (T5)', (title) => {
       const variants = titleVariants(title);
       assertWellFormed(variants);
       expect(variants.find((v) => v.tag === 'full')!.raw).toBe('foo bar');
     });
 
-    // T6 — the bracket form of T1. Both delimiter kinds share the counter.
     it('strips an unterminated bracket group to end-of-string (T6)', () => {
       const variants = titleVariants('Foo [Bar: Baz');
       assertWellFormed(variants);
@@ -297,14 +209,7 @@ describe('titleVariants', () => {
       expect(variants.filter((v) => v.parensStripped).map((v) => v.raw)).toEqual(['foo']);
     });
 
-    /**
-     * T7 (spec-review F4) — mismatched delimiter KINDS. This asserts AC1's
-     * answer, not whatever the implementation happens to do: one shared depth
-     * counter means `]` closes the `(`, so `Bar` is swallowed and `Baz` survives
-     * → `foo baz`. A delimiter-KIND stack (where `]` would not close a `(`, and
-     * the group therefore ran to end-of-string) yields `foo` instead and fails
-     * here — which is the entire reason the case is pinned.
-     */
+    // A shared counter lets either closer end either opener; a kind-aware stack would return foo.
     it('closes a group on either delimiter kind — one shared depth counter (T7)', () => {
       const variants = titleVariants('Foo (Bar] Baz');
       assertWellFormed(variants);
@@ -327,8 +232,6 @@ describe('titleVariants', () => {
     ]);
   });
 
-  // G3 — a `:` is a boundary only when its trimmed left context is >= 3 chars,
-  // the same COLON_PREFIX_MIN threshold `src/shared/dedup.ts` applies.
   describe('colon-boundary threshold (G3)', () => {
     it.each([
       ['X: Y', 'x y'],
@@ -366,8 +269,6 @@ describe('titleVariants', () => {
     });
   });
 
-  // G2/G4 — `prefix(k)`/`suffix(k)` at k === segment count collapse onto the
-  // paren-stripped full and the dedup pass keeps the FIRST occurrence.
   it('emits a collapsed key exactly once, keeping the earliest tag', () => {
     const variants = titleVariants('Foo: Subtitle');
     assertWellFormed(variants);
@@ -376,18 +277,14 @@ describe('titleVariants', () => {
       { raw: 'foo', tag: 'prefix(1)', parensStripped: true, lossy: false },
       { raw: 'subtitle', tag: 'suffix(1)', parensStripped: true, lossy: false },
     ]);
-    // `prefix(2)` equalled the full and was dropped, not re-emitted under a second tag.
     expect(variants.some((v) => v.tag === 'prefix(2)')).toBe(false);
   });
 
-  // AC6 — no article-stripping axis. Series identity owns articles.
   it('does not strip leading articles', () => {
     expect(titleVariants('The Churn').map((v) => v.raw)).toEqual(['the churn']);
     expect(titleVariants('Churn').map((v) => v.raw)).toEqual(['churn']);
   });
 
-  // AC18 — the #1896 volume-marker collapse in `dedup.ts` is deliberately NOT
-  // propagated here: `Saga Book 1` and `Saga Book 2` must stay distinguishable.
   it('does not strip trailing volume markers', () => {
     const one = titleVariants('Saga Book 1');
     const two = titleVariants('Saga Book 2');
@@ -396,10 +293,7 @@ describe('titleVariants', () => {
     expect(one.map((v) => v.raw)).not.toEqual(two.map((v) => v.raw));
   });
 
-  // G2 generator invariant — the tag schema deliberately admits `prefix(1.5)` /
-  // `prefix(-2)` so it stays exactly equal to the declared `VariantTag` type
-  // (AC14). That `n` is a POSITIVE INTEGER is the generator's guarantee, so it
-  // is observed here rather than at the schema layer.
+  // VariantTag permits arbitrary n; positive integers are a generator invariant.
   it('only ever emits a positive integer n in prefix(n) / suffix(n)', () => {
     const corpus = [
       'star wars: the high republic: Light of the Jedi (New Order Series)',
@@ -420,21 +314,10 @@ describe('titleVariants', () => {
     }
   });
 
-  /**
-   * #2110 — per-SLICE character survival. `hasDegenerateFullForm` answers "did
-   * the ASCII fold eat identity-bearing content?" for a whole title; `lossy`
-   * asks it of every slice, computed on the RAW slice text before
-   * normalization. The pairing rule refuses a lossy variant as OFFERED
-   * evidence, which is the variant-level form of the guard #2096 applied only
-   * to whole FULL forms.
-   */
+  // lossy is computed from each raw slice before normalization and can block offered evidence.
   describe('per-variant lossy flag (#2110)', () => {
-    // The verified D3 table, asserted as full arrays so membership, order and
-    // the flag are all pinned together.
     it('flags the paren-stripped full of a Russian-edition-with-translation title', () => {
-      // `prefix(1)` ('World of Warcraft') would be non-lossy, but it collapses
-      // onto the earlier lossy entry and dedup keeps the FIRST occurrence — so
-      // the bare franchise prefix is never offered as evidence at all.
+      // First-key dedup retains the lossy full, so the bare franchise prefix is not offered.
       expect(titleVariants('World of Warcraft: Тревелер (Traveler)')).toEqual([
         { raw: 'world of warcraft traveler', tag: 'full', parensStripped: false, lossy: true },
         { raw: 'world of warcraft', tag: 'full', parensStripped: true, lossy: true },
@@ -450,8 +333,7 @@ describe('titleVariants', () => {
     });
 
     it('leaves the pinned #2096 true positive non-lossy', () => {
-      // 'Sønner' is degenerate as a WHOLE title (ø does not decompose), but the
-      // fragment it offers lost nothing, so the pairing survives.
+      // Sønner is lossy as a whole, but the offered suffix loses nothing.
       expect(titleVariants("Sønner: Assassin's Apprentice")).toEqual([
         { raw: "s nner assassin's apprentice", tag: 'full', parensStripped: false, lossy: true },
         { raw: 's nner', tag: 'prefix(1)', parensStripped: true, lossy: true },
@@ -459,10 +341,7 @@ describe('titleVariants', () => {
       ]);
     });
 
-    /**
-     * Mixed corpus for the two flag properties — ASCII, Latin-accented,
-     * Cyrillic, CJK-mixed, non-decomposing Latin and an out-of-block mark.
-     */
+    /** Covers ASCII, accented Latin, non-Latin, mixed-script, and out-of-band marks. */
     const mixedCorpus = [
       'Chapterhouse: Dune',
       'The Churn: An Expanse Novella',
@@ -481,9 +360,6 @@ describe('titleVariants', () => {
       '[ ]',
     ];
 
-    // AC13 (D5) — the parens-intact FULL variant is pushed first, from the whole
-    // title, so its flag IS `hasDegenerateFullForm` by construction. Inert for
-    // the derived arms, but it makes the flag self-consistent.
     it('sets the parens-intact full variant flag to hasDegenerateFullForm(title)', () => {
       const withFull = mixedCorpus.filter((title) => normalizeTitleForVariantMatch(title).length > 0);
       expect(withFull.length).toBeGreaterThan(0);
@@ -494,10 +370,7 @@ describe('titleVariants', () => {
       }
     });
 
-    // AC14 (D3 invariant) — a slice cannot drop a character the whole title
-    // kept, so "the whole title is non-degenerate" implies every slice is
-    // non-lossy. This is what makes first-wins dedup safe: "first non-lossy,
-    // later lossy" is impossible.
+    // A non-degenerate whole cannot contain a lossy slice, making first-key dedup safe.
     it('emits no lossy variant for a title that is not degenerate as a whole', () => {
       const nonDegenerate = mixedCorpus.filter((title) => !hasDegenerateFullForm(title));
       expect(nonDegenerate.length).toBeGreaterThan(0);
@@ -507,28 +380,6 @@ describe('titleVariants', () => {
     });
   });
 
-  /**
-   * #2109 (b) — the input clamp.
-   *
-   * The derived loop does an O(L) slice/join/normalize per colon segment, so it
-   * is O(L²) on colon-dense input: 8 KB measured at ~360 ms, 16 KB at ~1 370 ms,
-   * 64 KB at ~27 s of synchronous event-loop blocking. The input is
-   * community-edited Hardcover member titles, and generation runs inside the
-   * `persistMembers` transaction, which serializes every other libSQL write.
-   *
-   * The clamp REMOVES WORK; it does not add a return shape. Both FULL pushes
-   * still run through the unchanged first-key-wins dedup, so cardinality is 1 or
-   * 2 depending on whether the paren-stripped form normalizes differently — a
-   * consequence of dedup, never a rule of the clamp. The one observable the
-   * clamp itself owns is asserted in every case below: NO `prefix(n)`,
-   * `suffix(n)` or `first+last` variant is emitted.
-   *
-   * The title text is never TRUNCATED. Truncating manufactures a sheared
-   * fragment — precisely what G1 forbids — whereas dropping the derived axis can
-   * only ever produce FEWER variants, so the failure mode is a false refusal (a
-   * missing "In Library" badge, which position rescue already covers) and never
-   * a false pair.
-   */
   describe('input clamp (#2109 AC5/AC6)', () => {
     const derivedTagsOf = (title: string): string[] =>
       titleVariants(title).map((v) => v.tag).filter((tag) => tag !== 'full');
@@ -538,25 +389,17 @@ describe('titleVariants', () => {
       expect(MAX_VARIANT_SEGMENTS).toBe(32);
     });
 
-    // T8 — the LENGTH branch's own observation point. 2306 chars but only 2
-    // segments, so it trips the length cap and nothing else: delete the length
-    // check and this fails; delete the segment check and it still passes.
-    // ('ab: '.repeat(600) would trip BOTH predicates and isolate neither.)
     it('degrades on length alone, with the segment count well under its cap (T8)', () => {
       const title = 'x'.repeat(2300) + ': tail';
       expect(title.length).toBe(2306);
       expect(titleSegments(title)).toHaveLength(2);
 
-      // No parenthetical, so both FULL pushes collapse onto the same key — the
-      // same single-entry collapse every no-parenthesis fixture already shows.
+      // Without a parenthetical, both full pushes dedupe.
       expect(titleVariants(title)).toEqual([
         { raw: `${'x'.repeat(2300)} tail`, tag: 'full', parensStripped: false, lossy: false },
       ]);
     });
 
-    // T9 — the SEGMENT branch's own observation point. 200 chars, far under the
-    // length cap, 40 segments. Delete the segment check and this fails; delete
-    // the length check and it still passes.
     it('degrades on segment count alone, well under the length cap (T9)', () => {
       const title = 'abc: '.repeat(40);
       expect(title.length).toBe(200);
@@ -570,11 +413,7 @@ describe('titleVariants', () => {
       expect(derivedTagsOf(title)).toEqual([]);
     });
 
-    // T9b — the TWO-FULL clamped case: the paren-stripped form normalizes
-    // differently from the intact one, so dedup keeps both. `(Deluxe)`, not
-    // `(Unabridged)`/`(Audio)`/`(Audible)` — those are peeled by the SCALAR
-    // normalizer itself, which would collapse the two FULL forms back into one
-    // and silently make this a duplicate of T8.
+    // Deluxe survives scalar normalization; Audio or Unabridged would collapse both full forms.
     it('still emits both FULL forms when the paren-stripped one differs (T9b)', () => {
       const title = '(Deluxe) ' + 'ab: '.repeat(600);
       expect(title.length).toBe(2409);
@@ -591,9 +430,6 @@ describe('titleVariants', () => {
       expect(derivedTagsOf(title)).toEqual([]);
     });
 
-    // T10 — both sides of both caps. The predicate is EXCEEDS, so at-cap still
-    // derives and cap+1 degrades. Off-by-one is the entire risk surface of a
-    // threshold, so neither side is sampled.
     describe('boundary quartet (T10)', () => {
       it('derives at exactly MAX_VARIANT_TITLE_LENGTH', () => {
         const title = 'x'.repeat(2042) + ': tail';
@@ -622,17 +458,7 @@ describe('titleVariants', () => {
       });
     });
 
-    /**
-     * T17b — the performance AC, asserted as a SHAPE rather than a wall clock.
-     *
-     * A timing assertion is flaky in CI, so the property under test is that the
-     * result does not grow with N: past the cap the derived axis is empty for
-     * every N, which is the same observable T8/T9 use. The wall clock enters
-     * only through vitest's default 5 s per-test timeout, and only as a coarse
-     * backstop — the pre-clamp code measured ~27 s on the 64 KB input below (8
-     * KB ≈ 360 ms, 16 KB ≈ 1 370 ms, clean 4x per 2x), so it would time out
-     * here, while the clamped code returns in single-digit milliseconds.
-     */
+    // Assert bounded result shape instead of flaky timing; the old 64 KB path exceeded the timeout.
     it.each([[600], [6_000], [16_000]])('emits no derived variant for a %i-repeat colon-dense title (T17b)', (n) => {
       const title = 'ab: '.repeat(n);
       expect(title.length).toBeGreaterThan(MAX_VARIANT_TITLE_LENGTH);
@@ -643,16 +469,9 @@ describe('titleVariants', () => {
   });
 });
 
-/**
- * Surfaced by the AC17 blast check against the live library (633 books) — the
- * unknown-corpus defect that sweep exists to find. The scalar normalizer's ASCII
- * fold can eat a title's ONLY distinguishing content, leaving a "complete" form
- * that is really a bare franchise prefix.
- */
+// Scalar folding can erase a title's only distinguishing text and leave a franchise prefix.
 describe('hasDegenerateFullForm', () => {
   it('flags a title whose colon tail is erased by the ASCII fold (the live case)', () => {
-    // Every Cyrillic character is dropped by `[^a-z0-9' ]+`, so the FULL form is
-    // indistinguishable from the franchise prefix shared by ~40 sibling books.
     expect(normalizeTitleForVariantMatch('World of Warcraft: Перед бурей')).toBe('world of warcraft');
     expect(hasDegenerateFullForm('World of Warcraft: Перед бурей')).toBe(true);
   });
@@ -660,18 +479,12 @@ describe('hasDegenerateFullForm', () => {
   it.each([
     ['World of Warcraft: 前夜'],
     ['Star Wars: Επεισόδιο'],
-    // #1547 scope pin: ß/ø/æ do not decompose, so an all-non-decomposing tail
-    // erases the same way a non-Latin script does.
+    // Non-decomposing Latin can erase an entire tail too.
     ['Star Wars: Æ'],
   ])('flags %j — any tail that leaves nothing behind', (title) => {
     expect(hasDegenerateFullForm(title)).toBe(true);
   });
 
-  // F8: detection must not depend on WHERE the erased content sits. The earlier
-  // structural (colon-segment) detector missed every one of these — the paren and
-  // bracket forms because the tail was stripped before the decision, and the
-  // colon-less form because there was no boundary to find. Token survival is the
-  // property they share.
   it.each([
     ['World of Warcraft: (Перед бурей)', 'erased tail in parentheses after a colon'],
     ['World of Warcraft: [Перед бурей]', 'erased tail in brackets after a colon'],
@@ -683,11 +496,7 @@ describe('hasDegenerateFullForm', () => {
     expect(hasDegenerateFullForm(title)).toBe(true);
   });
 
-  // F10: PARTIAL loss is loss. An earlier token-level test asked whether a whole
-  // token vanished, so a token mixing surviving and erased characters looked
-  // safe — `"A前夜"` and `"A後夜"` both reduce to `a`, and the two different books
-  // matched. The question belongs at the CHARACTER level, where the fold
-  // actually discards information.
+  // Partial token loss counts: A前夜 and A後夜 both scalar-fold to a.
   it.each([
     ['World of Warcraft: A前夜'],
     ['World of Warcraft: A後夜'],
@@ -697,16 +506,12 @@ describe('hasDegenerateFullForm', () => {
   });
 
   it('flags a non-decomposing Latin letter, which the fold genuinely discards', () => {
-    // #1547 pins that ß/ø/æ are NOT transliterated, so `straße` -> `stra e` has
-    // lost the ß. A prior revision called this "fragmenting, not missing" and let
-    // it pass — the same reasoning that let the mixed-token case through.
     expect(normalizeTitleForVariantMatch('Straße')).toBe('stra e');
     expect(hasDegenerateFullForm('Straße')).toBe(true);
     expect(hasDegenerateFullForm('Straße: Beyond the Dark Portal')).toBe(true);
   });
 
   it.each([
-    // Every character survives — these are real, complete titles.
     ['Chapterhouse: Dune'],
     ['World of Warcraft: Beyond the Dark Portal'],
     ['The Farseer: Assassin\'s Apprentice'],
@@ -714,27 +519,20 @@ describe('hasDegenerateFullForm', () => {
     ['Foundation'],
     ['Foundation (1951)'],
     ['IT: Chapter Two'],
-    // A diacritic that FOLDS leaves an all-ASCII form: nothing was discarded.
+    // A diacritic that folds to ASCII is not discarded.
     ['Star Wars: Éowyn'],
     ['Les Misérables'],
-    // The apostrophe is inside the scalar character class, so it is not loss.
+    // Apostrophes survive the scalar fold.
     ['Hitchhiker’s Guide'],
   ])('does not flag %j', (title) => {
     expect(hasDegenerateFullForm(title)).toBe(false);
   });
 
-  // F8 named requirement: the colon-inside-parentheses case must stay green —
-  // its parenthetical is retained by the scalar form and every token survives.
   it('does not flag the colon-inside-parens fixture', () => {
     expect(hasDegenerateFullForm('The Spiral Path (World of Warcraft: Traveler, Book 2)')).toBe(false);
   });
 
-  /**
-   * #2110 AC8 — the AC1 rewrite of `normalizeTitleLosslessly` moves this
-   * guard's evidence, so every verdict pinned before it is re-asserted after
-   * it, in BOTH polarities. `'Sạch'` is the pin that Vietnamese tone marks live
-   * INSIDE U+0300–036F on a Latin base and therefore still fold away.
-   */
+  // Sạch proves in-band Latin marks still fold.
   describe('verdicts unchanged by the #2110 lossless rewrite (AC8)', () => {
     it.each([['Straße'], ['World of Warcraft: A前夜'], ['World of Warcraft: Перед бурей']])(
       'still flags %j',
@@ -754,17 +552,7 @@ describe('hasDegenerateFullForm', () => {
     });
   });
 
-  /**
-   * #2110 AC9 / D1a — the strip is bounded to U+0300–036F, not to `\p{M}`.
-   * U+1DC0 sits on a Latin base but outside the band, and the SCALAR fold does
-   * not remove it either: it falls through to `[^a-z0-9' ]+` and fragments the
-   * word. Keeping it in the lossless form is what makes the loss visible.
-   *
-   * Counterfactual (run, verified): widen the strip to
-   * `(\p{Script=Latin})\p{M}+` and this fixture is the ONLY failure — every
-   * in-block fixture (AC2, AC5, AC7) stays green while a genuinely lossy title
-   * is silently trusted as complete.
-   */
+  /** U+1DC0 is outside scalar's strip band; lossless must preserve it so the loss stays visible. */
   it('flags an out-of-block combining mark on a Latin base (AC9)', () => {
     expect(normalizeTitleForVariantMatch('Sa᷀ga: Book One')).toBe('sa ga book one');
     expect(normalizeTitleLosslessly('Sa᷀ga: Book One')).toContain('᷀');
@@ -774,8 +562,6 @@ describe('hasDegenerateFullForm', () => {
   it('does not flag a title that normalizes away entirely (the empty guard owns that)', () => {
     expect(hasDegenerateFullForm('[ ]')).toBe(false);
     expect(hasDegenerateFullForm('')).toBe(false);
-    // All-Cyrillic: nothing survives, so there is no FULL form to be degenerate
-    // ABOUT. G5's empty-variant guard owns this title.
     expect(hasDegenerateFullForm('Перед бурей')).toBe(false);
     expect(titleVariants('Перед бурей')).toEqual([]);
   });
@@ -783,21 +569,12 @@ describe('hasDegenerateFullForm', () => {
 
 describe('normalizeTitleLosslessly', () => {
   it('preserves every script while applying the same folds as the scalar form', () => {
-    // #2110 AC7 / D10: the trailing `й` SURVIVES. This fixture used to pin
-    // `буреи`, under a comment calling the breve loss "the intended behaviour" —
-    // that comment was the defect. The combining-mark strip is script-agnostic
-    // only for LATIN bases now: Cyrillic `й` is `и` + breve, and the breve is
-    // identity-bearing, not a drift-tolerance nicety. This form is the SOLE
-    // evidence backing the degenerate FULL≡FULL arm, so a fold that erases an
-    // identity-bearing mark pairs exactly the titles that arm exists to refuse.
+    // Cyrillic й decomposes to и plus breve; stripping it would erase identity evidence.
     expect(normalizeTitleLosslessly('World of Warcraft: Перед бурей')).toBe('world of warcraft перед бурей');
     expect(normalizeTitleLosslessly('World of Warcraft: Последний страж')).toBe('world of warcraft последний страж');
     expect(normalizeTitleLosslessly('World of Warcraft')).toBe('world of warcraft');
   });
 
-  // AC2/AC3 — the refusals the fold exists to make. Each pair differs ONLY by a
-  // combining mark outside the Latin-base band, so a script-agnostic strip
-  // collapses them together.
   it.each([
     ['World of Warcraft: май', 'World of Warcraft: маи', 'Cyrillic й is и + breve'],
     ['किताब', 'कितीब', 'Devanagari matra ी is identity-bearing'],
@@ -807,17 +584,12 @@ describe('normalizeTitleLosslessly', () => {
     expect(normalizeTitleLosslessly(a)).not.toBe(normalizeTitleLosslessly(b));
   });
 
-  // AC4 — the keep class includes `\p{M}`, so an out-of-`\p{L}` mark is no
-  // longer punctuation. Before #2110 this produced `'क त ब'`: three word
-  // fragments, which both false-paired and false-refused.
   it('does not fragment a word whose vowels are combining marks (AC4)', () => {
     expect(normalizeTitleLosslessly('किताब')).not.toContain(' ');
     expect(normalizeTitleLosslessly('किताब')).toBe('किताब');
   });
 
-  // AC6 — the trailing `.normalize('NFC')` is load-bearing, not cosmetic:
-  // without it an ordinary (NFC) test literal would not equal the function's
-  // decomposed output for any title carrying a surviving mark.
+  // NFC is load-bearing: surviving marks must be independent of input normalization form.
   it.each([['World of Warcraft: Перед бурей'], ['किताब'], ['Les Misérables']])(
     'is independent of the input normalization form for %j (AC6)',
     (title) => {
@@ -826,8 +598,6 @@ describe('normalizeTitleLosslessly', () => {
   );
 
   it('distinguishes titles the scalar form collapses together', () => {
-    // The property the FULL≡FULL arm actually relies on: three titles that are
-    // indistinguishable after the lossy fold stay distinct here.
     const scalar = [
       'World of Warcraft: Перед бурей',
       'World of Warcraft: Последний страж',
@@ -843,51 +613,27 @@ describe('normalizeTitleLosslessly', () => {
     expect(new Set(lossless).size).toBe(3);
   });
 
-  // AC5 — Latin accent drift is still tolerated, byte for byte. The mark strip
-  // narrowed to Latin bases; it did not narrow on Latin bases.
   it('tolerates exactly the drift the scalar form tolerates — and no more', () => {
     expect(normalizeTitleLosslessly('  WORLD  of   Warcraft (Unabridged) ')).toBe('world of warcraft');
     expect(normalizeTitleLosslessly('Cake & Puppets')).toBe('cake and puppets');
     expect(normalizeTitleLosslessly('Hitchhiker’s Guide')).toBe("hitchhiker's guide");
     expect(normalizeTitleLosslessly('Les Misérables')).toBe('les miserables');
     expect(normalizeTitleLosslessly('Café')).toBe('cafe');
-    // But it does NOT erase a non-Latin script, which is the whole point.
     expect(normalizeTitleLosslessly('Перед бурей')).toBe('перед бурей');
   });
 });
 
 /**
- * T14/T15 / #2109 AC9-AC10 — the LOCKSTEP property.
- *
- * `hasDegenerateFullForm` rests on one premise: "dropped by the ASCII fold" is
- * exactly "outside the scalar keep class". That holds only while every preceding
- * fold step is identical in both pipelines, and AC8's `applyCommonFolds`
- * extraction cannot make it true by CONSTRUCTION — the two pipelines genuinely
- * differ in two knobs (the diacritic strip and the keep class) plus the lossless
- * form's trailing NFC, so both knobs stay independently editable. The extraction
- * is DRY; this property is the proof. It is required in addition to it, not as
- * an alternative.
- *
- * The relation asserted, over a corpus covering every fold trigger:
- *
- *   asciiFold(normalizeTitleLosslessly(t)) === normalizeTitleForVariantMatch(t)
- *
- * T15 — MUTATION-VERIFIED, not merely green. Widening the lossless diacritic
- * strip to `(\p{Script=Latin})\p{M}+` makes this fail on `'Sa᷀ga: Book One'`: the
- * mutant yields `'saga book one'` where the scalar yields `'sa ga book one'` (the
- * scalar's own diacritic step is U+0300-036F-bounded too, so U+1DC0 falls
- * through to `[^a-z0-9' ]+` and fragments the word). Confirmed by hand-applying
- * the widened strip and watching this go red, then reverting. That widening is
- * the exact trap `latin-bounded-combining-mark-strip` exists to catch, and this
- * property is worthless if it does not catch it.
+ * Shared mechanics do not prove scalar/lossless lockstep because their strip and keep knobs differ.
+ * Across every fold trigger, ASCII-folding lossless output must equal scalar output. Sa᷀ga ensures
+ * widening the lossless strip beyond U+0300–036F breaks the property.
  */
 describe('scalar/lossless fold lockstep (#2109 AC9)', () => {
   const asciiFold = (s: string): string => s.replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim();
 
-  // Literals, not escapes — the file's encoding is already the pinned contract,
-  // exactly as `mixedCorpus` above writes them.
+  // Literal characters make the file encoding part of the fixture contract.
   const lockstepCorpus = [
-    // Plain ASCII, including the punctuation and threshold shapes.
+    // ASCII punctuation and threshold shapes.
     'Chapterhouse: Dune',
     'The Churn: An Expanse Novella',
     'star wars: the high republic: Light of the Jedi (New Order Series)',
@@ -895,15 +641,15 @@ describe('scalar/lossless fold lockstep (#2109 AC9)', () => {
     'Foundation (1951)',
     'Foundation [1951]',
     'Saga Book 1',
-    // Latin-accented — the drift the strip exists to tolerate.
+    // Foldable Latin accents.
     'Café: A Novel',
     'Les Misérables: Tome I',
     'García: Un Cuento',
-    // Non-decomposing Latin (#1547 scope pin) — ß/ø/æ survive both folds intact.
+    // Non-decomposing Latin.
     'Straße: Beyond the Dark Portal',
     'Sønner: Assassin\'s Apprentice',
     'Star Wars: Æ',
-    // Non-Latin scripts, where the scalar fold erases and the lossless one must not.
+    // Non-Latin scripts that only lossless may retain.
     'World of Warcraft: Перед бурей',
     'World of Warcraft: май',
     'World of Warcraft: маи',
@@ -919,15 +665,15 @@ describe('scalar/lossless fold lockstep (#2109 AC9)', () => {
     'كِتاب',
     'كتاب',
     'Sạch: Vietnamese Tone Marks',
-    // The out-of-block mark — the T15 mutation's only observation point.
+    // Out-of-band mark: the strip-widening mutation's observation point.
     'Sa᷀ga: Book One',
-    // The remaining fold triggers: &/+, curly apostrophes, audio-edition tails.
+    // Remaining fold triggers.
     'Night of Cake & Puppets',
     'Cake + Puppets',
     'Hitchhiker’s Guide',
     '  WORLD  of   Warcraft (Unabridged) ',
     'Foo [Audible]',
-    // Empty and degenerate inputs.
+    // Empty inputs.
     '',
     '   ',
     '[ ]',
@@ -936,15 +682,12 @@ describe('scalar/lossless fold lockstep (#2109 AC9)', () => {
   it('folds the lossless form onto the scalar form for every title in the corpus (T14/T15)', () => {
     expect(lockstepCorpus.length).toBeGreaterThan(30);
     for (const title of lockstepCorpus) {
-      // The title rides in the message so a failure identifies its own input.
       expect(asciiFold(normalizeTitleLosslessly(title)), `lockstep broke on ${JSON.stringify(title)}`)
         .toBe(normalizeTitleForVariantMatch(title));
     }
   });
 
-  // The corpus is only as good as its coverage of the ONE case the mutation
-  // moves. Pinned separately so a future edit to the array cannot silently
-  // remove the mutation's observation point.
+  // Pin the mutation fixture separately so corpus edits cannot erase its observation point.
   it('covers the out-of-block combining mark the AC10 mutation moves (T15)', () => {
     expect(lockstepCorpus).toContain('Sa᷀ga: Book One');
     expect(normalizeTitleForVariantMatch('Sa᷀ga: Book One')).toBe('sa ga book one');

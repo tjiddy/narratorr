@@ -198,7 +198,6 @@ describe('BookMetadataModal', () => {
       await user.clear(posInput);
       await user.type(posInput, 'abc');
 
-      // Change title so onSave gets called with some data
       const titleInput = screen.getByLabelText(/^title/i);
       await user.clear(titleInput);
       await user.type(titleInput, 'Changed Title');
@@ -317,7 +316,6 @@ describe('BookMetadataModal', () => {
       renderModal({ onSave });
 
       await user.clear(screen.getByLabelText(/^author$/i));
-      // Change title so save still fires with a payload
       const titleInput = screen.getByLabelText(/^title/i);
       await user.clear(titleInput);
       await user.type(titleInput, 'Changed Title');
@@ -432,7 +430,6 @@ describe('BookMetadataModal', () => {
       const user = userEvent.setup();
       renderModal({ onSave });
 
-      // Touch a different field so save fires with a payload
       const titleInput = screen.getByLabelText(/^title/i);
       await user.clear(titleInput);
       await user.type(titleInput, 'Changed Title');
@@ -589,14 +586,7 @@ describe('BookMetadataModal', () => {
   });
 });
 
-// ─── #2069 AC25: the modal diffs against what the operator SEES ───
-//
-// For a post-import book the series exists only as a provider fallback
-// (`series_name = NULL`, `enrichmentStatus: 'enriched'` forever), so a
-// stored-value baseline renders the input empty and blanking it produces no diff —
-// the clear would be inexpressible for the most common book in the library.
 describe('BookMetadataModal — displayed baseline (#2069 AC25)', () => {
-  /** A book at `enriched` whose clearable columns are all empty. */
   const providerOnlyBook = createMockBook({
     title: 'Tress of the Emerald Sea',
     authors: [{ id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' }],
@@ -618,7 +608,6 @@ describe('BookMetadataModal — displayed baseline (#2069 AC25)', () => {
     genres: ['Fantasy', 'Epic'],
   };
 
-  /** The resolver output for a fully-tombstoned book — every field resolves to nothing. */
   const clearedDisplayed = {
     seriesName: undefined, seriesPosition: undefined, subtitle: undefined,
     description: undefined, publisher: undefined, publishedDate: undefined, genres: undefined,
@@ -638,8 +627,6 @@ describe('BookMetadataModal — displayed baseline (#2069 AC25)', () => {
     await user.clear(screen.getByLabelText(/series$/i));
     await user.click(screen.getByText('Save'));
 
-    // Without the displayed baseline the payload is empty and no tombstone can
-    // ever exist for this book.
     await waitFor(() => {
       expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ seriesName: null }), false);
     });
@@ -654,7 +641,6 @@ describe('BookMetadataModal — displayed baseline (#2069 AC25)', () => {
     await user.type(screen.getByLabelText(/^title/i), 'New Title');
     await user.click(screen.getByText('Save'));
 
-    // This is the arm that makes the prefill change safe.
     await waitFor(() => expect(onSave).toHaveBeenCalled());
     const payload = onSave.mock.calls[0]![0] as Record<string, unknown>;
     expect(payload.title).toBe('New Title');
@@ -688,8 +674,6 @@ describe('BookMetadataModal — displayed baseline (#2069 AC25)', () => {
     ])('%s renders empty for a tombstoned book', (_label, labelMatcher) => {
       renderModal({ book: providerOnlyBook, displayed: clearedDisplayed });
 
-      // An implementation that baselines on `stored ?? providerFallback` shows the
-      // value the operator just removed.
       expect(screen.getByLabelText(labelMatcher)).toHaveValue('');
     });
 
@@ -711,7 +695,6 @@ describe('BookMetadataModal — displayed baseline (#2069 AC25)', () => {
   it('a stored empty string on a || field renders the provider value and IS clearable', async () => {
     const onSave = vi.fn();
     const user = userEvent.setup();
-    // The resolver already applied `'' || provider`; the modal consumes its output.
     renderModal({
       book: createMockBook({ ...providerOnlyBook, publisher: '' }),
       displayed: providerDisplayed,
@@ -751,7 +734,6 @@ describe('BookMetadataModal — displayed baseline (#2069 AC25)', () => {
       const onSave = vi.fn();
       const user = userEvent.setup();
       const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-      // Opened BEFORE the provider metadata query resolved.
       const { rerender } = render(
         <QueryClientProvider client={queryClient}>
           <BookMetadataModal {...defaultProps} book={providerOnlyBook} onSave={onSave} />
@@ -792,7 +774,6 @@ describe('BookMetadataModal — displayed baseline (#2069 AC25)', () => {
       );
 
       expect(screen.getByLabelText(/series$/i)).toHaveValue('My Own Series');
-      // …while an untouched sibling still adopts the settled baseline.
       await waitFor(() => expect(screen.getByLabelText(/publisher/i)).toHaveValue('Dragonsteel'));
     });
   });
@@ -805,8 +786,6 @@ describe('BookMetadataModal — displayed baseline (#2069 AC25)', () => {
     expect(screen.getByLabelText(/genres/i)).toHaveValue('Fantasy, Epic');
   });
 });
-// ─── modal card overflow (drive-by): the dialog wrapper must join the Modal's
-// height-capped flex column, or the footer renders past the card on short viewports ───
 describe('height-capped card layout', () => {
   it('constrains the dialog wrapper and lets the body scroll within the card', async () => {
     renderModal();

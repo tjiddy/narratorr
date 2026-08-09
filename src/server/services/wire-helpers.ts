@@ -1,11 +1,3 @@
-/**
- * Helpers for the wire-once contract used by services with cyclic / late-bound
- * required dependencies. The composition root constructs each service with its
- * acyclic constructor args, then calls `wire(deps)` exactly once with the
- * cyclic deps. Methods that need wired deps call `requireWired()` to get them
- * — pre-wire usage throws ServiceWireError instead of silently no-op'ing.
- */
-
 export class ServiceWireError extends Error {
   constructor(message: string) {
     super(message);
@@ -13,10 +5,6 @@ export class ServiceWireError extends Error {
   }
 }
 
-/**
- * Mixin used by required-wiring services. Tracks a single wireDeps slot
- * with set-once and require-set semantics.
- */
 export class WireOnce<T> {
   private deps?: T;
 
@@ -38,7 +26,7 @@ export class WireOnce<T> {
     return this.deps;
   }
 
-  /** Returns the wired deps if present, otherwise undefined. Use only for genuinely optional dependencies. */
+  /** Read without requiring wiring; only for optional dependencies. */
   peek(): T | undefined {
     return this.deps;
   }

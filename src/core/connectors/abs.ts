@@ -24,7 +24,6 @@ const absLibrariesResponseSchema = z.object({
   }).passthrough()),
 }).passthrough();
 
-/** Map a non-ok HTTP status to a typed connector error with the right retry/field classification. */
 function classifyStatus(status: number, notFoundField: string | null): ConnectorRequestError {
   if (status === 401 || status === 403) {
     return new ConnectorRequestError(`Authentication failed (HTTP ${status})`, {
@@ -44,7 +43,6 @@ function classifyStatus(status: number, notFoundField: string | null): Connector
   return new ConnectorRequestError(`Request failed (HTTP ${status})`, { retryable: false });
 }
 
-/** Wrap a transport/DNS/timeout failure as a retryable connection error scoped to baseUrl. */
 function connectionError(error: unknown): ConnectorRequestError {
   return new ConnectorRequestError(`Connection failed: ${getErrorMessage(error)}`, {
     retryable: true,
@@ -69,7 +67,6 @@ export class AudiobookshelfConnector implements ConnectorAdapter {
     return { Authorization: `Bearer ${this.apiKey}` };
   }
 
-  /** GET /api/libraries → ConnectorTarget[]; throws ConnectorRequestError on failure. */
   async listTargets(): Promise<ConnectorTarget[]> {
     let res: Response;
     try {
@@ -87,7 +84,6 @@ export class AudiobookshelfConnector implements ConnectorAdapter {
     return parsed.data.libraries.map((lib) => ({ id: lib.id, name: lib.name }));
   }
 
-  /** Diagnostic test — never throws for expected failures; folds them into a field-scoped result. */
   async test(): Promise<ConnectorTestResult> {
     try {
       const targets = await this.listTargets();
@@ -112,15 +108,8 @@ export class AudiobookshelfConnector implements ConnectorAdapter {
     }
   }
 
-  /**
-   * POST /api/libraries/{libraryId}/scan with an empty body — a full library scan.
-   * Issues EXACTLY one request per call. ABS ignores item paths, so the batch
-   * contents do not affect the request. Throws ConnectorRequestError on failure.
-   *
-   * Accepts (and forwards) the service `AbortSignal` so an outer flush timeout
-   * cancels the in-flight scan request — same cancellation contract as Plex,
-   * even though ABS issues only one request.
-   */
+  // ABS ignores item paths and issues one full-library scan. Forward the service
+  // signal so its outer timeout cancels the request.
   async refreshImport(_batch: ConnectorImportBatch, signal: AbortSignal): Promise<ConnectorRefreshResult> {
     const url = `${this.baseUrl}/api/libraries/${encodeURIComponent(this.libraryId)}/scan`;
     let res: Response;
@@ -137,7 +126,6 @@ export class AudiobookshelfConnector implements ConnectorAdapter {
     return { success: true };
   }
 
-  /** Always one request — a single full library scan, regardless of batch size (ABS ignores item paths). */
   estimateRequestCount(): number {
     return 1;
   }

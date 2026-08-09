@@ -17,12 +17,8 @@ import { SearchLadderCooldown } from './search-ladder-cooldown.js';
 
 
 /**
- * `searchAllWithStatus` value for ONE indexer that answered (#2104 D16).
- *
- * `succeeded: 1` is what makes an empty list a GENUINE zero rather than an
- * outage, so the query ladder advances instead of aborting. Every pre-ladder
- * fixture here answers identically on every rung, which keeps the outcome the
- * same as before the ladder existed.
+ * `succeeded: 1` makes an empty result a genuine zero, so the ladder advances.
+ * Pre-ladder fixtures answer identically on every rung (#2104 D16).
  */
 function withStatus(results: SearchResult[]) {
   return { results, succeeded: 1, failed: 0 };
@@ -38,8 +34,7 @@ function createMockEventHistory(): EventHistoryService {
   } as unknown as EventHistoryService;
 }
 
-// Default module-level eventHistory mock for describes that don't assert on it.
-// Per-describe `let eventHistory` declarations shadow this with a fresh instance.
+// Describes that assert history shadow this default with a fresh mock.
 const eventHistory: EventHistoryService = createMockEventHistory();
 
 function createMockLogger(): FastifyBaseLogger {
@@ -215,8 +210,7 @@ describe('searchAndGrabForBook', () => {
     log = createMockLogger();
   });
 
-  // duration is MINUTES (3600 min = 60h), not seconds. Inert here: these tests
-  // use grabFloor 0 so the MB/h floor never rejects (#1797).
+  // Duration is minutes; grabFloor 0 makes this 60-hour value inert (#1797).
   const book = { id: 1, title: 'Test Book', duration: 3600, authors: [{ name: 'Author' }] };
 
   it('returns grabbed result on happy path (search → filter → grab)', async () => {
@@ -334,7 +328,6 @@ describe('searchAndGrabForBook', () => {
     expect(result).toEqual({ result: 'skipped', reason: 'grab_blocked' });
   });
 
-  // #197 — DuplicateDownloadError instanceof catch (ERR-1)
   it('returns skipped when DuplicateDownloadError is thrown (instanceof check, not string match)', async () => {
     vi.mocked(downloadService.grab).mockRejectedValue(new DuplicateDownloadError('Book already has an active download', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } }));
     const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
@@ -353,11 +346,9 @@ describe('searchAndGrabForBook', () => {
     const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
     expect(result.result).toBe('grab_error');
     if (result.result !== 'grab_error') return;
-    // #863 — Error instances must be returned by reference (no wrapping).
     expect(result.error).toBe(genericError);
   });
 
-  // #1157 — non-broadcaster branch also records event history
   it('records grab_failed event via eventHistory on grab_error in non-broadcaster path', async () => {
     vi.mocked(downloadService.grab).mockRejectedValue(new Error('Connection refused'));
     await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
@@ -385,11 +376,9 @@ describe('searchAndGrabForBook', () => {
     const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
     expect(result.result).toBe('grab_error');
     if (result.result !== 'grab_error') return;
-    // #863 — Error instances must be returned by reference (no wrapping).
     expect(result.error).toBe(grabError);
   });
 
-  // #863 — non-Error grab rejections are normalized to Error at tryGrab catch
   it('wraps string grab rejection into Error with the string as message', async () => {
     vi.mocked(downloadService.grab).mockRejectedValue('connection failed');
     const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
@@ -550,10 +539,7 @@ describe('filterAndRankResults — ebook format filtering', () => {
     expect(results).toHaveLength(1);
   });
 
-  // Companion-ebook slate guardrail (#1986). Narratorr *observes* an ebook the
-  // owner placed beside an audiobook; it never *acquires* one. Adding companion
-  // EPUB support must not relax EBOOK_FORMAT_RE — this is the single most
-  // likely accidental breach in that slate.
+  // Companion ebooks are observed, never acquired; EPUB support must not relax EBOOK_FORMAT_RE (#1986).
   it('still rejects an ebook-only release while companion EPUB support lands (#1986)', () => {
     const ebookOnly = filterAndRankResults([makeResult({ title: 'Dune EPUB' })], base.bookDuration, { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference });
     const withAudio = filterAndRankResults([makeResult({ title: 'Dune EPUB M4B' })], base.bookDuration, { grabFloor: base.grabFloor, minSeeders: base.minSeeders, protocolPreference: base.protocolPreference });
@@ -619,7 +605,6 @@ describe('filterAndRankResults — ebook format filtering', () => {
     });
   });
 
-  // #520 — nzbName fallback chain for ebook filter
   it('filters result when nzbName contains ebook keyword but rawTitle/title do not', () => {
     const { results } = filterAndRankResults(
       [makeResult({ nzbName: 'BookTitle-EPUB.part01.rar', rawTitle: 'BookTitle', title: 'Book Title' })],
@@ -656,7 +641,6 @@ describe('filterAndRankResults — ebook format filtering', () => {
     expect(results).toHaveLength(0);
   });
 
-  // #541 — cross-field ebook/audio detection
   it('keeps result when nzbName has ebook keyword and rawTitle has audio keyword (cross-field)', () => {
     const { results } = filterAndRankResults(
       [makeResult({ nzbName: 'BookTitle-EPUB.part01.rar', rawTitle: 'BookTitle MP3', title: 'Book Title' })],
@@ -939,11 +923,10 @@ describe('canonicalCompare — grabs tiebreaker (#272)', () => {
   });
 
   it('MB/hr quality beats grabs', () => {
-    // a has better MB/hr, b has better grabs
     const a = makeResult({ matchScore: 0.9, size: 1000 * 1024 * 1024, grabs: 10, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, size: 100 * 1024 * 1024, grabs: 10000, seeders: 5 });
     const { results } = filterAndRankResults([b, a], 3600, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
-    expect(results[0]!.grabs).toBe(10); // higher MB/hr wins
+    expect(results[0]!.grabs).toBe(10);
   });
 
   it('grabs=undefined on one result, grabs=1000 on other → result with grabs wins', () => {
@@ -990,7 +973,6 @@ describe('canonicalCompare — language tier (#272)', () => {
     const unknown = makeResult({ matchScore: 0.9, language: undefined, seeders: 5, title: 'Unknown' });
     const mismatch = makeResult({ matchScore: 0.9, language: 'german', seeders: 5, title: 'German' });
     const { results } = filterAndRankResults([mismatch, unknown], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english'] });
-    // mismatch is filtered out, only unknown remains
     expect(results).toHaveLength(1);
     expect(results[0]!.language).toBeUndefined();
   });
@@ -999,22 +981,20 @@ describe('canonicalCompare — language tier (#272)', () => {
     const noLang = makeResult({ matchScore: 0.9, seeders: 10, title: 'No Lang' });
     const withLang = makeResult({ matchScore: 0.9, language: 'english', seeders: 5, title: 'With Lang' });
     const { results } = filterAndRankResults([withLang, noLang], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english'] });
-    // Both pass filtering — noLang has no language (pass through), withLang matches
-    expect(results[0]!.seeders).toBe(10); // higher seeders wins as tiebreaker
+    expect(results[0]!.seeders).toBe(10);
   });
 
   it('language tier does not cross 0.1 matchScore gate (title similarity wins)', () => {
     const highScore = makeResult({ matchScore: 0.9, language: 'english', seeders: 5 });
     const lowScore = makeResult({ matchScore: 0.5, language: 'english', seeders: 5 });
     const { results } = filterAndRankResults([lowScore, highScore], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english'] });
-    expect(results[0]!.matchScore).toBe(0.9); // higher title match wins
+    expect(results[0]!.matchScore).toBe(0.9);
   });
 
   it('empty languages array → no language penalty applied to any result', () => {
     const german = makeResult({ matchScore: 0.9, language: 'german', seeders: 10, title: 'German' });
     const english = makeResult({ matchScore: 0.9, language: 'english', seeders: 5, title: 'English' });
     const { results } = filterAndRankResults([english, german], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
-    // No language preference → falls through to grabs/seeders
     expect(results[0]!.seeders).toBe(10);
   });
 
@@ -1022,7 +1002,6 @@ describe('canonicalCompare — language tier (#272)', () => {
     const match = makeResult({ matchScore: 0.9, language: 'english', seeders: 5, title: 'Match' });
     const unknown = makeResult({ matchScore: 0.9, language: undefined, seeders: 10, title: 'Unknown' });
     const { results } = filterAndRankResults([match, unknown], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english'] });
-    // Both are non-mismatch → tiebreaker is grabs/seeders (unknown has more seeders)
     expect(results[0]!.seeders).toBe(10);
   });
 });
@@ -1041,9 +1020,8 @@ describe('canonicalCompare — language array', () => {
     const english = makeResult({ matchScore: 0.9, language: 'english', seeders: 5 });
     const spanish = makeResult({ matchScore: 0.9, language: 'spanish', seeders: 10 });
     const { results } = filterAndRankResults([english, spanish], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english', 'spanish'] });
-    // Both match → both kept, english first (primary), spanish second
     expect(results).toHaveLength(2);
-    expect(results[0]!.language).toBe('english'); // primary language
+    expect(results[0]!.language).toBe('english');
     expect(results[1]!.language).toBe('spanish');
   });
 
@@ -1051,7 +1029,6 @@ describe('canonicalCompare — language array', () => {
     const match = makeResult({ matchScore: 0.9, language: 'english', seeders: 5, title: 'Match' });
     const mismatch = makeResult({ matchScore: 0.9, language: 'french', seeders: 10, title: 'Mismatch' });
     const { results } = filterAndRankResults([mismatch, match], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english', 'spanish'] });
-    // french is filtered out
     expect(results).toHaveLength(1);
     expect(results[0]!.language).toBe('english');
   });
@@ -1061,21 +1038,20 @@ describe('canonicalCompare — language array', () => {
     const match = makeResult({ matchScore: 0.9, language: 'english', seeders: 5, title: 'Match' });
     const { results } = filterAndRankResults([match, noLang], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english'] });
     expect(results).toHaveLength(2);
-    expect(results[0]!.seeders).toBe(10); // noLang passes through with higher seeders
+    expect(results[0]!.seeders).toBe(10);
   });
 
   it('no penalty when languages array is empty (filtering disabled)', () => {
     const french = makeResult({ matchScore: 0.9, language: 'french', seeders: 10 });
     const german = makeResult({ matchScore: 0.9, language: 'german', seeders: 5 });
     const { results } = filterAndRankResults([german, french], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
-    expect(results).toHaveLength(2); // all pass through
+    expect(results).toHaveLength(2);
   });
 
   it('first entry used as primary for sort ranking — primary language outranks secondary', () => {
     const english = makeResult({ matchScore: 0.9, language: 'english', seeders: 5, grabs: 100, title: 'English' });
     const spanish = makeResult({ matchScore: 0.9, language: 'spanish', seeders: 5, grabs: 100, title: 'Spanish' });
     const { results } = filterAndRankResults([spanish, english], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english', 'spanish'] });
-    // English is primary (first entry) → ranks above Spanish
     expect(results[0]!.language).toBe('english');
     expect(results[1]!.language).toBe('spanish');
   });
@@ -1084,7 +1060,6 @@ describe('canonicalCompare — language array', () => {
     const english = makeResult({ matchScore: 0.9, language: 'english', seeders: 5, grabs: 100 });
     const noLang = makeResult({ matchScore: 0.9, seeders: 5, grabs: 100, title: 'No Lang' });
     const { results } = filterAndRankResults([noLang, english], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english'] });
-    // Both match (english + unknown) — no sub-tier needed, stable order
     expect(results).toHaveLength(2);
   });
 });
@@ -1130,15 +1105,9 @@ describe('filterAndRankResults — language filtering', () => {
   });
 });
 
-// ============================================================================
-// #945 — gate-array refactor: order, short-circuit, closure-scoped variables
-// ============================================================================
-
 describe('filterAndRankResults — gate ordering (#945)', () => {
   it('result failing reject-word AND min-seeders is logged only under reject-word (earlier gate wins)', () => {
     const log = createMockLogger();
-    // Result has the reject word AND too few seeders; reject-word runs first
-    // and removes it before min-seeders sees it.
     filterAndRankResults(
       [makeResult({ title: 'BANNED Book', protocol: 'torrent', seeders: 0 })],
       undefined,
@@ -1153,8 +1122,6 @@ describe('filterAndRankResults — gate ordering (#945)', () => {
   });
 
   it('preserves canonical gate order: reject-word → required-word → ebook-only → min-seeders → grab-floor → max-size', () => {
-    // Each result is uniquely-failable by one earlier gate AND a later gate;
-    // assert each is logged only by the earlier gate.
     const log = createMockLogger();
     const rejectAndRequired = makeResult({ title: 'BANNED extra', protocol: 'torrent', seeders: 10 });
     const requiredAndEbook = makeResult({ title: 'Plain EPUB only', protocol: 'torrent', seeders: 10 });
@@ -1209,8 +1176,6 @@ describe('filterAndRankResults — disabled-gate short-circuit (#945)', () => {
     );
   });
 
-  // ===== #993 — word-boundary matching for reject-word gate =====
-
   it('reject-word gate matches "Sample" at word boundary in "Sample.Audiobook.MP3"', () => {
     const log = createMockLogger();
     const { results } = filterAndRankResults(
@@ -1249,8 +1214,6 @@ describe('filterAndRankResults — disabled-gate short-circuit (#945)', () => {
     );
     expect(results).toHaveLength(1);
   });
-
-  // ===== #1166 — reject words checked against narrator and author fields =====
 
   it('reject-word gate drops result with reject word in narrator', () => {
     const log = createMockLogger();
@@ -1356,8 +1319,6 @@ describe('filterAndRankResults — disabled-gate short-circuit (#945)', () => {
 
   it('required-word gate does not fire when requiredWords is empty', () => {
     const log = createMockLogger();
-    // No required words means everything passes — even a result that would
-    // otherwise be missing the required term.
     const { results } = filterAndRankResults(
       [makeResult({ title: 'Plain title' })],
       undefined,
@@ -1370,8 +1331,6 @@ describe('filterAndRankResults — disabled-gate short-circuit (#945)', () => {
       expect.any(String),
     );
   });
-
-  // ===== #1168 — required-word gate mirrors reject gate: all surfaces + word-boundary =====
 
   it('required-word gate keeps result when required word is only in rawTitle (nzbName populated, non-matching)', () => {
     const { results } = filterAndRankResults(
@@ -1513,10 +1472,8 @@ describe('filterAndRankResults — disabled-gate short-circuit (#945)', () => {
 describe('filterAndRankResults — closure-scoped gate variables (#945)', () => {
   it('grab-floor drop log carries the per-result mbPerHour, not a hoisted/shared value', () => {
     const log = createMockLogger();
-    // Two results with different sizes both fail grab-floor — each must log
-    // its own mbPerHour, not a value mixed in from another gate's scope.
-    const small = makeResult({ title: 'Small', size: 50 * 1024 * 1024 });   // 50 MB → 50 MB/hr
-    const tiny = makeResult({ title: 'Tiny', size: 10 * 1024 * 1024 });     // 10 MB → 10 MB/hr
+    const small = makeResult({ title: 'Small', size: 50 * 1024 * 1024 });
+    const tiny = makeResult({ title: 'Tiny', size: 10 * 1024 * 1024 });
     filterAndRankResults(
       [small, tiny],
       3600,
@@ -1572,10 +1529,6 @@ describe('filterAndRankResults — closure-scoped gate variables (#945)', () => 
   });
 });
 
-// ============================================================================
-// #392 — Search progress SSE emission via broadcaster
-// ============================================================================
-
 describe('#392 searchAndGrabForBook with broadcaster', () => {
   let indexerSearchService: IndexerSearchService;
   let downloadService: DownloadOrchestrator;
@@ -1605,7 +1558,6 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
       grab: vi.fn().mockResolvedValue({ id: 1, status: 'downloading' }),
     } as unknown as DownloadOrchestrator;
 
-    // Default: searchAllStreaming returns results and invokes onComplete callback
     indexerSearchService = {
       searchAllStreaming: vi.fn().mockImplementation(
         async (_query: string, _options: unknown, _controllers: Map<number, AbortController>, callbacks: { onComplete: (id: number, name: string, count: number, ms: number) => void }) => {
@@ -1704,7 +1656,6 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
         total_results: 1,
         outcome: 'grabbed',
       });
-      // search_grabbed must come before search_complete
       const grabbedIdx = emitCalls.indexOf(grabbedCall!);
       const completeIdx = emitCalls.indexOf(completeCall!);
       expect(grabbedIdx).toBeLessThan(completeIdx);
@@ -1772,7 +1723,6 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
       }));
     });
 
-    // #1157 — Surface grab-failure context in SSE payload and event history
     it('search_complete grab_error payload carries book_title, release_title, and error_message', async () => {
       vi.mocked(downloadService.grab).mockRejectedValue(new Error('Connection refused'));
       await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory, broadcaster });
@@ -1839,13 +1789,11 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
 
   describe('backwards compatibility', () => {
     it('no events emitted when broadcaster is not provided', async () => {
-      // Use searchAll mock since without broadcaster, the function should still work
       indexerSearchService = {
         searchAllWithStatus: vi.fn().mockResolvedValue(withStatus([makeResult()])),
       } as unknown as IndexerSearchService;
       const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
       expect(result).toEqual({ result: 'grabbed', title: 'Test Book' });
-      // No broadcaster passed — should not throw
     });
   });
 
@@ -1866,9 +1814,6 @@ describe('#392 searchAndGrabForBook with broadcaster', () => {
   });
 });
 
-// #1310 — Parity between the broadcaster (streaming) and non-broadcaster entry
-// points. Both delegate to one pipeline core, so identical inputs must produce
-// identical SingleBookSearchResult outcomes (same chosen result, same verdict).
 describe('#1310 searchAndGrabForBook broadcaster/non-broadcaster parity', () => {
   let blacklistService: BlacklistService;
   let log: FastifyBaseLogger;
@@ -1887,9 +1832,7 @@ describe('#1310 searchAndGrabForBook broadcaster/non-broadcaster parity', () => 
     log = createMockLogger();
   });
 
-  // An IndexerSearchService whose searchAll and searchAllStreaming return the
-  // SAME results, so the only variable under test is the entry-point wiring
-  // (event sink + injected search call), not the raw result set.
+  // Both search methods return the same results, isolating entry-point wiring.
   function makeParityIndexer(results: SearchResult[]): IndexerSearchService {
     return {
       searchAllWithStatus: vi.fn().mockResolvedValue(withStatus(results)),
@@ -1945,7 +1888,7 @@ describe('#1310 searchAndGrabForBook broadcaster/non-broadcaster parity', () => 
 
   for (const c of cases) {
     it(`produces identical ${c.name} outcome on both paths`, async () => {
-      // Shared grab mock so a rejected error is the same reference on both calls.
+      // Share the mock so rejected errors have identical object identity.
       const grab = c.grab();
       const downloadOrchestrator = { grab } as unknown as DownloadOrchestrator;
       const baseDeps = {
@@ -2004,15 +1947,8 @@ describe('#1310 searchAndGrabForBook broadcaster/non-broadcaster parity', () => 
   });
 
   it('selects the identical result from a multi-candidate ranked set on both paths (#1330)', async () => {
-    // A 4-candidate set where ranking + best-grabbable selection actually has to
-    // choose, so a divergence between the entry paths would be observable:
-    //  - top-ranked by matchScore LACKS a downloadUrl → `.find(r => r.downloadUrl)` skips it
-    //  - next has an empty-string downloadUrl (falsy) → also skipped
-    //  - the grabbable winner's release title differs from the book title,
-    //    defeating the degenerate makeResult default where they're equal.
-    // (downloadUrl `undefined`/`''` overrides go through makeResult's eopt-safe
-    // override type — `undefined` is deleted, `''` is set — per the
-    // fixture-builder-eopt-overrides learning.)
+    // Undefined and empty-string URLs outrank the explicit winner but are both ungrabbable.
+    // makeResult deletes undefined overrides while preserving the empty string.
     const candidates = [
       makeResult({ indexerId: 10, title: 'Top Ranked No URL', matchScore: 0.99, seeders: 50, downloadUrl: undefined }),
       makeResult({ indexerId: 10, title: 'Empty URL Row', matchScore: 0.95, seeders: 40, downloadUrl: '' }),
@@ -2043,8 +1979,6 @@ describe('#1310 searchAndGrabForBook broadcaster/non-broadcaster parity', () => 
     expect(broadcasterResult).toEqual({ result: 'grabbed', title: 'The Real Winner' });
     expect(nonBroadcasterResult).toEqual(broadcasterResult);
 
-    // Both paths grabbed; the grab payloads must be byte-identical and point at
-    // the explicit expected guid — not merely "a grab happened".
     expect(grab).toHaveBeenCalledTimes(2);
     expect(grab.mock.calls[1]![0]).toEqual(grab.mock.calls[0]![0]);
     expect(grab.mock.calls[0]![0]).toEqual(expect.objectContaining({ guid: 'winner-guid' }));
@@ -2091,19 +2025,17 @@ describe('canonicalCompare — indexer priority tiebreaker (#394)', () => {
   });
 
   it('priority tier does NOT override MB/hr when duration is known', () => {
-    // a has better MB/hr (larger size = higher bitrate), b has better priority
     const a = makeResult({ matchScore: 0.9, size: 1000 * 1024 * 1024, indexerPriority: 99, grabs: 50, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, size: 100 * 1024 * 1024, indexerPriority: 1, grabs: 50, seeders: 5 });
     const { results } = filterAndRankResults([b, a], 3600, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
-    expect(results[0]!.indexerPriority).toBe(99); // higher MB/hr wins despite worse priority
+    expect(results[0]!.indexerPriority).toBe(99);
   });
 
   it('priority tier does NOT override language tier', () => {
-    // a matches preferred language, b has better priority
     const a = makeResult({ matchScore: 0.9, language: 'english', indexerPriority: 99, grabs: 50, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, language: 'german', indexerPriority: 1, grabs: 50, seeders: 5 });
     const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: ['english'] });
-    expect(results[0]!.language).toBe('english'); // language match wins despite worse priority
+    expect(results[0]!.language).toBe('english');
   });
 
   it('priority 1 (best) vs priority 100 (worst) — 1 wins', () => {
@@ -2148,13 +2080,11 @@ describe('filterAndRankResults — indexer priority integration (#394)', () => {
     const a = makeResult({ matchScore: 0.9, indexerPriority: 50, grabs: 1000, seeders: 5 });
     const b = makeResult({ matchScore: 0.9, indexerPriority: 50, grabs: 10, seeders: 5 });
     const { results } = filterAndRankResults([b, a], undefined, { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', languages: [] });
-    // With equal priority, falls through to grabs — higher grabs wins
     expect(results[0]!.grabs).toBe(1000);
     expect(results[1]!.grabs).toBe(10);
   });
 });
 
-// #406 — Shared blacklist filter helper
 describe('filterBlacklistedResults', () => {
   let blacklistService: BlacklistService;
 
@@ -2279,7 +2209,6 @@ describe('filterBlacklistedResults', () => {
   });
 });
 
-// #406 — Blacklist filtering in searchAndGrabForBook (non-broadcaster)
 describe('#406 searchAndGrabForBook blacklist filtering', () => {
   const book = { id: 1, title: 'Test Book', duration: 3600, authors: [{ name: 'Author' }] };
   let indexerSearchService: IndexerSearchService;
@@ -2311,7 +2240,6 @@ describe('#406 searchAndGrabForBook blacklist filtering', () => {
 
     const result = await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
     expect(result.result).toBe('grabbed');
-    // Grabbed the clean result, not the blacklisted one with higher seeders
     expect(downloadService.grab).toHaveBeenCalledWith(expect.objectContaining({ title: 'Clean' }));
   });
 
@@ -2342,7 +2270,6 @@ describe('#406 searchAndGrabForBook blacklist filtering', () => {
   });
 });
 
-// #406 — Blacklist filtering in searchAndGrabForBook (broadcaster)
 describe('#406 searchAndGrabForBook blacklist filtering with broadcaster', () => {
   const book = { id: 1, title: 'Test Book', duration: 3600, authors: [{ name: 'Author' }] };
   let indexerSearchService: IndexerSearchService;
@@ -2425,8 +2352,8 @@ describe('#406 searchAndGrabForBook blacklist filtering with broadcaster', () =>
 });
 
 describe('filterAndRankResults — narrator priority', () => {
-  // Helper: for a 10-hour book (36000s), size for target MB/hr = mbhr * 10 * 1024 * 1024
-  const BOOK_DURATION = 36000; // 10 hours
+  // For a 10-hour book, target MB/h multiplied by 10 yields total MB.
+  const BOOK_DURATION = 36000;
   function sizeForMbhr(mbhr: number) { return Math.round(mbhr * 10 * 1024 * 1024); }
 
   const narratorPriority = { bookNarrators: ['Kevin R. Free'] };
@@ -2468,9 +2395,7 @@ describe('filterAndRankResults — narrator priority', () => {
     });
 
     it('#1655 5B: a placeholder book narrator ("Full Cast") creates NO narrator-priority boost', () => {
-      // Search ranking shares the comparison path with the import cap, so the 5B
-      // placeholder denylist applies here too — `Full Cast` carries no signal,
-      // so the placeholder "match" loses to a higher-quality non-match.
+      // Full Cast carries no identity signal in either search priority or import caps.
       const placeholderMatch = makeResult({ narrator: 'Full Cast', size: sizeForMbhr(79), matchScore: 0.9, title: 'Placeholder' });
       const goodNoMatch = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.9, title: 'NoMatch' });
       const { results } = filterAndRankResults(
@@ -2482,10 +2407,8 @@ describe('filterAndRankResults — narrator priority', () => {
     });
 
     it('unknown quality narrator-match beats known Good quality non-match', () => {
-      // No size = unknown quality, should still be eligible for narrator boost
       const unknownMatch = makeResult({ narrator: 'Kevin R. Free', size: undefined, matchScore: 0.9, title: 'Match' });
       const goodNoMatch = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.9, title: 'NoMatch' });
-      // Duration unknown path
       const { results } = filterAndRankResults([goodNoMatch, unknownMatch], undefined, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', languages: [], narratorPriority: narratorPriority });
       expect(results[0]!.title).toBe('Match');
     });
@@ -2502,7 +2425,6 @@ describe('filterAndRankResults — narrator priority', () => {
     it('omitting narratorPriority preserves exact current ranking (regression)', () => {
       const fair = makeResult({ narrator: 'Kevin R. Free', size: sizeForMbhr(79), matchScore: 0.9, title: 'Fair' });
       const good = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.9, title: 'Good' });
-      // No narratorPriority param — should rank by quality
       const { results } = filterAndRankResults([fair, good], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none' });
       expect(results[0]!.title).toBe('Good');
     });
@@ -2524,7 +2446,6 @@ describe('filterAndRankResults — narrator priority', () => {
 
   describe('fuzzy narrator matching in scoring', () => {
     it('normalized names match via diceCoefficient >= 0.8', () => {
-      // "Kevin R. Free" normalizes to "kevin r free" — exact match after normalization
       const match = makeResult({ narrator: 'Kevin R Free', size: sizeForMbhr(79), matchScore: 0.9 });
       const noMatch = makeResult({ narrator: 'Someone Else', size: sizeForMbhr(200), matchScore: 0.9 });
       const { results } = filterAndRankResults([noMatch, match], BOOK_DURATION, { grabFloor: 0, minSeeders: 1, protocolPreference: 'none', languages: [], narratorPriority: { bookNarrators: ['Kevin R. Free'] } });
@@ -2776,7 +2697,6 @@ describe('#502 searchAndGrabForBook — enrichment before filtering', () => {
       searchAllWithStatus: vi.fn().mockResolvedValue(withStatus([makeResult({ protocol: 'usenet', title: 'Clean Title', downloadUrl: 'http://nzb.test/1' })])),
     } as unknown as IndexerSearchService;
 
-    // Simulate enrichment populating nzbName with reject word
     mockEnrichUsenet.mockImplementation(async (results) => {
       for (const r of results) {
         if (r.protocol === 'usenet') r.nzbName = 'Stephen King-Hörbuch-Pack.rar';
@@ -2797,7 +2717,6 @@ describe('#502 searchAndGrabForBook — enrichment before filtering', () => {
 
     await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
 
-    // enrichUsenetLanguages is still called (it handles filtering internally)
     expect(mockEnrichUsenet).toHaveBeenCalled();
   });
 });
@@ -2823,7 +2742,6 @@ describe('#502 searchAndGrabForBook with broadcaster — enrichment before filte
       emit: vi.fn(),
     } as unknown as EventBroadcasterService;
 
-    // Simulate enrichment populating nzbName with reject word
     mockEnrichUsenet.mockImplementation(async (results) => {
       for (const r of results) {
         if (r.protocol === 'usenet') r.nzbName = 'Stephen King-Hörbuch-Pack.rar';
@@ -2867,7 +2785,6 @@ describe('#533 postProcessSearchResults — multi-part filter uses nzbName after
 
   it('filters Usenet result whose nzbName contains multi-part marker but rawTitle/title do not', async () => {
     const log = createMockLogger();
-    // Simulate enrichment populating nzbName with multi-part marker
     mockEnrichUsenet.mockImplementation(async (results) => {
       for (const r of results) {
         if (r.protocol === 'usenet') r.nzbName = 'Book Title (01 of 30).part01.rar';
@@ -2883,7 +2800,6 @@ describe('#533 postProcessSearchResults — multi-part filter uses nzbName after
 
   it('still filters Usenet result whose rawTitle contains multi-part marker when nzbName is absent (regression)', async () => {
     const log = createMockLogger();
-    // Enrichment does not populate nzbName — rawTitle should be checked
     mockEnrichUsenet.mockResolvedValue(undefined);
 
     const results = [makeResult({ protocol: 'usenet', title: 'Book Title', rawTitle: 'Book (08 of 30)', downloadUrl: 'http://nzb.test/1' })];
@@ -2906,7 +2822,6 @@ describe('#533 postProcessSearchResults — multi-part filter uses nzbName after
 
   it('falls through to rawTitle when nzbName is empty string (|| not ?? operator)', async () => {
     const log = createMockLogger();
-    // Enrichment sets nzbName to empty string — || should skip it, ?? would not
     mockEnrichUsenet.mockImplementation(async (results) => {
       for (const r of results) {
         if (r.protocol === 'usenet') r.nzbName = '';
@@ -2916,7 +2831,6 @@ describe('#533 postProcessSearchResults — multi-part filter uses nzbName after
     const results = [makeResult({ protocol: 'usenet', title: 'Clean Title', rawTitle: 'Book (01 of 30)', downloadUrl: 'http://nzb.test/1' })];
     const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), mockIndexer, log);
 
-    // Should fall through empty nzbName to rawTitle which has multi-part marker
     expect(output.results).toHaveLength(0);
     expect(output.unsupportedResults.count).toBe(1);
   });
@@ -2946,7 +2860,6 @@ describe('#533 postProcessSearchResults — multi-part filter uses nzbName after
 
   it('Usenet result with pre-populated language and multi-part marker in rawTitle is still filtered', async () => {
     const log = createMockLogger();
-    // Enrichment skips results with pre-populated language — nzbName stays undefined
     mockEnrichUsenet.mockResolvedValue(undefined);
 
     const results = [makeResult({ protocol: 'usenet', title: 'Clean Title', rawTitle: 'Book (08 of 30)', language: 'English', downloadUrl: 'http://nzb.test/1' })];
@@ -2960,11 +2873,9 @@ describe('#533 postProcessSearchResults — multi-part filter uses nzbName after
     const log = createMockLogger();
     mockEnrichUsenet.mockResolvedValue(undefined);
 
-    // Result has language set (enrichment won't populate nzbName), and rawTitle is clean
     const results = [makeResult({ protocol: 'usenet', title: 'Clean Title', rawTitle: 'Also Clean', language: 'English', downloadUrl: 'http://nzb.test/1' })];
     const output = await postProcessSearchResults(results, 3600, createMockBlacklist533(), createMockSettingsService533(), mockIndexer, log);
 
-    // No multi-part marker in any field — should pass through
     expect(output.results).toHaveLength(1);
     expect(output.unsupportedResults.count).toBe(0);
   });
@@ -3004,13 +2915,11 @@ describe('#533 postProcessSearchResults — multi-part filter uses nzbName after
     ];
     const output = await postProcessSearchResults(results, 3600, blacklist, createMockSettingsService533(), mockIndexer, log);
 
-    // Only the clean result should be enriched — blacklisted one removed before enrichment
     expect(mockEnrichUsenet).toHaveBeenCalledWith(
       expect.not.arrayContaining([expect.objectContaining({ guid: 'blacklisted-guid' })]),
       log,
       expect.objectContaining({ hostPort: expect.any(Set), hostname: expect.any(Set) }),
     );
-    // Clean result passes (no multi-part marker in nzbName)
     expect(output.results).toHaveLength(1);
     expect(output.results[0]!.guid).toBe('clean-guid');
   });
@@ -3046,20 +2955,13 @@ describe('postProcessSearchResults — interactive path stays uncapped (#1330)',
     await postProcessSearchResults(results, 3600, createBlacklist(), createSettings(), mockIndexer, log);
 
     expect(mockEnrichUsenet).toHaveBeenCalledTimes(1);
-    // The interactive/display path must stay uncapped. A copy-paste of
-    // `{ maxPhase2Fetches: AUTO_GRAB_PHASE2_CAP }` from the auto-grab path would
-    // add a 4th argument here and fail both assertions (#1330).
+    // Copying AUTO_GRAB_PHASE2_CAP from auto-grab would add a forbidden fourth argument (#1330).
     expect(mockEnrichUsenet.mock.calls[0]).toHaveLength(3);
     expect(mockEnrichUsenet.mock.calls[0]![3]).toBeUndefined();
   });
 });
 
-/**
- * Zod's `.optional()` infers `?: T | undefined`, but the function's return type
- * uses canonical `?: T` (strict). `TightenOptional<T>` strips the `| undefined`
- * representation artifact so this assertion catches real key/value drift, not
- * the Zod inference shape. Pattern shared with search-stream.test.ts.
- */
+/** Normalize Zod's optional `T | undefined` artifact so checks flag only contract drift. */
 type TightenOptional<T> = {
   [K in keyof T as undefined extends T[K] ? never : K]: T[K];
 } & {
@@ -3068,17 +2970,12 @@ type TightenOptional<T> = {
 
 describe('postProcessSearchResults — search-complete payload schema compatibility (#734 AC1)', () => {
   it('return type is structurally compatible with searchResponseSchema', () => {
-    // `relaxedQuery` is omitted deliberately: the query ladder's rung
-    // disclosure (#2104 D10) is added by the SSE ROUTE, which knows which rung
-    // won. `postProcessSearchResults` runs on one rung's results and has no way
-    // to know — so it is not part of its return contract.
+    // Only the SSE route knows the winning rung, so post-processing cannot return relaxedQuery.
     type TightSearchResponse = Omit<SearchResponsePayload, 'results' | 'relaxedQuery'> & { results: TightenOptional<SearchResultPayload>[] };
     expectTypeOf<Awaited<ReturnType<typeof postProcessSearchResults>>>()
       .branded.toEqualTypeOf<TightSearchResponse>();
   });
 });
-
-// ===== #1777 — shared applyMultiPartFilterAndRank helper =====
 
 describe('applyMultiPartFilterAndRank (#1777)', () => {
   const options = { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' };
@@ -3196,8 +3093,7 @@ describe('#1777 searchAndGrabForBook — multi-part usenet filter on the auto-gr
     log = createMockLogger();
   });
 
-  // duration is MINUTES (3600 min = 60h), not seconds. Inert here: these tests
-  // use grabFloor 0 so the MB/h floor never rejects (#1797).
+  // Duration is minutes; grabFloor 0 makes this 60-hour value inert (#1797).
   const book = { id: 1, title: 'Test Book', duration: 3600, authors: [{ name: 'Author' }] };
 
   it('does not grab a multi-part usenet post ranked ahead of a valid one — the valid candidate wins', async () => {
@@ -3253,12 +3149,8 @@ describe('#1777 searchAndGrabForBook — multi-part usenet filter on the auto-gr
     expect(downloadService.grab).not.toHaveBeenCalled();
   });
 
-  // #1797 — unit-honest four-path parity. Both legs feed the SAME book row: the
-  // display leg gets seconds derived from the row (`duration * 60`, as the client
-  // does), the auto-grab leg gets the raw row and must resolve the same seconds
-  // internally. A non-zero `grabFloor` makes a duration-unit divergence fail:
-  // pre-fix the auto-grab leg saw raw minutes as seconds (60× MB/h) and kept the
-  // below-floor release while the display leg dropped it.
+  // Display receives duration * 60 seconds; auto-grab must derive the same value
+  // from raw minutes. A nonzero floor exposes the old 60× MB/h inflation (#1797).
   it('display and auto-grab reject the same below-floor release for the same book row (unit-honest parity)', async () => {
     mockEnrichUsenet.mockReset();
     // 600 minutes = 10 hours. A 100MB release is 10 MB/h — below the 30 MB/h floor.
@@ -3276,21 +3168,17 @@ describe('#1777 searchAndGrabForBook — multi-part usenet filter on the auto-gr
       }),
     } as unknown as SettingsService;
 
-    // Display leg: client sends true seconds derived from the book row.
     const display = await postProcessSearchResults(input(), parityBook.duration * 60, blacklistService, settingsFloor, mockIndexer, log);
 
     indexerSearchService = { searchAllWithStatus: vi.fn().mockResolvedValue(withStatus(input())) } as unknown as IndexerSearchService;
     const grab = await searchAndGrabForBook(parityBook, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: { ...defaultQualitySettings, grabFloor: 30, minSeeders: 0 }, log, blacklistService, indexerService: mockIndexer, eventHistory });
 
-    // Multi-part dropped on both legs; the remaining release is below the floor,
-    // so display keeps nothing and auto-grab rejects together (no divergence).
     expect(display.results.map((r) => r.downloadUrl)).toEqual([]);
     expect(grab).toEqual({ result: 'no_results' });
     expect(downloadService.grab).not.toHaveBeenCalled();
   });
 
-  // #1797 AC1 — auto-grab floor rejection pin. Red before the fix (raw minutes fed
-  // as seconds inflate MB/h 60× so the floor never rejects), green after.
+  // Treating raw minutes as seconds inflates MB/h 60× and defeats this floor (#1797 AC1).
   it('does not auto-grab a below-floor release (duration is minutes, floor is seconds-based MB/h) (#1797 AC1)', async () => {
     // 600 min = 10h; 100MB / 10h = 10 MB/h < 30 floor → reject.
     const floorBook = { id: 1, title: 'Test Book', duration: 600, authors: [{ name: 'Author' }] };
@@ -3304,11 +3192,8 @@ describe('#1777 searchAndGrabForBook — multi-part usenet filter on the auto-gr
     expect(downloadService.grab).not.toHaveBeenCalled();
   });
 
-  // #1797 AC5 — audioDuration (seconds) wins over duration (minutes) on the grab path.
-  // Red before the fix (raw `book.duration` used directly, audioDuration ignored).
   it('resolves audioDuration (seconds) over duration on the auto-grab path (#1797 AC5)', async () => {
-    // audioDuration 36000s = 10h → 100MB / 10h = 10 MB/h < 30 → reject.
-    // duration 1 min would (wrongly) give a huge MB/h and pass; audioDuration must win.
+    // 36,000 seconds yields 10 MB/h; falling back to one minute would falsely pass.
     const precedenceBook = { id: 1, title: 'Test Book', duration: 1, audioDuration: 36000, authors: [{ name: 'Author' }] };
     indexerSearchService = {
       searchAllWithStatus: vi.fn().mockResolvedValue(withStatus([makeResult({ size: 100 * MB, downloadUrl: 'magnet:?xt=urn:btih:prec' })])),
@@ -3350,26 +3235,19 @@ describe('#1777 postProcessSearchResults — durationUnknown passthrough survive
   });
 });
 
-// ============================================================================
-// #2104 — progressive query relaxation, execution half
-// ============================================================================
-
 describe('searchAndGrabForBook — query ladder (#2104)', () => {
-  /** Deep-franchise live example: 8-rung ladder, `first+last` at index 3. */
   const franchiseBook = {
     id: 1,
     title: 'Star Wars: The High Republic: Haunted Starlight',
     duration: 3600,
     authors: [{ name: 'George Mann' }],
   };
-  /** The Churn live example: 3-rung ladder, `prefix(1)` at index 1. */
   const churnBook = {
     id: 2,
     title: 'The Churn: An Expanse Novella',
     duration: 3600,
     authors: [{ name: 'James S. A. Corey' }],
   };
-  /** Rising Storm live example: the paren-stripped `full` wins at index 1. */
   const risingStormBook = {
     id: 3,
     title: 'Star Wars: The Rising Storm (The High Republic)',
@@ -3391,11 +3269,7 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     log = createMockLogger();
   });
 
-  /**
-   * Aggregate search whose answer depends on the transport query, so a test can
-   * pin exactly WHICH rung produced the hits. `succeeded` defaults to 1 — a
-   * genuine, answered zero — so the ladder advances rather than aborting.
-   */
+  /** Maps transport queries to results; succeeded=1 makes missing entries answered zeros. */
   function serviceAnswering(
     byQuery: Record<string, SearchResult[]>,
     opts: { succeeded?: number } = {},
@@ -3423,10 +3297,7 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
   const queriesOf = (svc: IndexerSearchService): string[] =>
     vi.mocked(svc.searchAllWithStatus).mock.calls.map((c) => c[0] as string);
 
-  // AC15 — the no-op pin. A book findable at rung 1 must issue byte-identically
-  // the query it issued before the ladder existed, exactly once per indexer.
-  // COUNTERFACTUAL: delete `runQueryLadder`'s "stop at first non-empty rung"
-  // guard and this fails while the rest stay green.
+  // Removing stop-on-first-hit would run later rungs despite a canonical hit (AC15).
   it('issues exactly ONE query, byte-identical to the pre-ladder one, when rung 1 answers (AC15)', async () => {
     const svc = serviceAnswering({ 'Star Wars The High Republic Haunted Starlight George Mann': [makeResult()] });
 
@@ -3436,7 +3307,6 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     expect(queriesOf(svc)).toEqual(['Star Wars The High Republic Haunted Starlight George Mann']);
   });
 
-  // AC13 — all three live examples, at the rung the spec names.
   it('finds the deep-franchise example at the first+last rung and grabs it (AC13)', async () => {
     const svc = serviceAnswering({
       'star wars haunted starlight George Mann': [makeResult({ title: 'Star Wars: Haunted Starlight' })],
@@ -3453,13 +3323,8 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     ]);
   });
 
-  // AC13, plus #2133 AC7 — the ACCEPTED FLIP, and the reviewable decision point
-  // of #2133. The ladder still reaches the prefix(1) rung and still issues the
-  // same two queries; what changed is that `"The Churn"` is corroborated ONLY by
-  // that rung's own tokens, which is indistinguishable at the string level from
-  // the `"The Vital Abyss: An Expanse Novella"` false grab on the suffix side.
-  // The failure direction is the safe one: a Needs Review item, never a wrong
-  // book.
+  // Head-only "The Churn" is circular evidence; fail to Needs Review rather than
+  // risk the indistinguishable same-author suffix-sibling case (#2133 AC7).
   it('holds The Churn at the prefix(1) rung — a head-only release is circular evidence (AC13, #2133 AC7)', async () => {
     const svc = serviceAnswering({
       'the churn James S A Corey': [makeResult({ title: 'The Churn (Unabridged) [M4B]' })],
@@ -3485,8 +3350,6 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     }));
   });
 
-  // #2133 AC7 — a release carrying the WHOLE canonical title still grabs at the
-  // same rung, so the flip above is scoped to head-only names.
   it('still grabs a release carrying the whole canonical title at the prefix(1) rung (#2133 AC7)', async () => {
     const svc = serviceAnswering({
       'the churn James S A Corey': [makeResult({ title: 'The Churn: An Expanse Novella' })],
@@ -3498,8 +3361,7 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     expect(eventHistory.create).not.toHaveBeenCalled();
   });
 
-  // #2133 AC7 — the suffix-side mirror hole. Both are real Expanse novellas by
-  // the same author, so the `author=` transport filter does not exclude them.
+  // Both suffix siblings share the author, so the transport author filter cannot distinguish them.
   it('holds a franchise sibling found at the suffix(1) rung (#2133 AC7)', async () => {
     const svc = serviceAnswering({
       'an expanse novella James S A Corey': [
@@ -3537,14 +3399,10 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     ]);
   });
 
-  // AC16 — the existing gate chain must see ONLY the winning rung's results.
-  // COUNTERFACTUAL: move the gate chain inside the rung loop and every count
-  // below jumps to the number of rungs run.
+  // Moving gates inside the rung loop multiplies these calls; only the winner is gated (AC16).
   it('runs the gate chain exactly once, on the winning rung, across a 4-rung ladder (AC16)', async () => {
     const svc = serviceAnswering({
-      // A guid is what makes the blacklist gate actually issue its lookup —
-      // `filterBlacklistedResults` short-circuits when no result carries an
-      // identifier, which would make that spy a vacuous observation point.
+      // A guid prevents the blacklist lookup spy from becoming vacuous via short-circuit.
       'star wars haunted starlight George Mann': [makeResult({ title: 'Star Wars: Haunted Starlight', guid: 'g-1' })],
     });
     mockEnrichUsenet.mockClear();
@@ -3556,9 +3414,6 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     expect(mockEnrichUsenet).toHaveBeenCalledTimes(1);
   });
 
-  // AC14, AC32 — the floor withholds the grab and records exactly ONE event
-  // naming the highest-ranked DOWNLOADABLE failure. Observed at the GRAB and
-  // EVENT spies, not the log.
   it('withholds the grab and records one held event when every downloadable candidate fails the floor (AC14, AC32)', async () => {
     const svc = serviceAnswering({
       'star wars haunted starlight George Mann': [
@@ -3583,8 +3438,7 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     }));
   });
 
-  // AC14 — the floor is NOT duration-conditional. COUNTERFACTUAL: gate it on
-  // `durationUnknown` and only this test fails.
+  // Gating the floor on durationUnknown would bypass it for this known-duration book.
   it('applies the floor identically on a book with a KNOWN duration (AC14)', async () => {
     const svc = serviceAnswering({
       'star wars haunted starlight George Mann': [makeResult({ title: 'Star Wars: The High Republic: Cataclysm' })],
@@ -3597,7 +3451,6 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'search_relaxed_held' }));
   });
 
-  // AC31 — a lower-ranked passing candidate IS grabbed, and nothing is held.
   it('grabs a lower-ranked passing candidate past a failing top-ranked one (AC31)', async () => {
     const svc = serviceAnswering({
       'star wars haunted starlight George Mann': [
@@ -3612,14 +3465,6 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     expect(eventHistory.create).not.toHaveBeenCalled();
   });
 
-  // ==========================================================================
-  // #2138 — the bare distinguishing-title rung
-  // ==========================================================================
-
-  // AC1, AC10 — the new rung is REACHABLE on the auto path and is not hold-only
-  // by tag: a release found there that carries both canonical anchors grabs
-  // through the unchanged shared selector. `queriesOf` pins rungs 0-4 of AC1,
-  // which is where the ladder now stops.
   it('reaches the tail rung and grabs a release carrying both anchors (AC1, AC10)', async () => {
     const svc = serviceAnswering({
       'haunted starlight George Mann': [makeResult({ title: 'Star Wars: Haunted Starlight' })],
@@ -3638,13 +3483,8 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     expect(eventHistory.create).not.toHaveBeenCalled();
   });
 
-  // AC10 — the honest pin of the recorded decision on #2138. The shared anchor
-  // floor is built from the canonical title's FIRST and LAST effective segments,
-  // so a release that drops the franchise prefix supplies only one of the two.
-  // The query is now issued (which is the fix) and the release is now NAMED in
-  // Needs Review (which is the delivered value on this path), but the grab is
-  // withheld. Auto-grabbing it would require a per-rung floor — out of scope,
-  // and in direct tension with "the pure-franchise suppression is untouched".
+  // The shared first/last anchor floor intentionally holds tail-only releases;
+  // a per-rung floor would weaken franchise suppression (#2138 AC10).
   it('holds a franchise-dropping release found at the tail rung, recording ONE event (AC10)', async () => {
     const svc = serviceAnswering({
       'haunted starlight George Mann': [makeResult({ title: 'Haunted Starlight - George Mann' })],
@@ -3666,15 +3506,7 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     }));
   });
 
-  // ==========================================================================
-  // #2133 — the anchored floor, on the rung the circular floor let through
-  // ==========================================================================
-
-  // AC5 — the live repro (dev UAT c2e). Before #2133 the `prefix(2)` rung's
-  // floor WAS its own query, so every High Republic sibling corroborated itself
-  // and the top-ranked one was auto-sent to the download client.
-  // COUNTERFACTUAL: read `rung.segments` instead of `rung.floorSegments` and
-  // this grabs "01 Star Wars-The High Republic-The Eye of Darkness".
+  // Using rung.segments as the floor lets every prefix(2) sibling corroborate itself (#2133 AC5).
   it('holds every High-Republic sibling found at the prefix(2) rung, recording ONE event (AC5)', async () => {
     const svc = serviceAnswering({
       'star wars the high republic George Mann': [
@@ -3699,8 +3531,6 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     }));
   });
 
-  // AC6 — the positive control on the SAME rung: a release naming the wanted
-  // book still grabs, past a higher-ranked sibling, and holds nothing.
   it('grabs a lower-ranked release naming the wanted book at the prefix(2) rung (AC6)', async () => {
     const svc = serviceAnswering({
       'star wars the high republic George Mann': [
@@ -3726,9 +3556,7 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     expect(eventHistory.create).not.toHaveBeenCalled();
   });
 
-  // AC16 class 1 — COLLAPSED ANCHORS. Both ends normalize to `star wars`, so a
-  // floor stated as a SET would be satisfied by the single occurrence the
-  // prefix(2) query already guarantees. The canonical title carries it twice.
+  // Both anchors normalize to "star wars"; occurrence counts prevent one copy satisfying both.
   const collapsedBook = { id: 4, title: 'Star Wars: The High Republic: Star Wars', duration: 3600, authors: [{ name: 'George Mann' }] };
 
   it('holds the sibling of a collapsed-anchor title at the prefix(2) rung (AC16)', async () => {
@@ -3748,8 +3576,7 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     }));
   });
 
-  // COUNTERFACTUAL: restart the occurrence scan past the shared delimiter and
-  // both of these grabs become holds — the book fails its own floor.
+  // Overlap at the shared delimiter is required or the canonical release fails its own floor.
   it.each([
     ['Star Wars: The High Republic: Star Wars'],
     ['01 Star Wars-The High Republic-Star Wars'],
@@ -3762,9 +3589,7 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     expect(eventHistory.create).not.toHaveBeenCalled();
   });
 
-  // AC16 class 2 — an anchor RECURRING INSIDE A NEIGHBOURING SEGMENT. The
-  // prefix(2) query's own tail supplies one space-bounded `gamma`, so a one-each
-  // floor would be cleared by the query itself — and by the sibling.
+  // The queried prefix supplies one gamma; occurrence counts require the distinguishing second.
   const neighbourBook = { id: 5, title: 'Alpha: Beta Gamma: Gamma', duration: 3600, authors: [{ name: 'Ann Author' }] };
 
   it('holds the sibling of a recurring-anchor title at the prefix(2) rung (AC16)', async () => {
@@ -3795,10 +3620,7 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     expect(eventHistory.create).not.toHaveBeenCalled();
   });
 
-  // AC16 class 3 — a GENERIC PARENTHETICAL splitting an anchor. Both sides
-  // reduce through `titleSegments`, so the book's own paren-intact release
-  // grabs. COUNTERFACTUAL: reduce the release with the scalar normalizer alone
-  // and this book holds on its own release.
+  // Both sides need titleSegments; scalar normalization alone rejects this book's own release.
   const parenBook = { id: 6, title: 'Star (Deluxe) Wars: Haunted Starlight', duration: 3600, authors: [{ name: 'George Mann' }] };
 
   it('grabs the paren-intact own release of a split-anchor title at the prefix(1) rung (AC16)', async () => {
@@ -3812,12 +3634,7 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     expect(eventHistory.create).not.toHaveBeenCalled();
   });
 
-  // F1 — the offered side of the character-survival gate, on the auto path. The
-  // canonical title is pure ASCII, so it is NOT caught by the rung-1-only
-  // degenerate short-circuit and does build a floor; the two siblings are
-  // DIFFERENT books whose distinguishing characters the ASCII fold erases, so
-  // before the gate they supplied the anchors from what survived and the
-  // top-ranked one was auto-sent to the download client as the wrong book.
+  // ASCII folding erases these siblings' distinguishing characters; the survival gate must hold them.
   const lossyBook = { id: 7, title: 'World of Warcraft: A', duration: 3600, authors: [{ name: 'Christie Golden' }] };
 
   it('holds a lossy-fold sibling found at the prefix(1) rung rather than grabbing it (F1)', async () => {
@@ -3868,9 +3685,7 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     }));
   });
 
-  // AC40, AC41 — a post-gate list with no downloadable candidate is not a floor
-  // rejection. COUNTERFACTUAL: name the top-ranked result regardless of
-  // downloadability and a held event appears naming a PASSING release.
+  // Held events name only downloadable floor failures, never passing rows without URLs.
   it('records no held event when floor-passing results exist but none is downloadable (AC40, AC41)', async () => {
     const svc = serviceAnswering({
       'star wars haunted starlight George Mann': [makeResult({ title: 'Star Wars: Haunted Starlight', downloadUrl: undefined })],
@@ -3883,7 +3698,6 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     expect(eventHistory.create).not.toHaveBeenCalled();
   });
 
-  // AC40 — an empty post-gate list never names a release.
   it('records no held event when the gates removed every result (AC40)', async () => {
     const svc = serviceAnswering({
       'star wars haunted starlight George Mann': [makeResult({ title: 'Dune EPUB' })],
@@ -3895,7 +3709,7 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     expect(eventHistory.create).not.toHaveBeenCalled();
   });
 
-  // AC33 — a `full` rung is not a segment cut, so nothing is corroborated.
+  // A full rung is not a segment cut, so it has no corroboration floor (AC33).
   it('never applies the floor or holds on a full-tagged winning rung (AC33)', async () => {
     const svc = serviceAnswering({
       'star wars the rising storm Cavan Scott': [makeResult({ title: 'Completely Unrelated Release' })],
@@ -3907,9 +3721,7 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     expect(eventHistory.create).not.toHaveBeenCalled();
   });
 
-  // AC36 — every indexer rejected: an outage, not a zero. COUNTERFACTUAL: treat
-  // `[]` as a genuine zero and the call count jumps to the full ladder length
-  // AND a cooldown entry appears.
+  // Every indexer rejected is an outage, not a genuine zero; never advance or record cooldown (AC36).
   it('aborts the ladder after ONE rung when no indexer answered, recording no cooldown (AC36)', async () => {
     const svc = serviceAnswering({}, { succeeded: 0 });
     const searchLadderCooldown = new SearchLadderCooldown();
@@ -3922,8 +3734,7 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     expect(recordExhausted).not.toHaveBeenCalled();
   });
 
-  // AC35 — one indexer answering empty while another rejects is still a real,
-  // answered zero, so the ladder advances.
+  // One answered-empty indexer makes the aggregate a genuine zero despite another failure.
   it('advances when at least one indexer answered but the aggregate is empty (AC35)', async () => {
     const svc = {
       searchAllWithStatus: vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 1 }),
@@ -3941,29 +3752,25 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     ]);
   });
 
-  // AC34 — mode gating. The default ('always') never consults the cooldown, so
-  // a person clicking Search is never handed a degraded ladder.
   it('honours a live cooldown under ladderMode "scheduled" and ignores it under the default (AC34)', async () => {
     const searchLadderCooldown = new SearchLadderCooldown();
     const scheduledSvc = serviceAnswering({});
 
-    // Cycle 1 exhausts and records.
+    // First scheduled cycle exhausts and records.
     await searchAndGrabForBook(churnBook, deps(scheduledSvc, { searchLadderCooldown, ladderMode: 'scheduled' }));
     expect(queriesOf(scheduledSvc)).toHaveLength(6);
 
-    // Cycle 2 is restricted to rung 1.
+    // The next scheduled cycle is restricted to rung 1.
     const cycle2 = serviceAnswering({});
     await searchAndGrabForBook(churnBook, deps(cycle2, { searchLadderCooldown, ladderMode: 'scheduled' }));
     expect(queriesOf(cycle2)).toEqual(['The Churn An Expanse Novella James S A Corey']);
 
-    // A manual caller (default 'always') still gets the FULL ladder for the
-    // same book while that entry is live.
+    // Manual mode still runs the full ladder while the cooldown is live.
     const manual = serviceAnswering({});
     await searchAndGrabForBook(churnBook, deps(manual, { searchLadderCooldown }));
     expect(queriesOf(manual)).toHaveLength(6);
   });
 
-  // AC23 — a rung-1 hit means the canonical query works again.
   it('clears a live cooldown entry when rung 1 hits (AC23)', async () => {
     const searchLadderCooldown = new SearchLadderCooldown();
     await searchAndGrabForBook(churnBook, deps(serviceAnswering({}), { searchLadderCooldown, ladderMode: 'scheduled' }));
@@ -3976,8 +3783,7 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     expect(queriesOf(after)).toHaveLength(6);
   });
 
-  // A restricted cycle must not refresh the window, or the cooldown would never
-  // expire and the ladder would be suppressed forever.
+  // Restricted cycles must not refresh the window or the cooldown never expires.
   it('does not re-record exhaustion off a restricted (rung-1-only) cycle', async () => {
     const searchLadderCooldown = new SearchLadderCooldown();
     const recordExhausted = vi.spyOn(searchLadderCooldown, 'recordExhausted');
@@ -3988,9 +3794,7 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
     expect(recordExhausted).toHaveBeenCalledTimes(1);
   });
 
-  // AC17 — ranking context stays canonical on an author-OFF rung.
-  // COUNTERFACTUAL: drop `rankingAuthor` and the transport author is the only
-  // ranking context left, so an author-OFF rung ranks title-only.
+  // Without rankingAuthor, author-off rungs lose canonical-author ranking context.
   it('passes the canonical author as rankingAuthor on every rung, transport author only on author-ON ones (AC17)', async () => {
     const svc = serviceAnswering({ 'the churn': [makeResult()] });
 
@@ -4016,9 +3820,7 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
 describe('searchAndGrabForBook — query ladder on the broadcaster path (#2104)', () => {
   const churnBook = { id: 2, title: 'The Churn: An Expanse Novella', duration: 3600, authors: [{ name: 'James S. A. Corey' }] };
 
-  // AC18 — `search_started` is a per-CALL lifecycle event, not a per-rung one.
-  // COUNTERFACTUAL: leave `sink.searchStarted` inside the per-rung executor and
-  // the count becomes the number of rungs run.
+  // search_started is per call; emitting inside the rung executor duplicates it (AC18).
   it('emits search_started exactly once regardless of how many rungs run (AC18)', async () => {
     const broadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
     const indexerSearchService = {
@@ -4049,8 +3851,7 @@ describe('searchAndGrabForBook — query ladder on the broadcaster path (#2104)'
     expect(startedEmissions).toHaveLength(1);
   });
 
-  // D11 — the SAME controller map crosses every rung, which is what lets the
-  // pre-adapter abort guard skip an indexer cancelled on an earlier rung.
+  // One controller map preserves cancellations from earlier rungs (D11).
   it('reuses one sticky controller map across every rung (AC27)', async () => {
     const seen: Array<Map<number, AbortController>> = [];
     const indexerSearchService = {

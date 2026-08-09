@@ -9,18 +9,8 @@ import type { EpubInspection } from './result.js';
 import { inspectEpub, validateEpub } from './validate.js';
 
 /**
- * `inspectEpub` and the optional-read helpers in `extract.ts` (#1990, design §4).
- *
- * **Driven end-to-end through `inspectEpub`.** `extract.ts` exports no
- * path-taking function and no production-only seam exists to reach its helpers,
- * so every row here builds a real archive, writes it out, and inspects it. The
- * `fs`/`unzipper` mocks delegate to the real implementations by default and
- * exist only to answer the questions no black-box assertion can: how many times
- * was the file opened, which members had a stream opened, and in what order.
- *
- * The harness is duplicated from `validate.test.ts` rather than shared because
- * `vi.mock` calls are hoisted per test file; the EPUB-document builders it used
- * to carry now live in `../__tests__/epub-archive.fixture.ts`.
+ * End-to-end through real archives. Mocks delegate to real implementations and only
+ * observe opens, streamed members, and order; the harness stays local because vi.mock hoists.
  */
 
 const h = vi.hoisted(() => ({
@@ -30,9 +20,7 @@ const h = vi.hoisted(() => ({
     fsOpen: (typeof import('node:fs/promises'))['open'];
     Open: (typeof import('unzipper'))['Open'];
   },
-  /** Every archive member whose inflated stream was opened, in order. */
   streamed: [] as string[],
-  /** Replace one member's stream, by archive name. */
   onStream: undefined as ((name: string) => Readable | undefined) | undefined,
   handles: [] as Array<{ closes: number }>,
 }));
@@ -50,7 +38,7 @@ vi.mock('unzipper', async (importOriginal) => {
   return { ...actual, default: { ...real, Open: { ...real.Open, custom: h.openCustom } } };
 });
 
-/** The reader as the spies need to see it — `@types/unzipper` misdeclares `Open.custom` (#1997). */
+/** Spy-facing reader shape; @types/unzipper misdeclares Open.custom. */
 type ReaderCustom = (
   source: unknown,
   options: unknown,
@@ -60,14 +48,7 @@ function errno(code: string): Error {
   return Object.assign(new Error(`simulated ${code}`), { code });
 }
 
-/**
- * A `Readable` that emits `value` as an error instead of data, inflating
- * **nothing**.
- *
- * `File.stream()` returns a `Readable`, not a promise, so a rejected mock would
- * produce a `TypeError` on the missing `.pipe()` instead of exercising
- * stream-error classification.
- */
+/** Stream failure before data; File.stream cannot be modeled as a rejected promise. */
 function erroringStream(value: unknown): Readable {
   return new Readable({
     read() {
@@ -77,18 +58,8 @@ function erroringStream(value: unknown): Readable {
 }
 
 /**
- * A `Readable` that pushes `bytes` and only *then* fails with `value`.
- *
- * The distinction from {@link erroringStream} is load-bearing rather than
- * cosmetic. A stream that fails before emitting anything inflates nothing, so
- * `counter.bytesCounted` is 0 and charge-as-you-go is not exercised at all — a
- * rollback implementation is indistinguishable from a correct one. This one
- * inflates first, which is exactly the case where forgiving the bytes *would* be
- * a rollback.
- *
- * The two-call shape is what makes the count deterministic: `pipe` only calls
- * `read()` again once it has handed the first chunk to the counting transform,
- * so the bytes are counted before the error is raised.
+ * Emits bytes before failing so charge-without-rollback is observable. Two read calls
+ * ensure the counting transform receives the chunk before the error.
  */
 function partialThenErroringStream(bytes: Buffer, value: unknown): Readable {
   let pushed = false;
@@ -104,18 +75,14 @@ function partialThenErroringStream(bytes: Buffer, value: unknown): Readable {
   });
 }
 
-/** Make one archive member's stream fail with `value`, having inflated nothing. */
 function failEntry(name: string, value: unknown): void {
   h.onStream = (streamed) => (streamed === name ? erroringStream(value) : undefined);
 }
 
-/** Make one archive member's stream inflate `bytes` and then fail with `value`. */
 function failEntryAfterInflating(name: string, bytes: Buffer, value: unknown): void {
   h.onStream = (streamed) =>
     streamed === name ? partialThenErroringStream(bytes, value) : undefined;
 }
-
-// --- suite scaffolding ------------------------------------------------------
 
 let dir: string;
 let sequence = 0;
@@ -125,12 +92,10 @@ async function place(bytes: Buffer): Promise<string> {
   return F.writeArchive(dir, `fixture-${sequence}.epub`, bytes);
 }
 
-/** Build an EPUB, write it out, and inspect it. */
 async function inspectBuilt(options: F.EpubOptions = {}): Promise<EpubInspection> {
   return inspectEpub(await place(await F.buildEpub(options)));
 }
 
-/** The `available` arm, or a failure naming what came back instead. */
 function available(result: EpubInspection): Extract<EpubInspection, { status: 'available' }> {
   if (result.status !== 'available') throw new Error(`expected available, got ${result.status}`);
   return result;
@@ -169,9 +134,7 @@ beforeEach(() => {
     for (const file of directory.files) {
       const original = (file.stream as (...a: unknown[]) => Readable).bind(file);
       const name = String(file.path);
-      // `File` carries `stream` as an own property, so it can be wrapped in
-      // place on a real reader result (#1999) — this is the mechanism behind
-      // every "no stream was opened" assertion below.
+      // File.stream is an own property and can be wrapped on the real reader.
       file.stream = (...args: unknown[]) => {
         h.streamed.push(name);
         return h.onStream?.(name) ?? original(...args);
@@ -181,7 +144,7 @@ beforeEach(() => {
   });
 });
 
-/** The members every valid fixture reads as part of the *structural* pipeline. */
+/** Members always read by structural validation. */
 const MANDATORY = [
   'mimetype',
   'META-INF/container.xml',
@@ -189,12 +152,9 @@ const MANDATORY = [
   'META-INF/encryption.xml',
 ];
 
-/** Archive members whose stream was opened for an **optional** read. */
 function optionalStreams(): string[] {
   return h.streamed.filter((name) => !MANDATORY.includes(name));
 }
-
-// --- shared fixture shapes --------------------------------------------------
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01]);
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
@@ -230,7 +190,6 @@ const NAV_ENTRY = 'OEBPS/nav.xhtml';
 const NCX_ENTRY = 'OEBPS/toc.ncx';
 const COVER_ENTRY = 'OEBPS/cover.png';
 
-/** An EPUB 3 book whose nav document is `document`, discovered via `properties="nav"`. */
 function navBook(document: string | Buffer, options: F.EpubOptions = {}): F.EpubOptions {
   return {
     ...options,
@@ -239,12 +198,10 @@ function navBook(document: string | Buffer, options: F.EpubOptions = {}): F.Epub
   };
 }
 
-/** An EPUB 3 book whose nav `<ol>` is built from `nodes`, with the `nav` under `<body>`. */
 function navRowsBook(nodes: readonly F.TocNode[], options: F.EpubOptions = {}): F.EpubOptions {
   return navBook(F.navDocumentXml(F.navXml(nodes)), options);
 }
 
-/** An EPUB 2 book whose NCX is `document`, reached through `spine@toc`. */
 function ncxBook(document: string, options: F.EpubOptions = {}): F.EpubOptions {
   return {
     ...options,
@@ -261,7 +218,6 @@ function ncxRowsBook(nodes: readonly F.TocNode[], options: F.EpubOptions = {}): 
   return ncxBook(F.ncxDocumentXml(F.navMapXml(nodes)), options);
 }
 
-/** A book carrying `bytes` as its cover, declared through `properties="cover-image"`. */
 function coverBook(bytes: Buffer, options: F.EpubOptions = {}): F.EpubOptions {
   return {
     ...options,
@@ -272,8 +228,6 @@ function coverBook(bytes: Buffer, options: F.EpubOptions = {}): F.EpubOptions {
 
 const ONE_ROW: F.TocNode[] = [{ label: 'One' }];
 const ONE_ENTRY = [{ title: 'One', depth: 0 }];
-
-// ---------------------------------------------------------------------------
 
 describe('inspectEpub — the shape of a complete inspection', () => {
   it('returns metadata, a flat TOC, and a sniffed cover for an EPUB 3', async () => {
@@ -306,17 +260,13 @@ describe('inspectEpub — the shape of a complete inspection', () => {
       }),
     );
 
-    // The frozen order: TOC first — the smaller read, feeding the chapter
-    // count — then the cover, the largest and most expendable optional read.
+    // TOC precedes cover because it is smaller and supplies the chapter count.
     expect(optionalStreams()).toEqual([NAV_ENTRY, COVER_ENTRY]);
-    // One call is one open. There is no context to carry a second.
     expect(h.fsOpen).toHaveBeenCalledTimes(1);
     expect(h.handles).toHaveLength(1);
     expect(h.handles[0]?.closes).toBe(1);
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('non-available outcomes short-circuit every optional read', () => {
   const NON_AVAILABLE: Array<[label: string, options: F.EpubOptions]> = [
@@ -361,8 +311,7 @@ describe('non-available outcomes short-circuit every optional read', () => {
     );
     failEntry(F.DEFAULT_PACKAGE, errno('Z_DATA_ERROR'));
 
-    // The disposition half of the pair below: the identical `Z_DATA_ERROR` at a
-    // *mandatory* site is a verdict about the book.
+    // The identical Z_DATA_ERROR is a verdict here but disposes to null at an optional site.
     expect(await inspectEpub(filePath)).toEqual({ status: 'invalid', code: 'truncated' });
     expect(optionalStreams()).toEqual([]);
   });
@@ -396,16 +345,11 @@ describe('non-available outcomes short-circuit every optional read', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('an optional read never demotes the status', () => {
   it('returns available with cover null when the cover entry fails mid-inflate', async () => {
     const filePath = await place(await F.buildEpub(coverBook(PNG)));
     failEntry(COVER_ENTRY, errno('Z_DATA_ERROR'));
 
-    // The classification is identical to the mandatory site above — 1.1a's
-    // predicate ignores the call site — and only the *disposition* differs. A
-    // readable book with one damaged decorative resource is readable.
     const result = available(await inspectEpub(filePath));
     expect(result.cover).toBeNull();
     expect(result.metadata).toEqual({ title: 'Fixture', author: null, language: null });
@@ -423,7 +367,6 @@ describe('an optional read never demotes the status', () => {
     const oversize = Buffer.concat([PNG, Buffer.alloc(MAX_EPUB_COVER_BYTES)]);
     const result = available(await inspectBuilt(coverBook(oversize)));
 
-    // A cap breach is never a truncated image: no partial bytes are returned.
     expect(result.cover).toBeNull();
   });
 
@@ -439,8 +382,6 @@ describe('an optional read never demotes the status', () => {
     const filePath = await place(await F.buildEpub(coverBook(PNG)));
     failEntry(COVER_ENTRY, errno('EIO'));
 
-    // An optional read must never convert I/O indeterminacy into a confident
-    // `null`: a `throw` classification ignores the call site.
     await expect(inspectEpub(filePath)).rejects.toThrow('simulated EIO');
   });
 
@@ -452,16 +393,10 @@ describe('an optional read never demotes the status', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('the shared budget: order, pre-reject, and streamed exhaustion', () => {
   /**
-   * The mandatory reads are the only way to consume the inspection budget, and
-   * each is ceilinged at `MAX_XML_BYTES`. Four of them exist and
-   * `4 * MAX_XML_BYTES === MAX_INSPECTION_BYTES`, so padding `mimetype`,
-   * `container.xml`, and the package document to the ceiling and `encryption.xml`
-   * to `MAX_XML_BYTES - remainder` leaves exactly `remainder` bytes for the
-   * optional reads.
+   * Four mandatory reads are capped at MAX_XML_BYTES; padding them leaves an exact
+   * optional-read remainder.
    */
   function withRemainder(remainder: number, options: F.EpubOptions): F.EpubOptions {
     return {
@@ -481,16 +416,14 @@ describe('the shared budget: order, pre-reject, and streamed exhaustion', () => 
           packageOptions: { items: [CHAPTER, NAV_ITEM, COVER_ITEM] },
           files: [
             { name: NAV_ENTRY, content: navDocument },
-            // Individually within `MAX_EPUB_COVER_BYTES`, but 2000 > the 1000
-            // bytes the nav leaves behind.
+            // The nav leaves 1,000 bytes, less than this individually valid cover.
             { name: COVER_ENTRY, content: Buffer.concat([PNG, Buffer.alloc(1990)]) },
           ],
         }),
       ),
     );
 
-    // TOC present, cover dropped — which is only reachable if the TOC was read
-    // first. The reverse order would produce the mirror result for the same file.
+    // This asymmetric result proves TOC was read first.
     expect(result.toc).toEqual(ONE_ENTRY);
     expect(result.cover).toBeNull();
     expect(optionalStreams()).toEqual([NAV_ENTRY]);
@@ -511,17 +444,14 @@ describe('the shared budget: order, pre-reject, and streamed exhaustion', () => 
 
     expect(result.toc).toBeNull();
     expect(result.cover).toEqual({ mediaType: 'image/png', bytes: PNG });
-    // Nothing was charged for the nav, because no stream was ever opened for it —
-    // `readEntry` calls `file.stream()` unconditionally, so the pre-reject has to
-    // happen before `entry.read`, not inside it.
+    // Pre-rejection occurs before entry.read, so the nav opens no stream or charge.
     expect(optionalStreams()).toEqual([COVER_ENTRY]);
   });
 
   it('keeps a failed read charged when the actual inflate crosses the remainder', async () => {
     const remainder = 4096;
     const navDocument = F.padTo(F.navDocumentXml(F.navXml(ONE_ROW)), 20000);
-    // STORE, so the inflated size is exactly the content length and the whole
-    // member arrives in one chunk.
+    // STORE makes inflated size equal content length in one chunk.
     const bytes = await F.buildArchive({
       store: true,
       entries: F.epubEntries(
@@ -539,9 +469,7 @@ describe('the shared budget: order, pre-reject, and streamed exhaustion', () => 
     );
     const central = F.listCentralDirectory(bytes)[navIndex]!;
     const local = F.localFileHeader(bytes, navIndex);
-    // Understate the declared size so the pre-reject passes and the streamed
-    // counter is the only thing that fires. The declared size is used *only* to
-    // pre-reject; it is never trusted as the real size.
+    // Understate declared size so only streamed accounting can enforce the real size.
     const filePath = await place(
       F.patchArchive(bytes, [
         { offset: central.headerOffset + 24, size: 4, value: 100, why: 'central uncompressedSize lie' },
@@ -553,27 +481,18 @@ describe('the shared budget: order, pre-reject, and streamed exhaustion', () => 
 
     expect(result.toc).toBeNull();
     expect(result.cover).toBeNull();
-    // The load-bearing assertion. `consumed` lands at
-    // `MAX_INSPECTION_BYTES - 4096 + 20000` — past the ceiling by 15,904 bytes,
-    // strictly less than the single 20,000-byte chunk that crossed it, and it
-    // happens once because nothing is streamed afterwards. A rollback
-    // implementation would forgive the nav's bytes, leave 4,096 available, open
-    // the cover stream, and return a cover: both assertions here would break.
+    // The crossing chunk remains charged; rolling it back would leave room for the cover.
     expect(optionalStreams()).toEqual([NAV_ENTRY]);
     expect(Buffer.byteLength(navDocument)).toBe(20000);
     expect(20000 - remainder).toBeLessThan(Buffer.byteLength(navDocument));
   });
 
   /**
-   * The partial-decoder-failure pair. Both rows use the **same** fixture and the
-   * same `Z_DATA_ERROR` classification, and differ only in how many bytes the nav
-   * stream inflated before failing. That difference alone has to change the
-   * cover's outcome, which is what makes charge-as-you-go observable: an
-   * implementation that forgives a failed read's bytes collapses the two rows
-   * into one result and fails the first.
+   * Same fixture and failure; only bytes emitted before failure differ, making
+   * charge-as-you-go observable.
    */
   const PARTIAL_REMAINDER = 4096;
-  /** 3,000 bytes — fits the untouched remainder, but not what a 4,000-byte charge leaves. */
+  /** Fits the untouched 4,096-byte remainder, not the 96 bytes left after a 4,000-byte charge. */
   const MID_COVER = Buffer.concat([PNG, Buffer.alloc(3000 - PNG.length)]);
 
   function partialFixture(): F.EpubOptions {
@@ -592,9 +511,6 @@ describe('the shared budget: order, pre-reject, and streamed exhaustion', () => 
 
     const result = available(await inspectEpub(filePath));
 
-    // 4,000 of the 4,096-byte remainder are gone, so the 3,000-byte cover no
-    // longer fits and is pre-rejected without a stream. Nothing is rolled back
-    // just because the read that inflated the bytes did not finish.
     expect(result.toc).toBeNull();
     expect(result.cover).toBeNull();
     expect(optionalStreams()).toEqual([NAV_ENTRY]);
@@ -606,9 +522,6 @@ describe('the shared budget: order, pre-reject, and streamed exhaustion', () => 
 
     const result = available(await inspectEpub(filePath));
 
-    // Same fixture, same failure label, zero bytes inflated — so the remainder is
-    // untouched and the cover succeeds. This is the row that gives the one above
-    // its meaning: the charge, not the failure, is what closed the budget.
     expect(result.toc).toBeNull();
     expect(result.cover).toEqual({ mediaType: 'image/png', bytes: MID_COVER });
     expect(optionalStreams()).toEqual([NAV_ENTRY, COVER_ENTRY]);
@@ -630,12 +543,9 @@ describe('the shared budget: order, pre-reject, and streamed exhaustion', () => 
     const first = available(await inspectEpub(filePath));
     const second = available(await inspectEpub(filePath));
 
-    // A budget shared across calls would leave the second inspection nothing:
-    // the first alone consumes all but ~5 KiB of `MAX_INSPECTION_BYTES`.
     expect(second).toEqual(first);
     expect(second.toc).toEqual(ONE_ENTRY);
     expect(second.cover?.mediaType).toBe('image/png');
-    // Two calls, two opens, two closes — and two budgets.
     expect(h.fsOpen).toHaveBeenCalledTimes(2);
     expect(h.handles.map((handle) => handle.closes)).toEqual([1, 1]);
   });
@@ -658,18 +568,14 @@ describe('the shared budget: order, pre-reject, and streamed exhaustion', () => 
       ]),
     );
 
-    // The lie is harmless here — plenty of budget remains, so the entry is read
-    // and its real bytes are what the sniffer sees.
+    // Sniffing uses the real streamed bytes, not the understated size.
     const result = available(await inspectEpub(filePath));
     expect(result.cover?.bytes.length).toBe(cover.length);
-    // And `validateEpub` on the same file never opens that entry at all.
     h.streamed = [];
     expect(await validateEpub(filePath)).toEqual({ status: 'available' });
     expect(optionalStreams()).toEqual([]);
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('metadata', () => {
   async function metadataOf(options: F.MetadataOptions): Promise<unknown> {
@@ -731,7 +637,6 @@ describe('metadata', () => {
   });
 
   it('takes the first non-empty candidate, not the first candidate then normalised', async () => {
-    // `<dc:title></dc:title><dc:title>Real</dc:title>` is `"Real"`, not `null`.
     expect(
       await metadataOf({ raw: '<dc:title></dc:title><dc:title>Real</dc:title>' }),
     ).toMatchObject({ title: 'Real' });
@@ -755,8 +660,7 @@ describe('metadata', () => {
   });
 
   it('costs no budget, so it survives a package document that exhausts it', async () => {
-    // Every optional read is pre-rejected here, yet metadata is still present:
-    // it comes from the document the pipeline already parsed.
+    // Metadata comes from the parsed package, so optional pre-rejection cannot remove it.
     const result = await inspectBuilt({
       mimetype: F.padTo(F.EPUB_MEDIA_TYPE, MAX_XML_BYTES),
       container: F.padTo(F.containerXml(F.DEFAULT_PACKAGE), MAX_XML_BYTES),
@@ -774,8 +678,6 @@ describe('metadata', () => {
     expect(optionalStreams()).toEqual([]);
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('TOC discovery by reference, never by filename', () => {
   it('finds an EPUB 3 nav document at a name that is not nav.xhtml', async () => {
@@ -821,18 +723,7 @@ describe('TOC discovery by reference, never by filename', () => {
     expect(available(result).toc).toEqual(ONE_ENTRY);
   });
 
-  /**
-   * XML 1.0 §2.3 whitespace is space, tab, CR, and LF, and a conforming author
-   * may separate tokens with any of them. `hasToken` splits on all four (plus
-   * form feed); a `.split(' ')` narrowing would pass every other fixture in this
-   * suite, because they all happen to use spaces.
-   *
-   * Verified as observable rather than assumed: htmlparser2 performs no XML
-   * attribute-value normalisation, so the raw separator survives into `attribs`
-   * and reaches the predicate. (A conforming XML processor would fold these to
-   * spaces before the application ever saw them, which would make this untestable
-   * through the public path.)
-   */
+  /** Exercises every accepted separator; htmlparser2 preserves them for the token predicate. */
   const SEPARATORS: Array<[label: string, separator: string]> = [
     ['a tab', '\t'],
     ['a line feed', '\n'],
@@ -843,9 +734,7 @@ describe('TOC discovery by reference, never by filename', () => {
   it.each(SEPARATORS)(
     'matches every token-set attribute across %s separator',
     async (_label, separator) => {
-      // One fixture, all three token sites: `properties~=nav` picks the nav item,
-      // `epub:type~=toc` picks the nav element inside it, and
-      // `properties~=cover-image` picks the cover.
+      // One fixture covers nav-item, toc-nav, and cover-image token checks.
       const result = await inspectBuilt(
         navBook(
           F.navDocumentXml(
@@ -902,13 +791,10 @@ describe('TOC discovery by reference, never by filename', () => {
         items: [CHAPTER, NAV_ITEM, NCX_ITEM],
         spine: '<spine toc="ncx"><itemref idref="ch1"/></spine>',
       },
-      // The nav entry is deliberately not written.
       files: [{ name: NCX_ENTRY, content: F.ncxDocumentXml(F.navMapXml(ONE_ROW)) }],
     });
 
-    // "Preferred" is a selection rule, not a retry rule. Falling back would also
-    // make the NCX read's pre-reject depend on how many bytes the failed nav read
-    // had charged, coupling two independent resources through the shared budget.
+    // Nav selection precludes NCX fallback through the partly charged shared budget.
     expect(available(result).toc).toBeNull();
     expect(optionalStreams()).toEqual([]);
   });
@@ -927,15 +813,11 @@ describe('TOC discovery by reference, never by filename', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('locating the toc nav is a descendant search', () => {
   it('finds a nav sitting directly under body', async () => {
     const result = await inspectBuilt(navRowsBook(ONE_ROW));
 
-    // `childrenByLocalName($, htmlRoot, 'nav')` returns nothing for this shape,
-    // which is the realistic one — every other EPUB 3 fixture in this suite nests
-    // its nav under `<body>` for the same reason.
+    // A nav under body is not a direct child of html; childrenByLocalName would miss it.
     expect(available(result).toc).toEqual(ONE_ENTRY);
   });
 
@@ -970,11 +852,7 @@ describe('locating the toc nav is a descendant search', () => {
   });
 
   it('finds a toc nav whose type attribute is bound under a different prefix', async () => {
-    // The EPUB spec defines this attribute *with* a prefix, and a prefix is an
-    // alias the author binds — `ops:` is as valid as `epub:`. That is why
-    // `findTocNav` uses `attrByLocalName` and not `attrByExactName`, and this is
-    // the row that says so: every other nav fixture spells it `epub:type`, so
-    // narrowing the lookup to the exact name leaves them all green.
+    // Prefixes are aliases; local-name lookup must accept ops:type as epub:type.
     const result = await inspectBuilt(
       navBook(
         '<?xml version="1.0" encoding="UTF-8"?>' +
@@ -987,10 +865,7 @@ describe('locating the toc nav is a descendant search', () => {
   });
 
   it('walks past deep wrapper nesting that would overflow a recursive selector', async () => {
-    // Well under `MAX_XML_BYTES` (~275 KiB) but far past the ~11k frames Node's
-    // default stack allows. The traversal's visit cap does not protect this walk:
-    // the nav has not been selected yet, so nothing bounds its depth but the
-    // document. A recursive descendant search throws `RangeError` here.
+    // Well under the byte cap but deeper than the JS stack; recursive discovery would overflow.
     const depth = 25000;
     const wrapped = '<div>'.repeat(depth) + F.navXml(ONE_ROW) + '</div>'.repeat(depth);
     const result = await inspectBuilt(navBook(F.navDocumentXml(wrapped)));
@@ -998,8 +873,6 @@ describe('locating the toc nav is a descendant search', () => {
     expect(available(result).toc).toEqual(ONE_ENTRY);
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('the EPUB 3 TOC traversal', () => {
   async function tocOf(nodes: readonly F.TocNode[]): Promise<unknown> {
@@ -1021,9 +894,6 @@ describe('the EPUB 3 TOC traversal', () => {
   });
 
   it('does not let a parent row swallow its descendants’ titles', async () => {
-    // In EPUB 3 the nested `<ol>` is a *sibling* of the `<a>`, not a descendant,
-    // so taking the label from a direct child of the `li` gives this row's title
-    // alone. Reading the `li`'s own text would produce "Part OneChapter 1Chapter 2".
     expect(
       await tocOf([{ label: 'Part One', children: [{ label: 'Chapter 1' }, { label: 'Chapter 2' }] }]),
     ).toEqual([
@@ -1043,7 +913,6 @@ describe('the EPUB 3 TOC traversal', () => {
     expect(
       await tocOf([{ children: [{ label: 'Kept' }] }, { label: '  \n ', children: [{ label: 'Also' }] }]),
     ).toEqual([
-      // Depth is structural, so the survivors keep depth 1 rather than shifting up.
       { title: 'Kept', depth: 1 },
       { title: 'Also', depth: 1 },
     ]);
@@ -1086,11 +955,8 @@ describe('the EPUB 3 TOC traversal', () => {
   });
 
   it('terminates on the visit cap for a label-less chain nested far past it', async () => {
-    // Nothing above the bottom row is *emitted*, so a cap counting only emitted
-    // rows would run all the way down. The visit cap bounds the work itself, and
-    // the chain is deep enough that a recursive traversal would overflow.
-    // (Written by repetition rather than through the builder, which is itself
-    // recursive and would overflow while *constructing* the fixture.)
+    // Label-less rows prove the visit cap bounds work, not output. Repetition avoids
+    // overflowing the recursive fixture builder.
     const depth = 5000;
     const chain =
       '<ol><li>'.repeat(depth) + '<a href="c.xhtml">Bottom</a>' + '</li></ol>'.repeat(depth);
@@ -1101,8 +967,6 @@ describe('the EPUB 3 TOC traversal', () => {
     expect(available(result).toc).toBeNull();
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('the EPUB 2 (NCX) TOC traversal mirrors the same contract', () => {
   async function tocOf(nodes: readonly F.TocNode[]): Promise<unknown> {
@@ -1200,8 +1064,6 @@ describe('the EPUB 2 (NCX) TOC traversal mirrors the same contract', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('TOC multiplicity: first in document order everywhere', () => {
   it('uses the first manifest item carrying properties="nav"', async () => {
     const result = await inspectBuilt({
@@ -1247,14 +1109,10 @@ describe('TOC multiplicity: first in document order everywhere', () => {
       }),
     );
 
-    // `itemsById` maps a duplicated id to `null`, so "matches exactly one
-    // manifest item" is decidable rather than silently first-match.
     expect(available(result).toc).toBeNull();
     expect(optionalStreams()).toEqual([]);
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('malformed means exactly the parser’s rejected arm', () => {
   const REJECTED: Array<[label: string, document: string | Buffer]> = [
@@ -1262,8 +1120,7 @@ describe('malformed means exactly the parser’s rejected arm', () => {
     ['two root elements', '<?xml version="1.0"?><html><body/></html><html><body/></html>'],
     [
       'bytes that fail fatal decoding',
-      // `<html>` then two lone continuation bytes, which are not legal UTF-8
-      // anywhere, then `</html>`. The fatal decoder rejects before parsing.
+      // Lone continuation bytes force fatal UTF-8 rejection before parsing.
       Buffer.concat([
         Buffer.from('<html>', 'ascii'),
         Buffer.from([0x80, 0x81]),
@@ -1287,10 +1144,7 @@ describe('malformed means exactly the parser’s rejected arm', () => {
   });
 
   it('still yields rows for markup cheerio repairs', async () => {
-    // Unclosed and mismatched tags. `cheerio.load(..., { xmlMode: true })` repairs
-    // rather than throwing, and the contract is narrowed to what the chosen
-    // mechanism can actually decide — so this parses to a usable `html` root and
-    // returns its rows. No second well-formedness check exists to make it fail.
+    // htmlparser2 repairs this tag soup; no second well-formedness parser exists.
     const result = await inspectBuilt(
       navBook(
         '<?xml version="1.0"?><html><body><nav epub:type="toc"><ol>' +
@@ -1306,8 +1160,6 @@ describe('malformed means exactly the parser’s rejected arm', () => {
     ]);
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('the cover', () => {
   const SIGNATURES: Array<[label: string, bytes: Buffer, mediaType: string]> = [
@@ -1407,8 +1259,6 @@ describe('the cover', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('cover multiplicity and no fallback between tiers', () => {
   it('uses the first <meta name="cover"> when two are declared', async () => {
     const result = await inspectBuilt({
@@ -1483,9 +1333,6 @@ describe('cover multiplicity and no fallback between tiers', () => {
         files: [{ name: 'OEBPS/fallback.png', content: PNG }],
       });
 
-      // A declared-but-broken cover is a defective book, not a book with a second
-      // cover. Falling back would also couple the two tiers through the shared
-      // budget once bytes had been charged.
       expect(available(result).cover).toBeNull();
       expect(optionalStreams()).toEqual([]);
     },
@@ -1509,10 +1356,7 @@ describe('cover multiplicity and no fallback between tiers', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('the optional-resource failure matrix', () => {
-  /** Every way a declared TOC can be unusable. All of them dispose to `toc: null`. */
   const TOC_NULL: Array<[label: string, options: F.EpubOptions]> = [
     [
       'the nav item declares no href',
@@ -1591,10 +1435,7 @@ describe('the optional-resource failure matrix', () => {
     expect(available(result).toc).toBeNull();
   });
 
-  // These two cover the *disposition* of a decoder failure — `toc: null` rather
-  // than a demoted status — with nothing inflated. The budget consequence of a
-  // failure that did inflate bytes is a different property and lives with the
-  // rest of the budget accounting, above.
+  // These isolate null disposition; partial-failure budget accounting is tested above.
   it('yields toc null when the nav read fails without inflating anything', async () => {
     const filePath = await place(await F.buildEpub(navRowsBook(ONE_ROW)));
     failEntry(NAV_ENTRY, errno('Z_DATA_ERROR'));
@@ -1616,7 +1457,6 @@ describe('the optional-resource failure matrix', () => {
     expect(available(await inspectEpub(filePath)).toc).toBeNull();
   });
 
-  /** Every way a declared cover can be unusable. All of them dispose to `cover: null`. */
   const COVER_NULL: Array<[label: string, options: F.EpubOptions]> = [
     [
       'the cover item declares no href',
@@ -1654,8 +1494,6 @@ describe('the optional-resource failure matrix', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('public surface and guardrails', () => {
   const IMAGE_LIBRARIES = ['sharp', 'image-size', 'probe-image-size', 'jimp', 'canvas'];
 
@@ -1666,16 +1504,11 @@ describe('public surface and guardrails', () => {
     ) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
     const declared = Object.keys({ ...manifest.dependencies, ...manifest.devDependencies });
 
-    // Nothing in Narratorr decodes the cover — it is streamed to a browser that
-    // has its own bounded decoder — so a pixel-dimension bomb has no decoder here
-    // to attack, and the byte cap plus magic-byte sniffing closes the reachable
-    // case (#1990 Decision 1).
     expect(declared.filter((name) => IMAGE_LIBRARIES.includes(name))).toEqual([]);
   });
 
   it('imports no image library anywhere in src/core/epub', async () => {
-    // Comments are not stripped: an `import` written in prose is still a claim
-    // this folder decodes images, and the `from '…'` anchor keeps it precise.
+    // Comments remain in the scan; the anchored import pattern avoids prose false positives.
     const sources = await scanProductionSources(import.meta.dirname);
 
     const offenders = IMAGE_LIBRARIES.filter((name) =>
@@ -1689,9 +1522,6 @@ describe('public surface and guardrails', () => {
     const { readFile } = await import('node:fs/promises');
     const source = await readFile(path.join(import.meta.dirname, 'extract.ts'), 'utf8');
 
-    // Decision 2: `validateEpub` and `inspectEpub` are the only path-taking
-    // functions the folder offers outside it. `extract.ts` holds the helpers they
-    // call, and opens, closes, and re-opens nothing.
     expect(Object.keys(module).sort()).toEqual([
       'extractEpubCover',
       'extractEpubMetadata',
@@ -1702,23 +1532,8 @@ describe('public surface and guardrails', () => {
     expect(source).not.toContain('withZipSource');
   });
 
-  // `extract.ts`'s layer-guard coverage is **not** asserted here.
-  // `layer-guard.test.ts` › `describe('src/core/epub layer guard')` discovers
-  // every production module in this folder through the shared recursive scan
-  // and names its files with `expect.arrayContaining`, so a new module is in
-  // scope automatically and with no edit. Re-scanning the folder to prove that
-  // would restate the selection decision #2000 gave a single home.
-
-  // The `leaves the ebook-only search guard byte-for-byte unchanged` test that sat here was a
-  // character-identical copy of validate.test.ts's (which carries the rationale comment and
-  // survives as the single home). Deleted in #2050 — a duplicated guard adds runtime, not
-  // protection; the invariant (Narratorr observes a companion ebook, never acquires one) is
-  // still pinned by the surviving copy.
-
   it('keeps MAX_INSPECTION_BYTES the aggregate ceiling the budget arithmetic assumes', async () => {
-    // The four mandatory reads are each ceilinged at `MAX_XML_BYTES`, and the
-    // budget fixtures above derive their remainders from this equality. Retune
-    // either constant and those fixtures stop meaning what they say.
+    // Budget fixtures depend on four mandatory XML ceilings equaling the aggregate cap.
     expect(4 * MAX_XML_BYTES).toBe(MAX_INSPECTION_BYTES);
   });
 });

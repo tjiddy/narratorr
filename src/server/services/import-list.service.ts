@@ -23,34 +23,19 @@ import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 
 type QualitySettings = AppSettings['quality'];
 
-/** Milliseconds per minute — used for sync interval calculations. */
 const MS_PER_MINUTE = 60_000;
 
 type NewImportList = typeof importLists.$inferInsert;
 
-/**
- * Per-item disposition surfaced by {@link ImportListService.processItem} so
- * {@link ImportListService.syncList} can distinguish a clean "synced N" run from
- * one that held M items for recording review (#1735):
- * - `created` — a book row was inserted (counts toward `createdCount`).
- * - `held_review` — the `review` verdict skipped create but emitted an
- *   observable `recording_review_skipped` event (counts toward `heldReviewCount`).
- * - `skipped` — owned same-recording, or an ASIN-race owned skip — no count.
- */
+/** Per-item result used to report created versus review-held counts (#1735). */
 type ItemOutcome = 'created' | 'held_review' | 'skipped';
 
-/** Synced-vs-held tally returned by {@link ImportListService.syncList} (#1735). */
 interface SyncCounts {
   createdCount: number;
   heldReviewCount: number;
 }
 
-/**
- * Parse a saved settings JSON blob through the per-type Zod schema.
- *
- * Normalizes legacy blank values that pre-date the type tightening (e.g. Hardcover
- * `shelfId: ''` from the old default) so existing rows continue to work after upgrade.
- */
+/** Normalize legacy Hardcover `shelfId: ''` before strict per-provider schema parsing. */
 function parseSettingsForType(type: string, settings: Record<string, unknown>): ImportListSettings {
   const schema = importListSettingsSchemas[type as ImportListType];
   if (!schema) throw new Error(`Unknown provider type: ${type}`);
@@ -88,7 +73,7 @@ export class ImportListService {
   async create(data: Omit<NewImportList, 'id' | 'createdAt'>): Promise<ImportListRow> {
     const toInsert = {
       ...data,
-      nextRunAt: new Date(), // Sync on next poller cycle
+      nextRunAt: new Date(),
     };
     if (toInsert.settings) {
       toInsert.settings = encryptFields('importList', { ...(toInsert.settings as Record<string, unknown>) }, getKey());
@@ -127,7 +112,7 @@ export class ImportListService {
       const factory = IMPORT_LIST_ADAPTER_FACTORIES[data.type as keyof typeof IMPORT_LIST_ADAPTER_FACTORIES];
       if (!factory) return { success: false, message: `Unknown provider type: ${data.type}` };
 
-      // When editing an existing list, resolve sentinel values against saved settings
+      // Resolve edited sentinel values against stored secrets before testing.
       let resolvedSettings = data.settings;
       if (data.id != null) {
         const existing = await this.getById(data.id);
@@ -226,22 +211,7 @@ export class ImportListService {
     return counts;
   }
 
-  /**
-   * Resolve the rich metadata for an import-list item via the shared
-   * {@link MetadataService.resolveBook} resolver (ASIN fast path → title/author
-   * search fallback + validation), then build the enriched payload.
-   *
-   * The resolver carries the **correct audiobook ASIN** it found, so a bad
-   * print/Kindle provider ASIN is transparently replaced by the audiobook ASIN
-   * the search recovers (see {@link buildMatchedEnriched}). Returns the
-   * intermediate payload plus the `enrichmentStatus` to persist:
-   * - match adopted → `undefined` (default `'pending'`; rich metadata flows).
-   * - genuine no-match → `'failed'` (book still created so the import isn't
-   *   dropped; the background job retries it via search after 1h).
-   * - rate limit / transient error / no metadata service → `undefined`
-   *   (`'pending'`; raw provider fields, resolvable later — a rate limit is NOT
-   *   a no-match).
-   */
+  /** Resolve shared metadata, preserving failed only for a genuine no-match; transient states stay pending. */
   private async enrichItem(item: ImportListItem): Promise<{ enriched: EnrichedItem; enrichmentStatus: 'failed' | undefined }> {
     const { match, enrichmentStatus } = await this.resolveMatch(item);
     return { enriched: buildEnrichedItem(item, match), enrichmentStatus };
@@ -259,20 +229,15 @@ export class ImportListService {
         this.logIdentityMismatch(item, match);
         return { match, enrichmentStatus: undefined };
       }
-      // Genuine no-match: still create the book (don't silently drop the import)
-      // but mark it failed so the background job retries via search after 1h.
+      // A genuine no-match becomes failed so the one-hour search retry can recover it.
       return { match: null, enrichmentStatus: 'failed' };
     } catch (error: unknown) {
       if (error instanceof RateLimitError) {
-        // Transient provider state, NOT a no-match — leave the book resolvable
-        // later (pending), do not mark it failed.
+        // Provider failures stay pending; they are not evidence of no match.
         this.log.warn({ title: item.title, provider: error.provider, retryAfterMs: error.retryAfterMs }, 'Metadata resolution rate limited; leaving book pending');
         return { match: null, enrichmentStatus: undefined };
       }
       if (error instanceof TransientError) {
-        // Transient provider failure (timeout / 5xx / malformed JSON) during the
-        // fallback search — NOT a no-match. Leave the book pending so the
-        // background job retries it, same as the rate-limit branch above.
         this.log.warn({ title: item.title, provider: error.provider }, 'Metadata resolution hit a transient provider error; leaving book pending');
         return { match: null, enrichmentStatus: undefined };
       }
@@ -281,15 +246,6 @@ export class ImportListService {
     }
   }
 
-  /**
-   * Emit a warn audit log when an adopted match's metadata disagrees with the
-   * raw provider title/author. The match may be ASIN- or search-resolved; in
-   * either case the resolved metadata is adopted, and the log lets operators
-   * trace mixed-identity book rows back to their source. The title/author
-   * comparison is case-insensitive, so case-only differences (e.g. raw
-   * `GAME ON` vs resolved `Game On`) do not warn. Skipped when the raw fields
-   * are absent or already agree.
-   */
   private logIdentityMismatch(item: ImportListItem, match: BookMetadata): void {
     const metadataAuthor = match.authors[0]?.name;
     const titleDiffers = !!item.title && item.title.toLowerCase() !== match.title.toLowerCase();
@@ -307,14 +263,6 @@ export class ImportListService {
     );
   }
 
-  /**
-   * Three-way recording-identity resolution (#1711) for an enriched item.
-   * `enrichItem` supplies narrators + duration, so the resolver usually has
-   * signal: `same-recording` is owned; `review` is no/ambiguous signal;
-   * `different-recording` is a genuinely new recording. The caller
-   * ({@link processItem}) acts on the verdict — keeping `list` context out of
-   * this method's signature.
-   */
   private async resolveImportDisposition(enriched: EnrichedItem) {
     const authorList = enriched.authorName ? [{ name: enriched.authorName }] : undefined;
     return this.bookService.findDuplicate({
@@ -323,24 +271,12 @@ export class ImportListService {
       ...(enriched.asin !== undefined && { asin: enriched.asin }),
       ...(enriched.narrators !== undefined && { narrators: enriched.narrators }),
       ...(enriched.duration != null && { duration: enriched.duration }),
-      // Production form (#1728, F1): `enriched.productionType` is already
-      // normalized upstream (`buildMatchedEnriched`). Pass it so an
-      // abridged-vs-unabridged item with no duration holds for review instead of
-      // silently skipping as same-recording.
+      // Without normalized production type, abridged/unabridged items lacking duration collapse (#1728 F1).
       ...(enriched.productionType !== undefined && { productionType: enriched.productionType }),
     });
   }
 
-  /**
-   * Make the `review` disposition observable for automated import lists (#1735).
-   * Import lists have no interactive held-review UI, so a `review` verdict
-   * previously skipped the wanted recording with only a server log line. Emit a
-   * structured `recording_review_skipped` event (the same direct
-   * `this.db.insert(bookEvents)` precedent used for `book_added`) so the held
-   * candidate is queryable via the existing event-history surface and lands on
-   * the incumbent's book history. `bookTitle` is `notNull`, so it carries the
-   * candidate title; `existingBookId` is the incumbent the candidate matched.
-   */
+  /** Import lists have no review UI; persist held candidates on the incumbent's history (#1735). */
   private async recordReviewSkip(
     enriched: EnrichedItem,
     list: ImportListRow,
@@ -357,16 +293,12 @@ export class ImportListService {
       authorName: enriched.authorName ?? null,
       eventType: 'recording_review_skipped',
       source: 'import_list',
-      // `reason` is unstructured JSON (no migration). The machine reason (#1728)
-      // makes the held downgrade diagnosable — e.g. `production-type-mismatch`.
+      // Unstructured reason JSON preserves the machine downgrade reason without a migration (#1728).
       reason: { importListName: list.name, existingBookId, ...(recordingReviewReason && { recordingReviewReason }) },
     });
   }
 
-  /**
-   * Create the book row, mapping a same-ASIN create-time race (#1711) to an owned
-   * skip (returns null, no enqueue) rather than a hard failure.
-   */
+  /** Treat a create-time same-ASIN race as an owned skip with no enqueue (#1711). */
   private async createImportListBook(enriched: EnrichedItem, enrichmentStatus: 'failed' | undefined, list: ImportListRow): Promise<BookWithAuthor | null> {
     try {
       return await this.bookService.create({
@@ -437,18 +369,8 @@ export class ImportListService {
 }
 
 /**
- * Build the intermediate enriched payload from `(item, match)`.
- *
- * - `match` present — metadata wins for `title` and `authorName` (the resolved
- *   record is canonical identity). `BookMetadataSchema` requires `title` and a
- *   non-empty `authors`, so no per-field fallback is needed. Provider-first
- *   still applies to cover/description/isbn (raw item value is a hint), but the
- *   resolved **audiobook ASIN wins** over the raw provider ASIN (which may be a
- *   print/Kindle ASIN). `seriesPrimary` wins over `series[0]` (#1088 / #1097).
- * - `match` null — raw item fields only; no metadata side fields populated.
- *
- * Lives outside the class so its many `??`/`?.` operators don't accumulate
- * cyclomatic complexity in `enrichItem`.
+ * Resolved identity is canonical while raw cover/description/ISBN remain preferred hints.
+ * Keep this outside the class so fallback operators do not inflate `enrichItem` complexity.
  */
 function buildEnrichedItem(item: ImportListItem, match: BookMetadata | null): EnrichedItem {
   if (!match) return buildRawEnriched(item);
@@ -481,23 +403,14 @@ function buildMatchedEnriched(item: ImportListItem, match: BookMetadata): Enrich
     duration: match.duration,
     publishedDate: match.publishedDate,
     genres: match.genres,
-    // Resolved audiobook ASIN wins: when the search fallback recovered the real
-    // audiobook, `match.asin` is the correct ASIN to persist — NOT the raw
-    // provider ASIN (which may be a print/Kindle ASIN that 404s on Audnexus).
-    // On the ASIN fast path `match.asin` echoes `item.asin`, so this is a no-op.
+    // Search fallback may replace a print/Kindle ASIN with the resolved audiobook ASIN.
     asin: match.asin ?? item.asin,
     isbn: item.isbn ?? match.isbn,
-    // Recording production form (#1731). Gate on presence so a match without a
-    // formatType leaves the field unset (DB default 'unknown') rather than
-    // persisting an explicit 'unknown'. `buildRawEnriched` carries no signal.
+    // Persist only actual format signal; undefined preserves the DB default (#1731).
     productionType: match.formatType ? normalizeProductionType(match.formatType) : undefined,
   };
 }
 
-/** Intermediate enriched payload — `title` is canonical (metadata title on a
- *  successful match, raw item title otherwise), and `authorName` is singular,
- *  translated to `authors: { name: string }[]` at the
- *  {@link BookService.create} call site. */
 interface EnrichedItem {
   title: string;
   coverUrl?: string | undefined;

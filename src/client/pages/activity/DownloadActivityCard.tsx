@@ -118,7 +118,6 @@ function PendingReviewDetails({
     );
   }
 
-  // No qualityGate data — show action buttons directly without comparison panel
   return (
     <div className="mt-3">
       <PendingReviewActions
@@ -294,7 +293,6 @@ export function DownloadActivityCard({
               <DownloadMetadata download={download} compact={compact} config={config} StatusIcon={StatusIcon} />
             </div>
 
-            {/* Hide top-level actions for pending_review — they move into the expand panel */}
             {!isPendingReview && (
               <DownloadActions
                 download={download}

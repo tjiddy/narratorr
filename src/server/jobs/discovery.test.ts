@@ -29,8 +29,6 @@ describe('Discovery Job', () => {
     expect(mockDiscoveryService.refreshSuggestions).not.toHaveBeenCalled();
   });
 
-  // --- #408: Warning logging ---
-
   it('logs warnings from refresh result when non-empty', async () => {
     const settingsService = createMockSettingsService({ discovery: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: 5 } });
     const log = createMockLogger();
@@ -61,7 +59,6 @@ describe('Discovery Job', () => {
     const log = createMockLogger();
     mockDiscoveryService.refreshSuggestions.mockRejectedValueOnce(new Error('Provider down'));
 
-    // Should not throw
     await runDiscoveryJob(inject(mockDiscoveryService), inject(settingsService), inject<FastifyBaseLogger>(log));
     expect(log.error).toHaveBeenCalledWith(
       expect.objectContaining({ error: expect.objectContaining({ message: 'Provider down', type: 'Error' }) }),

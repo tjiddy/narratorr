@@ -27,12 +27,12 @@ import { ImportListsSettings } from './ImportListsSettings.js';
 import { SystemSettings } from './SystemSettings.js';
 
 export interface SettingsPageEntry {
-  /** Route path segment (empty string = index route) */
+  /** Empty string denotes the index route. */
   path: string;
   label: string;
   icon: ComponentType<{ className?: string }>;
   component: ComponentType;
-  /** If true, NavLink uses exact match (for the index route) */
+  /** Enables exact NavLink matching for the index route. */
   end?: boolean;
 }
 

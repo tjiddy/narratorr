@@ -39,22 +39,18 @@ describe('filterTabs (#351)', () => {
     expect(filterTabs).toHaveLength(6);
   });
 
-  // #1447 (S2d) — tabs are derived from the canonical filter vocabulary
   it('keys equal LIBRARY_FILTER_VALUES in order', () => {
     expect(filterTabs.map((t) => t.key)).toEqual([...LIBRARY_FILTER_VALUES]);
   });
 });
 
-// #282 — computeMbPerHour helper
 describe('computeMbPerHour (#282)', () => {
   it('computes MB/hr from audioTotalSize and audioDuration', () => {
-    // 100 MB in 1 hour = 100 MB/hr
     const book = makeBook({ audioTotalSize: 100 * 1024 * 1024, audioDuration: 3600 });
     expect(computeMbPerHour(book)).toBeCloseTo(100, 1);
   });
 
   it('falls back to size when audioTotalSize is null', () => {
-    // 50 MB in 1 hour = 50 MB/hr
     const book = makeBook({ audioTotalSize: null, size: 50 * 1024 * 1024, audioDuration: 3600 });
     expect(computeMbPerHour(book)).toBeCloseTo(50, 1);
   });
@@ -69,16 +65,13 @@ describe('computeMbPerHour (#282)', () => {
     expect(computeMbPerHour(book)).toBeNull();
   });
 
-  // #735 — audioDuration is in seconds, duration is in minutes; without unit
-  // conversion the minutes-only path inflates results 60x.
+  // `duration` is minutes; `audioDuration` is seconds.
   it('handles minutes-only duration via *60 conversion', () => {
-    // 600 min = 10 hr; 360 MiB / 10 hr = 36 MB/hr
     const book = makeBook({ audioDuration: null, duration: 600, audioTotalSize: 360 * 1024 * 1024, size: null });
     expect(computeMbPerHour(book)).toBeCloseTo(36, 1);
   });
 
   it('prefers audioDuration when both audioDuration and duration are populated', () => {
-    // audioDuration: 36000s = 10hr; duration field is ignored
     const book = makeBook({ audioDuration: 36000, duration: 600, audioTotalSize: 360 * 1024 * 1024, size: null });
     expect(computeMbPerHour(book)).toBeCloseTo(36, 1);
   });
@@ -89,7 +82,6 @@ describe('computeMbPerHour (#282)', () => {
   });
 
   it('falls through to duration when audioDuration is 0', () => {
-    // audioDuration: 0 should NOT short-circuit; falls through to duration (600 min = 10 hr)
     const book = makeBook({ audioDuration: 0, duration: 600, audioTotalSize: 360 * 1024 * 1024, size: null });
     expect(computeMbPerHour(book)).toBeCloseTo(36, 1);
   });

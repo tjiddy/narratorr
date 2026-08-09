@@ -4,12 +4,6 @@ import {
   isPersistableCompanionBasename,
 } from './companion-ebook-observation.js';
 
-/**
- * `isPersistableCompanionBasename` (#1974 AC10 term 3) is the ONE basename domain shared by
- * discovery, the opener, and the observation write boundary. It is defined *from*
- * `filenameSchema`, so these cases double as the proof that the three sites cannot drift:
- * each rejected name below is also rejected by a full `companionEbookObservationSchema.parse`.
- */
 describe('isPersistableCompanionBasename', () => {
   const accepted = [
     'book.epub',
@@ -19,7 +13,7 @@ describe('isPersistableCompanionBasename', () => {
     'book.part.epub',
     'Том 1.epub',
     'a, b & c.epub',
-    '.book.epub', // dotfiles are a DISCOVERY exclusion, not a persistability one
+    '.book.epub',
   ];
 
   const rejected = [
@@ -40,8 +34,6 @@ describe('isPersistableCompanionBasename', () => {
     expect(isPersistableCompanionBasename(name)).toBe(false);
   });
 
-  // The predicate is derived from `filenameSchema`, never a restatement of its rules.
-  // If someone re-spells the rules, this drifts and fails.
   it.each(rejected)('agrees with the observation write boundary on %j', (name) => {
     const parsed = companionEbookObservationSchema.safeParse({
       status: 'available',

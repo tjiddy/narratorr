@@ -20,7 +20,6 @@ const blacklistListQuerySchema = paginationParamsSchema;
 type BlacklistListQuery = z.infer<typeof blacklistListQuerySchema>;
 
 export async function blacklistRoutes(app: FastifyInstance, blacklistService: BlacklistService) {
-  // GET /api/blacklist
   app.get<{ Querystring: BlacklistListQuery }>(
     '/api/blacklist',
     { schema: { querystring: blacklistListQuerySchema } },
@@ -32,7 +31,6 @@ export async function blacklistRoutes(app: FastifyInstance, blacklistService: Bl
     },
   );
 
-  // POST /api/blacklist
   app.post<{ Body: CreateBlacklistInput }>(
     '/api/blacklist',
     {
@@ -51,7 +49,6 @@ export async function blacklistRoutes(app: FastifyInstance, blacklistService: Bl
     },
   );
 
-  // PATCH /api/blacklist/:id — toggle temporary/permanent
   app.patch<{ Params: IdParam; Body: ToggleBody }>(
     '/api/blacklist/:id',
     {
@@ -75,7 +72,6 @@ export async function blacklistRoutes(app: FastifyInstance, blacklistService: Bl
     },
   );
 
-  // DELETE /api/blacklist/:id
   app.delete<{ Params: IdParam }>(
     '/api/blacklist/:id',
     {

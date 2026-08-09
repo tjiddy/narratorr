@@ -15,9 +15,7 @@ import type { BulkJobFailure } from './bulk-job.js';
 
 export interface ReconcileBookSidecarsArgs {
   bookId: number;
-  /** Book title for the connector-refresh item (the reconcile SELECT loads it; authors are not). */
   title: string;
-  /** Non-null book folder (the reconcile query guarantees `path IS NOT NULL`). */
   bookFolder: string;
   coverUrl: string | null;
   bookService: BookService;
@@ -26,39 +24,20 @@ export interface ReconcileBookSidecarsArgs {
   connectorService?: ConnectorService | undefined;
 }
 
-/**
- * Outcome of one book's sidecar reconcile. Deliberately NOT a bare boolean (#2159): `false` used to
- * mean both "nothing went wrong" and "something went wrong but we discarded what", which is exactly
- * how the live ENOENT case reached the operator as an anonymous `failures: 1`. The `reason` is
- * always present on the failing arm, so a caller cannot record a failure with no identity.
- */
+// Every failure carries an operator-visible reason.
 export type SidecarReconcileOutcome = { failed: false } | { failed: true; reason: string };
 
-/** Stable reasons for a step that failed without reporting an underlying cause. */
 const GENERIC_OPF_REASON = 'OPF write failed';
 const GENERIC_COVER_REASON = 'Cover download failed';
 
 /**
- * (Re)write a single book's media-server sidecars from the DB: the `metadata.opf` and the folder
- * cover image. Returns `{ failed: true, reason }` only on a *failure* worth counting — an OPF write
- * that returns `'failed'`, or a cover download that was attempted and returned `'failed'`. Returns
- * `{ failed: false }` (success or benign skip) for: a foreign-OPF skip, a single-file-pointer path,
- * and a `coverUrl` that is `null` or already local (nothing to materialize).
- *
- * BOTH steps run in one iteration, so both can fail; that is ONE failure with ONE reason naming
- * both causes, OPF first. The ordering is load-bearing rather than cosmetic — the composed string
- * is length-bounded by `toShortErrorText` at the call site, so leading with the OPF cause means
- * truncation can never be what hides the ENOENT this issue exists to surface.
- *
- * Unlike the per-book edit triggers, reconcile writes the OPF regardless of the global
- * `tagging.writeOpf` setting — the bulk action is itself the operator's explicit opt-in.
+ * Benign sidecar skips succeed; combine actual failures OPF-first so truncation preserves that cause.
+ * This explicit bulk action writes OPF regardless of tagging.writeOpf.
  */
 export async function reconcileBookSidecars(args: ReconcileBookSidecarsArgs): Promise<SidecarReconcileOutcome> {
   const { bookId, title, bookFolder, coverUrl, bookService, db, log, connectorService } = args;
 
-  // Single-file pointer (path is a loose audio file, not a book directory): skip BOTH sidecars.
-  // The OPF writer already guards this; the cover materialization must too, else
-  // `join(<file>, 'cover.ext')` would target a path beneath a file and spuriously fail. Not a failure.
+  // A loose audio-file path cannot contain either sidecar.
   if (AUDIO_EXTENSIONS.has(extname(bookFolder).toLowerCase())) {
     log.debug({ bookId, bookFolder }, 'Sidecar reconcile skipped — single-file pointer path');
     return { failed: false };
@@ -67,18 +46,13 @@ export async function reconcileBookSidecars(args: ReconcileBookSidecarsArgs): Pr
   const reasons: string[] = [];
   let wrote = false;
 
-  // OPF: always enabled for the explicit reconcile action. 'skipped' (foreign OPF / missing book)
-  // is not a failure; only a 'failed' write counts. A 'written' OPF warrants a refresh.
-  // `onFailure` receives the caught VALUE — `ENOENT` lives on `.code` and undici's real diagnostic
-  // on `.cause`, and neither survives a message-only channel.
+  // Capture the raw failure value; .code and .cause are lost in a message-only channel.
   const opfCause = captureCause();
   const opfOutcome = await writeOpfSidecar({ enabled: true, bookService, bookId, bookFolder, log, onFailure: opfCause.sink });
   if (opfOutcome === 'failed') reasons.push(opfCause.describe(GENERIC_OPF_REASON));
   if (opfOutcome === 'written') wrote = true;
 
-  // Cover: only a remote coverUrl is materialized. null / already-local → no download attempt,
-  // not a failure. 'failed' (pre-rename) counts as a failure; a post-rename DB failure stays
-  // 'written' (the file materialized) → a refresh, not a counted failure.
+  // A post-rename DB failure still means the cover materialized and needs refresh.
   if (coverUrl && isRemoteCoverUrl(coverUrl)) {
     const coverCause = captureCause();
     const coverOutcome = await downloadRemoteCover(bookId, bookFolder, coverUrl, db, log, coverCause.sink);
@@ -86,9 +60,7 @@ export async function reconcileBookSidecars(args: ReconcileBookSidecarsArgs): Pr
     if (coverOutcome === 'written') wrote = true;
   }
 
-  // One refresh per book when an OPF or cover actually materialized; books that only skipped
-  // (foreign OPF / single-file pointer / already-local cover) enqueue nothing. authorName is null —
-  // the reconcile projection does not load authors and the field is observability-only.
+  // Authors are not loaded; authorName is observability-only.
   if (wrote) {
     enqueueBookRefresh(connectorService, log, 'metadata', { bookId, title, authorName: null, libraryPath: bookFolder });
   }
@@ -97,11 +69,7 @@ export async function reconcileBookSidecars(args: ReconcileBookSidecarsArgs): Pr
   return { failed: false };
 }
 
-/**
- * A one-shot `onFailure` sink plus its reader. `describe` formats whatever the step reported through
- * the shared formatter, or falls back to `generic` when the step never called the sink at all (an
- * older/mocked writer, or a failure arm with nothing to report).
- */
+// Older or mocked writers may report failure without invoking the sink.
 function captureCause(): { sink: (cause: unknown) => void; describe: (generic: string) => string } {
   let cause: unknown;
   let reported = false;
@@ -121,12 +89,7 @@ export interface RunSidecarReconcileDeps {
   connectorService?: ConnectorService | undefined;
 }
 
-/**
- * Bulk-job body for the library reconcile: iterate eligible books and (re)write each book's
- * sidecars. Extracted from `BulkOperationService` (it is over the file line cap) — mirrors the
- * `bulk-job.ts` split. `setTotal`/`tick` are the BulkJob progress callbacks; a thrown per-book
- * error counts as a failure but never aborts the run.
- */
+// Per-book errors count as failures but never abort the run.
 export async function runSidecarReconcile(
   deps: RunSidecarReconcileDeps,
   setTotal: (n: number) => void,
@@ -141,7 +104,7 @@ export async function runSidecarReconcile(
   setTotal(rows.length);
 
   for (const row of rows) {
-    if (!row.path) { tick(false); continue; } // defensive — the WHERE guarantees a non-null path
+    if (!row.path) { tick(false); continue; } // SQL guarantees path; retain runtime defense.
     try {
       const outcome = await reconcileBookSidecars({
         bookId: row.id,
@@ -153,9 +116,7 @@ export async function runSidecarReconcile(
         log,
         connectorService,
       });
-      // Exactly one tick and at most one detail per book, however many steps failed. The composed
-      // reason goes back through the shared formatter so the FINAL string is the one that gets
-      // redacted and length-bounded (AC11/AC13 step 4).
+      // Emit one redacted, length-bounded failure per book even if both steps fail.
       if (outcome.failed) {
         tick(true, { bookId: row.id, title: row.title, error: toShortErrorText(outcome.reason) });
       } else {

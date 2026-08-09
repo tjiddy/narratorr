@@ -10,7 +10,6 @@ const noTautologicalExpect = require('./eslint-rules/no-tautological-expect.cjs'
 const noUnstampedMatchGeneration = require('./eslint-rules/no-unstamped-match-generation.cjs');
 
 export default tseslint.config(
-  // Ignore patterns
   {
     ignores: [
       '**/dist/**',
@@ -25,13 +24,10 @@ export default tseslint.config(
     ],
   },
 
-  // Base config for all files
   js.configs.recommended,
 
-  // TypeScript config (recommended + type-checked for return-await)
   ...tseslint.configs.recommended,
 
-  // Global settings
   {
     languageOptions: {
       ecmaVersion: 2022,
@@ -51,7 +47,6 @@ export default tseslint.config(
     },
   },
 
-  // React config for client files
   {
     files: ['**/src/client/**/*.{ts,tsx}'],
     plugins: {
@@ -64,12 +59,10 @@ export default tseslint.config(
         'error',
         { allowConstantExport: true },
       ],
-      // No console in client code
       'no-console': ['error', { allow: ['warn', 'error'] }],
     },
   },
 
-  // Server-side code - allow console.log for logging
   {
     files: ['**/src/server/**/*.ts', '**/src/core/**/*.ts', '**/src/db/**/*.ts', 'e2e/**/*.ts'],
     rules: {
@@ -77,7 +70,7 @@ export default tseslint.config(
     },
   },
 
-  // Server-side custom rules — prevent raw error logging that Pino drops
+  // Pino drops raw catch bindings from structured JSON logs.
   {
     files: ['**/src/server/**/*.ts'],
     ignores: ['**/*.test.ts'],
@@ -89,10 +82,7 @@ export default tseslint.config(
     },
   },
 
-  // The two import hooks own every write that installs, replaces or clears a row's
-  // `matchResult` — each must route through `stampRow` so the row carries a fresh
-  // `matchGeneration` (#2055 B7 / #2182). Registration is scoped to these two files
-  // because they are the only places rows are built with a match.
+  // Only these hooks construct matched rows; every such write must carry a fresh generation stamp.
   {
     files: [
       '**/src/client/pages/library-import/useLibraryImport.ts',
@@ -106,10 +96,7 @@ export default tseslint.config(
     },
   },
 
-  // Layering guards — keep client/server/core/shared boundaries enforceable.
-  // Tests are intentionally excluded: shared/schemas/*.test.ts uses cross-layer
-  // type-only consumer-alignment imports (e.g. search-stream.test.ts), and
-  // service unit tests under src/server/ legitimately import from src/core/.
+  // Enforce production layer boundaries; tests deliberately use cross-layer fixtures and alignment imports.
   {
     files: ['**/src/client/**/*.{ts,tsx}'],
     ignores: ['**/*.test.ts', '**/*.test.tsx'],
@@ -140,9 +127,7 @@ export default tseslint.config(
     },
   },
   {
-    // Services are a lower layer than routes — they must not import from routes/.
-    // Production-only: test files legitimately reach into routes/ (e.g.
-    // indexer.service.test.ts dynamically imports routes/prowlarr-compat.js).
+    // Services must not import routes; compatibility tests may.
     files: ['**/src/server/services/**/*.ts'],
     ignores: ['**/*.test.ts'],
     rules: {
@@ -152,10 +137,7 @@ export default tseslint.config(
     },
   },
   {
-    // Jobs are a lower layer than routes — they must not import from routes/.
-    // Production-only: test files legitimately reach into routes/. The DI
-    // container type (`Services`) now lives in services/di.ts so jobs import it
-    // from there, not "upward" from routes/.
+    // Jobs must not import routes; tests may.
     files: ['**/src/server/jobs/**/*.ts'],
     ignores: ['**/*.test.ts'],
     rules: {
@@ -165,11 +147,7 @@ export default tseslint.config(
     },
   },
   {
-    // Utils are generic, layer-agnostic helpers — they must not import service
-    // VALUES (that's a layer inversion; the coupled logic belongs in services/).
-    // `import type` from services/ is allowed: ~10 utils reference service types
-    // for signatures without depending on their runtime, which is legitimate.
-    // Production-only: test files legitimately reach into services/.
+    // Utils may import service types for signatures, never runtime values; tests may cross the boundary.
     files: ['**/src/server/utils/**/*.ts'],
     ignores: ['**/*.test.ts'],
     rules: {
@@ -183,10 +161,8 @@ export default tseslint.config(
     },
   },
 
-  // Custom rules for all files
   {
     rules: {
-      // TypeScript
       '@typescript-eslint/no-unused-vars': [
         'error',
         {
@@ -201,14 +177,12 @@ export default tseslint.config(
         { prefer: 'type-imports', fixStyle: 'inline-type-imports' },
       ],
 
-      // Async safety — catch blocks are dead code without `await` on returned promises
+      // Without `await`, a returned rejection bypasses the surrounding catch.
       '@typescript-eslint/return-await': ['error', 'in-try-catch'],
 
-      // File hygiene
       'max-lines': ['error', { max: 400, skipBlankLines: true, skipComments: true }],
       'max-lines-per-function': ['error', { max: 150, skipBlankLines: true, skipComments: true }],
       'complexity': ['error', { max: 15 }],
-      // General
       'prefer-const': 'error',
       'no-var': 'error',
       'no-useless-escape': 'error',
@@ -216,8 +190,7 @@ export default tseslint.config(
     },
   },
 
-  // Test files - relax rules that don't add value in tests, but enforce
-  // anti-hollow-assertion sweep rule (catches `expect(true).toBe(true)` etc.)
+  // Relax test complexity limits while rejecting literal tautologies.
   {
     files: ['**/*.test.ts', '**/*.test.tsx'],
     plugins: {
@@ -228,9 +201,7 @@ export default tseslint.config(
       'max-lines-per-function': 'off',
       'complexity': 'off',
       'narratorr/no-tautological-expect': 'error',
-      // Allow inline `typeof import('...')` annotations in vi.mock/vi.importActual
-      // partial-mock helpers — type-only, fully-erased, harmless in test factories.
-      // Keep the import-style preference for ordinary `import type` usage.
+      // Vitest partial mocks need erased inline `typeof import(...)` annotations.
       '@typescript-eslint/consistent-type-imports': [
         'error',
         { prefer: 'type-imports', fixStyle: 'inline-type-imports', disallowTypeAnnotations: false },
@@ -238,9 +209,7 @@ export default tseslint.config(
     },
   },
 
-  // src/db/schema.ts is a declarative Drizzle table catalog — its length scales
-  // linearly with the data model, so the generic max-lines cap adds no value and
-  // would force an arbitrary split of co-located table definitions.
+  // Drizzle's declarative catalog scales with the data model; splitting it to satisfy max-lines adds no value.
   {
     files: ['src/db/schema.ts'],
     rules: {

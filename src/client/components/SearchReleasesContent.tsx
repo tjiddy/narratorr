@@ -14,10 +14,6 @@ import {
 import { UnsupportedSection } from '@/components/UnsupportedSection';
 import { ReleaseCard } from '@/components/ReleaseCard';
 
-// ============================================================================
-// Indexer Status Row
-// ============================================================================
-
 function IndexerStatusIcon({ status }: { status: IndexerState['status'] }) {
   switch (status) {
     case 'pending':
@@ -68,10 +64,6 @@ function IndexerStatusRow({
     </div>
   );
 }
-
-// ============================================================================
-// Phase Components
-// ============================================================================
 
 function SearchingPhase({
   indexers,
@@ -189,10 +181,6 @@ function ResultsPhase({
   );
 }
 
-// ============================================================================
-// Main Component
-// ============================================================================
-
 interface SearchReleasesContentProps {
   phase: 'idle' | 'searching' | 'results';
   indexers: IndexerState[];
@@ -206,9 +194,7 @@ interface SearchReleasesContentProps {
   onCancelIndexer: (id: number) => void;
   onShowResults: () => void;
   onRetry: () => void;
-  /** Retry is rendered in every error state but disabled when the current query is
-   *  ineligible (F9/F24) — the single observable contract is "rendered, disabled",
-   *  never hidden. */
+  /** Retry remains rendered but disabled when the current query is ineligible. */
   retryDisabled: boolean;
   onGrab: (result: SearchResult) => void;
   onBlacklist: (result: SearchResult) => void;

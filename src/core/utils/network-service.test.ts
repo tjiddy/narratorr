@@ -29,8 +29,7 @@ import {
 } from './network-service.js';
 import { Agent as UndiciAgent } from 'undici';
 
-// dns.lookup is overloaded; the all:true variant returns an array. Cast to a
-// permissive Mock so resolved-value typing accepts arrays.
+// dns.lookup's `all:true` overload needs a permissive Mock to accept array fixtures.
 const mockedLookup = vi.mocked(dnsLookup) as unknown as Mock;
 
 describe('fetchWithTimeout', () => {
@@ -91,7 +90,6 @@ describe('fetchWithTimeout', () => {
 
     await fetchWithTimeout('https://example.com', {}, 7500);
 
-    // Signal should exist with the timeout
     const calledOptions = fetchSpy.mock.calls[0]![1] as RequestInit;
     expect(calledOptions.signal).toBeDefined();
   });
@@ -106,7 +104,6 @@ describe('fetchWithTimeout', () => {
 
     const calledOptions = fetchSpy.mock.calls[0]![1] as RequestInit;
     expect(calledOptions.signal).toBeDefined();
-    // The composed signal reflects the caller aborting (without replacing the timeout).
     expect(calledOptions.signal!.aborted).toBe(false);
     controller.abort();
     expect(calledOptions.signal!.aborted).toBe(true);
@@ -487,7 +484,6 @@ describe('resolveAndValidate', () => {
   });
 });
 
-// #966 — LAN allowlist for Prowlarr-on-private-IP grabs
 describe('normalizedHostPortFromUrl / normalizedHostnameFromUrl', () => {
   it('emits scheme-default port when omitted (http → 80, https → 443)', () => {
     expect(normalizedHostPortFromUrl(new URL('http://prowlarr.lan/'))).toBe('prowlarr.lan:80');
@@ -568,7 +564,6 @@ describe('makeValidatingLookup / createSsrfSafeDispatcher (LAN allowlist, #966)'
   it('createSsrfSafeDispatcher() (no arg) blocks private IPs (regression guard for cover-art / enrich call sites)', async () => {
     mockedLookup.mockResolvedValueOnce([{ address: '192.168.1.1', family: 4 }]);
     const dispatcher = createSsrfSafeDispatcher();
-    // Pull the lookup hook out of the configured Agent connect options for direct test.
     const lookupFn = makeValidatingLookup();
     const { err } = await call(lookupFn, 'rebind.example.com');
     expect(err).toBeInstanceOf(Error);
@@ -631,11 +626,7 @@ describe('makeValidatingLookup / createSsrfSafeDispatcher (LAN allowlist, #966)'
   });
 });
 
-/**
- * Direct tests for the dispatcher's connect.lookup hook (AC1's socket-bound
- * validation). Service tests stub global fetch and never exercise this path,
- * so the rebinding-protection contract is verified here.
- */
+/** Directly exercises socket-bound validation because fetch stubs cannot reach the dispatcher hook. */
 describe('validatingLookup (socket-bound dispatcher hook)', () => {
   function callLookup(hostname: string): Promise<{ err: unknown; address: unknown; family: unknown }> {
     return new Promise((resolve) => {
@@ -759,15 +750,8 @@ describe('validatingLookup (socket-bound dispatcher hook)', () => {
 });
 
 /**
- * Regression: undici 8 tightened dispatcher type validation and rejects
- * dispatchers built from the npm `undici` package when passed to Node 24's
- * bundled `globalThis.fetch` (different `Dispatcher` class identity), throwing
- * `UND_ERR_INVALID_ARG: invalid onRequestStart method`. `undiciFetch` (also
- * imported from the npm `undici` package) accepts the same package's
- * dispatchers without that mismatch. This test instantiates a real `ProxyAgent`
- * pointed at an unreachable address and asserts the dispatcher is *used*
- * (i.e. the call fails with a connection-shaped error from the dispatcher,
- * not a type-validation error before the dispatcher ran).
+ * Node 24 bundled fetch rejects npm undici dispatchers by class identity. An unreachable real
+ * ProxyAgent may fail to connect, but must get past dispatcher-shape validation.
  */
 describe('undiciFetch + dispatcher (regression: dual-undici instance lineage)', () => {
   it('passes a ProxyAgent dispatcher through without UND_ERR_INVALID_ARG', async () => {
@@ -782,11 +766,8 @@ describe('undiciFetch + dispatcher (regression: dual-undici instance lineage)', 
       fetchOptions as Parameters<typeof undiciFetch>[1],
     ).catch((e: unknown) => e);
 
-    // Must be a thrown error of some kind — fetching through an unreachable
-    // proxy can't succeed.
+    // The unreachable proxy must throw, but the exact connection-error shape varies.
     expect(error).toBeInstanceOf(Error);
-    // The exact failure shape varies (AbortError, fetch failed, etc.) — what
-    // matters is it is NOT the dispatcher-shape mismatch that broke prod.
     const message = (error as Error).message ?? '';
     expect(message).not.toMatch(/invalid onRequestStart method/);
     const code = (error as { cause?: { code?: string } }).cause?.code;
@@ -797,25 +778,14 @@ describe('undiciFetch + dispatcher (regression: dual-undici instance lineage)', 
 });
 
 /**
- * Routing contract for `fetchWithOptionalDispatcher`. Together with the
- * dispatcher-routing tests in `proxy.dispatcher-routing.test.ts` and
- * `myanonamouse.dispatcher-routing.test.ts` (which prove the indexer call
- * sites pass the dispatcher into this helper), this asserts the production
- * fix from the undici 7→8 cover-download regression: dispatcher-attached
- * calls MUST go through `undiciFetch` so the package-instance Dispatcher
- * shape matches.
- *
- * The negative `expect(globalThis.fetch).not.toHaveBeenCalled()` assertion
- * is what protects the fix — a regression that swaps the helper back to
- * always-`globalThis.fetch` would fail this test.
+ * Call-site tests prove dispatchers reach this seam; the negative global-fetch assertion protects
+ * npm undici class lineage here.
  */
 describe('fetchWithOptionalDispatcher (call-site routing contract)', () => {
   it('routes through undiciFetch (NOT globalThis.fetch) when dispatcher is set', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const dispatcher = new UndiciAgent({ connect: { lookup: () => { /* never called */ } } });
 
-    // Trigger an unreachable host so the call fails fast — we don't care
-    // about the result, only that `globalThis.fetch` was NOT used.
     await fetchWithOptionalDispatcher('http://127.0.0.1:1/', {
       dispatcher,
       signal: AbortSignal.timeout(500),
@@ -844,7 +814,6 @@ describe('fetchWithOptionalDispatcher (call-site routing contract)', () => {
 describe('fetchWithSsrfRedirect', () => {
   beforeEach(() => {
     mockedLookup.mockReset();
-    // default: every host resolves to a public IP
     mockedLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
   });
 
@@ -1004,9 +973,6 @@ describe('fetchWithSsrfRedirect', () => {
   });
 
   it('rejects with a timeout-shaped error when the per-hop timeout fires (controlled firing)', async () => {
-    // Stub fetch to return a Promise that never resolves on its own — only
-    // the AbortSignal can settle it. This proves the helper actually wires the
-    // AbortSignal.timeout-driven signal into the fetch call.
     vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => {
       return new Promise<Response>((_resolve, reject) => {
         const signal = (init as RequestInit | undefined)?.signal;
@@ -1015,7 +981,7 @@ describe('fetchWithSsrfRedirect', () => {
           return;
         }
         signal.addEventListener('abort', () => {
-          // Mirror the real fetch behavior: reject with a TimeoutError DOMException
+          // Mirror fetch's TimeoutError rejection.
           reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
         });
       });
@@ -1032,8 +998,6 @@ describe('fetchWithSsrfRedirect', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const dispatcher = new UndiciAgent({ connect: { lookup: validatingLookup } });
 
-    // Hit an unreachable port so the dispatcher's connect path is exercised
-    // but the call fails fast — we only care that globalThis.fetch was NOT used.
     await fetchWithSsrfRedirect('http://127.0.0.1:1/', {
       dispatcher,
       timeoutMs: 500,
@@ -1050,7 +1014,6 @@ describe('fetchWithSsrfRedirect', () => {
     expect(fetchSpy).toHaveBeenCalledOnce();
   });
 
-  // #966 F1 — production redirect walker threads lanAllowlist into pre-flight
   describe('LAN allowlist propagation (#966)', () => {
     it('permits an allowlisted private start URL host:port to reach the fetch', async () => {
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
@@ -1107,8 +1070,6 @@ describe('fetchWithSsrfRedirect', () => {
     });
   });
 
-  // #1327 — caller headers forwarded into each real fetch hop; credential-class
-  // headers stripped on cross-origin redirect hops (non-dispatcher path).
   describe('header forwarding across redirect hops (#1327)', () => {
     function headersOfCall(spy: ReturnType<typeof vi.spyOn>, nth: number): Record<string, string> {
       return (spy.mock.calls[nth][1] as { headers: Record<string, string> }).headers;
@@ -1200,10 +1161,8 @@ describe('fetchWithSsrfRedirect', () => {
         headers: { 'User-Agent': 'X/1.0', 'Authorization': 'Bearer t' },
       });
 
-      // Hop 1 (B, cross-origin): credential stripped, identity kept.
       const hopB = headersOfCall(fetchSpy, 1);
       expect(hopB).toEqual({ 'User-Agent': 'X/1.0' });
-      // Hop 2 (back to A, same origin as start): credential restored.
       expect(headersOfCall(fetchSpy, 2)).toEqual(
         expect.objectContaining({ 'User-Agent': 'X/1.0', 'Authorization': 'Bearer t' }),
       );
@@ -1219,9 +1178,6 @@ describe('fetchWithSsrfRedirect', () => {
       expect(fetchSpy).toHaveBeenCalledTimes(2);
     });
 
-    // #1315 regression guard: the headers spread at the real-fetch layer is the
-    // forwarding fix behind the abuse-warning UA. This pins it so removing the
-    // spread breaks a test.
     it('forwards User-Agent to the real fetch mock across a hop (regression guard for #1315)', async () => {
       const fetchSpy = vi.spyOn(globalThis, 'fetch')
         .mockResolvedValueOnce(makeRedirect('https://a.com/2'))
@@ -1235,10 +1191,6 @@ describe('fetchWithSsrfRedirect', () => {
   });
 });
 
-// #1327 — pure helper behind the cross-origin credential-strip policy. Direct
-// unit tests cover both fetch paths by construction (the redirect walker hands
-// the single computed object to fetchWithOptionalDispatcher → plain fetch or
-// undiciFetch alike).
 describe('stripCrossOriginCredentialHeaders', () => {
   const credentialHeaders = {
     'User-Agent': 'X/1.0',
@@ -1285,20 +1237,10 @@ describe('stripCrossOriginCredentialHeaders', () => {
   });
 });
 
-// #966 F2/F3 — dispatcher hostname allowlist wiring (direct, not bypassing
-// `createSsrfSafeDispatcher` via a separate `makeValidatingLookup` call).
-//
-// Strategy: stand up an ephemeral HTTP server on 127.0.0.1 inside the test
-// (no ambient network dependency) and mock `node:dns/promises` to resolve
-// `prowlarr.lan` to that loopback address. `127.0.0.1` is itself in the
-// blocked range, so the hostname allowlist is what determines whether
-// validatingLookup permits the resolved address.
-//
-//   - Allowed-host case: lookup permits 127.0.0.1, undici connects, server
-//     replies 200. Asserting on a real status proves the allowlist argument
-//     was actually threaded into the dispatcher's `connect.lookup`.
-//   - Empty / no-arg / non-allowlisted cases: lookup refuses before any
-//     socket is opened; error message includes "blocked range".
+/**
+ * An ephemeral loopback server plus mocked DNS makes the hostname allowlist the only reason a
+ * blocked address can connect. A real 200 proves wiring into `connect.lookup`; negative cases refuse.
+ */
 describe('createSsrfSafeDispatcher — hostname allowlist wiring (#966)', () => {
   let server: http.Server;
   let serverPort: number;
@@ -1343,10 +1285,6 @@ describe('createSsrfSafeDispatcher — hostname allowlist wiring (#966)', () => 
       signal: AbortSignal.timeout(2000),
     } as Parameters<typeof undiciFetch>[1]);
 
-    // Lookup permitted prowlarr.lan → 127.0.0.1 because of the allowlist;
-    // undici connected to our local server and got a real 200. If
-    // createSsrfSafeDispatcher stopped forwarding hostnameAllowlist, the
-    // lookup would refuse 127.0.0.1 (blocked range) and this would throw.
     expect(response.status).toBe(200);
     expect(await response.text()).toBe('ok');
 

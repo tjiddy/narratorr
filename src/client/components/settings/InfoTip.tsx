@@ -2,20 +2,9 @@ import { useRef, useState, type ReactNode } from 'react';
 import { InfoIcon } from '@/components/icons';
 import { useClickOutside } from '@/hooks/useClickOutside';
 
-/**
- * Inline "more info" affordance for row descriptions: keeps the visible copy down to the
- * load-bearing sentence and tucks reference material (env-var lists, format details) behind a
- * small icon. Opens on hover AND on click/keyboard (touch devices have no hover), closes on
- * outside click / Escape / mouse leave. The popover is inside the hover wrapper, so moving the
- * pointer into it keeps it open — its content stays selectable/copyable.
- *
- * Only for SUPPLEMENTARY detail — anything required to fill the field correctly belongs in the
- * always-visible description, not in here.
- */
+/** Supplementary details only; required guidance belongs in the row description. */
 export function InfoTip({ label = 'More info', children }: { label?: string; children: ReactNode }) {
-  // Hover and click are SEPARATE states, or they fight: a mouse click is always preceded by
-  // mouseenter, so a single click-toggled state would open-on-hover then instantly close-on-click.
-  // Open while hovered OR pinned; click toggles the pin (touch/keyboard), Escape/outside clears both.
+  // Separate hover and pin state because clicking with a mouse also enters hover.
   const [hovered, setHovered] = useState(false);
   const [pinned, setPinned] = useState(false);
   const open = hovered || pinned;

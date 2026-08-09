@@ -26,7 +26,6 @@ vi.mock('@/lib/api', async (importOriginal) => {
   };
 });
 
-// #282 — Library table view component tests
 
 function defaultProps() {
   return {
@@ -86,35 +85,26 @@ describe('LibraryTableView', () => {
         seriesName: 'Cosmere',
         seriesPosition: 1,
         status: 'imported',
-        audioTotalSize: 500 * 1024 * 1024, // 500 MB
-        audioDuration: 36000, // 10 hours
+        audioTotalSize: 500 * 1024 * 1024,
+        audioDuration: 36000,
         audioFileFormat: 'mp3',
         createdAt: '2024-06-15T00:00:00Z',
       });
       renderTable({ books: [book] });
 
       const rows = screen.getAllByRole('row');
-      // First row is header, second is data
       const dataRow = rows[1];
       const cells = within(dataRow!).getAllByRole('cell');
 
-      // Status cell (index 1, after checkbox)
       expect(cells[1]).toHaveTextContent('imported');
-      // Title cell
       expect(cells[2]).toHaveTextContent('Mistborn');
-      // Author cell
       expect(cells[3]).toHaveTextContent('Brandon Sanderson');
-      // Narrator cell
       expect(cells[4]).toHaveTextContent('Michael Kramer');
-      // Series cell
       expect(cells[5]).toHaveTextContent('Cosmere #1');
-      // Date Added cell — formatted via toLocaleDateString, timezone may shift the day
+      // toLocaleDateString may shift UTC midnight by a day.
       expect(cells[6]!.textContent).toMatch(/Jun.*1[45].*2024/);
-      // Quality cell (MB/hr): 500 MB / 10 hours = 50 MB/hr
       expect(cells[7]).toHaveTextContent('50 MB/hr');
-      // Size cell
       expect(cells[8]).toHaveTextContent('500 MB');
-      // Format cell
       expect(cells[9]).toHaveTextContent('mp3');
     });
 
@@ -166,7 +156,7 @@ describe('LibraryTableView', () => {
     it('falls back from audioTotalSize to size for size column', () => {
       const book = createMockLibraryBook({
         audioTotalSize: null,
-        size: 200 * 1024 * 1024, // 200 MB
+        size: 200 * 1024 * 1024,
       });
       renderTable({ books: [book] });
 
@@ -176,10 +166,9 @@ describe('LibraryTableView', () => {
     });
 
     it('computes MB/hr from audioTotalSize and audioDuration', () => {
-      // 1 GB over 5 hours = 204.8 MB/hr, rounds to 205
       const book = createMockLibraryBook({
         audioTotalSize: 1024 * 1024 * 1024,
-        audioDuration: 18000, // 5 hours in seconds
+        audioDuration: 18000,
       });
       renderTable({ books: [book] });
 
@@ -198,7 +187,6 @@ describe('LibraryTableView', () => {
 
       const rows = screen.getAllByRole('row');
       const cells = within(rows[1]!).getAllByRole('cell');
-      // computeMbPerHour returns null when duration <= 0, so dash is shown
       expect(cells[7]).toHaveTextContent('—');
     });
   });
@@ -212,7 +200,7 @@ describe('LibraryTableView', () => {
       ];
       renderTable({ books });
 
-      const rows = screen.getAllByRole('row').slice(1); // skip header
+      const rows = screen.getAllByRole('row').slice(1);
       expect(rows[0]).toHaveTextContent('Alpha');
       expect(rows[1]).toHaveTextContent('Beta');
       expect(rows[2]).toHaveTextContent('Gamma');
@@ -222,7 +210,6 @@ describe('LibraryTableView', () => {
       renderTable();
       const sortButtons = screen.getAllByRole('button', { name: /sort by/i });
       expect(sortButtons.length).toBeGreaterThan(0);
-      // All sortable columns should have buttons
       expect(screen.getByRole('button', { name: 'Sort by Title' })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Sort by Author' })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Sort by Narrator' })).toBeInTheDocument();
@@ -270,7 +257,6 @@ describe('LibraryTableView', () => {
       renderTable({ books });
 
       const checkboxes = screen.getAllByRole('checkbox');
-      // 1 select-all + 2 row checkboxes
       expect(checkboxes).toHaveLength(3);
       expect(screen.getByLabelText('Select Book A')).toBeInTheDocument();
       expect(screen.getByLabelText('Select Book B')).toBeInTheDocument();
@@ -327,7 +313,6 @@ describe('LibraryTableView', () => {
         createMockLibraryBook({ id: 1 }),
         createMockLibraryBook({ id: 2 }),
       ];
-      // Start with all selected
       renderTable({ books, selectedIds: new Set([1, 2]), onSelectionChange });
 
       await user.click(screen.getByLabelText('Select all books'));
@@ -338,14 +323,10 @@ describe('LibraryTableView', () => {
   describe('empty state', () => {
     it('renders nothing when zero books', () => {
       const { container } = renderTable({ books: [] });
-      // Component returns null for empty books array
       expect(container.querySelector('table')).toBeNull();
     });
   });
 
-  // #1447 (S2d) — drift guard for the table-view status styling map. Keys must
-  // set-equal the canonical BookStatus set so the chip can never fall back to an
-  // empty style for an unmapped status.
   describe('status chip completeness (#1447)', () => {
     it('bookStatusChipStyles keys set-equal BOOK_STATUSES', () => {
       expect(Object.keys(bookStatusChipStyles).sort()).toEqual([...BOOK_STATUSES].sort());

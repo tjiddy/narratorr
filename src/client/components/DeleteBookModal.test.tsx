@@ -79,14 +79,11 @@ describe('DeleteBookModal', () => {
         <DeleteBookModal {...defaultProps} onCancel={onCancel} />,
       );
 
-      // Check the toggle
       await user.click(screen.getByLabelText('Also delete 12 files from disk'));
       expect(screen.getByLabelText('Also delete 12 files from disk')).toBeChecked();
 
-      // Cancel
       await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
-      // Re-render as open — toggle should be reset
       rerender(<DeleteBookModal {...defaultProps} onCancel={onCancel} />);
       expect(screen.getByLabelText('Also delete 12 files from disk')).not.toBeChecked();
     });

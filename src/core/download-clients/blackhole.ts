@@ -45,11 +45,8 @@ export class BlackholeClient implements DownloadClientAdapter {
       return null;
     }
 
-    // nzb-url — follow indexer download redirects (302 getnzb links) through the
-    // SSRF-safe redirect helper, exactly as the torrent path does, then write the
-    // final .nzb bytes. The LAN allowlist (when present) lets a private/LAN
-    // configured-indexer NZB URL (e.g. Prowlarr-in-Docker) pass the SSRF pre-flight
-    // without widening policy for arbitrary private addresses (#1243).
+    // Follow indexer redirects through SSRF validation. The configured-host allowlist
+    // admits LAN indexers without opening arbitrary private addresses.
     const dispatcher = createSsrfSafeDispatcher(artifact.lanAllowlist?.hostname);
     try {
       let response: Response;
@@ -60,15 +57,10 @@ export class BlackholeClient implements DownloadClientAdapter {
           ...(artifact.lanAllowlist && { lanAllowlist: artifact.lanAllowlist.hostPort }),
         });
       } catch (error: unknown) {
-        // fetchWithSsrfRedirect propagates raw errors (unlike fetchWithTimeout, which
-        // maps internally). Map first so the AbortSignal.timeout DOMException becomes
-        // the 'Request timed out' string isTimeoutError matches; otherwise a timeout
-        // would downgrade to a plain DownloadClientError.
+        // This helper propagates raw errors; map first so timeout classification survives.
         const mapped = mapNetworkError(error);
         if (isTimeoutError(mapped)) throw new DownloadClientTimeoutError(this.name, mapped.message);
-        // Redact any raw URL (and its apikey/passkey query params) from unmapped
-        // errors before surfacing — mapped network codes carry no URL, but the
-        // final passthrough branch of mapNetworkError returns error.message verbatim.
+        // Unmapped messages may contain passkey/API-key URLs.
         throw new DownloadClientError(this.name, redactUrlsFromMessage(mapped.message));
       }
       if (!response.ok) {
@@ -86,7 +78,6 @@ export class BlackholeClient implements DownloadClientAdapter {
   }
 
   async getDownload(_id: string): Promise<DownloadItemInfo | null> {
-    // Blackhole has no progress monitoring
     return null;
   }
 
@@ -95,15 +86,15 @@ export class BlackholeClient implements DownloadClientAdapter {
   }
 
   async pauseDownload(_id: string): Promise<void> {
-    // No-op
+    // No-op.
   }
 
   async resumeDownload(_id: string): Promise<void> {
-    // No-op
+    // No-op.
   }
 
   async removeDownload(_id: string, _deleteFiles?: boolean): Promise<void> {
-    // No-op — file already handed off to external client
+    // File was already handed off; there is no external control channel.
   }
 
   async getCategories(): Promise<string[]> {

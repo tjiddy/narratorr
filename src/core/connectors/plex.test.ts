@@ -106,8 +106,6 @@ describe('PlexConnector', () => {
       expect(await makeConnector().listTargets()).toEqual([]);
     });
 
-    // #1778 — a null section title must parse and degrade to name = key (never
-    // dropped, never empty), with other sections unaffected and no throw.
     it('coalesces a null section title to the section key without dropping it', async () => {
       server.use(http.get(SECTIONS_URL, () => HttpResponse.json({
         MediaContainer: {
@@ -169,7 +167,6 @@ describe('PlexConnector', () => {
         return HttpResponse.json({});
       }));
       await makeConnector().refreshImport(batchFor('/lib/a b&c#%'), SIGNAL);
-      // searchParams.get decodes once; a single round-trip means no double-encoding.
       expect(decodedPath).toBe('/lib/a b&c#%');
     });
 
@@ -229,10 +226,6 @@ describe('PlexConnector', () => {
     });
   });
 
-  // Structured outcome fields (#1505): the adapter must hand the service the
-  // counts + resolved paths so the service logs the right LEVEL without parsing
-  // the message string. passthrough/skip are classified from the mapping match
-  // state, not by comparing the resolved string to the input (F3).
   describe('refreshImport() — structured outcome fields (#1505)', () => {
     function countingRefresh() {
       const requests: (string | null)[] = [];
@@ -257,7 +250,6 @@ describe('PlexConnector', () => {
       countingRefresh();
       const connector = makeConnector({ pathMappings: [{ localPath: '/lib', serverPath: '/lib' }] });
       const result = await connector.refreshImport(batchFor('/lib/Dune'), SIGNAL);
-      // Resolves to the same string as the input, yet a mapping MATCHED → not passthrough.
       expect(result.passthrough).toBe(0);
       expect(result.skipped).toBe(0);
       expect(result.resolvedServerPaths).toEqual(['/lib/Dune']);
@@ -284,7 +276,7 @@ describe('PlexConnector', () => {
     it('all-skipped, fallback ON → fallbackRefreshed:N, skipped:0; one section refresh; message notes the rescue', async () => {
       const requests = countingRefresh();
       const result = await makeConnector({ fallbackToFullRefresh: true }).refreshImport(batchFor('  ', ''), SIGNAL);
-      expect(requests).toEqual([null]); // exactly one section-wide refresh, no path param
+      expect(requests).toEqual([null]);
       expect(result.fallbackRefreshed).toBe(2);
       expect(result.skipped).toBe(0);
       expect(result.passthrough).toBe(0);
@@ -295,7 +287,7 @@ describe('PlexConnector', () => {
       const requests = countingRefresh();
       const connector = makeConnector({ pathMappings: [{ localPath: '/map', serverPath: '/srv' }] });
       const result = await connector.refreshImport(batchFor('/map/X', '/other/Y', '   '), SIGNAL);
-      expect(requests.filter((p) => p !== null)).toHaveLength(2); // two targeted, no fallback
+      expect(requests.filter((p) => p !== null)).toHaveLength(2);
       expect(result.skipped).toBe(1);
       expect(result.passthrough).toBe(1);
       expect(result.message).toContain('passthrough');
@@ -303,11 +295,8 @@ describe('PlexConnector', () => {
     });
   });
 
-  // estimateRequestCount feeds the service's scaled flush-timeout watchdog (#1506
-  // AC1); it MUST mirror the request plan refreshImport actually executes.
   describe('estimateRequestCount() — request plan for the scaled flush timeout', () => {
     it('counts distinct derivable server paths (deduped), no I/O', () => {
-      // Two distinct paths + a duplicate of the first → 2 requests.
       expect(makeConnector().estimateRequestCount(batchFor('/lib/A', '/lib/B', '/lib/A'))).toBe(2);
     });
 
@@ -418,7 +407,6 @@ describe('classifyServerPath — match KIND (drives passthrough/skip accounting,
   });
 
   it('identity mapping (serverPath === localPath) → kind: mapped even though output === input', () => {
-    // The crux of F3: do NOT infer passthrough from output === input.
     expect(classifyServerPath('/lib/Dune', [{ localPath: '/lib', serverPath: '/lib' }])).toEqual({ kind: 'mapped', path: '/lib/Dune' });
   });
 

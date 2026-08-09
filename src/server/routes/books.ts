@@ -29,7 +29,6 @@ export interface BookRouteDeps {
   eventBroadcaster: EventBroadcasterService;
   seriesCardService: SeriesCardService;
   metadataService: MetadataService;
-  /** #1960 — the rename, Refresh & Scan, and wrong-release seams all fire through this. */
   companionEbook: CompanionBookReconcileTrigger;
   connectorService?: ConnectorService;
 }
@@ -61,10 +60,7 @@ import { enqueueBookRefresh, enqueueRetagRefresh } from '../utils/enqueue-book-r
 const booksListQuerySchema = bookListQuerySchema.merge(paginationParamsSchema);
 type BooksListQuery = z.infer<typeof booksListQuerySchema>;
 
-// The library list filter carries a `LibraryFilterBucket` (bucket key), distinct
-// from the generic route's per-book `BookStatus`. Override `status` to the
-// bucket-only schema so `?status=all` (client-only sentinel) and non-bucket
-// statuses like `?status=searching` are rejected with a 400.
+// Library filtering accepts only bucket keys; `all` is client-only and other book statuses are invalid.
 const libraryBooksListQuerySchema = booksListQuerySchema.extend({
   status: libraryStatusFilterSchema.optional(),
   collapse: z.enum(['true', 'false']).optional().transform(v => v === undefined ? undefined : v === 'true'),
@@ -94,7 +90,6 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
       case 'file_deletion_failed':
         return reply.status(500).send({ error: result.error });
       case 'deleted':
-        // #1589: surface what an on-disk delete preserved ("kept N files") when present.
         return result.fileSummary
           ? { success: true, fileSummary: result.fileSummary }
           : { success: true };
@@ -110,11 +105,7 @@ async function registerAddBookRoute(app: FastifyInstance, deps: BookRouteDeps) {
     { schema: { body: createBookBodySchema } },
     async (request, reply) => {
       const body = request.body;
-      // Three-way recording identity (#1711): only an owned (same-recording) OR
-      // an uncertain (review/no-signal) verdict blocks with 409 — a genuinely
-      // different recording of an owned title is allowed through (keep-both). A
-      // 'different-recording' verdict returns `book: null`, so the 409 only fires
-      // when there is an incumbent to surface.
+      // Block owned or uncertain recordings; a confirmed different recording is a valid keep-both.
       const resolution = await deps.bookService.findDuplicate({
         title: body.title,
         authors: body.authors,
@@ -131,7 +122,7 @@ async function registerAddBookRoute(app: FastifyInstance, deps: BookRouteDeps) {
       try {
         book = await deps.bookService.create(body);
       } catch (error: unknown) {
-        // Same-ASIN create-time race (#1711) → the recording is already owned.
+        // A same-ASIN create race means another request already owns the recording.
         if (error instanceof OwnedRecordingError) {
           request.log.info({ title: body.title, existingId: error.existingBookId }, 'Duplicate book detected (ASIN race)');
           const owner = await deps.bookService.getById(error.existingBookId);
@@ -154,12 +145,7 @@ async function registerAddBookRoute(app: FastifyInstance, deps: BookRouteDeps) {
         triggerImmediateSearch(book, { indexerSearchService, indexerService, downloadOrchestrator, settingsService, blacklistService, eventBroadcaster, eventHistory }, request.log);
       }
 
-      // Series card lazily populates on first GET via SeriesCardService when
-      // a Hardcover key is configured; no fire-and-forget enqueue here. For a
-      // series with no Hardcover row yet, the local series_members row from
-      // bookService.create.upsertSeriesLink is enough to render the card
-      // immediately; for an already-canonical series that guard writes no row,
-      // and the first card GET's reconcile seeds it instead (#2144).
+      // Series cards hydrate lazily on first GET; do not create a second enrichment path here.
 
       return reply.status(201).send(book);
     },
@@ -237,8 +223,7 @@ function registerMergeRoutes(app: FastifyInstance, mergeService: MergeService) {
   );
 }
 
-/** Build the overrides object the tagging service expects, omitting unset fields
- *  so the resulting object satisfies `exactOptionalPropertyTypes`. */
+/** Omit unset overrides for `exactOptionalPropertyTypes`. */
 function pickRetagOverrides(
   source: { mode?: 'populate_missing' | 'overwrite' | undefined; embedCover?: boolean | undefined } | undefined,
 ): { mode?: 'populate_missing' | 'overwrite'; embedCover?: boolean } {
@@ -248,8 +233,7 @@ function pickRetagOverrides(
   return out;
 }
 
-/** Project query params into the options shape both list services accept,
- *  dropping undefined keys so exactOptionalPropertyTypes stays happy. */
+/** Drop undefined query keys for `exactOptionalPropertyTypes`. */
 function pickListOptions(q: BooksListQuery): {
   search?: string; author?: string; series?: string; narrator?: string;
   sortField?: NonNullable<BooksListQuery['sortField']>;
@@ -273,7 +257,6 @@ function registerBookListRoutes(app: FastifyInstance, bookListService: BookRoute
     return bookListService.getAll(status, pagination, { slim: true, ...pickListOptions(request.query) });
   });
 
-  // GET /api/library/books — slim DTO for the library list view (#1132)
   app.get<{ Querystring: LibraryBooksListQuery }>('/api/library/books', { schema: { querystring: libraryBooksListQuerySchema } }, async (request) => {
     const { status, limit, offset, collapse } = request.query;
     request.log.debug({ ...request.query }, 'Fetching library books');
@@ -287,17 +270,14 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
   const { bookService, bookListService, renameService, mergeService, taggingService } = deps;
   registerBookListRoutes(app, bookListService);
 
-  // GET /api/books/identifiers — lightweight list for duplicate detection (no pagination)
   app.get('/api/books/identifiers', async () => {
     return bookListService.getIdentifiers();
   });
 
-  // GET /api/books/stats — server-side status counts and filter values
   app.get('/api/books/stats', async () => {
     return bookListService.getStats();
   });
 
-  // GET /api/books/:id
   app.get<{ Params: IdParam }>(
     '/api/books/:id',
     { schema: { params: idParamSchema } },
@@ -315,7 +295,6 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
 
   await registerAddBookRoute(app, deps);
 
-  // PUT /api/books/:id
   app.put<{ Params: IdParam; Body: UpdateBookBody }>(
     '/api/books/:id',
     { schema: { params: idParamSchema, body: updateBookBodySchema } },
@@ -323,18 +302,14 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       const { id } = request.params;
       const body = request.body;
 
-      // `userAsserted` is the ONLY path that adds a tombstone (#2069 AC5): this is
-      // the operator-facing edit route, so a blanked clearable field is a deliberate
-      // removal rather than "no value yet". Internal callers of `update()` pass
-      // `null`s of their own and deliberately do NOT opt in.
+      // Only operator edits create clear-field tombstones; internal nulls retain fill-empty semantics.
       const book = await bookService.update(id, body, { userAsserted: true });
 
       if (!book) {
         return reply.status(404).send({ error: 'Book not found' });
       }
 
-      // Keep the on-disk metadata.opf current with the edited DB state (gated on tagging.writeOpf,
-      // independent of any audio-retag). Skipped for not-yet-imported books (path === null).
+      // OPF refresh is independent of audio retagging and skips books without paths.
       const opfOutcome = await refreshOpfForBook({
         settingsService: deps.settingsService,
         bookService,
@@ -343,9 +318,7 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
         log: request.log,
       });
 
-      // Standalone metadata-edit route: a refresh only when the OPF actually got written
-      // ('skipped'/'failed' → none). The cover-upload and Fix-Match routes aggregate their own
-      // OPF write into a single refresh, so this independent OPF fire is scoped to the edit route.
+      // Only a written OPF triggers this route's refresh; other routes aggregate their own.
       if (opfOutcome === 'written') {
         enqueueBookRefresh(deps.connectorService, request.log, 'metadata', {
           bookId: id, title: book.title, authorName: book.authors?.[0]?.name ?? null, libraryPath: book.path!,
@@ -359,7 +332,6 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
 
   await registerDeleteMissingRoute(app, deps);
   await registerDeleteBookRoute(app, deps);
-  // GET /api/books/:id/rename/preview — dry-run plan for the rename action
   app.get<{ Params: IdParam }>(
     '/api/books/:id/rename/preview',
     { schema: { params: idParamSchema } },
@@ -380,16 +352,12 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     },
   );
 
-  // POST /api/books/:id/rename
   app.post<{ Params: IdParam }>(
     '/api/books/:id/rename',
     { schema: { params: idParamSchema } },
     async (request) => {
       const { id } = request.params;
-      // #1960 AC19/AC22 — caller 1 of three. A THROW always reconciles: `renameBook` persists
-      // the new `books.path` before `renameFilesWithTemplate` can fail, so the EPUB may already
-      // have travelled. On the success path only a MATERIAL rename does — the "Already
-      // organized" early return moved nothing, so there is nothing to re-observe.
+      // Path persistence can precede a filesystem throw, so failures reconcile; no-op successes do not.
       let result: RenameResult;
       try {
         result = await renameService.renameBook(id);
@@ -407,7 +375,6 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
 
   registerBookSearchRoute(app, deps);
 
-  // GET /api/books/:id/retag/preview — dry-run plan for the re-tag action
   app.get<{ Params: IdParam; Querystring: RetagPreviewQuery }>(
     '/api/books/:id/retag/preview',
     { schema: { params: idParamSchema, querystring: retagPreviewQuerySchema } },
@@ -417,7 +384,6 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     },
   );
 
-  // POST /api/books/:id/retag
   app.post<{ Params: IdParam; Body: RetagBody }>(
     '/api/books/:id/retag',
     { schema: { params: idParamSchema, body: retagBodySchema } },
@@ -426,38 +392,22 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       const excludeFields = new Set(request.body?.excludeFields ?? []);
       const result = await taggingService.retagBook(id, excludeFields, pickRetagOverrides(request.body ?? undefined));
 
-      // A re-tag rewrites embedded audio tags in place (new inode, same path) — fire a 'metadata'
-      // refresh when ≥1 file was tagged so ABS/Plex re-reads the changed files. The refresh item is
-      // built from `RetagResult.refreshItem` (loaded before the tag write), so a post-re-tag reload
-      // failure can't drop it. Single home shared with the bulk re-tag job (bulk-operation.service.ts).
+      // `refreshItem` is captured before in-place tag writes, so a reload failure cannot drop refresh.
       enqueueRetagRefresh(deps.connectorService, request.log, result);
 
       request.log.info({ id, tagged: result.tagged, skipped: result.skipped, failed: result.failed }, 'Book re-tagged');
-      // `refreshItem` is internal enqueue state (carries the absolute on-disk `libraryPath`) — strip it
-      // so the public response stays the counts/warnings shape the client `RetagResult` expects and the
-      // filesystem path never leaks to the API.
+      // Strip internal enqueue state so its absolute library path never reaches the API.
       const { refreshItem: _refreshItem, ...response } = result;
       return response;
     },
   );
 
-  // POST /api/books/:id/refresh-scan
   app.post<{ Params: IdParam }>(
     '/api/books/:id/refresh-scan',
     { schema: { params: idParamSchema } },
     async (request) => {
       const { id } = request.params;
-      // #1960 AC15–AC17 — sited HERE, not inside `refreshScanBook` (which gains no companion
-      // code). `finally`-shaped so every `RefreshScanError` code — `NOT_FOUND`, `NO_PATH`,
-      // `PATH_MISSING`, `NO_AUDIO_FILES`, all thrown BEFORE the audio probe — still refreshes
-      // the companion observation. The thrown error propagates to the existing handler
-      // untouched; the trigger never awaits and never throws.
-      //
-      // #2034 AC7 — and it FORCES. This is a user pointing at one book, so the fingerprint
-      // short-circuit is bypassed and a stale verdict on an unchanged file is re-judged. Without
-      // the final argument the reported bug stands: after a validator fix, no action reachable
-      // from the UI could make the book re-validate. The `finally` shape, the context string, and
-      // the fact that this is never awaited are all unchanged.
+      // Force the companion observation for errors before the audio probe and bypass the fingerprint short-circuit.
       try {
         return await refreshScanBook(id, deps.bookService, deps.settingsService, request.log);
       } finally {
@@ -470,10 +420,8 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
 
   registerMergeRoutes(app, mergeService);
 
-  // POST /api/books/:id/fix-match
   registerFixMatchRoute(app, deps);
 
-  // POST /api/books/:id/wrong-release
   const { bookRejectionService } = deps;
   app.post<{ Params: IdParam }>(
     '/api/books/:id/wrong-release',

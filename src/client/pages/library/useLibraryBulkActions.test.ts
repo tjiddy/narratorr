@@ -88,7 +88,6 @@ describe('useLibraryBulkActions — selection state', () => {
 
     expect(result.current.selectedIds).toEqual(new Set([1, 2, 3]));
 
-    // Rerender with book2 removed from visible list
     visibleBooks = [book1, book3];
     rerender();
 
@@ -115,7 +114,6 @@ describe('useLibraryBulkActions — selection state', () => {
 
 describe('useLibraryBulkActions — bulkDeleteMutation onError', () => {
   it('when mutationFn throws, toast.error is called with "Bulk delete failed: <message>"', async () => {
-    // Make deleteBook throw immediately so Promise.allSettled never runs
     vi.mocked(api.deleteBook).mockImplementation(() => {
       throw new Error('Network failure');
     });

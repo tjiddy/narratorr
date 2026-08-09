@@ -16,12 +16,10 @@ import {
   type EncodeStrategyInput,
 } from './encode-strategy.js';
 
-/** A fully-probed, copy-eligible AAC/m4b source. Override one field per rejection case. */
 function aacSource(overrides: Partial<SourceEvidence> = {}): SourceEvidence {
   return { extension: '.m4b', codec: 'aac', bitrateKbps: 128, sampleRate: 44_100, channels: 2, ...overrides };
 }
 
-/** A fully-probed, copy-eligible MP3 source. */
 function mp3Source(overrides: Partial<SourceEvidence> = {}): SourceEvidence {
   return { extension: '.mp3', codec: 'mp3', bitrateKbps: 128, sampleRate: 44_100, channels: 2, ...overrides };
 }
@@ -111,12 +109,10 @@ describe('resolveEncodeStrategy — explicit target (AC11)', () => {
 
 describe('AC6 — one unit, one validity predicate', () => {
   it('resolves a 251000 bps probe and a 251 kbps hint to the same 251 (never divided twice)', () => {
-    // The resolver's input is probe-collector output: a bps value is floored to kbps exactly
-    // once, before it reaches here. Both spellings of "251" must land on the same request.
     const fromProbe = resolve({ outputFormat: 'mp3', sources: [{ extension: '.wav', bitrateKbps: Math.floor(251_000 / 1000) }] });
     const fromHint = resolve({ outputFormat: 'mp3', hintBitrateKbps: 251, sources: [{ extension: '.wav' }] });
     expect(encodeOf(fromProbe).bitrateKbps).toBe(encodeOf(fromHint).bitrateKbps);
-    // 251 legalized against the rate-agnostic MP3 table (no sample rate known) → 160.
+    // With no sample rate, 251 snaps against the rate-agnostic MP3 table.
     expect(encodeOf(fromProbe).notices.find((n) => n.kind === 'mp3-table')?.from).toBe(251);
   });
 
@@ -132,7 +128,6 @@ describe('AC6 — one unit, one validity predicate', () => {
 
   it.each(USABILITY)('applies the same predicate to a probe value (%s → usable %s)', (value, expected) => {
     const strategy = resolve({ sources: [{ extension: '.wav', bitrateKbps: value as number }] });
-    // Unusable → the AC9 fallback; usable → the value itself (AAC never snaps below 512).
     const expectedKbps = expected ? Math.min(value as number, MAX_AAC_TARGET_KBPS) : KEEP_ORIGINAL_FALLBACK_BITRATE_KBPS;
     expect(encodeOf(strategy).bitrateKbps).toBe(expectedKbps);
   });
@@ -154,7 +149,6 @@ describe('AC6 — one unit, one validity predicate', () => {
     (bitrate) => {
       const strategy = resolve({ targetBitrateKbps: bitrate, sources: [{ extension: '.mp3' }] });
       const encode = encodeOf(strategy);
-      // No evidence either → the AC9 fallback, never `-b:a NaNk` / `0k` / `7k`.
       expect(encode.bitrateKbps).toBe(KEEP_ORIGINAL_FALLBACK_BITRATE_KBPS);
       expect(buildCodecArgs(strategy)).toContain(`${KEEP_ORIGINAL_FALLBACK_BITRATE_KBPS}k`);
       const notice = strategy.notices.find((n) => n.kind === 'unusable-target');

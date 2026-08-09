@@ -32,7 +32,6 @@ describe('hasReasonContent', () => {
     expect(hasReasonContent({ error: 'something' })).toBe(true);
   });
 
-  // #464 — false positive on null values
   it('returns false when all values are null', () => {
     expect(hasReasonContent({ error: null })).toBe(false);
   });

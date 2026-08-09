@@ -27,8 +27,7 @@ describe('ConnectorCard — view mode', () => {
   it('displays name and type subtitle (masked baseUrl degrades to the type fallback, never leaks the sentinel)', () => {
     renderWithProviders(<ConnectorCard connector={mockConnector} mode="view" onSubmit={vi.fn()} onFormTest={vi.fn()} />);
     expect(screen.getByText('My ABS')).toBeInTheDocument();
-    // baseUrl is a masked secret from the API; extractHostname can't parse '********'
-    // so the subtitle degrades to the type label fallback rather than leaking the sentinel.
+    // A masked baseUrl cannot yield a hostname, so the subtitle falls back to the type label.
     expect(screen.getByText(/Audiobookshelf — Audiobookshelf/)).toBeInTheDocument();
     expect(screen.queryByText(/\*{8}/)).not.toBeInTheDocument();
   });
@@ -92,14 +91,13 @@ describe('ConnectorCard — edit mode', () => {
     const payload = onFormTest.mock.calls[0]![0];
     expect(payload).toMatchObject({ type: 'audiobookshelf' });
     expect(payload).not.toHaveProperty('id');
-    // Strict-schema guard: settings carries only the connector's own keys.
+    // Settings must contain only this connector type's keys.
     expect(Object.keys(payload.settings).sort()).toEqual(['apiKey', 'baseUrl', 'libraryId']);
   });
 });
 
 describe('ConnectorCard — field-scoped test errors (nested settings.* paths)', () => {
-  // Deliver formTestResult AFTER mount, mirroring the real flow (the result arrives
-  // when the user clicks Test, not at initial render).
+  // Deliver after mount to match the real Test-result effect path.
   function Harness({ result }: { result: TestResult }) {
     const [r, setR] = useState<TestResult | null>(null);
     useEffect(() => { setR(result); }, [result]);
@@ -141,9 +139,6 @@ describe('ConnectorCard — fetch libraries', () => {
     expect(await screen.findByText('Key invalid')).toBeInTheDocument();
   });
 
-  // #1523 (Bug 2) — a THROWN error (e.g. ApiError from a non-2xx HTTP) must show
-  // its real reason, not the generic 'Failed to fetch options' fallback that
-  // previously masked every adapter error.
   it('surfaces the real message when the targets fetch throws', async () => {
     const user = userEvent.setup();
     vi.mocked(api.fetchConnectorTargets).mockRejectedValue(new Error('Authentication failed (HTTP 401)'));
@@ -169,28 +164,22 @@ describe('ConnectorCard — Plex (registry-driven per-type fields)', () => {
     const user = userEvent.setup();
     renderWithProviders(<ConnectorCard mode="create" onSubmit={vi.fn()} onFormTest={vi.fn()} />);
 
-    // ABS is the default; switching the type swaps the rendered field set (registry-driven).
     await user.selectOptions(screen.getByLabelText('Type'), 'plex');
 
     expect(screen.getByText('Plex Token')).toBeInTheDocument();
     expect(screen.getByText('Library Section')).toBeInTheDocument();
     expect(screen.getByText(/Path Mappings/)).toBeInTheDocument();
-    // Copy must match the adapter contract: fallback fires for no-derivable-path
-    // items, NOT for unmapped paths (those are passthrough). See F2 (#1502).
+    // Fallback is for paths that cannot be derived; unmapped paths pass through.
     expect(screen.getByText('Fall back to full section refresh when a path cannot be derived')).toBeInTheDocument();
     expect(screen.queryByText(/unmapped paths/)).not.toBeInTheDocument();
     expect(screen.getByText('Add Mapping')).toBeInTheDocument();
-    // ABS-only field is gone.
     expect(screen.queryByText('API Key')).not.toBeInTheDocument();
   });
 
-  // #1523 (Bug 3) — the Name placeholder reflects the selected type's registry
-  // label instead of a hardcoded 'My Audiobookshelf'.
   it('derives the Name placeholder from the selected connector type', async () => {
     const user = userEvent.setup();
     renderWithProviders(<ConnectorCard mode="create" onSubmit={vi.fn()} onFormTest={vi.fn()} />);
 
-    // ABS is the default.
     expect(screen.getByPlaceholderText('My Audiobookshelf')).toBeInTheDocument();
 
     await user.selectOptions(screen.getByLabelText('Type'), 'plex');
@@ -232,13 +221,11 @@ describe('ConnectorCard — Plex (registry-driven per-type fields)', () => {
     await user.type(screen.getByPlaceholderText('http://plex.local:32400'), 'http://plex.local');
     await user.type(screen.getByPlaceholderText('X-Plex-Token'), 'tok-123');
     await user.type(screen.getByPlaceholderText('Library Section ID (or fetch)'), '1');
-    // Append a row and leave BOTH fields blank, then submit.
     await user.click(screen.getByText('Add Mapping'));
     await user.click(screen.getByText('Add Connector'));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     expect(onSubmit.mock.calls[0]![0].settings.pathMappings).toEqual([]);
-    // The blank row must not surface a per-row validation error — it was pruned.
     expect(screen.queryByText('Local path is required')).not.toBeInTheDocument();
     expect(screen.queryByText('Server path is required')).not.toBeInTheDocument();
   });
@@ -254,7 +241,6 @@ describe('ConnectorCard — Plex (registry-driven per-type fields)', () => {
     await user.type(screen.getByPlaceholderText('X-Plex-Token'), 'tok-123');
     await user.type(screen.getByPlaceholderText('Library Section ID (or fetch)'), '1');
     await user.click(screen.getByText('Add Mapping'));
-    // Fill ONLY localPath — partial row must not be pruned and must flag serverPath inline.
     await user.type(screen.getByPlaceholderText('/library/audiobooks'), '/lib');
     await user.click(screen.getByText('Add Connector'));
 
@@ -273,7 +259,6 @@ describe('ConnectorCard — Plex (registry-driven per-type fields)', () => {
     await user.type(screen.getByPlaceholderText('X-Plex-Token'), 'tok-123');
     await user.type(screen.getByPlaceholderText('Library Section ID (or fetch)'), '1');
     await user.click(screen.getByText('Add Mapping'));
-    // Fill ONLY serverPath — partial row must flag localPath inline.
     await user.type(screen.getByPlaceholderText('/data/audiobooks'), '/data');
     await user.click(screen.getByText('Add Connector'));
 
@@ -291,9 +276,7 @@ describe('ConnectorCard — Plex (registry-driven per-type fields)', () => {
     await user.type(screen.getByPlaceholderText('http://plex.local:32400'), 'http://plex.local');
     await user.type(screen.getByPlaceholderText('X-Plex-Token'), 'tok-123');
     await user.type(screen.getByPlaceholderText('Library Section ID (or fetch)'), '1');
-    // Append a row and fill BOTH fields with whitespace only — the prune trims
-    // before comparing, so this row is treated as blank (kills a mutant that drops
-    // the .trim() in pruneBlankPathMappings).
+    // Whitespace must be trimmed before the blank-row check.
     await user.click(screen.getByText('Add Mapping'));
     await user.type(screen.getByPlaceholderText('/library/audiobooks'), '   ');
     await user.type(screen.getByPlaceholderText('/data/audiobooks'), '   ');
@@ -315,8 +298,6 @@ describe('ConnectorCard — Plex (registry-driven per-type fields)', () => {
     await user.type(screen.getByPlaceholderText('http://plex.local:32400'), 'http://plex.local');
     await user.type(screen.getByPlaceholderText('X-Plex-Token'), 'tok-123');
     await user.type(screen.getByPlaceholderText('Library Section ID (or fetch)'), '1');
-    // Append a fully-blank row, then click Test — the Test path must apply the same
-    // prune before the resolver so it reaches onFormTest instead of being blocked.
     await user.click(screen.getByText('Add Mapping'));
     await user.click(screen.getByText('Test').closest('button')!);
 

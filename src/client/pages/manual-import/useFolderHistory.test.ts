@@ -35,7 +35,7 @@ describe('useFolderHistory — localStorage validation', () => {
 
   it('skips entries with missing path field on parse', () => {
     localStorage.setItem(RECENT_KEY, JSON.stringify([
-      { lastUsedAt: '2026-01-01T00:00:00.000Z' }, // missing path
+      { lastUsedAt: '2026-01-01T00:00:00.000Z' },
       { path: '/valid', lastUsedAt: '2026-01-02T00:00:00.000Z' },
     ]));
     const { result } = renderHook(() => useFolderHistory());
@@ -45,7 +45,7 @@ describe('useFolderHistory — localStorage validation', () => {
 
   it('skips entries with missing lastUsedAt field on parse (prevents sort crash)', () => {
     localStorage.setItem(RECENT_KEY, JSON.stringify([
-      { path: '/bad' }, // missing lastUsedAt
+      { path: '/bad' },
       { path: '/valid', lastUsedAt: '2026-01-02T00:00:00.000Z' },
     ]));
     const { result } = renderHook(() => useFolderHistory());
@@ -61,7 +61,6 @@ describe('useFolderHistory — localStorage validation', () => {
     expect(() => {
       act(() => { result.current.addRecent('/audiobooks'); });
     }).not.toThrow();
-    // State still updates in memory
     expect(result.current.recents).toHaveLength(1);
     expect(result.current.recents[0]!.path).toBe('/audiobooks');
   });
@@ -104,7 +103,6 @@ describe('useFolderHistory — addRecent', () => {
     act(() => { result.current.addRecent('/new-folder'); });
     expect(result.current.recents).toHaveLength(15);
     expect(result.current.recents[0]!.path).toBe('/new-folder');
-    // Oldest was /folder0 (Jan 1) — should be evicted
     expect(result.current.recents.every(e => e.path !== '/folder0')).toBe(true);
   });
 
@@ -116,8 +114,8 @@ describe('useFolderHistory — addRecent', () => {
     act(() => { result.current.addRecent('/audiobooks'); });
     expect(result.current.recents).toHaveLength(1);
     expect(result.current.recents[0]!.path).toBe('/audiobooks');
-    expect(result.current.favorites).toHaveLength(1); // unchanged
-    expect(result.current.favorites[0]!.lastUsedAt).toBe('2026-01-01T00:00:00.000Z'); // not overwritten
+    expect(result.current.favorites).toHaveLength(1);
+    expect(result.current.favorites[0]!.lastUsedAt).toBe('2026-01-01T00:00:00.000Z');
   });
 });
 
@@ -158,9 +156,9 @@ describe('useFolderHistory — promoteToFavorite', () => {
     localStorage.setItem(RECENT_KEY, JSON.stringify([recentEntry]));
     const { result } = renderHook(() => useFolderHistory());
     act(() => { result.current.promoteToFavorite('/audiobooks'); });
-    expect(result.current.recents).toHaveLength(0); // recent copy removed
-    expect(result.current.favorites).toHaveLength(1); // only one favorite
-    expect(result.current.favorites[0]!.lastUsedAt).toBe('2026-01-01T00:00:00.000Z'); // NOT overwritten
+    expect(result.current.recents).toHaveLength(0);
+    expect(result.current.favorites).toHaveLength(1);
+    expect(result.current.favorites[0]!.lastUsedAt).toBe('2026-01-01T00:00:00.000Z');
   });
 });
 
@@ -195,31 +193,31 @@ describe('useFolderHistory — demoteToRecent', () => {
   });
 
   it('keeps single recent entry with max(favorite.lastUsedAt, recent.lastUsedAt) when path already exists in recents', () => {
-    const favEntry = makeEntry('/audiobooks', '2026-03-01T00:00:00.000Z'); // newer
-    const recentEntry = makeEntry('/audiobooks', '2026-01-01T00:00:00.000Z'); // older
+    const favEntry = makeEntry('/audiobooks', '2026-03-01T00:00:00.000Z');
+    const recentEntry = makeEntry('/audiobooks', '2026-01-01T00:00:00.000Z');
     localStorage.setItem(FAV_KEY, JSON.stringify([favEntry]));
     localStorage.setItem(RECENT_KEY, JSON.stringify([recentEntry]));
     const { result } = renderHook(() => useFolderHistory());
     act(() => { result.current.demoteToRecent('/audiobooks'); });
     expect(result.current.favorites).toHaveLength(0);
     expect(result.current.recents).toHaveLength(1);
-    expect(result.current.recents[0]!.lastUsedAt).toBe('2026-03-01T00:00:00.000Z'); // max kept
+    expect(result.current.recents[0]!.lastUsedAt).toBe('2026-03-01T00:00:00.000Z');
   });
 
   it('re-sorts recents by lastUsedAt descending after demotion collision', () => {
     const favEntry = makeEntry('/a', '2026-01-15T00:00:00.000Z');
     const existingRecents: FolderEntry[] = [
       makeEntry('/b', '2026-01-20T00:00:00.000Z'),
-      makeEntry('/a', '2026-01-10T00:00:00.000Z'), // older than fav
+      makeEntry('/a', '2026-01-10T00:00:00.000Z'),
       makeEntry('/c', '2026-01-05T00:00:00.000Z'),
     ];
     localStorage.setItem(FAV_KEY, JSON.stringify([favEntry]));
     localStorage.setItem(RECENT_KEY, JSON.stringify(existingRecents));
     const { result } = renderHook(() => useFolderHistory());
     act(() => { result.current.demoteToRecent('/a'); });
-    expect(result.current.recents[0]!.path).toBe('/b'); // Jan 20
-    expect(result.current.recents[1]!.path).toBe('/a'); // Jan 15 (fav timestamp wins)
-    expect(result.current.recents[2]!.path).toBe('/c'); // Jan 5
+    expect(result.current.recents[0]!.path).toBe('/b');
+    expect(result.current.recents[1]!.path).toBe('/a');
+    expect(result.current.recents[2]!.path).toBe('/c');
   });
 });
 
@@ -234,8 +232,8 @@ describe('useFolderHistory — demoteToRecent', () => {
     const { result } = renderHook(() => useFolderHistory());
     act(() => { result.current.demoteToRecent('/new-from-fav'); });
     expect(result.current.recents).toHaveLength(15);
-    expect(result.current.recents[0]!.path).toBe('/new-from-fav'); // newest at top
-    expect(result.current.recents.some(e => e.path === '/folder0')).toBe(false); // oldest evicted
+    expect(result.current.recents[0]!.path).toBe('/new-from-fav');
+    expect(result.current.recents.some(e => e.path === '/folder0')).toBe(false);
   });
 
 describe('useFolderHistory — removeRecent / removeFavorite', () => {
@@ -249,7 +247,7 @@ describe('useFolderHistory — removeRecent / removeFavorite', () => {
     act(() => { result.current.removeRecent('/audiobooks'); });
     expect(result.current.recents).toHaveLength(1);
     expect(result.current.recents[0]!.path).toBe('/podcasts');
-    expect(result.current.favorites).toHaveLength(1); // unchanged
+    expect(result.current.favorites).toHaveLength(1);
   });
 
   it('removes a favorite entry, does not affect recents', () => {
@@ -262,7 +260,7 @@ describe('useFolderHistory — removeRecent / removeFavorite', () => {
     act(() => { result.current.removeFavorite('/audiobooks'); });
     expect(result.current.favorites).toHaveLength(1);
     expect(result.current.favorites[0]!.path).toBe('/podcasts');
-    expect(result.current.recents).toHaveLength(1); // unchanged
+    expect(result.current.recents).toHaveLength(1);
   });
 });
 
@@ -287,8 +285,8 @@ describe('useFolderHistory — persistence', () => {
 
   it('recents are sorted by lastUsedAt descending on initial load', () => {
     localStorage.setItem(RECENT_KEY, JSON.stringify([
-      makeEntry('/a', '2026-01-01T00:00:00.000Z'), // oldest
-      makeEntry('/c', '2026-03-01T00:00:00.000Z'), // newest
+      makeEntry('/a', '2026-01-01T00:00:00.000Z'),
+      makeEntry('/c', '2026-03-01T00:00:00.000Z'),
       makeEntry('/b', '2026-02-01T00:00:00.000Z'),
     ]));
     const { result } = renderHook(() => useFolderHistory());

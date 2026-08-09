@@ -141,7 +141,7 @@ export function BookFixMatchModal({ book, onClose, isOpen = true }: BookFixMatch
 
   return (
     <Modal onClose={onClose} className="w-full max-w-2xl flex flex-col max-h-[85vh]">
-      {/* Participates in the Modal's height-capped flex column — see BookMetadataModal. */}
+      {/* Must join Modal's height-capped flex column so the body scrolls. */}
       <div
         role="dialog"
         aria-modal="true"

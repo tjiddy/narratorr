@@ -1,9 +1,5 @@
 import { z } from 'zod';
 
-// ============================================================================
-// Import job schemas
-// ============================================================================
-
 export const IMPORT_JOB_TYPES = ['manual', 'auto'] as const;
 export const importJobTypeSchema = z.enum(IMPORT_JOB_TYPES);
 export type ImportJobType = z.infer<typeof importJobTypeSchema>;

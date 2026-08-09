@@ -10,21 +10,7 @@ import { createMockDb, mockDbChain, inject } from '../../__tests__/helpers.js';
 import { v1BooksRoutes } from './books.js';
 import { V1NotFoundError, v1ErrorHandler } from './_helpers.js';
 
-// ============================================================================
-// v1ErrorHandler — the committed-response guard (#1975 AC23-AC26)
-// ============================================================================
-//
-// The guard is exercised by calling `v1ErrorHandler` DIRECTLY with a stubbed
-// reply, not through a route. That is deliberate: Fastify 5.8.5's `sendStream`
-// (`node_modules/fastify/lib/reply.js:768-789`) checks
-// `res.headersSent || reply.request.raw.aborted` in its `eos` callback and calls
-// `res.destroy()` INSTEAD of `onErrorHook`, so a route-level "force a stream
-// error and assert the guard fired" test passes with the guard deleted — exactly
-// the hollow assertion `narratorr/no-tautological-expect` exists to catch. The
-// observable route-level property (no JSON appended to a committed 200) is
-// asserted in `v1/companion-ebook-stream.test.ts` against received bytes instead.
-
-/** A validation-shaped Fastify error, matching what the schema compiler throws. */
+// Fastify destroys failed streams before onErrorHook, so only a direct test reaches this guard.
 function validationError(): FastifyError {
   return Object.assign(new Error('querystring must NOT have additional properties'), {
     code: 'FST_ERR_VALIDATION',
@@ -34,7 +20,6 @@ function validationError(): FastifyError {
   }) as unknown as FastifyError;
 }
 
-/** The three error classes the handler maps, by name. */
 const ERROR_CLASSES: Array<[string, () => FastifyError | Error]> = [
   ['a V1NotFoundError', () => new V1NotFoundError('Book not found')],
   ['a validation error', () => validationError()],
@@ -61,9 +46,7 @@ function stubReply(state: { sent?: boolean; headersSent?: boolean }) {
 
 describe('v1ErrorHandler', () => {
   describe('the committed-response guard', () => {
-    // AC24 — the guard is the FIRST branch, so it must fire for EVERY error class.
-    // A guard placed after the not-found/validation branches would still pass a
-    // generic-error-only test while attempting an envelope send on those two.
+    // Every error class must hit the committed-response guard before classification.
     describe.each(ERROR_CLASSES)('with %s', (_label, makeError) => {
       it('destroys the raw response and sends nothing when raw.headersSent is true', () => {
         const { request } = stubRequest();
@@ -99,10 +82,7 @@ describe('v1ErrorHandler', () => {
       const records = [...log.error.mock.calls, ...log.warn.mock.calls];
       expect(records).toHaveLength(1);
       const record = records[0]![0] as { error: unknown };
-      // Per learning #1982: `Error.prototype.message`/`.stack` are NON-ENUMERABLE and read
-      // through, so `objectContaining({ message })` passes for a RAW Error and proves
-      // nothing. Assert on the own-enumerable key set plus serializeError's `type` field —
-      // both are absent on a raw Error and present only after serialization.
+      // Non-enumerable message/stack cannot distinguish this from a raw Error; own keys can.
       expect(Object.keys(record.error as object)).toEqual(
         expect.arrayContaining(['message', 'type']),
       );
@@ -110,7 +90,6 @@ describe('v1ErrorHandler', () => {
     });
   });
 
-  // AC25 — every existing mapping is byte-identical for a not-yet-committed reply.
   describe('the existing mappings, for an uncommitted reply', () => {
     it('maps V1NotFoundError to 404 NOT_FOUND', () => {
       const { request, log } = stubRequest();
@@ -153,9 +132,6 @@ describe('v1ErrorHandler', () => {
   });
 });
 
-// ----------------------------------------------------------------------------
-// Blast radius: the guard sits on the error path of every v1 route module.
-// ----------------------------------------------------------------------------
 describe('v1 route error envelopes are unchanged by the guard', () => {
   let app: FastifyInstance;
   let db: ReturnType<typeof createMockDb>;
@@ -166,8 +142,7 @@ describe('v1 route error envelopes are unchanged by the guard', () => {
     app.setSerializerCompiler(serializerCompiler);
 
     db = createMockDb();
-    // No auth plugin: this suite exercises the v1 ERROR path, and the auth hook
-    // would answer 401 before routing ever reached it.
+    // Auth would return 401 before these v1 error paths run.
     await v1BooksRoutes(app, {
       bookService: { getById: vi.fn().mockResolvedValue(null) } as never,
       bookListService: { getAll: vi.fn().mockResolvedValue({ data: [], total: 0 }) } as never,

@@ -30,10 +30,7 @@ export function LibraryPage() {
     />
   );
 
-  // The attention banner (#1894, F40) sits ABOVE the branch switch so it renders in
-  // the empty-library and error states too, not only the populated body. It is
-  // cross-source (no `source`) on the Library page; its query is independent of the
-  // book-list query.
+  // Keep the cross-source attention banner outside the branch switch so empty and error states render it.
   const body = (() => {
   if (s.isLoading) return <PageLoading header={<LibraryHeader actions={actionsMenu} />} />;
   if (s.booksError) return (

@@ -43,7 +43,6 @@ function parsePage(value: string | null): number {
 export function useLibraryFilters() {
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Initialize state from URL params (synchronous, first render only)
   const [statusFilter, setStatusFilterState] = useState<StatusFilter>(() => parseStatus(searchParams.get('status')));
   const [authorFilter, setAuthorFilterState] = useState(() => searchParams.get('author') ?? DEFAULTS.author);
   const [seriesFilter, setSeriesFilterState] = useState(() => searchParams.get('series') ?? DEFAULTS.series);
@@ -57,7 +56,7 @@ export function useLibraryFilters() {
 
   const pagination = usePagination(DEFAULT_LIMITS.books, parsePage(searchParams.get('page')));
 
-  // Sync state → URL params (replaceState to avoid back-button noise)
+  // Replace URL state so filter changes do not pollute back-button history.
   useEffect(() => {
     const params = new URLSearchParams();
 
@@ -74,7 +73,6 @@ export function useLibraryFilters() {
     setSearchParams(params, { replace: true });
   }, [statusFilter, sortField, sortDirection, debouncedSearch, authorFilter, seriesFilter, narratorFilter, collapseSeriesEnabled, pagination.page, setSearchParams]);
 
-  // Debounce search to avoid rapid API calls per keystroke
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
     debounceRef.current = setTimeout(() => {
@@ -83,7 +81,6 @@ export function useLibraryFilters() {
     return () => clearTimeout(debounceRef.current);
   }, [searchQuery]);
 
-  // Reset pagination when filters change
   const setStatusFilter = useCallback((status: StatusFilter) => {
     setStatusFilterState(status);
     pagination.reset();
@@ -121,7 +118,7 @@ export function useLibraryFilters() {
 
   const clearSearch = useCallback(() => {
     setSearchQueryState('');
-    setDebouncedSearch(''); // Immediately clear debounced value
+    setDebouncedSearch(''); // Clear the debounced value immediately.
     pagination.reset();
   }, [pagination]);
 
@@ -130,7 +127,6 @@ export function useLibraryFilters() {
     pagination.reset();
   }, [pagination]);
 
-  // Build API params from filter state (search is debounced)
   const apiParams: LibraryBookListParams = useMemo(() => ({
     ...(statusFilter !== 'all' && { status: statusFilter }),
     ...(debouncedSearch && { search: debouncedSearch }),
@@ -196,8 +192,7 @@ export function useLibraryFilters() {
   };
 }
 
-/** Server handles collapse when enabled — client just casts to DisplayBook.
- *  The server returns `collapsedCount` on representative rows. */
+/** Preserve server-provided `collapsedCount`; collapse is not recomputed client-side. */
 export function applyClientFilters(
   books: LibraryBookListItem[],
 ): DisplayBook[] {

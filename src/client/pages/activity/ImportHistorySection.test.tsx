@@ -14,7 +14,7 @@ const getImportSubmissionDetail = vi.fn();
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>();
   return {
-    ...actual, // keep the real ApiError class for instanceof checks
+    ...actual, // Preserve ApiError identity for instanceof checks.
     api: {
       listImportSubmissions: (...a: unknown[]) => listImportSubmissions(...a),
       getImportSubmissionDetail: (...a: unknown[]) => getImportSubmissionDetail(...a),
@@ -76,7 +76,7 @@ describe('ImportHistorySection (#1894)', () => {
   });
 
   it('hydrates an off-page deep-link run into exactly one focused card (F64)', async () => {
-    listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1 })], total: 1 }); // page lacks id 9
+    listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1 })], total: 1 });
     getImportSubmissionDetail.mockResolvedValue({
       ...summary({ id: 9 }), itemsIncluded: true,
       items: [{ disposition: 'held', ordinal: 0, path: '/h', title: 'Held Book', reason: 'recording-review-required' }],
@@ -93,46 +93,39 @@ describe('ImportHistorySection (#1894)', () => {
     renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history&run=9' });
     await screen.findByTestId('import-run-unavailable');
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
-    // The rest of the section still renders.
     expect(screen.getByTestId('import-history-card-1')).toBeInTheDocument();
   });
 
   it('an ON-PAGE deep-link 404 (discarded/GC\'d between snapshot and read) renders the same 404 placeholder, not the generic detail error (F43)', async () => {
     const { ApiError } = await import('@/lib/api');
-    // The run id IS on the current page, but the direct read now 404s.
     listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1 })], total: 1 });
     getImportSubmissionDetail.mockRejectedValue(new ApiError(404, { error: 'submission-not-found' }));
     renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history&run=1' });
-    // One 404-aware hydration authority regardless of on/off page.
     expect(await screen.findByTestId('import-run-unavailable')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument(); // 404 → no retry
-    expect(screen.queryByText('Couldn’t load import details.')).not.toBeInTheDocument(); // NOT the generic arm
-    expect(screen.queryByTestId('import-history-card-1')).not.toBeInTheDocument(); // target not also rendered as a list row
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Couldn’t load import details.')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('import-history-card-1')).not.toBeInTheDocument();
   });
 
   it('a detail that completes BEFORE the list resolves keeps its terminal header — a late processing list row cannot revert it (F44)', async () => {
     let resolveList!: (v: { data: SubmissionSummary[]; total: number }) => void;
-    listImportSubmissions.mockReturnValue(new Promise((res) => { resolveList = res; })); // list stays pending
+    listImportSubmissions.mockReturnValue(new Promise((res) => { resolveList = res; }));
     getImportSubmissionDetail.mockResolvedValue({
       ...summary({ id: 1, status: 'complete', completedAt: new Date().toISOString(), processedCount: 3, aggregates: { accepted: 1, held: 1, skipped: 0, failed: 1 } }),
       itemsIncluded: true, items: [{ disposition: 'failed', ordinal: 0, path: '/a', title: 'Failed Book', message: 'boom' }],
     });
     renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history&run=1' });
-    // The detail reaches complete while the list is still loading.
     await screen.findByText('Completed');
     await screen.findByText('Failed Book');
     const listCallsBefore = listImportSubmissions.mock.calls.length;
 
-    // The list now resolves with the SAME id from an EARLIER processing snapshot.
     resolveList({ data: [summary({ id: 1, status: 'processing', processedCount: 1, aggregates: { accepted: 0, held: 0, skipped: 0, failed: 0 } })], total: 1 });
 
-    // The header must NOT revert to Processing (single source = the hydrated detail),
-    // and the target is never rendered twice.
     await waitFor(() => expect(screen.getByTestId('import-history-card-1')).toBeInTheDocument());
     expect(screen.getByText('Completed')).toBeInTheDocument();
     expect(screen.queryByText('Processing')).not.toBeInTheDocument();
     expect(screen.getAllByTestId('import-history-card-1')).toHaveLength(1);
-    expect(listImportSubmissions.mock.calls.length).toBe(listCallsBefore); // no extra list fetch triggered
+    expect(listImportSubmissions.mock.calls.length).toBe(listCallsBefore);
   });
 
   it('after the deep link is REMOVED, the reconciled ordinary card stays terminal — no stale Processing revert, no extra fetch (F47)', async () => {
@@ -153,14 +146,10 @@ describe('ImportHistorySection (#1894)', () => {
       itemsIncluded: true, items: [{ disposition: 'failed', ordinal: 0, path: '/a', title: 'Failed Book', message: 'boom' }],
     });
     renderWithProviders(<Harness />, { route: '/activity?tab=history&run=1', queryClient: qc });
-    // The detail reaches complete while the list is still loading.
     await screen.findByText('Failed Book');
     expect(within(screen.getByTestId('import-history-card-1')).getByText('Completed')).toBeInTheDocument();
 
-    // The list resolves with a STALE processing row for the same id — the effect
-    // reconciles the terminal detail into the list cache.
     resolveList({ data: [summary({ id: 1, status: 'processing', processedCount: 1, aggregates: { accepted: 0, held: 0, skipped: 0, failed: 0 } })], total: 1 });
-    // Wait for the reconciliation to promote the cached list row to terminal.
     await waitFor(() => {
       const lc = qc.getQueryData(['importSubmissions', 'list', { limit: 50, offset: 0 }]) as { data?: { status?: string }[] } | undefined;
       expect(lc?.data?.[0]?.status).toBe('complete');
@@ -168,13 +157,10 @@ describe('ImportHistorySection (#1894)', () => {
     const listCalls = listImportSubmissions.mock.calls.length;
     const detailCalls = getImportSubmissionDetail.mock.calls.length;
 
-    // Remove the deep link → the hydrated authority unmounts and the ordinary card
-    // (from the reconciled list cache) is revealed — it must be TERMINAL, not stale.
     fireEvent.click(screen.getByRole('button', { name: 'unfocus' }));
     await waitFor(() => expect(within(screen.getByTestId('import-history-card-1')).getByText('Completed')).toBeInTheDocument());
     expect(within(screen.getByTestId('import-history-card-1')).queryByText('Processing')).not.toBeInTheDocument();
     expect(screen.getAllByTestId('import-history-card-1')).toHaveLength(1);
-    // No extra list or detail fetch was triggered by the unfocus.
     expect(listImportSubmissions.mock.calls.length).toBe(listCalls);
     expect(getImportSubmissionDetail.mock.calls.length).toBe(detailCalls);
   });
@@ -195,9 +181,7 @@ describe('ImportHistorySection (#1894)', () => {
 
   it('promotes a self-polled detail header into the card and keeps it terminal across collapse/re-expand (F86)', async () => {
     const user = userEvent.setup();
-    // The list snapshot shows the run still Processing…
     listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1, status: 'processing', processedCount: 1, aggregates: { accepted: 0, held: 0, skipped: 0, failed: 0 } })], total: 1 });
-    // …but the detail read for that id is already terminal.
     getImportSubmissionDetail.mockResolvedValue({
       ...summary({ id: 1, status: 'complete', processedCount: 3 }), itemsIncluded: true,
       items: [{ disposition: 'failed', ordinal: 0, path: '/a', title: 'Failed Book', message: 'nope' }],
@@ -206,14 +190,14 @@ describe('ImportHistorySection (#1894)', () => {
     const card = await screen.findByTestId('import-history-card-1');
     expect(screen.getByText('Processing')).toBeInTheDocument();
 
-    await user.click(card.querySelector('button')!); // expand → detail promotes the header
+    await user.click(card.querySelector('button')!);
     await screen.findByText('Failed Book');
     await waitFor(() => expect(screen.getByText('Completed')).toBeInTheDocument());
     expect(screen.queryByText('Processing')).not.toBeInTheDocument();
 
-    await user.click(card.querySelector('button')!); // collapse — header must stay Completed
+    await user.click(card.querySelector('button')!);
     expect(screen.getByText('Completed')).toBeInTheDocument();
-    await user.click(card.querySelector('button')!); // re-expand
+    await user.click(card.querySelector('button')!);
     expect(screen.getByText('Completed')).toBeInTheDocument();
     await screen.findByText('Failed Book');
   });
@@ -221,13 +205,12 @@ describe('ImportHistorySection (#1894)', () => {
   it('a pruned card still issues the mandatory direct GET and renders "details expired" (F4)', async () => {
     const user = userEvent.setup();
     listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1, detailsPruned: true })], total: 1 });
-    // The direct GET returns the pruned summary arm (itemsIncluded:false, detailsPruned:true).
     getImportSubmissionDetail.mockResolvedValue(summary({ id: 1, detailsPruned: true }));
     renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history' });
     await screen.findByTestId('import-history-card-1');
     await user.click(screen.getByTestId('import-history-card-1').querySelector('button')!);
     expect(await screen.findByTestId('import-details-expired')).toBeInTheDocument();
-    expect(getImportSubmissionDetail).toHaveBeenCalledWith(1); // F4 — never skips the GET
+    expect(getImportSubmissionDetail).toHaveBeenCalledWith(1);
   });
 
   it('auto-expands a pruned deep-link run via the direct GET (F4)', async () => {
@@ -238,7 +221,6 @@ describe('ImportHistorySection (#1894)', () => {
     expect(getImportSubmissionDetail).toHaveBeenCalledWith(3);
   });
 
-  // ── F20: status labels, relative-time source, pagination ────────────────────
   it('renders all three status labels and uses completedAt/createdAt correctly under a frozen clock (F20)', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     const now = new Date('2026-07-21T12:00:00.000Z');
@@ -256,13 +238,13 @@ describe('ImportHistorySection (#1894)', () => {
     expect(screen.getByText('Completed')).toBeInTheDocument();
     expect(screen.getByText('Processing')).toBeInTheDocument();
     expect(screen.getByText('Receiving')).toBeInTheDocument();
-    // complete → completedAt (2h ago), NOT createdAt (1m ago); processing → createdAt (3h ago).
+    // Terminal rows use completedAt; active rows use createdAt.
     expect(screen.getByText('2h ago')).toBeInTheDocument();
     expect(screen.getByText('3h ago')).toBeInTheDocument();
   });
 
   it('paginates — a page change re-queries with the next offset (F20)', async () => {
-    listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1 })], total: 120 }); // > page size
+    listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1 })], total: 120 });
     renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history' });
     await screen.findByTestId('import-history-card-1');
     expect(listImportSubmissions).toHaveBeenCalledWith({ limit: 50, offset: 0 });
@@ -270,7 +252,6 @@ describe('ImportHistorySection (#1894)', () => {
     await waitFor(() => expect(listImportSubmissions).toHaveBeenCalledWith({ limit: 50, offset: 50 }));
   });
 
-  // ── F17: shared detail hook self-polls processing → complete ────────────────
   it('an expanded card self-polls its detail from processing to terminal rows, patches the header, then stops (F17)', async () => {
     vi.useFakeTimers();
     listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1, status: 'processing', processedCount: 1 })], total: 1 });
@@ -281,13 +262,10 @@ describe('ImportHistorySection (#1894)', () => {
     await vi.advanceTimersByTimeAsync(10);
     fireEvent.click(screen.getByTestId('import-history-card-1').querySelector('button')!);
     await vi.advanceTimersByTimeAsync(10);
-    // Pre-terminal snapshot: only a pending row → no attention rows yet.
     expect(screen.queryByText('Failed Book')).not.toBeInTheDocument();
-    // Advance the detail's own poll → terminal state.
     await vi.advanceTimersByTimeAsync(FAST_POLL_MS + 10);
-    expect(screen.getByText('Failed Book')).toBeInTheDocument(); // terminal rows replace pending
-    expect(screen.getByText('Completed')).toBeInTheDocument(); // header patched (F86)
-    // The detail poll STOPS at complete — no further detail fetches.
+    expect(screen.getByText('Failed Book')).toBeInTheDocument();
+    expect(screen.getByText('Completed')).toBeInTheDocument();
     const calls = getImportSubmissionDetail.mock.calls.length;
     await vi.advanceTimersByTimeAsync(FAST_POLL_MS * 3);
     expect(getImportSubmissionDetail.mock.calls.length).toBe(calls);
@@ -296,10 +274,10 @@ describe('ImportHistorySection (#1894)', () => {
   it('an OFF-PAGE deep-linked card self-polls to terminal ROWS + HEADER (status/count/completed-time), stays terminal across collapse/re-expand, and never refetches the list (F35/F46/F49)', async () => {
     vi.useFakeTimers();
     const now = new Date('2026-07-21T12:00:00.000Z');
-    vi.setSystemTime(now); // freeze Date so the relative-time labels are deterministic
-    const createdAt = new Date(now.getTime() - 3 * 3600_000).toISOString(); // 3h ago
-    const completedAt = new Date(now.getTime() - 1 * 3600_000).toISOString(); // 1h ago (distinct label)
-    listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1 })], total: 1 }); // page lacks id 9
+    vi.setSystemTime(now);
+    const createdAt = new Date(now.getTime() - 3 * 3600_000).toISOString();
+    const completedAt = new Date(now.getTime() - 1 * 3600_000).toISOString();
+    listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1 })], total: 1 });
     let phase: 'processing' | 'complete' = 'processing';
     getImportSubmissionDetail.mockImplementation(() => Promise.resolve(
       phase === 'processing'
@@ -308,35 +286,32 @@ describe('ImportHistorySection (#1894)', () => {
     ));
     renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history&run=9' });
     await vi.advanceTimersByTimeAsync(10);
-    const card9 = () => screen.getByTestId('import-history-card-9'); // re-query (DOM re-renders)
-    expect(within(card9()).getByText('Processing')).toBeInTheDocument(); // header from the detail (processing)
-    expect(within(card9()).getByText('3h ago')).toBeInTheDocument(); // processing → createdAt time
+    const card9 = () => screen.getByTestId('import-history-card-9');
+    expect(within(card9()).getByText('Processing')).toBeInTheDocument();
+    expect(within(card9()).getByText('3h ago')).toBeInTheDocument();
     expect(screen.queryByText('Held Book')).not.toBeInTheDocument();
     const listCalls = listImportSubmissions.mock.calls.length;
 
     phase = 'complete';
-    await vi.advanceTimersByTimeAsync(FAST_POLL_MS + 10); // the detail's own poll advances
-    // Terminal ROWS and terminal HEADER (status + count + COMPLETED time) all update.
+    await vi.advanceTimersByTimeAsync(FAST_POLL_MS + 10);
     expect(screen.getByText('Held Book')).toBeInTheDocument();
     expect(within(card9()).getByText('Completed')).toBeInTheDocument();
     expect(within(card9()).getByText('1 held')).toBeInTheDocument();
-    expect(within(card9()).getByText('1h ago')).toBeInTheDocument(); // complete → completedAt time
+    expect(within(card9()).getByText('1h ago')).toBeInTheDocument();
     expect(within(card9()).queryByText('Processing')).not.toBeInTheDocument();
-    expect(within(card9()).queryByText('3h ago')).not.toBeInTheDocument(); // no longer the createdAt time
+    expect(within(card9()).queryByText('3h ago')).not.toBeInTheDocument();
 
-    // Collapse and re-expand — the header stays terminal (status + completed time).
     fireEvent.click(within(card9()).getAllByRole('button')[0]!);
     await vi.advanceTimersByTimeAsync(10);
     expect(within(card9()).getByText('Completed')).toBeInTheDocument();
     expect(within(card9()).getByText('1h ago')).toBeInTheDocument();
-    expect(screen.queryByText('Held Book')).not.toBeInTheDocument(); // rows collapsed
+    expect(screen.queryByText('Held Book')).not.toBeInTheDocument();
     fireEvent.click(within(card9()).getAllByRole('button')[0]!);
     await vi.advanceTimersByTimeAsync(10);
     expect(within(card9()).getByText('Completed')).toBeInTheDocument();
     expect(within(card9()).getByText('1h ago')).toBeInTheDocument();
     expect(screen.getByText('Held Book')).toBeInTheDocument();
 
-    // The detail poll STOPPED at complete, and the off-page path never refetched the list.
     phase = 'processing';
     const detailCalls = getImportSubmissionDetail.mock.calls.length;
     await vi.advanceTimersByTimeAsync(FAST_POLL_MS * 3);
@@ -350,8 +325,6 @@ describe('ImportHistorySection (#1894)', () => {
     listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1 })], total: 1 });
     getImportSubmissionDetail.mockResolvedValue({ ...summary({ id: 1 }), itemsIncluded: true, items: [{ disposition: 'bogus', ordinal: 0 }] });
     renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history&run=1' });
-    // The deep-link target (on- or off-page) renders through the single hydration
-    // authority, which validates the detail and shows its error before any header.
     expect(await screen.findByTestId('import-run-malformed')).toBeInTheDocument();
     await waitFor(() => expect(warn).toHaveBeenCalledWith(expect.stringContaining('Malformed'), expect.anything()));
     warn.mockRestore();
@@ -371,8 +344,7 @@ describe('ImportHistorySection (#1894)', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     let resolveList!: (v: { data: SubmissionSummary[]; total: number }) => void;
     listImportSubmissions.mockReturnValue(new Promise((res) => { resolveList = res; }));
-    // A "terminal" (status:complete) detail but with an INVALID header — missing
-    // `aggregates`. The hook leaves it in query data for the hydrator's error arm.
+    // Missing aggregates leaves this terminal detail in the hydrator's error arm.
     const malformedTerminal = {
       ...summary({ id: 1, status: 'complete', completedAt: new Date().toISOString() }),
       aggregates: undefined,
@@ -382,37 +354,30 @@ describe('ImportHistorySection (#1894)', () => {
     getImportSubmissionDetail.mockResolvedValue(malformedTerminal);
 
     renderWithProviders(<Harness />, { route: '/activity?tab=history&run=1', queryClient: qc });
-    // The malformed deep-link target shows the malformed placeholder, not a header.
     await screen.findByTestId('import-run-malformed');
 
-    // The list resolves with a VALID Processing row for the same id.
     resolveList({ data: [summary({ id: 1, status: 'processing', processedCount: 1, aggregates: { accepted: 0, held: 0, skipped: 0, failed: 0 } })], total: 1 });
     await waitFor(() => expect(listImportSubmissions).toHaveBeenCalled());
-    await new Promise((r) => setTimeout(r, 50)); // let the reconciliation effect run (and SKIP the malformed detail)
+    await new Promise((r) => setTimeout(r, 50)); // Let reconciliation reject the malformed detail.
 
-    // The list cache row stays VALID (Processing, aggregates intact) — never promoted
-    // to the malformed terminal header.
     const lc = qc.getQueryData(['importSubmissions', 'list', { limit: 50, offset: 0 }]) as { data?: { status?: string; aggregates?: unknown }[] } | undefined;
     expect(lc?.data?.[0]?.status).toBe('processing');
     expect(lc?.data?.[0]?.aggregates).toBeDefined();
 
-    // Removing the deep link reveals the ordinary card from the valid row — it renders
-    // (Processing) without crashing on a poisoned header.
     fireEvent.click(screen.getByRole('button', { name: 'unfocus' }));
     await waitFor(() => expect(within(screen.getByTestId('import-history-card-1')).getByText('Processing')).toBeInTheDocument());
     warn.mockRestore();
   });
 
-  // ── F23: transient deep-link + per-card detail failure isolation ────────────
   it('a transient (non-404) deep-link failure renders a focused retry card while other cards remain (F23)', async () => {
-    listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1 })], total: 1 }); // id 1 on page
-    getImportSubmissionDetail.mockRejectedValue(new Error('network')); // off-page hydrate for run=9 fails transiently
+    listImportSubmissions.mockResolvedValue({ data: [summary({ id: 1 })], total: 1 });
+    getImportSubmissionDetail.mockRejectedValue(new Error('network'));
     renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history&run=9' });
-    // A transient (non-404) error retries twice (backoff ~3s) before surfacing.
+    // Two query retries take about three seconds before the local error arm appears.
     await screen.findByText('Couldn’t load this import run.', {}, { timeout: 8000 });
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
-    expect(screen.getByTestId('import-history-card-1')).toBeInTheDocument(); // other cards remain
-    expect(screen.queryByTestId('import-run-unavailable')).not.toBeInTheDocument(); // not the 404 arm
+    expect(screen.getByTestId('import-history-card-1')).toBeInTheDocument();
+    expect(screen.queryByTestId('import-run-unavailable')).not.toBeInTheDocument();
   }, 12000);
 
   it('a per-card detail failure shows a local retry inside that card only (F23)', async () => {
@@ -422,6 +387,6 @@ describe('ImportHistorySection (#1894)', () => {
     await screen.findByTestId('import-history-card-1');
     fireEvent.click(screen.getByTestId('import-history-card-1').querySelector('button')!);
     await screen.findByText('Couldn’t load import details.', {}, { timeout: 8000 });
-    expect(screen.getByTestId('import-history-card-2')).toBeInTheDocument(); // sibling card unaffected
+    expect(screen.getByTestId('import-history-card-2')).toBeInTheDocument();
   }, 12000);
 });

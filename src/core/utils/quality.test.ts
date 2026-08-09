@@ -15,7 +15,6 @@ describe('calculateQuality', () => {
   });
 
   it('calculates Low tier (< 30 MB/hr)', () => {
-    // 10 MB over 1 hour = 10 MB/hr
     const result = calculateQuality(10 * 1024 * 1024, 3600);
     expect(result).not.toBeNull();
     expect(result!.tier).toBe('Low');
@@ -23,7 +22,6 @@ describe('calculateQuality', () => {
   });
 
   it('calculates Fair tier (30-80 MB/hr)', () => {
-    // 50 MB over 1 hour = 50 MB/hr
     const result = calculateQuality(50 * 1024 * 1024, 3600);
     expect(result).not.toBeNull();
     expect(result!.tier).toBe('Fair');
@@ -31,7 +29,6 @@ describe('calculateQuality', () => {
   });
 
   it('calculates Good tier (80-200 MB/hr)', () => {
-    // 128 MB over 1 hour = 128 MB/hr
     const result = calculateQuality(128 * 1024 * 1024, 3600);
     expect(result).not.toBeNull();
     expect(result!.tier).toBe('Good');
@@ -39,7 +36,6 @@ describe('calculateQuality', () => {
   });
 
   it('calculates High tier (200-400 MB/hr)', () => {
-    // 300 MB over 1 hour = 300 MB/hr
     const result = calculateQuality(300 * 1024 * 1024, 3600);
     expect(result).not.toBeNull();
     expect(result!.tier).toBe('High');
@@ -47,7 +43,6 @@ describe('calculateQuality', () => {
   });
 
   it('calculates Lossless tier (> 400 MB/hr)', () => {
-    // 500 MB over 1 hour = 500 MB/hr
     const result = calculateQuality(500 * 1024 * 1024, 3600);
     expect(result).not.toBeNull();
     expect(result!.tier).toBe('Lossless');
@@ -55,7 +50,6 @@ describe('calculateQuality', () => {
   });
 
   it('handles multi-hour durations', () => {
-    // 1280 MB over 10 hours = 128 MB/hr
     const result = calculateQuality(1280 * 1024 * 1024, 36000);
     expect(result).not.toBeNull();
     expect(result!.tier).toBe('Good');
@@ -63,14 +57,12 @@ describe('calculateQuality', () => {
   });
 
   it('rounds mbPerHour to nearest integer', () => {
-    // 33.33 MB over 1 hour
     const bytes = 33.33 * 1024 * 1024;
     const result = calculateQuality(bytes, 3600);
     expect(result).not.toBeNull();
     expect(result!.mbPerHour).toBe(33);
   });
 
-  // Boundary tests
   it('returns Fair at exactly 30 MB/hr', () => {
     const result = calculateQuality(30 * 1024 * 1024, 3600);
     expect(result!.tier).toBe('Fair');
@@ -107,17 +99,14 @@ describe('compareQuality', () => {
   const HOUR = 3600;
 
   it('returns lower when result MB/hr < existing', () => {
-    // existing: 128 MB/hr, result: 50 MB/hr
     expect(compareQuality(128 * MB, 50 * MB, HOUR)).toBe('lower');
   });
 
   it('returns higher when result MB/hr > existing', () => {
-    // existing: 50 MB/hr, result: 128 MB/hr
     expect(compareQuality(50 * MB, 128 * MB, HOUR)).toBe('higher');
   });
 
   it('returns similar when within ±10% threshold', () => {
-    // existing: 100 MB/hr, result: 105 MB/hr (5% higher → similar)
     expect(compareQuality(100 * MB, 105 * MB, HOUR)).toBe('similar');
   });
 
@@ -146,10 +135,7 @@ describe('compareQuality', () => {
   });
 
   it('respects custom threshold', () => {
-    // existing: 100 MB/hr, result: 85 MB/hr (15% lower)
-    // Default threshold (10%) → lower
     expect(compareQuality(100 * MB, 85 * MB, HOUR, 0.1)).toBe('lower');
-    // Threshold 20% → similar
     expect(compareQuality(100 * MB, 85 * MB, HOUR, 0.2)).toBe('similar');
   });
 });
@@ -172,7 +158,7 @@ describe('resolveBookQualityInputs', () => {
 
   it('falls back to duration * 60 when audioDuration is null', () => {
     const result = resolveBookQualityInputs({ audioDuration: null, duration: 120 });
-    expect(result.durationSeconds).toBe(7200); // 120 * 60
+    expect(result.durationSeconds).toBe(7200);
   });
 
   it('returns null when both audioTotalSize and size are null', () => {

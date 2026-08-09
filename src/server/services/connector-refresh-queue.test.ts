@@ -10,10 +10,7 @@ import { createMockLogger } from '../__tests__/helpers.js';
 import { ConnectorRequestError, type ConnectorImportBatch, type ConnectorRefreshResult } from '@core/connectors/index.js';
 import { CONNECTOR_TIMEOUT_MS } from '@core/utils/constants.js';
 
-// The queue touches connector/adapter/DB state ONLY through the injected
-// resolveFlush callback, so these tests drive a FAKE resolver (no db/getById/
-// getAdapter mocking) — the connector-specific resolution is exercised on the
-// ConnectorService side in connector.service.test.ts.
+// Queue tests use the injected resolver; ConnectorService covers connector-specific DB/adapter resolution.
 type Refresh = (batch: ConnectorImportBatch, signal: AbortSignal) => Promise<ConnectorRefreshResult>;
 
 const DEFAULT_CTX: Omit<ConnectorLogContext, 'connectorId'> = {
@@ -26,14 +23,11 @@ interface ResolverOpts {
   requestCount?: number;
   disabled?: boolean;
   ctx?: Partial<Omit<ConnectorLogContext, 'connectorId'>>;
-  // Per-connector-id url (disambiguates same-type connectors on the log).
+  // Distinguishes same-type connectors in log assertions.
   url?: (id: number) => string;
 }
 
-/**
- * A resolveFlush that mirrors the real one: skip (null) when disabled, otherwise
- * run the provided refresh mock as the provider call, carrying a stub logContext.
- */
+// Mirrors real resolution: disabled returns null; otherwise carry log context into the provider call.
 function resolver(refresh: Refresh, opts: ResolverOpts = {}): ResolveFlush {
   return async (entry) => {
     if (opts.disabled) return null;
@@ -70,7 +64,6 @@ describe('ConnectorRefreshQueue', () => {
 
   const ITEM = (bookId: number) => ({ bookId, title: `Book ${bookId}`, libraryPath: `/lib/${bookId}` });
 
-  // ── debounce coalescing ──────────────────────────────────────────────────────
   it('coalesces same-reason enqueues into one batch carrying all items', async () => {
     const refresh = vi.fn().mockResolvedValue({ success: true });
     const queue = makeQueue(resolver(refresh));
@@ -93,12 +86,9 @@ describe('ConnectorRefreshQueue', () => {
     queue.enqueue(1, 'restored', ITEM(2));
     await vi.advanceTimersByTimeAsync(DEBOUNCE);
 
-    // Debounce key is the connector id alone → one window, one provider refresh.
     expect(refresh).toHaveBeenCalledTimes(1);
     const batch = refresh.mock.calls[0]![0] as ConnectorImportBatch;
-    // Both reasons surface on the batch, deduplicated + first-seen order-stable (AC4).
     expect(batch.reasons).toEqual(['import', 'restored']);
-    // The union of items from every coalesced reason — nothing dropped (AC7).
     expect(batch.items.map((i) => i.bookId)).toEqual([1, 2]);
   });
 
@@ -121,10 +111,8 @@ describe('ConnectorRefreshQueue', () => {
     const resolve = vi.fn(resolver(refresh));
     const queue = makeQueue(resolve);
 
-    // Simulate a request handler that enqueues and returns synchronously.
     const handleRequest = () => { queue.enqueue(1, 'import', ITEM(1)); return 'returned'; };
     expect(handleRequest()).toBe('returned');
-    // Nothing resolved/flushed yet — the work is deferred past the request.
     expect(resolve).not.toHaveBeenCalled();
     expect(refresh).not.toHaveBeenCalled();
 
@@ -133,7 +121,6 @@ describe('ConnectorRefreshQueue', () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  // ── retry ────────────────────────────────────────────────────────────────────
   it('retries exactly once when run throws a retryable error then succeeds', async () => {
     const refresh = vi.fn()
       .mockRejectedValueOnce(new ConnectorRequestError('5xx', { retryable: true }))
@@ -167,7 +154,6 @@ describe('ConnectorRefreshQueue', () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  // ── structured-outcome log levels + redacted host ────────────────────────────
   it('logs the returned success message (skip counts) instead of a bare debug dispatch (F7)', async () => {
     const refresh = vi.fn().mockResolvedValue({ success: true, message: 'refreshed 2 paths, skipped 1' });
     const queue = makeQueue(resolver(refresh));
@@ -291,15 +277,13 @@ describe('ConnectorRefreshQueue', () => {
     );
   });
 
-  // ── upper bounds: maxBatchItems / maxBatchWaitMs ─────────────────────────────
   it('flushes immediately at maxBatchItems without waiting for the debounce timer (F8)', async () => {
     const refresh = vi.fn().mockResolvedValue({ success: true });
     const queue = makeQueue(resolver(refresh), { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 0, maxBatchItems: 3 });
 
     queue.enqueue(1, 'import', ITEM(1));
     queue.enqueue(1, 'import', ITEM(2));
-    queue.enqueue(1, 'import', ITEM(3)); // hits the cap → immediate flush
-    // Advance LESS than the debounce window: the flush must already have run.
+    queue.enqueue(1, 'import', ITEM(3));
     await vi.advanceTimersByTimeAsync(1);
 
     expect(refresh).toHaveBeenCalledTimes(1);
@@ -311,7 +295,7 @@ describe('ConnectorRefreshQueue', () => {
     const queue = makeQueue(resolver(refresh), { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 0, maxBatchItems: 1 });
 
     queue.enqueue(1, 'import', ITEM(1));
-    await vi.advanceTimersByTimeAsync(1); // well under debounce
+    await vi.advanceTimersByTimeAsync(1);
 
     expect(refresh).toHaveBeenCalledTimes(1);
     expect((refresh.mock.calls[0]![0] as ConnectorImportBatch).items.map((i) => i.bookId)).toEqual([1]);
@@ -321,19 +305,18 @@ describe('ConnectorRefreshQueue', () => {
     const refresh = vi.fn().mockResolvedValue({ success: true });
     const queue = makeQueue(resolver(refresh), { debounceMs: 1000, backoffMs: 0, flushTimeoutMs: 0, maxBatchWaitMs: 2500 });
 
-    queue.enqueue(1, 'import', ITEM(1));        // t=0, deadline at 2500
-    await vi.advanceTimersByTimeAsync(900);     // t=900
-    queue.enqueue(1, 'import', ITEM(2));        // resets debounce (would fire ~1900)
-    await vi.advanceTimersByTimeAsync(900);     // t=1800
-    queue.enqueue(1, 'import', ITEM(3));        // resets debounce (would fire ~2800)
-    expect(refresh).not.toHaveBeenCalled();     // neither bound has fired yet
-    await vi.advanceTimersByTimeAsync(700);     // t=2500 → deadline pre-empts debounce
+    queue.enqueue(1, 'import', ITEM(1)); // t=0; deadline stays at 2500 despite debounce resets.
+    await vi.advanceTimersByTimeAsync(900);
+    queue.enqueue(1, 'import', ITEM(2));
+    await vi.advanceTimersByTimeAsync(900);
+    queue.enqueue(1, 'import', ITEM(3));
+    expect(refresh).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(700);
 
     expect(refresh).toHaveBeenCalledTimes(1);
     expect((refresh.mock.calls[0]![0] as ConnectorImportBatch).items).toHaveLength(3);
   });
 
-  // ── withTimeout budget scaling ───────────────────────────────────────────────
   it('aborts the signal passed into run when the outer flush timeout fires (F10)', async () => {
     let captured: AbortSignal | undefined;
     const refresh = vi.fn((_batch: ConnectorImportBatch, signal: AbortSignal) => new Promise<ConnectorRefreshResult>((_resolve, reject) => {
@@ -343,17 +326,16 @@ describe('ConnectorRefreshQueue', () => {
     const queue = makeQueue(resolver(refresh as unknown as Refresh), { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 500 });
 
     queue.enqueue(1, 'import', ITEM(1));
-    await vi.advanceTimersByTimeAsync(DEBOUNCE); // flush starts run
-    await vi.advanceTimersByTimeAsync(500);      // outer timeout fires → signal aborts
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+    await vi.advanceTimersByTimeAsync(500);
 
     expect(captured?.aborted).toBe(true);
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
   it('scales the outer flush timeout by the reported request count so a healthy multi-path batch is NOT aborted (AC1)', async () => {
-    const BASE = CONNECTOR_TIMEOUT_MS + 5_000; // single-request budget + margin
-    // Reports 3 sequential requests; takes 2.5 per-request timeouts total — over
-    // the base budget but under the scaled budget (BASE + 2 * CONNECTOR_TIMEOUT_MS).
+    const BASE = CONNECTOR_TIMEOUT_MS + 5_000;
+    // Three sequential requests take 2.5 request budgets: above BASE, below the scaled budget.
     const work = 2.5 * CONNECTOR_TIMEOUT_MS;
     const refresh = vi.fn((_b: ConnectorImportBatch, signal: AbortSignal) => new Promise<ConnectorRefreshResult>((resolve, reject) => {
       const t = setTimeout(() => resolve({ success: true }), work);
@@ -362,11 +344,11 @@ describe('ConnectorRefreshQueue', () => {
     const queue = makeQueue(resolver(refresh as unknown as Refresh, { requestCount: 3 }), { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: BASE });
 
     queue.enqueue(1, 'import', ITEM(1));
-    await vi.advanceTimersByTimeAsync(DEBOUNCE); // flush starts run
-    await vi.advanceTimersByTimeAsync(work);     // request completes before the scaled budget fires
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+    await vi.advanceTimersByTimeAsync(work);
 
     expect(refresh).toHaveBeenCalledTimes(1);
-    expect(log.warn).not.toHaveBeenCalled(); // not aborted, not logged as failed
+    expect(log.warn).not.toHaveBeenCalled();
   });
 
   it('control: the SAME long work aborts at the base budget when a single request is reported (AC1)', async () => {
@@ -374,14 +356,14 @@ describe('ConnectorRefreshQueue', () => {
     let captured: AbortSignal | undefined;
     const refresh = vi.fn((_b: ConnectorImportBatch, signal: AbortSignal) => new Promise<ConnectorRefreshResult>((_resolve, reject) => {
       captured = signal;
-      // Non-retryable so the abort doesn't trigger the retry path — keeps timing simple.
+      // Non-retryable keeps the abort out of the retry path.
       signal.addEventListener('abort', () => reject(new ConnectorRequestError('aborted', { retryable: false })));
     }));
     const queue = makeQueue(resolver(refresh as unknown as Refresh, { requestCount: 1 }), { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: BASE });
 
     queue.enqueue(1, 'import', ITEM(1));
     await vi.advanceTimersByTimeAsync(DEBOUNCE);
-    await vi.advanceTimersByTimeAsync(BASE); // base single-request budget elapses → abort
+    await vi.advanceTimersByTimeAsync(BASE);
 
     expect(captured?.aborted).toBe(true);
   });
@@ -398,13 +380,10 @@ describe('ConnectorRefreshQueue', () => {
     await vi.advanceTimersByTimeAsync(DEBOUNCE);
 
     expect(refresh).toHaveBeenCalledTimes(1);
-    // A real signal is threaded (never aborts here since the watchdog is off).
     expect(captured).toBeInstanceOf(AbortSignal);
     expect(captured?.aborted).toBe(false);
   });
 
-  // ── per-connector in-flight serialization ────────────────────────────────────
-  // A gated run that records peak concurrency per connector id.
   function gatedRefresh() {
     let inFlight = 0;
     let maxInFlight = 0;
@@ -425,21 +404,19 @@ describe('ConnectorRefreshQueue', () => {
     const g = gatedRefresh();
     const queue = makeQueue(resolver(g.refresh as unknown as Refresh), { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 0, maxBatchItems: 2 });
 
-    // Synchronous >maxBatchItems burst of MIXED reasons coalesces into one pending
-    // entry per connector, so the cap is evaluated against the COMBINED item count.
     queue.enqueue(1, 'import', ITEM(1));
-    queue.enqueue(1, 'restored', ITEM(2)); // coalesced → cap(2) → flush #1
+    queue.enqueue(1, 'restored', ITEM(2));
     queue.enqueue(1, 'rename', ITEM(3));
-    queue.enqueue(1, 'import', ITEM(4));   // coalesced → cap(2) → flush #2 (chained behind #1)
+    queue.enqueue(1, 'import', ITEM(4));
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(g.refresh).toHaveBeenCalledTimes(1); // only #1 entered; #2 is chained
+    expect(g.refresh).toHaveBeenCalledTimes(1);
     expect(g.maxInFlight).toBe(1);
 
-    g.gates[0]!();                          // release #1
+    g.gates[0]!();
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(g.refresh).toHaveBeenCalledTimes(2); // #2 now runs — still serial
+    expect(g.refresh).toHaveBeenCalledTimes(2);
     expect(g.maxInFlight).toBe(1);
     expect(g.batches.map((b) => b.reasons)).toEqual([['import', 'restored'], ['rename', 'import']]);
     expect(g.batches.map((b) => b.items.map((i) => i.bookId))).toEqual([[1, 2], [3, 4]]);
@@ -455,7 +432,7 @@ describe('ConnectorRefreshQueue', () => {
     queue.enqueue(1, 'restored', ITEM(2));
     await vi.advanceTimersByTimeAsync(DEBOUNCE);
 
-    expect(g.refresh).toHaveBeenCalledTimes(1); // ONE flush, not two
+    expect(g.refresh).toHaveBeenCalledTimes(1);
     expect(g.maxInFlight).toBe(1);
     expect(g.batches[0]!.reasons).toEqual(['import', 'restored']);
     expect(g.batches[0]!.items.map((i) => i.bookId)).toEqual([1, 2]);
@@ -471,7 +448,7 @@ describe('ConnectorRefreshQueue', () => {
     queue.enqueue(2, 'import', ITEM(2));
     await vi.advanceTimersByTimeAsync(DEBOUNCE);
 
-    expect(g.refresh).toHaveBeenCalledTimes(2); // both connectors run in parallel
+    expect(g.refresh).toHaveBeenCalledTimes(2);
     expect(g.maxInFlight).toBe(2);
     g.gates.forEach((release) => release());
     await vi.advanceTimersByTimeAsync(0);
@@ -481,26 +458,23 @@ describe('ConnectorRefreshQueue', () => {
     const g = gatedRefresh();
     const queue = makeQueue(resolver(g.refresh as unknown as Refresh), { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 0, maxBatchItems: 1 });
 
-    queue.enqueue(1, 'import', ITEM(1)); // maxBatchItems=1 → immediate flush #1
+    queue.enqueue(1, 'import', ITEM(1));
     await vi.advanceTimersByTimeAsync(0);
-    expect(g.refresh).toHaveBeenCalledTimes(1); // #1 in flight (gated)
+    expect(g.refresh).toHaveBeenCalledTimes(1);
 
-    // New item arrives during the in-flight window → fresh pending entry, immediate
-    // flush (cap=1), chained behind the in-flight #1 rather than lost.
     queue.enqueue(1, 'import', ITEM(2));
     await vi.advanceTimersByTimeAsync(0);
-    expect(g.refresh).toHaveBeenCalledTimes(1); // still serialized — #2 chained, not entered
+    expect(g.refresh).toHaveBeenCalledTimes(1);
 
     g.gates[0]!();
     await vi.advanceTimersByTimeAsync(0);
 
     expect(g.refresh).toHaveBeenCalledTimes(2);
-    expect(g.batches.map((b) => b.items.map((i) => i.bookId))).toEqual([[1], [2]]); // item 2 NOT dropped
+    expect(g.batches.map((b) => b.items.map((i) => i.bookId))).toEqual([[1], [2]]);
     g.gates[1]!();
     await vi.advanceTimersByTimeAsync(0);
   });
 
-  // ── resolver-null skip (disabled/not-found at flush time) ─────────────────────
   it('resolver returning null is a no-op skip — no run, no retry, no dispatch/failure log; the draining entry self-prunes', async () => {
     const refresh = vi.fn().mockResolvedValue({ success: true });
     const queue = makeQueue(resolver(refresh, { disabled: true }));
@@ -513,7 +487,6 @@ describe('ConnectorRefreshQueue', () => {
     expect(log.info).not.toHaveBeenCalled();
     expect(log.debug).not.toHaveBeenCalledWith(expect.anything(), 'Connector refresh dispatched');
 
-    // The draining entry self-pruned: a fresh (non-disabled) enqueue flushes cleanly.
     const refresh2 = vi.fn().mockResolvedValue({ success: true });
     const queue2 = makeQueue(resolver(refresh2));
     queue2.enqueue(1, 'import', ITEM(2));
@@ -521,13 +494,12 @@ describe('ConnectorRefreshQueue', () => {
     expect(refresh2).toHaveBeenCalledTimes(1);
   });
 
-  // ── failure log context — the three branches (F5 regression guard) ────────────
   it('run failure logs the FULL logContext fields (connectorType/connectorName/url) + serializeError', async () => {
     const refresh = vi.fn().mockRejectedValue(new ConnectorRequestError('still 5xx', { retryable: true }));
     const queue = makeQueue(resolver(refresh));
 
     queue.enqueue(1, 'import', ITEM(1));
-    // Must not throw despite retry exhaustion (fire-and-forget).
+    // Retry exhaustion must remain fire-and-forget.
     await vi.advanceTimersByTimeAsync(DEBOUNCE);
 
     expect(refresh).toHaveBeenCalledTimes(2);
@@ -551,10 +523,8 @@ describe('ConnectorRefreshQueue', () => {
     queue.enqueue(1, 'restored', ITEM(2));
     await vi.advanceTimersByTimeAsync(DEBOUNCE);
 
-    // One coalesced batch, attempted twice (initial + single retry) — never split per reason.
     expect(refresh).toHaveBeenCalledTimes(2);
     expect(batches.map((b) => b.reasons)).toEqual([['import', 'restored'], ['import', 'restored']]);
-    // Terminal failure warn reflects every coalesced reason, not a scalar.
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({ connectorId: 1, reasons: ['import', 'restored'], count: 2 }),
       'Connector refresh failed',
@@ -568,7 +538,6 @@ describe('ConnectorRefreshQueue', () => {
     try {
       const refresh = vi.fn();
       const zodErr = new z.ZodError([]);
-      // Resolver throws after the row was resolved — carries logContext (F5).
       const resolve: ResolveFlush = async (entry) => {
         throw new FlushResolutionError(
           { connectorId: entry.connectorId, connectorType: 'plex', connectorName: 'My Plex', url: 'http://plex.local:32400' },
@@ -597,7 +566,6 @@ describe('ConnectorRefreshQueue', () => {
     const onUnhandled = (reason: unknown) => unhandled.push(reason);
     process.on('unhandledRejection', onUnhandled);
     try {
-      // getById-rejected shape: no row was ever resolved, so no logContext.
       const resolve: ResolveFlush = async () => { throw new Error('db is down'); };
       const queue = makeQueue(resolve);
 
@@ -622,7 +590,6 @@ describe('ConnectorRefreshQueue', () => {
   it('removes the pending key after a failing flush so a later enqueue schedules a fresh flush', async () => {
     let mode: 'fail' | 'ok' = 'fail';
     const refresh = vi.fn().mockResolvedValue({ success: true });
-    // Resolver throws with context on the first (fail) round, resolves on the second.
     const resolve: ResolveFlush = async (entry) => {
       if (mode === 'fail') {
         throw new FlushResolutionError(
@@ -640,7 +607,6 @@ describe('ConnectorRefreshQueue', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(log.warn).toHaveBeenCalledTimes(1);
 
-    // The key is gone (no stuck entry): a fresh enqueue + debounce flushes again.
     mode = 'ok';
     queue.enqueue(1, 'import', ITEM(2));
     await vi.advanceTimersByTimeAsync(DEBOUNCE);
@@ -649,8 +615,6 @@ describe('ConnectorRefreshQueue', () => {
     expect((refresh.mock.calls[0]![0] as ConnectorImportBatch).items.map((i) => i.bookId)).toEqual([2]);
   });
 
-  // ── shutdown drain: stop() ───────────────────────────────────────────────────
-  // A manually-gated run: each call parks until its gate is released.
   function deferredRefresh() {
     const gates: Array<() => void> = [];
     const refresh = vi.fn(() => new Promise<{ success: true }>((resolve) => {
@@ -665,7 +629,7 @@ describe('ConnectorRefreshQueue', () => {
 
     queue.enqueue(1, 'import', ITEM(1));
     await expect(queue.stop()).resolves.toBeUndefined();
-    await vi.advanceTimersByTimeAsync(DEBOUNCE); // the cleared timers must NOT fire a flush
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
 
     expect(refresh).not.toHaveBeenCalled();
     expect(log.warn).toHaveBeenCalledWith(
@@ -679,15 +643,15 @@ describe('ConnectorRefreshQueue', () => {
     const queue = makeQueue(resolver(refresh as unknown as Refresh));
 
     queue.enqueue(1, 'import', ITEM(1));
-    await vi.advanceTimersByTimeAsync(DEBOUNCE); // flush starts; run in flight (gated)
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
     expect(refresh).toHaveBeenCalledTimes(1);
 
     let stopped = false;
     const stopPromise = queue.stop().then(() => { stopped = true; });
     await vi.advanceTimersByTimeAsync(0);
-    expect(stopped).toBe(false); // still awaiting the in-flight draining chain
+    expect(stopped).toBe(false);
 
-    gates[0]!(); // settle run
+    gates[0]!();
     await stopPromise;
     expect(stopped).toBe(true);
   });
@@ -700,15 +664,15 @@ describe('ConnectorRefreshQueue', () => {
     const queue = makeQueue(resolver(refresh), { debounceMs: DEBOUNCE, backoffMs: BACKOFF, flushTimeoutMs: 0 });
 
     queue.enqueue(1, 'import', ITEM(1));
-    await vi.advanceTimersByTimeAsync(DEBOUNCE); // flush starts; first attempt rejects → enters backoff sleep
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
     expect(refresh).toHaveBeenCalledTimes(1);
 
     let stopped = false;
     const stopPromise = queue.stop().then(() => { stopped = true; });
     await vi.advanceTimersByTimeAsync(0);
-    expect(stopped).toBe(false); // mid-backoff: the in-flight flush (in draining) hasn't settled
+    expect(stopped).toBe(false);
 
-    await vi.advanceTimersByTimeAsync(BACKOFF * 1.3); // backoff (+ max jitter) elapses → retry runs & succeeds
+    await vi.advanceTimersByTimeAsync(BACKOFF * 1.3); // Covers maximum retry jitter.
     await stopPromise;
     expect(stopped).toBe(true);
     expect(refresh).toHaveBeenCalledTimes(2);
@@ -741,11 +705,10 @@ describe('ConnectorRefreshQueue', () => {
       const refresh = vi.fn().mockResolvedValue({ success: true });
       const queue = makeQueue(resolver(refresh), { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 1000 });
 
-      queue.enqueue(1, 'import', ITEM(1));         // arms debounce + deadline timers
-      await vi.advanceTimersByTimeAsync(DEBOUNCE);  // flush → withTimeout arms the request-timeout timer
+      queue.enqueue(1, 'import', ITEM(1));
+      await vi.advanceTimersByTimeAsync(DEBOUNCE);
 
       expect(refresh).toHaveBeenCalledTimes(1);
-      // debounce + deadline + request-timeout = 3 queue timers, every one unref()'d.
       expect(unrefs.length).toBeGreaterThanOrEqual(3);
       for (const u of unrefs) expect(u).toHaveBeenCalledTimes(1);
     } finally {
@@ -758,8 +721,8 @@ describe('ConnectorRefreshQueue', () => {
     const queue = makeQueue(resolver(refresh));
 
     queue.enqueue(1, 'import', ITEM(1));
-    queue.enqueue(1, 'restored', ITEM(2)); // coalesced into connector 1's entry → count 2, two reasons
-    queue.enqueue(2, 'import', ITEM(3));    // distinct connector → its own entry
+    queue.enqueue(1, 'restored', ITEM(2));
+    queue.enqueue(2, 'import', ITEM(3));
 
     await queue.stop();
     await vi.advanceTimersByTimeAsync(DEBOUNCE);
@@ -788,14 +751,12 @@ describe('ConnectorRefreshQueue', () => {
     gates[0]!();
     await expect(first).resolves.toBeUndefined();
     await expect(second).resolves.toBeUndefined();
-    expect(refresh).toHaveBeenCalledTimes(1); // no duplicate flush
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  // ── bounded shutdown drain (#1512) ──────────────────────────────────────────
   const DRAIN = 5_000;
 
-  // A run that records its AbortSignal and rejects when it fires — so the
-  // in-flight attempt actually unwinds at the drain deadline.
+  // Reject on abort so the in-flight attempt actually unwinds at the drain deadline.
   function abortAwareRefresh(retryable = false) {
     let captured: AbortSignal | undefined;
     const refresh = vi.fn((_batch: ConnectorImportBatch, signal: AbortSignal) => new Promise((_resolve, reject) => {
@@ -806,18 +767,18 @@ describe('ConnectorRefreshQueue', () => {
   }
 
   it('stop() resolves within the shutdown drain budget even with a large in-flight batch — bounded by shutdownDrainMs, NOT the scaled withTimeout budget (AC1)', async () => {
-    const { refresh } = deferredRefresh(); // 500-path batch in flight, never settles on its own
+    const { refresh } = deferredRefresh();
     const queue = makeQueue(resolver(refresh as unknown as Refresh, { requestCount: 500 }), { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: CONNECTOR_TIMEOUT_MS + 5_000, shutdownDrainMs: DRAIN });
 
     queue.enqueue(1, 'import', ITEM(1));
-    await vi.advanceTimersByTimeAsync(DEBOUNCE); // flush starts; in-flight in `draining`
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
     expect(refresh).toHaveBeenCalledTimes(1);
 
     let stopped = false;
     const stopPromise = queue.stop().then(() => { stopped = true; });
     await vi.advanceTimersByTimeAsync(DRAIN - 1);
-    expect(stopped).toBe(false); // still draining just under the budget
-    await vi.advanceTimersByTimeAsync(1); // budget elapses → bounded resolve
+    expect(stopped).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
     await stopPromise;
     expect(stopped).toBe(true);
   });
@@ -834,12 +795,11 @@ describe('ConnectorRefreshQueue', () => {
     await vi.advanceTimersByTimeAsync(DRAIN);
     await stopPromise;
     expect(a.signal?.aborted).toBe(true);
-    // The abort is an intentional cancellation — NOT double-logged as a failure.
     expect(log.warn).not.toHaveBeenCalledWith(expect.anything(), 'Connector refresh failed');
   });
 
   it('a deadline abort does NOT burn a retry — even when the abort error is retryable (AC3)', async () => {
-    // retryable:true proves it's the ABORT, not retryability, that stops the retry.
+    // retryable=true proves abort state, not error classification, suppresses retry.
     const a = abortAwareRefresh(true);
     const queue = makeQueue(resolver(a.refresh as unknown as Refresh), { debounceMs: DEBOUNCE, backoffMs: 1_000, flushTimeoutMs: 0, shutdownDrainMs: DRAIN });
 
@@ -850,27 +810,25 @@ describe('ConnectorRefreshQueue', () => {
     await stopPromise;
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(a.refresh).toHaveBeenCalledTimes(1); // aborted attempt not retried
+    expect(a.refresh).toHaveBeenCalledTimes(1);
   });
 
   it('a chained draining tail does NOT start connector work after shutdown — dropped + warn-logged (AC4)', async () => {
-    const a = abortAwareRefresh(); // active attempt rejects on abort so the chain unwinds
+    const a = abortAwareRefresh();
     const queue = makeQueue(resolver(a.refresh as unknown as Refresh), { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 0, maxBatchItems: 2, shutdownDrainMs: DRAIN });
 
-    // Cap-triggered chain for ONE connector: #1 active, #2 queued behind it.
     queue.enqueue(1, 'import', ITEM(1));
-    queue.enqueue(1, 'import', ITEM(2)); // cap → flush #1 (active)
+    queue.enqueue(1, 'import', ITEM(2));
     queue.enqueue(1, 'import', ITEM(3));
-    queue.enqueue(1, 'import', ITEM(4)); // cap → flush #2 (chained tail)
+    queue.enqueue(1, 'import', ITEM(4));
     await vi.advanceTimersByTimeAsync(0);
-    expect(a.refresh).toHaveBeenCalledTimes(1); // only #1 entered; #2 chained
+    expect(a.refresh).toHaveBeenCalledTimes(1);
 
     const stopPromise = queue.stop();
     await vi.advanceTimersByTimeAsync(DRAIN);
     await stopPromise;
-    await vi.advanceTimersByTimeAsync(0); // let the active unwind + the tail short-circuit
+    await vi.advanceTimersByTimeAsync(0);
 
-    // The tail must never enter run, even after the active attempt unwound.
     expect(a.refresh).toHaveBeenCalledTimes(1);
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({ connectorId: 1, reasons: ['import'], count: 2 }),
@@ -879,7 +837,7 @@ describe('ConnectorRefreshQueue', () => {
   });
 
   it('warn-logs still-in-flight connectors as dropped at the drain deadline (AC5)', async () => {
-    const { refresh } = deferredRefresh(); // never settles, ignores abort → still in flight at deadline
+    const { refresh } = deferredRefresh();
     const queue = makeQueue(resolver(refresh as unknown as Refresh), { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 0, shutdownDrainMs: DRAIN });
 
     queue.enqueue(1, 'import', ITEM(1));
@@ -907,10 +865,10 @@ describe('ConnectorRefreshQueue', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(stopped).toBe(false);
 
-    gates[0]!(); // genuine completion well inside the budget
+    gates[0]!();
     await stopPromise;
     expect(stopped).toBe(true);
-    expect(log.warn).not.toHaveBeenCalled(); // no premature deadline abort / dropped warn
+    expect(log.warn).not.toHaveBeenCalled();
   });
 
   it('a second stop() after the first bounded stop returned is a no-op — does not re-warn the deadline (F7)', async () => {
@@ -920,15 +878,15 @@ describe('ConnectorRefreshQueue', () => {
     queue.enqueue(1, 'import', ITEM(1));
     await vi.advanceTimersByTimeAsync(DEBOUNCE);
     const first = queue.stop();
-    await vi.advanceTimersByTimeAsync(DRAIN); // first resolves at the deadline (drops + warns once)
+    await vi.advanceTimersByTimeAsync(DRAIN);
     await first;
 
     const warnMock = log.warn as unknown as ReturnType<typeof vi.fn>;
     const deadlineWarns = () => warnMock.mock.calls.filter((c: unknown[]) => c[1] === 'Connector refreshes dropped at shutdown drain deadline');
     expect(deadlineWarns()).toHaveLength(1);
 
-    await queue.stop(); // second call in the post-deadline window
+    await queue.stop();
     await vi.advanceTimersByTimeAsync(0);
-    expect(deadlineWarns()).toHaveLength(1); // not re-warned
+    expect(deadlineWarns()).toHaveLength(1);
   });
 });

@@ -1,11 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createMAMFake, type MAMFakeHandle } from './mam.js';
 
-/**
- * Unit tests against the fake MAM server. Port is randomized per test so
- * parallel vitest workers don't collide.
- */
-
+// Allocate a unique port per test so parallel Vitest workers cannot collide.
 let nextPort = 14100;
 function allocatePort(): number {
   return nextPort++;
@@ -44,7 +40,7 @@ describe('fake MAM indexer', () => {
       expect(body.data).toHaveLength(1);
       expect(body.data[0]!.id).toBe(42);
       expect(body.data[0]!.title).toBe('E2E Test Book');
-      // author_info is double-encoded JSON — parseDoubleEncodedNames in myanonamouse.ts expects this shape.
+      // `parseDoubleEncodedNames` expects `author_info` to contain JSON encoded twice.
       expect(JSON.parse(JSON.parse(body.data[0]!.author_info))['1']).toBe('E2E Test Author');
     });
 
@@ -64,7 +60,7 @@ describe('fake MAM indexer', () => {
       const res = await fetchWithCookie('/tor/js/loadSearchJSONbasic.php?tor%5Btext%5D=anything', {}, 'mam_id=wrong');
       expect(res.status).toBe(403);
       const body = await res.text();
-      // MyAnonamouseIndexer parses the `<br />\s*(.+)` pattern for the error detail.
+      // The indexer extracts MAM's error detail after the HTML `<br>`.
       expect(body).toMatch(/<br\s*\/>/);
     });
   });
@@ -75,7 +71,7 @@ describe('fake MAM indexer', () => {
       expect(res.status).toBe(200);
       expect(res.headers.get('content-type')).toMatch(/application\/x-bittorrent/);
       const buf = Buffer.from(await res.arrayBuffer());
-      // Minimal bencode sanity: starts with `d4:info`.
+      // Minimal bencode sanity: a torrent payload starts with `d4:info`.
       expect(buf.subarray(0, 7).toString()).toBe('d4:info');
     });
 
@@ -140,13 +136,10 @@ describe('fake MAM indexer', () => {
 
   describe('server lifecycle', () => {
     it('listens on the configured port and returns a close() handle', async () => {
-      // Already covered by setup/teardown working at all — assert url shape.
       expect(fake.url).toMatch(/^http:\/\/localhost:\d+$/);
     });
   });
 
-  // #1156 F5 — HTTP control endpoints added with the wedge fix must be exercised
-  // directly so future deletion of the handlers can't pass silently.
   describe('POST /__control/wedges', () => {
     async function postWedges(body: unknown) {
       return fetch(`${fake.url}/__control/wedges`, {
@@ -214,7 +207,7 @@ describe('fake MAM indexer', () => {
     }
 
     it('applies an override that forces success=true regardless of wedge inventory', async () => {
-      await postBonusBuy({}); // ensure cleared
+      await postBonusBuy({});
       await fetch(`${fake.url}/__control/wedges`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ count: 0 }),
       });
@@ -239,14 +232,12 @@ describe('fake MAM indexer', () => {
     });
 
     it('clears an override when posted with an empty body — restores wedge-count-aware default', async () => {
-      // Seed an override forcing failure, then clear it.
       await postBonusBuy({ success: false, error: 'forced' });
       const cleared = await postBonusBuy({});
       expect(cleared.status).toBe(200);
       const clearedBody = await cleared.json() as { ok: boolean; cleared: boolean };
       expect(clearedBody.cleared).toBe(true);
 
-      // Seed wedges > 0 so the default path returns success.
       await fetch(`${fake.url}/__control/wedges`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ count: 3 }),
       });

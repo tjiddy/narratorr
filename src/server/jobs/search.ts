@@ -25,9 +25,6 @@ export interface SearchAllWantedResult {
   errors: number;
 }
 
-/**
- * Run a single search cycle: find wanted books, search indexers, and grab the best result.
- */
 export async function runSearchJob(
   settingsService: SettingsService,
   bookListService: BookListService,
@@ -41,7 +38,6 @@ export async function runSearchJob(
   broadcaster?: EventBroadcasterService,
   searchLadderCooldown?: SearchLadderCooldown,
 ): Promise<SearchJobResult> {
-  // Reset retry budget at the start of every search cycle (any caller)
   retryBudget?.resetAll();
 
   const searchSettings = await settingsService.get('search');
@@ -70,9 +66,7 @@ export async function runSearchJob(
         indexerSearchService, downloadOrchestrator,
         qualitySettings: buildSearchFilterOptions(qualitySettings, metadataSettings, { narratorPriority }),
         log, blacklistService, indexerService, eventHistory, broadcaster,
-        // The scheduled cycle is the ONLY caller that consults and records the
-        // query-ladder exhaustion cooldown (#2104 D15) — an unattended cycle
-        // must not degrade a later user-initiated search.
+        // Only unattended searches use cooldown; manual searches must remain unaffected.
         searchLadderCooldown, ladderMode: 'scheduled',
       });
       searched++;
@@ -89,10 +83,7 @@ export async function runSearchJob(
   return { searched, grabbed };
 }
 
-/**
- * Search all wanted books against all enabled indexers and grab the best result per book.
- * Unlike runSearchJob, this bypasses the searchSettings.enabled check (manual trigger).
- */
+// Manual trigger: ignores searchSettings.enabled and never participates in ladder cooldown.
 export async function searchAllWanted(
   settingsService: SettingsService,
   bookListService: BookListService,

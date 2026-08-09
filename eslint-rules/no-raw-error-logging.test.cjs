@@ -7,7 +7,6 @@ const ruleTester = new RuleTester({
 
 ruleTester.run('no-raw-error-logging', rule, {
   valid: [
-    // Canonical shape — already wrapped with serializeError under `error` key
     {
       code: `
         try { foo(); } catch (error) {
@@ -15,47 +14,45 @@ ruleTester.run('no-raw-error-logging', rule, {
         }
       `,
     },
-    // Error property value is a MemberExpression (result.error), not a catch binding
+    // A member value is valid when its root is not a catch binding.
     {
       code: `
         const result = doSomething();
         log.error({ error: result.error }, 'failed');
       `,
     },
-    // Plain variable — not from catch or .catch callback
+    // Plain variables are not catch sources.
     {
       code: `
         const message = 'oops';
         log.info({ error: message }, 'info');
       `,
     },
-    // Constructed Error — not traced to a catch source
+    // Constructed errors are not catch sources.
     {
       code: `
         const error = new Error('test');
         log.error({ error }, 'failed');
       `,
     },
-    // Plain string message — no error payload
     {
       code: `
         log.info('plain message');
       `,
     },
-    // Non-error object payload with unrelated keys
     {
       code: `
         log.error({ msg: 'plain' }, 'top-level');
       `,
     },
-    // Local variable bare-first-arg — not traceable to a catch binding
+    // A bare local is valid when it is not traceable to a catch binding.
     {
       code: `
         const result = doSomething();
         log.error(result, 'failed');
       `,
     },
-    // Bare CallExpression whose callee is NOT serializeError — must not flag
+    // Bare calls whose callee is not `serializeError` are out of scope.
     {
       code: `
         try { foo(); } catch (err) {
@@ -63,7 +60,6 @@ ruleTester.run('no-raw-error-logging', rule, {
         }
       `,
     },
-    // `err:` key wrapped with serializeError — already canonical-equivalent, must pass
     {
       code: `
         try { foo(); } catch (err) {
@@ -71,7 +67,7 @@ ruleTester.run('no-raw-error-logging', rule, {
         }
       `,
     },
-    // `err:` key with an unrelated non-catch identifier — must not flag
+    // The `err` alias still requires a catch-sourced value.
     {
       code: `
         const someUnrelatedNonCatchVar = { code: 1 };
@@ -79,9 +75,8 @@ ruleTester.run('no-raw-error-logging', rule, {
       `,
     },
 
-    // ── MemberExpression negative cases (root is not a catch binding) ─────
+    // MemberExpression negative cases whose root is not a catch binding.
 
-    // `result.error` where `result` is a typed result-union, not a catch binding
     {
       code: `
         async function run() {
@@ -90,7 +85,6 @@ ruleTester.run('no-raw-error-logging', rule, {
         }
       `,
     },
-    // `refresh.error` from an awaited service call — not a catch binding
     {
       code: `
         async function run() {
@@ -99,7 +93,7 @@ ruleTester.run('no-raw-error-logging', rule, {
         }
       `,
     },
-    // Computed segment at the root — out of scope
+    // Computed access at any chain depth is out of scope.
     {
       code: `
         const key = 'foo';
@@ -108,7 +102,6 @@ ruleTester.run('no-raw-error-logging', rule, {
         }
       `,
     },
-    // Computed segment in the chain (root computed) — out of scope
     {
       code: `
         const key = 'foo';
@@ -117,7 +110,6 @@ ruleTester.run('no-raw-error-logging', rule, {
         }
       `,
     },
-    // Computed segment in the outermost level — out of scope
     {
       code: `
         const key = 'foo';
@@ -126,7 +118,7 @@ ruleTester.run('no-raw-error-logging', rule, {
         }
       `,
     },
-    // Call-result base — out of scope
+    // Call-result roots are out of scope.
     {
       code: `
         function getError() { return { foo: 1 }; }
@@ -135,7 +127,6 @@ ruleTester.run('no-raw-error-logging', rule, {
         }
       `,
     },
-    // Already wrapped with serializeError — value is a CallExpression, not MemberExpression
     {
       code: `
         try { foo(); } catch (error) {
@@ -143,16 +134,14 @@ ruleTester.run('no-raw-error-logging', rule, {
         }
       `,
     },
-    // Plain string literal value — no identifier at all
     {
       code: `
         log.warn({ error: 'plain string' }, 'msg');
       `,
     },
 
-    // ── `logger`-bound receiver (naming symmetry with `log`) ──────────────
+    // `logger` receiver symmetry with `log`.
 
-    // Canonical shape on a `logger`-named binding — already wrapped, must pass
     {
       code: `
         try { foo(); } catch (err) {
@@ -160,15 +149,13 @@ ruleTester.run('no-raw-error-logging', rule, {
         }
       `,
     },
-    // `logger` receiver with a non-catch MemberExpression value — must not flag
     {
       code: `
         const result = doSomething();
         logger.error({ error: result.error }, 'failed');
       `,
     },
-    // False-positive guard: `logger`-named receiver, non-catch first arg — the
-    // widening to `logger` must not broaden the trigger beyond catch-traced values
+    // Adding `logger` must not broaden the trigger beyond catch-traced values.
     {
       code: `
         const logger = { warn(x){} };
@@ -179,9 +166,8 @@ ruleTester.run('no-raw-error-logging', rule, {
   ],
 
   invalid: [
-    // ── Case 1: object-key raw ────────────────────────────────────────────
+    // Object-key raw values.
 
-    // Shorthand from catch binding
     {
       code: `
         try { foo(); } catch (error) {
@@ -197,7 +183,6 @@ try { foo(); } catch (error) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // Alias from catch binding
     {
       code: `
         try { foo(); } catch (err) {
@@ -213,7 +198,6 @@ try { foo(); } catch (err) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // Mixed fields from catch binding
     {
       code: `
         try { foo(); } catch (error) {
@@ -229,7 +213,6 @@ try { foo(); } catch (error) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // Promise .catch callback parameter — alias
     {
       code: `
         promise.catch((rmError) => {
@@ -245,7 +228,6 @@ promise.catch((rmError) => {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // Promise .catch callback parameter — shorthand
     {
       code: `
         promise.catch((error) => {
@@ -262,9 +244,8 @@ promise.catch((error) => {
       errors: [{ messageId: 'rawError' }],
     },
 
-    // ── Case 2: bare Identifier first arg ─────────────────────────────────
+    // Bare identifier first arguments.
 
-    // Bare catch binding — `log.error(err, '…')`
     {
       code: `
         try { foo(); } catch (err) {
@@ -280,7 +261,6 @@ try { foo(); } catch (err) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // Bare .catch callback parameter — `log.warn(err, '…')`
     {
       code: `
         promise.catch((err) => {
@@ -296,7 +276,6 @@ promise.catch((err) => {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // request.log.* receiver
     {
       code: `
         try { foo(); } catch (err) {
@@ -312,7 +291,6 @@ try { foo(); } catch (err) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // this.log.* receiver
     {
       code: `
         try { foo(); } catch (err) {
@@ -328,7 +306,6 @@ try { foo(); } catch (err) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // deps.log.* receiver
     {
       code: `
         try { foo(); } catch (err) {
@@ -344,7 +321,6 @@ try { foo(); } catch (err) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // app.log.* receiver
     {
       code: `
         try { foo(); } catch (err) {
@@ -360,7 +336,6 @@ try { foo(); } catch (err) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // All four methods — `debug`
     {
       code: `
         try { foo(); } catch (err) {
@@ -376,7 +351,6 @@ try { foo(); } catch (err) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // All four methods — `info`
     {
       code: `
         try { foo(); } catch (err) {
@@ -392,7 +366,7 @@ try { foo(); } catch (err) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // Preserves trailing args (pino format placeholders)
+    // Fixes must preserve Pino format arguments.
     {
       code: `
         try { foo(); } catch (error) {
@@ -409,9 +383,8 @@ try { foo(); } catch (error) {
       errors: [{ messageId: 'rawError' }],
     },
 
-    // ── Case 3: bare serializeError(...) first arg ────────────────────────
+    // Bare `serializeError` first arguments.
 
-    // Bare `log.error(serializeError(err), '…')` — wrap in { error: … }
     {
       code: `
         try { foo(); } catch (err) {
@@ -425,7 +398,6 @@ try { foo(); } catch (error) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // Bare `this.log.warn(serializeError(err), '…')` — covers the pre-existing outlier
     {
       code: `
         try { foo(); } catch (error) {
@@ -440,9 +412,8 @@ try { foo(); } catch (error) {
       errors: [{ messageId: 'rawError' }],
     },
 
-    // ── Fixer depth cases ─────────────────────────────────────────────────
+    // Depth-aware import fixes.
 
-    // Sibling of helper — file in src/server/utils/
     {
       code: `
         try { foo(); } catch (err) {
@@ -459,7 +430,6 @@ try { foo(); } catch (err) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // Depth-1 — file in src/server/services/
     {
       code: `
         try { foo(); } catch (err) {
@@ -476,7 +446,6 @@ try { foo(); } catch (err) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // Depth-2 — file in src/server/services/import-adapters/
     {
       code: `
         try { foo(); } catch (err) {
@@ -493,7 +462,6 @@ try { foo(); } catch (err) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // Depth-1 — file in src/server/routes/
     {
       code: `
         try { foo(); } catch (err) {
@@ -511,9 +479,8 @@ try { foo(); } catch (err) {
       errors: [{ messageId: 'rawError' }],
     },
 
-    // ── Case 1 (extension): `err:` key from catch binding ─────────────────
+    // Catch bindings under the `err` alias.
 
-    // Shorthand `{ err }` from catch binding — normalizes to `error:`
     {
       code: `
         try { foo(); } catch (err) {
@@ -529,7 +496,6 @@ try { foo(); } catch (err) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // Explicit `err: <catchBinding>` with mixed fields
     {
       code: `
         try { foo(); } catch (error) {
@@ -545,7 +511,6 @@ try { foo(); } catch (error) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // `.catch` callback shorthand `{ err }`
     {
       code: `
         p.catch(err => log.warn({ err }, 'msg'));
@@ -557,7 +522,6 @@ p.catch(err => log.warn({ error: serializeError(err) }, 'msg'));
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // Non-first shorthand position via spread — `{ ...other, err }`
     {
       code: `
         const other = { ctx: 1 };
@@ -571,7 +535,6 @@ const other = { ctx: 1 };
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // `this.log` receiver with `err: <alias>` and mixed fields
     {
       code: `
         try { foo(); } catch (e) {
@@ -587,8 +550,7 @@ try { foo(); } catch (e) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // Literal property key `'err'` from catch binding — locks in the
-    // `Literal` branch of checkObjectArg's keyName resolution
+    // Literal `err` locks the property-key resolution branch.
     {
       code: `
         try { foo(); } catch (err) {
@@ -605,9 +567,8 @@ try { foo(); } catch (err) {
       errors: [{ messageId: 'rawError' }],
     },
 
-    // ── Case 1 (extension): MemberExpression value from catch binding ─────
+    // MemberExpression values from catch bindings.
 
-    // Synthetic catch-root regression fixture — closes the blind spot from #862
     {
       code: `
         try { foo(); } catch (error) {
@@ -623,7 +584,6 @@ try { foo(); } catch (error) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // Nested dot chain — `error.cause.message`
     {
       code: `
         try { foo(); } catch (error) {
@@ -639,7 +599,6 @@ try { foo(); } catch (error) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // `.catch` callback parameter with MemberExpression — `err.message`
     {
       code: `
         someAsync().catch(err => log.warn({ error: err.message }, 'msg'));
@@ -651,7 +610,6 @@ someAsync().catch(err => log.warn({ error: serializeError(err.message) }, 'msg')
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // Literal property key `'error'` with MemberExpression value
     {
       code: `
         try { foo(); } catch (error) {
@@ -667,7 +625,6 @@ try { foo(); } catch (error) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // `err:` alias key with MemberExpression value — normalizes key to `error:`
     {
       code: `
         try { foo(); } catch (error) {
@@ -684,9 +641,8 @@ try { foo(); } catch (error) {
       errors: [{ messageId: 'rawError' }],
     },
 
-    // ── `logger`-bound receiver (naming symmetry with `log`) ──────────────
+    // `logger` receiver symmetry with `log`.
 
-    // Bare catch binding on a `logger`-named identifier — `logger.error(err, …)`
     {
       code: `
         try { foo(); } catch (err) {
@@ -702,7 +658,6 @@ try { foo(); } catch (err) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
-    // `this.logger.*` member receiver, object-key shorthand from catch binding
     {
       code: `
         try { foo(); } catch (error) {

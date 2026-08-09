@@ -94,14 +94,12 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
     });
   }
 
-  // ── list ──────────────────────────────────────────────────────────────────
-
   describe('list', () => {
     it('orders newest-first (createdAt DESC, id DESC) with a same-createdAt tie-break', async () => {
       const t = new Date('2026-07-01T00:00:00.000Z');
       const older = await seed({ status: 'complete', createdAt: new Date('2026-06-01T00:00:00.000Z'), completedAt: t });
       const a = await seed({ status: 'complete', createdAt: t, completedAt: t });
-      const b = await seed({ status: 'complete', createdAt: t, completedAt: t }); // same createdAt, higher id
+      const b = await seed({ status: 'complete', createdAt: t, completedAt: t }); // same timestamp, higher id
       const { data, total } = await service.list({ limit: 20, offset: 0 });
       expect(total).toBe(3);
       expect(data.map((d) => d.id)).toEqual([b, a, older]);
@@ -138,7 +136,7 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
     });
 
     it('marks a pruned complete row detailsPruned, a retained one not (batch existence)', async () => {
-      const pruned = await seed({ status: 'complete', expectedCount: 2, counts: { accepted: 2 } }); // no item rows
+      const pruned = await seed({ status: 'complete', expectedCount: 2, counts: { accepted: 2 } });
       const retained = await seed({ status: 'complete', expectedCount: 1, counts: { accepted: 1 } });
       await seedItem(retained, 0, 'accepted');
       const { data } = await service.list({ limit: 20, offset: 0 });
@@ -147,8 +145,7 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
     });
 
     it('uses a CONSTANT two-query item budget regardless of row count (N+1 guard, F9/F52/F84)', async () => {
-      // Several complete AND several non-complete rows — a per-header loader would
-      // scale the item-query count with the page size; the set-based loader must not.
+      // Mixed complete and active rows ensure neither item query scales per header.
       for (let i = 0; i < 4; i++) {
         const c = await seed({ status: 'complete', expectedCount: 2, counts: { accepted: 1, held: 1 } });
         await seedItem(c, 0, 'accepted');
@@ -159,12 +156,10 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
       }
       const spy = spyItemQueries(db);
       const { data } = await service.list({ limit: 20, offset: 0 });
-      // Exactly two item-table statements: the grouped disposition count (non-complete)
-      // + the DISTINCT existence probe (complete). Not one-per-header.
+      // One grouped live-count query plus one retained-detail existence query.
       expect(spy.count).toBe(2);
-      expect(spy.statements.some((s) => /group by/i.test(s))).toBe(true); // grouped counts
-      expect(spy.statements.some((s) => /distinct/i.test(s))).toBe(true); // existence probe
-      // …and the assembled counts are still correct.
+      expect(spy.statements.some((s) => /group by/i.test(s))).toBe(true);
+      expect(spy.statements.some((s) => /distinct/i.test(s))).toBe(true);
       const complete = data.find((d) => d.status === 'complete')!;
       expect(complete.aggregates).toEqual({ accepted: 1, held: 1, skipped: 0, failed: 0 });
       const processing = data.find((d) => d.status === 'processing')!;
@@ -179,28 +174,21 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
       }
       const spy = spyItemQueries(db);
       await service.list({ limit: 20, offset: 0 });
-      expect(spy.count).toBe(1); // only the batch existence probe (no non-complete rows)
+      expect(spy.count).toBe(1);
       expect(spy.statements[0]).toMatch(/distinct/i);
       spy.restore();
     });
 
-    // AC1 real-DB layer (#1921): durable discovery of two INDEPENDENT creates. Two distinct
-    // `createSubmission` calls (distinct clientSubmissionIds) must BOTH survive in the durable
-    // list read — the read behind GET /api/import/submissions — with no last-write-wins loss of
-    // a receipt. The headers are minted through the real `ImportStagingService.createSubmission`
-    // (NOT the direct-insert `seed` helper), which is exactly the two distinct create calls the AC
-    // requires; the client-hook/outbox layer of AC1 is pinned separately in useStagedSubmission.test.tsx.
+    // Use concurrent real staging creates here; useStagedSubmission.test.tsx owns the client outbox layer.
     it('two distinct createSubmission calls are BOTH returned by list — durable discovery, no last-write-wins loss (AC1)', async () => {
       const staging = new ImportStagingService(db, noopLog, () => { /* runner nudge no-op */ });
       const idA = randomUUID();
       const idB = randomUUID();
-      // Concurrent creates (Promise.all) — the durable list must surface BOTH `receiving` headers
-      // regardless of how the two inserts interleave.
       const [a, b] = await Promise.all([
         staging.createSubmission({ source: 'library', clientSubmissionId: idA, payloadDigest: 'a'.repeat(64), expectedCount: 1 }),
         staging.createSubmission({ source: 'library', clientSubmissionId: idB, payloadDigest: 'b'.repeat(64), expectedCount: 1 }),
       ]);
-      expect(a.id).not.toBe(b.id); // two distinct durable headers, not a create-or-return collapse
+      expect(a.id).not.toBe(b.id);
 
       const { data, total } = await service.list({ limit: 20, offset: 0 });
       expect(total).toBe(2);
@@ -208,20 +196,18 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
     });
   });
 
-  // ── attention ───────────────────────────────────────────────────────────────
-
   describe('attention', () => {
     it('returns the older attention run even when a healthy newest run exists (F48)', async () => {
       const attn = await seed({ status: 'complete', createdAt: new Date('2026-06-01T00:00:00.000Z'), completedAt: new Date('2026-06-01T00:00:00.000Z'), counts: { held: 2, failed: 1 } });
-      await seed({ status: 'complete', createdAt: new Date('2026-06-20T00:00:00.000Z'), completedAt: new Date('2026-06-20T00:00:00.000Z'), counts: { accepted: 5 } }); // healthy, newer
+      await seed({ status: 'complete', createdAt: new Date('2026-06-20T00:00:00.000Z'), completedAt: new Date('2026-06-20T00:00:00.000Z'), counts: { accepted: 5 } });
       const { data, watch } = await service.attention({});
       expect(data?.id).toBe(attn);
       expect(data?.attention).toEqual({ kind: 'completed-attention', held: 2, failed: 1 });
-      expect(watch).toBe(false); // all complete
+      expect(watch).toBe(false);
     });
 
     it('watch is true for a processing row (no attention data yet)', async () => {
-      expect(await service.attention({})).toEqual({ data: null, watch: false }); // empty scope
+      expect(await service.attention({})).toEqual({ data: null, watch: false });
       await seed({ status: 'processing' });
       expect(await service.attention({})).toEqual({ data: null, watch: true });
     });
@@ -239,14 +225,13 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
       const now = new Date('2026-07-21T00:00:00.000Z');
       vi.useFakeTimers();
       vi.setSystemTime(now);
-      // Fully received (receivedCount === expectedCount) but never finalized, past grace.
       const id = await seed({ status: 'receiving', expectedCount: 3, receivedCount: 3, updatedAt: new Date(now.getTime() - ABANDONED_UPLOAD_GRACE_MS - 60_000) });
       const res = await service.attention({});
       expect(res.data?.id).toBe(id);
       expect(res.data?.attention).toEqual({ kind: 'abandoned' });
       expect(res.data?.receivedCount).toBe(3);
       expect(res.data?.expectedCount).toBe(3);
-      expect(res.watch).toBe(true); // still receiving → keep polling for a later finalize
+      expect(res.watch).toBe(true);
     });
 
     it('a healthy processing run does not mask an older attention run (data=attention, watch=true)', async () => {
@@ -278,7 +263,7 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
     it('completed-attention survives pruning — frozen aggregates from the CTE (F75)', async () => {
       const id = await seed({ status: 'complete', expectedCount: 3, completedAt: new Date('2026-06-01T00:00:00.000Z'), counts: { accepted: 1, held: 1, failed: 1 } });
       await seedItem(id, 0, 'held', { reason: 'recording-review-required' });
-      await db.delete(importSubmissionItems).where(eq(importSubmissionItems.submissionId, id)); // prune
+      await db.delete(importSubmissionItems).where(eq(importSubmissionItems.submissionId, id));
       const { data } = await service.attention({});
       expect(data?.itemsIncluded).toBe(false);
       expect(data?.detailsPruned).toBe(true);
@@ -303,12 +288,9 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
       expect(m.data?.attention).toEqual({ kind: 'completed-attention', held: 0, failed: 1 });
     });
 
-    // ── one-atomic-snapshot coherence (F11/F68/F71) — CTE-appropriate proofs ──
     it('a processing→completed-attention commit is seen entirely before OR after the read (never a split state)', async () => {
       const id = await seed({ status: 'processing', expectedCount: 2, createdAt: new Date('2026-06-01T00:00:00.000Z') });
-      // Read while still processing: no attention data, but watch true.
       expect(await service.attention({})).toEqual({ data: null, watch: true });
-      // Commit the terminal transition wholly, then read: sees completed-attention, watch false.
       await db.update(importSubmissions)
         .set({ status: 'complete', heldCount: 1, completedAt: new Date('2026-06-01T00:00:00.000Z') })
         .where(eq(importSubmissions.id, id));
@@ -333,7 +315,7 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
     });
 
     it('{data:null, watch:false} is reachable ONLY when neither attention nor non-terminal work exists', async () => {
-      await seed({ status: 'complete', completedAt: new Date('2026-06-01T00:00:00.000Z'), counts: { accepted: 3 } }); // healthy
+      await seed({ status: 'complete', completedAt: new Date('2026-06-01T00:00:00.000Z'), counts: { accepted: 3 } });
       expect(await service.attention({})).toEqual({ data: null, watch: false });
     });
 
@@ -343,9 +325,7 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
       const spy = spyStatements(db);
       await service.attention({});
       spy.restore();
-      // A single statement referencing import_submissions — splitting `data` and
-      // `watch` into two reads would make this 2. And that one statement must carry
-      // BOTH the abandoned/completed predicate AND the non-terminal watch EXISTS.
+      // One statement must contain both the attention predicate and non-terminal watch arm.
       const submissionStmts = spy.statements.filter((s) => /import_submissions/i.test(s));
       expect(submissionStmts).toHaveLength(1);
       const cte = submissionStmts[0]!.toLowerCase();
@@ -357,14 +337,12 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
       const now = new Date('2026-07-21T00:00:00.000Z');
       vi.useFakeTimers();
       vi.setSystemTime(now);
-      // Boundary row (exactly at grace → NOT abandoned) and a one-tick-past row
-      // (abandoned) share one snapshot with one captured cutoff.
       await seed({ status: 'receiving', expectedCount: 2, receivedCount: 1, createdAt: new Date('2026-07-20T10:00:00.000Z'), updatedAt: new Date(now.getTime() - ABANDONED_UPLOAD_GRACE_MS) });
       const past = await seed({ status: 'receiving', expectedCount: 2, receivedCount: 1, createdAt: new Date('2026-07-20T11:00:00.000Z'), updatedAt: new Date(now.getTime() - ABANDONED_UPLOAD_GRACE_MS - 1000) });
       const res = await service.attention({});
-      expect(res.data?.id).toBe(past); // only the strictly-past-grace row is abandoned
+      expect(res.data?.id).toBe(past);
       expect(res.data?.attention).toEqual({ kind: 'abandoned' });
-      expect(res.watch).toBe(true); // both receiving rows keep watch true (same snapshot)
+      expect(res.watch).toBe(true);
     });
 
     it('attention header is byte-identical to the list summary header for the same submission (single canonical mapper, F39)', async () => {
@@ -373,14 +351,12 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
         createdAt: new Date('2026-05-30T00:00:00.000Z'), completedAt: new Date('2026-06-01T00:00:00.000Z'),
         counts: { accepted: 1, held: 2, skipped: 0, failed: 1 },
       });
-      await seedItem(id, 0, 'held', { reason: 'recording-review-required' }); // retained (not pruned)
+      await seedItem(id, 0, 'held', { reason: 'recording-review-required' });
       const listRow = (await service.list({ limit: 20, offset: 0 })).data.find((d) => d.id === id)!;
       const { attention: _attention, ...attnHeader } = (await service.attention({ source: 'manual' })).data!;
-      expect(attnHeader).toEqual(listRow); // same canonical header — no drift between the two mappers
+      expect(attnHeader).toEqual(listRow);
     });
   });
-
-  // ── reportDetail (projection) ────────────────────────────────────────────────
 
   describe('reportDetail', () => {
     it('projection column set excludes itemPayload and has no message column (F62/F66)', () => {
@@ -390,15 +366,13 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
     });
 
     it('the ACTUAL executed reportDetail SELECT never references item_payload (F10)', async () => {
-      // A regression to `.select()` (all columns) would show item_payload in the SQL
-      // even though the isolated projection helper stayed unchanged.
+      // Inspect executed SQL so a regression to select-all cannot hide behind the projection helper.
       const id = await seed({ status: 'complete', expectedCount: 3, completedAt: new Date(), counts: { accepted: 1, held: 1, failed: 1 } });
       await seedItem(id, 0, 'accepted');
       await seedItem(id, 1, 'held', { reason: 'recording-review-required' });
       await seedItem(id, 2, 'failed', { reason: 'boom' });
       const spy = spyItemQueries(db);
       const detail = await service.reportDetail(id);
-      // The item-row SELECT (the one projecting path/title/disposition) must not read the payload.
       const selects = spy.statements.filter((s) => /\bfrom\b\s+"?import_submission_items"?/i.test(s) && /\bselect\b/i.test(s));
       expect(selects.length).toBeGreaterThan(0);
       for (const s of selects) expect(s).not.toMatch(/item_payload/i);
@@ -429,7 +403,6 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
 
     it('covers every remaining mapper branch — pending, already-importing, independent optional fields, failed reason=null (F26)', async () => {
       const idOnlyBook = await seedBook('Id Only Book');
-      // A processing submission's detail still maps all its item rows.
       const id = await seed({ status: 'processing', expectedCount: 6 });
       await seedItem(id, 0, 'pending');
       await seedItem(id, 1, 'skipped', { reason: 'already-importing' }); // neither collision field
@@ -475,7 +448,6 @@ describe('ImportSubmissionReportService (DB-backed, #1894)', () => {
   });
 });
 
-/** Spy on the libSQL client, capturing every executed SQL string touching the items table. */
 function spyItemQueries(db: Db): { statements: string[]; get count(): number; restore: () => void } {
   const client = db.$client as unknown as { execute: (...a: unknown[]) => unknown };
   const original = client.execute.bind(client);
@@ -492,7 +464,6 @@ function spyItemQueries(db: Db): { statements: string[]; get count(): number; re
   };
 }
 
-/** Spy capturing EVERY executed SQL string (used to prove a single-statement read). */
 function spyStatements(db: Db): { statements: string[]; restore: () => void } {
   const client = db.$client as unknown as { execute: (...a: unknown[]) => unknown };
   const original = client.execute.bind(client);

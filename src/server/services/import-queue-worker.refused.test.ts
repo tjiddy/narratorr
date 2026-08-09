@@ -19,14 +19,8 @@ const noopLog: FastifyBaseLogger = {
   level: 'info', silent: vi.fn(),
 } as unknown as FastifyBaseLogger;
 
-// #1736 — DB-backed worker-level regression guard for the forced-import refused terminal disposition.
-//
-// The copy-time collision fence refuses a forced import by throwing `OwnedRecordingError`. The
-// adapter rethrows it (it stops translating the typed error into a generic failure — covered in
-// manual.test.ts), and `ImportQueueWorker.processJob` must branch on it BEFORE the generic
-// `markJobFailed` path. This file drives a real adapter-rethrow through the real worker against a
-// migrated DB so the placeholder-deletion + FK-nulling + enriched event/SSE contract is exercised
-// end-to-end — an adapter-only test can pass while the worker still emits the generic failed path.
+// Drive a real adapter rethrow through the DB-backed worker: forced refusal must bypass generic
+// failure, delete its placeholder, null the FK, and emit the structured event/SSE contract.
 describe('ImportQueueWorker — forced-import refused terminal disposition (#1736, DB-backed)', () => {
   let dir: string;
   let db: Db;
@@ -34,12 +28,7 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
   let emitSpy: ReturnType<typeof vi.fn>;
   let eventCreate: ReturnType<typeof vi.fn>;
   let eventHistory: EventHistoryService;
-  /**
-   * #1960 AC5 — the companion trigger must NOT fire on the forced-refusal branch: that branch
-   * DELETES the placeholder book, so a reconcile would enqueue work for a row that no longer
-   * exists. The worker is constructed WITH this spy so a trigger added to the refusal path is
-   * detectable here; without it the whole branch is a blind spot.
-   */
+  // Refusal deletes the placeholder, so it must never enqueue reconciliation for that row.
   let reconcileBook: Mock<(bookId: number) => Promise<void>>;
   let worker: ImportQueueWorker;
 
@@ -64,11 +53,10 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {
-      // libsql may keep handles on Windows — best effort
+      // libsql may retain Windows handles; cleanup is best-effort.
     }
   });
 
-  /** Seed an `importing` placeholder book + a pending manual job linked to it. */
   async function seedForcedJob(): Promise<{ bookId: number; jobId: number }> {
     const book = await bookService.create({ title: 'Forced Book', authors: [{ name: 'Author' }], status: 'importing' });
     const [job] = await db.insert(importJobs).values({
@@ -81,7 +69,6 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
     return { bookId: book.id, jobId: job!.id };
   }
 
-  /** Seed an `importing` placeholder + a pending manual job WITHOUT `forceImport` (the F1 case). */
   async function seedNonForcedJob(): Promise<{ bookId: number; jobId: number }> {
     const book = await bookService.create({ title: 'Plain Book', authors: [{ name: 'Author' }], status: 'importing' });
     const [job] = await db.insert(importJobs).values({
@@ -94,7 +81,6 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
     return { bookId: book.id, jobId: job!.id };
   }
 
-  /** Register a manual adapter that rethrows the given OwnedRecordingError (as the real adapter does). */
   function registerRefusingAdapter(error: OwnedRecordingError): void {
     const adapter: ImportAdapter = {
       type: 'manual',
@@ -103,7 +89,6 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
     registerImportAdapter(adapter);
   }
 
-  /** Drive one drain cycle to completion. */
   async function runWorker(): Promise<void> {
     await worker.start();
     await new Promise(r => setTimeout(r, 150));
@@ -116,21 +101,17 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
 
     await runWorker();
 
-    // Job → terminal failed/failed (NOT completed); lastError carries the structured refusal.
     const [jobRow] = await db.select().from(importJobs).where(eq(importJobs.id, jobId)).limit(1);
     expect(jobRow!.status).toBe('failed');
     expect(jobRow!.phase).toBe('failed');
     const parsedErr = JSON.parse(jobRow!.lastError!);
     expect(parsedErr.refusal).toMatchObject({ kind: 'forced-import-refused', recordingReason: 'recording-review', existingBookId: 99 });
 
-    // Placeholder book deleted — no orphan importing/failed row.
     const remaining = await db.select().from(books).where(eq(books.id, bookId));
     expect(remaining).toHaveLength(0);
 
-    // Post-delete FK linkage: import_jobs.book_id nulled by `onDelete: set null`.
     expect(jobRow!.bookId).toBeNull();
 
-    // Enriched durable event on the import_failed channel; bookId null (placeholder gone), title preserved.
     expect(eventCreate).toHaveBeenCalledTimes(1);
     const eventArg = eventCreate.mock.calls[0]![0];
     expect(eventArg).toMatchObject({
@@ -141,8 +122,7 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
     });
     expect(eventArg.reason.refusal).toMatchObject({ kind: 'forced-import-refused', recordingReason: 'recording-review', existingBookId: 99 });
 
-    // SSE import_failed: pre-delete placeholder book_id (so the client evicts the card), structured
-    // refusal reason, and a non-generic error_message. Validates against the SSE schema.
+    // SSE retains the pre-delete book id so the client can evict the placeholder.
     const failedCalls = emitSpy.mock.calls.filter(c => c[0] === 'import_failed');
     expect(failedCalls).toHaveLength(1);
     const payload = failedCalls[0]![1];
@@ -155,11 +135,8 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
     });
     expect(payload.error_message).toContain('force refused');
     expect(payload.error_message).toContain('#99');
-    // NOT the generic import_complete success path.
     expect(emitSpy.mock.calls.some(c => c[0] === 'import_complete')).toBe(false);
 
-    // #1960 AC5 — and NO companion reconcile: the placeholder was just deleted, so enqueueing a
-    // book run here would schedule work against a row that no longer exists.
     expect(reconcileBook).not.toHaveBeenCalled();
   });
 
@@ -175,7 +152,7 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
     expect(remaining).toHaveLength(0);
     const payload = emitSpy.mock.calls.find(c => c[0] === 'import_failed')![1];
     expect(payload.refusal_reason).toMatchObject({ kind: 'forced-import-refused', recordingReason: 'recording-review-ambiguous-owner', existingBookId: 5 });
-    expect(reconcileBook).not.toHaveBeenCalled(); // #1960 AC5
+    expect(reconcileBook).not.toHaveBeenCalled();
   });
 
   it('ownerless refusal (-1 sentinel) reports existingBookId null, never "book #-1"', async () => {
@@ -188,15 +165,13 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
     expect(payload.refusal_reason).toMatchObject({ kind: 'forced-import-refused', recordingReason: 'recording-review-no-disambiguator', existingBookId: null });
     expect(payload.error_message).not.toContain('#-1');
     expect(payload.error_message).toContain('no identifiable owner');
-    expect(reconcileBook).not.toHaveBeenCalled(); // #1960 AC5
+    expect(reconcileBook).not.toHaveBeenCalled();
     void jobId;
   });
 
   it('F1 — NON-forced OwnedRecordingError takes the generic path, NOT the forced-refused disposition', async () => {
-    // The copy-time collision fence is force-independent, so a non-forced import can also throw
-    // OwnedRecordingError. That was never user-forced — it must settle as a generic failure (book
-    // reverts to `failed`, survives; no structured refusal reason; no worker-recorded event), never
-    // a `forced-import-refused` disposition with a deleted placeholder.
+    // OwnedRecordingError is force-independent; only forced imports get refusal cleanup.
+    // Non-forced imports take generic failure and retain their placeholder.
     const { bookId, jobId } = await seedNonForcedJob();
     registerRefusingAdapter(new OwnedRecordingError({ existingBookId: 99, title: 'Owned', reason: 'recording-review' }));
 
@@ -205,18 +180,14 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
     const [jobRow] = await db.select().from(importJobs).where(eq(importJobs.id, jobId)).limit(1);
     expect(jobRow!.status).toBe('failed');
     expect(jobRow!.phase).toBe('failed');
-    // Generic path: lastError carries NO structured refusal discriminator.
     expect(JSON.parse(jobRow!.lastError!).refusal).toBeUndefined();
-    // Placeholder NOT deleted — it reverts importing → failed and survives, keeping its FK link.
     const [bookRow] = await db.select().from(books).where(eq(books.id, bookId)).limit(1);
     expect(bookRow).toBeDefined();
     expect(bookRow!.status).toBe('failed');
     expect(jobRow!.bookId).toBe(bookId);
-    // SSE import_failed without a structured refusal reason; no worker-recorded refusal event.
     const payload = emitSpy.mock.calls.find(c => c[0] === 'import_failed')![1];
     expect(payload.refusal_reason).toBeUndefined();
     expect(eventCreate).not.toHaveBeenCalled();
-    // #1960 AC5 — the generic failure path does not reconcile either.
     expect(reconcileBook).not.toHaveBeenCalled();
   });
 
@@ -229,31 +200,20 @@ describe('ImportQueueWorker — forced-import refused terminal disposition (#173
 
     const [jobRow] = await db.select().from(importJobs).where(eq(importJobs.id, jobId)).limit(1);
     expect(jobRow!.status).toBe('failed');
-    // Generic path: the book is NOT deleted — it transitions importing → failed and survives.
     const [bookRow] = await db.select().from(books).where(eq(books.id, bookId)).limit(1);
     expect(bookRow).toBeDefined();
     expect(bookRow!.status).toBe('failed');
-    // No structured refusal reason on a generic failure SSE.
     const payload = emitSpy.mock.calls.find(c => c[0] === 'import_failed')![1];
     expect(payload.refusal_reason).toBeUndefined();
     expect(payload.error_message).toContain('disk full');
-    // The worker did not record a refused event for a generic failure (that event is the adapter's).
     expect(eventCreate).not.toHaveBeenCalled();
-    // FK still nulled? No — the book survives, so the job keeps its link.
     expect(jobRow!.bookId).toBe(bookId);
-    // Sanity: no bookEvents written by the worker on the generic path.
     const events = await db.select().from(bookEvents);
     expect(events).toHaveLength(0);
-    // #1960 AC5 — no companion reconcile on a generic failure.
     expect(reconcileBook).not.toHaveBeenCalled();
   });
 
-  /**
-   * #1960 AC5, the positive control for this suite: the SAME worker instance — the one carrying
-   * the reconciler spy — DOES fire exactly once when the adapter succeeds. Without this, every
-   * `not.toHaveBeenCalled()` above would also pass against a worker whose trigger was wired to a
-   * dead reference, and the whole refusal-branch guard would be vacuous.
-   */
+  // Positive control proves the reconciler spy is live; otherwise every negative assertion is vacuous.
   it('positive control: a SUCCEEDING import on this same worker fires exactly one reconcile', async () => {
     const { bookId, jobId } = await seedForcedJob();
     registerImportAdapter({ type: 'manual', async process() { /* succeeds */ } } as ImportAdapter);

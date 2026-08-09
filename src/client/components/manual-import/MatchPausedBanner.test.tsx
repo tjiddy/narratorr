@@ -6,8 +6,6 @@ import { PAUSED_REASON_DETAIL, pausedReasonDetail, type PausedReason } from '@/h
 
 const ALL_REASONS: PausedReason[] = ['start-failed', 'unreachable', 'request-rejected', 'run-expired', 'cancelled'];
 
-// Copy rule (#1864 §5): domain wording only — never raw error/server text, status
-// codes, or transport vocabulary. Covers server-derived strings, not just "chunk".
 const FORBIDDEN = ['chunk', 'job', 'poll', '404', 'http', '500', 'not found', 'expired', 'rejected the request', 'network'];
 
 describe('PausedReason → detail mapping (#1864 §5a)', () => {
@@ -16,7 +14,6 @@ describe('PausedReason → detail mapping (#1864 §5a)', () => {
       expect(PAUSED_REASON_DETAIL[reason]).toBeTruthy();
       expect(pausedReasonDetail(reason)).toBe(PAUSED_REASON_DETAIL[reason]);
     }
-    // No extra members beyond the closed union.
     expect(Object.keys(PAUSED_REASON_DETAIL).sort()).toEqual([...ALL_REASONS].sort());
   });
 

@@ -1,17 +1,6 @@
-/**
- * #2168 — the pure trailing-trim rule.
- *
- * Two properties carry the whole feature and each has its counterfactual named in
- * the test that pins it: the walk is a contiguous TAIL walk (rewrite it as a
- * match-anywhere filter and the "stops at the first non-match" case must go red),
- * and `trimmedChapterCount` is a first-class output (derive it from
- * `trimmed !== full` and the zero-length-tail case must go red).
- */
-
 import { describe, it, expect } from 'vitest';
 import { computeTrimmedChapterRuntime, type ChapterTrimEntry } from './chapter-trim.js';
 
-/** A story chapter — never matches the trigger pattern. */
 function story(lengthMs: number, title = 'Chapter 1'): ChapterTrimEntry {
   return { title, lengthMs };
 }
@@ -19,13 +8,7 @@ function story(lengthMs: number, title = 'Chapter 1'): ChapterTrimEntry {
 const HOUR_MS = 3_600_000;
 
 describe('computeTrimmedChapterRuntime — the four measured field specimens', () => {
-  /**
-   * Each fixture is built from the per-chapter field diff in #2168: lengths chosen
-   * so BOTH measured deltas hold — `|scanned − full| > 240` (would flag today) and
-   * `|scanned − trimmed| ≤ 240` (suppressed after this change). The array ORDER is
-   * pinned explicitly; an order-blind fixture cannot fail if the walk is rewritten
-   * as a match-anywhere filter.
-   */
+  // Each ordered fixture mismatches the full runtime but falls within the trimmed tolerance.
   it.each([
     {
       book: 'Addie LaRue',
@@ -79,8 +62,6 @@ describe('computeTrimmedChapterRuntime — the four measured field specimens', (
       trimmedRuntimeMs: fixture.trimmedRuntimeMs,
       trimmedChapterCount: fixture.removed,
     });
-    // The measured deltas: outside the 240s band against the full sum, inside it
-    // against the trimmed one. Without both, the fixture proves nothing.
     expect(Math.abs(fixture.scannedSeconds - fixture.runtimeLengthMs / 1000)).toBeGreaterThan(240);
     expect(Math.abs(fixture.scannedSeconds - fixture.trimmedRuntimeMs / 1000)).toBeLessThanOrEqual(240);
   });
@@ -106,11 +87,7 @@ describe('computeTrimmedChapterRuntime — the backward walk (pin 1)', () => {
   });
 
   it('STOPS at the first non-match, leaving an earlier matching chapter untouched', () => {
-    // Counterfactual: rewrite the walk as `chapters.filter(c => !PATTERN.test(c.title))`
-    // and this case must go red (it would report count 1 / trimmed − 60_000) while
-    // the four specimens above still pass. That asymmetry is the whole point of
-    // the tail walk — an `End Credits` the file actually CONTAINS must not be
-    // trimmed, or the corroboration manufactures a mismatch in the other direction.
+    // A match-anywhere filter would incorrectly remove the earlier End Credits.
     const result = computeTrimmedChapterRuntime(
       [story(HOUR_MS), { title: 'End Credits', lengthMs: 60_000 }, story(300_000, 'Chapter 2')],
       HOUR_MS + 360_000,
@@ -121,18 +98,13 @@ describe('computeTrimmedChapterRuntime — the backward walk (pin 1)', () => {
   });
 
   it('no-trim invariant (AC6): entry lengths that do NOT sum to runtimeLengthMs still yield it exactly', () => {
-    // A real `brandOutroDurationMs` gap — the endpoint publishes brand intro/outro
-    // alongside the array, so a naive re-sum of the KEPT entries would not
-    // reproduce `runtimeLengthMs`. Subtraction from the published total does.
+    // Published intro/outro gaps make re-summing retained chapters incorrect.
     const result = computeTrimmedChapterRuntime([story(1_000), story(2_000)], 3_777);
 
     expect(result).toEqual({ trimmedRuntimeMs: 3_777, trimmedChapterCount: 0 });
   });
 
   it('zero-length trailing match: removed and COUNTED, with the runtime unchanged', () => {
-    // Counterfactual: implement trim detection as `trimmed !== full` and this must
-    // go red. Paired assertions live in the service (the settle log reports 1) and
-    // the route (the optional trimmed field is OMITTED — the runtimes are equal).
     const result = computeTrimmedChapterRuntime(
       [story(HOUR_MS), { title: 'End Credits', lengthMs: 0 }],
       HOUR_MS,
@@ -142,9 +114,6 @@ describe('computeTrimmedChapterRuntime — the backward walk (pin 1)', () => {
   });
 
   it('an untrusted barrier reached AFTER removals does not roll them back', () => {
-    // Counterfactual: a loop that discards accumulated removals on hitting an
-    // untrusted barrier (or returns count 0) passes every other guard case below,
-    // because they all place the untrusted chapter LAST.
     const result = computeTrimmedChapterRuntime(
       [story(HOUR_MS), { title: 'End Credits' }, { title: 'Excerpt: Foo', lengthMs: 90_000 }],
       HOUR_MS + 150_000,
@@ -198,8 +167,7 @@ describe('computeTrimmedChapterRuntime — untrusted trailing entries stop the w
     ['lengthMs null', { title: 'End Credits', lengthMs: null }],
     ['lengthMs a string', { title: 'End Credits', lengthMs: '60000' }],
     ['lengthMs NaN', { title: 'End Credits', lengthMs: Number.NaN }],
-    // Reachable: JSON `1e999` parses to Infinity. The local `Number.isFinite`
-    // guard is the established pattern here (the blanket sweep closed as #1940).
+    // JSON `1e999` can produce Infinity.
     ['lengthMs Infinity', { title: 'End Credits', lengthMs: Number.POSITIVE_INFINITY }],
     ['lengthMs negative', { title: 'End Credits', lengthMs: -1_000 }],
     ['title absent', { lengthMs: 60_000 }],
@@ -246,9 +214,7 @@ describe('computeTrimmedChapterRuntime — the runtime is arithmetic, never a ve
     ['absent', undefined],
     ['null', null],
   ])('runtimeLengthMs %s → no trimmed runtime, but the count still reports the walk', (_label, runtimeLengthMs) => {
-    // Two counterfactuals. Short-circuit the walk on an unusable runtime and the
-    // count assertion fails. Drop the `typeof` guard and the `null` case returns
-    // −60_000, because JS coerces `null` to `0` (`null - 60000 === -60000`).
+    // The typeof guard prevents null coercion; the walk still reports its count.
     const result = computeTrimmedChapterRuntime(
       [story(HOUR_MS), { title: 'End Credits', lengthMs: 60_000 }],
       runtimeLengthMs,
@@ -262,9 +228,7 @@ describe('computeTrimmedChapterRuntime — the runtime is arithmetic, never a ve
     ['negative', -5_000],
     ['Infinity', Number.POSITIVE_INFINITY],
   ])('a degenerate NUMERIC runtimeLengthMs (%s) rides through raw — the rule does NOT reject it', (_label, runtimeLengthMs) => {
-    // The paired service assertion is "no trimmed reference" for every row, but
-    // that verdict is `usableChapterSeconds`'s. A rule that returns `undefined`
-    // here fails, even though the end-to-end behavior would look identical.
+    // Validity belongs to usableChapterSeconds, not this arithmetic rule.
     expect(computeTrimmedChapterRuntime([story(HOUR_MS)], runtimeLengthMs))
       .toEqual({ trimmedRuntimeMs: runtimeLengthMs, trimmedChapterCount: 0 });
   });
@@ -300,7 +264,6 @@ describe('computeTrimmedChapterRuntime — the runtime is arithmetic, never a ve
   });
 
   it('a Σ that overflows to Infinity yields -Infinity — no finite-sum guarantee is claimed', () => {
-    // Number.MAX_VALUE + Number.MAX_VALUE === Infinity; 100 - Infinity === -Infinity.
     const result = computeTrimmedChapterRuntime(
       [
         story(HOUR_MS),

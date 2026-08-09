@@ -174,7 +174,6 @@ describe('download-status-registry', () => {
     });
   });
 
-  // ── Two-axis derivation (#1445) ─────────────────────────────────────────
   describe('deriveDisplayStatus', () => {
     it('maps client-only tuples (pipelineStage=idle) onto the client status, including the failure tuple', () => {
       for (const s of ['queued', 'downloading', 'paused', 'completed', 'failed'] as const) {
@@ -183,7 +182,6 @@ describe('download-status-registry', () => {
     });
 
     it('pipeline stage wins over clientStatus whenever the stage is non-idle', () => {
-      // A completed client download mid-pipeline always shows the pipeline stage.
       expect(deriveDisplayStatus('completed', 'checking')).toBe('checking');
       expect(deriveDisplayStatus('completed', 'importing')).toBe('importing');
       expect(deriveDisplayStatus('completed', 'imported')).toBe('imported');

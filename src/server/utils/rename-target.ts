@@ -2,13 +2,7 @@ import { normalize, resolve, relative } from 'node:path';
 import { buildTargetPath } from './import-helpers.js';
 import type { NamingOptions } from '@core/utils/naming.js';
 
-/**
- * Row shape needed to compute a book's folder target. Mirrors the fields
- * `buildTargetPath` reads from a book — including ordered `narrators` so the
- * `{narrator}`/`{narratorLastFirst}` folder tokens render identically whether the
- * caller is `planRename` (full book from `getById`) or the bulk count/preview/job
- * (projected DB rows). `path` is the book's current absolute folder path.
- */
+/** Fields consumed by buildTargetPath; narrator order must match full-book queries. */
 export interface FolderTargetRow {
   path: string;
   title: string;
@@ -16,7 +10,7 @@ export interface FolderTargetRow {
   seriesPosition?: number | null | undefined;
   narrators?: Array<{ name: string }> | null | undefined;
   publishedDate?: string | null | undefined;
-  /** Stored edition_label (#1712) — feeds the `{edition}` token + mandatory collision suffix. */
+  /** Feeds the `{edition}` token and collision suffix. */
   editionLabel?: string | null | undefined;
 }
 
@@ -25,14 +19,7 @@ export interface LibraryFolderSettings {
   folderFormat: string;
 }
 
-/**
- * Single source of truth for "where should this book's folder live, and does that
- * differ from where it is now?". Consumed by `planRename`, the bulk count/preview,
- * and the bulk rename job so the preview can never disagree with the apply.
- *
- * Backslash-stored paths (Windows imports) are normalized to POSIX before the
- * comparison, matching how the bulk count has always compared paths.
- */
+/** Shared preview/apply target calculation with normalized Windows-stored paths. */
 export function computeFolderTarget(
   row: FolderTargetRow,
   authorName: string | null,
@@ -45,11 +32,7 @@ export function computeFolderTarget(
   return { targetPath, changed: normalizedCurrent !== normalizedTarget };
 }
 
-/**
- * Convert an absolute folder path to its library-root-relative form, using
- * POSIX separators for parity with how paths are stored and rendered elsewhere.
- * Falls back to the original path if it's not actually inside the library root.
- */
+/** Return a POSIX library-relative path, or the original when outside the root. */
 export function toLibraryRelative(absPath: string, libraryRoot: string): string {
   const rel = relative(normalize(resolve(libraryRoot)), normalize(resolve(absPath)));
   if (!rel || rel.startsWith('..')) return absPath;

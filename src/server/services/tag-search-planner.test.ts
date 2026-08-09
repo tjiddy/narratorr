@@ -45,9 +45,6 @@ describe('planTagSearchAttempts', () => {
   });
 
   it('AC11 — preserves edition annotations like `Special Edition, Book 1` (no series keyword)', () => {
-    // `- Special Edition, Book 1` does NOT match the dash-series-keyword regex
-    // (no "series/saga/trilogy/cycle/chronicles"); cleanTagTitle then strips
-    // `, Book 1` only, leaving `The Hobbit - Special Edition`.
     const scan = makeScan({ tagAlbum: 'The Hobbit - Special Edition, Book 1' });
     const attempts = planTagSearchAttempts(scan, { title: 'The Hobbit', author });
     const albumAttempt = attempts.find(a => a.source === 'album');
@@ -107,7 +104,6 @@ describe('planTagSearchAttempts', () => {
   });
 
   it('AC27 — deduplicates identical titles (case- and whitespace-insensitive)', () => {
-    // tagAlbum equals tagQuery title → only one attempt emitted.
     const scan = makeScan({ tagAlbum: 'imagine me' });
     const attempts = planTagSearchAttempts(scan, { title: 'Imagine Me', author });
     const titles = attempts.map(a => a.title.toLowerCase());
@@ -115,7 +111,6 @@ describe('planTagSearchAttempts', () => {
   });
 
   it('AC28 — caps attempts at MAX_TAG_SEARCH_ATTEMPTS', () => {
-    // Construct an input that triggers every possible attempt.
     const scan = makeScan({ tagAlbum: 'Distinct Album Title' });
     const attempts = planTagSearchAttempts(scan, {
       title: 'Series Name 1.5 - Some Title: Subtitle - Part 2',
@@ -142,8 +137,6 @@ describe('planTagSearchAttempts', () => {
     const attempts = planTagSearchAttempts(scan, { title: 'Mistborn: The Final Empire', author });
     expect(attempts[0]!.source).toBe('exact');
     expect(attempts[0]!.title).toBe('Mistborn: The Final Empire');
-    // strip-colon-suffix attempt also exists but follows exact; AC24's "no retries fire"
-    // is enforced by runTagSearch terminating on the first successful attempt.
     expect(attempts.find(a => a.source === 'strip-colon-suffix')?.title).toBe('Mistborn');
   });
 });

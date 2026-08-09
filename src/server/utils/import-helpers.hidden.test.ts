@@ -12,13 +12,7 @@ import {
   getVisiblePathSize,
 } from './import-helpers.js';
 
-/**
- * #1852 — born-hidden visibility contract, exercised against a REAL tmpdir so the recursive
- * dot-directory skip (files AND subtrees, at every depth) and identity-root policy are proven
- * on the real filesystem rather than a mock. Each classifier must ignore leading-dot files and
- * never descend a `.hidden/` (or `.merge-tmp/`) subtree, while still enumerating the VISIBLE
- * children of a hidden ROOT handed to it by identity.
- */
+// Real-fs coverage: skip hidden children at every depth, but still walk a hidden root (#1852).
 
 let root: string;
 
@@ -37,13 +31,13 @@ afterEach(async () => {
 describe('#1852 recursive dot-directory policy (real fs)', () => {
   it('countAudioFiles skips dot-files and never descends Visible/.hidden/track.mp3', async () => {
     await writeFile(join(root, 'real.mp3'), 'a');
-    await writeFile(join(root, '.real.tmp.mp3'), 'a'); // born-hidden temp beside the real file
+    await writeFile(join(root, '.real.tmp.mp3'), 'a');
     await mkdir(join(root, 'Visible'), { recursive: true });
     await writeFile(join(root, 'Visible', 'disc.mp3'), 'a');
     await mkdir(join(root, 'Visible', '.hidden'), { recursive: true });
-    await writeFile(join(root, 'Visible', '.hidden', 'track.mp3'), 'a'); // nested hidden subtree
+    await writeFile(join(root, 'Visible', '.hidden', 'track.mp3'), 'a');
 
-    expect(await countAudioFiles(root)).toBe(2); // real.mp3 + Visible/disc.mp3 only
+    expect(await countAudioFiles(root)).toBe(2);
   });
 
   it('containsAudioFiles returns false when the only audio lives under a dot-dir', async () => {
@@ -70,7 +64,7 @@ describe('#1852 recursive dot-directory policy (real fs)', () => {
 
   it('getVisiblePathSize totals ALL visible files but skips dot-files and dot-dir subtrees', async () => {
     await writeBytes(join(root, 'real.mp3'), 100);
-    await writeBytes(join(root, 'cover.jpg'), 50); // visible non-audio still counts (all-files size)
+    await writeBytes(join(root, 'cover.jpg'), 50);
     await writeBytes(join(root, '.temp.tmp.mp3'), 999);
     await mkdir(join(root, '.merge-tmp'), { recursive: true });
     await writeBytes(join(root, '.merge-tmp', 'big.m4b'), 100_000);
@@ -101,7 +95,6 @@ describe('#1852 recursive dot-directory policy (real fs)', () => {
 
     const dest = join(root, 'out');
     await copyAudioFiles(join(root, 'src'), dest);
-    // Two discs, one track each → two sequential output files, ghost excluded.
     expect((await readdir(dest)).length).toBe(2);
   });
 
@@ -126,7 +119,6 @@ describe('#1852 recursive dot-directory policy (real fs)', () => {
     await writeFile(join(root, 'Book Disc 1 of 2', 't.mp3'), 'x');
     await mkdir(join(root, 'Book Disc 2 of 2'), { recursive: true });
     await writeFile(join(root, 'Book Disc 2 of 2', 't.mp3'), 'x');
-    // A born-hidden orphan sibling that shares the stem — must be invisible to reconstruction.
     await mkdir(join(root, '.Book Disc 2 of 2'), { recursive: true });
     await writeFile(join(root, '.Book Disc 2 of 2', 't.mp3'), 'x');
 
@@ -165,11 +157,10 @@ describe('#1852 getVisiblePathSize does not abort on an unreadable hidden subtre
     const hidden = join(root, '.hidden');
     await mkdir(hidden, { recursive: true });
     await writeBytes(join(hidden, 'big.m4b'), 9999);
-    // Even if this subtree were unreadable, the walk never enters it. Best-effort chmod (POSIX).
     await chmod(hidden, 0o000).catch(() => {});
 
     expect(await getVisiblePathSize(root)).toBe(100);
 
-    await chmod(hidden, 0o755).catch(() => {}); // restore so afterEach cleanup can remove it
+    await chmod(hidden, 0o755).catch(() => {}); // Restore for afterEach cleanup.
   });
 });

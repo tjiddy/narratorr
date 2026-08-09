@@ -3,29 +3,10 @@ import { buildEditedFromBestMatch } from './buildEditedFromBestMatch.js';
 import type { ImportRow } from './types.js';
 
 /**
- * Merges a freshly-arrived match result into an import row: applies the
- * selection-safety predicate and auto-populates edited fields from the best
- * match. Shared by both Manual Import and Library Import so the predicate cannot
- * drift between the twin hooks (#1374) — the recurring drift class that #1318's
- * byte-identical-twins review flagged.
- *
- * The caller owns the duplicate-skip decision (library uses `isDbDuplicate`,
- * manual uses `row.book.isDuplicate`) and must short-circuit before delegating;
- * this helper only owns the selection predicate + auto-populate.
- *
- * Selection rules:
- * - A post-match library duplicate (`match.isDuplicate`) fails closed: it is
- *   deselected AND its duplicate fields are propagated onto `row.book` so the
- *   "Already in library" badge lights up. This overrides BOTH the confidence and
- *   `userEdited` branches — a newly discovered owned book must not be sent to
- *   confirm with `forceImport` (#1662 F8). Re-importing requires the user to
- *   deliberately re-check the row (the existing force-import opt-in).
- * - A row the user explicitly FIXED via the edit modal (`userEdited`) keeps its
- *   current selection regardless of the incoming confidence — discrete user
- *   intent is not the merge predicate's to override (#1374).
- * - Otherwise only `'high'` confidence preserves the prior selection; medium /
- *   none / unknown fail closed to unchecked so importing an unreviewed match is
- *   never the default (#1318).
+ * Shared match merge for both import flows; callers must skip their own DB
+ * duplicates first. Post-match duplicates deselect, user-edited rows preserve
+ * selection, and otherwise only high confidence preserves it. Best-match fields
+ * populate only untouched rows.
  */
 export function mergeMatchIntoRow(row: ImportRow, match: MatchResult): ImportRow {
   const isPostMatchDuplicate = match.isDuplicate === true;
@@ -36,10 +17,7 @@ export function mergeMatchIntoRow(row: ImportRow, match: MatchResult): ImportRow
       ? row.selected
       : (match.confidence === 'high' ? row.selected : false);
 
-  // Propagate the post-match duplicate verdict onto the row's book so the badge
-  // + the hooks' `isDbDuplicate`/`isDuplicate` checks see it (#1662 F8). A
-  // non-duplicate `review` verdict (#1711) instead surfaces a display-only
-  // `reviewReason` on the row — the row still flows (not hard-skipped).
+  // Propagate hard duplicates for downstream skip/badge checks; review-only rows still flow.
   const baseBook = isPostMatchDuplicate
     ? {
         ...row.book,
@@ -50,20 +28,12 @@ export function mergeMatchIntoRow(row: ImportRow, match: MatchResult): ImportRow
     : match.reviewReason !== undefined
       ? { ...row.book, reviewReason: match.reviewReason }
       : row.book;
-  // Thread the recording verdict (#1712) onto the row regardless of branch — it
-  // co-occurs with `isDuplicate` (same-recording), with `reviewReason` (review), or
-  // stands alone (different-recording of an owned title). Drives the ImportCard ladder.
+  // Recording verdict is orthogonal to duplicate/review flags and always propagates.
   const book = match.recordingVerdict !== undefined
     ? { ...baseBook, recordingVerdict: match.recordingVerdict }
     : baseBook;
 
-  // Auto-populate edited fields from the best match only when the user hasn't
-  // already edited this row. A row counts as edited if the user committed a fix
-  // through the modal (`userEdited`) — true even when they corrected fields
-  // manually WITHOUT picking a provider result, in which case `edited.metadata`
-  // is undefined (#1374 F1) — OR a prior merge already populated it
-  // (`edited.metadata` set). Keying on `edited.metadata` alone would let a later
-  // bestMatch overwrite a no-metadata manual correction.
+  // userEdited includes manual fixes without metadata; metadata alone would miss and clobber them.
   const wasEdited = row.userEdited || row.edited.metadata !== undefined;
   if (!wasEdited && match.bestMatch) {
     return {

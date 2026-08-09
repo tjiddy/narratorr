@@ -10,12 +10,7 @@ import { openCompanionEbook, resolveCompanionEbookPath } from './companion-ebook
 import { CAN_SYMLINK } from '../__tests__/windows-fs.js';
 import { READ_NO_FOLLOW } from '@core/utils/no-follow-open.js';
 
-/**
- * Driven against a REAL temp directory, never an `fs` mock: the symlink / regular-file /
- * parent-escape distinctions this helper exists to make are exactly the ones a mock erases.
- * `lstat` and `open` are wrapped in spies that delegate to the real implementations, so the
- * "no syscall issued" and forced-errno cases are expressible without faking the filesystem.
- */
+// Real temp dirs preserve symlink/parent-escape behavior; spies expose only syscall and errno boundaries.
 vi.mock('node:fs/promises', async () => {
   const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
   return { ...actual, lstat: vi.fn(actual.lstat), open: vi.fn(actual.open) };
@@ -30,7 +25,6 @@ function createMockLogger() {
   return { log: log as unknown as FastifyBaseLogger, spies: log };
 }
 
-/** Recursively collect every string leaf of a log record. */
 function stringLeaves(value: unknown, acc: string[] = []): string[] {
   if (typeof value === 'string') acc.push(value);
   else if (Array.isArray(value)) for (const v of value) stringLeaves(v, acc);
@@ -38,16 +32,8 @@ function stringLeaves(value: unknown, acc: string[] = []): string[] {
   return acc;
 }
 
-/**
- * Assert a logged `error` value is the output of `serializeError`, not the caught `Error`.
- *
- * The own-ENUMERABLE key set is what makes this discriminating. On a real `Error`, `message`
- * and `stack` are non-enumerable, so `Object.keys(rawError)` yields only the assigned `code`;
- * a `toMatchObject`/`objectContaining({ message })` matcher reads through to the non-enumerable
- * property and passes on a raw `Error` too, which is exactly the hole this closes. Pino
- * serializes own-enumerable properties only, so the key set is also what actually reaches the
- * log line. Mirrors the repository precedent at `indexer-search.service.test.ts:715-724`.
- */
+// Enumerable keys distinguish serializeError output from raw Error properties that Pino would omit.
+// objectContaining({ message }) is insufficient because it reads non-enumerable properties.
 function expectSerializedError(logged: unknown, original: Error, expected: { code?: string }): void {
   expect(logged).not.toBe(original);
   expect(logged).not.toBeInstanceOf(Error);
@@ -73,8 +59,7 @@ describe('openCompanionEbook', () => {
   beforeEach(async () => {
     vi.mocked(lstat).mockClear();
     vi.mocked(open).mockClear();
-    // `realpath` the temp roots up front: macOS resolves /var → /private/var, which would
-    // otherwise make every containment check fail for the wrong reason.
+    // macOS resolves /var → /private/var, so canonicalize roots before containment tests.
     root = await realpath(mkdtempSync(join(tmpdir(), 'narratorr-1974-lib-')));
     outside = await realpath(mkdtempSync(join(tmpdir(), 'narratorr-1974-out-')));
     bookPath = join(root, 'Author', 'Title');
@@ -106,11 +91,7 @@ describe('openCompanionEbook', () => {
       await result.handle.close();
     });
 
-    /**
-     * Containment is verified against a PATHNAME, and the open below is a second resolution of
-     * it. Both tests here defend the gap between those two steps; the first runs everywhere and
-     * catches a regression to `'r'`, the second proves the flag actually refuses the swap.
-     */
+    // Cover the pathname-check/open gap: flag use everywhere and real swap refusal where supported.
     it('opens with O_NOFOLLOW rather than a symlink-following read flag', async () => {
       await writeFile(join(bookPath, 'book.epub'), 'x');
       const result = await call('book.epub');
@@ -120,13 +101,7 @@ describe('openCompanionEbook', () => {
       if (result.outcome === 'ok') await result.handle.close();
     });
 
-    /**
-     * The half of the TOCTOU defence that is OURS to prove, and it runs on every platform.
-     * `O_NOFOLLOW → ELOOP on a symlink` is POSIX's contract, not this module's; what this
-     * module owes is that the resulting errno becomes a refusal rather than a served file.
-     * The end-to-end case below needs a real symlink AND a real flag, so it can only run on
-     * Linux — without this test, the classification would ship unproven on Todd's machine.
-     */
+    // POSIX owns O_NOFOLLOW → ELOOP; this module must classify that errno as a refusal.
     it('classifies an ELOOP from the open as unreadable, never as a served handle', async () => {
       await writeFile(join(bookPath, 'book.epub'), 'x');
       vi.mocked(open).mockRejectedValueOnce(
@@ -144,9 +119,7 @@ describe('openCompanionEbook', () => {
         const path = join(bookPath, 'book.epub');
         await writeFile(path, 'a real epub at verification time');
 
-        // The race, made deterministic: resolve() has already lstat'd a regular file and
-        // realpath'd it inside the root. Swapping HERE — after the checks, before the open —
-        // is exactly the window an attacker with write access to the book folder gets.
+        // Swap after containment but before open to exercise the attacker-controlled window.
         const { open: actualOpen } = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
         vi.mocked(open).mockImplementationOnce(async (...args) => {
           await rm(path);
@@ -156,8 +129,7 @@ describe('openCompanionEbook', () => {
 
         const result = await call('book.epub');
 
-        // ELOOP is not definitive absence, so `classifyFailure` reports `unreadable` and the
-        // route 404s. The bytes of `secret` must never reach a handle.
+        // ELOOP is unreadable, not missing; no handle may expose secret bytes.
         expect(result.outcome).toBe('unreadable');
       },
     );
@@ -168,7 +140,6 @@ describe('openCompanionEbook', () => {
       await writeFile(join(outside, 'secret.epub'), 'secret');
       await symlink(join(outside, 'secret.epub'), join(bookPath, 'book.epub'));
 
-      // The discriminator, NOT "the open throws" and NOT a dev/ino comparison.
       await expect(call('book.epub')).resolves.toEqual({ outcome: 'not_regular_file' });
     });
 
@@ -192,13 +163,12 @@ describe('openCompanionEbook', () => {
 
   describe('outside_library', () => {
     it.skipIf(!CAN_SYMLINK)('rejects a parent-directory symlink escape', async () => {
-      // <root>/escape is a symlink to a real folder outside the root holding a real book.epub.
       const externalBook = join(outside, 'Title');
       await mkdir(externalBook, { recursive: true });
       await writeFile(join(externalBook, 'book.epub'), 'outside bytes');
       await symlink(externalBook, join(root, 'escape'));
 
-      // The final component IS a regular file; only canonicalising the full path catches this.
+      // lstat sees a regular final component; only full-path canonicalization catches the parent escape.
       const result = await call('book.epub', { bookPath: join(root, 'escape') });
       expect(result).toEqual({ outcome: 'outside_library' });
     });
@@ -211,7 +181,7 @@ describe('openCompanionEbook', () => {
   });
 
   describe('invalid_filename', () => {
-    // Same set as the discovery exclusions — AC3 and AC10 term 3 call one predicate.
+    // Mirrors discovery exclusions; both paths must share one predicate.
     const rejected = ['', 'a/b.epub', 'a\\b.epub', ' book.epub', 'book.epub ', '.', '..'];
 
     it.each(rejected)('rejects %j with no syscall issued', async (filename) => {
@@ -226,9 +196,7 @@ describe('openCompanionEbook', () => {
       await expect(call('book.epub')).resolves.toEqual({ outcome: 'missing' });
     });
 
-    // The case that actually exercises the ENOENT-REJECTING containment variant. The test
-    // above exits at `lstat` and never reaches it, so on its own it cannot tell the strict
-    // guard from the legacy swallow-on-ENOENT sibling.
+    // The earlier case exits at lstat; this one reaches strict realpath ENOENT handling.
     it('rejects a file that disappears between a successful lstat and the containment check', async () => {
       const filePath = join(bookPath, 'book.epub');
       await writeFile(filePath, 'bytes');
@@ -241,10 +209,7 @@ describe('openCompanionEbook', () => {
 
       await expect(call('book.epub')).resolves.toEqual({ outcome: 'missing' });
 
-      // THE discriminator. `assertRealPathInsideLibraryStrict` propagates the realpath ENOENT,
-      // so the helper classifies and returns without ever opening. Swap in the legacy
-      // `assertRealPathInsideLibrary` and the ENOENT is swallowed, containment "passes", and
-      // `open` runs — same `missing` outcome, so only this assertion catches the regression.
+      // Only no-open distinguishes strict ENOENT propagation from the legacy swallowing guard.
       expect(vi.mocked(open)).not.toHaveBeenCalled();
     });
 
@@ -309,8 +274,7 @@ describe('openCompanionEbook', () => {
     it('logs a caught error at debug in the sibling shape, with the path preserved', async () => {
       const filePath = join(bookPath, 'book.epub');
       await writeFile(filePath, 'bytes');
-      // A REAL Node-shaped EACCES whose message and stack embed the path: the record must
-      // still serialize. A path-free `serializeError` is not expressible (F16).
+      // A real Node EACCES necessarily embeds the path in its serialized message and stack.
       const eacces = Object.assign(new Error(`EACCES: permission denied, open '${filePath}'`), { code: 'EACCES' });
       vi.mocked(open).mockRejectedValueOnce(eacces);
 
@@ -320,18 +284,15 @@ describe('openCompanionEbook', () => {
       const [record] = logger.spies.debug.mock.calls[0] as [Record<string, unknown>, string];
       expect(record).toMatchObject({ bookId: 42, path: filePath });
 
-      // The load-bearing half: `error` is the SERIALIZED plain object, not the caught Error.
       expectSerializedError(record.error, eacces, { code: 'EACCES' });
 
-      // …and the serialized record still carries the path verbatim in both message and stack,
-      // which is the point F16 settled: a path-free `serializeError` is not expressible.
+      // Path-free serializeError is impossible because Node embeds it in message and stack.
       expect(stringLeaves(record.error).join('\n')).toContain(filePath);
       expect(logger.spies.warn).not.toHaveBeenCalled();
       expect(logger.spies.error).not.toHaveBeenCalled();
     });
 
-    // AC2's never-throws guarantee reaches the cleanup path too: abandoning a handle whose
-    // own `close()` rejects must still resolve to the classified outcome and still log.
+    // Never-throws includes cleanup: a rejecting close must still classify and log.
     it('absorbs and serializes a rejection from closing an abandoned handle', async () => {
       const filePath = join(bookPath, 'book.epub');
       await writeFile(filePath, 'bytes');
@@ -346,7 +307,6 @@ describe('openCompanionEbook', () => {
         return handle;
       });
 
-      // Never throws — the close rejection does not escape as an unhandled reason.
       await expect(call('book.epub')).resolves.toEqual({ outcome: 'unreadable' });
 
       const closeRecord = logger.spies.debug.mock.calls.find(
@@ -360,8 +320,8 @@ describe('openCompanionEbook', () => {
     });
 
     it('never logs above debug', async () => {
-      await call('book.epub'); // missing
-      await call('a/b.epub');  // invalid_filename
+      await call('book.epub');
+      await call('a/b.epub');
       expect(logger.spies.info).not.toHaveBeenCalled();
       expect(logger.spies.warn).not.toHaveBeenCalled();
       expect(logger.spies.error).not.toHaveBeenCalled();
@@ -369,16 +329,7 @@ describe('openCompanionEbook', () => {
   });
 });
 
-/**
- * `resolveCompanionEbookPath` (#1976 AC1) — the verification prefix `openCompanionEbook` now
- * composes, and the sole path-construction site the two read routes and the selection
- * mutation all reach.
- *
- * Driven against the same real temp directories for the same reason: the symlink /
- * regular-file / parent-escape distinctions are the ones a mock erases. Every case asserts
- * `open` was never called — the resolver's whole point is that it verifies WITHOUT taking a
- * descriptor, so `inspectEpub` can open the archive by pathname itself (AC3).
- */
+// The resolver verifies real symlink/escape behavior without opening a descriptor.
 describe('resolveCompanionEbookPath', () => {
   let root: string;
   let bookPath: string;
@@ -407,11 +358,6 @@ describe('resolveCompanionEbookPath', () => {
     );
   }
 
-  /**
-   * The AC1 "no descriptor" invariant. The resolver issues `lstat` and `realpath` only, so a
-   * regression that opened a handle to probe the file — and leaked it — shows up here as a
-   * call to the spied `open`, which is the only observable a leaked descriptor has.
-   */
   function expectNoDescriptorOpened(): void {
     expect(vi.mocked(open)).not.toHaveBeenCalled();
   }
@@ -428,8 +374,7 @@ describe('resolveCompanionEbookPath', () => {
     });
 
     it('returns the path VERBATIM, not the canonicalised realpath', async () => {
-      // Containment canonicalises to decide, but the returned path is the one the caller
-      // built from `books.path` — so `inspectEpub` opens the same name the row names.
+      // Canonicalize only for containment; return the pathname stored by the book row.
       await writeFile(join(bookPath, 'book.epub'), 'bytes');
       const result = await resolve('book.epub');
 
@@ -480,9 +425,7 @@ describe('resolveCompanionEbookPath', () => {
   });
 
   describe('outside_library', () => {
-    // The PARENT-component escape, not merely a final-component one: this is the case
-    // `isCompanionEbookEligible`'s directory-level guard cannot cover once a component is
-    // swapped after it ran, and the only reason step 6 of the selection pass exists (AC28).
+    // A parent component can be swapped after the earlier directory-level eligibility guard.
     it.skipIf(!CAN_SYMLINK)('rejects a parent-directory symlink escape whose final component is a real file', async () => {
       const externalBook = join(outside, 'Title');
       await mkdir(externalBook, { recursive: true });
@@ -547,8 +490,7 @@ describe('resolveCompanionEbookPath', () => {
 
     it('classifies a code-less throw as unreadable, never missing', async () => {
       await writeFile(join(bookPath, 'book.epub'), 'bytes');
-      // The message SAYS ENOENT and there is no `code`: only the shared #1955 discriminator
-      // gets this right, a hand-rolled message match does not.
+      // A code-less "ENOENT" message must not trigger absence classification.
       vi.mocked(lstat).mockRejectedValueOnce(new Error('ENOENT'));
 
       await expect(resolve('book.epub')).resolves.toEqual({ outcome: 'unreadable' });
@@ -556,9 +498,7 @@ describe('resolveCompanionEbookPath', () => {
     });
   });
 
-  // AC2/AC6 boundary: the resolver's `debug` records carry the path DELIBERATELY. The
-  // path-free rule is the route boundary's, and #1974 settled that a path-free
-  // `serializeError` is not expressible.
+  // Debug records deliberately retain paths; redaction belongs at the route boundary.
   describe('logging', () => {
     it('logs a caught lstat error at debug with the path preserved in the serialized error', async () => {
       const filePath = join(bookPath, 'book.epub');
@@ -587,8 +527,8 @@ describe('resolveCompanionEbookPath', () => {
     });
 
     it('never logs above debug', async () => {
-      await resolve('book.epub'); // missing
-      await resolve('a/b.epub');  // invalid_filename
+      await resolve('book.epub');
+      await resolve('a/b.epub');
       expect(logger.spies.info).not.toHaveBeenCalled();
       expect(logger.spies.warn).not.toHaveBeenCalled();
       expect(logger.spies.error).not.toHaveBeenCalled();

@@ -68,12 +68,7 @@ function ErrorDetails({ reason }: { reason: Record<string, unknown> }) {
 }
 
 function HeldForReviewDetails({ reason }: { reason: Record<string, unknown> }) {
-  // Signal-on-failure, guarded against per-re-render spam. Logging in an effect keyed on
-  // `reason` fires once per distinct blob (not once per render of the same blob) and keeps
-  // the warn out of the render body. Type drift or a legacy/malformed blob lands in the
-  // fallback branch; without this signal the panel silently degrades to the generic dump
-  // with no trace of why. (console.debug is lint-forbidden; this mirrors the warn precedent
-  // in src/client/lib/sse/safe-parse-event.ts.)
+  // Effect-scoped warning avoids render-body logging and repeats only for a new reason object.
   useEffect(() => {
     const result = qualityGateReasonSchema.safeParse(reason);
     if (!result.success) {
@@ -102,13 +97,6 @@ function GrabFailedDetails({ reason }: { reason: Record<string, unknown> }) {
   );
 }
 
-/**
- * `search_relaxed_held` (#2104): a relaxed query rung found grabbable
- * candidates, but none of them corroborated the retained title segments, so the
- * auto-grab was withheld and the operator gets the call. Naming all three parts
- * is what makes that call possible — WHICH looser query ran, HOW loose it was,
- * and WHICH release it declined.
- */
 function SearchRelaxedHeldDetails({ reason }: { reason: Record<string, unknown> }) {
   const relaxedQuery = reason.relaxed_query as string | undefined;
   const variantTag = reason.variant_tag as string | undefined;
@@ -150,7 +138,6 @@ const DETAIL_RENDERERS: Record<string, React.FC<{ reason: Record<string, unknown
   search_relaxed_held: ({ reason }) => <SearchRelaxedHeldDetails reason={reason} />,
 };
 
-/** Renders formatted event reason details based on event type. */
 export function EventReasonDetails({ eventType, reason, indexerMap }: {
   eventType: string;
   reason: Record<string, unknown>;

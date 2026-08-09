@@ -28,9 +28,7 @@ describe('ReferenceReadService.list* (paginated, deterministic)', () => {
   });
 
   it('applies the requested limit/offset to the page query', async () => {
-    // Pagination forwarding only — the actual `name ASC, id ASC` order contract
-    // is proven against a real in-memory DB below (mockDbChain does not evaluate
-    // orderBy, so asserting it here would prove nothing about the SQL result).
+    // mockDbChain cannot evaluate SQL ordering; real-engine coverage below owns that contract.
     const chain = mockDbChain([]);
     db.select
       .mockReturnValueOnce(chain)
@@ -78,16 +76,7 @@ describe('ReferenceReadService.getById', () => {
   });
 });
 
-/**
- * Spin up a real in-memory libsql DB with the `authors` table CREATEd from its
- * drizzle schema definition, seeded with DUPLICATE names in scrambled insert
- * order. mockDbChain never evaluates `orderBy`, so the SQL order contract
- * (`name ASC, id ASC`) can only be proven against a real engine: a regression
- * to the wrong column or descending direction would still pass a mocked test.
- *
- * Schema kept inline so a column-name drift in src/db/schema.ts surfaces here
- * (the inserts below would fail to bind) instead of silently breaking the proof.
- */
+/** Real libSQL makes name/id ordering and duplicate-name tiebreaks observable. */
 async function loadAuthorsOrderingDb() {
   const client = createClient({ url: ':memory:' });
   const db = drizzle(client);
@@ -102,9 +91,7 @@ async function loadAuthorsOrderingDb() {
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     )
   `);
-  // Insert order is deliberately NOT the sorted order. Three rows share the name
-  // "Alpha" so the `id ASC` tiebreak is observable; a `name ASC, id DESC` bug
-  // would flip the Alpha block to 5,3,2.
+  // Insert order is not sorted; duplicate Alpha rows make the id-ascending tiebreak observable.
   const seed: Array<[number, string]> = [
     [1, 'Beta'],
     [2, 'Alpha'],
@@ -122,7 +109,6 @@ async function loadAuthorsOrderingDb() {
 }
 
 describe('ReferenceReadService list ordering (real in-memory DB)', () => {
-  // Expected order by name ASC, id ASC across the seeded rows.
   const EXPECTED_IDS = ['au_2', 'au_3', 'au_5', 'au_1', 'au_4'];
   const EXPECTED_NAMES = ['Alpha', 'Alpha', 'Alpha', 'Beta', 'Charlie'];
 
@@ -156,13 +142,10 @@ describe('ReferenceReadService list ordering (real in-memory DB)', () => {
     expect(page2.data.map((r) => r.publicId)).toEqual(['au_5', 'au_1']);
     expect(page3.data.map((r) => r.publicId)).toEqual(['au_4']);
 
-    // Concatenated pages reproduce the full ordered set exactly — no row dropped,
-    // none seen twice — which is the deterministic-offset-pagination contract.
     const paged = [...page1.data, ...page2.data, ...page3.data].map((r) => r.publicId);
     expect(paged).toEqual(EXPECTED_IDS);
     expect(new Set(paged).size).toBe(EXPECTED_IDS.length);
 
-    // total is the full unpaginated count on every page, independent of limit/offset.
     expect([page1.total, page2.total, page3.total]).toEqual([5, 5, 5]);
   });
 });

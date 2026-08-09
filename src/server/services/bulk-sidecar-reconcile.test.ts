@@ -3,8 +3,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@db/index.js';
 import type { BookService } from './book.service.js';
 
-// reconcileBookSidecars composes two cross-module helpers — mock them at their module boundaries
-// (NOT same-module, so vi.mock intercepts) and assert the orchestration + failure accounting.
+// Mock cross-module seams so orchestration and failure accounting remain observable.
 vi.mock('../utils/opf-writer.js', () => ({
   writeOpfSidecar: vi.fn().mockResolvedValue('written'),
 }));
@@ -112,8 +111,8 @@ describe('reconcileBookSidecars (#1670)', () => {
     writeOpfMock.mockResolvedValue('failed');
     downloadMock.mockResolvedValue('written');
     const outcome = await run({ coverUrl: 'https://example.com/c.png' });
-    expect(outcome.failed).toBe(true); // OPF failure still counts
-    expect(notifyRefresh).toHaveBeenCalledTimes(1); // but the cover write still warrants a refresh
+    expect(outcome.failed).toBe(true);
+    expect(notifyRefresh).toHaveBeenCalledTimes(1);
   });
 
   it('coverUrl=null → no download attempt, not a failure', async () => {
@@ -134,7 +133,6 @@ describe('reconcileBookSidecars (#1670)', () => {
   });
 });
 
-/** Drive `writeOpfSidecar` to `'failed'`, reporting `cause` through its optional failure sink. */
 function opfFailsWith(cause: unknown) {
   writeOpfMock.mockImplementation(async (args) => {
     args.onFailure?.(cause);
@@ -142,7 +140,6 @@ function opfFailsWith(cause: unknown) {
   });
 }
 
-/** Drive `downloadRemoteCover` to `'failed'`, reporting `cause` through its trailing sink. */
 function coverFailsWith(cause: unknown) {
   downloadMock.mockImplementation(async (_bookId, _path, _url, _db, _log, onFailure) => {
     onFailure?.(cause);
@@ -174,7 +171,7 @@ describe('reconcileBookSidecars — named failure reasons (#2159)', () => {
   });
 
   it('falls back to the generic OPF reason when the step reports no cause', async () => {
-    writeOpfMock.mockResolvedValue('failed'); // never calls onFailure
+    writeOpfMock.mockResolvedValue('failed');
     expect(await run()).toEqual({ failed: true, reason: 'OPF write failed' });
   });
 
@@ -185,13 +182,12 @@ describe('reconcileBookSidecars — named failure reasons (#2159)', () => {
   });
 
   it('falls back to the generic cover reason when the step reports no cause', async () => {
-    downloadMock.mockResolvedValue('failed'); // never calls onFailure
+    downloadMock.mockResolvedValue('failed');
     expect(await run({ coverUrl: 'https://example.com/c.png' }))
       .toEqual({ failed: true, reason: 'Cover download failed' });
   });
 
-  // AC13 step 2 observed end-to-end through a producer: undici puts a bare `fetch failed` on top and
-  // the actionable diagnostic on `.cause`. A message-only side channel would have lost this.
+  // Undici nests the actionable diagnostic under a generic TypeError.cause.
   it("surfaces an undici cause's ENOTFOUND rather than the generic 'fetch failed'", async () => {
     const cause = Object.assign(new Error('getaddrinfo ENOTFOUND covers.example.com'), { code: 'ENOTFOUND' });
     coverFailsWith(new TypeError('fetch failed', { cause }));
@@ -200,7 +196,6 @@ describe('reconcileBookSidecars — named failure reasons (#2159)', () => {
     expect(outcome.failed && outcome.reason).not.toContain('fetch failed');
   });
 
-  // AC11 row 3 — both steps fail in one iteration: ONE failure, ONE reason, OPF cause FIRST.
   it('composes both causes, OPF first, when the OPF and the cover both fail', async () => {
     opfFailsWith(makeEnoent());
     coverFailsWith('Cover response is not an image (content-type: text/html)');

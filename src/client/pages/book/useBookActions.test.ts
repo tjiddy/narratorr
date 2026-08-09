@@ -190,9 +190,6 @@ describe('useBookActions', () => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
     });
 
-    // #2069 AC17 — the series card lives in the SINGULAR `book` root namespace, so
-    // no prefix cascade from `['books', id]` reaches it. Without this the card keeps
-    // rendering the old series after a metadata save that cleared it.
     it('also invalidates the series-card query after a successful save', async () => {
       (api.updateBook as Mock).mockResolvedValue({});
       const { queryClient, wrapper } = createTestHarness();
@@ -204,8 +201,6 @@ describe('useBookActions', () => {
         await result.current.handleSave({ seriesName: null }, false);
       });
 
-      // The EXACT key array — a prefix-shaped assertion is what let the false
-      // "it already cascades" claim through in the first place.
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['book', 42, 'series'] });
       expect(queryKeys.bookSeries(42)).toEqual(['book', 42, 'series']);
       expect(queryKeys.book(42)).toEqual(['books', 42]);
@@ -237,7 +232,6 @@ describe('useBookActions', () => {
         await result.current.handleSave({ title: 'x' }, true);
       });
 
-      // 3 calls from save + 3 calls from rename = 6
       const bookCalls = invalidateSpy.mock.calls.filter(
         ([arg]) => JSON.stringify(arg) === JSON.stringify({ queryKey: ['books', 42] })
       );
@@ -573,7 +567,6 @@ describe('useBookActions', () => {
     });
   });
 
-  // #445 — uploadCoverMutation
   describe('uploadCoverMutation', () => {
     const testFile = new File(['data'], 'cover.jpg', { type: 'image/jpeg' });
 
@@ -673,10 +666,6 @@ describe('useBookActions', () => {
       queryClient.clear();
     });
 
-    // #1963 AC30 — the invalidation lives in onSettled, not onSuccess. The server fires the
-    // companion-ebook reconcile in a `finally`, so a book with no audio files throws
-    // NO_AUDIO_FILES *after* the ebook observation was refreshed; invalidating only on success
-    // would leave the Ebook panel showing a stale observation in exactly that case.
     it('still invalidates when the scan REJECTS, and toasts only the error', async () => {
       (api.refreshScanBook as Mock).mockRejectedValue(new Error('No audio files found'));
       const { queryClient, wrapper } = createTestHarness();

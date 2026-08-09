@@ -46,9 +46,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const [tab, setTab] = useState<'details' | 'history'>('details');
 
   const merged = mergeBookData(libraryBook, metadataBook);
-  // The modal's pre-fill and diff baseline come from the SAME resolver call the
-  // header's meta line does (#2069 AC18/AC25), so what the header hides and what
-  // the modal pre-fills cannot drift apart.
+  // Modal prefill/diff and header visibility share this resolver to prevent drift.
   const displayed = resolveDisplayedFields(libraryBook, metadataBook);
   const { renameMutation, mergeMutation, cancelMergeMutation, retagMutation, refreshScanMutation, deleteMutation, wrongReleaseMutation, retryImportMutation, uploadCoverMutation, ffmpegConfigured, isSaving, handleSave } =
     useBookActions(libraryBook.id);
@@ -128,12 +126,10 @@ export function BookDetails({ libraryBook, metadataBook }: {
         />
       )}
 
-      {/* Tab buttons */}
       <div className="flex justify-center animate-fade-in-up stagger-4">
         <Tabs tabs={BOOK_TABS} value={tab} onChange={(v) => setTab(v as 'details' | 'history')} ariaLabel="Book details" />
       </div>
 
-      {/* Tab content */}
       {tab === 'details' && (
         <div role="tabpanel" id="tabpanel-details" aria-labelledby="tab-details">
           <BookDetailsContent libraryBook={libraryBook} merged={merged} />

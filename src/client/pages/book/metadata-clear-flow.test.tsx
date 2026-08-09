@@ -8,12 +8,7 @@ import type { BookWithAuthor, UpdateBookPayload } from '@/lib/api';
 import type { ClearableBookField } from '@shared/schemas.js';
 import { BookPage } from './BookPage';
 
-// importOriginal form, NOT a bare replacement factory — BookDetails transitively
-// loads CompanionEbookSection, which reads named exports at RUNTIME
-// (`vimock-barrel-replace-drops-named-exports`). The reciprocal hazard applies too:
-// every method left unstubbed stays REAL and issues a genuine relative-URL fetch, so
-// the standing `issues no real network request` guard below is what keeps this suite
-// honest as child components change.
+// Preserve runtime exports for transitive children; the network guard catches any unstubbed real method.
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>();
   return {
@@ -39,29 +34,13 @@ vi.mock('sonner', () => ({
 
 import { api } from '@/lib/api';
 
-/**
- * The CLIENT half of the #2069 provider-only clear workflow (AC20/AC25), end to end
- * across the real page: `BookPage` → `BookDetails` → `resolveDisplayedFields` →
- * `BookMetadataModal` → `useBookActions` → the API call → cache invalidation →
- * refetch → the re-rendered header.
- *
- * The `api` layer is backed by an in-memory fake that models the SERVER's tombstone
- * semantics (recompute on `seriesName: null`, hydrate the parsed array on read), so
- * the invalidation/refetch loop is exercised for real rather than asserted about.
- *
- * The server half — the same PUT payload against the real Fastify app, real
- * BookService and a real migrated DB, plus the persistence, series-card and
- * post-enrichment assertions — is
- * `src/server/__tests__/metadata-clear-flow.e2e.test.ts`. The two meet at the PUT
- * payload, which both assert on literally (`{ seriesName: null }`); they cannot be
- * one test because client suites run in jsdom and server suites in node.
- */
+// This client E2E uses an in-memory tombstone model so invalidation, refetch, and re-render execute for real.
+// The Node-side persistence half lives in metadata-clear-flow.e2e.test.ts; both pin the same PUT payload.
 describe('Provider-only metadata clear — client E2E (#2069)', () => {
   let fetchSpy: MockInstance<typeof globalThis.fetch>;
-  /** The fake server's row for book 1, mutated by the PUT the way the service would. */
+  // Mutable fake-server row returned by each refetch.
   let storedBook: BookWithAuthor;
 
-  /** A post-import book: `enriched`, no stored series — the series is provider-only. */
   function providerOnlyBook(): BookWithAuthor {
     return createMockBook({
       id: 1,
@@ -70,8 +49,7 @@ describe('Provider-only metadata clear — client E2E (#2069)', () => {
       narrators: [],
       status: 'imported',
       enrichmentStatus: 'enriched',
-      // `useBook` is keyed off the ASIN — without one the provider query never fires
-      // and the fallback under test could not exist.
+      // useBook is ASIN-keyed; without this the provider fallback never exists.
       asin: 'B0BTRESS01',
       seriesName: null,
       seriesPosition: null,
@@ -93,14 +71,11 @@ describe('Provider-only metadata clear — client E2E (#2069)', () => {
     vi.clearAllMocks();
     storedBook = providerOnlyBook();
 
-    // The fake server: `getBookById` always returns CURRENT state, so a refetch after
-    // invalidation observes the write — the loop this test exists to cover.
+    // Return the mutable row so invalidation observes writes.
     vi.mocked(api.getBookById).mockImplementation(async () => storedBook);
     vi.mocked(api.getBook).mockResolvedValue(metadataBook);
     vi.mocked(api.updateBook).mockImplementation(async (_id: number, payload: UpdateBookPayload) => {
-      // Mirror the server's AC6 recompute for the one field this flow touches: a
-      // blank value adds the tombstone and normalizes the stored column to NULL; a
-      // non-blank value removes it.
+      // Mirror server tombstone recomputation for this flow.
       const cleared = new Set<ClearableBookField>(storedBook.userClearedFields ?? []);
       if ('seriesName' in payload) {
         if (payload.seriesName == null || payload.seriesName.trim() === '') {
@@ -111,9 +86,7 @@ describe('Provider-only metadata clear — client E2E (#2069)', () => {
           storedBook = { ...storedBook, seriesName: payload.seriesName };
         }
       }
-      // #2152: the position carries its OWN tombstone, plus AC4's two pair rules —
-      // (a) a non-blank name re-asserts the pair unless the body names the position,
-      // (b) a live name tombstone NULLs the position column.
+      // Position has its own tombstone; a live name reasserts the pair, while a name tombstone nulls position.
       if ('seriesPosition' in payload) {
         if (payload.seriesPosition == null) {
           cleared.add('seriesPosition');
@@ -168,34 +141,25 @@ describe('Provider-only metadata clear — client E2E (#2069)', () => {
     const user = userEvent.setup();
     renderPage();
 
-    // 1. The header shows the series from the PROVIDER fallback — nothing is stored.
     await waitFor(() => expect(screen.getByText('Tress of the Emerald Sea')).toBeInTheDocument());
-    // The provider metadata is a separate query from the library book — wait for it
-    // to settle rather than asserting on the library-only first paint.
+    // Provider metadata is a separate query; wait past the library-only first paint.
     await waitFor(() => expect(screen.getByText(/Secret Projects #1/)).toBeInTheDocument());
 
-    // 2. The modal pre-fills from the SAME resolver decision (AC18/AC25) — this is
-    //    what makes the clear expressible at all for this book.
+    // The modal must prefill from the same resolver decision or this clear is not expressible.
     await openEditModal(user);
     const seriesInput = screen.getByLabelText(/series$/i);
     expect(seriesInput).toHaveValue('Secret Projects');
 
-    // 3. Blank it and save.
     await user.clear(seriesInput);
     await user.click(screen.getByText('Save'));
 
-    // 4. The exact payload the server half consumes.
     await waitFor(() => expect(api.updateBook).toHaveBeenCalled());
     expect(api.updateBook).toHaveBeenCalledWith(1, { seriesName: null });
 
-    // 5. Invalidation → refetch → re-render. No remount, no reload: the same tree
-    //    that rendered the dot must stop rendering it.
     await waitFor(() => expect(screen.queryByText(/Secret Projects/)).not.toBeInTheDocument());
 
-    // 6. The tombstone came back on the refetched detail and is what suppresses the
-    //    provider fallback — the header is not merely showing a stale empty string.
+    // A refetched tombstone, not a stale empty string, must suppress the fallback.
     expect(storedBook.userClearedFields).toEqual(['seriesName']);
-    // Untouched neighbours still render, so this is a targeted suppression.
     expect(screen.getByText(/Dragonsteel/)).toBeInTheDocument();
   });
 
@@ -211,7 +175,6 @@ describe('Provider-only metadata clear — client E2E (#2069)', () => {
 
     await openEditModal(user);
 
-    // The operator never sees the value they just removed reappear.
     expect(screen.getByLabelText(/series$/i)).toHaveValue('');
   });
 
@@ -249,8 +212,7 @@ describe('Provider-only metadata clear — client E2E (#2069)', () => {
     await user.type(screen.getByLabelText(/series$/i), 'Cosmere');
     await user.click(screen.getByText('Save'));
 
-    // Scope to the header meta line — the series card sidebar also renders the name
-    // once the tombstone is gone, and `getByText` would ambiguously match both.
+    // Scope to the header; SeriesCard also renders the restored name.
     await waitFor(() => expect(screen.getByText(/^Cosmere #1 ·/)).toBeInTheDocument());
     expect(storedBook.userClearedFields).toEqual([]);
   });
@@ -269,11 +231,9 @@ describe('Provider-only metadata clear — client E2E (#2069)', () => {
     const payload = vi.mocked(api.updateBook).mock.calls[0]![1] as Record<string, unknown>;
     expect(payload).toEqual({ title: 'Renamed Book' });
     expect(payload).not.toHaveProperty('seriesName');
-    // The header keeps showing the provider fallback — nothing was tombstoned.
     expect(screen.getByText(/Secret Projects #1/)).toBeInTheDocument();
   });
 
-  // ─── #2152 AC14: clearing the POSITION alone, series kept ───
   describe('clearing the position alone (#2152 AC14)', () => {
     async function clearPosition(user: ReturnType<typeof userEvent.setup>) {
       await openEditModal(user);
@@ -293,7 +253,6 @@ describe('Provider-only metadata clear — client E2E (#2069)', () => {
       expect(api.updateBook).toHaveBeenCalledWith(1, { seriesPosition: null });
       expect(vi.mocked(api.updateBook).mock.calls[0]![1]).not.toHaveProperty('seriesName');
 
-      // Invalidation → refetch → re-render: the number is gone, the series stays.
       await waitFor(() => expect(screen.queryByText(/Secret Projects #1/)).not.toBeInTheDocument());
       expect(screen.getByText(/Secret Projects/)).toBeInTheDocument();
       expect(storedBook.userClearedFields).toEqual(['seriesPosition']);
@@ -348,9 +307,7 @@ describe('Provider-only metadata clear — client E2E (#2069)', () => {
     });
   });
 
-  // Standing guard (`vimock-barrel-replace-drops-named-exports`): a method left real
-  // by the preserved barrel reaches `fetchApi`, which resolves a relative `/api/...`
-  // URL against jsdom's base and issues a genuine request.
+  // Preserved barrel exports can reach real fetchApi; this guard catches unstubbed methods.
   it('issues no real network request across the whole clear flow', async () => {
     const user = userEvent.setup();
     renderPage();

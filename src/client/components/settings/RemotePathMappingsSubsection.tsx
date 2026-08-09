@@ -119,7 +119,6 @@ export function RemotePathMappingsSubsection({ clientId }: RemotePathMappingsSub
 
   return (
     <div className="space-y-4 border-t border-border pt-5 mt-5">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h4 className="font-display text-base font-semibold">Remote Path Mappings</h4>
@@ -141,7 +140,6 @@ export function RemotePathMappingsSubsection({ clientId }: RemotePathMappingsSub
         </button>
       </div>
 
-      {/* Add Form */}
       {showForm && (
         <MappingForm
           onSubmit={(data) => createMutation.mutate({ ...data, downloadClientId: clientId })}
@@ -150,7 +148,6 @@ export function RemotePathMappingsSubsection({ clientId }: RemotePathMappingsSub
         />
       )}
 
-      {/* List */}
       {isLoading ? (
         <div className="flex items-center justify-center py-6">
           <LoadingSpinner className="w-6 h-6 text-primary" />

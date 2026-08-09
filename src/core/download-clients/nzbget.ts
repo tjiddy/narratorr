@@ -25,14 +25,8 @@ import { z } from 'zod';
 type NZBGetGroup = z.infer<typeof nzbgetGroupSchema>;
 type NZBGetHistoryItem = z.infer<typeof nzbgetHistorySchema>;
 
-/**
- * NZBGet's `DestDir` is the full per-download folder (`<MainDir>/<Category>/<NzbName>`),
- * not the parent. The import pipeline expects `savePath` (parent) + `name` (child) joined
- * together (see `monitor.ts`, `download-path.ts`). Split `DestDir` into parent/basename to
- * match that contract — mirroring SABnzbd's `splitStorage`. Guard the empty case before
- * calling `dirname`/`basename`, because `path.dirname('')` returns `'.'` (a truthy value),
- * so an `|| ''` fallback after `dirname` would never fire and `savePath` would become `'.'`.
- */
+// DestDir is the full download folder; split it into the import contract's parent/name.
+// Guard empty first because dirname('') returns the truthy value '.'.
 function splitDest(dest: string | undefined, fallbackName: string): { savePath: string; name: string } {
   if (!dest) return { savePath: '', name: fallbackName };
   return { savePath: dirname(dest), name: basename(dest) };
@@ -100,7 +94,6 @@ export class NZBGetClient implements DownloadClientAdapter {
   async getDownload(id: string): Promise<DownloadItemInfo | null> {
     const nzbId = parseInt(id, 10);
 
-    // Check active groups first
     const rawGroups = await this.rpc<unknown[]>('listgroups');
     const groups = this.parseGroups(rawGroups);
     const group = groups.find((g) => g.NZBID === nzbId);
@@ -108,7 +101,6 @@ export class NZBGetClient implements DownloadClientAdapter {
       return this.mapGroup(group);
     }
 
-    // Check history
     const rawHistory = await this.rpc<unknown[]>('history', [false]);
     const history = this.parseHistory(rawHistory);
     const histItem = history.find((h) => h.NZBID === nzbId);
@@ -324,7 +316,6 @@ export class NZBGetClient implements DownloadClientAdapter {
   }
 
   private mapGroupStatus(status: string): DownloadItemInfo['status'] {
-    // NZBGet group statuses: DOWNLOADING, PAUSED, QUEUED, PP_QUEUED, LOADING, PP_*, FETCHING
     const upper = status.toUpperCase();
     if (upper === 'PAUSED') return 'paused';
     if (upper.startsWith('PP_') || upper === 'DOWNLOADING' || upper === 'FETCHING' || upper === 'QUEUED' || upper === 'LOADING')
@@ -336,9 +327,7 @@ export class NZBGetClient implements DownloadClientAdapter {
     const upper = item.Status.toUpperCase();
     if (upper.startsWith('FAILURE') || upper.startsWith('DELETED')) return 'error';
 
-    // SUCCESS/* and WARNING/* are both terminal — classify through the shared
-    // post-processing degradation gate (the WARNING detail substring is never
-    // branched on; the post-proc fields carry the failure signal).
+    // SUCCESS and WARNING are terminal; post-processing fields decide degradation.
     if (upper.startsWith('SUCCESS') || upper.startsWith('WARNING')) {
       if (
         postProcFailed(item.ParStatus ?? undefined) ||
@@ -350,13 +339,11 @@ export class NZBGetClient implements DownloadClientAdapter {
       return 'completed';
     }
 
-    // Genuinely-unknown statuses keep the defensive default — never auto-import
-    // a possibly-bad file behind an unrecognized future status.
+    // Unknown future statuses must never auto-import.
     return 'downloading';
   }
 }
 
-/** Check if a post-processing field indicates failure (present and not SUCCESS/NONE). */
 function postProcFailed(value: string | undefined): boolean {
   if (!value) return false;
   const upper = value.toUpperCase();

@@ -1,6 +1,6 @@
 import type { NotificationEvent, EventPayload } from '@shared/notification-events.js';
 
-// Re-export from shared for backward compatibility with existing core consumers
+// Compatibility export for existing core consumers.
 export type { NotificationEvent, EventPayload };
 export { formatEventMessage } from '@shared/notification-events.js';
 

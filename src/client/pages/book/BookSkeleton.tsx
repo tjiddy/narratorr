@@ -1,10 +1,8 @@
 export function BookSkeleton() {
   return (
     <div className="space-y-6">
-      {/* Back button */}
       <div className="h-5 w-24 skeleton rounded" />
 
-      {/* Hero: cover + text */}
       <div className="flex flex-col sm:flex-row gap-6 sm:gap-8">
         <div className="w-44 sm:w-48 lg:w-56 aspect-square skeleton rounded-2xl shrink-0 mx-auto sm:mx-0" />
         <div className="flex-1 space-y-4">
@@ -20,7 +18,6 @@ export function BookSkeleton() {
         </div>
       </div>
 
-      {/* Content grid: description (2/3) + sidebar (1/3) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-3">
           <div className="h-4 w-32 skeleton rounded" />

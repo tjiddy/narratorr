@@ -15,8 +15,7 @@ export async function getAudioStats(path: string, log: FastifyBaseLogger): Promi
     return { fileCount: 0, totalSize: 0 };
   }
 
-  // Single-file path (direct-file branch): a hidden file is a born-hidden transient, not real
-  // content — count it as zero (parity with the scanner/preview direct-file branches).
+  // A caller-supplied hidden file is transient, unlike a caller-supplied hidden directory root.
   if (stats.isFile()) {
     if (!isHiddenName(basename(path)) && AUDIO_EXTENSIONS.has(extname(path).toLowerCase())) {
       return { fileCount: 1, totalSize: stats.size };
@@ -30,7 +29,7 @@ export async function getAudioStats(path: string, log: FastifyBaseLogger): Promi
   try {
     const entries = await readdir(path, { withFileTypes: true });
     for (const entry of entries) {
-      if (isHiddenName(entry.name)) continue; // skip hidden files AND dot-dir subtrees (fileCount + totalSize)
+      if (isHiddenName(entry.name)) continue;
       const entryPath = join(path, entry.name);
       if (entry.isFile()) {
         if (AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
@@ -58,7 +57,6 @@ export interface BuildDiscoveredBookOptions {
   reviewReason?: string | undefined;
 }
 
-/** Build a DiscoveredBook from parsed folder data and optional duplicate / review info. */
 export function buildDiscoveredBook(
   path: string,
   parsed: { title: string; author: string | null; series: string | null; seriesPosition?: number },

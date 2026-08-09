@@ -35,8 +35,7 @@ describe('Connector ADAPTER_FACTORIES', () => {
   });
 
   describe('schema alignment', () => {
-    // SQLite text({enum}) emits no DB CHECK — enum drift between the column and
-    // the Zod enum is only caught here. See learnings: drizzle-sqlite-text-enum-no-db-check.
+    // Drizzle's SQLite text enum emits no CHECK, so this is the runtime drift guard.
     it('connectors.type enumValues set equals the Zod connector-type enum options', () => {
       const columnEnum = new Set(connectors.type.enumValues);
       const zodEnum = new Set(connectorTypeSchema.options);

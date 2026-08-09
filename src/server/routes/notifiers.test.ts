@@ -76,7 +76,7 @@ describe('notifiers routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/notifiers',
-        payload: { type: 'webhook' }, // missing name, events, settings
+        payload: { type: 'webhook' },
       });
       expect(res.statusCode).toBe(400);
     });
@@ -85,7 +85,7 @@ describe('notifiers routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/notifiers',
-        payload: { name: 'Bad', type: 'webhook', events: ['on_grab'], settings: { method: 'POST' } }, // missing url
+        payload: { name: 'Bad', type: 'webhook', events: ['on_grab'], settings: { method: 'POST' } },
       });
 
       expect(res.statusCode).toBe(400);
@@ -171,7 +171,6 @@ describe('notifiers routes', () => {
       expect(res.json()).toEqual({ success: true });
     });
 
-    // #827 — sentinel-laden body + valid id reaches the service (no schema 400)
     it('accepts sentinel in webhookUrl with id and forwards to testConfig', async () => {
       vi.mocked(services.notifier.testConfig).mockResolvedValue({ success: true });
 
@@ -232,7 +231,6 @@ describe('notifiers routes', () => {
 
       expect(res.statusCode).toBe(201);
       const body = res.json();
-      // Response masks the smtpPass secret; non-secret fields pass through.
       expect(body).toMatchObject({
         name: 'Email Notifier',
         type: 'email',
@@ -295,7 +293,6 @@ describe('notifiers routes', () => {
 
       expect(res.statusCode).toBe(201);
       const body = res.json();
-      // Response masks the botToken secret; non-secret fields pass through.
       expect(body).toMatchObject({
         name: 'Telegram Notifier',
         type: 'telegram',
@@ -517,9 +514,7 @@ describe('notifiers routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      // Response is masked
       expect(res.json().settings.url).toBe('********');
-      // Service receives the sentinel; the service is responsible for resolving it.
       expect(services.notifier.update).toHaveBeenCalledWith(
         1,
         expect.objectContaining({

@@ -7,7 +7,6 @@ import { api, ApiError } from '@/lib/api';
 import { createMockBook } from '@/__tests__/factories';
 import type { BookIdentifier, BookMetadata, BookWithAuthor } from '@/lib/api';
 
-/** Project a full library book down to the identifiers DTO the page now reads (#1916). */
 function toIdentifier(book: BookWithAuthor): BookIdentifier {
   return {
     id: book.id,
@@ -26,8 +25,6 @@ vi.mock('@/lib/api', async (importOriginal) => {
     api: {
       ...originalApi,
       searchMetadata: vi.fn(),
-      // #1916 — ownership on the search page comes from the unpaginated
-      // identifiers endpoint, not the 120-row-capped getBooks page.
       getBookIdentifiers: vi.fn(),
       addBook: vi.fn(),
       getSettings: vi.fn().mockResolvedValue({
@@ -128,9 +125,7 @@ describe('SearchPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Open popover
     await user.click(screen.getByRole('button', { name: /^add book$/i }));
-    // Click Add to Library in popover
     const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
     await user.click(addToLibrary);
 
@@ -143,7 +138,6 @@ describe('SearchPage', () => {
       }));
     });
 
-    // After success, should show "In Library"
     await waitFor(() => {
       expect(screen.getByText('In Library')).toBeInTheDocument();
     });
@@ -196,7 +190,6 @@ describe('SearchPage', () => {
       expect(screen.getByText('Words of Radiance')).toBeInTheDocument();
     });
 
-    // Book count shown in tab
     expect(screen.getByText('(2)')).toBeInTheDocument();
   });
 
@@ -217,13 +210,10 @@ describe('SearchPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Open popover
     await user.click(screen.getByRole('button', { name: /^add book$/i }));
-    // Click Add to Library in popover
     const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
     await user.click(addToLibrary);
 
-    // After 409, should show "In Library"
     await waitFor(() => {
       expect(screen.getByText('In Library')).toBeInTheDocument();
     });
@@ -292,10 +282,9 @@ describe('SearchPage', () => {
       const input = screen.getByPlaceholderText(/search by title/i);
       expect(input).toHaveValue('a');
 
-      // Search button should be disabled with single-char query
       expect(screen.getByRole('button', { name: /^search$/i })).toBeDisabled();
 
-      // Wait a tick to ensure no search fires
+      // Let effects settle before asserting no search fires.
       await new Promise((r) => setTimeout(r, 100));
       expect(api.searchMetadata).not.toHaveBeenCalled();
     });

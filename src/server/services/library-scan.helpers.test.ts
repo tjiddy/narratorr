@@ -78,10 +78,7 @@ describe('buildDiscoveredBook', () => {
   });
 
   it('never emits duplicateFirstPath even when a legacy caller passes it (removal is load-bearing, #1925 F1)', () => {
-    // The scan-only first-path field was removed with the within-scan hard-flag. This is a
-    // deletion-heuristic guard: a legacy caller supplying it (cast past the now-narrowed options
-    // type) must NOT round-trip it. Reintroducing the destructure/spread in buildDiscoveredBook
-    // would make this fail — without it, the field could silently return while the suite stays green.
+    // A cast legacy field must not resurrect the removed within-scan deletion heuristic.
     const legacyOptions = {
       isDuplicate: true,
       duplicateReason: 'slug',
@@ -97,7 +94,6 @@ describe('buildDiscoveredBook', () => {
     );
 
     expect(result).not.toHaveProperty('duplicateFirstPath');
-    // Sanity: the still-supported fields DO round-trip, so the assertion above isn't vacuously green.
     expect(result.isDuplicate).toBe(true);
     expect(result.duplicateReason).toBe('slug');
   });
@@ -207,9 +203,7 @@ describe('getAudioStats', () => {
   });
 
   it('totalSize includes non-audio files but fileCount counts only audio', async () => {
-    // Pin current behavior at library-scan.helpers.ts:48-53: stat() runs for
-    // EVERY file (audio or not), so totalSize aggregates the whole folder
-    // while fileCount only increments for audio extensions.
+    // totalSize covers every file; fileCount covers audio extensions only.
     await writeFile(join(root, 'book.m4b'), Buffer.alloc(500));
     await writeFile(join(root, 'cover.jpg'), Buffer.alloc(50));
     await writeFile(join(root, 'metadata.opf'), Buffer.alloc(25));
@@ -224,7 +218,7 @@ describe('getAudioStats', () => {
     await mkdir(nested, { recursive: true });
     await writeFile(join(root, 'top.m4b'), Buffer.alloc(10));
     await writeFile(join(root, 'level1', 'mid.m4b'), Buffer.alloc(20));
-    await writeFile(nested, Buffer.alloc(0)).catch(() => {}); // ignore
+    await writeFile(nested, Buffer.alloc(0)).catch(() => {});
     await writeFile(join(nested, 'deep.m4b'), Buffer.alloc(40));
 
     const result = await getAudioStats(root, inject<FastifyBaseLogger>(log));
@@ -234,9 +228,9 @@ describe('getAudioStats', () => {
 
   it('#1852: excludes dot-files and dot-dir subtrees from fileCount AND totalSize', async () => {
     await writeFile(join(root, 'real.m4b'), Buffer.alloc(100));
-    await writeFile(join(root, '.real.tmp.m4b'), Buffer.alloc(999)); // born-hidden temp
+    await writeFile(join(root, '.real.tmp.m4b'), Buffer.alloc(999));
     await mkdir(join(root, '.merge-tmp'), { recursive: true });
-    await writeFile(join(root, '.merge-tmp', 'big.m4b'), Buffer.alloc(50_000)); // hidden subtree
+    await writeFile(join(root, '.merge-tmp', 'big.m4b'), Buffer.alloc(50_000));
 
     const result = await getAudioStats(root, inject<FastifyBaseLogger>(log));
     expect(result).toEqual({ fileCount: 1, totalSize: 100 });
@@ -253,9 +247,7 @@ describe('getAudioStats', () => {
   });
 
   it.skipIf(process.platform === 'win32')('logs warn and continues with partial results when a subdirectory cannot be read', async () => {
-    // Windows ignores chmod permission bits (uses ACLs instead), so this test
-    // can't make a directory unreadable via the same mechanism. CI runs Linux
-    // where the test exercises the real path.
+    // chmod cannot make directories unreadable on Windows.
     await writeFile(join(root, 'good.m4b'), Buffer.alloc(100));
     const denied = join(root, 'denied');
     await mkdir(denied);
@@ -264,7 +256,6 @@ describe('getAudioStats', () => {
 
     try {
       const result = await getAudioStats(root, inject<FastifyBaseLogger>(log));
-      // Top-level audio file still counted; denied subdir contributes nothing.
       expect(result.fileCount).toBe(1);
       expect(result.totalSize).toBe(100);
       expect(log.warn).toHaveBeenCalledWith(
@@ -272,7 +263,6 @@ describe('getAudioStats', () => {
         expect.stringContaining('Error getting audio stats'),
       );
     } finally {
-      // Restore perms so afterEach can clean up.
       await chmod(denied, 0o700);
     }
   });
@@ -318,26 +308,18 @@ describe('getAudioStats', () => {
   });
 
   it.skipIf(process.platform === 'win32')('silently ignores symlink entries (Dirent#isFile / #isDirectory both false for symlinks under withFileTypes)', async () => {
-    // Windows requires admin or Developer Mode to call fs.symlink(). CI runs
-    // on Linux where the test exercises the real path.
-    // readdir(..., { withFileTypes: true }) returns Dirents whose isFile()
-    // and isDirectory() both return false for symlinks. The helper only
-    // handles real files and directories, so symlinks of any kind are
-    // silently ignored (neither counted nor recursed into).
+    // Windows symlink creation needs elevated privileges.
     const realDir = join(root, 'real');
     await mkdir(realDir);
     await writeFile(join(realDir, 'real.m4b'), Buffer.alloc(50));
 
-    // Symlink to a file outside our walk
     const externalAudio = join(root, '..', `library-scan-external-${Date.now()}.m4b`);
     await writeFile(externalAudio, Buffer.alloc(9999));
     try {
       await symlink(externalAudio, join(root, 'linked.m4b'));
-      // Symlink to a directory containing audio
       await symlink(realDir, join(root, 'linked-dir'));
 
       const result = await getAudioStats(root, inject<FastifyBaseLogger>(log));
-      // Only the real file under realDir is counted; both symlinks ignored.
       expect(result.fileCount).toBe(1);
       expect(result.totalSize).toBe(50);
     } finally {

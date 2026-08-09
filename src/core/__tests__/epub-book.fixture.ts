@@ -2,32 +2,13 @@ import path from 'node:path';
 import { buildArchive, type ArchiveEntrySpec } from './epub-zip.fixture.js';
 
 /**
- * EPUB *document* fixtures — the XML that goes inside a container: `container.xml`,
- * the OPF package/metadata, and both navigation forms (EPUB 3 `nav` and EPUB 2 NCX).
- *
- * Split out of `epub-archive.fixture.ts` (#2003), which had reached 396 of the
- * repo's 400-line `max-lines` cap with four lines of headroom. That cap counts code
- * only (`skipBlankLines`/`skipComments`), so the file read as 629 lines in an editor
- * while lint saw 396 — the next fixture shape anyone added would have failed lint and
- * blocked `pnpm verify` for an unrelated change.
- *
- * The seam was already marked in that file by a comment banner: ZIP/archive byte
- * plumbing on one side, EPUB document shapes on the other. Two reasons to change,
- * now two files.
- *
- * `epub-archive.fixture.ts` remains the import path for every consumer — it is now a
- * barrel over this file and `epub-zip.fixture.ts`. Import from it, not from here, so
- * a future re-split does not churn call sites again.
- *
- * Depends on `epub-zip.fixture.ts` (for `buildArchive`) and never the reverse — the
- * barrel re-exports both, so a dependency in the other direction would be circular.
+ * EPUB XML fixtures for container, package metadata, nav, and NCX documents. Consumers
+ * import through epub-archive.fixture; this module may depend on ZIP fixtures, never the reverse.
  */
 
 /**
- * Every optional field is written `?: T | undefined` rather than bare `?: T`.
- * `exactOptionalPropertyTypes` is on (`tsconfig.json:9`), and forwarding one
- * builder's possibly-undefined option into another — which the composition below
- * does constantly — is rejected under the bare spelling.
+ * Explicit `| undefined` permits forwarding optional builder values under
+ * exactOptionalPropertyTypes.
  */
 
 export const EPUB_MEDIA_TYPE = 'application/epub+zip';
@@ -50,10 +31,8 @@ export interface SpineItemref {
 }
 
 /**
- * The manifest item pairing with the `ch1.xhtml` entry `epubEntries` always emits.
- * `packageOptions.items` replaces the manifest wholesale, so suites adding a nav,
- * cover, or font beside the default chapter should extend from this instead of
- * re-declaring the pairing (#2052).
+ * Manifest item paired with the emitted ch1.xhtml. Since items replaces the entire
+ * manifest, callers adding resources should extend this item.
  */
 export const CHAPTER_ITEM: ManifestItem = {
   id: 'ch1',
@@ -61,7 +40,6 @@ export const CHAPTER_ITEM: ManifestItem = {
   mediaType: 'application/xhtml+xml',
 };
 
-/** The manifest `packageXml` emits when `items` is not overridden. */
 export const DEFAULT_ITEMS: readonly ManifestItem[] = [CHAPTER_ITEM];
 const DEFAULT_ITEMREFS: SpineItemref[] = [{ idref: 'ch1' }];
 
@@ -85,14 +63,14 @@ function itemrefXml(itemref: SpineItemref): string {
 }
 
 export interface MetadataOptions {
-  /** Raw inner XML, replacing every generated field below. */
+  /** Raw inner XML replacing all generated fields. */
   raw?: string | undefined;
-  /** `null` omits `<dc:title>`; the default is `Fixture`. */
+  /** null omits dc:title; default is Fixture. */
   title?: string | null | undefined;
-  /** Emitted as `<dc:creator>`, one element per entry, in order. */
+  /** One ordered dc:creator element per entry. */
   creators?: readonly string[] | undefined;
   language?: string | undefined;
-  /** One `<meta name="cover">` per entry; `null` omits its `content` attribute. */
+  /** One cover meta per entry; null omits its content attribute. */
   covers?: readonly (string | null)[] | undefined;
 }
 
@@ -113,16 +91,16 @@ export function metadataXml(options: MetadataOptions = {}): string {
 export interface PackageOptions {
   items?: ManifestItem[] | undefined;
   itemrefs?: SpineItemref[] | undefined;
-  /** Raw `<manifest>` override, for the shapes the typed form cannot express. */
+  /** Raw manifest override for shapes the typed form cannot express. */
   manifest?: string | undefined;
-  /** Raw `<spine>` override. */
+  /** Raw spine override. */
   spine?: string | undefined;
   metadata?: MetadataOptions | undefined;
-  /** Raw override for the whole `<metadata>` element — for multi-`<metadata>` shapes. */
+  /** Whole metadata-element override, including multiple metadata siblings. */
   metadataSection?: string | undefined;
-  /** Raw whole-document override. */
+  /** Whole-document override. */
   raw?: string | undefined;
-  /** Padding appended after the root element, for the byte-budget fixtures. */
+  /** Padding after the root for byte-budget fixtures. */
   padTo?: number | undefined;
 }
 
@@ -139,38 +117,33 @@ export function packageXml(options: PackageOptions = {}): string {
   return options.padTo === undefined ? document : padTo(document, options.padTo);
 }
 
-/** Whitespace-pad an XML document to exactly `bytes`, outside the root element. */
+/** Pads XML to exactly bytes outside its root element. */
 export function padTo(document: string, bytes: number): string {
   return document + ' '.repeat(bytes - Buffer.byteLength(document));
 }
 
 export interface EpubOptions {
   packageName?: string | undefined;
-  /** `false` omits the entry entirely. */
+  /** false omits the entry. */
   mimetype?: string | Buffer | false | undefined;
-  /** `false` omits `META-INF/container.xml`. */
+  /** false omits META-INF/container.xml. */
   container?: string | false | undefined;
-  /** The `full-path` written into a generated container. */
+  /** full-path for a generated container. */
   containerFullPath?: string | null | undefined;
-  /** `false` omits the package document entry. */
+  /** false omits the package document. */
   package?: string | false | undefined;
   packageOptions?: PackageOptions | undefined;
   encryption?: string | Buffer | undefined;
-  /** Extra members, appended after the standard ones. */
+  /** Members appended after standard entries. */
   files?: ArchiveEntrySpec[] | undefined;
-  /** Move `mimetype` to the end of the archive. */
+  /** Moves mimetype to the archive end. */
   mimetypeLast?: boolean | undefined;
   store?: boolean | undefined;
 }
 
 /**
- * The archive member {@link epubEntries} emits for the built book's one chapter —
- * always beside the package document, so it moves with `packageName`.
- *
- * Single-homed because {@link drmProtectedEpub} has to name the same member: two
- * independent copies of this join would let the DRM reference drift onto an entry
- * the archive does not contain, which the classifier still calls `drm_protected`
- * (see that helper's note), so the drift would be silent.
+ * Derives the chapter beside packageName. drmProtectedEpub must share this join;
+ * a stale missing DRM target still classifies protected and would hide drift.
  */
 function chapterEntryName(packageName: string): string {
   return path.posix.join(path.posix.dirname(packageName), 'ch1.xhtml');
@@ -212,47 +185,20 @@ export function buildEpub(options: EpubOptions = {}): Promise<Buffer> {
 }
 
 /**
- * A `META-INF/encryption.xml` that encrypts **nothing** — a well-formed document
- * with no `<EncryptedData>` at all, which the §4 classifier reads and then ignores.
- *
- * It exists for the byte-budget fixtures: `encryption.xml` is the fourth and last
- * of the mandatory reads, so `padTo(EMPTY_ENCRYPTION_XML, n)` is how a suite buys a
- * mandatory read of a chosen size without changing the verdict.
+ * Well-formed encryption.xml that encrypts nothing. Padding this fourth mandatory
+ * read consumes a chosen budget without changing the verdict.
  */
 export const EMPTY_ENCRYPTION_XML =
   '<?xml version="1.0"?><encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"></encryption>';
 
-/** A realistic algorithm for a genuinely encrypted content document. Decorative — see below. */
+/** Decorative realistic algorithm; the classifier ignores it. */
 const DRM_ALGORITHM = 'http://www.w3.org/2001/04/xmlenc#aes128-cbc';
 
 /**
- * `options` with `encryption` set to a `META-INF/encryption.xml` that encrypts the
- * built book's own spine content document — the shape whose §4 verdict is
- * `drm_protected`.
- *
- * **What actually drives the verdict** is the `<CipherReference URI="…">`: an
- * unprefixed, non-empty `URI` resolving from the archive root to an entry that is
- * not a manifest-declared, non-spined font. `EncryptionMethod`/`Algorithm` are read
- * by nobody in the classifier — the hand-rolled copies this replaced disagreed on
- * that attribute precisely because it does not matter — so the one here is for
- * readability only.
- *
- * **The URI is derived, not hardcoded.** It names {@link chapterEntryName} for the
- * effective `packageName`, so a caller relocating the package document keeps a
- * reference that resolves. This matters more than it looks: a URI naming an entry
- * absent from the archive ALSO reads `drm_protected`, because `isObfuscatedFont`
- * answers `false` for a name it cannot find — so a stale reference would still
- * produce the right verdict for the wrong reason.
- *
- * **Precedence: the helper wins.** A caller-supplied `encryption` is overwritten,
- * so `drmProtectedEpub(x)` is `drm_protected` for every `x`. A suite that wants its
- * own `encryption.xml` should set the option directly instead of calling this.
- * Every other `EpubOptions` field is passed through untouched.
- *
- * **The archive must be valid on every structural axis.** §4 runs the encryption
- * classifier LAST — after `mimetype`, `container.xml`, package resolution, the
- * manifest and the linear spine — so composing this with, say,
- * `packageOptions: { itemrefs: [] }` yields `empty_spine`, not `drm_protected`.
+ * Adds encryption.xml targeting the built chapter. The CipherReference URI drives
+ * classification; derive it from packageName because a stale missing target also
+ * (incorrectly) appears protected. This helper overwrites caller encryption but
+ * preserves other options. Earlier structural failures still take precedence.
  */
 export function drmProtectedEpub(options: EpubOptions = {}): EpubOptions {
   const uri = chapterEntryName(options.packageName ?? DEFAULT_PACKAGE);
@@ -267,8 +213,6 @@ export function drmProtectedEpub(options: EpubOptions = {}): EpubOptions {
       '</encryption>',
   };
 }
-
-// --- navigation document and NCX shapes -------------------------------------
 
 /** One table-of-contents row for {@link navListXml} and {@link navMapXml}. */
 export interface TocNode {
@@ -293,7 +237,6 @@ export function navListXml(nodes: readonly TocNode[]): string {
   return `<ol>${rows.join('')}</ol>`;
 }
 
-/** A `<nav>` carrying an `epub:type` and an `<ol>` built from `nodes`. */
 export function navXml(nodes: readonly TocNode[], epubType = 'toc'): string {
   return `<nav epub:type="${epubType}">${navListXml(nodes)}</nav>`;
 }
@@ -318,7 +261,6 @@ export function navMapXml(nodes: readonly TocNode[]): string {
   return `<navMap>${nodes.map(navPointXml).join('')}</navMap>`;
 }
 
-/** An NCX document wrapping `inner`. */
 export function ncxDocumentXml(inner: string): string {
   return (
     `<?xml version="1.0" encoding="UTF-8"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">` +

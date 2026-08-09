@@ -11,18 +11,13 @@ import { useTrackedForm } from '@/hooks/dirty-forms.js';
 import type { AppSettings, UpdateSettingsInput } from '@shared/schemas.js';
 
 export interface UseSettingsFormConfig<T extends Record<string, unknown>> {
-  // z.ZodType<T, T> is intentional: z.ZodType<T> sets _input to unknown, which conflicts
-  // with zodResolver's FieldValues constraint. The second T aligns _input with the output type.
+  // Explicit input T keeps zodResolver compatible; z.ZodType<T> defaults input to unknown.
   schema: z.ZodType<T, T>;
   defaultValues: T;
   select: (settings: AppSettings) => T;
   toPayload: (data: T) => Partial<UpdateSettingsInput>;
   successMessage: string;
-  /**
-   * Human-readable card name shown by the unsaved-changes guard. Keep it in sync
-   * with the sibling `<SettingsSection title>` by sharing one per-card constant —
-   * the success message is not a reliable card name (some cards share one).
-   */
+  /** Unsaved-changes label; share the card title because success messages are not unique. */
   label: string;
 }
 
@@ -32,11 +27,7 @@ export interface UseSettingsFormReturn<T extends Record<string, unknown>> {
   onSubmit: (data: T) => void;
 }
 
-/**
- * Deterministic compare of two raw form-value objects. Both operands originate from
- * `form.getValues()` on the same form, so they share shape and key order and a stable
- * serialize is fully deterministic — no external deep-equal dependency is needed.
- */
+// Both values come from one form, so JSON key order is stable.
 function valuesEqual<T>(a: T, b: T): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
@@ -83,28 +74,21 @@ export function useSettingsForm<T extends Record<string, unknown>>({
 
   const mutation = useMutation<AppSettings, Error, T, { submittedRaw: T }>({
     mutationFn: (data: T) => api.updateSettings(toPayloadRef.current(data)),
-    // Deep-clone the raw submit-time snapshot. getValues() spreads only the top level
-    // of _formValues, so nested references stay shared with the live form; a nested-path
-    // edit during flight would otherwise mutate the captured snapshot and defeat the
-    // compare. Settings values are JSON-safe, so structuredClone is safe here.
+    // Snapshot deeply because RHF shares nested references with edits made during the request.
     onMutate: () => ({ submittedRaw: structuredClone(form.getValues()) }),
-    // context (the onMutate result) is the third argument in @tanstack/query-core.
+    // onMutate context is TanStack Query's third onSuccess argument.
     onSuccess: (_result, submittedData, context) => {
       const currentRaw = form.getValues();
-      // "drifted" = did the RAW value change after submit? Compared raw-vs-raw, never
-      // against the resolver-parsed submittedData (which diverges for transforming
-      // schemas even with no edit) and never via RHF's dirty-vs-old-default check.
+      // Compare raw snapshots; resolver output may differ without a user edit.
       const drifted = !valuesEqual(currentRaw, context.submittedRaw);
       if (drifted) {
-        // Rebaseline the default to the saved payload, then restore the raw draft while
-        // keeping that new baseline so isDirty re-derives as currentRaw !== submittedData.
+        // The saved payload becomes baseline while the later draft remains dirty.
         reset(submittedData as DefaultValues<T>);
         reset(currentRaw as DefaultValues<T>, { keepDefaultValues: true });
       } else {
         reset(submittedData as DefaultValues<T>);
       }
-      // Synchronous guard so the hydrate effect can't observe a stale-clean ref and
-      // clobber the preserved draft when the settings refetch resolves.
+      // Update before invalidation so refetch hydration cannot overwrite a preserved draft.
       isDirtyRef.current = drifted;
       queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
       toast.success(successMessage);
@@ -114,8 +98,7 @@ export function useSettingsForm<T extends Record<string, unknown>>({
     },
   });
 
-  // Register with the dirty-form guard so navigating away with unsaved edits (or
-  // a save in flight) is intercepted. Covers every useSettingsForm card at once.
+  // Saving counts as dirty so navigation cannot dismiss an in-flight card.
   useTrackedForm({ isDirty, isPending: mutation.isPending, label });
 
   const onSubmit = (data: T) => {

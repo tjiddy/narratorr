@@ -7,7 +7,6 @@ import { createMockLibraryBook, createMockAuthor } from '@/__tests__/factories';
 import { LibraryPage } from './LibraryPage';
 import { DEFAULT_LIMITS } from '@shared/schemas/common.js';
 
-// Mock api
 vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual('@/lib/api');
   return {
@@ -28,7 +27,6 @@ vi.mock('@/lib/api', async () => {
       retryBookImport: vi.fn(),
       getActiveBulkJob: vi.fn().mockResolvedValue(null),
       checkRetryImportAvailable: vi.fn().mockResolvedValue({ available: false }),
-      // #1894 — the cross-source attention banner mounts above the branch switch.
       getImportSubmissionAttention: vi.fn().mockResolvedValue({ data: null, watch: false }),
       discardImportSubmission: vi.fn(),
       getIndexers: vi.fn().mockResolvedValue([
@@ -40,7 +38,6 @@ vi.mock('@/lib/api', async () => {
   };
 });
 
-// Mock sonner
 vi.mock('sonner', () => ({
   toast: {
     success: vi.fn(),
@@ -49,7 +46,6 @@ vi.mock('sonner', () => ({
   },
 }));
 
-// Spy on useNavigate for navigation assertions
 const mockNavigate = vi.fn();
 vi.mock('react-router', async () => {
   const actual = await vi.importActual<typeof import('react-router')>('react-router');
@@ -121,15 +117,7 @@ import type { BookWithAuthor, LibraryBookListItem, BookListParams } from '@/lib/
 import { simulateStatusFilter } from '@/__tests__/library-server-sim';
 import type { StatusFilter } from './helpers';
 
-// Hand-authored server order for `mockBooks`, keyed by `${sortField}:${sortDirection}`.
-// Values are book ids in the order `BookListService.buildOrderBy`
-// (src/server/services/book-list.service.ts) produces for these four books —
-// the tests assert against this fixed order instead of re-deriving the server's
-// comparator. `createdAt` desc is the app default (useLibraryFilters); `title`
-// asc strips the leading article ("The Way of Kings" → "Way of Kings"), matching
-// the server contract covered in book-list.service.test.ts. Sort modes the grid
-// coerces to `createdAt` desc (quality/size/format/narrator/series) fall through
-// to the default below, so no key ever resolves to undefined.
+// Hand-authored order keeps the fixture independent of the server comparator it represents.
 const MOCK_BOOKS_ORDER: Record<string, number[]> = {
   'createdAt:desc': [4, 3, 2, 1],
   'createdAt:asc': [1, 2, 3, 4],
@@ -138,9 +126,6 @@ const MOCK_BOOKS_ORDER: Record<string, number[]> = {
 };
 const DEFAULT_ORDER_KEY = 'createdAt:desc';
 
-/** Look up the pre-ordered server order for a sort key and reorder `books` to match.
- * Books not covered by the fixture keep their input order at the end (order-preserving,
- * so it composes with the retained status/search filters). Returns a fresh array. */
 function applyServerOrder(
   books: LibraryBookListItem[],
   sortField?: string,
@@ -154,9 +139,6 @@ function applyServerOrder(
   return [...ordered, ...books.filter(b => !covered.has(b.id))];
 }
 
-/** Helper: mock both listLibraryBooks and getBookStats consistently.
- * listLibraryBooks filters by params and returns each sort mode in the
- * hand-authored server order (via applyServerOrder), a fresh array per call. */
 function mockLibraryData(books: LibraryBookListItem[]) {
   vi.mocked(api.listLibraryBooks).mockImplementation((params?: BookListParams) => {
     let filtered = books;
@@ -200,8 +182,6 @@ function mockLibraryData(books: LibraryBookListItem[]) {
   vi.mocked(api.getBookStats).mockResolvedValue({ counts, authors, series, narrators });
 }
 
-/** Paged variant: accepts independent total so Pagination renders when total > limit (DEFAULT_LIMITS.books).
- * Use total > DEFAULT_LIMITS.books to trigger Pagination rendering. */
 function mockPagedLibraryData(books: LibraryBookListItem[], opts: { total: number }) {
   vi.mocked(api.listLibraryBooks).mockImplementation((params?: BookListParams) => {
     const offset = params?.offset ?? 0;
@@ -222,8 +202,6 @@ function mockPagedLibraryData(books: LibraryBookListItem[], opts: { total: numbe
   const narrators = [...new Set(books.flatMap(b => b.narrators.map(n => n.name)).filter(Boolean))].sort() as string[];
   vi.mocked(api.getBookStats).mockResolvedValue({ counts, authors, series, narrators });
 }
-
-// --- Shared toolbar interaction helpers (#183) ---
 
 async function waitForLibraryLoad() {
   await waitFor(() => {
@@ -283,7 +261,6 @@ describe('LibraryPage', () => {
     await waitFor(() => {
       expect(screen.getByText('Project Hail Mary')).toBeInTheDocument();
       expect(screen.getByText('Recursion')).toBeInTheDocument();
-      // Authors appear in cards and possibly dropdown, so use getAllByText
       expect(screen.getAllByText('Andy Weir').length).toBeGreaterThanOrEqual(1);
       expect(screen.getAllByText('Blake Crouch').length).toBeGreaterThanOrEqual(1);
     });
@@ -299,17 +276,12 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Open the status dropdown to see all options with counts
     await user.click(screen.getByRole('button', { name: /all.*4/i }));
 
     await waitFor(() => {
-      // All count = 4
       expect(screen.getByRole('option', { name: /all.*4/i })).toBeInTheDocument();
-      // Wanted count = 2
       expect(screen.getByRole('option', { name: /wanted.*2/i })).toBeInTheDocument();
-      // Downloading count = 1
       expect(screen.getByRole('option', { name: /downloading.*1/i })).toBeInTheDocument();
-      // Imported count = 1
       expect(screen.getByRole('option', { name: /imported.*1/i })).toBeInTheDocument();
     });
   });
@@ -324,7 +296,6 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Open status dropdown and select Imported
     await user.click(screen.getByRole('button', { name: /all.*4/i }));
     await user.click(screen.getByRole('option', { name: /imported/i }));
 
@@ -345,15 +316,12 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Filters should be collapsed by default — no author dropdown visible
     await waitFor(() => {
       expect(screen.queryByDisplayValue('All Authors')).not.toBeInTheDocument();
     });
 
-    // Open filters
     await user.click(screen.getByRole('button', { name: /Toggle filters/i }));
 
-    // Now author dropdown should be visible
     const authorSelect = screen.getByDisplayValue('All Authors');
     await user.selectOptions(authorSelect, 'Andy Weir');
 
@@ -374,12 +342,10 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Open filters and select an author
     await user.click(screen.getByRole('button', { name: /Toggle filters/i }));
     const authorSelect = screen.getByDisplayValue('All Authors');
     await user.selectOptions(authorSelect, 'Andy Weir');
 
-    // Filter badge should show "1"
     await waitFor(() => {
       const filtersButton = screen.getByRole('button', { name: /Toggle filters/i });
       expect(within(filtersButton).getByText('1')).toBeInTheDocument();
@@ -396,11 +362,9 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Open sort dropdown and select Title (A→Z)
     await user.click(screen.getByRole('button', { name: /date added.*newest/i }));
     await user.click(screen.getByRole('option', { name: /title.*a.*z/i }));
 
-    // All books still present after sort change
     await waitFor(() => {
       expect(screen.getByText('Recursion')).toBeInTheDocument();
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
@@ -416,8 +380,6 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Cards should be rendered with role="link" for accessibility
-    // Filter to only book cards (they have tabIndex=0), excluding nav links
     await waitFor(() => {
       const bookCards = screen.getAllByRole('link').filter(el => el.getAttribute('tabIndex') === '0');
       expect(bookCards.length).toBe(mockBooks.length);
@@ -434,7 +396,6 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Hover to reveal menu button, then click it
     const menuButtons = screen.getAllByLabelText('Book options');
     await user.click(menuButtons[0]!);
 
@@ -455,25 +416,20 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Open context menu and click remove
     const menuButtons = screen.getAllByLabelText('Book options');
     await user.click(menuButtons[0]!);
     await user.click(screen.getByText('Remove from Library'));
 
-    // Confirm modal should appear with the warning message
     await waitFor(() => {
       expect(screen.getByText(/Are you sure you want to remove/)).toBeInTheDocument();
     });
 
-    // Click the destructive "Remove" button in the modal
     const modal = screen.getByRole('dialog');
     const removeButton = within(modal).getByRole('button', { name: 'Remove' });
     await user.click(removeButton);
 
-    // Default sort is createdAt desc, so first book shown is id=4 (Words of Radiance)
     await waitFor(() => {
       expect(vi.mocked(api.deleteBook).mock.calls[0]![0]).toBe(4);
-      // Without checking the box, deleteFiles should not be passed
       expect(vi.mocked(api.deleteBook).mock.calls[0]![1]).toBeUndefined();
     });
   });
@@ -503,13 +459,11 @@ describe('LibraryPage', () => {
     await user.click(menuButtons[0]!);
     await user.click(screen.getByText('Remove from Library'));
 
-    // Checkbox should be visible for book with path
     const checkbox = screen.getByLabelText('Delete files from disk');
     await waitFor(() => {
       expect(checkbox).not.toBeChecked();
     });
 
-    // Check the box and confirm
     await user.click(checkbox);
     await waitFor(() => {
       expect(checkbox).toBeChecked();
@@ -588,17 +542,14 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Open context menu and click remove
     const menuButtons = screen.getAllByLabelText('Book options');
     await user.click(menuButtons[0]!);
     await user.click(screen.getByText('Remove from Library'));
 
-    // Cancel
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
     await waitFor(() => {
       expect(api.deleteBook).not.toHaveBeenCalled();
-      // Modal should be gone
       expect(screen.queryByText(/Are you sure you want to remove/)).not.toBeInTheDocument();
     });
   });
@@ -613,12 +564,10 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Open filters and filter by Andy Weir
     await user.click(screen.getByRole('button', { name: /Toggle filters/i }));
     const authorSelect = screen.getByDisplayValue('All Authors');
     await user.selectOptions(authorSelect, 'Andy Weir');
 
-    // Then switch to Imported via status dropdown (Andy Weir's book is downloading, not imported)
     await user.click(screen.getByRole('button', { name: /all.*\d+/i }));
     await user.click(screen.getByRole('option', { name: /^imported/i }));
 
@@ -637,11 +586,9 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Search for something that won't match any books
     const searchInput = screen.getByPlaceholderText('Search library...');
     await user.type(searchInput, 'nonexistent book title xyz');
 
-    // After debounce, NoMatchState should appear with Add Book link
     await waitFor(() => {
       expect(screen.getByText('No books match your filters')).toBeInTheDocument();
     }, { timeout: 2000 });
@@ -675,7 +622,6 @@ describe('LibraryPage', () => {
     const searchInput = screen.getByPlaceholderText('Search library...');
     await user.type(searchInput, 'Hail Mary');
 
-    // After debounce (300ms) + fetch, only matching book should show
     await waitFor(() => {
       expect(screen.getByText('Project Hail Mary')).toBeInTheDocument();
       expect(screen.queryByText('The Way of Kings')).not.toBeInTheDocument();
@@ -696,13 +642,11 @@ describe('LibraryPage', () => {
     const searchInput = screen.getByPlaceholderText('Search library...');
     await user.type(searchInput, 'Sanderson');
 
-    // Should show "X results" format when searching
     await waitFor(() => {
       expect(screen.getByText(/result/)).toBeInTheDocument();
     }, { timeout: 2000 });
   });
 
-  // #365 — narrator-only search term returns no results
   it('searching for a narrator-only name shows no matching books', async () => {
     mockLibraryData(mockBooks);
     const user = userEvent.setup();
@@ -716,7 +660,6 @@ describe('LibraryPage', () => {
     const searchInput = screen.getByPlaceholderText('Search library...');
     await user.type(searchInput, 'Ray Porter');
 
-    // Ray Porter is a narrator on "Project Hail Mary" but not a title/author/series/genre match
     await waitFor(() => {
       expect(screen.queryByText('Project Hail Mary')).not.toBeInTheDocument();
     }, { timeout: 2000 });
@@ -749,10 +692,7 @@ describe('LibraryPage', () => {
     }, { timeout: 2000 });
 
     await waitFor(() => {
-      // Producer-omit pattern: cleared search results in `search` key omission
-      // from the request, not explicit undefined (eopt invariant per #939 AC4).
-      // Check that at least one call had `search` omitted (typed-search call
-      // still has it set in mock history; clear-search call drops the key).
+      // Require key omission; explicit undefined violates the exact-optional contract.
       const calls = vi.mocked(api.listLibraryBooks).mock.calls;
       const omitted = calls.some(([params]) => !('search' in (params ?? {})));
       expect(omitted).toBe(true);
@@ -776,7 +716,6 @@ describe('LibraryPage', () => {
       expect(screen.queryByText('Project Hail Mary')).not.toBeInTheDocument();
     }, { timeout: 2000 });
 
-    // Open status dropdown and select Wanted
     await user.click(screen.getByRole('button', { name: /all/i }));
     await user.click(screen.getByRole('option', { name: /wanted/i }));
 
@@ -804,7 +743,6 @@ describe('LibraryPage', () => {
     await user.click(menuButtons[0]!);
     await user.click(screen.getByText('Search Releases'));
 
-    // Modal should open — default sort is createdAt desc, so first card is "Words of Radiance"
     await waitFor(() => {
       expect(screen.getByText(/Releases for:/)).toBeInTheDocument();
     });
@@ -821,12 +759,10 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Open context menu and click remove
     const menuButtons = screen.getAllByLabelText('Book options');
     await user.click(menuButtons[0]!);
     await user.click(screen.getByText('Remove from Library'));
 
-    // Confirm modal should appear
     await waitFor(() => {
       expect(screen.getByText(/Are you sure you want to remove/)).toBeInTheDocument();
     });
@@ -850,7 +786,6 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Open sort dropdown and select Title (A→Z) for ascending alphabetical order
     await user.click(screen.getByRole('button', { name: /date added.*newest/i }));
     await user.click(screen.getByRole('option', { name: /title.*a.*z/i }));
 
@@ -861,7 +796,6 @@ describe('LibraryPage', () => {
         return h3?.textContent;
       });
 
-      // Verify titles are in ascending alphabetical order
       const sorted = [...titlesAsc].sort((a, b) => (a ?? '').localeCompare(b ?? ''));
       expect(titlesAsc).toEqual(sorted);
     });
@@ -1102,7 +1036,6 @@ describe('LibraryPage', () => {
     });
   });
 
-  // #282 — Grid/Table view toggle
   describe('grid/table view toggle (#282)', () => {
     beforeEach(() => {
       localStorage.removeItem('narratorr:library-view');
@@ -1170,13 +1103,11 @@ describe('LibraryPage', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      // Switch to table
       await user.click(screen.getByLabelText('Table view'));
       await waitFor(() => {
         expect(screen.getByLabelText('Table view')).toHaveAttribute('aria-pressed', 'true');
       });
 
-      // Switch back to grid
       await user.click(screen.getByLabelText('Grid view'));
       await waitFor(() => {
         expect(screen.getByLabelText('Grid view')).toHaveAttribute('aria-pressed', 'true');
@@ -1305,7 +1236,6 @@ describe('LibraryPage', () => {
       expect(screen.getByRole('option', { name: /date added.*newest/i })).toBeInTheDocument();
     });
 
-    // #365 — grid-view coercion for narrator/series sorts
     it('coerces sort to Date Added (desc) when switching from table to grid with narrator sort active', async () => {
       mockLibraryData(mockBooks);
       const user = userEvent.setup();
@@ -1350,24 +1280,19 @@ describe('LibraryPage', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      // Switch to table view
       await user.click(screen.getByLabelText('Table view'));
 
-      // Select a book via checkbox
       await waitFor(() => {
         expect(screen.getByLabelText('Select all books')).toBeInTheDocument();
       });
       await user.click(screen.getByLabelText('Select all books'));
 
-      // Verify selection is active (bulk toolbar should appear)
       await waitFor(() => {
         expect(screen.getByText(/selected/i)).toBeInTheDocument();
       });
 
-      // Switch back to grid — selection should clear
       await user.click(screen.getByLabelText('Grid view'));
 
-      // Bulk toolbar should be gone (no selection)
       await waitFor(() => {
         expect(screen.queryByText(/selected/i)).not.toBeInTheDocument();
       });
@@ -1393,7 +1318,6 @@ describe('LibraryPage', () => {
       await openSearchWanted(user);
 
       await waitFor(() => {
-        // mockBooks has 2 wanted books (id 1 and 4), 2 enabled indexers → 4 API calls
         expect(screen.getByText(/Search 2 wanted books across 2 enabled indexers/)).toBeInTheDocument();
         expect(screen.getByText(/~4 API calls/)).toBeInTheDocument();
       });
@@ -1472,7 +1396,6 @@ describe('LibraryPage', () => {
 
     it('disables Search Wanted overflow item while mutation is pending', async () => {
       mockLibraryData(mockBooks);
-      // Return a promise that never resolves to keep mutation pending
       vi.mocked(api.searchAllWanted).mockReturnValue(new Promise(() => {}));
       const user = userEvent.setup();
 
@@ -1482,12 +1405,10 @@ describe('LibraryPage', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      // Open overflow menu — Search Wanted item should be enabled initially
       await user.click(screen.getByRole('button', { name: /library actions/i }));
       const searchWantedItem = screen.getByRole('menuitem', { name: /search wanted/i });
       expect(searchWantedItem).toBeEnabled();
 
-      // Click it — opens confirm modal, menu closes
       await user.click(searchWantedItem);
 
       await waitFor(() => {
@@ -1496,7 +1417,6 @@ describe('LibraryPage', () => {
 
       await user.click(screen.getByText('Search', { selector: 'button' }));
 
-      // Reopen overflow menu — Search Wanted should now be disabled while mutation is pending
       await user.click(screen.getByRole('button', { name: /library actions/i }));
       await waitFor(() => {
         expect(screen.getByRole('menuitem', { name: /search wanted/i })).toBeDisabled();
@@ -1530,7 +1450,6 @@ describe('LibraryPage', () => {
     });
   });
 
-  // #351 — Failed and Missing status pill click-through
   describe('failed and missing status pills (#351)', () => {
     const booksWithAllStatuses = [
       ...mockBooks,
@@ -1683,8 +1602,6 @@ describe('LibraryPage — settings-driven empty-state wiring (#133)', () => {
   });
 });
 
-// #1704 — the Library page must supply the sidecar gate from settings.tagging.writeOpf,
-// not a hardcoded boolean. Asserts the page-level wiring, not just the menu's prop behavior.
 describe('LibraryPage — settings-driven sidecar menu gate (#1704)', () => {
   async function openLibraryActions(user: ReturnType<typeof userEvent.setup>) {
     await waitFor(() => {
@@ -1714,13 +1631,11 @@ describe('LibraryPage — settings-driven sidecar menu gate (#1704)', () => {
     renderWithProviders(<LibraryPage />);
     await openLibraryActions(user);
 
-    // Menu is open (the bulk group renders) but the settings-gated sidecar item is absent.
     expect(screen.getByRole('menuitem', { name: /rename all books/i })).toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: /sidecars/i })).not.toBeInTheDocument();
   });
 });
 
-// #183 — Test coverage gaps
 
 describe('LibraryPage — view mode localStorage edge cases (#183)', () => {
   beforeEach(() => {
@@ -1774,7 +1689,6 @@ describe('LibraryPage — view mode localStorage edge cases (#183)', () => {
 });
 
 describe('LibraryPage — pagination (#183)', () => {
-  // Create a page of books that mockPagedLibraryData will return
   const pageBooks = Array.from({ length: 4 }, (_, i) =>
     createMockLibraryBook({
       id: i + 1,
@@ -1785,7 +1699,6 @@ describe('LibraryPage — pagination (#183)', () => {
   );
 
   it('renders Pagination when total exceeds page limit', async () => {
-    // total=150 > limit=DEFAULT_LIMITS.books → pagination visible
     mockPagedLibraryData(pageBooks, { total: 150 });
 
     renderWithProviders(<LibraryPage />);
@@ -1808,7 +1721,6 @@ describe('LibraryPage — pagination (#183)', () => {
       expect(screen.getByText('Book 1')).toBeInTheDocument();
     });
 
-    // No pagination controls since total (4) <= limit (DEFAULT_LIMITS.books)
     expect(screen.queryByText(/showing/i)).not.toBeInTheDocument();
   });
 
@@ -1826,7 +1738,6 @@ describe('LibraryPage — pagination (#183)', () => {
     await user.click(nextButton);
 
     await waitFor(() => {
-      // getBooks should be called with offset=DEFAULT_LIMITS.books for page 2
       expect(vi.mocked(api.listLibraryBooks)).toHaveBeenCalledWith(
         expect.objectContaining({ offset: DEFAULT_LIMITS.books }),
       );
@@ -1835,7 +1746,6 @@ describe('LibraryPage — pagination (#183)', () => {
 
   it('does not render Pagination when total is zero', async () => {
     mockPagedLibraryData([], { total: 0 });
-    // Override stats to have counts so empty-state doesn't trigger
     vi.mocked(api.getBookStats).mockResolvedValue({
       counts: { wanted: 5, downloading: 0, imported: 0, failed: 0, missing: 0 },
       authors: [], series: [], narrators: [],
@@ -1847,7 +1757,6 @@ describe('LibraryPage — pagination (#183)', () => {
       expect(screen.getByText('No books match your filters')).toBeInTheDocument();
     });
 
-    // No pagination since total=0
     expect(screen.queryByText(/showing/i)).not.toBeInTheDocument();
   });
 });
@@ -1882,7 +1791,6 @@ describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
 
     await waitForLibraryLoad();
 
-    // Grid mode is default — no bulk toolbar
     expect(screen.queryByText(/selected/i)).not.toBeInTheDocument();
   });
 
@@ -1896,7 +1804,6 @@ describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
 
     await switchToTableView(user);
 
-    // No selections made — no bulk toolbar
     expect(screen.queryByText(/selected/i)).not.toBeInTheDocument();
   });
 
@@ -1912,18 +1819,15 @@ describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
     await switchToTableView(user);
     await selectAllBooksInTable(user);
 
-    // Click Remove in bulk toolbar
     const removeButton = screen.getByRole('button', { name: /remove/i });
     await user.click(removeButton);
 
-    // Check the "Delete files from disk" checkbox in the confirm modal
     await waitFor(() => {
       expect(screen.getByText('Delete Selected Books')).toBeInTheDocument();
     });
     const checkbox = screen.getByLabelText(/delete files from disk/i);
     await user.click(checkbox);
 
-    // Confirm deletion via the Remove button in the dialog
     const confirmButton = within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' });
     await user.click(confirmButton);
 
@@ -1953,12 +1857,10 @@ describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
       expect(screen.getByText('Delete Selected Books')).toBeInTheDocument();
     });
 
-    // Confirm without checking deleteFiles via the Remove button in the dialog
     const confirmButton = within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' });
     await user.click(confirmButton);
 
     await waitFor(() => {
-      // deleteFiles=false → deleteBook(id, undefined)
       expect(vi.mocked(api.deleteBook)).toHaveBeenCalledWith(
         expect.any(Number),
         undefined,
@@ -2022,7 +1924,6 @@ describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
     await switchToTableView(user);
     await selectAllBooksInTable(user);
 
-    // Open the Set Status menu
     await user.click(screen.getByRole('button', { name: /set status/i }));
 
     await waitFor(() => {
@@ -2037,7 +1938,6 @@ describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
       );
     });
 
-    // Verify the label is preserved through the page wiring to the toast
     await waitFor(() => {
       expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
         expect.stringContaining('to Wanted'),
@@ -2071,7 +1971,6 @@ describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
       );
     });
 
-    // Verify the label is preserved through the page wiring to the toast
     await waitFor(() => {
       expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
         expect.stringContaining('to Owned'),
@@ -2142,10 +2041,8 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
     await user.click(optionsButtons[1]!);
 
     await waitFor(() => {
-      // First button's menu closed, second button's menu opened
       expect(optionsButtons[0]).toHaveAttribute('aria-expanded', 'false');
       expect(optionsButtons[1]).toHaveAttribute('aria-expanded', 'true');
-      // Still exactly one menu in the DOM
       expect(screen.getAllByRole('menu')).toHaveLength(1);
     });
   });
@@ -2172,7 +2069,6 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
       expect(screen.getByText(/releases for/i)).toBeInTheDocument();
     });
 
-    // Menu should be closed
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 
@@ -2198,7 +2094,6 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
       expect(screen.getByText(/are you sure you want to remove/i)).toBeInTheDocument();
     });
 
-    // Menu should be closed
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 
@@ -2210,11 +2105,9 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
 
     await waitForLibraryLoad();
 
-    // Click the first book card (role="link" with tabIndex=0)
     const bookCards = screen.getAllByRole('link').filter(el => el.getAttribute('tabindex') === '0');
     await user.click(bookCards[0]!);
 
-    // Default sort is createdAt desc, so the first rendered card is id=4 (Words of Radiance, Jan 4)
     expect(mockNavigate).toHaveBeenCalledWith('/books/4');
   });
 
@@ -2233,7 +2126,6 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
       expect(screen.getByRole('menu')).toBeInTheDocument();
     });
 
-    // Click outside the menu (on the page heading)
     await user.click(screen.getByText('Library'));
 
     await waitFor(() => {
@@ -2323,13 +2215,10 @@ describe('LibraryPage — import polling smoke test (#183)', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Record call count after initial load
     const initialCallCount = vi.mocked(api.listLibraryBooks).mock.calls.length;
 
-    // Advance time by 3s — useImportPolling sets a 3s interval that invalidates queries
     await vi.advanceTimersByTimeAsync(3100);
 
-    // getBooks should have been called again due to the polling invalidation
     await waitFor(() => {
       expect(vi.mocked(api.listLibraryBooks).mock.calls.length).toBeGreaterThan(initialCallCount);
     });
@@ -2342,7 +2231,6 @@ describe('LibraryPage — status counts and subtitle (#183)', () => {
   it('shows "0 books in your collection" when stats returns zero counts', async () => {
     mockLibraryData([]);
 
-    // Override getBookStats to return null-like zero counts (the page handles empty stats)
     vi.mocked(api.getBookStats).mockResolvedValue({
       counts: { wanted: 0, downloading: 0, imported: 0, failed: 0, missing: 0 },
       authors: [],
@@ -2352,7 +2240,6 @@ describe('LibraryPage — status counts and subtitle (#183)', () => {
 
     renderWithProviders(<LibraryPage />);
 
-    // With 0 totalAll and no search, empty state renders
     await waitFor(() => {
       expect(screen.getByText('Your library is empty')).toBeInTheDocument();
     });
@@ -2366,7 +2253,6 @@ describe('LibraryPage — status counts and subtitle (#183)', () => {
 
     await waitForLibraryLoad();
 
-    // Type in search
     const searchInput = screen.getByPlaceholderText(/search/i);
     await user.type(searchInput, 'Recursion');
 
@@ -2387,7 +2273,6 @@ describe('LibraryPage — status counts and subtitle (#183)', () => {
   });
 
   describe('sort-change animation replay', () => {
-    /** Helper: get all book-card DOM elements (role="link" with tabIndex="0"). */
     function getCardElements() {
       return screen.getAllByRole('link').filter(el => el.getAttribute('tabIndex') === '0');
     }
@@ -2402,23 +2287,18 @@ describe('LibraryPage — status counts and subtitle (#183)', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      // Capture DOM element references before sort change
       const cardsBefore = getCardElements();
       expect(cardsBefore.length).toBeGreaterThan(0);
 
-      // Change sort field: createdAt → title
       await user.click(screen.getByRole('button', { name: /date added.*newest/i }));
       await user.click(screen.getByRole('option', { name: /title.*a.*z/i }));
 
-      // Wait for settled response
       await waitFor(() => {
         const cardsAfter = getCardElements();
         expect(cardsAfter.length).toBeGreaterThan(0);
-        // Every card DOM node should be a NEW element (grid remounted)
         for (const cardAfter of cardsAfter) {
           expect(cardsBefore).not.toContain(cardAfter);
         }
-        // Remounted cards have correct stagger animation delays
         cardsAfter.forEach((card, index) => {
           expect(card).toHaveStyle({ animationDelay: `${Math.min(index, 9) * 50}ms` });
         });
@@ -2426,7 +2306,6 @@ describe('LibraryPage — status counts and subtitle (#183)', () => {
     });
 
     it('preserves card DOM nodes while sorted response is still loading (placeholder phase)', async () => {
-      // First call resolves immediately (initial load); second call stays pending (sort change)
       let resolveSortedResponse!: (v: { data: LibraryBookListItem[]; total: number }) => void;
       const pendingSortResponse = new Promise<{ data: LibraryBookListItem[]; total: number }>((r) => {
         resolveSortedResponse = r;
@@ -2447,25 +2326,20 @@ describe('LibraryPage — status counts and subtitle (#183)', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      // Capture card DOM references before sort change
       const cardsBefore = getCardElements();
       expect(cardsBefore.length).toBeGreaterThan(0);
 
-      // Change sort field — this triggers a new query but response is pending
       await user.click(screen.getByRole('button', { name: /date added.*newest/i }));
       await user.click(screen.getByRole('option', { name: /title.*a.*z/i }));
 
-      // During placeholder phase: cards should be the SAME DOM nodes (grid not remounted)
       const cardsDuringPlaceholder = getCardElements();
       for (const card of cardsDuringPlaceholder) {
         expect(cardsBefore).toContain(card);
       }
 
-      // Now resolve the sorted response
       const sortedBooks = [...mockBooks].sort((a, b) => a.title.localeCompare(b.title));
       resolveSortedResponse({ data: sortedBooks, total: sortedBooks.length });
 
-      // After settle: cards should be NEW DOM nodes (grid remounted)
       await waitFor(() => {
         const cardsAfter = getCardElements();
         expect(cardsAfter.length).toBeGreaterThan(0);
@@ -2485,7 +2359,6 @@ describe('LibraryPage — status counts and subtitle (#183)', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      // First change to title sort (A→Z)
       await user.click(screen.getByRole('button', { name: /date added.*newest/i }));
       await user.click(screen.getByRole('option', { name: /title.*a.*z/i }));
 
@@ -2493,19 +2366,15 @@ describe('LibraryPage — status counts and subtitle (#183)', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      // Capture DOM element references after first sort settles
       const cardsBefore = getCardElements();
       expect(cardsBefore.length).toBeGreaterThan(0);
 
-      // Toggle direction: A→Z to Z→A
       await user.click(screen.getByRole('button', { name: /title.*a.*z/i }));
       await user.click(screen.getByRole('option', { name: /title.*z.*a/i }));
 
-      // Wait for settled response
       await waitFor(() => {
         const cardsAfter = getCardElements();
         expect(cardsAfter.length).toBeGreaterThan(0);
-        // Every card DOM node should be a NEW element (grid remounted)
         for (const cardAfter of cardsAfter) {
           expect(cardsBefore).not.toContain(cardAfter);
         }
@@ -2522,23 +2391,19 @@ describe('LibraryPage — status counts and subtitle (#183)', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      // Capture a specific card DOM element reference before search change
       const wayOfKingsCard = getCardElements().find(
         el => el.querySelector('h3')?.textContent === 'The Way of Kings',
       )!;
       expect(wayOfKingsCard).toBeDefined();
 
-      // Type a search query that matches "The Way of Kings"
       const searchInput = screen.getByPlaceholderText(/search/i);
       await user.type(searchInput, 'Way');
 
-      // Wait for filtered results to settle — same card should be the SAME DOM node
       await waitFor(() => {
         const cardsAfter = getCardElements();
         const sameCard = cardsAfter.find(
           el => el.querySelector('h3')?.textContent === 'The Way of Kings',
         );
-        // Grid container key unchanged (sort params stable) → card persists as same node
         expect(sameCard).toBe(wayOfKingsCard);
       });
     });
@@ -2581,7 +2446,6 @@ describe('LibraryPage — status counts and subtitle (#183)', () => {
       const cards = getCardElements();
       expect(cards.length).toBe(15);
 
-      // Cards at index 10-14 should all have 450ms delay (capped at Math.min(index, 9) * 50)
       for (let i = 10; i < 15; i++) {
         expect(cards[i]).toHaveStyle({ animationDelay: '450ms' });
       }
@@ -2606,7 +2470,6 @@ describe('LibraryPage — URL param restoration (#352)', () => {
       expect(api.listLibraryBooks).toHaveBeenCalled();
     });
 
-    // The first getBooks call should use the URL-derived params
     const firstCallArgs = vi.mocked(api.listLibraryBooks).mock.calls[0]?.[0];
     expect(firstCallArgs).toMatchObject({
       status: 'wanted',
@@ -2626,7 +2489,6 @@ describe('LibraryPage — URL param restoration (#352)', () => {
       expect(api.listLibraryBooks).toHaveBeenCalled();
     });
 
-    // Page 3 with default limit of DEFAULT_LIMITS.books → offset DEFAULT_LIMITS.books * 2
     const firstCallArgs = vi.mocked(api.listLibraryBooks).mock.calls[0]?.[0];
     expect(firstCallArgs).toMatchObject({
       offset: DEFAULT_LIMITS.books * 2,
@@ -2646,8 +2508,7 @@ describe('LibraryPage — URL param restoration (#352)', () => {
     });
 
     const firstCallArgs = vi.mocked(api.listLibraryBooks).mock.calls[0]?.[0];
-    // Producer-omit pattern: absent `status` URL param results in key omission,
-    // not explicit undefined (eopt invariant per #939 AC4).
+    // Require key omission; explicit undefined violates the exact-optional contract.
     expect(firstCallArgs).not.toHaveProperty('status');
     expect(firstCallArgs).toMatchObject({
       sortField: 'createdAt',
@@ -2712,24 +2573,19 @@ describe('LibraryPage — error states (#480)', () => {
     it('shows error state when getBooks succeeds then fails on refetch', async () => {
       const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
-      // First call succeeds with books
       vi.mocked(api.listLibraryBooks).mockResolvedValueOnce({ data: mockBooks, total: mockBooks.length });
       vi.mocked(api.getBookStats).mockResolvedValue({ counts: { wanted: 1, downloading: 1, imported: 1, failed: 0, missing: 0 }, authors: [], series: [], narrators: [] });
 
       renderWithProviders(<LibraryPage />, { queryClient });
 
-      // Verify books rendered successfully
       await waitFor(() => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      // Second call rejects
       vi.mocked(api.listLibraryBooks).mockRejectedValue(new Error('Server down'));
 
-      // Invalidate to trigger refetch
       queryClient.invalidateQueries();
 
-      // Error state should replace stale book data
       await waitFor(() => {
         expect(screen.getByTestId('library-error')).toBeInTheDocument();
       });
@@ -2767,7 +2623,6 @@ describe('LibraryPage — error states (#480)', () => {
 
   describe('loading vs error precedence', () => {
     it('shows loading spinner while isLoading is true, not error state', () => {
-      // getBooks never resolves — stays in loading state
       vi.mocked(api.listLibraryBooks).mockReturnValue(new Promise(() => {}));
       vi.mocked(api.getBookStats).mockReturnValue(new Promise(() => {}));
 
@@ -2787,7 +2642,6 @@ describe('LibraryPage — error states (#480)', () => {
       expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
       const trigger = screen.getByRole('button', { name: /library actions/i });
       expect(trigger).toBeInTheDocument();
-      // The standalone Import Files link is gone — it now lives inside the menu.
       expect(screen.queryByRole('link', { name: /import files/i })).not.toBeInTheDocument();
       await user.click(trigger);
       expect(screen.getByRole('menuitem', { name: /import files/i })).toHaveAttribute('href', '/import');
@@ -2831,9 +2685,8 @@ describe('LibraryPage — error states (#480)', () => {
         expect(toast.success).toHaveBeenCalledWith('Import retry queued');
       });
 
-      // Cache invalidation: getBooks should be re-called after retry success
       const getBooksCallCount = vi.mocked(api.listLibraryBooks).mock.calls.length;
-      expect(getBooksCallCount).toBeGreaterThanOrEqual(2); // initial load + invalidation refetch
+      expect(getBooksCallCount).toBeGreaterThanOrEqual(2);
     });
 
     it('shows error toast when retryBookImport rejects', async () => {
@@ -2883,9 +2736,6 @@ describe('LibraryPage — error states (#480)', () => {
     });
   });
 
-  // F21 — the cross-source attention banner is hosted ABOVE the branch switch (F40),
-  // so it renders in the empty and error branches, and routes "Import again" by the
-  // abandoned submission's source.
   describe('attention banner host (#1894, F21)', () => {
     it('renders the banner in the empty-library branch', async () => {
       mockLibraryData([]);

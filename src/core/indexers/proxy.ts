@@ -1,9 +1,4 @@
-/**
- * Proxy agent creation and IP resolution for HTTP/HTTPS/SOCKS5 proxies.
- *
- * This module provides the standard proxy path (not FlareSolverr).
- * FlareSolverr uses its own API and is handled in fetch.ts.
- */
+/** Standard HTTP/HTTPS/SOCKS5 proxy transport; FlareSolverr lives in fetch.ts. */
 
 import { z } from 'zod';
 import { ProxyAgent } from 'undici';
@@ -23,10 +18,7 @@ const ipifyResponseSchema = z.object({
 
 type ProxyDispatcher = ProxyAgent | SocksProxyAgent;
 
-/**
- * Create a proxy dispatcher for the given URL.
- * Returns undefined if proxyUrl is empty/undefined.
- */
+/** Create a proxy dispatcher, or undefined when no proxy is configured. */
 export function createProxyAgent(proxyUrl: string | undefined): ProxyDispatcher | undefined {
   if (!proxyUrl) return undefined;
 
@@ -37,16 +29,13 @@ export function createProxyAgent(proxyUrl: string | undefined): ProxyDispatcher 
       return new SocksProxyAgent(proxyUrl);
     }
 
-    // HTTP/HTTPS proxy — use undici ProxyAgent
     return new ProxyAgent(proxyUrl);
   } catch {
     throw new ProxyError(`Invalid proxy URL: ${proxyUrl}`);
   }
 }
 
-/**
- * Fetch a URL through a proxy agent. Throws ProxyError on transport failures.
- */
+/** Fetch through an optional proxy agent, preserving upstream HTTP errors. */
 export async function fetchWithProxyAgent(
   url: string,
   options: {
@@ -76,7 +65,7 @@ export async function fetchWithProxyAgent(
     try {
       response = await fetchWithOptionalDispatcher(url, fetchOptions);
     } catch (error: unknown) {
-      if (!dispatcher) throw mapNetworkError(error); // Direct fetch — map network errors
+      if (!dispatcher) throw mapNetworkError(error); // Preserve direct network error mapping.
       if (error instanceof DOMException && error.name === 'AbortError') {
         throw new ProxyError(`Proxy timed out after ${Math.round(timeoutMs / 1000)}s`);
       }
@@ -86,8 +75,7 @@ export async function fetchWithProxyAgent(
 
     if (!response.ok) {
       if (dispatcher) {
-        // Only wrap as ProxyError if it's clearly a proxy-level failure
-        // (e.g., 407 Proxy Authentication Required, 502 Bad Gateway from proxy)
+        // Only known proxy statuses become ProxyError; upstream errors stay ordinary.
         const proxyStatusCodes = [407, 502, 503];
         if (proxyStatusCodes.includes(response.status)) {
           throw new ProxyError(`Proxy HTTP error ${response.status}: ${response.statusText}`);
@@ -103,10 +91,7 @@ export async function fetchWithProxyAgent(
   }
 }
 
-/**
- * Resolve the exit IP address by making a request through the proxy to ipify.
- * Returns the IP string on success, throws ProxyError on failure.
- */
+/** Resolve the proxy's exit IP through ipify. */
 export async function resolveProxyIp(proxyUrl: string): Promise<string> {
   try {
     const { body } = await fetchWithProxyAgent(IPIFY_URL, { proxyUrl, timeoutMs: 15_000 });

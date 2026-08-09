@@ -15,7 +15,6 @@ export async function searchRoutes(
   app: FastifyInstance,
   downloadOrchestrator: DownloadOrchestrator,
 ) {
-  // POST /api/search/grab
   app.post<{ Body: GrabInput }>(
     '/api/search/grab',
     {
@@ -34,10 +33,7 @@ export async function searchRoutes(
         return await reply.status(201).send(download);
       } catch (error: unknown) {
         if (error instanceof DuplicateDownloadError) {
-          // Shape both conflict codes from the REQUIRED code-discriminated error
-          // `details` the classifier populated — no internal ids, no raw messages,
-          // no re-querying, no fallback (the decision stayed in the service, #1857
-          // F60 / #1861).
+          // Build the public conflict solely from classified details; never leak ids or raw errors.
           if ('active' in error.details) {
             const { active } = error.details;
             return reply.status(409).send({ code: 'ACTIVE_DOWNLOAD_EXISTS', active: { title: active.title }, count: active.count });
@@ -45,8 +41,7 @@ export async function searchRoutes(
           return reply.status(409).send({ code: 'PIPELINE_ACTIVE', reason: error.details.reason });
         }
         if (error instanceof DownloadClientError) {
-          // Typed download-client errors propagate to error-handler plugin
-          // (DownloadClientAuthError → 401, DownloadClientTimeoutError → 504, DownloadClientError → 502)
+          // The global handler maps typed client errors to 401, 504, or 502.
           throw error;
         }
         request.log.error({ error: serializeError(error) }, 'Grab failed');

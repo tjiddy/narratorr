@@ -122,11 +122,7 @@ describe('Books E2E', () => {
   });
 });
 
-// #1916 — the Add-Book search page derives ownership from this endpoint, so it
-// must stay unpaginated and status-blind. `/api/books` caps at DEFAULT_LIMITS.books
-// (120) and orders created-at-descending; if identifiers ever grew a limit or a
-// status predicate, the search card would silently regress to the wrong affordance
-// for any book outside the visible page.
+// Add-book ownership depends on this endpoint staying status-blind and unpaginated.
 describe('GET /api/books/identifiers — unpaginated and status-blind (#1916)', () => {
   let e2e: E2EApp;
   const SEEDED = 131;
@@ -156,8 +152,6 @@ describe('GET /api/books/identifiers — unpaginated and status-blind (#1916)', 
     expect(body).toHaveLength(SEEDED);
     expect(body.every((row) => typeof row.id === 'number')).toBe(true);
 
-    // Every seeded ASIN is present — including the ones that fall outside the
-    // most-recent 120 rows that `/api/books` would have returned.
     const returnedAsins = new Set(body.map((row) => row.asin));
     for (let i = 0; i < SEEDED; i++) {
       expect(returnedAsins.has(`B${String(i).padStart(9, '0')}`)).toBe(true);

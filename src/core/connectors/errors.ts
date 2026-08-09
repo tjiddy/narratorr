@@ -1,12 +1,7 @@
 import type { ConnectorFieldErrors } from './types.js';
 
-/**
- * Thrown by `listTargets()` and `refreshImport()` on any HTTP/transport failure.
- *
- * The service classifies retry on `retryable` (transport/DNS/timeout/5xx => true;
- * 4xx/auth/bad-id => false); routes translate it into the field-scoped envelope;
- * `test()` catches it internally and folds it into `ConnectorTestResult`.
- */
+// HTTP/transport failure from listTargets or refreshImport. retryable drives service
+// retries; routes and test() translate fieldErrors into results.
 export class ConnectorRequestError extends Error {
   readonly retryable: boolean;
   readonly fieldErrors?: ConnectorFieldErrors;

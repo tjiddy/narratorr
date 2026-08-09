@@ -17,16 +17,11 @@ export interface CompletedDispositionArgs {
   bookId: number | null;
   bookTitle: string;
   phaseHistory: PhaseHistoryEntry[];
-  /** `Date.now()` captured when the job was picked up — the elapsed-time origin. */
+  /** Elapsed-time origin captured when the worker picks up the job. */
   startTime: number;
 }
 
-/**
- * Resolve the canonical book title from the `books` row for SSE emit.
- * Falls back to `fallback` when bookId is null, the row is missing, or the
- * lookup throws — preserves the quiet-path semantics for this high-volume
- * code (no error logs on failure).
- */
+/** Resolve the canonical SSE title, quietly falling back on any lookup failure. */
 export async function resolveBookTitle(db: Db, bookId: number | null, fallback: string): Promise<string> {
   if (bookId === null) return fallback;
   try {
@@ -41,17 +36,6 @@ export async function resolveBookTitle(db: Db, bookId: number | null, fallback: 
   }
 }
 
-/**
- * Terminal disposition for an import job the adapter processed successfully (#1960 AC2).
- * Extracted from `ImportQueueWorker.processJob`'s success tail — same deps/args shape as
- * `finalizeForcedImportRefusal`, its sibling on the failure side — so the worker stays under
- * its 400-line cap while the companion-ebook trigger seam lands beside it.
- *
- * Behaviour is byte-for-byte what the worker did inline: close the open phase entry, persist
- * the completion UPDATE, compute elapsed time, resolve the canonical title, emit
- * `import_complete`, and log the success line. It does NOT trigger the companion reconcile —
- * that seam is the worker's, sited so it cannot fail the job (AC7).
- */
 export async function finalizeCompletedImport(
   deps: CompletedDispositionDeps,
   args: CompletedDispositionArgs,
@@ -59,7 +43,6 @@ export async function finalizeCompletedImport(
   const { db, broadcaster, log } = deps;
   const { jobId, bookId, bookTitle, phaseHistory, startTime } = args;
 
-  // Close current phase entry
   if (phaseHistory.length > 0) {
     const last = phaseHistory[phaseHistory.length - 1]!;
     if (last.completedAt === undefined) {

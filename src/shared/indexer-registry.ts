@@ -4,7 +4,7 @@ import { extractHostname } from './registry-utils.js';
 
 export const INDEXER_TYPES = ['newznab', 'torznab', 'myanonamouse', 'abb'] as const;
 
-/** MAM language codes — numeric IDs used by the MAM API's `tor[browse_lang]` parameter. */
+// Numeric IDs for MAM's tor[browse_lang] parameter.
 export const MAM_LANGUAGES: ReadonlyArray<{ id: number; label: string }> = [
   { id: 1, label: 'English' },
   { id: 2, label: 'Chinese' },
@@ -25,7 +25,7 @@ export const MAM_LANGUAGES: ReadonlyArray<{ id: number; label: string }> = [
 
 export type MamSearchType = 'all' | 'active' | 'fl' | 'fl-VIP' | 'VIP' | 'nVIP';
 
-/** MAM search type options — string values expected by the MAM API's `tor[searchType]` parameter. */
+// String values for MAM's tor[searchType] parameter.
 export const MAM_SEARCH_TYPES: ReadonlyArray<{ value: MamSearchType; label: string }> = [
   { value: 'all', label: 'All' },
   { value: 'active', label: 'Active' },
@@ -37,7 +37,7 @@ export const MAM_SEARCH_TYPES: ReadonlyArray<{ value: MamSearchType; label: stri
 
 const MAM_SEARCH_TYPE_VALUES = new Set<string>(MAM_SEARCH_TYPES.map(st => st.value));
 
-/** Legacy integer → string mapping for persisted numeric searchType values. */
+// Persisted legacy integers map to strings; unknown values fall back to active.
 const LEGACY_SEARCH_TYPE_MAP: Record<number, MamSearchType> = {
   0: 'all',
   1: 'active',
@@ -45,7 +45,6 @@ const LEGACY_SEARCH_TYPE_MAP: Record<number, MamSearchType> = {
   3: 'fl-VIP',
 };
 
-/** Coerce a persisted searchType value (possibly legacy integer) to a valid MamSearchType. */
 export function coerceSearchType(value: unknown): MamSearchType {
   if (typeof value === 'string' && MAM_SEARCH_TYPE_VALUES.has(value)) return value as MamSearchType;
   if (typeof value === 'number') return LEGACY_SEARCH_TYPE_MAP[value] ?? 'active';

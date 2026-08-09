@@ -15,16 +15,6 @@ export interface V1AuthorsRouteDeps {
   referenceReadService: ReferenceReadService;
 }
 
-/**
- * Native public API v1 — Authors (read). Registers `GET /api/v1/authors` and
- * `GET /api/v1/authors/:publicId` inside an ENCAPSULATED plugin so the v1-scoped
- * `v1ErrorHandler` (v1 error envelope) does not leak onto internal `/api/*`
- * routes. API-key auth is inherited automatically via the global `/api/v*`
- * `onRequest` hook. Mirrors `v1BooksRoutes` (#1449) verbatim: both endpoints
- * declare a `.strict()` Fastify `response` schema and FAIL CLOSED on any leaked
- * internal field at serialization. Authors are listable regardless of book
- * linkage — the read service reads the base table.
- */
 export async function v1AuthorsRoutes(app: FastifyInstance, deps: V1AuthorsRouteDeps, db: Db): Promise<void> {
   await app.register(
     async (v1) => {

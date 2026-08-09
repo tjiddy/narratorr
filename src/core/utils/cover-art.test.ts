@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { detectCoverArtSource, withCoverArtPipeline } from './cover-art.js';
 
-// Mock at the OS boundary (node:child_process) so the env passed to ffprobe is captured.
 vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
 }));
@@ -50,18 +49,13 @@ describe('detectCoverArtSource', () => {
 
     await detectCoverArtSource('/usr/bin/ffmpeg', ['/audio/book.m4b']);
 
-    // execFileAsync(ffprobePath, args, { env }) → options is the 3rd positional arg.
+    // execFile options are the third positional argument.
     const opts = mockExecFile.mock.calls[0]![2] as { env?: Record<string, string> };
     expect(opts.env).toBeDefined();
     expect(opts.env).not.toHaveProperty('NARRATORR_SECRET_KEY');
     expect(opts.env).toHaveProperty('PATH');
   });
 });
-
-// ============================================================================
-// #2078 — the extract/reattach remuxes must survive the 60 s stall timer, and
-// the reattach must not undo the metadata/chapters the merge just preserved.
-// ============================================================================
 
 const FFMPEG = '/usr/bin/ffmpeg';
 const TARGET_DIR = '/lib/book';
@@ -72,12 +66,10 @@ const OUTPUT_2 = join(TARGET_DIR, 'Book Part 2.m4b');
 const COVER = join(TARGET_DIR, '_cover.jpg');
 const MERGED = join(TARGET_DIR, '_cover_merged.m4b');
 
-/** Every spawn argv the pipeline issued, in call order: [extract, ...reattach]. */
 function spawnArgvs(spawn: ReturnType<typeof vi.fn>): string[][] {
   return spawn.mock.calls.map((call) => call[1] as string[]);
 }
 
-/** The whole call (ffmpegPath, argv, options) whose last operand is `output`. */
 function spawnCallWriting(spawn: ReturnType<typeof vi.fn>, output: string): unknown[] {
   const found = spawn.mock.calls.find((call) => {
     const args = call[1] as string[];
@@ -87,14 +79,12 @@ function spawnCallWriting(spawn: ReturnType<typeof vi.fn>, output: string): unkn
   return found as unknown[];
 }
 
-/** The argv whose last operand is `output` — identifies a command without pinning call order. */
 function argvWriting(spawn: ReturnType<typeof vi.fn>, output: string): string[] {
   return spawnCallWriting(spawn, output)[1] as string[];
 }
 
 describe('withCoverArtPipeline (#2078)', () => {
   beforeEach(() => {
-    // A source carrying an embedded picture, so the extract arm runs.
     mockExecFileStdout('audio\nvideo\n');
     vi.mocked(stat).mockResolvedValue({ size: 12_345 } as never);
     vi.mocked(rm).mockResolvedValue(undefined);
@@ -113,15 +103,12 @@ describe('withCoverArtPipeline (#2078)', () => {
     const result = await runPipeline(spawn);
     expect(result.warnings).toEqual([]);
 
-    // spawnFfmpeg's 60 s stall timer only resets on STDOUT activity. A `-c copy` remux of a
-    // multi-GB merged audiobook emits nothing on stdout without this flag, so it was killed at
-    // 60 s and the reattach silently degraded to the warning arm.
     for (const args of spawnArgvs(spawn)) {
       const idx = args.indexOf('-progress');
       expect(idx).toBeGreaterThan(-1);
       expect(args[idx + 1]).toBe('pipe:1');
     }
-    expect(spawnArgvs(spawn)).toHaveLength(2); // extract + reattach
+    expect(spawnArgvs(spawn)).toHaveLength(2);
   });
 
   it('reattach maps global metadata and chapters from the audio input (AC7)', async () => {
@@ -129,8 +116,6 @@ describe('withCoverArtPipeline (#2078)', () => {
 
     await runPipeline(spawn);
 
-    // The reattach is a second remux over the just-merged file. Without these it can drop the
-    // source tags Layer 1 preserved and the generated chapter set #2068 pinned.
     const reattach = spawnArgvs(spawn).find((args) => args.includes('-disposition:v:0'))!;
     expect(reattach).toBeDefined();
     const inputs = reattach.reduce<string[]>((acc, a, i) => (a === '-i' ? [...acc, reattach[i + 1]!] : acc), []);
@@ -149,7 +134,6 @@ describe('withCoverArtPipeline (#2078)', () => {
   });
 
   it('reattach failure degrades with its own distinct warning and never throws', async () => {
-    // Extract succeeds, reattach fails — the production symptom this issue diagnosed.
     const spawn = vi.fn()
       .mockImplementationOnce(() => Promise.resolve())
       .mockImplementationOnce(() => Promise.reject(new Error('ffmpeg stalled: no progress for 60s')));
@@ -172,13 +156,6 @@ describe('withCoverArtPipeline (#2078)', () => {
   });
 });
 
-// ============================================================================
-// #2080 — Cancel must actually cancel. The three cover phases take the merge's
-// AbortSignal, and an abort propagates AS an abort rather than degrading into a
-// best-effort cover warning (which, on the reattach arm, was a *successful*
-// return for an operation the operator cancelled).
-// ============================================================================
-
 describe('withCoverArtPipeline — cancellation (#2080)', () => {
   beforeEach(() => {
     mockExecFileStdout('audio\nvideo\n');
@@ -199,9 +176,7 @@ describe('withCoverArtPipeline — cancellation (#2080)', () => {
   }
 
   /**
-   * A spawn double standing in for the real cancellation sequence: the operator aborts while
-   * this command is in flight, so the controller trips and the command rejects. Keyed on the
-   * argv's output operand rather than a call index — extract and reattach are the same double.
+   * Aborts and rejects when a command writes `target`; matching output avoids dependence on call order.
    */
   function spawnAbortingOn(controller: AbortController, target: string, error: Error) {
     return vi.fn().mockImplementation(async (_ffmpegPath: string, args: string[]) => {
@@ -218,8 +193,6 @@ describe('withCoverArtPipeline — cancellation (#2080)', () => {
 
     await runPipeline(spawn, controller.signal);
 
-    // spawnFfmpeg's own abort listener sends the SIGTERM — it can only do that if it is
-    // handed the signal, so this is the observation point for "Cancel kills the child".
     for (const target of [COVER, MERGED]) {
       const options = spawnCallWriting(spawn, target)[2] as { signal?: AbortSignal } | undefined;
       expect(options?.signal).toBe(controller.signal);
@@ -244,12 +217,9 @@ describe('withCoverArtPipeline — cancellation (#2080)', () => {
       { signal: controller.signal },
     )).rejects.toThrow('The operation was aborted');
 
-    // execFileAsync(ffprobePath, args, { env, signal }) → options is the 3rd positional arg.
     const opts = mockExecFile.mock.calls[0]![2] as { signal?: AbortSignal; env?: Record<string, string> };
     expect(opts.signal).toBe(controller.signal);
-    expect(opts.env).toBeDefined(); // the sanitized env survives the new option
-    // The per-file catch treats an unprobeable file as "no cover here" and moves on. Under an
-    // aborted signal that reads cancellation as "no cover art" and lets the merge proceed.
+    expect(opts.env).toBeDefined();
     expect(mockExecFile).toHaveBeenCalledTimes(1);
     expect(spawn).not.toHaveBeenCalled();
   });
@@ -262,8 +232,6 @@ describe('withCoverArtPipeline — cancellation (#2080)', () => {
     await expect(runPipeline(spawn, controller.signal, [OUTPUT], processFn))
       .rejects.toThrow('ffmpeg exited with code null');
 
-    // No result object exists at all, so the extraction warning cannot reach the operator —
-    // and the encode the cancel was meant to stop never started.
     expect(processFn).not.toHaveBeenCalled();
     expect(spawnArgvs(spawn)).toHaveLength(1);
   });
@@ -272,8 +240,6 @@ describe('withCoverArtPipeline — cancellation (#2080)', () => {
     const controller = new AbortController();
     const spawn = spawnAbortingOn(controller, MERGED, new Error('ffmpeg exited with code null'));
 
-    // The exact scenario the non-abort test above resolves with a warning now takes the
-    // opposite branch: a cancelled reattach must not walk into removeSourceFiles.
     await expect(runPipeline(spawn, controller.signal)).rejects.toThrow('ffmpeg exited with code null');
   });
 
@@ -304,9 +270,7 @@ describe('withCoverArtPipeline — cancellation (#2080)', () => {
 
     await expect(runPipeline(spawn, controller.signal)).rejects.toThrow();
 
-    // The extraction catch is the ONLY remover on this path — `extractCoverArt` throws before
-    // returning a path, so the pipeline's `finally` sees a null `coverPath` and does nothing.
-    // Hence the exact count: it pins that nothing downstream is covering for this cleanup.
+    // Extraction throws before returning coverPath, so only extractCoverArt performs this cleanup.
     expect(rm).toHaveBeenCalledWith(COVER, { force: true });
     expect(rm).toHaveBeenCalledTimes(1);
   });
@@ -318,7 +282,6 @@ describe('withCoverArtPipeline — cancellation (#2080)', () => {
     const controller = new AbortController();
     const spawn = spawnAbortingOn(controller, MERGED, new Error(message));
 
-    // One cancellation, three error shapes: only the pre-spawn one is recognisable by text.
     await expect(runPipeline(spawn, controller.signal)).rejects.toThrow(message);
   });
 

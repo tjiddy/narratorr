@@ -50,7 +50,7 @@ describe('retryDelayMs — full-jitter backoff', () => {
   });
   it('applies full jitter: delay = random() * cap', () => {
     const err = new ApiError(500, {});
-    expect(retryDelayMs(3, err, () => 0.5)).toBe(1000); // 0.5 * 2000
+    expect(retryDelayMs(3, err, () => 0.5)).toBe(1000);
     expect(retryDelayMs(1, err, () => 0)).toBe(0);
   });
   it('never exceeds BACKOFF_CAP even for a large retry index', () => {
@@ -69,7 +69,7 @@ describe('retryDelayMs — Retry-After precedence', () => {
     expect(retryDelayMs(1, err, () => 1)).toBe(RETRY_AFTER_CAP);
   });
   it('falls back to backoff when Retry-After is absent (invalid header parsed to undefined)', () => {
-    const err = new ApiError(429, {}); // retryAfterMs undefined
+    const err = new ApiError(429, {});
     expect(retryDelayMs(2, err, () => 1)).toBe(1000);
   });
 });

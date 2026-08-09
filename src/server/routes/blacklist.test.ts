@@ -88,12 +88,11 @@ describe('blacklist routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/blacklist',
-        payload: { reason: 'spam' }, // missing infoHash and title
+        payload: { reason: 'spam' },
       });
       expect(res.statusCode).toBe(400);
     });
 
-    // L-4: reason is now required in the blacklist contract
     it('rejects payload with missing reason', async () => {
       const res = await app.inject({
         method: 'POST',
@@ -101,7 +100,6 @@ describe('blacklist routes', () => {
         payload: {
           infoHash: 'abc123def456',
           title: 'Bad Release [Unabridged]',
-          // no reason — should be rejected
         },
       });
       expect(res.statusCode).toBe(400);
@@ -226,7 +224,6 @@ describe('blacklist routes', () => {
     });
   });
 
-  // #372 — Default pagination enforcement
   describe('GET /api/blacklist — default pagination', () => {
     it('applies default limit=100 when no limit param provided', async () => {
       (services.blacklist.getAll as Mock).mockResolvedValue({ data: [], total: 0 });

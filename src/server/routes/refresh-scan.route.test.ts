@@ -80,9 +80,7 @@ describe('POST /api/books/:id/refresh-scan', () => {
     expect(body.durationMinutes).toBe(2);
   });
 
-  // Names deliberately say "passes through", not "when a tag was present": since #2161 the flag
-  // means a source supplied a replacement, so it is true for an OPF-only replacement with no tag at
-  // all and false for a whitespace- or delimiter-only tag. The route only forwards the boolean.
+  // The flag means a source supplied a replacement, not that an embedded tag existed.
   it('passes a true narratorsUpdated through unchanged', async () => {
     vi.mocked(refreshScanBook).mockResolvedValue({
       bookId: 1, codec: 'mp3', bitrate: 128000, fileCount: 1, durationMinutes: 60, narratorsUpdated: true,
@@ -155,10 +153,6 @@ describe('POST /api/books/:id/refresh-scan', () => {
     );
   });
 
-  // ==========================================================================
-  // #1960 AC15–AC17 — the companion reconcile is `finally`-shaped at THIS route
-  // ==========================================================================
-
   describe('#1960 companion-ebook reconcile', () => {
     const reconcileMock = () => services.companionEbook.reconcileBook as ReturnType<typeof vi.fn>;
 
@@ -175,16 +169,12 @@ describe('POST /api/books/:id/refresh-scan', () => {
 
       expect(res.statusCode).toBe(200);
       expect(reconcileMock()).toHaveBeenCalledTimes(1);
-      // #2034 AC7 — Refresh & Scan FORCES. It is the only UI-reachable force path this issue
-      // ships, so the reported bug ("no user action could make the book re-validate") is closed
-      // from the operator's seat by this argument alone.
+      // Refresh & Scan is a user-initiated force path.
       expect(reconcileMock()).toHaveBeenCalledWith(7, true);
       expect(services.companionEbook.reconcileAll).not.toHaveBeenCalled();
     });
 
-    // AC16 — every coded error is thrown BEFORE the audio probe, so a failing probe (or a
-    // missing directory) must still refresh the companion observation. The HTTP mapping for
-    // each code is asserted unchanged alongside the trigger.
+    // Coded errors occur before the audio probe but finally must still force reconciliation.
     it.each([
       ['NOT_FOUND', 'Book 5 not found', 404],
       ['NO_PATH', 'Book 5 has no library path — import it first', 400],
@@ -198,9 +188,6 @@ describe('POST /api/books/:id/refresh-scan', () => {
       expect(res.statusCode).toBe(status);
       expect(JSON.parse(res.payload)).toEqual({ error: message });
       expect(reconcileMock()).toHaveBeenCalledTimes(1);
-      // #2034 AC7 — the `finally` shape forces on the error path too. Every one of these codes
-      // is thrown BEFORE the audio probe, so the companion verdict is exactly as stale here as
-      // on the success path.
       expect(reconcileMock()).toHaveBeenCalledWith(5, true);
     });
 
@@ -227,8 +214,7 @@ describe('POST /api/books/:id/refresh-scan', () => {
     });
 
     it('#2034 AC7: the trigger is still never awaited — a never-settling reconciler still responds', async () => {
-      // A promise that never settles. If the route awaited the trigger, `inject` would hang and
-      // this case would time out rather than fail.
+      // If the route awaits this promise, inject times out.
       reconcileMock().mockReturnValue(new Promise<void>(() => {}));
       vi.mocked(refreshScanBook).mockResolvedValue({
         bookId: 3, codec: 'mp3', bitrate: 128000, fileCount: 2, durationMinutes: 30, narratorsUpdated: true,
@@ -241,8 +227,7 @@ describe('POST /api/books/:id/refresh-scan', () => {
     });
 
     it('#2034 AC7: a SYNCHRONOUSLY THROWING reconciler changes neither the status code nor the body', async () => {
-      // `fireAndForget` evaluates its argument eagerly, so only the trigger's own `try` contains
-      // this (fire-and-forget-preflight). Forcing must not have moved the throw outside it.
+      // fireAndForget evaluates eagerly, so the trigger's own try must contain this throw.
       reconcileMock().mockImplementation(() => { throw new Error('reconcile threw synchronously'); });
       vi.mocked(refreshScanBook).mockResolvedValue({
         bookId: 3, codec: 'mp3', bitrate: 128000, fileCount: 2, durationMinutes: 30, narratorsUpdated: true,
@@ -255,27 +240,12 @@ describe('POST /api/books/:id/refresh-scan', () => {
     });
   });
 
-  // ==========================================================================
-  // #2034 AC8 — the call-site inventory
-  // ==========================================================================
-
   /**
-   * A SOURCE SCAN, deliberately, and it lives here because Refresh & Scan is the one forcing
-   * site — the inventory's whole claim is "this one and no other".
-   *
-   * Behavioural tests cannot express AC8: the seven non-forcing seams live in seven suites, and
-   * each of those asserts only its own call. What AC8 actually guards is a LATER BLANKET EDIT —
-   * someone threading force through every site at once, or "tidying" the helper to always
-   * forward a value. Both are properties of the whole file set, so the file set is what gets
-   * read.
-   *
-   * `reconcileBook(id, undefined)` is a real failure mode and not a pedantic one: vitest's
-   * `toHaveBeenCalledWith(id)` compares argument ARRAYS, so `[id, undefined]` fails it, and a
-   * blanket edit forwarding an explicit `undefined` would break seven suites this issue never
-   * touches. Hence "true single-argument", asserted as an argument COUNT.
+   * Source-scan the cross-suite invariant: only two user actions force; seven seams must not.
+   * Count arguments because omitted force and explicit undefined are observably different to Vitest.
    */
   describe('#2034 AC8: triggerCompanionReconcile call-site inventory', () => {
-    /** Split an argument list on TOP-LEVEL commas — nesting- and quote-aware. */
+    /** Count top-level arguments while respecting nesting and quotes. */
     function countArgs(argText: string): number {
       let depth = 0;
       let quote: string | null = null;
@@ -299,8 +269,7 @@ describe('POST /api/books/:id/refresh-scan', () => {
     /** Every `triggerCompanionReconcile(...)` CALL in a source file, with its argument count. */
     function callsIn(source: string): number[] {
       const counts: number[] = [];
-      // Not preceded by `.` or a word char: skips the import binding and
-      // `import-queue-worker.ts`'s same-named private method invoked as `this.…`.
+      // Skip import bindings and this.triggerCompanionReconcile method calls.
       const pattern = /(?<![.\w])triggerCompanionReconcile\(/g;
       for (let match = pattern.exec(source); match !== null; match = pattern.exec(source)) {
         // The same-named METHOD DECLARATION in `import-queue-worker.ts` is not a call.
@@ -327,20 +296,8 @@ describe('POST /api/books/:id/refresh-scan', () => {
       return counts;
     }
 
-    /**
-     * The nine sites, by file, in source order, with the argument count each must have.
-     *
-     * TWO forcing calls, and only two — Refresh & Scan (AC7) and the companion refresh endpoint
-     * (AC11), the two places a user points at one book. The other SEVEN are AC8's inventory and
-     * must stay four-argument: import completion, the two rename callers in `books.ts`, the Fix
-     * Match rename, wrong-release, and the two opener read-unavailable arms. Those read arms
-     * matter most — they fire once per REQUEST, so forcing there would put a full `validateEpub`
-     * on an unbounded request-rate path.
-     *
-     * Only the v1 arm is strictly a stored/live MISMATCH. Since #2038 the owner gate admits a
-     * stored `drm_protected` row, so a genuinely DRM'd file reaches the owner arm while the row
-     * and the live file agree — which is exactly why forcing there would be worse, not better.
-     */
+    // Only Refresh & Scan and companion refresh force. The seven background/read seams do not;
+    // forcing request-time opener paths would put full EPUB validation on an unbounded rate path.
     const INVENTORY = [
       // Two renames (non-forcing), then Refresh & Scan (forcing).
       { file: 'src/server/routes/books.ts', counts: [4, 4, 5] },
@@ -371,12 +328,10 @@ describe('POST /api/books/:id/refresh-scan', () => {
         }
       }
 
-      // Refresh & Scan, and the companion refresh endpoint. Nothing else.
       expect(forcing).toEqual([
         'src/server/routes/books.ts',
         'src/server/routes/companion-ebook.ts',
       ]);
-      // AC8's seven, counted. A blanket edit that forced them all would land here.
       expect(nonForcing).toBe(7);
     });
 

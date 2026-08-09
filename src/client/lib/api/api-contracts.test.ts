@@ -1,10 +1,3 @@
-/**
- * API wrapper contract tests — verifies each API method calls fetchApi
- * with the correct URL path, HTTP method, and request body shape.
- *
- * These are contract tests, not integration tests. They catch drift
- * in URL paths, HTTP methods, or body shapes without needing a server.
- */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockFetchApi = vi.fn().mockResolvedValue({});
@@ -208,13 +201,6 @@ describe('blacklistApi', () => {
 });
 
 describe('booksApi', () => {
-  // `getBooks` was removed in #1951 (no client callers left — see the comment on
-  // `booksApi` in books.ts). The shared `buildBookListQuery` it used is still reached
-  // through `listLibraryBooks` via `buildLibraryBookListQuery`, so the serialization
-  // contract below covers the same builder; only the dead wrapper's duplicate cases
-  // went away.
-
-  // #1143 — server-side author/series/narrator filters: URL serialization contract
   it('listLibraryBooks with author → GET /library/books?author=...', async () => {
     await booksApi.listLibraryBooks({ author: 'Brandon Sanderson' });
     expect(mockFetchApi).toHaveBeenCalledWith('/library/books?author=Brandon+Sanderson');
@@ -235,9 +221,6 @@ describe('booksApi', () => {
     expect(mockFetchApi).toHaveBeenCalledWith('/library/books?status=imported&search=kings&author=Sanderson');
   });
 
-  // Retargeted from `getBooks` when it was removed (#1951). These pin
-  // `buildBookListQuery`'s falsy-skip (`if (value)`), which is shared machinery — not
-  // anything specific to the wrapper that used to call it.
   it('listLibraryBooks omits author/series/narrator from URL when not set', async () => {
     await booksApi.listLibraryBooks({ status: 'wanted' });
     const url = (mockFetchApi.mock.calls[0]?.[0] ?? '') as string;
@@ -254,8 +237,6 @@ describe('booksApi', () => {
     expect(url).not.toContain('narrator=');
   });
 
-  // Also retargeted from `getBooks` (#1951): the full param set, which the
-  // listLibraryBooks cases above do not otherwise cover (sort fields, limit, offset).
   it('listLibraryBooks with all params serializes every field', async () => {
     await booksApi.listLibraryBooks({ status: 'wanted', search: 'tolkien', sortField: 'title', sortDirection: 'asc', limit: 10, offset: 20 });
     expect(mockFetchApi).toHaveBeenCalledWith('/library/books?status=wanted&search=tolkien&sortField=title&sortDirection=asc&limit=10&offset=20');
@@ -416,7 +397,6 @@ describe('downloadClientsApi', () => {
     }));
   });
 
-  // F2 — contract proves testClientConfig accepts and forwards optional id (#827)
   it('testClientConfig → POST /download-clients/test serializes optional id field', async () => {
     const data = {
       name: 'Test',
@@ -534,8 +514,7 @@ describe('libraryScanApi', () => {
     expect(mockFetchApi).toHaveBeenCalledWith('/library/import/match/abc123', expect.objectContaining({ method: 'DELETE' }));
   });
 
-  // #2055 — dumb transport: the ASIN goes out verbatim (normalizing is the re-pick
-  // predicate's job; the server re-trims), and the scanner value is never rounded.
+  // Transport preserves ASIN and fractional scanner values verbatim.
   it('corroborateImportDuration → POST /library/import/duration-corroboration with asin + scannedSeconds', async () => {
     await libraryScanApi.corroborateImportDuration({ asin: 'B00CXXEX8W', scannedSeconds: 33219.47 });
     expect(mockFetchApi).toHaveBeenCalledWith('/library/import/duration-corroboration', expect.objectContaining({
@@ -709,11 +688,6 @@ describe('systemApi', () => {
   });
 });
 
-// ============================================================================
-// Response pass-through assertions
-// Verifies wrapper methods return fetchApi's resolved value without transformation
-// ============================================================================
-
 describe('response pass-through', () => {
   it('activityApi.getActivity returns fetchApi response', async () => {
     const data = { data: [{ id: 1, title: 'Test', status: 'downloading' }], total: 1 };
@@ -808,7 +782,6 @@ describe('response pass-through', () => {
 
 });
 
-// #1894 F63 — durable import-report wrapper (relevant to the #1902 migration).
 describe('submissionsApi', () => {
   it('listImportSubmissions with no params → GET /import/submissions (no stray query keys)', async () => {
     await submissionsApi.listImportSubmissions();
@@ -840,7 +813,6 @@ describe('submissionsApi', () => {
     expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/9', { method: 'DELETE' });
   });
 
-  // ── Staged write + poll lane (#1902) ──────────────────────────────────────
   it('createImportSubmission → POST /import/submissions with the create body', async () => {
     const body = { source: 'library', clientSubmissionId: 'u', payloadDigest: 'd', expectedCount: 2 } as never;
     await submissionsApi.createImportSubmission(body);

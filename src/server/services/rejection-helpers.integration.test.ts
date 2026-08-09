@@ -12,12 +12,7 @@ import type { IndexerService } from './indexer.service.js';
 import type { RetrySearchDeps } from './retry-search.js';
 import type { EventHistoryService } from './event-history.service.js';
 
-// NOTE: This file is intentionally separate from rejection-helpers.test.ts
-// because that file vi.mocks retrySearch — which means deleting the real
-// imported-book guard inside retrySearch() would not fail those tests.
-// This integration test exercises the REAL retrySearch from inside
-// blacklistAndRetrySearch so the centralized #1103 guard is covered from
-// the rejection-helpers caller surface (B5 in the AC).
+// Keep retrySearch real: the unit suite mocks it and cannot detect deletion of its imported guard.
 
 function makeImportedBookDeps(retryBudget: RetryBudget) {
   const mockSearchAll = vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
@@ -33,7 +28,7 @@ function makeImportedBookDeps(retryBudget: RetryBudget) {
       getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }),
     }),
     bookService: inject<BookService>({
-      // Imported book — path is non-null, the guard must fire.
+      // A non-null path triggers the imported-book guard.
       getById: vi.fn().mockResolvedValue({
         id: 1,
         title: 'Imported Book',
@@ -73,17 +68,14 @@ describe('blacklistAndRetrySearch — imported-book guard integration (#1103 F3)
 
     await blacklistAndRetrySearch(req);
 
-    // Blacklist write is independent of the retry-search guard and must still fire.
     expect(req.blacklistService!.create).toHaveBeenCalledWith(expect.objectContaining({
       infoHash: 'hash-123',
       reason: 'wrong_content',
     }));
 
-    // Allow the fire-and-forget retrySearch dispatch to settle.
+    // Flush the fire-and-forget retry dispatch.
     await new Promise((r) => setTimeout(r, 0));
 
-    // The centralized imported-book guard inside retrySearch() must prevent
-    // both indexer search and grab AND must not consume a retry budget attempt.
     expect(mockSearchAll).not.toHaveBeenCalled();
     expect(mockGrab).not.toHaveBeenCalled();
     expect(retryBudget.hasRemaining(1)).toBe(budgetBefore);

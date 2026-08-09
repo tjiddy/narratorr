@@ -8,18 +8,15 @@ import {
   EPUB_CAP_EXCEEDED_CODE,
 } from './counting-stream.js';
 
-/** Yield `count` one-byte chunks. */
 async function* oneByteAtATime(count: number): AsyncGenerator<Buffer> {
   for (let i = 0; i < count; i += 1) yield Buffer.from([0x61]);
 }
 
-/** Run a source through the transform, returning the drained output or the rejection value. */
 async function run(
   source: AsyncIterable<Buffer> | Readable,
   stream: Transform,
 ): Promise<{ output?: Buffer; error?: unknown }> {
-  // Accumulate incrementally: on an abort the sink's iteration throws, so a
-  // whole-buffer assignment would lose everything already forwarded.
+  // Preserve chunks forwarded before an abort makes sink iteration throw.
   const forwarded: Buffer[] = [];
   try {
     await pipeline(source, stream, async (out) => {
@@ -33,8 +30,6 @@ async function run(
 
 describe('createCountingStream — the cap boundary', () => {
   it('passes a stream of exactly the cap intact and reports the exact total', async () => {
-    // Strictly `total > cap`: an off-by-one here rejects a book that is exactly
-    // at the documented limit.
     const stream = createCountingStream(8);
     const input = Buffer.alloc(8, 0x61);
     const { output, error } = await run(Readable.from([input]), stream);
@@ -45,24 +40,17 @@ describe('createCountingStream — the cap boundary', () => {
   });
 
   it('aborts inside the transform call that crosses the cap, consuming no further chunk', async () => {
-    // One-byte chunks, so "aborts at the crossing byte" is assertable rather
-    // than an artefact of chunk size.
+    // One-byte chunks make the crossing byte observable independent of chunk size.
     const stream = createCountingStream(4);
     const { output, error } = await run(oneByteAtATime(20), stream);
 
     expect(isCapExceededError(error)).toBe(true);
-    // Counted the crossing byte and nothing after it — the abort happened
-    // inside that `_transform` call, not after the source drained or at flush.
-    // 20 chunks were offered; exactly 5 were consumed.
     expect(stream.bytesCounted).toBe(5);
     expect(isCapExceededError(error) && error.bytesCounted).toBe(5);
-    // Nothing past the cap was forwarded downstream either.
     expect(output?.length).toBeLessThanOrEqual(4);
   });
 
   it('keeps the running total readable after an abort', async () => {
-    // 1.1e's charge-as-you-go budget depends on this: the total reflects every
-    // byte observed, not zero.
     const stream = createCountingStream(3);
     const { error } = await run(Readable.from([Buffer.alloc(10, 0x61)]), stream);
 
@@ -81,8 +69,6 @@ describe('createCountingStream — the cap-breach identity', () => {
 
     expect(isCapExceededError(error)).toBe(true);
     expect(isCapExceededError(error) && error.code).toBe(EPUB_CAP_EXCEEDED_CODE);
-    // Neither errno-shaped nor a zlib code, so it can never be mistaken for one
-    // by the classifier's code-shape arm.
     expect(EPUB_CAP_EXCEEDED_CODE).not.toMatch(/^E[A-Z0-9]+$/);
     expect(EPUB_CAP_EXCEEDED_CODE).not.toMatch(/^(?:Z_|ERR_ZLIB_)/);
   });
@@ -97,7 +83,6 @@ describe('createCountingStream — the cap-breach identity', () => {
   });
 
   it('does not match an ordinary Error wearing the same code string', () => {
-    // The identity is the predicate, not the code spelling.
     const impostor = Object.assign(new Error('cap exceeded'), { code: EPUB_CAP_EXCEEDED_CODE });
     expect(isCapExceededError(impostor)).toBe(false);
   });

@@ -38,7 +38,6 @@ const MOCK_SCAN_RESULT = {
   hasCoverArt: false,
 };
 
-// Default webhook sink to absorb fire-and-forget notifications
 const mswServer = setupServer(
   http.post(WEBHOOK_URL, () => new HttpResponse(null, { status: 200 })),
   http.post(WEBHOOK_URL_2, () => new HttpResponse(null, { status: 200 })),
@@ -57,13 +56,11 @@ describe('Error recovery E2E', () => {
     downloadParent = await mkdtemp(join(tmpdir(), 'narratorr-err-dl-'));
     libraryDir = await mkdtemp(join(tmpdir(), 'narratorr-err-lib-'));
 
-    // Create download source with audio files
     const downloadSource = join(downloadParent, 'Test Audiobook');
     await mkdir(downloadSource, { recursive: true });
     await writeFile(join(downloadSource, 'book.m4b'), Buffer.alloc(1024));
     await writeFile(join(downloadSource, 'chapter2.m4b'), Buffer.alloc(2048));
 
-    // Seed download client
     const clientRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/download-clients',
@@ -78,7 +75,6 @@ describe('Error recovery E2E', () => {
     expect(clientRes.statusCode).toBe(201);
     downloadClientId = clientRes.json().id;
 
-    // Seed notifiers for testing
     await e2e.app.inject({
       method: 'POST',
       url: '/api/notifiers',
@@ -121,33 +117,25 @@ describe('Error recovery E2E', () => {
     await rm(libraryDir, { recursive: true, force: true });
   });
 
-  // ── Import failure: unreachable download client ─────────────────────────
-
   it('import fails gracefully when download client is unreachable — download failed, book recovered to wanted', async () => {
     const { bookId, downloadId } = await seedBookAndDownload(e2e, downloadClientId, 'Unreachable Client Book', 'Test Author');
 
-    // Make qBittorrent auth fail (unreachable)
     mswServer.use(qbLoginErrorHandler(500));
 
     await expect(e2e.services.import.importDownload(downloadId)).rejects.toThrow();
 
-    // Download status → failed with error message
     const [dl] = await e2e.db.select().from(downloads).where(eq(downloads.id, downloadId));
     expect(dl!.clientStatus).toBe('failed');
     expect(dl!.pipelineStage).toBe('idle');
     expect(dl!.errorMessage).toBeTruthy();
 
-    // Book status recovered — no path so reverts to 'wanted'
     const bookRes = await e2e.app.inject({ method: 'GET', url: `/api/books/${bookId}` });
     expect(bookRes.json().status).toBe('wanted');
   });
 
-  // ── Search: indexer returns malformed/empty results ────────────────────
-
   it('search handles indexer failure with partial results from other indexers', async () => {
     const INDEXER_2_BASE = 'http://indexer2.test';
 
-    // Seed two indexers — one will fail, one will succeed
     const idx1 = await e2e.app.inject({
       method: 'POST',
       url: '/api/indexers',
@@ -174,7 +162,6 @@ describe('Error recovery E2E', () => {
     });
     expect(idx2.statusCode).toBe(201);
 
-    // First indexer returns error, second returns valid results
     mswServer.use(
       http.get(`${INDEXER_BASE}/api`, () => {
         return new HttpResponse('Server Error', { status: 500 });
@@ -186,22 +173,13 @@ describe('Error recovery E2E', () => {
       }),
     );
 
-    // GET /api/search was retired in Wave 11.2 (#755) in favor of SSE
-    // /api/search/stream. SSE stream parsing requires app.listen() + fetch,
-    // which doesn't compose with the inject()-based e2e harness; the SSE route
-    // and indexer-error event behavior are covered by search-stream-filtering
-    // route tests and indexer.service tests ("continues searching when one
-    // indexer errors"). The remaining concern at the e2e level is that BOTH
-    // indexer HTTP endpoints are reachable through the indexer service, so we
-    // exercise the service directly here.
+    // SSE needs listen+fetch and does not compose with this inject harness; route event behavior
+    // is covered separately, while this service call retains E2E coverage of both HTTP endpoints.
     const results = await e2e.services.indexerSearch.searchAll('Brandon Sanderson');
     expect(results.length).toBeGreaterThan(0);
   });
 
-  // ── Notifier dispatch: one notifier fails, others still fire ──────────
-
   it('notifier dispatch continues when one notifier endpoint fails', async () => {
-    // Add a second notifier that will succeed
     await e2e.app.inject({
       method: 'POST',
       url: '/api/notifiers',
@@ -217,7 +195,6 @@ describe('Error recovery E2E', () => {
     const { downloadId } = await seedBookAndDownload(e2e, downloadClientId, 'Notifier Fail Test', 'Test Author');
     vi.mocked(scanAudioDirectory).mockResolvedValueOnce(MOCK_SCAN_RESULT);
 
-    // First notifier returns 500, second captures successfully
     const { handler: workingHandler, captured } = webhookCaptureHandler(WEBHOOK_URL_2);
     mswServer.use(
       http.post(WEBHOOK_URL, () => new HttpResponse('Error', { status: 500 })),
@@ -229,19 +206,15 @@ describe('Error recovery E2E', () => {
     const result = await e2e.services.importOrchestrator.importDownload(downloadId);
     expect(result.fileCount).toBe(2);
 
-    // Working notifier still received the notification
     await waitForRequests(captured, 1);
     expect(captured).toHaveLength(1);
     expect((captured[0]!.body as Record<string, unknown>).event).toBe('on_import');
   });
 
-  // ── Enrichment: failure leaves book intact, 1-hour retry gate ─────────
-
   it('enrichment failure leaves book with existing data intact, retries only after 1-hour window', async () => {
     const AUDNEXUS_BASE = 'https://api.audnex.us';
     const TEST_ASIN = 'B001TEST01';
 
-    // Create a book with ASIN (required for enrichment) and mark it pending
     const bookRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/books',
@@ -250,13 +223,9 @@ describe('Error recovery E2E', () => {
     expect(bookRes.statusCode).toBe(201);
     const bookId = bookRes.json().id;
 
-    // Reset enrichmentStatus to pending so enrichment runs
     await e2e.db.update(books).set({ enrichmentStatus: 'pending' }).where(eq(books.id, bookId));
 
-    // Genuine no-match (#1628): the ASIN is genuinely not found (404 → null, not a
-    // transient 500) AND the title/author search fallback returns zero results.
-    // Only a true empty result marks the row `failed`; a transient provider error
-    // (5xx/timeout) would instead leave the book `pending` for the next cycle.
+    // Only a true ASIN 404 plus empty fallback marks failed; transient provider errors retain pending.
     mswServer.use(
       http.get(`${AUDNEXUS_BASE}/books/${TEST_ASIN}`, () => {
         return new HttpResponse('Not Found', { status: 404 });
@@ -266,17 +235,14 @@ describe('Error recovery E2E', () => {
       }),
     );
 
-    // Import the enrichment job runner
     const { runEnrichment } = await import('../jobs/enrichment.js');
     await runEnrichment(e2e.db, e2e.services.metadata, e2e.services.book, e2e.app.log);
 
-    // Book should be marked failed but existing data preserved
     const [bookAfterFail] = await e2e.db.select().from(books).where(eq(books.id, bookId));
     expect(bookAfterFail!.enrichmentStatus).toBe('failed');
     expect(bookAfterFail!.title).toBe('Enrichment Test Book');
 
-    // Run enrichment again immediately — should NOT retry (updatedAt is recent)
-    // Switch Audnexus to return valid data for when retry eventually fires
+    // Install success first; a recent updatedAt must still suppress the immediate retry.
     mswServer.use(
       http.get(`${AUDNEXUS_BASE}/books/${TEST_ASIN}`, () => {
         return HttpResponse.json({
@@ -291,15 +257,12 @@ describe('Error recovery E2E', () => {
     await runEnrichment(e2e.db, e2e.services.metadata, e2e.services.book, e2e.app.log);
 
     const [bookAfterImmediate] = await e2e.db.select().from(books).where(eq(books.id, bookId));
-    // Still failed — not retried because updatedAt is recent
     expect(bookAfterImmediate!.enrichmentStatus).toBe('failed');
     expect(bookAfterImmediate!.title).toBe('Enrichment Test Book');
 
-    // Set updatedAt to 2 hours ago to simulate passage of time
     const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
     await e2e.db.update(books).set({ updatedAt: twoHoursAgo }).where(eq(books.id, bookId));
 
-    // Now enrichment should retry — Audnexus returns valid data (handler set above)
     await runEnrichment(e2e.db, e2e.services.metadata, e2e.services.book, e2e.app.log);
 
     const [bookAfterRetry] = await e2e.db.select().from(books).where(eq(books.id, bookId));

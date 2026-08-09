@@ -64,15 +64,12 @@ describe('isCompanionEbookEligible', () => {
     const { log } = makeLog();
     await expect(isCompanionEbookEligible(input(), log)).resolves.toBe(true);
     expect(mockStat).toHaveBeenCalledTimes(1);
-    // Pin the probe TARGET, not just the call count: an ordinary stat double answers the
-    // same for any argument, so a regression to `stat(libraryRoot)` would otherwise stay green.
+    // Call count alone would not catch probing libraryRoot instead.
     expect(mockStat).toHaveBeenCalledWith(BOOK_PATH);
   });
 
   it("is false when the stored path is a file rather than a directory", async () => {
-    // Argument-sensitive on purpose. With a blanket `file()` double, an implementation that
-    // probed the library root instead of the book path would still return false here; with
-    // this one, that regression reports a file-backed book as ELIGIBLE and fails.
+    // Argument-sensitive so probing libraryRoot makes this case fail.
     mockStat.mockImplementation((p: string) => Promise.resolve(p === BOOK_PATH ? file() : directory()));
     const { log } = makeLog();
     await expect(isCompanionEbookEligible(input(), log)).resolves.toBe(false);
@@ -87,11 +84,6 @@ describe('isCompanionEbookEligible', () => {
     });
   }
 
-  // ---------------------------------------------------------------------------
-  // Gate ordering (AC17). A guard that stats first and filters afterwards passes a
-  // result-only suite, so the negative call assertion is the only thing pinning the
-  // order — one per gate that must short-circuit BEFORE the filesystem is touched.
-  // ---------------------------------------------------------------------------
   describe('gate ordering — every gate before the stat returns without touching the filesystem', () => {
     it('feature disabled', async () => {
       const { log } = makeLog();
@@ -144,9 +136,6 @@ describe('isCompanionEbookEligible', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Containment, delegated to the existing lexical decision in utils/paths.ts.
-  // ---------------------------------------------------------------------------
   describe('containment', () => {
     it("rejects the sibling-prefix case a raw startsWith would wrongly admit ('/library-2/book' vs '/library')", async () => {
       const { log } = makeLog();
@@ -182,18 +171,13 @@ describe('isCompanionEbookEligible', () => {
       const [payload] = debug.mock.calls[0]!;
       expect(payload).toMatchObject({ bookId: 42 });
       expect(String((payload as { path: string }).path).split('\\').join('/')).toContain('elsewhere/book');
-      // Expected control flow, not a failure: no `error:` key.
+      // Expected miss, not a filesystem failure.
       expect(payload).not.toHaveProperty('error');
-      // A result-only assertion would still pass if this branch returned false silently.
       expect(mockStat).not.toHaveBeenCalled();
     });
   });
 
-  // The deliberate no-realpath policy (AC22). Containment is LEXICAL by design: a
-  // symlinked book folder is operator-placed, not attacker-influenced, and the
-  // serve-time authority is 1.5's lstat + containment on the file itself. Do not
-  // "fix" this into an assertRealPathInsideLibrary / realpath call — the sibling
-  // guard exists and is deliberately not used here.
+  // Containment is deliberately lexical; serve-time checks secure files under operator-created symlinks.
   it.skipIf(!CAN_SYMLINK)('accepts a real in-root symlink whose target lies outside the root, and never consults realpath', async () => {
     const realFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
     const os = await import('node:os');
@@ -205,7 +189,6 @@ describe('isCompanionEbookEligible', () => {
     await realFs.mkdir(join(root, 'Author'), { recursive: true });
     await realFs.symlink(outside, linked, 'dir');
 
-    // Delegate to the REAL stat so the symlink is genuinely followed on disk.
     mockStat.mockImplementation((p: string) => realFs.stat(p));
 
     const { log } = makeLog();
@@ -214,17 +197,12 @@ describe('isCompanionEbookEligible', () => {
         isCompanionEbookEligible(input({ path: linked, libraryRoot: root }), log),
       ).resolves.toBe(true);
       expect(mockRealpath).not.toHaveBeenCalled();
-      // The linked path itself is what gets probed — `root` is also a directory here, so
-      // without this the symlink case would pass on a root-probing implementation too.
       expect(mockStat).toHaveBeenCalledWith(linked);
     } finally {
       await realFs.rm(dir, { recursive: true, force: true });
     }
   });
 
-  // ---------------------------------------------------------------------------
-  // Fail-closed on every fs error (AC18) — each one also logs (AC20).
-  // ---------------------------------------------------------------------------
   describe('fails closed on every stat rejection and logs it', () => {
     for (const code of ['ENOENT', 'EACCES', 'ENOTDIR', 'EIO', 'ESTALE']) {
       it(`${code} → false, logged once at debug with a serialized error`, async () => {

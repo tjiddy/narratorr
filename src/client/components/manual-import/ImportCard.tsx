@@ -18,16 +18,10 @@ interface ImportCardProps {
   row: ImportRow;
   onToggle: () => void;
   onEdit: () => void;
-  /** When true, path-duplicates suppress checkbox+edit; slug-duplicates suppress checkbox but show edit */
+  /** Locks path duplicates completely; slug duplicates remain editable. */
   lockDuplicates?: boolean | undefined;
-  /** Pre-computed relative path to display instead of the auto-shortened absolute path */
   relativePath?: string | undefined;
-  /**
-   * When true (paused match run, #1895), a genuinely-new pending row renders the static
-   * `Paused` badge instead of the spinning `Matching` one. Defaults to false so the
-   * non-paused path — and Manual Import — stay byte-identical. Does NOT affect the
-   * ownership badge, which precedes the confidence badge.
-   */
+  /** Replaces a pending Matching spinner with Paused; ownership badges still win. */
   paused?: boolean | undefined;
 }
 
@@ -50,14 +44,8 @@ const confidenceLabel = {
 } as const;
 
 /**
- * Three-way import-review badge ladder (#1712 §3c). Precedence: the recording
- * verdict (set by the match job for library hits) wins; a scan-time DB duplicate
- * (path/decisive-ASIN) carries no verdict and falls back to the duplicate flags.
- *
- * `reviewReason` is deliberately NOT a rung — it is a separate display-only
- * absorbed-content warning (#1031) rendered as its own tooltip indicator, and an
- * ordinary new book can carry it. Only `recordingVerdict:'review'` lights the
- * "Possible duplicate (review)" badge.
+ * Recording verdicts win; scan-time duplicates fall back to duplicate flags.
+ * `reviewReason` is a separate warning, never an ownership-badge rung.
  */
 function ownershipBadge(book: ImportRow['book']): { label: string; variant: 'muted' | 'warning' } | null {
   switch (book.recordingVerdict) {
@@ -65,7 +53,6 @@ function ownershipBadge(book: ImportRow['book']): { label: string; variant: 'mut
     case 'different-recording': return { label: 'New version of an owned title', variant: 'muted' };
     case 'review': return { label: 'Possible duplicate (review)', variant: 'warning' };
   }
-  // Scan-time DB duplicates bypass the match-job helper, so they have no verdict.
   if (book.isDuplicate && (book.duplicateReason === 'path' || book.duplicateReason === 'slug')) {
     return { label: 'Already owned', variant: 'muted' };
   }
@@ -74,8 +61,6 @@ function ownershipBadge(book: ImportRow['book']): { label: string; variant: 'mut
 
 function ConfidenceBadge({ confidence, reason, paused }: { confidence?: Confidence | undefined; reason?: string | undefined; paused?: boolean | undefined }) {
   if (!confidence) {
-    // Paused (#1895): the run is halted, so a result-less row is not "matching" — drop the
-    // spinner and say so, statically. Non-paused keeps the spinning "Matching" badge.
     return paused ? (
       <Badge variant="muted">Paused</Badge>
     ) : (
@@ -101,41 +86,30 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
   const showPencilAlways = !confidence || confidence === 'medium' || confidence === 'none';
   const displayTitle = row.edited.title;
   const displayAuthor = row.edited.author || row.book.parsedAuthor || '';
-  // Prefer the top-level edited narrator (where the Edit Book modal saves the user's
-  // edit, and where matched rows are seeded) over metadata.narrators — mirroring the
-  // import-confirm + server narrator precedence so the row shows what will be imported (#1660).
+  // Mirror import precedence: explicit edited narrators win over matched metadata.
   const displayNarrator = row.edited.narrators?.length
     ? row.edited.narrators.join(', ')
     : row.edited.metadata?.narrators?.join(', ');
-  // Series/#position — edited-first, then metadata fallback (#1927 AC6), mirroring
-  // `displayNarrator` (#1660) and the item-first server resolver so the row shows the
-  // EFFECTIVE value that will be imported. A non-empty edited series (user edit, or the
-  // provider primary seeded onto an untouched matched row) wins and renders verbatim; a
-  // cleared/absent edited series defers to the matched metadata's primary series — the
-  // deferred value the server imports. `edited.series` is trimmed only to classify.
+  // Mirror server precedence: edited series wins verbatim; blank defers to provider primary.
+  // Trim only to classify, preserving displayed and stored whitespace.
   const matchedSeries = row.edited.series?.trim()
     ? { name: row.edited.series, position: row.edited.seriesPosition }
     : pickPrimarySeries(row.edited.metadata);
-  // Show pre-computed relative path if provided, otherwise last 3 path segments
   const pathParts = row.book.path.split(/[\\/]/).filter(Boolean);
   const shortPath = relativePath ?? pathParts.slice(-3).join('/') ?? row.book.path;
 
-  // When lockDuplicates=true: path-duplicates are fully locked; slug-duplicates show edit but no checkbox.
   const isPathDuplicate = lockDuplicates && isDuplicate && row.book.duplicateReason === 'path';
   const isSlugDuplicate = lockDuplicates && isDuplicate && row.book.duplicateReason === 'slug';
   const showCheckbox = !isPathDuplicate && !isSlugDuplicate;
   const showEditButton = !isDuplicate || isSlugDuplicate;
   const ownership = ownershipBadge(row.book);
 
-  // Left border: amber for no-match, matches LibraryPage's status border pattern
   const borderClass = confidence === 'none'
     ? 'border-l-[3px] border-l-amber-500'
     : confidence === 'medium'
       ? 'border-l-[3px] border-l-amber-500/40'
       : '';
 
-  // Mute unselected duplicate rows; grey out rows that are still matching.
-  // Selected duplicates (force-import opt-in) are undimmed entirely.
   const dimClass = isDuplicate
     ? (row.selected ? '' : 'opacity-60')
     : (!confidence ? 'opacity-50' : '');
@@ -146,7 +120,6 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
         row.selected ? 'bg-primary/5' : 'hover:bg-muted/20'
       }`}
     >
-      {/* Checkbox */}
       {showCheckbox && (
         <button
           type="button"
@@ -162,7 +135,6 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
         </button>
       )}
 
-      {/* Title + filepath */}
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium truncate">{displayTitle}</p>
         <p className="text-xs text-muted-foreground/50 truncate" title={row.book.path}>
@@ -170,7 +142,6 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
         </p>
       </div>
 
-      {/* Author + narrator/size */}
       <div className="hidden sm:block w-64 shrink-0 text-right">
         <p className="text-sm text-muted-foreground truncate">
           {displayAuthor || <span className="italic text-muted-foreground/40">Unknown</span>}
@@ -188,8 +159,6 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
         </p>
       </div>
 
-      {/* Badge: three-way recording-review ladder (#1712) for owned/new-version/review,
-          confidence badge for a genuinely new book. */}
       <div className="w-32 shrink-0 flex justify-center">
         {ownership ? (
           <Badge variant={ownership.variant}>{ownership.label}</Badge>
@@ -198,8 +167,7 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
         )}
       </div>
 
-      {/* Discovery review-flag indicator — independent of confidence so high-match
-          rows still surface absorbed-bonus warnings before import (#1031). */}
+      {/* Review warnings remain visible independently of match confidence. */}
       {row.book.reviewReason && (
         <span
           title={row.book.reviewReason}
@@ -212,7 +180,6 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
         </span>
       )}
 
-      {/* Audio preview — always visible when previewUrl is present */}
       {row.book.previewUrl && (
         <AudioPreview
           source={{ kind: 'url', previewUrl: row.book.previewUrl, enabled: true }}
@@ -220,7 +187,6 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
         />
       )}
 
-      {/* Edit button — hidden for path-locked duplicate rows */}
       {showEditButton && (
         <button
           type="button"

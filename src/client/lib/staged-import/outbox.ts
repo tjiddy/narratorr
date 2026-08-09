@@ -7,22 +7,8 @@ import {
   type SubmissionSource,
 } from '@core/import-staging/schemas.js';
 
-/**
- * Best-effort, source-scoped submission outbox (#1902, F69/F12).
- *
- * This is a same-tab RECONNECTION HINT — NOT an admission gate or recovery
- * authority. The durable `import_submissions` header is authoritative; the outbox
- * only lets the current tab rejoin a poll / surface an in-flight or just-finished run
- * after a client-side remount, keyed by `clientSubmissionId`. It is a single slot per
- * source (`library` / `manual`), last-write-wins; a superseded pointer is lost
- * locally but its durable header survives in the #1894 Activity history.
- *
- * Storage is mirrored to `localStorage` but the IN-MEMORY snapshot is authoritative
- * for the session: every `getItem`/`setItem`/`removeItem` is catch-guarded (Safari
- * private mode throws from reads AND eviction), and a failed evict never resurrects a
- * surfaced record — the snapshot is set before the write is attempted. Module state
- * is exposed through `useSyncExternalStore` so surface/evict transitions re-render.
- */
+// Best-effort same-tab hint; durable import_submissions remain authoritative.
+// One last-write-wins slot per source; memory remains authoritative when localStorage throws.
 
 const OUTBOX_VERSION = 1;
 
@@ -43,7 +29,6 @@ function keyFor(source: SubmissionSource): string {
   return `narratorr:import-outbox:${source}`;
 }
 
-// ── Catch-guarded storage primitives (F12) ──────────────────────────────────
 function safeGetItem(key: string): string | null {
   try {
     return localStorage.getItem(key);
@@ -55,18 +40,17 @@ function safeSetItem(key: string, value: string): void {
   try {
     localStorage.setItem(key, value);
   } catch {
-    // quota exceeded / storage unavailable — the in-memory snapshot still holds.
+    // The memory snapshot remains authoritative.
   }
 }
 function safeRemoveItem(key: string): void {
   try {
     localStorage.removeItem(key);
   } catch {
-    // eviction can throw too — non-fatal; the in-memory snapshot is already null.
+    // The memory snapshot was already cleared.
   }
 }
 
-// ── Module external store ────────────────────────────────────────────────────
 const listeners = new Set<() => void>();
 const cache = new Map<SubmissionSource, OutboxRecord | null>();
 
@@ -79,11 +63,7 @@ function subscribe(cb: () => void): () => void {
   return () => listeners.delete(cb);
 }
 
-/**
- * Read + validate the stored record for a source, evicting anything corrupt,
- * unknown-version, or schema-invalid without throwing into render. Result is memoized
- * so `useSyncExternalStore` sees a stable snapshot reference until a mutation.
- */
+// Memoize validated storage so useSyncExternalStore receives a stable snapshot.
 export function readOutbox(source: SubmissionSource): OutboxRecord | null {
   if (cache.has(source)) return cache.get(source) ?? null;
   const raw = safeGetItem(keyFor(source));
@@ -95,13 +75,11 @@ export function readOutbox(source: SubmissionSource): OutboxRecord | null {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    // Corrupt JSON — evict and ignore.
     safeRemoveItem(keyFor(source));
     cache.set(source, null);
     return null;
   }
   const result = outboxRecordSchema.safeParse(parsed);
-  // Unknown version / invalid uuid-digest-status / wrong source → evict + ignore.
   if (!result.success || result.data.source !== source) {
     safeRemoveItem(keyFor(source));
     cache.set(source, null);
@@ -111,7 +89,6 @@ export function readOutbox(source: SubmissionSource): OutboxRecord | null {
   return result.data;
 }
 
-/** Persist (create-or-replace) the single hint for a source. Storage failure is non-fatal. */
 export function putOutbox(record: OutboxRecord): void {
   const validated = outboxRecordSchema.parse(record);
   cache.set(validated.source, validated);
@@ -119,12 +96,7 @@ export function putOutbox(record: OutboxRecord): void {
   notify();
 }
 
-/**
- * Advance the hint to `finalized`, optionally stamping the now-known durable id. No-op
- * if absent OR if `expectedClientId` is passed and no longer matches the stored hint —
- * a newer submission has already replaced the single slot, so an older callback must
- * not rewrite it (#1902 F1: source-scoped supersession guard).
- */
+// expectedClientId prevents a stale callback from rewriting a newer source slot.
 export function markOutboxFinalized(source: SubmissionSource, submissionId?: number, expectedClientId?: string): void {
   const current = readOutbox(source);
   if (!current) return;
@@ -132,13 +104,7 @@ export function markOutboxFinalized(source: SubmissionSource, submissionId?: num
   putOutbox({ ...current, status: 'finalized', ...(submissionId !== undefined ? { submissionId } : {}) });
 }
 
-/**
- * Evict the hint. The in-memory snapshot is nulled BEFORE the (guarded) storage write.
- * When `expectedClientId` is passed, evict ONLY if the stored hint still belongs to that
- * submission — a late poll/lookup/finalize callback from a superseded run must not delete
- * the newer submission's hint (#1902 F1). An unguarded call (no `expectedClientId`) always
- * evicts — used by the mount receiving/never-landed arms that own the slot they read.
- */
+// Clear memory first; expectedClientId prevents stale callbacks from evicting newer hints.
 export function evictOutbox(source: SubmissionSource, expectedClientId?: string): void {
   if (expectedClientId !== undefined) {
     const current = readOutbox(source);
@@ -149,7 +115,6 @@ export function evictOutbox(source: SubmissionSource, expectedClientId?: string)
   notify();
 }
 
-/** React binding — re-renders on any surface/evict transition for this source. */
 export function useOutbox(source: SubmissionSource): OutboxRecord | null {
   return useSyncExternalStore(
     subscribe,

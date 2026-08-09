@@ -16,13 +16,8 @@ import { useFfmpegStatus } from '@/hooks/useFfmpegStatus';
 
 const saveButtonClass = 'px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in';
 
-// Post Processing = the "when": automations that fire after a download. The merge/convert
-// ENGINE config (the "how") lives on the Audio Tools page. TWO independent forms — one per card,
-// each with its own dirty-gated Save (the app-wide per-card convention). Each saves only its own
-// subset; the backend patch-merges categories, so the two forms (and the Audio Tools engine
-// subset) never clobber each other.
-
-// ─── Automations card (processing automations + the whole tagging category) ───
+// Post Processing owns automation; Audio Tools owns merge/convert. These cards submit disjoint
+// subsets that the backend patch-merges, so each retains an independent dirty-gated Save.
 
 const automationsFormSchema = z.object({
   autoMergeDownloads: z.boolean(),
@@ -58,7 +53,6 @@ function toAutomationsPayload(data: AutomationsFormData) {
   };
 }
 
-/** "needs ffmpeg" note shown under a gated automation when ffmpeg isn't detected. */
 function GateNote() {
   return (
     <span className="inline-flex items-center gap-1.5 mt-2 text-xs font-medium text-destructive">
@@ -82,15 +76,12 @@ function AutoMergeDescription({ gated }: { gated: boolean }): ReactNode {
   );
 }
 
-// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
 const POST_PROCESSING_CARD_LABEL = 'Post Processing';
 
 function AutomationsForm() {
   const ffmpegStatus = useFfmpegStatus();
-  // Optimistic while the status query LOADS — avoids a flash of "needs ffmpeg" on a
-  // normal (ffmpeg-present) install — but fail SAFE on a query error: an errored status
-  // fetch gates the toggles (disabled) rather than leaving them enabled on a box where
-  // ffmpeg may be absent. Real enforcement is still the backend FFMPEG_NOT_CONFIGURED gate.
+  // Stay optimistic while loading to avoid a false warning, but fail closed on query errors.
+  // The backend still enforces FFMPEG_NOT_CONFIGURED.
   const ffmpegAvailable = ffmpegStatus.isError ? false : ffmpegStatus.data?.detected !== false;
 
   const { form, mutation, onSubmit } = useSettingsForm<AutomationsFormData>({
@@ -177,8 +168,6 @@ function AutomationsForm() {
   );
 }
 
-// ─── Custom script card (script path + timeout — its own form and Save) ───
-
 const customScriptFormSchema = z.object({
   postProcessingScript: z.string(),
   postProcessingScriptTimeout: postProcessingScriptTimeoutField.optional(),
@@ -210,12 +199,10 @@ function toCustomScriptPayload(data: CustomScriptFormData) {
   };
 }
 
-/** A monospaced env-var chip for the script's description copy. */
 function EnvChip({ children }: { children: ReactNode }) {
   return <code className="px-1 py-0.5 bg-muted rounded text-xs font-mono">{children}</code>;
 }
 
-// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
 const CUSTOM_SCRIPT_CARD_LABEL = 'Custom script';
 
 function CustomScriptForm() {

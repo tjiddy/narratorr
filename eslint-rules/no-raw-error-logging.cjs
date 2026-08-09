@@ -1,40 +1,17 @@
 /**
- * ESLint rule: no-raw-error-logging
- *
- * Pino serializes `catch (error: unknown)` bindings to `"error":{}` in JSON logs —
- * the standard serializers only run for `err` (Error instances). This rule flags
- * three non-canonical shapes for the four `log.(debug|info|warn|error)` methods:
- *
- *   1. Object-key raw: `log.error({ error }, '…')` / `{ error: err }` where the
- *      value traces back to a catch binding or `.catch` callback parameter.
- *   2. Bare identifier: `log.error(err, '…')` where `err` traces back to a catch
- *      binding or `.catch` callback parameter.
- *   3. Bare serializeError call: `log.error(serializeError(err), '…')` — the
- *      serialized object must live under an `error` key on the log record, not
- *      at the top level.
- *
- * All three autofix to the canonical shape:
- *   `log.error({ error: serializeError(err) }, '…')`
- *
- * The `serializeError` import is inserted at the top of the file when missing,
- * with a depth-aware relative path from the source file to
- * `src/server/utils/serialize-error.js`.
+ * Rejects catch-sourced errors passed raw to Pino as object values, bare identifiers,
+ * or bare `serializeError` calls. Fixes to `{ error: serializeError(err) }` and inserts
+ * a depth-aware import when needed.
  */
 
 const path = require('node:path');
 
 const LOG_METHODS = new Set(['error', 'warn', 'info', 'debug']);
 
-// Receiver binding names recognized as a logger. `log` and `logger` are the two
-// conventions used across the codebase; both must be policed identically so a
-// raw `logger.error(err)` is flagged the same as `log.error(err)`.
+// Both logger naming conventions are part of the rule's contract.
 const LOG_RECEIVERS = new Set(['log', 'logger']);
 
-/**
- * Check if a node is a log method call like `log.error(...)`, `logger.error(...)`,
- * `this.log.warn(...)`, `this.logger.warn(...)`, `request.log.error(...)`,
- * `app.log.warn(...)`, `deps.logger.warn(...)`.
- */
+// Recognizes direct receivers and one-level `.log`/`.logger` members.
 function isLogCall(node) {
   if (node.type !== 'CallExpression' || node.callee.type !== 'MemberExpression') {
     return false;
@@ -93,12 +70,7 @@ function isErrorSource(identifierNode, context) {
   return false;
 }
 
-/**
- * Compute the relative import path from the source file to
- * `src/server/utils/serialize-error.js`. Depth-aware — works at any depth under
- * `src/server/**`. Falls back to `../utils/serialize-error.js` if the file
- * isn't under `src/server/`.
- */
+/** Computes a depth-aware helper import under `src/server`, with a legacy fallback outside it. */
 function computeImportPath(filePath) {
   const normalized = (filePath || '').replace(/\\/g, '/');
   const marker = '/src/server/';
@@ -114,9 +86,6 @@ function computeImportPath(filePath) {
   return rel;
 }
 
-/**
- * Build fixes that add `import { serializeError } from '…';` when missing.
- */
 function buildImportFixes(fixer, context) {
   const sourceCode = context.sourceCode;
   const text = sourceCode.getText();
@@ -137,12 +106,6 @@ function buildImportFixes(fixer, context) {
   return [fixer.insertTextBefore(program.body[0], importText + '\n')];
 }
 
-/**
- * Case 1: Object-key raw — `log.error({ error: <catchBinding> }, '…')` or
- * `log.error({ err: <catchBinding> }, '…')` (Pino's stdSerializers handle `err`
- * for true Error instances, but the rule normalizes both keys to the canonical
- * `error: serializeError(...)` shape so codebase-wide grep stays consistent).
- */
 function checkObjectArg(node, firstArg, context) {
   for (const prop of firstArg.properties) {
     if (prop.type !== 'Property') continue;
@@ -162,9 +125,7 @@ function checkObjectArg(node, firstArg, context) {
       traceTarget = value;
       valueText = value.name;
     } else if (value.type === 'MemberExpression') {
-      // Walk through dot-access (computed === false) only, to a root Identifier.
-      // Bail on any computed segment (`obj[k]`) or non-Identifier root (calls,
-      // literals, etc.) — those are out of scope for catch-tracing.
+      // Trace only noncomputed member chains to a root catch binding.
       let cursor = value;
       let bail = false;
       while (cursor.type === 'MemberExpression') {
@@ -193,10 +154,6 @@ function checkObjectArg(node, firstArg, context) {
   }
 }
 
-/**
- * Case 2: Bare identifier — `log.error(err, '…')` where `err` is a catch binding
- * or `.catch` callback parameter.
- */
 function checkBareIdentifierArg(node, firstArg, context) {
   if (firstArg.type !== 'Identifier') return;
   if (!isErrorSource(firstArg, context)) return;
@@ -211,10 +168,6 @@ function checkBareIdentifierArg(node, firstArg, context) {
   });
 }
 
-/**
- * Case 3: Bare `serializeError(...)` call — `log.error(serializeError(err), '…')`.
- * Wrap the existing call in `{ error: ... }` without double-wrapping.
- */
 function checkBareSerializeErrorArg(node, firstArg, context) {
   if (firstArg.type !== 'CallExpression') return;
   if (firstArg.callee.type !== 'Identifier' || firstArg.callee.name !== 'serializeError') {

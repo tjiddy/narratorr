@@ -7,7 +7,6 @@ describe('formatBytesPerSec', () => {
   });
 
   it('renders sub-KB values as KB/s (minimum resolution for UI)', () => {
-    // 512 bytes → 0.5 KB/s — anything below 1 KB/s rounds for display.
     expect(formatBytesPerSec(512)).toBe('0.5 KB/s');
   });
 
@@ -30,7 +29,6 @@ describe('formatBytesPerSec', () => {
   });
 
   it('handles the KB/MB boundary cleanly (1023 KB stays KB/s)', () => {
-    // 1023 * 1024 = 1047552 bytes → still below MB threshold
     expect(formatBytesPerSec(1023 * 1024)).toBe('1023.0 KB/s');
   });
 });

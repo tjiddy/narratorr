@@ -3,8 +3,7 @@ import { bookStatusConfig, bookStatusChipStyles } from './status.js';
 import type { BookStatusStyle } from './status.js';
 import { BOOK_STATUSES } from '@shared/schemas/book.js';
 
-// Verify the interface is exported (compile-time check — if this import fails, the test file won't compile)
-// PHASE 1 SKIPPED — needs human review
+// Compile-time export check.
 const _typeCheck: BookStatusStyle = bookStatusConfig.wanted;
 void _typeCheck;
 
@@ -17,8 +16,6 @@ describe('bookStatusConfig', () => {
     }
   });
 
-  // #1447 (S2d) — drift guard: the badge config keys must set-equal the canonical
-  // BookStatus set, so a future status can't render with an empty/fallback style.
   it('keys set-equal BOOK_STATUSES (no drift, no fallback masking)', () => {
     expect(Object.keys(bookStatusConfig).sort()).toEqual([...BOOK_STATUSES].sort());
   });
@@ -27,8 +24,6 @@ describe('bookStatusConfig', () => {
     for (const status of BOOK_STATUSES) {
       const entry = bookStatusConfig[status];
       expect(entry).toBeDefined();
-      // Non-`wanted` statuses must not coincidentally equal the `wanted` config,
-      // which would mean a missing entry was being masked by a fallback.
       if (status !== 'wanted') {
         expect(entry).not.toBe(bookStatusConfig.wanted);
       }
@@ -50,7 +45,6 @@ describe('bookStatusConfig', () => {
   });
 
   it('wanted uses stone palette', () => {
-    // PHASE 1 SKIPPED — needs human review
     const { dotClass, textClass, barClass } = bookStatusConfig.wanted;
     expect(dotClass).toContain('stone');
     expect(textClass).toContain('stone');
@@ -58,7 +52,6 @@ describe('bookStatusConfig', () => {
   });
 
   it('searching uses sky palette', () => {
-    // PHASE 1 SKIPPED — needs human review
     const { dotClass, textClass, barClass } = bookStatusConfig.searching;
     expect(dotClass).toContain('sky');
     expect(textClass).toContain('sky');
@@ -66,7 +59,6 @@ describe('bookStatusConfig', () => {
   });
 
   it('downloading uses violet palette', () => {
-    // PHASE 1 SKIPPED — needs human review
     const { dotClass, textClass, barClass } = bookStatusConfig.downloading;
     expect(dotClass).toContain('violet');
     expect(textClass).toContain('violet');
@@ -74,7 +66,6 @@ describe('bookStatusConfig', () => {
   });
 
   it('importing uses amber palette', () => {
-    // PHASE 1 SKIPPED — needs human review
     const { dotClass, textClass, barClass } = bookStatusConfig.importing;
     expect(dotClass).toContain('amber');
     expect(textClass).toContain('amber');
@@ -82,7 +73,6 @@ describe('bookStatusConfig', () => {
   });
 
   it('imported uses emerald palette', () => {
-    // PHASE 1 SKIPPED — needs human review
     const { dotClass, textClass, barClass } = bookStatusConfig.imported;
     expect(dotClass).toContain('emerald');
     expect(textClass).toContain('emerald');
@@ -90,7 +80,6 @@ describe('bookStatusConfig', () => {
   });
 
   it('missing uses rose palette', () => {
-    // PHASE 1 SKIPPED — needs human review
     const { dotClass, textClass, barClass } = bookStatusConfig.missing;
     expect(dotClass).toContain('rose');
     expect(textClass).toContain('rose');
@@ -98,15 +87,12 @@ describe('bookStatusConfig', () => {
   });
 
   it('failed uses rose palette', () => {
-    // PHASE 1 SKIPPED — needs human review
     const { dotClass, textClass, barClass } = bookStatusConfig.failed;
     expect(dotClass).toContain('rose');
     expect(textClass).toContain('rose');
     expect(barClass).toContain('rose');
   });
 
-  // #1447 (S2d) — second status-style renderer (library table chip) carries the
-  // same drift guard, so neither status-style map can fall behind BOOK_STATUSES.
   it('bookStatusChipStyles keys set-equal BOOK_STATUSES', () => {
     expect(Object.keys(bookStatusChipStyles).sort()).toEqual([...BOOK_STATUSES].sort());
   });

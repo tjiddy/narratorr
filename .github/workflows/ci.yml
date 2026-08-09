@@ -10,8 +10,6 @@ on:
 permissions:
   contents: read
 
-# Cancel an in-progress run when a newer commit lands on the same ref, so a
-# stuck/superseded run frees the runner instead of grinding to its timeout.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -19,7 +17,7 @@ concurrency:
 jobs:
   quality-gates:
     runs-on: ubuntu-latest
-    timeout-minutes: 30   # fail fast on a hung step instead of running to GitHub's 6h default
+    timeout-minutes: 30   # Cap hangs below GitHub's six-hour default.
 
     steps:
       - name: Checkout repository
@@ -65,7 +63,6 @@ jobs:
           NODE_ENV=production DATABASE_URL=file:/tmp/ci-smoke-test.db PORT=3199 node dist/server/index.js &
           SERVER_PID=$!
 
-          # Wait for server to be ready (max 30s)
           for i in $(seq 1 30); do
             if curl -sf http://localhost:3199/api/health > /dev/null 2>&1; then
               break
@@ -73,7 +70,6 @@ jobs:
             sleep 1
           done
 
-          # Assert health endpoint returns 200
           HTTP_STATUS=$(curl -sf -o /dev/null -w '%{http_code}' http://localhost:3199/api/health)
           kill $SERVER_PID 2>/dev/null || true
 
@@ -87,10 +83,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: quality-gates
     timeout-minutes: 20
-    # Run inside Playwright's official image: Chromium and all of its system deps
-    # are baked into the image, so there is no 170MB browser download to hang on
-    # (the failure mode that stalled this job repeatedly). The image tag MUST
-    # track the @playwright/test version in package.json — currently v1.62.1.
+    # Browser dependencies are preinstalled; keep this tag aligned with @playwright/test.
     container:
       image: mcr.microsoft.com/playwright:v1.62.1-noble
 

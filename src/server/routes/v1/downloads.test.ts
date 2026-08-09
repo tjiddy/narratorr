@@ -16,14 +16,13 @@ import { v1DownloadsRoutes } from './downloads.js';
 import { downloadV1Schema } from '@shared/schemas/v1/downloads.js';
 import { v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
 
-// Mock config so the auth plugin runs with authBypass off (mirrors books.test).
+// Run the auth plugin with authBypass off.
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));
 
 const VALID_KEY = 'valid-key';
 const keyHeaders = { 'x-api-key': VALID_KEY };
 
-/** A hydrated DownloadWithBook row as the service returns it (leaky internals,
- *  Date timestamps, left-joined book, derived display status + indexerName). */
+/** Hydrated service row with leaky internals used to verify v1 serialization. */
 function hydratedDownload(overrides?: Record<string, unknown>) {
   return {
     id: 42,
@@ -107,10 +106,8 @@ describe('v1 downloads routes', () => {
       expect(downloadV1Schema.parse(body.data[0])).toBeTruthy();
       expect(body.data[0].id).toBe('dl_test000000000000000');
       expect(body.data[0].book).toEqual({ id: 'bk_test000000000000000' });
-      // Date -> ISO string survives real Fastify serialization.
       expect(typeof body.data[0].addedAt).toBe('string');
       expect(body.data[0].addedAt).toBe('2024-01-02T03:04:05.000Z');
-      // No internal leaks shipped through serialization.
       for (const field of ['infoHash', 'downloadUrl', 'guid', 'externalId', 'outputPath', 'bookId', 'indexerId', 'downloadClientId', 'indexerName']) {
         expect(body.data[0]).not.toHaveProperty(field);
       }
@@ -185,7 +182,7 @@ describe('v1 downloads routes', () => {
     });
 
     it('returns a 404 v1 envelope for an unknown publicId', async () => {
-      db.select.mockReturnValue(mockDbChain([])); // resolveByPublicId → null
+      db.select.mockReturnValue(mockDbChain([]));
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/downloads/dl_nope', headers: keyHeaders });
 
@@ -205,10 +202,7 @@ describe('v1 downloads routes', () => {
       expect(downloadService.getById as Mock).toHaveBeenCalledWith(5);
     });
 
-    // #1983 F3 — pins the CANONICAL `v1PublicIdParamSchema` (`.trim().min(1)`) as this
-    // route's validator. Reverting this module to a private `z.string().min(1)` copy turns
-    // these back into 404 lookups, which `common.test.ts` (schema in isolation) and the
-    // companion-route suite (a different consumer) both stay green through.
+    // Pin the canonical v1PublicIdParamSchema (.trim().min(1)) as this route's validator.
     it.each(['%20', '%20%20', '%09'])(
       'returns a 400 BAD_REQUEST envelope for the whitespace-only publicId %s, without resolving',
       async (encoded) => {
@@ -217,15 +211,13 @@ describe('v1 downloads routes', () => {
         expect(res.statusCode).toBe(400);
         expect(res.json()).toEqual({ error: { code: 'BAD_REQUEST', message: expect.any(String) } });
         expectV1Envelope(res.json());
-        // Validation precedes the handler: neither the publicId resolution nor the
-        // service read was reached.
         expect(db.select).not.toHaveBeenCalled();
         expect(downloadService.getById as Mock).not.toHaveBeenCalled();
       },
     );
 
     it('returns a 404 v1 envelope for a numeric rowid (opaque-key only, never fetched by rowid)', async () => {
-      db.select.mockReturnValue(mockDbChain([])); // a numeric id never matches publicId
+      db.select.mockReturnValue(mockDbChain([]));
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/downloads/42', headers: keyHeaders });
 
@@ -258,7 +250,7 @@ describe('v1 downloads routes', () => {
   });
 });
 
-/** Assert a body is the canonical v1 error envelope, NOT the internal `{ statusCode, error, message }`. */
+/** Assert the canonical v1 envelope and reject internal Fastify fields. */
 function expectV1Envelope(body: unknown): void {
   expect(v1ErrorEnvelopeSchema.safeParse(body).success).toBe(true);
   const b = body as Record<string, unknown>;

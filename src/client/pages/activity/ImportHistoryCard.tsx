@@ -4,14 +4,7 @@ import { StatusChip, DispositionCounts } from '@/components/import-report/Import
 import { relativeWhen } from '@/lib/import-report/rowDisplay';
 import { ImportDetailExpansion } from '@/components/import-report/ImportDetailExpansion';
 
-/**
- * One Activity import-history card (#1894). The header always renders from `row`
- * — the (cache-patched) list summary — so it stays terminal across expand,
- * collapse, and re-expand (F86): when a self-polled detail advances, it writes the
- * freshened header back into the list cache, the parent re-renders, and this `row`
- * prop updates. Expanding shows attention rows only via the shared self-polling
- * detail hook (held read-only here); a pruned card shows "details expired".
- */
+/** Header state comes from the cache-patched summary; expansion owns detail polling and pruned-run handling. */
 export function ImportHistoryCard({ row, defaultExpanded = false }: { row: SubmissionSummary; defaultExpanded?: boolean }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const sourceLabel = row.source === 'library' ? 'Library' : 'Manual';
@@ -36,9 +29,7 @@ export function ImportHistoryCard({ row, defaultExpanded = false }: { row: Submi
       </button>
       {expanded && (
         <div className="border-t border-border/50 px-3 pb-2">
-          {/* Always mount the detail query on expand — the deep-link contract requires
-              a direct GET /:id?includeItems=true even for a pruned run (F4); the
-              expansion renders the returned pruned arm as "Details expired". */}
+          {/* Always query expanded details; a pruned run is a valid expired-details response. */}
           <ImportDetailExpansion id={row.id} enabled={expanded} />
         </div>
       )}

@@ -20,41 +20,32 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { downloads, books } from '@db/schema.js';
 
-// Mock node:fs/promises
 vi.mock('node:fs/promises', () => ({
   mkdir: vi.fn().mockResolvedValue(undefined),
   cp: vi.fn().mockResolvedValue(undefined),
-  // The commit-pending marker (#1290/#1336) must read as ABSENT — these mocked flows never
-  // write one, and the failure-cleanup gate keys on real marker presence, so a blanket
-  // "everything exists" stat would spuriously preserve `.import-bak` on ordinary failures.
+  // Markers default absent; "everything exists" would preserve backups on ordinary failures (#1290).
   stat: vi.fn().mockImplementation(async (p: unknown) =>
     String(p).endsWith('.import-commit-pending')
       ? Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
       : { isFile: () => false, isDirectory: () => true, size: 1024 }),
-  // #1598: deleteManagedBookFiles classifies the top-level bookPath via `lstat` (not `stat`) so a
-  // symlinked source is never followed. Mirror the marker-aware stat impl and report a non-symlink
-  // directory so the cleanup flows here stay on the directory-sweep path.
+  // Cleanup sees an ordinary directory here; symlink cases override lstat (#1598).
   lstat: vi.fn().mockImplementation(async (p: unknown) =>
     String(p).endsWith('.import-commit-pending')
       ? Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
       : { isFile: () => false, isDirectory: () => true, isSymbolicLink: () => false, size: 1024 }),
   readdir: vi.fn().mockResolvedValue([]),
-  // #1674: deleteManagedBookFiles now reads a root `metadata.opf` for the narratorr provenance
-  // marker. Default the read to UNMARKED (foreign) content so the sweep preserves any OPF — a
-  // blanket "marked" default would silently flip preservation assertions on every cleanup path.
-  // Tests asserting deletion of a narratorr-owned OPF override this to resolve marked content.
+  // Unmarked OPF is the safe default; ownership-deletion tests override it (#1674).
   readFile: vi.fn().mockResolvedValue('<?xml version="1.0"?><package><metadata><dc:title>foreign</dc:title></metadata></package>'),
   writeFile: vi.fn().mockResolvedValue(undefined),
   rename: vi.fn().mockResolvedValue(undefined),
   rm: vi.fn().mockResolvedValue(undefined),
   rmdir: vi.fn().mockResolvedValue(undefined),
-  // #1591: cleanupOldBookPath / handleImportFailure now run the symlink-aware realpath containment.
-  // Identity realpath (no symlinks) → lexical-equivalent containment for these in-library paths.
+  // Identity preserves containment; symlink cases override realpath (#1591).
   realpath: vi.fn().mockImplementation(async (p: unknown) => String(p)),
   statfs: vi.fn().mockResolvedValue({ bavail: BigInt(100_000_000_000), bsize: BigInt(1) }),
 }));
 
-// Mock enrichment-utils — delegates to real impl by default, override per-test for throw scenarios
+// The hoisted delegate preserves real enrichment unless a test overrides the mock.
 const realEnrichBookFromAudio = vi.hoisted(() => {
   let realFn: ((...args: unknown[]) => Promise<unknown>) | null = null;
   return {
@@ -71,12 +62,10 @@ vi.mock('./enrichment-utils.js', async (importOriginal) => {
   };
 });
 
-// Mock audio scanner
 vi.mock('@core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn().mockResolvedValue(null),
 }));
 
-// Spy on import-helpers — passthrough to real implementation so existing unit tests still work
 vi.mock('../utils/import-helpers.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
   return {
@@ -85,7 +74,6 @@ vi.mock('../utils/import-helpers.js', async (importOriginal) => {
   };
 });
 
-// Spy on paths — passthrough to real implementation
 vi.mock('../utils/paths.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
   return {
@@ -94,7 +82,6 @@ vi.mock('../utils/paths.js', async (importOriginal) => {
   };
 });
 
-// Spy on import-steps — passthrough to real implementation so existing unit tests still work
 vi.mock('../utils/import-steps.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
   return {
@@ -113,15 +100,11 @@ import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js'
 
 const now = new Date();
 
-/** ENOENT, the shape Node's fs raises for a missing path. */
 const markerEnoent = (): Promise<never> => Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
 
 /**
- * Default `stat` impl: non-marker paths read as directories (size verification); the
- * #1290/#1341 commit-pending marker reads as ABSENT (ENOENT). These mocked flows never
- * write a marker, and the #1341 `assertMarkerPathWritable` preflight aborts on a NON-FILE
- * marker stat — a blanket "everything is a directory" mock would make every happy-path
- * import abort with `MarkerPathConflictError`.
+ * Non-marker paths default to directories; the marker defaults to ENOENT.
+ * Treating every path as a directory aborts every happy path with MarkerPathConflictError (#1341).
  */
 const statDirMarkerAbsent = async (p: unknown): Promise<never> =>
   (String(p).endsWith('.import-commit-pending')
@@ -155,10 +138,9 @@ const mockDownload = {
   externalId: 'ext-1',
   errorMessage: null,
   addedAt: now,
-  completedAt: new Date(Date.now() - 3600_000), // 1 hour ago
+  completedAt: new Date(Date.now() - 3600_000), // one hour ago
   guid: null, outputPath: null, progressUpdatedAt: null, pendingCleanup: null,
-  // Default pre-grab snapshot: a normal first-download (book was 'wanted' at grab),
-  // so a failed import reverts the book to 'wanted'. Override per-test for upgrades.
+  // Default first-download snapshot reverts failures to wanted; upgrade tests override it.
   bookStatusAtGrab: 'wanted' as const,
 };
 
@@ -222,7 +204,6 @@ describe('buildTargetPath', () => {
 
   it('handles series format with empty series', () => {
     const result = buildTargetPath('/audiobooks', '{author}/{series}/{title}', { title: 'Test', seriesName: null }, 'Author');
-    // Empty series segment should be removed
     expect(result).not.toMatch(/\/\//);
   });
 
@@ -304,7 +285,6 @@ describe('ImportService', () => {
   let service: ImportService;
   let mockBookService: { getById: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
 
-  /** Wrap a bare book row in a BookWithAuthor shell (authors + narrators arrays). */
   function withAuthor(book: Record<string, unknown>, narratorNames: string[] = []) {
     return {
       ...book,
@@ -313,7 +293,6 @@ describe('ImportService', () => {
     };
   }
 
-  /** Shared baseline — called in each concern's own beforeEach instead of a shared parent beforeEach. */
   function setupDefaults() {
     vi.clearAllMocks();
     db = createMockDb();
@@ -323,10 +302,7 @@ describe('ImportService', () => {
     mockBookService = { getById: vi.fn().mockResolvedValue(withAuthor(mockBook)), update: vi.fn().mockResolvedValue(undefined) };
     service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
 
-    // clearAllMocks() clears call history but NOT implementations (see CLAUDE.md
-    // gotcha) — so a persistent rm/rename/cp mockImplementation set by one test
-    // would leak into later ones. Reset + re-establish the fs-mock defaults here
-    // so every test starts from a clean resolve, regardless of prior test order.
+    // clearAllMocks preserves implementations; reset fs mocks to prevent order-dependent leaks.
     vi.mocked(rm).mockReset();
     vi.mocked(rm).mockResolvedValue(undefined);
     vi.mocked(rename).mockReset();
@@ -334,15 +310,12 @@ describe('ImportService', () => {
     vi.mocked(cp).mockReset();
     vi.mocked(cp).mockResolvedValue(undefined);
 
-    // Default: stat returns a directory for source/target (size verification). The
-    // commit-pending marker (#1290/#1336) reads as ABSENT — see the fs-mock factory note;
-    // a blanket resolve would spuriously trip the disk-state preservation gate on failure.
+    // Source and target default to directories while the commit marker remains absent.
     vi.mocked(stat).mockImplementation(async (p: unknown) =>
       String(p).endsWith('.import-commit-pending')
         ? Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
         : ({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never));
 
-    // readdir returns one audio file
     vi.mocked(readdir).mockResolvedValue([
       { name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false },
     ] as never);
@@ -351,10 +324,7 @@ describe('ImportService', () => {
   describe('importDownload', () => {
     beforeEach(setupDefaults);
     it('imports a completed download successfully', async () => {
-      // First select: get download
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      // Second select: get book with author
-      // update calls: set importing, then update book, then update download to imported
       const chain = mockDbChain();
       db.update.mockReturnValue(chain);
 
@@ -366,14 +336,11 @@ describe('ImportService', () => {
       expect(mkdir).toHaveBeenCalled();
       expect(cp).toHaveBeenCalled();
 
-      // Two load-bearing pipeline-axis writes (#1445). Both touch ONLY the
-      // pipelineStage axis — an accidental clientStatus key would fail toEqual.
+      // Lifecycle writes touch pipelineStage only; clientStatus belongs to the adapter axis (#1445).
       const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
-      // Pre-import claim is the FIRST DB write, before any filesystem work.
+      // The first DB write claims the pipeline.
       expect(setCalls[0]).toEqual({ pipelineStage: 'importing' });
-      // Success write flips the stage to imported (in-transaction with the book update).
       expect(setCalls).toContainEqual({ pipelineStage: 'imported' });
-      // No download write ever carries clientStatus on the happy path.
       const downloadAxisWrites = setCalls.filter((s) => 'pipelineStage' in s);
       for (const w of downloadAxisWrites) {
         expect('clientStatus' in w).toBe(false);
@@ -396,12 +363,10 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // Make stat throw to simulate file not found
       const statMock = vi.mocked(stat);
       statMock.mockImplementation(async (p: unknown) =>
         String(p).endsWith('.import-commit-pending') ? markerEnoent() : Promise.reject(new Error('ENOENT')));
 
-      // The second update (setting importing) succeeds, then stat fails
       await expect(service.importDownload(1)).rejects.toThrow();
     });
 
@@ -434,7 +399,6 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // Should NOT throw — error is logged but swallowed
       const result = await service.importDownload(1);
 
       expect(result.downloadId).toBe(1);
@@ -461,7 +425,7 @@ describe('ImportService', () => {
         expect.any(Object),
         expect.any(String),
         expect.objectContaining({ separator: 'period', case: 'upper' }),
-        null, // #1712 — stored edition_label (null for this book) threaded as the 6th arg
+        null, // editionLabel (#1712)
       );
     });
 
@@ -523,7 +487,6 @@ describe('ImportService', () => {
         return Promise.resolve({});
       });
 
-      // Download completed 1 hour ago, min seed time is 2 hours
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
@@ -552,7 +515,6 @@ describe('ImportService', () => {
       db.update.mockReturnValue(mockDbChain());
     }
 
-    /** Extract the enrichment update (the one with audioCodec) from db.update calls. */
     function getEnrichmentUpdate(): Record<string, unknown> | undefined {
       const updateCalls = db.update.mock.results;
       const setCalls = updateCalls
@@ -588,7 +550,7 @@ describe('ImportService', () => {
 
       const enrichmentCall = getEnrichmentUpdate();
       expect(enrichmentCall).toBeDefined();
-      expect(enrichmentCall!.narrator).toBeUndefined(); // should not overwrite
+      expect(enrichmentCall!.narrator).toBeUndefined();
     });
 
     it('does not overwrite existing duration', async () => {
@@ -604,7 +566,7 @@ describe('ImportService', () => {
 
       const enrichmentCall = getEnrichmentUpdate();
       expect(enrichmentCall).toBeDefined();
-      expect(enrichmentCall!.duration).toBeUndefined(); // should not overwrite
+      expect(enrichmentCall!.duration).toBeUndefined();
     });
 
     it('saves embedded cover art and sets coverUrl', async () => {
@@ -620,8 +582,7 @@ describe('ImportService', () => {
 
       await service.importDownload(1);
 
-      // The commit-pending marker (#1290) also uses writeFile, so match the cover
-      // write specifically rather than asserting on the first call.
+      // Marker writes share this mock; select the cover call explicitly (#1290).
       const coverCall = vi.mocked(writeFile).mock.calls.find((c) => /cover\.png$/.test(String(c[0])));
       expect(coverCall).toBeDefined();
       expect(coverCall![1]).toBe(coverData);
@@ -647,8 +608,7 @@ describe('ImportService', () => {
 
       await service.importDownload(1);
 
-      // No cover write happens (book already has a cover). The commit-pending marker
-      // (#1290) may still use writeFile, so assert specifically that no cover was written.
+      // Marker writes share this mock; exclude cover calls explicitly (#1290).
       const coverCall = vi.mocked(writeFile).mock.calls.find((c) => /cover\./.test(String(c[0])));
       expect(coverCall).toBeUndefined();
     });
@@ -660,7 +620,6 @@ describe('ImportService', () => {
 
       const result = await service.importDownload(1);
       expect(result.downloadId).toBe(1);
-      // Should complete without error
     });
 
     it('writes technical audio fields in enrichment update', async () => {
@@ -733,7 +692,6 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // readdir returns no audio files
       const readdirMock = vi.mocked(readdir);
       readdirMock.mockResolvedValue([
         { name: 'readme.txt', isFile: () => true, isDirectory: () => false },
@@ -747,18 +705,15 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // readdir returns audio file
       const readdirMock = vi.mocked(readdir);
       readdirMock.mockResolvedValue([
         { name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false },
       ] as never);
 
-      // cp throws mid-copy
       const cpMock = vi.mocked(cp);
       cpMock.mockRejectedValueOnce(new Error('ENOSPC: no space left on device'));
 
       await expect(service.importDownload(1)).rejects.toThrow('ENOSPC');
-      // Download should be set to failed
       expect(db.update).toHaveBeenCalled();
     });
 
@@ -789,7 +744,6 @@ describe('ImportService', () => {
 
     beforeEach(() => {
       setupDefaults();
-      // Default book for re-import tests has an existing path
       mockBookService.getById.mockResolvedValue(withAuthor(importedBook));
     });
 
@@ -805,8 +759,7 @@ describe('ImportService', () => {
     });
 
     it('preserves an unmarked (foreign) metadata.opf in the old folder during re-import cleanup (#1674)', async () => {
-      // The old folder holds a managed audio file AND a third-party (ABS/Calibre) metadata.opf.
-      // The default readFile mock resolves unmarked content, so the OPF must NOT be deleted.
+      // Default readFile marks metadata.opf foreign, so only audio is managed.
       vi.mocked(readdir).mockResolvedValue([
         { name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false },
         { name: 'metadata.opf', isFile: () => true, isDirectory: () => false },
@@ -818,9 +771,7 @@ describe('ImportService', () => {
       await service.importDownload(1);
 
       const rmMock = vi.mocked(rm);
-      // The managed audio is force-deleted...
       expect(rmMock).toHaveBeenCalledWith(expect.stringMatching(/Old Book[\\/]chapter1\.mp3$/), { force: true });
-      // ...but the foreign metadata.opf is never deleted.
       expect(rmMock).not.toHaveBeenCalledWith(expect.stringMatching(/Old Book[\\/]metadata\.opf$/), { force: true });
     });
 
@@ -840,14 +791,12 @@ describe('ImportService', () => {
     });
 
     it('skips deletion when target path equals existing book path (same-path re-import)', async () => {
-      // Book with path that matches what buildTargetPath will generate
       const samePathBook = createMockDbBook({
         status: 'downloading' as const,
-        // buildTargetPath generates: /audiobooks/{author}/{title} — mock it to match
+        // Match the path buildTargetPath generates.
         path: '/audiobooks/Brandon Sanderson/The Way of Kings',
       });
 
-      // Override settings to produce a known target path
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
         if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
@@ -862,9 +811,7 @@ describe('ImportService', () => {
 
       await service.importDownload(1);
 
-      // The commit/cleanup must not wholesale-delete the existing book folder we
-      // re-imported into. (Staging/backup SIBLINGS are removed recursively, but the
-      // target folder itself must never get the recursive-delete signature.)
+      // Recursive sibling cleanup is allowed; the existing target directory is protected.
       const base = '/audiobooks/Brandon Sanderson/The Way of Kings';
       const rmMock = vi.mocked(rm);
       expect(rmMock).not.toHaveBeenCalledWith(base, expect.objectContaining({ recursive: true }));
@@ -882,7 +829,6 @@ describe('ImportService', () => {
         if (key === 'processing') return Promise.resolve({});
         return Promise.resolve({});
       });
-      // Target already holds an old 2-part MP3 rip plus a cover.
       vi.mocked(readdir).mockResolvedValue([
         { name: 'old - 001.mp3', isFile: () => true, isDirectory: () => false },
         { name: 'old - 002.mp3', isFile: () => true, isDirectory: () => false },
@@ -896,21 +842,15 @@ describe('ImportService', () => {
       await service.importDownload(1);
 
       const base = '/audiobooks/Brandon Sanderson/The Way of Kings';
-      // #1911: active born-hidden scratch (`.<name>.import-staging` / `.import-backup`).
       const { stagingPath: STAGING, backupPath: BACKUP } = deriveImportSiblings(base);
       const renameMock = vi.mocked(rename);
-      // Old audio is moved (backed up) out of the target — not destroyed in place...
       expect(renameMock).toHaveBeenCalledWith(join(base, 'old - 001.mp3'), join(BACKUP, 'old - 001.mp3'));
       expect(renameMock).toHaveBeenCalledWith(join(base, 'old - 002.mp3'), join(BACKUP, 'old - 002.mp3'));
-      // ...the cover is never moved out of the target (non-audio preserved)...
       expect(renameMock).not.toHaveBeenCalledWith(join(base, 'cover.jpg'), join(BACKUP, 'cover.jpg'));
 
       const rmMock = vi.mocked(rm);
-      // ...old audio is not individually force-deleted (it is moved, then the backup dir cleaned)...
       expect(rmMock).not.toHaveBeenCalledWith(join(base, 'old - 001.mp3'), { force: true });
-      // ...the target folder itself is never wholesale-deleted...
       expect(rmMock).not.toHaveBeenCalledWith(base, expect.objectContaining({ recursive: true }));
-      // ...and the staging + backup siblings are removed on success.
       expect(rmMock).toHaveBeenCalledWith(BACKUP, { recursive: true, force: true });
       expect(rmMock).toHaveBeenCalledWith(STAGING, { recursive: true, force: true });
     });
@@ -925,7 +865,6 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // Should NOT throw — import still succeeds
       const result = await service.importDownload(1);
       expect(result.downloadId).toBe(1);
     });
@@ -942,20 +881,18 @@ describe('ImportService', () => {
 
       await service.importDownload(1);
 
-      // cp was called (new files exist) and import completed
       expect(cp).toHaveBeenCalled();
       expect(mkdir).toHaveBeenCalled();
     });
 
     it('does not attempt old-folder deletion when book has no path', async () => {
-      mockBookService.getById.mockResolvedValueOnce(withAuthor(mockBook)); // override re-import-flow default (no path)
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(mockBook)); // override re-import default
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
       await service.importDownload(1);
 
-      // No prior path → cleanupOldBookPath does nothing; the target folder must not
-      // get the recursive folder-delete signature (staging/backup siblings may).
+      // Sibling cleanup may recurse; the new target may not.
       const rmMock = vi.mocked(rm);
       expect(rmMock).not.toHaveBeenCalledWith('/audiobooks/Brandon Sanderson/The Way of Kings', expect.objectContaining({ recursive: true }));
     });
@@ -966,14 +903,12 @@ describe('ImportService', () => {
 
       await service.importDownload(1);
 
-      // Old download record should NOT be deleted — only status updated
       expect(db.delete).not.toHaveBeenCalled();
     });
   });
 
   describe('atomic staged re-import — data-loss prevention (#1255)', () => {
     const SAME_PATH = '/audiobooks/Brandon Sanderson/The Way of Kings';
-    // #1911: active born-hidden scratch derived through the shared helper.
     const { stagingPath: STAGING, backupPath: BACKUP } = deriveImportSiblings(SAME_PATH);
 
     function useSamePathSettings() {
@@ -986,7 +921,6 @@ describe('ImportService', () => {
       });
     }
 
-    /** Existing in-place book: one old audio file + a cover. */
     function withExistingAudioAndCover() {
       vi.mocked(readdir).mockResolvedValue([
         { name: 'old.mp3', isFile: () => true, isDirectory: () => false },
@@ -1003,16 +937,12 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // The staged copy fails partway through Phase 1.
       vi.mocked(cp).mockRejectedValueOnce(new Error('ENOSPC during staging'));
 
       await expect(service.importDownload(1)).rejects.toThrow('ENOSPC during staging');
 
-      // The existing book folder is NEVER blanket-removed...
       expect(rm).not.toHaveBeenCalledWith(SAME_PATH, expect.objectContaining({ recursive: true }));
-      // ...no existing audio was moved out (the commit phase was never reached)...
       expect(rename).not.toHaveBeenCalledWith(join(SAME_PATH, 'old.mp3'), join(BACKUP, 'old.mp3'));
-      // ...and the staging sibling is cleaned up.
       expect(rm).toHaveBeenCalledWith(STAGING, { recursive: true, force: true });
     });
 
@@ -1023,7 +953,7 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // Backup move + in-staging renames succeed; the staged-file move INTO the target fails.
+      // Fail only the staged-file move into the target.
       vi.mocked(rename).mockImplementation(async (src: unknown, dst: unknown) => {
         const s = String(src); const d = String(dst);
         if (s.includes('.import-staging') && !d.includes('.import-staging') && !d.includes('.import-backup')) {
@@ -1033,28 +963,21 @@ describe('ImportService', () => {
 
       await expect(service.importDownload(1)).rejects.toThrow('EIO during swap');
 
-      // Rollback restored the backed-up audio into the target...
       expect(rename).toHaveBeenCalledWith(join(BACKUP, 'old.mp3'), join(SAME_PATH, 'old.mp3'));
-      // ...the existing book folder was never blanket-removed...
       expect(rm).not.toHaveBeenCalledWith(SAME_PATH, expect.objectContaining({ recursive: true }));
-      // ...and both transient siblings are cleaned up.
       expect(rm).toHaveBeenCalledWith(STAGING, { recursive: true, force: true });
       expect(rm).toHaveBeenCalledWith(BACKUP, { recursive: true, force: true });
     });
 
     it('#1341: a non-file marker-path collision aborts the auto import before any destructive work', async () => {
-      // A metadata-derived folder collides with the marker path: a DIRECTORY squats at
-      // `${SAME_PATH}.import-commit-pending`. The #1341 preflight (assertMarkerPathWritable)
-      // must throw MarkerPathConflictError at the START of importDownload — before
-      // stagingPath/backupPath are derived — so handleImportFailure can neither strict-clear
-      // an adjacent `.import-bak` nor blanket-delete the protected same-path target.
+      // A directory squats on the marker path. Preflight must fail before sibling derivation,
+      // preventing cleanup from touching the adjacent backup or target (#1341).
       useSamePathSettings();
       mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: SAME_PATH })));
       withExistingAudioAndCover();
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // Marker path is a DIRECTORY (non-file); source/target read as directories.
       vi.mocked(stat).mockImplementation(async (p: unknown) =>
         String(p).endsWith('.import-commit-pending')
           ? ({ isFile: () => false, isDirectory: () => true } as never)
@@ -1062,31 +985,23 @@ describe('ImportService', () => {
 
       await expect(service.importDownload(1)).rejects.toBeInstanceOf(MarkerPathConflictError);
 
-      // Aborted before staging/commit — no copy, no backup-out rename, no commit marker write.
       expect(cp).not.toHaveBeenCalled();
       expect(rename).not.toHaveBeenCalled();
       expect(writeFile).not.toHaveBeenCalledWith(`${SAME_PATH}.import-commit-pending`, expect.anything(), expect.anything());
-      // No sibling cleanup (stagingPath/backupPath were never derived) and the protected
-      // same-path target is never blanket-removed, leaving an adjacent `.import-bak` intact.
       expect(rm).not.toHaveBeenCalledWith(STAGING, expect.objectContaining({ recursive: true }));
       expect(rm).not.toHaveBeenCalledWith(BACKUP, expect.objectContaining({ recursive: true }));
       expect(rm).not.toHaveBeenCalledWith(SAME_PATH, expect.objectContaining({ recursive: true }));
     });
 
     it('#1336 window 4: a pre-flight validateSource throw with a marker on disk preserves .import-bak + the marker', async () => {
-      // A prior commit was killed (marker + populated .import-bak live), then on the
-      // recovery boot the downloads mount isn't up yet → validateSource throws BEFORE
-      // prepareImportSiblings/recovery runs. The error reaches handleImportFailure as a
-      // plain Error; the prior identity-gate deleted the stranded originals through this
-      // door (#1290's loss). The disk-state gate must preserve them.
+      // Recovery can fail before sibling preparation; an on-disk marker must protect the prior
+      // crash backup from failure cleanup (#1290/#1336).
       useSamePathSettings();
       mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: SAME_PATH })));
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // Marker present on disk AS A FILE (#1341: a real marker is a regular file, so the
-      // preflight passes and markerPresent reads it as present); the source save path is
-      // missing → validateSource throws.
+      // A regular-file marker passes preflight; the missing source fails validation (#1341).
       vi.mocked(stat).mockImplementation(async (p: unknown) =>
         String(p).endsWith('.import-commit-pending')
           ? ({ isFile: () => true, isDirectory: () => false } as never)
@@ -1094,16 +1009,12 @@ describe('ImportService', () => {
 
       await expect(service.importDownload(1)).rejects.toThrow(/Path not found/);
 
-      // The backup and the marker both survive for the next boot's recovery attempt.
       expect(rm).not.toHaveBeenCalledWith(BACKUP, { recursive: true, force: true });
       expect(rm).not.toHaveBeenCalledWith(`${SAME_PATH}.import-commit-pending`, { force: true });
     });
 
     it('#1336 window 4: a pre-flight checkDiskSpace throw with a marker on disk preserves .import-bak + the marker', async () => {
-      // Same recovery-boot hazard as the validateSource case, but the throw originates in
-      // checkDiskSpace (here: statfs fails; in production also when the crash's stale
-      // .import-tmp inflates usage). It still lands in handleImportFailure as a plain Error
-      // BEFORE prepareImportSiblings/recovery runs — the marker-protected backup must survive.
+      // Disk-space checks can fail before sibling recovery; marker-protected backups must survive.
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
         if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
@@ -1114,23 +1025,18 @@ describe('ImportService', () => {
       mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: SAME_PATH })));
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
-      // Audio-extension source name so validateSource (#1852 F28: rejects a non-audio direct file)
-      // passes and the throw-under-test still originates in checkDiskSpace, as intended.
+      // Audio extension keeps the failure under test in checkDiskSpace (#1852).
       (mockAdapter.getDownload as Mock).mockResolvedValueOnce({ ...defaultDownloadItem, name: 'book.m4b' });
 
-      // Marker present AS A FILE (#1341: a real marker is a regular file → preflight passes,
-      // markerPresent reads present); source is a single FILE so checkDiskSpace uses
-      // sourceStats.size and never walks the (self-referential) readdir mock via getVisiblePathSize.
+      // File source makes sizing use stat.size instead of the self-referential readdir mock.
       vi.mocked(stat).mockImplementation(async (p: unknown) =>
         String(p).endsWith('.import-commit-pending')
           ? ({ isFile: () => true, isDirectory: () => false } as never)
           : ({ isFile: () => true, isDirectory: () => false, size: 500_000_000 } as never));
-      // statfs failure → checkDiskSpace throws "Disk space check failed: ...".
       vi.mocked(statfs).mockRejectedValueOnce(new Error('statfs EIO'));
 
       await expect(service.importDownload(1)).rejects.toThrow(/Disk space check failed/);
 
-      // The backup and the marker both survive for the next boot's recovery attempt.
       expect(rm).not.toHaveBeenCalledWith(BACKUP, { recursive: true, force: true });
       expect(rm).not.toHaveBeenCalledWith(`${SAME_PATH}.import-commit-pending`, { force: true });
     });
@@ -1142,9 +1048,7 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // The leftover .import-staging cannot be cleared. Because commitStagedImport
-      // enumerates whatever is in staging and moves it into the target, the import
-      // MUST abort here rather than copy + commit over the stale staging dir (#1911).
+      // Clearing staging is mandatory because commitStagedImport trusts every remaining entry (#1911).
       vi.mocked(rm).mockImplementation(async (p: unknown) =>
         String(p).endsWith('.import-staging')
           ? Promise.reject(Object.assign(new Error('EACCES'), { code: 'EACCES' }))
@@ -1153,34 +1057,28 @@ describe('ImportService', () => {
 
       await expect(service.importDownload(1)).rejects.toThrow('EACCES');
 
-      // The copy never ran — no staged files were produced, so nothing stale could be committed...
       expect(cp).not.toHaveBeenCalled();
-      // ...and the existing protected book folder was never blanket-removed.
       expect(rm).not.toHaveBeenCalledWith(SAME_PATH, expect.objectContaining({ recursive: true }));
     });
 
     it('AC4: a first-import copy failure cleans up its own partial (staged) files', async () => {
-      // mockBook has no path → first import → targetPath is the import's own scratch dir.
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
       vi.mocked(cp).mockRejectedValueOnce(new Error('ENOSPC'));
 
       await expect(service.importDownload(1)).rejects.toThrow('ENOSPC');
 
-      // The staging sibling (the partial copy) is removed during failure cleanup.
       const stagingCleanup = vi.mocked(rm).mock.calls.find(([p]) => String(p).endsWith('.import-staging'));
       expect(stagingCleanup).toBeDefined();
     });
   });
 
   describe('move-path re-import — post-commit ordering (#1257)', () => {
-    // Default settings resolve targetPath from buildTargetPath('/audiobooks',
-    // '{author}/{title}', book='The Way of Kings', author='Brandon Sanderson').
+    // Default folder settings resolve to this target.
     const NEW_TARGET = '/audiobooks/Brandon Sanderson/The Way of Kings';
     const OLD_PATH = '/audiobooks/Brandon Sanderson/Old Title';
     const { stagingPath: STAGING, backupPath: BACKUP } = deriveImportSiblings(NEW_TARGET);
 
-    /** Collect every `.set({...})` payload across all db.update() calls. */
     function collectSetArgs(database: typeof db): Record<string, unknown>[] {
       const setCalls = database.update.mock.results
         .map((r: { value: unknown }) => { try { return (r.value as { set: ReturnType<typeof vi.fn> }).set; } catch { return null; } })
@@ -1188,20 +1086,14 @@ describe('ImportService', () => {
       return setCalls.flatMap((s: ReturnType<typeof vi.fn> | null) => s!.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
     }
 
-    /**
-     * db.update mock that rejects update #3 (download→imported, inside the
-     * post-commit transaction), simulating a post-commit DB failure after
-     * commitStagedImport has already succeeded. updates #1/#2 and the later
-     * revert updates (#4+) resolve normally.
-     */
+    /** Reject update #3 after commit; earlier writes and later failure reverts resolve. */
     function failPostCommitUpdate() {
       let updateCallCount = 0;
       db.update.mockImplementation(() => {
         updateCallCount++;
         const chain = mockDbChain();
         if (updateCallCount === 3) {
-          // #3 is the download imported write, which goes through transitionDownloadState
-          // and terminates at .returning() (the guarded UPDATE returns the matched id).
+          // The guarded download transition terminates at returning().
           (chain.returning as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('constraint violation'));
         }
         return chain as never;
@@ -1211,24 +1103,17 @@ describe('ImportService', () => {
     beforeEach(setupDefaults);
 
     it('post-commit DB failure preserves the committed new target AND the old path, reverting the book to imported', async () => {
-      // Move re-import: old path differs from targetPath → protectTarget starts false.
       mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: OLD_PATH })));
-      // Pre-grab snapshot: book was 'imported' (re-import of an existing book) → revert to 'imported'.
       db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, bookStatusAtGrab: 'imported' }]));
-      failPostCommitUpdate(); // commit succeeds (rename resolves by default), then update #3 throws
+      failPostCommitUpdate();
 
       await expect(service.importDownload(1)).rejects.toThrow('constraint violation');
 
-      // The committed new version survives — protectTarget flipped true after commit.
       expect(rm).not.toHaveBeenCalledWith(NEW_TARGET, { recursive: true, force: true });
-      // The old folder cleanup is deferred past the (failed) transaction → never ran,
-      // so the DB's old book.path still has real files behind it.
       expect(rm).not.toHaveBeenCalledWith(OLD_PATH, { recursive: true, force: true });
-      // Transient siblings are still cleaned.
       expect(rm).toHaveBeenCalledWith(STAGING, { recursive: true, force: true });
       expect(rm).toHaveBeenCalledWith(BACKUP, { recursive: true, force: true });
 
-      // DB revert: download → failed, book → imported (non-null old path), NOT wanted.
       const allSetArgs = collectSetArgs(db);
       expect(allSetArgs).toContainEqual(expect.objectContaining({ clientStatus: 'failed' }));
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'imported' }));
@@ -1243,16 +1128,13 @@ describe('ImportService', () => {
       const result = await service.importDownload(1);
 
       expect(result.targetPath).toBe(NEW_TARGET);
-      // Old-folder managed-file deletion still happens on the success path, just after the DB
-      // commit — now per-file (#1589) rather than a blanket recursive rm.
+      // Old-path cleanup remains per-file (#1589).
       expect(rm).toHaveBeenCalledWith(expect.stringMatching(/Old Title[\\/]chapter1\.mp3$/), { force: true });
-      // Book row now points at the new target.
       const allSetArgs = collectSetArgs(db);
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'imported', path: NEW_TARGET }));
     });
 
     it('same-path re-import: post-commit DB failure does not rm the target (unchanged from #1255)', async () => {
-      // book.path === targetPath → protectTarget already true before commit.
       mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: NEW_TARGET })));
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       failPostCommitUpdate();
@@ -1263,15 +1145,13 @@ describe('ImportService', () => {
     });
 
     it('first import: pre-commit copy failure cleans the scratch target + siblings (protectTarget still false)', async () => {
-      // mockBook has path null → first import → targetPath is the import's own scratch dir.
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
       vi.mocked(cp).mockRejectedValueOnce(new Error('ENOSPC'));
 
       await expect(service.importDownload(1)).rejects.toThrow('ENOSPC');
 
-      // Pre-commit → protectTarget false → the scratch target's managed files are removed (#1589,
-      // per-file) and the emptied folder cleaned up; the staging sibling is blanket-removed as before.
+      // Unprotected scratch target uses per-file cleanup; only its sibling is removed recursively.
       expect(rm).toHaveBeenCalledWith(expect.stringContaining(NEW_TARGET), { force: true });
       expect(rmdir).toHaveBeenCalledWith(NEW_TARGET);
       expect(rm).toHaveBeenCalledWith(STAGING, { recursive: true, force: true });
@@ -1285,11 +1165,9 @@ describe('ImportService', () => {
 
       await expect(service.importDownload(1)).rejects.toThrow('ENOSPC');
 
-      // The new scratch target's managed files are cleaned (protectTarget still false pre-commit)...
       expect(rm).toHaveBeenCalledWith(expect.stringContaining(NEW_TARGET), { force: true });
       expect(rmdir).toHaveBeenCalledWith(NEW_TARGET);
-      // ...but cleanupOldBookPath only runs after a successful commit + DB write, so
-      // the old path is never touched on a pre-commit failure.
+      // Old-path cleanup begins only after commit and DB persistence.
       expect(rm).not.toHaveBeenCalledWith(expect.stringContaining(OLD_PATH), expect.anything());
       expect(rmdir).not.toHaveBeenCalledWith(OLD_PATH);
     });
@@ -1304,18 +1182,15 @@ describe('ImportService', () => {
         path: '/audiobooks/existing',
       });
       mockBookService.getById.mockResolvedValueOnce(withAuthor(importedBook));
-      // Pre-grab snapshot: the book was 'imported' (an auto-upgrade replacement that failed).
       db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, bookStatusAtGrab: 'imported' }]));
       db.update.mockReturnValue(mockDbChain());
 
-      // Make stat throw to trigger failure
       const statMock = vi.mocked(stat);
       statMock.mockImplementation(async (p: unknown) =>
         String(p).endsWith('.import-commit-pending') ? markerEnoent() : Promise.reject(new Error('ENOENT')));
 
       await expect(service.importDownload(1)).rejects.toThrow();
 
-      // Check that one of the update calls set book status to 'imported'
       const updateCalls = db.update.mock.results;
       const setCalls = updateCalls
         .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
@@ -1325,7 +1200,6 @@ describe('ImportService', () => {
     });
 
     it('reverts book to its wanted pre-grab snapshot when a first-download import fails', async () => {
-      // Pre-grab snapshot: the book was 'wanted' (a normal first-download flow).
       db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, bookStatusAtGrab: 'wanted' }]));
       db.update.mockReturnValue(mockDbChain());
 
@@ -1349,7 +1223,6 @@ describe('ImportService', () => {
         path: '/audiobooks/existing',
       });
       mockBookService.getById.mockResolvedValueOnce(withAuthor(importedBook));
-      // Pre-grab snapshot: book was 'imported' (upgrade replacement that fails on copy).
       db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, bookStatusAtGrab: 'imported' }]));
       db.update.mockReturnValue(mockDbChain());
 
@@ -1374,13 +1247,12 @@ describe('ImportService', () => {
     it('preserves targetPath when DB update throws after copy (#1257 — committed version protected)', async () => {
       db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, bookStatusAtGrab: 'wanted' }]));
 
-      // First two updates succeed (book status='importing', download status='importing')
-      // Then fail on the book update (status='imported', path=targetPath)
+      // Reject update #3, the guarded post-commit download transition.
       let updateCallCount = 0;
       db.update.mockImplementation(() => {
         updateCallCount++;
         if (updateCallCount === 3) {
-          // 3rd update: the download imported write (transitionDownloadState → .returning()).
+          // transitionDownloadState terminates at returning().
           return { set: vi.fn().mockReturnValue({ where: vi.fn().mockReturnValue({ returning: vi.fn().mockRejectedValue(new Error('DB write failed')) }) }) } as never;
         }
         return mockDbChain() as never;
@@ -1390,20 +1262,16 @@ describe('ImportService', () => {
 
       await expect(service.importDownload(1)).rejects.toThrow('DB write failed');
 
-      // #1257: the failure is post-commit, so protectTarget is already true — the
-      // committed new version at targetPath is NOT blanket-removed. Separator-agnostic
-      // matchers: production builds these paths with join() (backslashes on Windows).
+      // Post-commit failures protect the target; match join() output on both separators (#1257).
       expect(rmMock).not.toHaveBeenCalledWith(
         expect.stringMatching(/[\\/]audiobooks[\\/]Brandon Sanderson[\\/]The Way of Kings$/),
         { recursive: true, force: true },
       );
-      // Transient siblings are still cleaned (active born-hidden staging, #1911).
       expect(rmMock).toHaveBeenCalledWith(
         expect.stringMatching(/[\\/]audiobooks[\\/]Brandon Sanderson[\\/]\.The Way of Kings\.import-staging$/),
         { recursive: true, force: true },
       );
 
-      // Verify DB revert still happened (download set to failed, book set to wanted)
       const updateCalls = db.update.mock.results;
       const setCalls = updateCalls
         .map((r: { value: unknown }) => {
@@ -1416,17 +1284,14 @@ describe('ImportService', () => {
     });
 
     it('logs warning and continues DB revert when a managed targetPath file cannot be deleted (pre-commit cleanup)', async () => {
-      // #1257/#1589: post-commit first imports PROTECT targetPath, so the targetPath cleanup only
-      // fires on a PRE-commit failure (protectTarget still false). The cleanup now deletes managed
-      // files per-file via the shared helper; a locked managed file is recorded + warn-logged
-      // (not thrown), and the import error still rethrows + DB revert continues.
+      // Pre-commit cleanup deletes only managed files. A locked file warns while the import error
+      // and DB revert continue (#1257/#1589).
       db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, bookStatusAtGrab: 'wanted' }]));
       db.update.mockReturnValue(mockDbChain());
 
       vi.mocked(cp).mockRejectedValueOnce(new Error('ENOSPC during copy'));
 
-      // Let the recursive sibling cleanup succeed; make the per-file managed delete (force-only,
-      // non-recursive rm) reject so the failure under test surfaces inside the managed-file sweep.
+      // Reject only force-only managed-file deletion; recursive sibling cleanup still succeeds.
       const rmMock = vi.mocked(rm);
       rmMock.mockImplementation((_p: unknown, opts: unknown) =>
         (opts as { recursive?: boolean })?.recursive
@@ -1435,14 +1300,12 @@ describe('ImportService', () => {
 
       await expect(service.importDownload(1)).rejects.toThrow('ENOSPC during copy');
 
-      // The managed-file deletion was attempted (force-only rm) and its failure logged at warn level.
       expect(rmMock).toHaveBeenCalledWith(expect.stringContaining('audiobooks'), { force: true });
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ file: expect.stringContaining('audiobooks') }),
         expect.stringContaining('Failed to delete managed book file'),
       );
 
-      // Verify DB revert still proceeded despite rm failure
       const updateCalls = db.update.mock.results;
       const setCalls = updateCalls
         .map((r: { value: unknown }) => {
@@ -1462,7 +1325,6 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // readdir returns audio files for the rename step (second call after containsAudioFiles)
       const readdirMock = vi.mocked(readdir);
       readdirMock.mockResolvedValue([
         { name: 'scene-release-01.mp3', isFile: () => true, isDirectory: () => false },
@@ -1494,7 +1356,6 @@ describe('ImportService', () => {
 
       await service.importDownload(1, { setPhase });
 
-      // Service should have called setPhase for copying, renaming, fetching_metadata in that order
       const phaseArgs = setPhase.mock.calls.map((c) => c[0]);
       expect(phaseArgs).toEqual(['copying', 'renaming', 'fetching_metadata']);
     });
@@ -1523,7 +1384,6 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // No callbacks — should complete without error and not invoke anything extra
       const result = await service.importDownload(1);
       expect(result.downloadId).toBe(1);
       expect(result.bookId).toBe(1);
@@ -1541,7 +1401,6 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // Override copyToLibrary to invoke the service-provided onProgress deterministically
       vi.mocked(copyToLibrary).mockImplementationOnce(async (args) => {
         args.onProgress?.(0.5, { current: 500, total: 1000 });
         args.onProgress?.(1, { current: 1000, total: 1000 });
@@ -1550,7 +1409,6 @@ describe('ImportService', () => {
       const emitProgress = vi.fn();
       await service.importDownload(1, { emitProgress });
 
-      // Service-level wrapper must tag with phase 'copying' and pass the byteCounter through unchanged
       expect(emitProgress).toHaveBeenCalledWith('copying', 0.5, { current: 500, total: 1000 });
       expect(emitProgress).toHaveBeenCalledWith('copying', 1, { current: 1000, total: 1000 });
     });
@@ -1567,9 +1425,9 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // Skip real copy — we only care about the rename-progress wiring here
+      // Isolate rename progress from real copying.
       vi.mocked(copyToLibrary).mockImplementationOnce(async () => {});
-      // Override renameFilesWithTemplate to invoke its onProgress callback (arg index 6) with known counts
+      // onProgress is positional argument 7.
       vi.mocked(renameFilesWithTemplate).mockImplementationOnce(async (...args: unknown[]) => {
         const onProgress = args[6] as ((current: number, total: number) => void) | undefined;
         onProgress?.(1, 2);
@@ -1580,7 +1438,6 @@ describe('ImportService', () => {
       const emitProgress = vi.fn();
       await service.importDownload(1, { emitProgress });
 
-      // Service-level wrapper must tag with phase 'renaming' and translate (current,total) → ratio + byteCounter
       expect(emitProgress).toHaveBeenCalledWith('renaming', 0.5, { current: 1, total: 2 });
       expect(emitProgress).toHaveBeenCalledWith('renaming', 1, { current: 2, total: 2 });
     });
@@ -1597,12 +1454,10 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // Without callbacks, copyToLibrary should receive onProgress: undefined
       await service.importDownload(1);
       const withoutCallbackArgs = vi.mocked(copyToLibrary).mock.calls[0]![0];
       expect(withoutCallbackArgs.onProgress).toBeUndefined();
 
-      // With emitProgress, copyToLibrary should receive a function
       vi.mocked(copyToLibrary).mockClear();
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
@@ -1678,14 +1533,11 @@ describe('ImportService', () => {
 
       const result = await serviceWithMappings.importDownload(1);
 
-      // stat should receive the mapped path, not the original /downloads/ path. The first
-      // stat is now the #1341 marker-path preflight (target-derived) — assert against the
-      // first SOURCE stat (the validateSource call on a non-marker path).
+      // Marker preflight runs first; select the first non-marker source stat (#1341).
       const statPath = statMock.mock.calls.find((c) => !String(c[0]).endsWith('.import-commit-pending'))![0] as string;
       expect(statPath).toMatch(/^C:[/\\]library[/\\]/);
       expect(statPath).not.toMatch(/^\/downloads\//);
 
-      // cp should also receive the mapped source path
       const cpMock = vi.mocked(cp);
       const cpSource = cpMock.mock.calls[0]![0] as string;
       expect(cpSource).toMatch(/^C:[/\\]library[/\\]/);
@@ -1703,7 +1555,6 @@ describe('ImportService', () => {
 
       const result = await serviceWithMappings.importDownload(1);
 
-      // Should still work — original path used
       expect(result.downloadId).toBe(1);
     });
 
@@ -1748,13 +1599,12 @@ describe('ImportService', () => {
     it('preserves committed files when DB update throws after copy (#237, updated by #1257)', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
 
-      // First update (set importing) succeeds, then book update at step 8 throws
       let updateCallCount = 0;
       db.update.mockImplementation(() => {
         updateCallCount++;
         const chain = mockDbChain();
         if (updateCallCount === 3) {
-          // #3 download imported write → transitionDownloadState terminates at .returning().
+          // transitionDownloadState terminates at returning().
           (chain.returning as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('DB constraint violation'));
         }
         return chain;
@@ -1762,18 +1612,15 @@ describe('ImportService', () => {
 
       await expect(service.importDownload(1)).rejects.toThrow('DB constraint violation');
 
-      // Verify cp was called (files were copied) and the commit landed (staged → target).
       expect(cp).toHaveBeenCalled();
 
-      // #1257: the DB failure is post-commit, so protectTarget is already true — the
-      // committed targetPath is NOT recursively removed (previously #237 deleted it).
+      // The committed target becomes protected before the DB transition (#1257).
       const rmMock = vi.mocked(rm);
       expect(rmMock).not.toHaveBeenCalledWith(
         '/audiobooks/Brandon Sanderson/The Way of Kings',
         { recursive: true, force: true },
       );
 
-      // Verify catch block still reverts download to 'failed'
       const updateCalls = db.update.mock.results;
       const setCalls = updateCalls
         .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
@@ -1795,9 +1642,7 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // #1589: old-path cleanup deletes managed files per-file (force-only rm). Make those reject
-      // while the recursive sibling cleanup still succeeds, so the import proceeds and the managed
-      // deletion failure stays nonfatal (warn, not error).
+      // Reject only old-path per-file deletes; sibling cleanup succeeds and failure stays a warning (#1589).
       const rmMock = vi.mocked(rm);
       rmMock.mockImplementation((p: unknown, opts: unknown) =>
         (String(p).includes('Old Book') && !(opts as { recursive?: boolean })?.recursive)
@@ -1806,10 +1651,8 @@ describe('ImportService', () => {
 
       const result = await svc.importDownload(1);
 
-      // Import still succeeds
       expect(result.downloadId).toBe(1);
 
-      // Logged at warn level, not error (the helper records the failed managed deletion).
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ file: expect.stringContaining('Old Book') }),
         expect.stringContaining('Failed to delete managed book file'),
@@ -1832,14 +1675,11 @@ describe('ImportService', () => {
 
       const result = await svc.importDownload(1);
 
-      // Import succeeds despite enrichment throw
       expect(result.downloadId).toBe(1);
-      // Warning logged, not error
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ error: expect.objectContaining({ message: 'Enrichment exploded', type: 'Error' }) }),
         expect.stringContaining('enrichment threw'),
       );
-      // No revert to failed — import is committed
       expect(log.error).not.toHaveBeenCalled();
     });
   });
@@ -1866,10 +1706,8 @@ describe('ImportService', () => {
       const cpMock = vi.mocked(cp);
       const copiedFiles = cpMock.mock.calls.map(call => call[0] as string);
 
-      // Should have copied only the two audio files
       expect(copiedFiles.some(p => p.endsWith('chapter1.mp3'))).toBe(true);
       expect(copiedFiles.some(p => p.endsWith('chapter2.m4b'))).toBe(true);
-      // Should NOT have copied non-audio files
       expect(copiedFiles.some(p => p.endsWith('.nzb'))).toBe(false);
       expect(copiedFiles.some(p => p.endsWith('.sfv'))).toBe(false);
       expect(copiedFiles.some(p => p.endsWith('.nfo'))).toBe(false);
@@ -1880,11 +1718,9 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // stat returns a file (not directory)
       const statMock = vi.mocked(stat);
       statMock.mockResolvedValue({ isFile: () => true, isDirectory: () => false, size: 1024 } as never);
 
-      // Adapter returns a single .nzb file
       mockAdapter.getDownload.mockResolvedValueOnce({
         id: 'ext-1',
         name: 'release.nzb',
@@ -1907,10 +1743,6 @@ describe('ImportService', () => {
 
 
 
-  // concurrency limiting tests removed in #636 (slot-based concurrency replaced by import_jobs queue)
-
-  // Slot-based concurrency tests removed in #636 (replaced by import_jobs queue)
-
   describe('disk space check', () => {
     beforeEach(setupDefaults);
 
@@ -1932,7 +1764,7 @@ describe('ImportService', () => {
       const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
       setupImportMocks();
 
-      // 100GB free, 5GB threshold + ~500MB source = plenty of space
+      // 100 GB free exceeds the 5 GB threshold plus 500 MB source.
       vi.mocked(statfs).mockResolvedValueOnce({ bavail: BigInt(100_000_000_000), bsize: BigInt(1) } as never);
 
       const result = await svc.importDownload(1);
@@ -1944,7 +1776,6 @@ describe('ImportService', () => {
       const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
       setupImportMocks();
 
-      // Only 1GB free, need 5GB threshold + source
       vi.mocked(statfs).mockResolvedValueOnce({ bavail: BigInt(1_000_000_000), bsize: BigInt(1) } as never);
 
       await expect(svc.importDownload(1)).rejects.toThrow('insufficient disk space');
@@ -1955,8 +1786,6 @@ describe('ImportService', () => {
       const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
       setupImportMocks();
 
-      // Source size is 500_000_000 (from stat mock), multiplier=1
-      // Required = 5 * 1024^3 + 500_000_000 = 5_368_709_120 + 500_000_000 = 5_868_709_120
       const exactlyEnough = BigInt(5) * BigInt(1024 ** 3) + BigInt(500_000_000);
       vi.mocked(statfs).mockResolvedValueOnce({ bavail: exactlyEnough, bsize: BigInt(1) } as never);
 
@@ -1965,14 +1794,12 @@ describe('ImportService', () => {
     });
 
     it('estimated output uses sourceSize * 1 (no processing multiplier)', async () => {
-      // Use minFreeSpaceGB=1 so disk check actually runs (0 skips it)
+      // Zero skips the check, so use a 1 GB threshold.
       const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 1 });
       const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
       setupImportMocks();
 
-      // Source = 500MB, estimated = 500MB, threshold = 1GB
-      // Required = 1GB + 500MB = ~1.5GB
-      // Free = 2GB → should succeed because 2GB >= 1.5GB
+      // Free 2 GB exceeds the required 1 GB + 500 MB only with multiplier 1.
       vi.mocked(statfs).mockResolvedValueOnce({ bavail: BigInt(2_000_000_000), bsize: BigInt(1) } as never);
 
       const result = await svc.importDownload(1);
@@ -1995,7 +1822,6 @@ describe('ImportService', () => {
       const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
       setupImportMocks();
 
-      // statfs should not be called
       const result = await svc.importDownload(1);
       expect(result.downloadId).toBe(1);
       expect(statfs).not.toHaveBeenCalled();
@@ -2010,7 +1836,6 @@ describe('ImportService', () => {
 
       await expect(svc.importDownload(1)).rejects.toThrow();
 
-      // Verify download was set to failed with error message
       const updateSetCalls = db.update.mock.results
         .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
         .flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
@@ -2035,7 +1860,6 @@ describe('ImportService', () => {
 
       await expect(svc.importDownload(1)).rejects.toThrow();
 
-      // Book should be reverted to 'wanted' (mockBook.path is undefined)
       const updateSetCalls = db.update.mock.results
         .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
         .flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
@@ -2075,7 +1899,6 @@ describe('ImportService', () => {
       await expect(service.getImportContext(1)).rejects.toThrow('no linked book');
     });
 
-    // #504 — ImportContext identifier extension
     it('returns infoHash from the download record', async () => {
       db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, infoHash: 'hash-abc' }]));
       const ctx = await service.getImportContext(1);
@@ -2095,18 +1918,11 @@ describe('ImportService', () => {
     });
 
     it('returns null for guid when download has no guid (torrent)', async () => {
-      db.select.mockReturnValueOnce(mockDbChain([mockDownload])); // guid: null in fixture
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       const ctx = await service.getImportContext(1);
       expect(ctx.guid).toBeNull();
     });
   });
-
-  // Tests for removed methods deleted in #636
-
-  // ── #525 — getNextQueuedDownload + claimQueuedDownload ──────────────────
-  // Tests for removed methods deleted in #636
-
-  // Tests for removed methods deleted in #636
 
   describe('lastGrab identifier tracking', () => {
     beforeEach(() => {
@@ -2205,7 +2021,6 @@ describe('ImportService consolidation (issue #79)', () => {
     expect(ctx.narratorStr).toBeNull();
   });
 
-  // ── #229 Observability — logging improvements ───────────────────────────
   describe('logging improvements (#229)', () => {
     let service: ImportService;
     let mockBookService: { getById: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
@@ -2351,7 +2166,6 @@ describe('ImportService consolidation (issue #79)', () => {
     });
   });
 
-  // #318 — minSeedRatio gating in handleTorrentRemoval
   describe('seed ratio gating (handleTorrentRemoval)', () => {
     let service: ImportService;
     let mockBookService: { getById: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
@@ -2364,7 +2178,6 @@ describe('ImportService consolidation (issue #79)', () => {
       settingsService = createMockSettingsService();
       mockBookService = { getById: vi.fn().mockResolvedValue({ ...createMockDbBook({ status: 'downloading' as const }), authors: [createMockDbAuthor()], narrators: [] }), update: vi.fn().mockResolvedValue(undefined) };
       service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
-      // Default: stat returns directory, readdir returns audio file
       vi.mocked(stat).mockImplementation(statDirMarkerAbsent);
       vi.mocked(readdir).mockResolvedValue([
         { name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false },
@@ -2379,7 +2192,7 @@ describe('ImportService consolidation (issue #79)', () => {
         if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 1.0 });
         return Promise.resolve({});
       });
-      // First call: resolveSavePath, second call: handleTorrentRemoval ratio check
+      // resolveSavePath reads first; the ratio gate reads second.
       mockAdapter.getDownload
         .mockResolvedValueOnce(defaultDownloadItem)
         .mockResolvedValueOnce({ ...defaultDownloadItem, ratio: 0.5 });
@@ -2409,7 +2222,7 @@ describe('ImportService consolidation (issue #79)', () => {
       await service.importDownload(1);
 
       expect(mockAdapter.removeDownload).toHaveBeenCalledWith('ext-1', true);
-      // Negative twin (#1293 F1): initial-import success must NOT null outputPath
+      // Successful removal must not null outputPath (#1293).
       const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
       const outputPathClear = setCalls.find((call: unknown[]) => call[0] && typeof call[0] === 'object' && 'outputPath' in (call[0] as Record<string, unknown>));
       expect(outputPathClear).toBeUndefined();
@@ -2419,7 +2232,7 @@ describe('ImportService consolidation (issue #79)', () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
         if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 30, minSeedRatio: 1.0 }); // 30min, download completed 1hr ago
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 30, minSeedRatio: 1.0 }); // 30 min; completed 1 h ago
         return Promise.resolve({});
       });
       mockAdapter.getDownload
@@ -2504,7 +2317,7 @@ describe('ImportService consolidation (issue #79)', () => {
         if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 1.0 });
         return Promise.resolve({});
       });
-      // First call for resolveSavePath, second for handleTorrentRemoval returns null
+      // resolveSavePath reads first; the ratio gate receives null.
       mockAdapter.getDownload
         .mockResolvedValueOnce(defaultDownloadItem)
         .mockResolvedValueOnce(null);
@@ -2512,12 +2325,10 @@ describe('ImportService consolidation (issue #79)', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // Should not throw — graceful handling
       const result = await service.importDownload(1);
       expect(result.downloadId).toBe(1);
-      // When getDownload returns null, cannot determine ratio — should set pendingCleanup for retry
       expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
-      // Negative twin (#1293 F1): live-state-unavailable defers via pendingCleanup, without nulling outputPath
+      // Unavailable torrent ratio defers without clearing outputPath (#1293).
       const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
       const pendingCall = setCalls.find((call: unknown[]) => call[0] && typeof call[0] === 'object' && 'pendingCleanup' in (call[0] as Record<string, unknown>));
       expect(pendingCall).toBeDefined();
@@ -2525,8 +2336,7 @@ describe('ImportService consolidation (issue #79)', () => {
       expect('outputPath' in (pendingCall![0] as Record<string, unknown>)).toBe(false);
     });
 
-    // #1298 — usenet must NOT defer on an unfetchable live ratio (seed ratio is meaningless for
-    // usenet). Import path now derives deferOnUnavailableRatio from download.protocol === 'torrent'.
+    // Unavailable ratio defers torrents only; seed ratio is meaningless for Usenet (#1298).
     it('proceeds with usenet removal when ratio unfetchable (does not defer)', async () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
@@ -2534,7 +2344,7 @@ describe('ImportService consolidation (issue #79)', () => {
         if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 1.0 });
         return Promise.resolve({});
       });
-      // First call for resolveSavePath, second for handleTorrentRemoval returns null (ratio unfetchable)
+      // resolveSavePath reads first; the ratio gate receives null.
       mockAdapter.getDownload
         .mockResolvedValueOnce(defaultDownloadItem)
         .mockResolvedValueOnce(null);
@@ -2544,7 +2354,6 @@ describe('ImportService consolidation (issue #79)', () => {
 
       const result = await service.importDownload(1);
       expect(result.downloadId).toBe(1);
-      // Regression guard: usenet with unfetchable ratio proceeds to removal, never defers.
       expect(mockAdapter.removeDownload).toHaveBeenCalledWith('ext-1', true);
       const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
       const pendingCall = setCalls.find((call: unknown[]) => call[0] && typeof call[0] === 'object' && 'pendingCleanup' in (call[0] as Record<string, unknown>));
@@ -2577,7 +2386,7 @@ describe('ImportService consolidation (issue #79)', () => {
         if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 1.0 });
         return Promise.resolve({});
       });
-      // First call for resolveSavePath succeeds, second for handleTorrentRemoval throws
+      // resolveSavePath reads first; the ratio gate throws second.
       mockAdapter.getDownload
         .mockResolvedValueOnce(defaultDownloadItem)
         .mockRejectedValueOnce(new Error('Connection refused'));
@@ -2591,7 +2400,6 @@ describe('ImportService consolidation (issue #79)', () => {
     });
   });
 
-  // #318 — cleanupDeferredImports
   describe('cleanupDeferredImports', () => {
     let service: ImportService;
     const deferredImport = { ...mockDownload, id: 10, status: 'imported' as const, pendingCleanup: new Date() };
@@ -2621,7 +2429,7 @@ describe('ImportService consolidation (issue #79)', () => {
       const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
       const clearCall = setCalls.find((call: unknown[]) => call[0] && typeof call[0] === 'object' && (call[0] as Record<string, unknown>).pendingCleanup === null);
       expect(clearCall).toBeDefined();
-      // Negative twin (#1293 F1): deferred-import success clears pendingCleanup ONLY — must NOT null outputPath
+      // Deferred cleanup clears pendingCleanup without nulling outputPath (#1293).
       expect('outputPath' in (clearCall![0] as Record<string, unknown>)).toBe(false);
     });
 
@@ -2654,7 +2462,6 @@ describe('ImportService consolidation (issue #79)', () => {
       await service.cleanupDeferredImports();
 
       expect(log.error).toHaveBeenCalled();
-      // pendingCleanup should NOT be cleared — no null-set call
       const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
       const clearCall = setCalls.find((call: unknown[]) => call[0] && typeof call[0] === 'object' && (call[0] as Record<string, unknown>).pendingCleanup === null);
       expect(clearCall).toBeUndefined();
@@ -2666,7 +2473,6 @@ describe('ImportService consolidation (issue #79)', () => {
         if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 0 });
         return Promise.resolve({});
       });
-      // getAdapter returns null — client may have been deleted
       (clientService.getAdapter as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
       db.select.mockReturnValueOnce(mockDbChain([deferredImport]));
       db.update.mockReturnValue(mockDbChain());
@@ -2678,7 +2484,6 @@ describe('ImportService consolidation (issue #79)', () => {
         expect.objectContaining({ downloadId: deferredImport.id }),
         expect.stringContaining('adapter not found'),
       );
-      // pendingCleanup must NOT be cleared — retry next cycle
       const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
       const clearCall = setCalls.find((call: unknown[]) => call[0] && typeof call[0] === 'object' && (call[0] as Record<string, unknown>).pendingCleanup === null);
       expect(clearCall).toBeUndefined();
@@ -2794,8 +2599,7 @@ describe('ImportService consolidation (issue #79)', () => {
           expect.objectContaining({ error: expect.objectContaining({ message: 'unexpected crash', type: 'Error' }) }),
           expect.stringContaining('enrichment threw'),
         );
-        // Import succeeded → no failure-cleanup recursive rm of the target folder.
-        // (Staging/backup sibling cleanup is recursive and expected; the target is not.)
+        // Recursive sibling cleanup is expected; failure cleanup must not remove the committed target.
         expect(rm).not.toHaveBeenCalledWith('/audiobooks/Brandon Sanderson/The Way of Kings', expect.objectContaining({ recursive: true }));
       });
     });
@@ -2822,11 +2626,10 @@ describe('ImportService consolidation (issue #79)', () => {
   });
 });
 
-// #1861 AC3 — direct seam over a REAL migrated in-memory DB (mockDbChain does not
-// evaluate SQL, so the non-empty externalId guard must be proven against real SQL).
-// getEligibleDownloads now consumes the shared qualityGateEligibleDownloadCondition,
-// so a completed `external_id = ''` row (seeded as PRE-EXISTING) must never be
-// eligible — proving the truthiness alignment needs no data migration.
+/**
+ * mockDbChain cannot evaluate SQL. A migrated DB proves shared eligibility rejects a
+ * pre-existing external_id = '' without a data migration (#1861).
+ */
 const PROD_DRIZZLE = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'drizzle');
 
 describe('ImportService.getEligibleDownloads — externalId truthiness alignment (#1861 AC3)', () => {
@@ -2859,7 +2662,7 @@ describe('ImportService.getEligibleDownloads — externalId truthiness alignment
 
     expect(ids).toEqual([realRow!.id]);
     expect(ids).not.toContain(nullRow!.id);
-    expect(ids).not.toContain(emptyRow!.id); // pre-existing '' clears with NO migration
+    expect(ids).not.toContain(emptyRow!.id);
   });
 
   it('excludes an eligible-looking row missing completedAt or bookId (import-specific guards retained)', async () => {

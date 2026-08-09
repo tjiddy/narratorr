@@ -1,10 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { formatDurationSeconds } from './format-duration.js';
 
-// Moved here from the client `format.test.ts` and the server
-// `match-job.helpers.test.ts` (#1854): the formatter now has one shared home, so
-// its exact-string, options, fallback/nullish, and >90s-gap regression cases live
-// beside the implementation.
 describe('formatDurationSeconds (#1854 shared home)', () => {
   describe('alwaysShowBoth: true (default)', () => {
     it('formats standard hours and minutes', () => {
@@ -70,13 +66,8 @@ describe('formatDurationSeconds (#1854 shared home)', () => {
     });
   });
 
-  // Floor semantic + the >90s-gap regression (#1850/#1854): two runtimes more than
-  // 90s apart can never floor into the same whole minute, so a mismatch reason
-  // built from this formatter always renders visibly-distinct sides. Under the old
-  // one-decimal-hours display BOTH sides could render "29.8hrs".
   describe('>90s-gap-never-renders-equal regression', () => {
     it('two values >90s apart never floor to the same whole minute', () => {
-      // 107340s → 29h 49m; 107440s → 29h 50m (Δ100s). Distinct.
       expect(formatDurationSeconds(107340)).toBe('29h 49m');
       expect(formatDurationSeconds(107440)).toBe('29h 50m');
       expect(formatDurationSeconds(107340)).not.toBe(formatDurationSeconds(107440));

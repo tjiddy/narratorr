@@ -5,8 +5,7 @@ import { resolve } from 'node:path';
 import { useMswServer } from '../__tests__/msw/server.js';
 import type * as NetworkServiceModule from '../utils/network-service.js';
 
-// Route fetchWithOptionalDispatcher through globalThis.fetch so MSW handlers
-// and `vi.spyOn(globalThis, 'fetch')` continue to intercept the proxy path.
+// Keep MSW/fetch spies on this test path while production retains dispatcher routing.
 vi.mock('../utils/network-service.js', async (importActual) => {
   const actual = await importActual<typeof NetworkServiceModule>();
   return {
@@ -33,7 +32,6 @@ describe('NewznabIndexer', () => {
   });
 
   afterEach(() => {
-    // Restore GIT_TAG so the User-Agent test's env stub never leaks.
     vi.unstubAllEnvs();
   });
 
@@ -54,11 +52,7 @@ describe('NewznabIndexer', () => {
 
   describe('search', () => {
     it('sends a User-Agent: Narratorr/<version> header on the API request (#1315)', async () => {
-      // Pin GIT_TAG so the assertion is deterministic regardless of the runner's
-      // ambient env (a CI/release env that exports GIT_TAG would otherwise flip
-      // the expected value) AND so deleting getUserAgent()'s tagged-version
-      // branch makes this fail. The unset/unknown fallbacks are covered in
-      // src/shared/user-agent.test.ts.
+      // Pin the version independently of the runner's environment.
       vi.stubEnv('GIT_TAG', 'v9.9.9');
       let userAgent: string | null = null;
       server.use(
@@ -119,8 +113,8 @@ describe('NewznabIndexer', () => {
 
       const { results } = await indexer.search('Brandon Sanderson');
 
-      expect(results[0]!.size).toBe(1073741824); // 1 GB
-      expect(results[1]!.size).toBe(2147483648); // 2 GB
+      expect(results[0]!.size).toBe(1073741824); // 1 GiB
+      expect(results[1]!.size).toBe(2147483648); // 2 GiB
     });
 
     it('extracts grabs from newznab:attr', async () => {
@@ -541,7 +535,6 @@ describe('NewznabIndexer', () => {
 
       const { results } = await indexer.search('test');
       expect(results).toHaveLength(1);
-      // Number('notanumber') = NaN, size || undefined = undefined
       expect(results[0]!.size).toBeUndefined();
     });
 
@@ -669,7 +662,6 @@ describe('NewznabIndexer', () => {
 
       expect(results).toHaveLength(3);
       expect(results[0]!.title).toBe('The Way of Kings - Brandon Sanderson (Unabridged)');
-      // Verify fetch was called with a dispatcher (proxy agent)
       expect(fetchSpy).toHaveBeenCalledOnce();
       const callArgs = fetchSpy.mock.calls[0];
       expect((callArgs![1] as Record<string, unknown>).dispatcher).toBeDefined();
@@ -688,7 +680,6 @@ describe('NewznabIndexer', () => {
     });
 
     it('search throws non-proxy errors (not swallowed)', async () => {
-      // Create a non-proxied indexer so errors are NOT wrapped as ProxyError
       const directIndexer = new NewznabIndexer({
         apiUrl: API_BASE,
         apiKey: 'testapikey',
@@ -732,7 +723,6 @@ describe('NewznabIndexer', () => {
     it('forwards signal to fetch helper when provided via options', async () => {
       let capturedSignal: AbortSignal | undefined;
 
-      // Spy on fetch to capture the signal
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
         capturedSignal = init?.signal ?? undefined;
         return new Response(searchXml, { headers: { 'Content-Type': 'application/rss+xml' } });
@@ -742,7 +732,6 @@ describe('NewznabIndexer', () => {
       await indexer.search('test', { signal: controller.signal });
 
       expect(capturedSignal).toBeDefined();
-      // Aborting the caller signal should propagate through the composed signal
       controller.abort();
       expect(capturedSignal!.aborted).toBe(true);
 

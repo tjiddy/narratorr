@@ -1,13 +1,9 @@
-/**
- * ISO 639 language code → lowercase full name mapping.
- * Used to normalize language codes from Newznab/Torznab attrs and MAM lang_code
- * into the app's canonical format (lowercase full names, matching region-languages.ts).
- */
+// Normalize indexer and MAM identifiers to the app's lowercase full-name format.
 
 import { MAM_LANGUAGES } from '@shared/indexer-registry.js';
 
 const ISO_639_TO_NAME: Record<string, string> = {
-  // ISO 639-2/B (bibliographic) — used by MAM and most Newznab indexers
+  // ISO 639-2/B bibliographic codes used by MAM and most Newznab indexers.
   eng: 'english',
   ger: 'german',
   fre: 'french',
@@ -50,7 +46,7 @@ const ISO_639_TO_NAME: Record<string, string> = {
   lit: 'lithuanian',
   lav: 'latvian',
   est: 'estonian',
-  // ISO 639-1 (two-letter) — some indexers use these
+  // ISO 639-1 codes used by some indexers.
   en: 'english',
   de: 'german',
   fr: 'french',
@@ -88,20 +84,14 @@ const ISO_639_TO_NAME: Record<string, string> = {
   et: 'estonian',
 };
 
-// Also accept full language names (pass-through)
 const KNOWN_NAMES = new Set(Object.values(ISO_639_TO_NAME));
 
-// MAM sends `lang_code` as numeric strings (e.g. '1' for English).
-// Build a string-keyed lookup from the shared registry so we stay in sync with the UI/API side.
+// Derive MAM's numeric codes from the shared registry to prevent UI/API drift.
 const MAM_NUMERIC_TO_NAME = new Map<string, string>(
   MAM_LANGUAGES.map((l) => [String(l.id), l.label.toLowerCase()]),
 );
 
-/**
- * Normalize a language code or name to a lowercase full name.
- * Returns undefined for empty/missing input.
- * Unknown codes are returned as-is in lowercase.
- */
+/** Unknown values pass through lowercased; blank input returns undefined. */
 export function normalizeLanguage(code: string | undefined | null): string | undefined {
   if (!code || !code.trim()) return undefined;
   const lower = code.trim().toLowerCase();

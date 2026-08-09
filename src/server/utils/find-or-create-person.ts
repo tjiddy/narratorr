@@ -4,7 +4,6 @@ import { authors, narrators } from '@db/schema.js';
 import { slugify } from '@shared/utils.js';
 import { generatePublicId } from './public-id.js';
 
-/** Table reference for authors or narrators — both have id + slug columns. */
 type PersonTable = typeof authors | typeof narrators;
 
 /**
@@ -47,12 +46,6 @@ async function findOrCreateBySlug(
   }
 }
 
-/**
- * Find an existing author by slug or create a new one.
- * Optionally backfills ASIN if the existing author has none.
- *
- * @returns The author's ID (never null — throws on failure).
- */
 export async function findOrCreateAuthor(db: DbOrTx, name: string, asin?: string): Promise<number> {
   const slug = slugify(name);
   return findOrCreateBySlug(
@@ -73,11 +66,6 @@ export async function findOrCreateAuthor(db: DbOrTx, name: string, asin?: string
   );
 }
 
-/**
- * Find an existing narrator by slug or create a new one.
- *
- * @returns The narrator's ID (never null — throws on failure).
- */
 export async function findOrCreateNarrator(db: DbOrTx, name: string): Promise<number> {
   const slug = slugify(name);
   return findOrCreateBySlug(

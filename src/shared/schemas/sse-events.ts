@@ -2,10 +2,6 @@ import { z } from 'zod';
 import { downloadStatusSchema } from './activity';
 import { bookStatusSchema } from './book';
 
-// ============================================================================
-// SSE Event Types — single source of truth for all real-time event contracts
-// ============================================================================
-
 export const sseEventTypeSchema = z.enum([
   'download_progress',
   'download_status_change',
@@ -28,10 +24,6 @@ export const sseEventTypeSchema = z.enum([
 ]);
 
 export type SSEEventType = z.infer<typeof sseEventTypeSchema>;
-
-// ============================================================================
-// Event Payloads
-// ============================================================================
 
 export const downloadProgressPayload = z.object({
   download_id: z.number(),
@@ -89,14 +81,7 @@ export const importProgressPayload = z.object({
   }).optional(),
 });
 
-/**
- * Structured refusal discriminator for a forced import the copy-time collision
- * fence refused (#1736). Carried on the existing `import_failed` channel (event +
- * SSE) so a forced import that fails closed is self-describing rather than an
- * opaque generic failure. `existingBookId` is nullable: the ownerless fence throw
- * sites (audio on disk, no row claims it) carry no real incumbent id, so the `-1`
- * sentinel maps to `null` (the user-facing reason never reports "book #-1").
- */
+// existingBookId is null for ownerless collisions; never expose the internal -1 sentinel.
 export const forcedImportRefusedReasonSchema = z.object({
   kind: z.literal('forced-import-refused'),
   recordingReason: z.string(),
@@ -111,7 +96,6 @@ export const importFailedPayload = z.object({
   book_title: z.string(),
   phase: z.string(),
   error_message: z.string(),
-  // Optional (#1736): present only for a forced-import refusal; ordinary failures omit it.
   refusal_reason: forcedImportRefusedReasonSchema.optional(),
 });
 
@@ -155,29 +139,16 @@ export const mergeFailedPayload = z.object({
   reason: mergeFailedReasonSchema.default('error'),
 });
 
-/**
- * The in-flight display phases — the only ones a `merge_state` snapshot entry may carry
- * (#2129). Derived from `mergeDisplayPhaseSchema` with `.extract()` rather than redeclared,
- * so a phase renamed there cannot silently drift out of the snapshot contract. `queued` is
- * excluded because queued books live in the snapshot's own `queued` list, and the terminal
- * phases are excluded because a terminal merge has already left the snapshot entirely — a
- * snapshot that still carried it would overwrite the terminal card the client just installed.
- */
+// Extract to prevent phase drift. Queued items live in snapshot.queued; terminal
+// merges must not reappear and overwrite terminal client state.
 export const mergeActivePhaseSchema = mergeDisplayPhaseSchema.extract([
   'starting', 'staging', 'processing', 'verifying', 'committing',
 ]);
 
 export type MergeActivePhase = z.infer<typeof mergeActivePhaseSchema>;
 
-/**
- * Full-state snapshot of the live merge domain (#2129). Unlike every other type on this
- * stream this is state, not an event: it is re-broadcast on every merge state change AND
- * written once to each newly connected client, which is what makes a late joiner (page
- * reload mid-queue) correct by construction. `active` is a list because the merge semaphore
- * is sized from `processing.maxConcurrentProcessing` (1..8), so N merges can genuinely run
- * at once. `queued` is FIFO — position is `index + 1`, not a field. `percentage` is the
- * audio processor's 0..1 fraction, converted to a display percent at the client boundary.
- */
+// Full state is replayed to new clients and rebroadcast on changes. active may hold
+// concurrent merges; queued order is FIFO; percentage is a 0..1 fraction.
 export const mergeStatePayload = z.object({
   active: z.array(z.object({
     book_id: z.number(),
@@ -230,10 +201,6 @@ export const searchCompletePayload = z.object({
   release_title: z.string().optional(),
 });
 
-// ============================================================================
-// Typed event map — used by EventBroadcaster and frontend handler
-// ============================================================================
-
 export type SSEEventPayloads = {
   download_progress: z.infer<typeof downloadProgressPayload>;
   download_status_change: z.infer<typeof downloadStatusChangePayload>;
@@ -254,10 +221,6 @@ export type SSEEventPayloads = {
   search_grabbed: z.infer<typeof searchGrabbedPayload>;
   search_complete: z.infer<typeof searchCompletePayload>;
 };
-
-// ============================================================================
-// Cache invalidation matrix — data-driven, no switch statements
-// ============================================================================
 
 export type CacheAction = 'patch' | 'invalidate';
 
@@ -282,8 +245,7 @@ export const CACHE_INVALIDATION_MATRIX: Record<SSEEventType, CacheInvalidationRu
   merge_complete: { activity: 'invalidate', activityCounts: 'invalidate', books: 'invalidate', eventHistory: 'invalidate' },
   merge_started: { eventHistory: 'invalidate' },
   merge_failed: { eventHistory: 'invalidate', books: 'invalidate' },
-  // Deliberately empty (#2129): this frame fires on every progress tick and carries no data
-  // any query owns — invalidating from it would refetch the whole activity surface per tick.
+  // Snapshots own no query data; invalidating here would refetch activity every tick.
   merge_state: {},
   search_started: {},
   search_indexer_complete: {},
@@ -292,7 +254,6 @@ export const CACHE_INVALIDATION_MATRIX: Record<SSEEventType, CacheInvalidationRu
   search_complete: { eventHistory: 'invalidate' },
 };
 
-// Event types that should trigger toast notifications
 export const TOAST_EVENT_CONFIG: Partial<Record<SSEEventType, { level: 'success' | 'info' | 'warning' | 'error'; titleKey: string }>> = {
   import_complete: { level: 'success', titleKey: 'book_title' },
   import_failed: { level: 'error', titleKey: 'book_title' },

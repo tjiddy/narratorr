@@ -48,8 +48,6 @@ describe('HealthDashboard', () => {
     expect(screen.getByText('Low disk space: 3.2 GB free')).toBeInTheDocument();
   });
 
-  // library-root and disk-space both emit `{ kind: 'route', path: '/settings' }` from the
-  // server, so a `kind:path` card key collides them into one React key (#2094).
   it('keys library-root and disk-space distinctly despite their shared route target', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     (api.getHealthStatus as Mock).mockResolvedValue([
@@ -278,14 +276,11 @@ describe('HealthDashboard', () => {
 
       const card = await screen.findByRole('link', { name: /indexer:MAM/i });
       card.focus();
-      // Keyboard activation (Enter) fires a click the guard intercepts while dirty.
       await user.keyboard('{Enter}');
 
       expect(screen.getByRole('dialog')).toBeInTheDocument();
       expect(screen.getByTestId('loc').textContent).toBe('/settings/system');
 
-      // Discard replays the captured card click through the Router pipeline,
-      // preserving the exact query-carrying destination.
       await user.click(screen.getByRole('button', { name: 'Discard changes' }));
       expect(screen.getByTestId('loc').textContent).toBe('/settings/indexers?edit=42');
     });
@@ -296,7 +291,6 @@ describe('HealthDashboard', () => {
         { checkName: 'indexer:NZB', state: 'warning', target: { kind: 'indexer', id: 2 } },
       ]);
 
-      // Suppress noise; assert no duplicate-key warning surfaces.
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       renderWithProviders(<HealthDashboard />);
@@ -374,7 +368,7 @@ describe('HealthDashboard', () => {
       { checkName: 'library-root', state: 'healthy' },
     ]);
 
-    // Render a companion that subscribes to the summary query so invalidation triggers a refetch
+    // Subscribe to summary so invalidation triggers a refetch.
     function SummaryObserver() {
       useQuery({ queryKey: queryKeys.health.summary(), queryFn: api.getHealthSummary });
       return null;
@@ -391,7 +385,6 @@ describe('HealthDashboard', () => {
       expect(screen.getByText('library-root')).toBeInTheDocument();
     });
 
-    // Record call counts after initial render
     const statusCallsBefore = (api.getHealthStatus as Mock).mock.calls.length;
     const summaryCallsBefore = (api.getHealthSummary as Mock).mock.calls.length;
 

@@ -2,14 +2,8 @@ import { z } from 'zod';
 import { NOTIFIER_REGISTRY, NOTIFIER_TYPES, type NotifierType } from '../notifier-registry';
 import { NOTIFICATION_EVENTS } from '../notification-events';
 
-// ============================================================================
-// Notifier schemas
-// ============================================================================
-
 export const notifierTypeSchema = z.enum(NOTIFIER_TYPES);
 export const notificationEventSchema = z.enum(NOTIFICATION_EVENTS);
-
-// ── Per-adapter settings schemas (strict — rejects unknown fields) ──────────
 
 export const webhookSettingsSchema = z.object({
   url: z.string().trim().min(1),
@@ -49,33 +43,20 @@ export const slackSettingsSchema = z.object({
 
 export const pushoverSettingsSchema = z.object({
   pushoverToken: z.string().trim().min(1),
-  // Sentinel passthrough: this field is a registered secret (#1307), so the
-  // masked sentinel '********' must survive validation on create/update. It does
-  // so today only because the validator is a bare `.trim().min(1)` (the sentinel
-  // is 8 non-space chars). If you tighten this to a format constraint (e.g.
-  // Pushover's 30-char alnum user key), add an explicit `z.union([z.literal('********'), ...])`
-  // — otherwise unrelated saves that round-trip the sentinel silently 400.
+  // Any future format constraint must admit the masked secret sentinel.
   pushoverUser: z.string().trim().min(1),
 }).strict();
 
-// ntfy's documented Priority header tokens (min|low|default|high|max). Empty/unset
-// means "send no Priority header" (server default applies).
+// Empty means omit the Priority header and use the server default.
 export const NTFY_PRIORITIES = ['min', 'low', 'default', 'high', 'max'] as const;
 
 export const ntfySettingsSchema = z.object({
-  // Sentinel passthrough: registered secret (#1307) — the masked '********' must
-  // pass validation. Safe today only because this is a bare `.trim().min(1)`. Any
-  // future format constraint must explicitly admit the sentinel literal, or
-  // sentinel round-trips on save will silently 400. See pushoverUser above.
+  // Any future format constraint must admit the masked secret sentinel.
   ntfyTopic: z.string().trim().min(1),
   ntfyServer: z.string().trim().optional(),
-  // Sentinel passthrough: registered secret (#1607) — the masked '********' must
-  // pass validation. Safe today only because this is a bare optional `.trim()`. Any
-  // future format constraint must explicitly admit the sentinel literal. See above.
+  // Any future format constraint must admit the masked secret sentinel.
   ntfyAccessToken: z.string().trim().optional(),
-  // Optional enum that can also arrive as '' — the unselected <select> and the
-  // registry default both produce ''. `.enum([...]).optional()` would reject a
-  // present '', so admit the empty literal explicitly alongside absent.
+  // Forms and registry defaults use '' for unset; optional alone would reject it.
   ntfyPriority: z.enum(NTFY_PRIORITIES).or(z.literal('')).optional(),
 }).strict();
 
@@ -83,8 +64,6 @@ export const gotifySettingsSchema = z.object({
   gotifyUrl: z.string().trim().min(1),
   gotifyToken: z.string().trim().min(1),
 }).strict();
-
-// ── Settings types and dispatch map ─────────────────────────────────────────
 
 export type WebhookSettings = z.infer<typeof webhookSettingsSchema>;
 export type DiscordSettings = z.infer<typeof discordSettingsSchema>;
@@ -121,8 +100,6 @@ export const notifierSettingsSchemas: Record<NotifierType, z.ZodTypeAny> = {
   ntfy: ntfySettingsSchema,
   gotify: gotifySettingsSchema,
 };
-
-// ── Server-side schemas ─────────────────────────────────────────────────────
 
 function validateSettingsPerType(
   data: { type: string; settings: Record<string, unknown> },
@@ -164,26 +141,20 @@ export const updateNotifierSchema = z.object({
   }
 });
 
-// ── Form schema (unchanged — uses superRefine + registry.requiredFields for zodResolver compat) ──
-
 export const createNotifierFormSchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(100),
   type: notifierTypeSchema,
   enabled: z.boolean(),
   events: z.array(notificationEventSchema).min(1, 'Select at least one event'),
   settings: z.object({
-    // Webhook
     url: z.string().trim().optional(),
     method: z.enum(['POST', 'PUT']).optional(),
     headers: z.string().trim().optional(),
     bodyTemplate: z.string().trim().optional(),
-    // Discord
     webhookUrl: z.string().trim().optional(),
     includeCover: z.boolean().optional(),
-    // Script
     path: z.string().trim().optional(),
     timeout: z.number().int().min(1).max(300).optional(),
-    // Email
     smtpHost: z.string().trim().optional(),
     smtpPort: z.number().int().min(1).max(65535).optional(),
     smtpUser: z.string().trim().optional(),
@@ -191,19 +162,15 @@ export const createNotifierFormSchema = z.object({
     smtpTls: z.boolean().optional(),
     fromAddress: z.string().trim().optional(),
     toAddress: z.string().trim().optional(),
-    // Telegram
     botToken: z.string().trim().optional(),
     chatId: z.string().trim().optional(),
-    // Slack (uses webhookUrl)
-    // Pushover
+    // Slack reuses webhookUrl.
     pushoverToken: z.string().trim().optional(),
     pushoverUser: z.string().trim().optional(),
-    // ntfy
     ntfyTopic: z.string().trim().optional(),
     ntfyServer: z.string().trim().optional(),
     ntfyAccessToken: z.string().trim().optional(),
     ntfyPriority: z.enum(NTFY_PRIORITIES).or(z.literal('')).optional(),
-    // Gotify
     gotifyUrl: z.string().trim().optional(),
     gotifyToken: z.string().trim().optional(),
   }),

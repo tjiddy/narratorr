@@ -19,8 +19,6 @@ describe('NumberField', () => {
     render(<NumberField aria-label="Bitrate" />);
     const input = screen.getByRole('spinbutton', { name: 'Bitrate' });
     expect(input).toHaveAttribute('type', 'number');
-    // errorInputClass's w-full beats width utilities on the input in compiled CSS — the real
-    // width must live on the wrapper (the select idiom).
     expect(input.parentElement).toHaveClass('w-24');
     expect(input).not.toHaveClass('w-24');
   });

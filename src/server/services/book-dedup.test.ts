@@ -4,7 +4,6 @@ import { OwnedRecordingError, buildForcedImportRefusedReason, toLibraryRecording
 import type { BookWithAuthor } from './book.service.js';
 import type { Db } from '@db/index.js';
 
-// Build a minimal `BookWithAuthor` row exercising only the fields `toLibraryRecording` reads.
 function makeRow(overrides: {
   title?: string;
   authors?: { name: string }[];
@@ -24,10 +23,7 @@ function makeRow(overrides: {
   } as unknown as BookWithAuthor;
 }
 
-// #1736 — the copy-time collision fence raises `OwnedRecordingError`; the worker's refused terminal
-// disposition maps it into a structured `forced-import-refused` reason. The ownerless fence throw
-// sites carry the `-1` sentinel (audio on disk, no row claims it) which must map to `null` so a
-// user-facing reason never reports "book #-1".
+// -1 means audio exists with no owning row and must never reach user-facing output.
 describe('buildForcedImportRefusedReason (#1736)', () => {
   it('always sets the forced-import-refused discriminator and carries the recording reason', () => {
     const reason = buildForcedImportRefusedReason(
@@ -37,8 +33,6 @@ describe('buildForcedImportRefusedReason (#1736)', () => {
     expect(reason.recordingReason).toBe('recording-review');
   });
 
-  // Single-owner `recording-review` and 2+-owner `recording-review-ambiguous-owner` always carry a
-  // real incumbent id → keep it.
   it.each([
     'recording-review',
     'recording-review-ambiguous-owner',
@@ -50,8 +44,6 @@ describe('buildForcedImportRefusedReason (#1736)', () => {
     expect(reason.recordingReason).toBe(variant);
   });
 
-  // Ownerless throw sites (`recording-review-no-disambiguator`, `recording-review-disambiguated-collision`
-  // with zero path owners) carry the `-1` sentinel → must map to null.
   it.each([
     'recording-review-no-disambiguator',
     'recording-review-disambiguated-collision',
@@ -71,12 +63,7 @@ describe('buildForcedImportRefusedReason (#1736)', () => {
   });
 });
 
-// #1734 — drift guard. `toLibraryRecording` is the SINGLE adapter that maps a hydrated owner row
-// into the resolver's `LibraryRecording` shape for BOTH the DB-side `findDuplicate` resolver and the
-// copy-time on-disk collision fence (`import-orchestration.helpers.ts` previously held a byte-for-byte
-// copy, `ownerToLibraryRecording`, now deleted). Pinning the output to an explicit expected shape makes
-// any future field addition / normalization change visible here, so the fence and DB dedup can never
-// silently disagree on whether a path owner is the same recording.
+// DB dedup and the copy-time collision fence share this adapter; pin its full shape against drift.
 describe('toLibraryRecording (#1734 fence/DB-dedup drift guard)', () => {
   it('maps an owner row to the exact LibraryRecording shape both paths consume', () => {
     expect(toLibraryRecording(makeRow())).toEqual({
@@ -109,21 +96,12 @@ describe('toLibraryRecording (#1734 fence/DB-dedup drift guard)', () => {
     });
   });
 
-  // #1728 — the production form is the discriminator behind the resolver's veto;
-  // pin that `toLibraryRecording` carries it through so the veto is not inert.
   it('carries productionType through from the owner row', () => {
     expect(toLibraryRecording(makeRow({ productionType: 'abridged' })).productionType).toBe('abridged');
   });
 });
 
-// #1891 F8 — the review representative must be the LOWEST matching books.id. Gathering
-// builds a Set (insertion-ordered), then `resolveDuplicate` relies on the terminal
-// `return [...ids].sort((a, b) => a - b)` to iterate ascending so the FIRST review
-// incumbent is the lowest id. The DB-backed integration test seeds ascending IDs and the
-// author query returns them in rowid (ascending) order, so the sort is never load-bearing
-// there — deleting it leaves that test green. This focused resolver test forces the author
-// query to gather the HIGHER id FIRST, so the sort is the only thing that yields the
-// lowest-id representative; deleting it flips `book.id` to 80 and fails here.
+// Reverse gather order makes the terminal sort the only path to the lowest-ID representative.
 describe('resolveDuplicate — deterministic review representative under reverse gather order (#1891 F8)', () => {
   const makeBook = (id: number): BookWithAuthor =>
     ({
@@ -137,8 +115,6 @@ describe('resolveDuplicate — deterministic review representative under reverse
     }) as unknown as BookWithAuthor;
 
   it('returns the lowest-id review incumbent even when the author query gathers the higher id first', async () => {
-    // Mocked author-scope query returns id 80 BEFORE id 75 (non-ascending) — no ASIN and
-    // no candidate narrators, so every incumbent resolves to `review`.
     const db = {
       select: vi.fn().mockReturnValue(
         mockDbChain([
@@ -160,8 +136,6 @@ describe('resolveDuplicate — deterministic review representative under reverse
   });
 });
 
-// #1728 — the candidate adapter must forward `productionType` so the resolver's
-// production-type veto can fire; an omitted value maps to null (no veto signal).
 describe('toRecordingCandidate (#1728 productionType plumbing)', () => {
   it('forwards productionType from the candidate', () => {
     expect(toRecordingCandidate({ title: 'T', productionType: 'unabridged' }).productionType).toBe('unabridged');

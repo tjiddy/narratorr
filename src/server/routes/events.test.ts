@@ -21,8 +21,7 @@ const mockLog = {
 
 describe('GET /api/events', () => {
   let broadcaster: EventBroadcasterService;
-  // The merge-state source behind the connect greeting (#2129). `snapshot` is reassignable so a
-  // test can change what the route would send at a chosen moment.
+  // Reassignable so tests can change the connect-time snapshot at a precise moment.
   let snapshot: MergeStateSnapshot;
   let mergeState: MergeStateSource;
 
@@ -32,7 +31,6 @@ describe('GET /api/events', () => {
     mergeState = { getMergeStateSnapshot: vi.fn(() => snapshot) };
   });
 
-  /** The parsed payloads of every `merge_state` frame written to one mock reply. */
   function mergeStateFrames(write: ReturnType<typeof vi.fn>): unknown[] {
     return write.mock.calls
       .map((c) => String(c[0]))
@@ -59,10 +57,8 @@ describe('GET /api/events', () => {
   }
 
   it('sets correct SSE headers and sends keepalive', async () => {
-    // Import the route handler factory
     const { eventsRoutes } = await import('./events.js');
 
-    // Create a mock Fastify app that captures the route handler
     let routeHandler: ((req: FastifyRequest, reply: FastifyReply) => Promise<void>) | null = null;
     const mockApp = {
       get: (_path: string, handler: (req: FastifyRequest, reply: FastifyReply) => Promise<void>) => {
@@ -76,37 +72,27 @@ describe('GET /api/events', () => {
     const { reply, request, writeHead, write, hijack, onClose } = createMockReplyAndRequest();
     await routeHandler!(request, reply);
 
-    // Verifies Content-Type header
     expect(writeHead).toHaveBeenCalledWith(200, expect.objectContaining({
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
     }));
 
-    // Verifies keepalive comment sent on connect
     expect(write).toHaveBeenCalledWith(':keepalive\n\n');
 
-    // Verifies client added to broadcaster
     expect(broadcaster.clientCount).toBe(1);
 
-    // Verifies hijack called to keep connection open
     expect(hijack).toHaveBeenCalled();
 
-    // Verifies cleanup on close
     expect(onClose).toHaveBeenCalledWith('close', expect.any(Function));
 
-    // Simulate close
     const closeHandler = onClose.mock.calls[0]![1] as () => void;
     closeHandler();
     expect(broadcaster.clientCount).toBe(0);
   });
 
   it('stamps the registered client with connectedAt = Date.now() at registration (#1796)', async () => {
-    // connectedAt is stamped here in the route and is load-bearing: the
-    // EventBroadcasterService max-age sweep keys the bounded-stream-lifetime
-    // security boundary off it. Freeze the clock and capture the client actually
-    // handed to addClient so a wrong clock source, a placeholder, or a stale
-    // timestamp is caught at the registration site (service tests only see
-    // hand-built mock timestamps).
+    // Broadcaster max-age security depends on connectedAt; service tests use hand-built clients,
+    // so freeze and assert the timestamp at the route registration boundary.
     const { eventsRoutes } = await import('./events.js');
 
     let routeHandler: ((req: FastifyRequest, reply: FastifyReply) => Promise<void>) | null = null;
@@ -161,10 +147,6 @@ describe('GET /api/events', () => {
     expect(mock2.write).toHaveBeenCalledWith(expected);
   });
 
-  // ==========================================================================
-  // #2129 — connect-time merge_state greeting
-  // ==========================================================================
-
   describe('merge_state connect greeting', () => {
     async function captureHandler(): Promise<(req: FastifyRequest, reply: FastifyReply) => Promise<void>> {
       const { eventsRoutes } = await import('./events.js');
@@ -215,16 +197,12 @@ describe('GET /api/events', () => {
 
       expect(mergeStateFrames(second.write)).toHaveLength(1);
       expect(first.write).not.toHaveBeenCalled();
-      // The keepalive comment and the greeting are the whole connect handshake.
       expect(second.write.mock.calls.map((c) => String(c[0]).split('\n')[0])).toEqual([':keepalive', 'event: merge_state']);
     });
 
     it('sends the snapshot as it stood at registration — an await in between would ship a stale one (F2)', async () => {
-      // The race this pins: with an `await` between addClient and the greeting write, a merge
-      // state change broadcast in that window reaches the already-registered client FIRST, and
-      // the greeting then lands last and overwrites it. Plain call-order spies cannot see that —
-      // they report registration-before-write either way. So schedule the state change as a
-      // microtask fired AT registration: it can only be observed by a greeting that suspended.
+      // A suspension after registration lets a broadcast beat the greeting, then the stale greeting
+      // overwrites it. Trigger a microtask at addClient because call-order spies cannot expose that race.
       const AT_REGISTRATION: MergeStateSnapshot = { active: [], queued: [{ book_id: 43, book_title: 'The Shining' }] };
       const AFTER_A_SUSPENSION: MergeStateSnapshot = { active: [], queued: [] };
       snapshot = AT_REGISTRATION;
@@ -242,14 +220,14 @@ describe('GET /api/events', () => {
 
       expect(addClientSpy).toHaveBeenCalledTimes(1);
       expect(mergeStateFrames(write)).toEqual([AT_REGISTRATION]);
-      // The sentinel really did fire — otherwise the assertion above proves nothing.
+      // Prove the scheduled sentinel ran; otherwise the race assertion is vacuous.
       await Promise.resolve();
       expect(snapshot).toBe(AFTER_A_SUSPENSION);
       addClientSpy.mockRestore();
     });
 
     it('is a no-op when registration was refused during the shutdown drain window (AC6)', async () => {
-      broadcaster.stop(); // latches `stopping`: addClient ends the reply instead of registering
+      broadcaster.stop();
       const routeHandler = await captureHandler();
       const { reply, request, write } = createMockReplyAndRequest();
       (reply.raw as unknown as { end: () => void }).end = vi.fn();
@@ -267,8 +245,7 @@ describe('GET /api/events', () => {
       await eventsRoutes(app, broadcaster, mergeState);
       await app.ready();
 
-      // `/api/events` never ends on its own; stop() ends every registered reply so the
-      // helper's `res.text()` can resolve (see its "finite streams only" note).
+      // Stop the endless stream so the finite-stream helper can resolve res.text().
       const streamed = fetchSseEvents(app, '/api/events');
       await vi.waitFor(() => expect(broadcaster.clientCount).toBe(1));
       broadcaster.stop();
@@ -281,7 +258,7 @@ describe('GET /api/events', () => {
   });
 
   describe('auth integration', () => {
-    // Auth plugin rejects before the SSE handler runs, so inject() completes normally
+    // Pre-handler auth rejection keeps inject finite despite the endless SSE handler.
     it('returns 401 when no auth credentials provided and auth mode is forms', async () => {
       const authService = {
         validateApiKey: vi.fn().mockResolvedValue(false),
@@ -304,10 +281,8 @@ describe('GET /api/events', () => {
     });
 
     it('rejects the API key on /api/events even when valid, with the API-key 401 body (de-god-moded #1453)', async () => {
-      // Post-#1453 the SSE endpoints are no longer API-key-reachable — they use a
-      // short-lived stream token. A valid key on `/api/events` (a non-`v*` path)
-      // is never validated, and an API-key-only request returns the canonical
-      // API-key contract `{ error: 'Invalid API key' }`, not the generic ambient 401.
+      // SSE accepts short-lived stream tokens, not API keys; this non-v1 path never validates the key
+      // and must return the canonical API-key error body.
       const authService = {
         validateApiKey: vi.fn().mockResolvedValue(true),
         getSessionSecret: vi.fn().mockResolvedValue('test-secret'),

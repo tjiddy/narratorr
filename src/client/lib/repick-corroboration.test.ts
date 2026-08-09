@@ -3,9 +3,7 @@ import { needsChapterCorroboration, applyCorroboration, stampRow, type Corrobora
 import type { MatchResult, BookMetadata } from '@/lib/api';
 import type { ImportRow } from '@/components/manual-import';
 
-// The live Fablehaven case, canonical values already pinned in-repo: the scanner's RAW
-// unrounded runtime, the chapter-table total (Δ 0.02s — inside the band), and the provider
-// scalar of 539 minutes (Δ 879.47s — outside it).
+// Live case: raw scan and chapter total differ by 0.02s; the provider scalar differs by 879.47s.
 const ASIN = 'B00CXXEX8W';
 const SCANNED = 33219.47;
 const PATH = '/audiobooks/Brandon Mull/Fablehaven';
@@ -20,13 +18,7 @@ const mismatchRow: MatchResult = {
   scannedSeconds: SCANNED,
 };
 
-/**
- * A row the match job flagged `missing-duration` — the SCAN side has a positive runtime, the
- * best match has none (`MatchReasonKind`: "duration evidence is incomplete on ONE side").
- * Re-picking an edition that DOES carry a runtime re-evaluates this row, and when that
- * runtime is out of band it lands on the very same outcome (4) a `duration-mismatch` row
- * does — so it is equally entitled to the chapter-table second opinion.
- */
+/** A picked scalar turns this `missing-duration` row into the same qualifying medium mismatch. */
 const missingDurationRow: MatchResult = {
   path: PATH,
   confidence: 'medium',
@@ -37,7 +29,7 @@ const missingDurationRow: MatchResult = {
   scannedSeconds: SCANNED,
 };
 
-/** The picked edition: the provider scalar (539 min = 32340s) is out of band vs SCANNED. */
+/** The picked provider scalar is out of band with `SCANNED`. */
 const picked = (over: Partial<BookMetadata> = {}): BookMetadata => ({
   title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], duration: 539, asin: ASIN, ...over,
 });
@@ -48,10 +40,7 @@ describe('needsChapterCorroboration (#2055)', () => {
       .toEqual({ asin: ASIN, scannedSeconds: SCANNED });
   });
 
-  // The predicate keys on the outcome of the re-evaluation, NOT on the row's ORIGINAL
-  // reason kind. A `missing-duration` row whose re-pick supplies the runtime that was
-  // missing lands on outcome (4) too, and it must dispatch — gating on the incoming
-  // `reasonKind` instead would leave every other case in this file green.
+  // Eligibility follows the re-evaluated outcome, not the original reason kind.
   it('requests corroboration when an original missing-duration row re-evaluates out of band', () => {
     expect(needsChapterCorroboration(missingDurationRow, picked(), undefined))
       .toEqual({ asin: ASIN, scannedSeconds: SCANNED });
@@ -68,7 +57,7 @@ describe('needsChapterCorroboration (#2055)', () => {
   });
 
   it('makes no request for an IN-BAND re-pick — the sync path already cleared it to high', () => {
-    // 553 min = 33180s, Δ 39.47s from the scan: inside the 240s band.
+    // 553 minutes is 39.47 seconds from the scan, inside the 240-second band.
     expect(needsChapterCorroboration(mismatchRow, picked({ duration: 553 }), undefined)).toBeUndefined();
   });
 
@@ -212,24 +201,13 @@ describe('stampRow (#2060)', () => {
     expect(stamped.matchGeneration).toBe(5);
   });
 
-  // Pins the property order inside the four-line body (`{ ...row, matchGeneration }`, not the
-  // reverse): with the spread last, a row already carrying a stamp would keep the STALE one and
-  // every superseding write in both hooks would silently stop superseding.
+  // `matchGeneration` must follow `...row` or an older stamp wins.
   it('overwrites an older stamp already on the row', () => {
     expect(stampRow({ ...unstamped, matchGeneration: 3 }, 9).matchGeneration).toBe(9);
   });
 
-  // Type-level regression, checked by `pnpm typecheck` rather than by this run: `readonly`
-  // means the pair can only be set by construction, so a write that installs `matchResult`
-  // cannot skip the stamp by mutating a row in place. Each directive below would go unused —
-  // TS2578, a typecheck failure — the moment a `readonly` is dropped. The assigned values are
-  // well-typed, so `readonly` is the ONLY error each line can raise.
-  //
-  // Deliberately NOT pinned here because it is NOT caught: assigning through a structurally
-  // compatible mutable alias (`const m: MutableRow = row; m.matchResult = next;`) compiles with
-  // no cast and no error, because TypeScript ignores `readonly` in assignability. Nor are
-  // `Object.defineProperty` / `Reflect.set`. `readonly` blocks the realistic accident, not the
-  // invariant — #2182 is the enforcement work.
+  // Typecheck requires each directive to fail solely because these fields are readonly.
+  // Mutable structural aliases can evade readonly; the custom lint rule enforces that wider invariant.
   it('rejects every direct write to matchResult / matchGeneration, and still allows construction', () => {
     const row: ImportRow = stampRow(unstamped, 1);
     const next: MatchResult = mismatchRow;

@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 
-// Mock node:fs/promises before importing the module under test
 vi.mock('node:fs/promises', () => ({
   stat: vi.fn(),
   readdir: vi.fn(),
@@ -28,7 +27,6 @@ import {
   ContentFailureError,
 } from './import-helpers.js';
 
-/** Normalize backslashes to forward slashes for cross-platform test assertions. */
 const norm = (s: string) => s.split('\\').join('/');
 
 function makeDirent(name: string, isFile: boolean, isDirectory: boolean) {
@@ -76,7 +74,6 @@ describe('assertCopyVerified (#1304)', () => {
   });
 
   it('does not throw exactly at the threshold boundary (source * 0.99)', () => {
-    // 1000 * 0.99 === 990 — equal is not "below", so it passes.
     expect(() => assertCopyVerified(1000, 990)).not.toThrow();
   });
 
@@ -89,8 +86,6 @@ describe('assertCopyVerified (#1304)', () => {
   });
 
   it('does not throw for a zero-byte source/target (audio-free folder edge, #1346)', () => {
-    // Reachable when an audio-free folder slips through (0 < 0 * 0.99 === 0 < 0 is false),
-    // so verification is a no-op here rather than a false content failure. Pinned deliberately.
     expect(() => assertCopyVerified(0, 0)).not.toThrow();
   });
 });
@@ -118,14 +113,12 @@ describe('buildTargetPath', () => {
 
   it('omits optional tokens (narrator, year) when not provided', () => {
     const result = buildTargetPath('/audiobooks', '{author}/{title}', { title: 'Test' }, 'Author');
-    // Should not contain literal {narrator} or {year} placeholders
     expect(result).not.toMatch(/\{narrator\}/);
     expect(result).not.toMatch(/\{year\}/);
   });
 
   it('joins rendered path segments with library path', () => {
     const result = buildTargetPath('/audiobooks', '{author}/{title}', { title: 'Book' }, 'Author');
-    // Result should include the library path (join normalizes separators per platform)
     expect(result).toContain('audiobooks');
     expect(result).toContain('Author');
     expect(result).toContain('Book');
@@ -160,7 +153,6 @@ describe('buildTargetPath', () => {
     it('template containing {edition}: renders the label in place and does NOT double it with the suffix', () => {
       const result = buildTargetPath('/audiobooks', '{author}/{title} ({edition})', { title: 'Dark Matter' }, 'Blake Crouch', undefined, 'Full Cast');
       expect(result).toBe('/audiobooks/Blake Crouch/Dark Matter (Full Cast)');
-      // Exactly one occurrence of the label — not "(Full Cast) (Full Cast)".
       expect(result.match(/Full Cast/g)).toHaveLength(1);
     });
 
@@ -177,7 +169,6 @@ describe('buildTargetPath', () => {
 
     it('a slash in the label does NOT fragment the path into extra segments (suffix branch)', () => {
       const result = buildTargetPath('/audiobooks', '{author}/{title}', book, 'Blake Crouch', undefined, 'R.C. Bray/Full Cast');
-      // Exactly three segments under the library root: author / leaf — no phantom nested folder.
       expect(norm(result)).toBe('/audiobooks/Blake Crouch/Dark Matter (R.C. BrayFull Cast)');
     });
 
@@ -191,7 +182,6 @@ describe('buildTargetPath', () => {
       const token = buildTargetPath('/audiobooks', '{author}/{title} ({edition})', book, 'Blake Crouch', undefined, 'Cast: Ensemble');
       expect(suffix).toBe(token);
       expect(norm(suffix)).toBe('/audiobooks/Blake Crouch/Dark Matter (Cast Ensemble)');
-      // The colon — illegal on NTFS — never reaches the leaf.
       expect(suffix.split('/').pop()).not.toContain(':');
     });
 
@@ -233,7 +223,6 @@ describe('buildTargetPath', () => {
         const leaf = norm(result).split('/').pop()!;
         expect(leaf.length).toBeLessThanOrEqual(255);
         expect(leaf).toContain('(Full Cast)');
-        // The {edition} keeps its in-place wrapper — it is not normalized to a trailing suffix.
         expect(leaf.endsWith('(Full Cast)')).toBe(true);
       });
 
@@ -248,13 +237,10 @@ describe('buildTargetPath', () => {
         const result = buildTargetPath('/audiobooks', '{author}/{title}', longBook, 'Author', undefined, longLabel);
         const leaf = norm(result).split('/').pop()!;
         expect(leaf.length).toBeLessThanOrEqual(255);
-        // The discriminator is never reduced to empty: the long title is sacrificed, the label remains.
         expect(leaf).toContain('N');
       });
 
       it('token branch: discriminator survives when BOTH {title} and {titleSort} land in the leaf (F2)', () => {
-        // A legal template that renders two unbounded title contributions before {edition}; the
-        // per-contribution budgeting must still leave the in-place (Full Cast) intact.
         const result = buildTargetPath('/audiobooks', '{author}/{title} - {titleSort} ({edition})', longBook, 'Author', undefined, 'Full Cast');
         const leaf = norm(result).split('/').pop()!;
         expect(leaf.length).toBeLessThanOrEqual(255);
@@ -263,14 +249,11 @@ describe('buildTargetPath', () => {
       });
 
       it('token branch: an overlong discriminator with a 255-char title still survives non-empty (F3)', () => {
-        // When the discriminator itself is ~255 chars, the budgeting probes must NOT saturate (which
-        // would leave the title unbudgeted and let the final render truncate {edition} away entirely).
-        // The title is budgeted to near-nothing so the long discriminator dominates and survives.
+        // Short budgeting probes must not saturate when the discriminator does.
         const longLabel = 'N'.repeat(255);
         const result = buildTargetPath('/audiobooks', '{author}/{title} ({edition})', longBook, 'Author', undefined, longLabel);
         const leaf = norm(result).split('/').pop()!;
         expect(leaf.length).toBeLessThanOrEqual(255);
-        // The discriminator survives (non-empty), and the title did NOT consume the whole leaf.
         expect(leaf).toContain('N');
         expect(leaf).toContain('(N');
       });
@@ -283,7 +266,7 @@ describe('buildTargetPath', () => {
           const suffix = buildTargetPath('/audiobooks', '{author}/{title}', book, 'Blake Crouch', options, 'Full Cast');
           const token = buildTargetPath('/audiobooks', '{author}/{title} ({edition})', book, 'Blake Crouch', options, 'Full Cast');
           expect(suffix).toBe(token);
-          // Discriminator is verbatim — NOT styled to "FULL.CAST" by the naming transforms.
+          // Naming transforms must not style the discriminator.
           expect(suffix.split('/').pop()).toContain('(Full Cast)');
         });
 
@@ -307,9 +290,9 @@ describe('getPathSize', () => {
 
   it('returns total size for a directory with files', async () => {
     vi.mocked(stat)
-      .mockResolvedValueOnce({ isFile: () => false, isDirectory: () => true } as unknown as Stats) // dir itself
-      .mockResolvedValueOnce({ size: 100 } as Stats) // file1
-      .mockResolvedValueOnce({ size: 200 } as Stats); // file2
+      .mockResolvedValueOnce({ isFile: () => false, isDirectory: () => true } as unknown as Stats)
+      .mockResolvedValueOnce({ size: 100 } as Stats)
+      .mockResolvedValueOnce({ size: 200 } as Stats);
     vi.mocked(readdir).mockResolvedValue([
       makeDirent('file1.mp3', true, false),
       makeDirent('file2.mp3', true, false),
@@ -320,11 +303,10 @@ describe('getPathSize', () => {
   });
 
   it('recursively sums nested directory sizes', async () => {
-    // Root dir
     vi.mocked(stat)
       .mockResolvedValueOnce({ isFile: () => false, isDirectory: () => true } as unknown as Stats)
-      .mockResolvedValueOnce({ isFile: () => false, isDirectory: () => true } as unknown as Stats) // subdir
-      .mockResolvedValueOnce({ size: 500 } as Stats); // nested file
+      .mockResolvedValueOnce({ isFile: () => false, isDirectory: () => true } as unknown as Stats)
+      .mockResolvedValueOnce({ size: 500 } as Stats);
 
     vi.mocked(readdir)
       .mockResolvedValueOnce([makeDirent('subdir', false, true)] as never)
@@ -335,23 +317,11 @@ describe('getPathSize', () => {
   });
 });
 
-/**
- * #1856 — the three directory sizers (`getPathSize` / `getAudioPathSize` / `getVisiblePathSize`)
- * were consolidated onto one internal parameterized walker. These cases pin every row of the
- * behavior matrix the consolidation must preserve byte-for-byte: the hidden/audio/direct-file/
- * identity-root policy axes, the root/child symlink asymmetry, the non-file-root fall-through, and
- * the fail-loud (never catch-and-return-zero) error contract. All exercise the PUBLIC wrappers only
- * and mock at the `node:fs/promises` OS boundary (per `esm-same-module-vi-mock-bypass`).
- */
+// Public-wrapper matrix for the shared walker: hidden/audio/root/Dirent/error policies (#1856).
 describe('directory sizers — consolidated walker policy matrix (#1856)', () => {
   const ROOT = '/root';
 
-  /**
-   * Path-driven fs mock. `dirs` maps a directory path → its `readdir` Dirent[]; `files` maps a file
-   * path → its byte size. A path present in `files` stats as a file; one present in `dirs` stats as
-   * a directory and `readdir`s to its entries. Any other path rejects, so a forbidden `stat`/`readdir`
-   * (e.g. on an entry that should have been filtered before I/O) fails the test loudly.
-   */
+  // Unknown paths reject so forbidden stat/readdir calls fail loudly.
   function mockFs(
     dirs: Record<string, ReturnType<typeof makeDirent>[]>,
     files: Record<string, number>,
@@ -375,14 +345,14 @@ describe('directory sizers — consolidated walker policy matrix (#1856)', () =>
       { [join(ROOT, 'a.mp3')]: 100, [join(ROOT, 'TRACK.M4B')]: 10 },
     );
     expect(await getPathSize(ROOT)).toBe(110);
-    expect(await getAudioPathSize(ROOT)).toBe(110); // .M4B lowercases into AUDIO_EXTENSIONS
+    expect(await getAudioPathSize(ROOT)).toBe(110);
     expect(await getVisiblePathSize(ROOT)).toBe(110);
   });
 
   it('dir with only a visible non-audio cover.jpg (50): 50 / 0 / 50', async () => {
     mockFs({ [ROOT]: [makeDirent('cover.jpg', true, false)] }, { [join(ROOT, 'cover.jpg')]: 50 });
     expect(await getPathSize(ROOT)).toBe(50);
-    expect(await getAudioPathSize(ROOT)).toBe(0); // non-audio rejected by the extension predicate
+    expect(await getAudioPathSize(ROOT)).toBe(0);
     expect(await getVisiblePathSize(ROOT)).toBe(50);
   });
 
@@ -391,7 +361,7 @@ describe('directory sizers — consolidated walker policy matrix (#1856)', () =>
       { [ROOT]: [makeDirent('a.mp3', true, false), makeDirent('.tmp.mp3', true, false)] },
       { [join(ROOT, 'a.mp3')]: 100, [join(ROOT, '.tmp.mp3')]: 999 },
     );
-    expect(await getPathSize(ROOT)).toBe(1099); // counts the hidden file
+    expect(await getPathSize(ROOT)).toBe(1099);
     expect(await getAudioPathSize(ROOT)).toBe(100);
     expect(await getVisiblePathSize(ROOT)).toBe(100);
   });
@@ -404,7 +374,7 @@ describe('directory sizers — consolidated walker policy matrix (#1856)', () =>
       },
       { [join(ROOT, 'a.mp3')]: 100, [join(ROOT, '.hidden', 'big.m4b')]: 5000 },
     );
-    expect(await getPathSize(ROOT)).toBe(5100); // descends the hidden subtree
+    expect(await getPathSize(ROOT)).toBe(5100);
     expect(await getAudioPathSize(ROOT)).toBe(100);
     expect(await getVisiblePathSize(ROOT)).toBe(100);
   });
@@ -428,26 +398,23 @@ describe('directory sizers — consolidated walker policy matrix (#1856)', () =>
     const p = '/x/cover.jpg';
     mockFs({}, { [p]: 50 });
     expect(await getPathSize(p)).toBe(50);
-    expect(await getAudioPathSize(p)).toBe(0); // non-audio direct file → 0
+    expect(await getAudioPathSize(p)).toBe(0);
     expect(await getVisiblePathSize(p)).toBe(50);
   });
 
-  // F2 — the direct-file-root audio predicate has its OWN toLowerCase() (walkSize root branch),
-  // separate from the child predicate. A lowercase-only root fixture would leave that call untested,
-  // so `getAudioPathSize('/x/BOOK.M4B')` regressing to 0 would pass. This pins the root case-fold.
   it('direct file root uppercase BOOK.M4B (100): 100 / 100 / 100 (case-insensitive root predicate, F2)', async () => {
     const p = '/x/BOOK.M4B';
     mockFs({}, { [p]: 100 });
     expect(await getPathSize(p)).toBe(100);
-    expect(await getAudioPathSize(p)).toBe(100); // root predicate lowercases the extension → .m4b matches
+    expect(await getAudioPathSize(p)).toBe(100);
     expect(await getVisiblePathSize(p)).toBe(100);
   });
 
   it('direct hidden file root .a.mp3 (100): 100 / 0 / 100 (F32)', async () => {
     const p = '/x/.a.mp3';
     mockFs({}, { [p]: 100 });
-    expect(await getPathSize(p)).toBe(100); // hidden root file still sized by the all-entry wrapper
-    expect(await getAudioPathSize(p)).toBe(0); // hidden basename → 0 (F32)
+    expect(await getPathSize(p)).toBe(100);
+    expect(await getAudioPathSize(p)).toBe(0);
     expect(await getVisiblePathSize(p)).toBe(100);
   });
 
@@ -465,17 +432,12 @@ describe('directory sizers — consolidated walker policy matrix (#1856)', () =>
       { [staging]: [makeDirent('t.mp3', true, false), makeDirent('c.jpg', true, false)] },
       { [join(staging, 't.mp3')]: 42, [join(staging, 'c.jpg')]: 15 },
     );
-    expect(await getPathSize(staging)).toBe(57); // both children
-    expect(await getAudioPathSize(staging)).toBe(42); // audio child only
-    expect(await getVisiblePathSize(staging)).toBe(57); // visible children
+    expect(await getPathSize(staging)).toBe(57);
+    expect(await getAudioPathSize(staging)).toBe(42);
+    expect(await getVisiblePathSize(staging)).toBe(57);
   });
 
-  // F1 — the recursive descent (walkSize's `else if isDirectory` branch) is the ONLY place both
-  // `includeHidden` and `audioOnly` are forwarded into a nested visible directory. Every other
-  // fixture puts the hidden/non-audio entries at the ROOT, so hard-coding the recursive call to the
-  // all-files preset would still pass them. This case buries audio, non-audio, and hidden entries a
-  // level down under a VISIBLE subdir and asserts distinct per-wrapper totals — the only way all
-  // three match is if both flags propagate through the recursion.
+  // Only a nested fixture proves both policy flags propagate through recursion.
   it('recursive descent forwards both policies into a nested visible subdir (F1)', async () => {
     const sub = join(ROOT, 'sub');
     const nested = join(sub, '.nested');
@@ -498,16 +460,11 @@ describe('directory sizers — consolidated walker policy matrix (#1856)', () =>
         [join(nested, 'buried.mp3')]: 5000,
       },
     );
-    // all-entries: top + deep + notes + .hidden.mp3 + .nested/buried = 100+200+30+999+5000
     expect(await getPathSize(ROOT)).toBe(6329);
-    // audio + skip-hidden: top + deep only (notes non-audio, .hidden.mp3 hidden, .nested skipped)
     expect(await getAudioPathSize(ROOT)).toBe(300);
-    // all-visible: top + deep + notes (.hidden.mp3 hidden, .nested skipped)
     expect(await getVisiblePathSize(ROOT)).toBe(330);
   });
 
-  // Section 3a — the hidden skip runs BEFORE any I/O on the child (the F40 failure mode): a hidden
-  // child/subtree that would reject if stat'd/readdir'd must never be touched.
   it('skips hidden children before stat/readdir — audio & visible wrappers (F40)', async () => {
     const realFile = join(ROOT, 'real.mp3');
     const hiddenFile = join(ROOT, '.tmp.mp3');
@@ -519,7 +476,7 @@ describe('directory sizers — consolidated walker policy matrix (#1856)', () =>
         const key = String(p);
         if (key === ROOT) return { isFile: () => false, isDirectory: () => true } as unknown as Stats;
         if (key === realFile) return { isFile: () => true, size: 100 } as Stats;
-        throw new Error(`ENOENT stat ${key}`); // any hidden child path rejects if touched
+        throw new Error(`ENOENT stat ${key}`);
       });
       vi.mocked(readdir).mockImplementation(async (p) => {
         if (String(p) === ROOT) {
@@ -532,15 +489,12 @@ describe('directory sizers — consolidated walker policy matrix (#1856)', () =>
         throw new Error(`ENOENT readdir ${String(p)}`);
       });
 
-      expect(await fn(ROOT)).toBe(100); // visible audio control only
-      // First-arg inspection (options-aware): neither hidden path was ever passed to stat/readdir.
+      expect(await fn(ROOT)).toBe(100);
       expect(vi.mocked(stat).mock.calls.every((c) => c[0] !== hiddenFile && c[0] !== hiddenDir)).toBe(true);
       expect(vi.mocked(readdir).mock.calls.every((c) => c[0] !== hiddenDir)).toBe(true);
     }
   });
 
-  // Section 3b — getAudioPathSize applies the extension predicate to the Dirent name BEFORE stat, so
-  // a visible non-audio sibling is never stat'd (can't raise ENOENT/EACCES on a vanishing cover).
   it('getAudioPathSize never stats a visible non-audio child', async () => {
     const realFile = join(ROOT, 'real.mp3');
     const coverFile = join(ROOT, 'cover.jpg');
@@ -548,7 +502,7 @@ describe('directory sizers — consolidated walker policy matrix (#1856)', () =>
       const key = String(p);
       if (key === ROOT) return { isFile: () => false, isDirectory: () => true } as unknown as Stats;
       if (key === realFile) return { isFile: () => true, size: 100 } as Stats;
-      throw new Error(`ENOENT stat ${key}`); // cover.jpg must never be stat'd
+      throw new Error(`ENOENT stat ${key}`);
     });
     vi.mocked(readdir).mockResolvedValue([
       makeDirent('real.mp3', true, false),
@@ -559,9 +513,7 @@ describe('directory sizers — consolidated walker policy matrix (#1856)', () =>
     expect(vi.mocked(stat).mock.calls.every((c) => c[0] !== coverFile)).toBe(true);
   });
 
-  // Section 4 — child classification is by Dirent only. A non-regular child (isFile() === false AND
-  // isDirectory() === false: symlink/FIFO/socket/device) is ignored with no further I/O, for ALL
-  // three presets. Guards against a "stat every child" consolidation that would count linked bytes.
+  // Dirent classification must prevent stat-following symlinks and devices.
   it('ignores a non-regular child Dirent without stat/readdir — all three presets (F5)', async () => {
     const realFile = join(ROOT, 'real.mp3');
     const weird = join(ROOT, 'weird');
@@ -571,7 +523,7 @@ describe('directory sizers — consolidated walker policy matrix (#1856)', () =>
         const key = String(p);
         if (key === ROOT) return { isFile: () => false, isDirectory: () => true } as unknown as Stats;
         if (key === realFile) return { isFile: () => true, size: 100 } as Stats;
-        throw new Error(`must not touch ${key}`); // the non-regular child must never be stat'd
+        throw new Error(`must not touch ${key}`);
       });
       vi.mocked(readdir).mockImplementation(async (p) => {
         if (String(p) === ROOT) {
@@ -580,14 +532,12 @@ describe('directory sizers — consolidated walker policy matrix (#1856)', () =>
         throw new Error(`must not readdir ${String(p)}`);
       });
 
-      expect(await fn(ROOT)).toBe(100); // visible audio control, counted by every preset
+      expect(await fn(ROOT)).toBe(100);
       expect(vi.mocked(stat).mock.calls.every((c) => c[0] !== weird)).toBe(true);
       expect(vi.mocked(readdir).mock.calls.every((c) => c[0] !== weird)).toBe(true);
     }
   });
 
-  // Section 5 — a non-file, non-directory root (FIFO/socket/device) falls through to readdir(path)
-  // with NO isDirectory() short-circuit that returns 0; the readdir error propagates. Sentinel identity.
   it('non-file root falls through to readdir and propagates its error — all three presets (F10)', async () => {
     const sentinel = new Error('ENOTDIR sentinel');
     for (const fn of [getPathSize, getAudioPathSize, getVisiblePathSize]) {
@@ -599,8 +549,6 @@ describe('directory sizers — consolidated walker policy matrix (#1856)', () =>
     }
   });
 
-  // Section 6 — visited-path failures are never swallowed into a partial/zero total. Sentinel identity
-  // is itself the proof the getAudioStats catch-and-return-zero contract was not adopted.
   it('root stat rejection propagates unchanged — all three presets', async () => {
     const sentinel = new Error('root stat sentinel');
     for (const fn of [getPathSize, getAudioPathSize, getVisiblePathSize]) {
@@ -622,7 +570,7 @@ describe('directory sizers — consolidated walker policy matrix (#1856)', () =>
 
   it('admitted child stat rejection propagates unchanged — all three presets', async () => {
     const sentinel = new Error('child stat sentinel');
-    const realFile = join(ROOT, 'real.mp3'); // audio so getAudioPathSize also admits (and stats) it
+    const realFile = join(ROOT, 'real.mp3');
     for (const fn of [getPathSize, getAudioPathSize, getVisiblePathSize]) {
       vi.clearAllMocks();
       vi.mocked(stat).mockImplementation(async (p) => {
@@ -800,9 +748,6 @@ describe('copyAudioFiles', () => {
       .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never)
       .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never);
 
-    // #1346: the flat-collision site (collectFlatFiles) throws a typed ContentFailureError.
-    // Byte-for-byte message pin (#1346 AC) — full text, not a substring, so any suffix/path
-    // drift on this throw site fails the test rather than slipping through.
     const err = await copyAudioFiles('/src', '/dest').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ContentFailureError);
     expect(norm((err as Error).message)).toBe(
@@ -856,19 +801,14 @@ describe('copyAudioFiles', () => {
 });
 
 describe('copyAudioFiles — multi-disc detection and sequential renaming', () => {
-  /**
-   * Helper: mock readdir to return disc subfolders at root, then files within each disc.
-   * discEntries: array of [discName, audioFileNames[]]
-   */
   function setupDiscLayout(discEntries: Array<[string, string[]]>, rootFiles: string[] = []) {
     const rootItems = [
       ...rootFiles.map(f => makeDirent(f, true, false)),
       ...discEntries.map(([name]) => makeDirent(name, false, true)),
     ];
     vi.mocked(readdir)
-      .mockResolvedValueOnce(rootItems as never); // root readdir
+      .mockResolvedValueOnce(rootItems as never);
 
-    // Each disc subfolder readdir
     for (const [, files] of discEntries) {
       vi.mocked(readdir).mockResolvedValueOnce(
         files.map(f => makeDirent(f, true, false)) as never,
@@ -876,14 +816,12 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
     }
   }
 
-  /** Extract copied destination filenames from cp mock calls. */
   function getCopiedDestNames(): string[] {
     return (cp as Mock).mock.calls.map(
       (c: unknown[]) => norm(c[1] as string).split('/').pop()!,
     );
   }
 
-  /** Extract copied source paths from cp mock calls. */
   function getCopiedSrcPaths(): string[] {
     return (cp as Mock).mock.calls.map(
       (c: unknown[]) => norm(c[0] as string),
@@ -899,7 +837,6 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
     await copyAudioFiles('/src', '/dest');
 
     expect(cp).toHaveBeenCalledTimes(4);
-    // 4 tracks → padWidth=1 → 1.mp3, 2.mp3, 3.mp3, 4.mp3
     expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3', '3.mp3', '4.mp3']);
   });
 
@@ -911,7 +848,6 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
 
     await copyAudioFiles('/src', '/dest');
 
-    // Disc 2 should come first (natural sort), then Disc 10
     const srcPaths = getCopiedSrcPaths();
     expect(srcPaths[0]).toContain('Disc 2');
     expect(srcPaths[1]).toContain('Disc 10');
@@ -931,8 +867,6 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
   });
 
   it('orders unpadded tracks within each disc numerically — Track2 before Track10 (#1192)', async () => {
-    // Multi-disc (>=2) path: within-disc order comes straight from the locale-numeric
-    // collectAudioFiles sort, which then drives sequential numbering.
     setupDiscLayout([
       ['Disc 01', ['Track10.mp3', 'Track2.mp3', 'Track1.mp3']],
       ['Disc 02', ['Track2.mp3', 'Track1.mp3']],
@@ -940,14 +874,12 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
 
     await copyAudioFiles('/src', '/dest');
 
-    // locale-numeric source ordering → Track1, Track2, Track10 (NOT alphabetic Track1, Track10, Track2)
     const srcPaths = getCopiedSrcPaths();
     expect(srcPaths[0]!.split('\\').join('/')).toBe('/src/Disc 01/Track1.mp3');
     expect(srcPaths[1]!.split('\\').join('/')).toBe('/src/Disc 01/Track2.mp3');
     expect(srcPaths[2]!.split('\\').join('/')).toBe('/src/Disc 01/Track10.mp3');
     expect(srcPaths[3]!.split('\\').join('/')).toBe('/src/Disc 02/Track1.mp3');
     expect(srcPaths[4]!.split('\\').join('/')).toBe('/src/Disc 02/Track2.mp3');
-    // 5 tracks → padWidth=1 → sequential 1..5 in play order
     expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3', '3.mp3', '4.mp3', '5.mp3']);
   });
 
@@ -966,7 +898,6 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
   });
 
   it('handles common disc patterns: CD 1, Disk 2, disc01, DISC 004, cd1', async () => {
-    // Each pattern should be detected as a disc folder
     for (const discName of ['CD 1', 'Disk 2', 'disc01', 'DISC 004', 'cd1']) {
       vi.clearAllMocks();
       vi.mocked(readdir)
@@ -975,13 +906,11 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
 
       await copyAudioFiles('/src', '/dest');
 
-      // Single disc treated as no-disc (no renaming), but should not error
       expect(cp).toHaveBeenCalledTimes(1);
     }
   });
 
   it('rejects non-disc folders — does not treat Extras, Part 1, 01 - Chapter One as disc folders', async () => {
-    // Non-disc subfolders should be recursively flattened (existing behavior), not disc-detected
     vi.mocked(readdir)
       .mockResolvedValueOnce([
         makeDirent('Extras', false, true),
@@ -992,7 +921,6 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
 
     await copyAudioFiles('/src', '/dest');
 
-    // Files should be flattened with original names (no sequential renaming)
     const destNames = getCopiedDestNames();
     expect(destNames).toContain('bonus.mp3');
     expect(destNames).toContain('chapter.mp3');
@@ -1005,7 +933,6 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
 
     await copyAudioFiles('/src', '/dest');
 
-    // Single disc = no renaming, just flatten
     const destNames = getCopiedDestNames();
     expect(destNames).toEqual(['track1.mp3', 'track2.mp3']);
   });
@@ -1019,12 +946,10 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
     await copyAudioFiles('/src', '/dest');
 
     expect(cp).toHaveBeenCalledTimes(2);
-    // 2 tracks → padWidth=1 → 1.mp3, 2.mp3
     expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3']);
   });
 
   it('zero-pads sequential names when 10+ tracks (2-digit padding)', async () => {
-    // 6 tracks per disc = 12 total → padWidth=2 → 01.mp3 through 12.mp3
     setupDiscLayout([
       ['Disc 01', ['a.mp3', 'b.mp3', 'c.mp3', 'd.mp3', 'e.mp3', 'f.mp3']],
       ['Disc 02', ['g.mp3', 'h.mp3', 'i.mp3', 'j.mp3', 'k.mp3', 'l.mp3']],
@@ -1047,7 +972,6 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
 
     await copyAudioFiles('/src', '/dest');
 
-    // 5 tracks → padWidth=1 → 1.mp3 through 5.mp3
     expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3', '3.mp3', '4.mp3', '5.mp3']);
   });
 
@@ -1062,7 +986,6 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
     const srcPaths = getCopiedSrcPaths();
     expect(srcPaths[0]).toContain('Disc 1');
     expect(srcPaths[1]).toContain('Disc 02');
-    // 2 tracks → padWidth=1
     expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3']);
   });
 
@@ -1077,7 +1000,6 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
 
     await copyAudioFiles('/src', '/dest');
 
-    // Only audio file copied, single disc = no renaming
     expect(cp).toHaveBeenCalledTimes(1);
     expect(getCopiedDestNames()).toEqual(['track.mp3']);
   });
@@ -1095,10 +1017,8 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
 
     await copyAudioFiles('/src', '/dest');
 
-    // 2 disc tracks get sequential names, Extras file flattened with original name
     expect(cp).toHaveBeenCalledTimes(3);
     const destNames = getCopiedDestNames();
-    // Non-disc files first (alpha sort), then sequential disc files
     expect(destNames).toContain('bonus.mp3');
     expect(destNames).toContain('1.mp3');
     expect(destNames).toContain('2.mp3');
@@ -1115,8 +1035,6 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
       .mockResolvedValueOnce([makeDirent('b.mp3', true, false)] as never) // Disc 02
       .mockResolvedValueOnce([makeDirent('1.mp3', true, false)] as never); // Extras — collides with sequential "1.mp3"
 
-    // #1346: the disc/non-disc sequential-collision site throws a typed ContentFailureError.
-    // Byte-for-byte message pin (#1346 AC).
     const err = await copyAudioFiles('/src', '/dest').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ContentFailureError);
     expect(norm((err as Error).message)).toBe(
@@ -1126,7 +1044,6 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
   });
 
   it('duplicate filenames within the SAME disc still error', async () => {
-    // Single disc with duplicate files — this shouldn't happen in practice but should error
     vi.mocked(readdir)
       .mockResolvedValueOnce([
         makeDirent('Disc 01', false, true),
@@ -1138,10 +1055,8 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
       ] as never)
       .mockResolvedValueOnce([makeDirent('other.mp3', true, false)] as never);
 
-    // Within-disc duplicates will be caught by alphabetical sort producing same name
-    // The sequential renaming should handle this gracefully, but let's verify no data loss
+    // Sequential renaming makes duplicate source basenames safe within a disc.
     await copyAudioFiles('/src', '/dest');
-    // With sequential renaming, even within-disc dupes get unique names
     expect(cp).toHaveBeenCalledTimes(3);
   });
 
@@ -1158,8 +1073,6 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
       .mockResolvedValueOnce([makeDirent('cover.mp3', true, false)] as never) // Extras
       .mockResolvedValueOnce([makeDirent('cover.mp3', true, false)] as never); // Bonus
 
-    // #1346: the non-disc collision site (collectMultiDiscFiles) throws a typed ContentFailureError.
-    // Byte-for-byte message pin (#1346 AC).
     const err = await copyAudioFiles('/src', '/dest').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ContentFailureError);
     expect(norm((err as Error).message)).toBe(
@@ -1176,7 +1089,6 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
 
     await copyAudioFiles('/src', '/dest');
 
-    // 2 tracks → padWidth=1
     expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3']);
   });
 
@@ -1188,7 +1100,6 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
 
     await copyAudioFiles('/src', '/dest');
 
-    // Disc 2 (number=2) before CD 10 (number=10) regardless of prefix
     const srcPaths = getCopiedSrcPaths();
     expect(srcPaths[0]).toContain('Disc 2');
     expect(srcPaths[1]).toContain('CD 10');
@@ -1207,15 +1118,10 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
     await copyAudioFiles('/src', '/dest');
 
     const destNames = getCopiedDestNames();
-    // Non-disc files first (original name), then sequential disc files
     expect(destNames).toEqual(['root_track.mp3', '1.mp3', '2.mp3']);
   });
 
-  // ---- Embedded disc-marker source folders (#1272) ----
-
   it('detects embedded "Disc N of M" source subfolders and flattens without a basename collision', async () => {
-    // Each disc holds an identically-named "01.mp3" — collectFlatFiles would throw on the dupe;
-    // the multi-disc path sequentially renames them instead.
     setupDiscLayout([
       ['2005 Non Fiction David McCullough - 1776 Disc 1 of 10 - File ~ of 28 - yEnc', ['01.mp3']],
       ['2005 Non Fiction David McCullough - 1776 Disc 2 of 10 - File ~ of 28 - yEnc', ['01.mp3']],
@@ -1239,8 +1145,7 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
   });
 
   it('sorts embedded-marker discs by parsed disc number — shared parser with discovery', async () => {
-    // Names match ONLY the embedded grammar (not DISC_FOLDER_PATTERN / parseTitledDiscFolder),
-    // so correct ordering proves extractDiscNumber routes through parseEmbeddedDiscMarker.
+    // These match only the embedded grammar, so ordering proves shared-parser use.
     setupDiscLayout([
       ['Author - Long Book Disc 10 of 10', ['ten.mp3']],
       ['Author - Long Book Disc 2 of 10', ['two.mp3']],
@@ -1255,15 +1160,9 @@ describe('copyAudioFiles — multi-disc detection and sequential renaming', () =
 });
 
 describe('reconstructDiscGroup', () => {
-  // reconstructDiscGroup reads the parent dir, then probes each sibling for audio via
-  // containsAudioFiles (one readdir per sibling). Serve both from a path->entries tree so
-  // the audio-bearing decision is driven through the real OS boundary (the exported
-  // containsAudioFiles is same-module, so a vi.mock of it would not intercept the internal call).
+  // Mock readdir: same-module containsAudioFiles calls cannot be intercepted.
   type TreeEntry = { name: string; isFile: boolean; reject?: boolean };
-  // reconstructDiscGroup builds sibling paths with join(parent, name), which emits backslashes
-  // on Windows; the tree is keyed with POSIX separators, so normalize the lookup key before
-  // matching. Without this the per-sibling audio probe ENOENTs on a Windows dev box, audioBearing
-  // empties, and reconstruction returns [] (a silent local-only failure; Linux CI stays green).
+  // Normalize lookup keys because node:path emits backslashes on Windows.
   const norm = (paths: string[]): string[] => paths.map(p => p.split('\\').join('/'));
   function setupTree(tree: Record<string, TreeEntry[]>) {
     vi.mocked(readdir).mockImplementation(async (p: unknown) => {
@@ -1277,7 +1176,6 @@ describe('reconstructDiscGroup', () => {
     });
   }
 
-  /** Build a parent listing of disc dirs (each with one audio file) plus extra siblings. */
   function discTree(
     parent: string,
     stem: string,
@@ -1333,10 +1231,7 @@ describe('reconstructDiscGroup', () => {
     expect(norm(result)).toEqual(['/downloads/1776 Disc 1 of 2', '/downloads/1776 Disc 2 of 2']);
   });
 
-  // #1852 F7 — the hidden guard must PREVENT PROBING the sibling, not merely exclude it from the
-  // output. A hidden sibling's parsed stem already differs (leading dot), so it's excluded from the
-  // returned set with OR without the guard — the load-bearing behavior is that its subtree is never
-  // readdir'd. Deleting the `isHiddenName` guard would probe it (readdir), failing this assertion.
+  // Membership cannot prove the hidden guard because stem mismatch also excludes it; assert no probe.
   it('#1852 F7: never probes (readdir) a hidden audio-bearing sibling subtree', async () => {
     const hiddenSibling = '/downloads/.Author - Book Disc 2 of 3';
     const tree: Record<string, TreeEntry[]> = {
@@ -1344,7 +1239,7 @@ describe('reconstructDiscGroup', () => {
         { name: 'Author - Book Disc 1 of 3', isFile: false },
         { name: 'Author - Book Disc 2 of 3', isFile: false },
         { name: 'Author - Book Disc 3 of 3', isFile: false },
-        { name: '.Author - Book Disc 2 of 3', isFile: false }, // born-hidden orphan/staging sibling
+        { name: '.Author - Book Disc 2 of 3', isFile: false },
       ],
       '/downloads/Author - Book Disc 1 of 3': [{ name: 'a.mp3', isFile: true }],
       '/downloads/Author - Book Disc 2 of 3': [{ name: 'a.mp3', isFile: true }],
@@ -1355,13 +1250,11 @@ describe('reconstructDiscGroup', () => {
 
     const result = await reconstructDiscGroup('/downloads/Author - Book Disc 1 of 3');
 
-    // Correct member set: only the three visible discs.
     expect(norm(result)).toEqual([
       '/downloads/Author - Book Disc 1 of 3',
       '/downloads/Author - Book Disc 2 of 3',
       '/downloads/Author - Book Disc 3 of 3',
     ]);
-    // The visible siblings WERE probed; the hidden sibling's subtree was NEVER readdir'd.
     const probed = vi.mocked(readdir).mock.calls.map(c => String(c[0]).split('\\').join('/'));
     expect(probed).toContain('/downloads/Author - Book Disc 2 of 3');
     expect(probed).not.toContain(hiddenSibling);
@@ -1380,13 +1273,11 @@ describe('reconstructDiscGroup', () => {
 
     const result = await reconstructDiscGroup('/downloads/Author - Book Disc 1 of 10');
 
-    // Discovery left these separate → reconstruction must too (length 1 → callers skip flatten)
     expect(norm(result)).toEqual(['/downloads/Author - Book Disc 1 of 10']);
   });
 
   it('does NOT reconstruct when an AUDIO-bearing markerless sibling shares the stem (all-or-nothing)', async () => {
     const { tree } = discTree('/downloads', 'Author - Book', 2, 3, {
-      // markerless sibling that DOES contain audio → genuinely ambiguous → guard must refuse
       '/downloads/Author - Book Bonus Material': [{ name: 'extra.mp3', isFile: true }],
     });
     setupTree(tree);
@@ -1397,8 +1288,6 @@ describe('reconstructDiscGroup', () => {
   });
 
   it('reconstructs the FULL N-disc set despite an audioless markerless stem-sharing sibling (#1280)', async () => {
-    // The data-loss case: an audioless `<stem> Artwork` sibling broke the all-or-nothing guard
-    // at import time even though discovery (audio-bearing children only) coalesced all 10 discs.
     const { tree, discPaths } = discTree('/downloads', '1776', 10, 10, {
       '/downloads/1776 Artwork': [{ name: 'cover.jpg', isFile: true }, { name: 'info.nfo', isFile: true }],
     });
@@ -1421,8 +1310,6 @@ describe('reconstructDiscGroup', () => {
   });
 
   it('excludes a marker-carrying AUDIOLESS sibling from the member set (members are audio-bearing dirs only)', async () => {
-    // A stray `<stem> Disc 11 of 10` dir with no audio — discovery never persists it (audioless),
-    // so reconstruction must not return it either.
     const { tree, discPaths } = discTree('/downloads', '1776', 10, 10, {
       '/downloads/1776 Disc 11 of 10': [{ name: 'liner-notes.pdf', isFile: true }],
     });
@@ -1435,9 +1322,7 @@ describe('reconstructDiscGroup', () => {
   });
 
   it('reconstructs ALL members of an incomplete N-of-M set unchanged — import is never blocked (#1282)', async () => {
-    // 8-of-10 download: discs 9 and 10 are missing. The incomplete-set warning is display-only
-    // at discovery; reconstruction must still return every available member so the import copies
-    // all 8 discs (refusing partial sets would itself be a data-loss regression).
+    // Missing discs are a discovery warning, not an import veto.
     const { tree, discPaths } = discTree('/downloads', 'Author - Book', 8, 10);
     setupTree(tree);
 
@@ -1448,8 +1333,6 @@ describe('reconstructDiscGroup', () => {
   });
 
   it('treats an unreadable audioless sibling as zero-audio (mirrors discovery scanDir)', async () => {
-    // F5: containsAudioFiles failure on a sibling must not fail the whole import — discovery's
-    // scanDir catches readdir failures and treats the subtree as empty/no-audio.
     const { tree, discPaths } = discTree('/downloads', '1776', 10, 10, {
       '/downloads/1776 Artwork': [{ name: 'x', isFile: true, reject: true }],
     });
@@ -1464,8 +1347,8 @@ describe('reconstructDiscGroup', () => {
 describe('copyDiscGroup', () => {
   it('flattens an ordered member-disc set into target with sequential renaming', async () => {
     vi.mocked(readdir)
-      .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never)  // disc 1 files
-      .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never); // disc 2 files
+      .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never)
+      .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never);
 
     await copyDiscGroup(
       ['/downloads/Author - Book Disc 1 of 2', '/downloads/Author - Book Disc 2 of 2'],
@@ -1513,7 +1396,6 @@ describe('countAudioFiles', () => {
 
 describe('buildTargetPath — first-by-position author/narrator tokens (#71)', () => {
   it('two authors → {author} token resolves to authors[0].name (position=0)', () => {
-    // Callers pass authors[0].name as authorName — buildTargetPath receives the resolved string
     const result = buildTargetPath('/library', '{author}/{title}', { title: 'The Way of Kings', narrators: null }, 'Brandon Sanderson');
     expect(result).toBe('/library/Brandon Sanderson/The Way of Kings');
   });
@@ -1527,7 +1409,6 @@ describe('buildTargetPath — first-by-position author/narrator tokens (#71)', (
   });
 
   it('empty narrators array → {narrator} token is omitted (undefined)', () => {
-    // renderTemplate skips tokens with undefined value — the segment is dropped
     const result = buildTargetPath('/library', '{narrator}/{title}', {
       title: 'The Way of Kings',
       narrators: [],
@@ -1550,7 +1431,6 @@ describe('buildTargetPath — first-by-position author/narrator tokens (#71)', (
 });
 
 describe('titled-disc import flattening (issue #426)', () => {
-  /** Helper: mock readdir for disc layout, same pattern as multi-disc test suite */
   function setupDiscLayout(discEntries: Array<[string, string[]]>, rootFiles: string[] = []) {
     const rootItems = [
       ...rootFiles.map(f => makeDirent(f, true, false)),
@@ -1597,7 +1477,6 @@ describe('titled-disc import flattening (issue #426)', () => {
 
       await copyAudioFiles('/src', '/dest');
 
-      // Disc 01 should sort before Disc 02 (not by "99" in title)
       const srcPaths = getCopiedSrcPaths();
       expect(srcPaths[0]).toContain('Disc 01');
       expect(srcPaths[1]).toContain('Disc 02');
@@ -1631,7 +1510,6 @@ describe('titled-disc import flattening (issue #426)', () => {
     });
 
     it('handles titled-disc folders with non-disc sibling', async () => {
-      // 2 titled-disc + 1 non-disc = still treated as disc (disc count ≥2)
       setupDiscLayout([
         ['BookTitle (Disc 01)', ['01.mp3']],
         ['BookTitle (Disc 02)', ['01.mp3']],
@@ -1641,7 +1519,6 @@ describe('titled-disc import flattening (issue #426)', () => {
       await copyAudioFiles('/src', '/dest');
 
       expect(cp).toHaveBeenCalledTimes(3);
-      // Sequential disc files + non-disc file with original name
       const destNames = getCopiedDestNames();
       expect(destNames).toContain('bonus.mp3');
     });
@@ -1711,7 +1588,6 @@ describe('titled-disc import flattening (issue #426)', () => {
 
       expect(cp).toHaveBeenCalledTimes(4);
       expect(getCopiedDestNames()).toEqual(['1.mp3', '2.mp3', '3.mp3', '4.mp3']);
-      // D1 tracks first, then D2
       const srcPaths = getCopiedSrcPaths();
       expect(srcPaths[0]).toContain('(D1)');
       expect(srcPaths[2]).toContain('(D2)');

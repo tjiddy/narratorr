@@ -1,4 +1,4 @@
-// Does not use useSettingsForm: authentication form with password validation, not a settings API patch.
+// Authentication forms validate passwords; they are not settings API patches.
 import { useState, type FormEvent } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
@@ -8,10 +8,7 @@ import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { useMutationWithToast } from '@/hooks/useMutationWithToast';
 import { inputClass } from '@/components/settings/formStyles';
 
-// Credential inputs sit in row-table rows like the rest of settings, but a username/password
-// doesn't want the full card width — a fixed-width wrapper keeps the input compact and
-// right-aligned (inputClass is w-full, so the wrapper sets the real width, per the NumberField/
-// select idiom).
+// inputClass is full-width; this wrapper keeps credential fields compact and right-aligned.
 const credentialFieldWidth = 'w-64 max-w-full';
 const btnPrimary = 'px-5 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all focus-ring';
 const btnDestructive = 'px-5 py-3 bg-destructive text-destructive-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all focus-ring';

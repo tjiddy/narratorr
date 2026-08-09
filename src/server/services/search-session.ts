@@ -31,7 +31,6 @@ export class SearchSessionManager {
     return this.sessions.get(sessionId);
   }
 
-  /** Cancel a specific indexer within a session. Returns false if session or indexer not found. */
   cancel(sessionId: string, indexerId: number): boolean {
     const session = this.sessions.get(sessionId);
     if (!session) return false;
@@ -43,7 +42,6 @@ export class SearchSessionManager {
     return true;
   }
 
-  /** Remove session and abort all pending controllers. */
   cleanup(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;

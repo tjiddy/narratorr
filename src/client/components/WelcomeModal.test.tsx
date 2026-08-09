@@ -48,7 +48,6 @@ describe('WelcomeModal', () => {
 
   it('Row 1 cards each have a warning badge', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
-    // 3 warning badges for the 3 "Read This" cards
     const badges = screen.getAllByLabelText('Important');
     expect(badges).toHaveLength(3);
   });
@@ -82,7 +81,6 @@ describe('WelcomeModal', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
-  // Scroll lock (AC1)
   it('sets document.body overflow to hidden while modal is open', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     expect(document.body.style.overflow).toBe('hidden');
@@ -94,10 +92,9 @@ describe('WelcomeModal', () => {
     expect(document.body.style.overflow).toBe('hidden');
     unmount();
     expect(document.body.style.overflow).toBe('auto');
-    document.body.style.overflow = ''; // cleanup
+    document.body.style.overflow = '';
   });
 
-  // Focus trap — base Modal now owns useFocusTrap, so non-pending focus lands on Modal panel
   it('places focus on the Modal panel (not inner dialog) when modal opens without pending state', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     const dialog = screen.getByRole('dialog');
@@ -140,7 +137,6 @@ describe('WelcomeModal', () => {
     expect(dialog.contains(document.activeElement)).toBe(true);
   });
 
-  // Mobile scroll — dialog div must participate in flex layout so inner content can scroll
   it('dialog container has flex layout and overflow-hidden for mobile scroll support', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     const dialog = screen.getByRole('dialog');
@@ -155,19 +151,14 @@ describe('WelcomeModal', () => {
     expect(dialog.className).toContain('outline-none');
   });
 
-  // Backdrop non-dismiss (AC — clicking outside does not close the modal)
   it('clicking the backdrop does not dismiss the modal', async () => {
     const user = userEvent.setup();
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
-    // Modal has no onClose prop — backdrop click is a no-op by design
     await user.click(screen.getByTestId('modal-backdrop'));
     expect(onDismiss).not.toHaveBeenCalled();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
-  // #169 — Welcome modal polish
-
-  // Scroll-to-top (AC2)
   it('scrollable content container scrollTop is 0 when modal opens', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     const content = screen.getByTestId('modal-content');
@@ -182,16 +173,14 @@ describe('WelcomeModal', () => {
     expect(content.scrollTop).toBe(0);
   });
 
-  // Icon swap (AC3)
   it('header displays HeadphonesIcon, not BookOpenIcon', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     const iconContainer = screen.getByTestId('welcome-header-icon');
     const svg = iconContainer.querySelector('svg');
-    // HeadphonesIcon uses strokeWidth="1.5"; BookOpenIcon uses strokeWidth="2"
+    // HeadphonesIcon uses strokeWidth 1.5; BookOpenIcon uses 2.
     expect(svg).toHaveAttribute('stroke-width', '1.5');
   });
 
-  // Clickable cards (AC4)
   it('all 10 cards render as <a> links with target="_blank" and rel="noopener noreferrer"', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     const links = screen.getAllByRole('link');
@@ -220,7 +209,7 @@ describe('WelcomeModal', () => {
 
   it('Library path card links to https://docs.narratorr.dev/configuration/library/', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
-    // Use "Library path:" with colon to distinguish from "Library Import"
+    // The colon distinguishes this accessible name from Library Import.
     expect(screen.getByRole('link', { name: /Library path:/i })).toHaveAttribute(
       'href',
       'https://docs.narratorr.dev/configuration/library/',
@@ -283,9 +272,6 @@ describe('WelcomeModal', () => {
     );
   });
 
-  // Onboarding-copy contract (F1) — the description must communicate BOTH the optional
-  // free Hardcover key AND the library-only fallback, per AC. Guard the full string so
-  // dropping the fallback (or the "free key" framing) fails the build.
   it('Series Metadata card description states the optional free Hardcover key and the library-only fallback', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     expect(
@@ -295,8 +281,6 @@ describe('WelcomeModal', () => {
     ).toBeInTheDocument();
   });
 
-  // Grid layout — 4 feature cards tile in a single 4-across row (sm:grid-cols-4)
-  // at the original width: no scroll, no orphaned card.
   it('Features grid uses sm:grid-cols-4 for a single 4-across row', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     const heading = screen.getByText('Features Worth Knowing');
@@ -310,7 +294,6 @@ describe('WelcomeModal', () => {
     expect(screen.queryByRole('link', { name: /recommendations/i })).toBeNull();
   });
 
-  // Preserved hidden behavior (F3) — FeaturesSection must keep its max-height hide
   it('Features section preserves the [@media(max-height:60rem)]:hidden behavior', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     const heading = screen.getByText('Features Worth Knowing');
@@ -325,7 +308,6 @@ describe('WelcomeModal', () => {
     expect(onDismiss).not.toHaveBeenCalled();
   });
 
-  // Hover state (AC5)
   it('card links have cursor-pointer class', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     for (const link of screen.getAllByRole('link')) {
@@ -340,7 +322,6 @@ describe('WelcomeModal', () => {
     }
   });
 
-  // Settings → nowrap (AC8)
   it('"Settings → Security" in Auth card description is wrapped in whitespace-nowrap span', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     const nowrapSpans = document.querySelectorAll('.whitespace-nowrap');
@@ -362,7 +343,6 @@ describe('WelcomeModal', () => {
     expect(texts.some((t) => t?.includes('Settings → Library'))).toBe(true);
   });
 
-  // Copy changes (AC7, AC9)
   it('Audible region card title shows Region and Language on separate lines', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     expect(screen.getByText(/Region: US/)).toBeInTheDocument();
@@ -392,7 +372,6 @@ describe('WelcomeModal', () => {
     ).toBeInTheDocument();
   });
 
-  // Keyboard navigation with 10 tabbable links + Get Started button
   it('initial focus lands on Modal panel, not any card link', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     const panel = screen.getByRole('dialog').parentElement!;

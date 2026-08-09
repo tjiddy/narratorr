@@ -133,7 +133,6 @@ describe('SystemInfo', () => {
     await waitFor(() => {
       expect(screen.getByText(/0\.1\.0/)).toBeInTheDocument();
     });
-    // Should show N/A or similar for null values
     const naElements = screen.getAllByText(/n\/a|not configured/i);
     expect(naElements.length).toBeGreaterThanOrEqual(1);
   });

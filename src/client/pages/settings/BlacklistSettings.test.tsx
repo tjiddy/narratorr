@@ -135,7 +135,6 @@ describe('BlacklistSettings', () => {
     await waitFor(() => {
       expect(screen.getByText('Usenet Release')).toBeInTheDocument();
     });
-    // No truncated hash should be visible since infoHash is null
     expect(screen.queryByText(/\.\.\./)).not.toBeInTheDocument();
   });
 
@@ -150,14 +149,11 @@ describe('BlacklistSettings', () => {
       expect(screen.getByText('Bad Release [Unabridged]')).toBeInTheDocument();
     });
 
-    // Click delete on first entry
     const deleteButtons = screen.getAllByLabelText(/Remove .* from blacklist/);
     await user.click(deleteButtons[0]!);
 
-    // Confirm modal should appear
     expect(screen.getByText(/Remove "Bad Release \[Unabridged\]" from the blacklist/)).toBeInTheDocument();
 
-    // Click the "Delete" confirm button
     const confirmButton = screen.getByRole('button', { name: 'Delete' });
     await user.click(confirmButton);
 
@@ -199,7 +195,6 @@ describe('BlacklistSettings', () => {
       expect(screen.getByText('Infrastructure Error')).toBeInTheDocument();
     });
 
-    // #315 — user_cancelled reason label
     it('shows "User Cancelled" label for entries with user_cancelled reason', async () => {
       const entries = [
         {
@@ -277,7 +272,7 @@ describe('BlacklistSettings', () => {
     });
 
     it('shows singular "Expires in 1 day" at one-day boundary', async () => {
-      // Set expiry to ~12 hours from now — Math.ceil will round to 1 day
+      // Math.ceil rounds a 12-hour expiry to one day.
       const entries = [
         {
           id: 1,
@@ -462,19 +457,14 @@ describe('pagination placeholderData', () => {
       </QueryClientProvider>,
     );
 
-    // Wait for page 1 to render
     await waitFor(() => expect(screen.getByText('Bad Release [Unabridged]')).toBeInTheDocument());
 
-    // Verify pagination is showing (total=110 > DEFAULT_LIMITS.blacklist=100)
     expect(screen.getByText(/Page 1 of/)).toBeInTheDocument();
 
-    // Click next page — triggers page 2 fetch (pending)
     await user.click(screen.getByRole('button', { name: /next page/i }));
 
-    // placeholderData: page 1 items still visible while page 2 is loading
     expect(screen.getByText('Bad Release [Unabridged]')).toBeInTheDocument();
 
-    // Resolve page 2
     act(() => {
       resolveP2({ data: [page2Entry as typeof mockEntries[0]], total: 110 });
     });

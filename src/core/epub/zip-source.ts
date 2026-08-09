@@ -13,40 +13,15 @@ import { decodeEntryName, findDuplicateEntry, normalizeArchivePath } from './pat
 import type { EpubValidationCode } from './result.js';
 
 /**
- * The single-handle positional (`pread`) archive adapter for companion EPUBs
- * (#1988, design §4). Every byte any later module reads from an archive comes
- * through here.
+ * Single-handle positional archive adapter for companion EPUBs. unzipper allocates
+ * from an unchecked ZIP64 record count, so a tiny forgery can exhaust the heap unless
+ * the count is validated before Open.custom reads it from the same descriptor.
  *
- * **Internal to `src/core/epub/`.** Nothing here appears in an exported
- * signature outside this folder, and no `FileHandle`, source, stream, or session
- * outlives {@link withZipSource}'s callback.
+ * One descriptor pins the inode, not its bytes. The replay queue therefore gives the
+ * reader the exact tail, locator, and record that preflight accepted.
  *
- * **Why the module exists, in one measurement.** §4 declined an EOCD preflight
- * on the reasoning that a 256 MiB `stat` ceiling bounds the worst case. It does
- * not: a 213-byte forged archive OOM-kills the process after ~31 s under a 1 GiB
- * heap cap, because `unzipper@0.12.3/lib/Open/directory.js:185` is
- * `Bluebird.mapSeries(Array(vars.numberOfRecords), …)` and `numberOfRecords` is
- * an unchecked 8-byte field on the ZIP64 path (`:68`). A pathname-based
- * preflight cannot fix it either — `Open.file(path)` does its own `stat` and its
- * own ranged reads *by pathname*, so the bytes validated beforehand are not the
- * bytes it parses.
- *
- * **One descriptor is necessary but not sufficient.** A shared handle pins the
- * *inode*; it does not freeze the *bytes*. The reader re-reads the tail, the
- * ZIP64 locator, and the ZIP64 record after the preflight already read them
- * (`directory.js:92-100`, `:132-137`, `:53`), and `fh.read` returns current
- * inode contents on every call — so an in-place rewrite between the two reads
- * would hand the reader a count we never validated. The bound is real only when
- * the reader consumes **the exact bytes the preflight accepted** for those three
- * structures, and only those. That is the validated replay queue below.
- *
- * **What that guarantees, and what it does not.** A live rewrite cannot change
- * the record count the reader allocates against. It does *not* freeze the
- * central directory or entry payloads — those are read live by construction, a
- * same-length rename simply parses as the new name, and a framing-breaking
- * rewrite surfaces as a reported decoder failure. §5 cut the TOCTOU requirement
- * and this module does not reinstate it; the replay scope is deliberately narrow
- * so it cannot accidentally provide content authenticity.
+ * The central directory and payloads remain live; replay prevents count substitution,
+ * not general TOCTOU or content tampering. Nothing outlives withZipSource's callback.
  */
 
 /** 22-byte EOCD record plus the 65,535-byte legal maximum ZIP comment. */
@@ -54,7 +29,7 @@ const EOCD_WINDOW_BYTES = 65557;
 const EOCD_RECORD_BYTES = 22;
 const ZIP64_LOCATOR_BYTES = 20;
 const ZIP64_RECORD_BYTES = 56;
-/** A ZIP64 locator plus a record must physically precede the EOCD. */
+/** A ZIP64 locator and record must physically precede the EOCD. */
 const ZIP64_TAIL_BYTES = ZIP64_LOCATOR_BYTES + ZIP64_RECORD_BYTES;
 
 const EOCD_SIGNATURE = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
@@ -64,23 +39,12 @@ const DISK_SENTINEL = 0xffff;
 const OFFSET_SENTINEL = 0xffffffff;
 const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
 
-/**
- * Live reads are chunked. `directory.js:149` streams from the central-directory
- * offset to EOF in a single `stream()` call, so a `fh.read` of `size - offset`
- * would allocate up to `MAX_ARCHIVE_BYTES` in one buffer.
- */
+/** Chunk live reads because unzipper requests central-directory offset through EOF. */
 const READ_CHUNK_BYTES = 64 * 1024;
 
 /**
- * A broken assumption about the pinned dependency — never evidence about a book.
- *
- * The identity is load-bearing, not free choice. `classifyEpubReadError` must
- * route it to `throw`, and it does so twice over: it is an excluded subclass
- * (`errors.ts:81`) *and* it carries a non-decoder `code` (`errors.ts:88`). A
- * plain uncoded `Error` would be wrong — raised inside the reader's promise
- * chain it is caught with `archiveRead: true` provenance and falls through to
- * `errors.ts:92` as a `decoder-failure`, so 1.1d would persist a dependency bump
- * as `truncated`, i.e. "this book is corrupt".
+ * Pinned-reader protocol drift, never evidence about a book. This subclass and
+ * non-decoder code must classify as throw; a plain Error would become decoder-failure.
  */
 export class ZipSourceProtocolError extends TypeError {
   readonly code = 'EPUB_ZIP_SOURCE_PROTOCOL';
@@ -91,91 +55,60 @@ export class ZipSourceProtocolError extends TypeError {
   }
 }
 
-/** The positional source handed to `Open.custom`. */
+/** Positional source handed to Open.custom. */
 export interface ZipPositionalSource {
-  /** Frozen — the size captured by the one preflight `fh.stat()`, never a fresh `stat`. */
+  /** Size frozen by the single preflight fh.stat(). */
   size(): Promise<number>;
   /**
-   * `length` is optional and `undefined` means "to end of file". Every
-   * structural read in the pinned reader passes one argument — the tail
-   * (`directory.js:96`), the ZIP64 locator (`:132`), the ZIP64 record (`:53`),
-   * and the whole central directory (`:149`); only per-entry reads pass a length
-   * (`Open/unzip.js:13`). The built-in sources spell this the same way
-   * (`Open/index.js:7-9`). An implementation written to the two-parameter
-   * `@types` signature alone fails on the very first read.
+   * Runtime structural reads omit length, meaning through EOF. Implementing only
+   * the two-parameter @types signature fails on the first read.
    */
   stream(offset: number, length?: number): Readable;
 }
 
-/** A failure reported rather than thrown. `throw` is never reported — it propagates. */
+/** Reported failure labels; throw always propagates. */
 export type ZipReadFailure = Exclude<EpubReadErrorLabel, 'throw'>;
 
 /**
- * The outcome of reading one member through the counting transform.
- *
- * The failed arm carries `inflatedBytes` — every byte the counting transform
- * observed before it aborted, **including the chunk that crossed the cap**
- * (`counting-stream.ts:57-63`). Nothing else exposes that count, and a caller
- * sharing one budget across several reads has to charge it: forgiving a failed
- * read's inflated bytes is a rollback, which would let one call inflate more
- * than its ceiling by failing repeatedly (#1990 Decision 3). The successful arm
- * needs no such field — a clean end pushes every counted chunk, so
- * `bytes.length` *is* the observed count.
+ * A failed read reports every inflated byte, including the cap-crossing chunk, so
+ * callers can charge shared budgets without rollback. Successful bytes already carry that count.
  */
 export type ZipEntryRead =
   | { kind: 'bytes'; bytes: Buffer }
   | { kind: 'failed'; label: ZipReadFailure; inflatedBytes: number };
 
-/** One central-directory member, as this module hands it to the rest of `src/core/epub/`. */
+/** Validated central-directory member exposed inside src/core/epub. */
 export interface ZipArchiveEntry {
-  /** The fatally-decoded, normalised POSIX archive key — the only name any consumer may use. */
+  /** Fatally decoded, normalized POSIX key; consumers must not use unzipper's path. */
   readonly name: string;
-  /** ZIP general-purpose bit flags, surfaced unchanged for 1.1d's encryption-bit scan. */
+  /** Raw general-purpose flags used for encryption detection. */
   readonly flags: number;
-  /** The declared inflated size. Attacker-authored and advisory; never an enforcement point. */
+  /** Attacker-authored declared size; advisory, never enforcement. */
   readonly uncompressedSize: number;
   /**
-   * Stream this member through the counting transform, bounded at `cap`.
-   * The cap is the caller's — `MAX_INSPECTION_BYTES`, `MAX_XML_BYTES`, and
-   * `MAX_EPUB_COVER_BYTES` are selected per read by 1.1d and 1.1e, and this
-   * module owns no budget. `File.buffer()` is never called; it inflates without
-   * bound.
+   * Streams through the counting transform under the caller's cap. File.buffer()
+   * is forbidden because it inflates without a bound.
    */
   read(cap: number): Promise<ZipEntryRead>;
 }
 
-/** {@link ZipSourceSession.preflightAndOpen}'s outcome. */
 export type ZipArchiveResult =
   | { kind: 'archive'; entries: ZipArchiveEntry[] }
   | { kind: 'rejected'; code: EpubValidationCode }
   | { kind: 'failed'; label: ZipReadFailure };
 
-/**
- * The session {@link withZipSource} hands its callback. Exposes exactly the
- * `Stats` from the one `fh.stat()`, the positional source, and the preflight
- * entry point — never the `FileHandle`, and never a `close()`.
- */
+/** Callback-scoped view; never exposes the FileHandle or close operation. */
 export interface ZipSourceSession {
-  /**
-   * The `Stats` from the single `fh.stat()`, so a caller can satisfy "`fstat` on
-   * the handle, not the path, is the authority" without re-opening.
-   */
+  /** Stats from the single handle-based stat. */
   readonly stat: Stats;
   readonly source: ZipPositionalSource;
-  /**
-   * Run the structural preflight and, if it passes, the pinned reader. The
-   * entry-count ceiling is enforced here — once, pre-open, against the validated
-   * declared count.
-   */
+  /** Preflights structure and count before invoking the pinned reader. */
   preflightAndOpen(): Promise<ZipArchiveResult>;
 }
 
 /**
- * The pinned `@types/unzipper@0.10.11` declares `Open.custom` with **one**
- * parameter (`index.d.ts:63-68`), while the runtime forwards a second straight
- * to the directory parser (`lib/Open/index.js:137-138`), so `tailSize` is
- * honoured. Declare the two-parameter shape locally rather than casting to
- * `any`.
+ * Runtime Open.custom forwards tailSize although pinned @types declares one parameter;
+ * preserve the real two-parameter shape locally.
  */
 type OpenCustom = (
   source: ZipPositionalSource,
@@ -184,23 +117,17 @@ type OpenCustom = (
 
 const openCustom = unzipper.Open.custom as OpenCustom;
 
-/** One validated structure, held exactly as the preflight accepted it. */
 interface ReplayEntry {
   readonly offset: number;
   readonly bytes: Buffer;
 }
 
-/** The tail of the file the preflight read to find the EOCD candidate. Scratch, then released. */
 interface ScratchWindow {
   readonly offset: number;
   readonly bytes: Buffer;
 }
 
-/**
- * What a validated EOCD (legacy) or ZIP64 record declares about the central
- * directory: how many records it holds, and where it starts. Both branches
- * surface both fields so the count and span ceilings apply identically to each.
- */
+/** Shared ZIP32/ZIP64 declaration so both branches receive identical ceilings. */
 interface DeclaredDirectory {
   readonly count: number;
   /** Absolute offset the reader will seek to. The span is `eocdOffset - this`. */
@@ -216,13 +143,8 @@ const TRUNCATED = { kind: 'rejected', code: 'truncated' } as const;
 /**
  * Read `[offset, offset + length)` in full.
  *
- * **A short read means partial, not final.** `FileHandle.read()` reports
- * `bytesRead` and never promises to fill the buffer, so a nonzero-but-short
- * result with data still remaining is ordinary — loop until the range is
- * obtained or `bytesRead === 0` proves true EOF. Returning a truncated window is
- * not permitted: a short first read of the 65,557-byte tail would silently
- * shrink the scan window and reject a valid book as `truncated`. Never loops on
- * a zero-byte read.
+ * FileHandle.read may return a nonzero partial read; continue until the range is
+ * full or bytesRead === 0 proves EOF.
  */
 async function readRange(fh: FileHandle, offset: number, length: number): Promise<Buffer> {
   if (length <= 0) return Buffer.alloc(0);
@@ -233,22 +155,13 @@ async function readRange(fh: FileHandle, offset: number, length: number): Promis
     if (bytesRead === 0) break;
     filled += bytesRead;
   }
-  // Only bytes actually returned — never the uninitialised tail of the scratch buffer.
+  // Return only bytes actually read, never the uninitialized scratch-buffer tail.
   return buffer.subarray(0, filled);
 }
 
 /**
- * Assemble `[offset, offset + length)`, taking whatever the scratch window
- * already holds and reading only the uncovered remainder from the handle.
- *
- * The window is always the file's tail, so the uncovered part is always a
- * *prefix* of the request. **Acquisition is separate from replay**: whether a
- * structure lies wholly inside the window, wholly outside it, or across its edge
- * only affects how the bytes are assembled here, never how they are replayed —
- * the queue stores assembled bytes, not buffer fragments. A legal 65,525-byte
- * comment puts the locator at `T - 10` for `T = size - 65557`, and a
- * 65,480-byte comment puts the record across `[T - 21, T + 35)`; both are
- * conformant and both assemble into one queue entry.
+ * Assembles a range from the tail window plus any uncovered prefix. Replay stores
+ * the assembled structure, so ranges crossing the window boundary behave identically.
  */
 async function acquireRange(
   fh: FileHandle,
@@ -266,7 +179,6 @@ async function acquireRange(
   return Buffer.concat([head, window.bytes.subarray(0, offset + length - window.offset)]);
 }
 
-/** A stream over bytes we already hold. */
 function createBufferStream(bytes: Buffer): Readable {
   let pushed = false;
   return new Readable({
@@ -280,19 +192,9 @@ function createBufferStream(bytes: Buffer): Readable {
 }
 
 /**
- * A stream over `[offset, end)` read positionally from the shared handle.
- *
- * **`destroy()` never touches the shared handle.** The reader destroys the
- * source stream after *every* entry (`Open/unzip.js:100-108`), so a destroyed
- * stream must stop reading and release only itself. That invariant is why the
- * positional form exists at all: a `filehandle.createReadStream()`-backed source
- * closes its handle on destroy, leaving `fh.fd = -1` and `EBADF` on the second
- * entry.
- *
- * **The range is clamped and short reads are normal.** Per-entry the reader asks
- * for `30 + padding(1000) + extraFieldLength + fileNameLength + compressedSize`
- * (`directory.js:222-228`), which routinely runs past EOF on the last entry; an
- * offset at or beyond the frozen size yields an immediately-ending stream.
+ * Positional stream whose destroy never closes the shared handle; unzipper destroys
+ * every entry stream. Ranges clamp to the frozen size because its padded requests
+ * routinely extend beyond EOF.
  */
 function createLiveStream(
   fh: FileHandle,
@@ -308,10 +210,7 @@ function createLiveStream(
   const stream: Readable = new Readable({
     read() {
       if (reading || stream.destroyed) return;
-      // The reader leaves its central-directory stream flowing after it has
-      // parsed what it needs (`directory.js:149` is never destroyed), so a read
-      // can still be pending when the session ends. Ending quietly here keeps
-      // that from landing on a closed handle.
+      // The central-directory stream can outlive parsing; stop before it reaches a closed handle.
       if (position >= end || isClosed()) {
         stream.push(null);
         return;
@@ -332,7 +231,7 @@ function createLiveStream(
         (error: unknown) => {
           reading = false;
           if (stream.destroyed) return;
-          // Forward the original value onto the stream; the caller classifies it.
+          // Preserve the original value for classification.
           stream.destroy(error as Error);
         },
       );
@@ -341,7 +240,6 @@ function createLiveStream(
   return stream;
 }
 
-/** The positional source plus the two controls `withZipSource` keeps to itself. */
 interface PositionalSourceControl {
   readonly source: ZipPositionalSource;
   arm(entries: readonly ReplayEntry[]): void;
@@ -349,19 +247,10 @@ interface PositionalSourceControl {
 }
 
 /**
- * Build the source over one handle and one frozen size.
- *
- * **Replay is keyed on the reader's request sequence, not on byte offsets.**
- * Interception by "is this offset covered by a buffer I retained?" cannot work:
- * the acquisition window is the whole file for any archive under 65,557 bytes,
- * so an offset test cannot tell a structural read apart from a central-directory
- * or payload read. While the queue is non-empty the next call must match the
- * head's offset exactly; it is served from that entry and the entry is consumed
- * one-shot. Once the queue is empty every call is live — which is why the
- * central directory and every payload are live *by construction*, with no offset
- * arithmetic: by the time the reader reaches `:149` the queue is empty. One-shot
- * consumption is what makes that hold even in an empty archive, whose EOCD sits
- * at 0 and whose `offsetToStartOfCentralDirectory` is also 0.
+ * Builds a source over one handle and frozen size. Replay follows request sequence,
+ * not covered offsets: each structural entry must match and is consumed once, then
+ * central-directory and payload reads are live. One-shot consumption also separates
+ * the empty archive's EOCD and directory reads at the same offset.
  */
 function createPositionalSource(fh: FileHandle, size: number): PositionalSourceControl {
   const queue: ReplayEntry[] = [];
@@ -382,9 +271,7 @@ function createPositionalSource(fh: FileHandle, size: number): PositionalSourceC
         return stream;
       }
       if (offset !== head.offset) {
-        // Not a silent live read: falling through would reinstate the unbounded
-        // allocation this module exists to prevent. Reachable only by a
-        // dependency bump, which is exactly what it is here to catch.
+        // Fail closed on reader protocol drift; a live fallback would restore the allocation bug.
         throw new ZipSourceProtocolError(
           `pinned reader requested offset ${offset} while the validated replay queue expected ${head.offset}`,
         );
@@ -403,9 +290,7 @@ function createPositionalSource(fh: FileHandle, size: number): PositionalSourceC
     close() {
       closed = true;
       queue.length = 0;
-      // Release every stream still flowing — destroying them touches only the
-      // streams, never the handle, and it is what keeps a pending positional
-      // read from reaching a descriptor `withZipSource` is about to close.
+      // Destroy live streams before their shared handle closes; stream destruction cannot close it.
       for (const stream of live) stream.destroy();
       live.clear();
     },
@@ -413,11 +298,8 @@ function createPositionalSource(fh: FileHandle, size: number): PositionalSourceC
 }
 
 /**
- * Scan backward for the first offset satisfying **all** of: the four bytes are
- * `PK\x05\x06`; at least 22 bytes remain to end-of-file; and
- * `offset + 22 + commentLength === size`. The length check is part of candidate
- * acceptance, so no field is ever read out of range and no `RangeError` can
- * arise from a short candidate.
+ * Scans backward for an EOCD signature with a full record and an exact
+ * `offset + 22 + commentLength === size`, rejecting planted or short candidates.
  */
 function selectEocdCandidate(window: ScratchWindow, size: number): number | null {
   let index = window.bytes.lastIndexOf(EOCD_SIGNATURE);
@@ -432,7 +314,7 @@ function selectEocdCandidate(window: ScratchWindow, size: number): number | null
   return null;
 }
 
-/** The legacy EOCD fields, at the same offsets the reader parses (`directory.js:109-120`). */
+/** Legacy EOCD fields at the offsets unzipper parses. */
 function readLegacyEocd(tail: Buffer) {
   return {
     diskNumber: tail.readUInt16LE(4),
@@ -444,12 +326,8 @@ function readLegacyEocd(tail: Buffer) {
 }
 
 /**
- * Validate the ZIP64 locator at `eocdOffset - 20` and return the record offset.
- *
- * The reader derives the same address as
- * `sourceSize - (tailSize - endDir.match + 20)` (`directory.js:129`); with
- * `tailSize = size - eocdOffset` the window starts at our candidate, so
- * `match === 0` and the expression reduces to exactly `eocdOffset - 20`.
+ * Validates the locator immediately before EOCD; tailSize makes unzipper derive
+ * the same address before replaying it.
  */
 function validateZip64Locator(locator: Buffer, eocdOffset: number): number | null {
   if (locator.length < ZIP64_LOCATOR_BYTES) return null;
@@ -457,30 +335,16 @@ function validateZip64Locator(locator: Buffer, eocdOffset: number): number | nul
   if (locator.readUInt32LE(4) !== 0) return null;
   if (locator.readUInt32LE(16) !== 1) return null;
   const rawOffset = locator.readBigUInt64LE(8);
-  // Safe-integer first, BEFORE any `Number(...)` — the reader coerces the same
-  // field at `parseBuffer.js:13-16` and silently loses precision above 2^53.
+  // Reject above 2^53 before Number conversion can lose precision.
   if (rawOffset > MAX_SAFE) return null;
   if (rawOffset > BigInt(eocdOffset - ZIP64_TAIL_BYTES)) return null;
   return Number(rawOffset);
 }
 
 /**
- * Validate the ZIP64 record and return its declared entry count **and** the
- * central-directory offset it declares.
- *
- * The legacy disk fields are not authoritative on this branch, but these are:
- * `diskNumber` (+16) and `diskStart` (+20) must be 0, and
- * `numberOfRecordsOnDisk` (+24) must equal `numberOfRecords` (+32). The record's
- * own `offsetToStartOfCentralDirectory` (+48) is the field the reader actually
- * seeks to (`directory.js:59-71` → `parseBuffer.js:13-16` → `:149`), so it is
- * held to the same safe-integer and in-range rule as the locator's — without it
- * a record with a safe count and an offset of `2^53 + 1` reaches `Open.custom()`
- * and is silently rounded before use.
- *
- * The offset is *returned* rather than validated and dropped (#2025): it is the
- * only place the ZIP64 branch can learn where its central directory starts, and
- * the span ceiling needs it. The legacy field cannot stand in — on this branch it
- * carries the `0xffffffff` sentinel by definition.
+ * Validates authoritative ZIP64 disk fields, matching counts, safe integers, and
+ * the record's central-directory offset. That offset must be returned for the span
+ * ceiling because the legacy field is a sentinel on this branch.
  */
 function validateZip64Record(record: Buffer, size: number): DeclaredDirectory | null {
   if (record.length < ZIP64_RECORD_BYTES) return null;
@@ -494,15 +358,14 @@ function validateZip64Record(record: Buffer, size: number): DeclaredDirectory | 
   return { count: Number(count), centralDirectoryOffset: Number(centralDirectoryOffset) };
 }
 
-/** `0` or the `0xffff` sentinel — a conformant ZIP64 writer may emit either. */
+/** ZIP64 permits either zero or the 0xffff sentinel here. */
 function isZeroOrDiskSentinel(value: number): boolean {
   return value === 0 || value === DISK_SENTINEL;
 }
 
 /**
- * The ZIP64 branch. Authority moves off the legacy fields and onto the locator
- * and record, both read from the same handle and both captured as replay-queue
- * entries so the reader parses exactly the bytes validated here.
+ * ZIP64 authority moves to the locator and record; both are acquired from the
+ * shared handle and queued for exact replay.
  */
 async function preflightZip64(
   fh: FileHandle,
@@ -511,9 +374,7 @@ async function preflightZip64(
   size: number,
   queue: ReplayEntry[],
 ): Promise<DeclaredDirectory | null> {
-  // 20 bytes of locator plus a 56-byte record must physically precede the EOCD;
-  // a smaller offset leaves no room, and rejecting here means no out-of-range
-  // read is ever attempted.
+  // Reject before reading if the locator and record cannot physically precede EOCD.
   if (eocdOffset < ZIP64_TAIL_BYTES) return null;
 
   const locatorOffset = eocdOffset - ZIP64_LOCATOR_BYTES;
@@ -530,21 +391,10 @@ async function preflightZip64(
 }
 
 /**
- * Select the EOCD candidate, validate the declared record count, and build the
- * ordered replay queue — `[tail]` on the ZIP32 branch, `[tail, locator, record]`
- * on the ZIP64 one, mirroring the reader's fixed, ordered structural calls.
- *
- * Retained memory is bounded by that queue: `size - eocdOffset` (≤ 65,557) plus
- * 76 bytes on the ZIP64 branch. The scratch window is released on return.
- *
- * Outcome mapping is exact and non-overlapping: any structural failure is
- * `truncated`; a well-formed declaration over either resource ceiling is
- * `limit_exceeded`. In both cases `Open.custom()` is never called.
- *
- * **Structure is decided before the ceilings.** A central directory declared to
- * start *after* the EOCD is a broken file, not an oversized one, so it is
- * `truncated` whatever it declares — that ordering is contractual (#2025), and
- * only the two ceilings below it are order-independent relative to each other.
+ * Selects EOCD and builds the reader-order replay queue: tail for ZIP32, then
+ * locator and record for ZIP64. Structural failures are truncated; only a valid
+ * declaration above a resource ceiling is limit_exceeded, before Open.custom.
+ * Structure therefore takes precedence over both ceilings.
  */
 async function preflight(fh: FileHandle, size: number): Promise<PreflightOutcome> {
   const windowLength = Math.min(size, EOCD_WINDOW_BYTES);
@@ -561,8 +411,7 @@ async function preflight(fh: FileHandle, size: number): Promise<PreflightOutcome
   const queue: ReplayEntry[] = [{ offset: eocdOffset, bytes: tail }];
   const legacy = readLegacyEocd(tail);
 
-  // Exact equality on each field independently, mirroring `directory.js:124-125`.
-  // A near-sentinel such as 0xfffe or 0xfffffffe does not take this branch.
+  // Only exact sentinels trigger ZIP64; near-sentinels stay legacy.
   const isZip64 =
     legacy.diskNumber === DISK_SENTINEL ||
     legacy.numberOfRecords === DISK_SENTINEL ||
@@ -575,7 +424,7 @@ async function preflight(fh: FileHandle, size: number): Promise<PreflightOutcome
         ? await preflightZip64(fh, window, eocdOffset, size, queue)
         : null;
   } else {
-    // OCF forbids split containers, and the reader checks none of these fields.
+    // OCF forbids split containers; unzipper does not check these fields.
     declared =
       legacy.diskNumber === 0 &&
       legacy.diskStart === 0 &&
@@ -585,14 +434,9 @@ async function preflight(fh: FileHandle, size: number): Promise<PreflightOutcome
   }
 
   if (declared === null) return TRUNCATED;
-  // One formula, both branches. On the ZIP64 branch this is the *pre-EOCD
-  // envelope*: it includes the 56-byte record and 20-byte locator sitting
-  // between the directory and the EOCD, over-counting the true extent by exactly
-  // 76 bytes. Accepted deliberately — one mental model, and 76 bytes is nothing
-  // against a multi-MiB ceiling. `recordOffset` is not the endpoint.
+  // One formula caps both branches; ZIP64 deliberately includes its 76-byte tail envelope.
   const span = eocdOffset - declared.centralDirectoryOffset;
-  // Structural, and therefore first. A span of exactly 0 is the empty archive,
-  // which is well-formed and must still reach the reader — `< 0`, never `<= 0`.
+  // Negative is structurally invalid; zero is the valid empty archive.
   if (span < 0) return TRUNCATED;
   if (declared.count > MAX_ARCHIVE_ENTRIES) return { kind: 'rejected', code: 'limit_exceeded' };
   if (span > MAX_CENTRAL_DIRECTORY_BYTES) return { kind: 'rejected', code: 'limit_exceeded' };
@@ -600,23 +444,15 @@ async function preflight(fh: FileHandle, size: number): Promise<PreflightOutcome
 }
 
 /**
- * Read one member through the counting transform.
- *
- * `File.buffer()` is never called — it inflates without bound. The declared
- * `uncompressedSize` is not consulted: the reader bounds the *compressed* pull
- * by the honest `compressedSize` and lets central-directory vars override the
- * local header (`Open/unzip.js:44`, `:87`), so a lying declared size changes
- * nothing the reader does and the streamed counter is the only enforcement point
- * that fires.
+ * Streams one member through the counting transform. Declared uncompressed size
+ * is advisory; only streamed bytes enforce the cap, and File.buffer() is forbidden.
  */
 async function readEntry(file: File, cap: number): Promise<ZipEntryRead> {
   const counter = createCountingStream(cap);
   let source: Readable | undefined;
   let sourceFailure: { value: unknown } | undefined;
   try {
-    // `File.stream()` returns a `Readable`, not a promise, and `pipe` does not
-    // forward source errors — hand them to the counter, preserving the original
-    // value so the classifier sees the identity the library raised.
+    // pipe does not forward source errors; preserve their original identity for classification.
     source = file.stream();
     source.on('error', (value: unknown) => {
       sourceFailure = { value };
@@ -630,25 +466,17 @@ async function readEntry(file: File, cap: number): Promise<ZipEntryRead> {
     const value = sourceFailure ? sourceFailure.value : caught;
     const label = classifyEpubReadError(value, { archiveRead: true });
     if (label === 'throw') throw value;
-    // `counter.bytesCounted` rather than the bytes that reached us: a `Transform`
-    // aborted through `callback(error)` discards chunks it had already pushed but
-    // we had not yet pulled (#1992), so delivered and inflated diverge here and
-    // only the counter's total is the honest one.
+    // Failed transforms can discard pushed output; bytesCounted is the honest inflated total.
     return { kind: 'failed', label, inflatedBytes: counter.bytesCounted };
   } finally {
-    // A cap breach aborts the counter while the entry stream is still flowing.
-    // This releases the stream only — never the shared handle.
+    // A cap breach leaves the source flowing; destroy only that stream, never the handle.
     source?.destroy();
   }
 }
 
 /**
- * Decode, normalise, and duplicate-check every central-directory name.
- *
- * `File.path` is never used for lookup, comparison, or classification: it comes
- * from a non-fatal `Buffer.toString('utf8')` (`directory.js:212`) that silently
- * replaces malformed bytes with U+FFFD. `File.pathBuffer` is the only name
- * source this module trusts.
+ * Fatally decodes, normalizes, and duplicate-checks names from pathBuffer.
+ * unzipper's path uses non-fatal UTF-8 replacement and is never trusted.
  */
 function normalizeEntries(files: readonly File[]): ZipArchiveResult {
   const entries: ZipArchiveEntry[] = [];
@@ -670,23 +498,15 @@ function normalizeEntries(files: readonly File[]): ZipArchiveResult {
 }
 
 /**
- * Preflight, then hand the pinned reader a source armed with the validated
- * replay queue.
- *
- * `tailSize` pins the reader to our candidate: its window *begins* at the
- * accepted offset, so its forward `Buffer.indexOf` necessarily matches at
- * position 0. One candidate, chosen by one algorithm, consumed by both — a
- * comment containing a planted `PK\x05\x06` cannot make the two disagree.
+ * Preflights before arming exact replay. tailSize starts unzipper at the accepted
+ * candidate, preventing a planted EOCD signature from selecting another record.
  */
 async function preflightAndOpen(
   fh: FileHandle,
   size: number,
   control: PositionalSourceControl,
 ): Promise<ZipArchiveResult> {
-  // Preflight `fh.read` failures are deliberately not caught: with
-  // `archiveRead: false` provenance `classifyEpubReadError` routes every value
-  // but our own cap breach to `throw`, so an explicit catch here would be a
-  // no-op that only risks mislabelling an OS error as a corrupt book.
+  // Let preflight I/O failures propagate; catching them risks labelling OS errors as corrupt books.
   const outcome = await preflight(fh, size);
   if (outcome.kind === 'rejected') return { kind: 'rejected', code: outcome.code };
 
@@ -700,11 +520,7 @@ async function preflightAndOpen(
     return { kind: 'failed', label };
   }
 
-  // A defensive equality assertion, NOT a second independent measurement: the
-  // reader builds `vars.files` from `Bluebird.mapSeries(Array(numberOfRecords))`
-  // (`directory.js:185-239`), so `files.length` *is* the declared count by
-  // construction and can never disagree. It is a cheap guard against a future
-  // reader-version change, and says nothing about the archive.
+  // Defensive protocol assertion only: pinned unzipper constructs files from the declared count.
   if (directory.files.length !== outcome.declaredCount) {
     throw new ZipSourceProtocolError(
       `pinned reader returned ${directory.files.length} members for a validated declared count of ${outcome.declaredCount}`,
@@ -714,20 +530,14 @@ async function preflightAndOpen(
 }
 
 /**
- * Open `filePath` once, run `callback` with a session, and close the handle in a
- * `finally` on **every** exit — success, structural rejection, or thrown error.
- *
- * `fs.open` is the only failure that happens before a handle exists: its
- * rejection propagates unchanged, `callback` never runs, and **no close is
- * attempted**, because nothing was acquired. After this function returns, the
- * session, its source, and every stream either produced are unusable.
+ * Opens once and always closes after the callback. Open failures propagate before
+ * callback or close; afterward the session and its streams are unusable.
  */
 export async function withZipSource<T>(
   filePath: string,
   callback: (session: ZipSourceSession) => Promise<T>,
 ): Promise<T> {
-  // `READ_NO_FOLLOW`, never `'r'`: callers verify the path before handing it here, so this open
-  // is a second resolution of a pathname they already checked. See no-follow-open.ts.
+  // This second pathname resolution must not follow a swapped symlink.
   const handle = await open(filePath, READ_NO_FOLLOW);
   let disarm: (() => void) | undefined;
   try {
@@ -741,10 +551,7 @@ export async function withZipSource<T>(
     };
     return await callback(session);
   } finally {
-    // The only close in the module, and idempotent: `FileHandle.close()` caches
-    // its own promise, so a second call is a no-op rather than a double close.
-    // `disarm` is undefined only when `fh.stat()` itself rejected, in which case
-    // no source was ever built.
+    // Disarm streams before the only handle close; no source exists if stat failed.
     disarm?.();
     await handle.close();
   }

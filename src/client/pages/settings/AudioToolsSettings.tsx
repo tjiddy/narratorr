@@ -10,12 +10,8 @@ import { outputFormatSchema, bitrateField, maxConcurrentProcessingField, DEFAULT
 import { SettingsSection } from './SettingsSection';
 import { useFfmpegStatus } from '@/hooks/useFfmpegStatus';
 
-// Only the shared merge/convert ENGINE fields live here (the "how"). Automations (the
-// "when") stay on Post Processing. Each page saves ONLY its own subset of `processing`;
-// the backend patch-merges, so the two pages never clobber each other's fields. The
-// engine/automation field partition is enforced by processing-field-partition.test.ts.
-// Numeric bounds are the shared field validators from processing.ts, so the UI can't drift from
-// the backend schema; the partition test additionally guards the engine/automation field split.
+// Audio Tools owns merge/convert fields; Post Processing owns automation.
+// Each sends a schema-derived subset that the backend patch-merges.
 const audioToolsSchema = z.object({
   outputFormat: outputFormatSchema,
   keepOriginalBitrate: z.boolean(),
@@ -52,8 +48,7 @@ function FfmpegStatusRow() {
     );
   }
 
-  // A failed status *query* (network/auth/server) is NOT the same as a real "ffmpeg absent"
-  // answer — don't send the operator chasing an install when the check itself didn't run.
+  // A failed query is not proof ffmpeg is absent, so show a distinct status.
   if (isError) {
     return (
       <div className="flex items-start gap-2 rounded-xl border border-border bg-card/40 px-4 py-3 text-sm">
@@ -66,7 +61,6 @@ function FfmpegStatusRow() {
     );
   }
 
-  // Only the unhappy path carries setup copy — the 99% never see it.
   return (
     <div className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
       <AlertCircleIcon className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
@@ -78,7 +72,6 @@ function FfmpegStatusRow() {
   );
 }
 
-// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
 const CARD_LABEL = 'Merge & Convert';
 
 export function AudioToolsSettings() {

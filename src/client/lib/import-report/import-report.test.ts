@@ -64,8 +64,8 @@ describe('dismissal store (F55)', () => {
     const { result } = renderHook(() => useAttentionDismissal());
     act(() => result.current.dismiss(dismissalKey(5, 'abandoned')));
     expect(result.current.isDismissed(dismissalKey(5, 'abandoned'))).toBe(true);
-    expect(result.current.isDismissed(dismissalKey(5, 'completed-attention'))).toBe(false); // distinct key
-    expect(result.current.isDismissed(dismissalKey(6, 'abandoned'))).toBe(false); // new id
+    expect(result.current.isDismissed(dismissalKey(5, 'completed-attention'))).toBe(false);
+    expect(result.current.isDismissed(dismissalKey(6, 'abandoned'))).toBe(false);
   });
 
   it('caps at 50 with FIFO eviction — the 51st dismissal evicts the oldest', () => {
@@ -75,8 +75,8 @@ describe('dismissal store (F55)', () => {
     });
     expect(DISMISSAL_CAP).toBe(50);
     expect(loadDismissedKeys()).toHaveLength(50);
-    expect(result.current.isDismissed(dismissalKey(0, 'abandoned'))).toBe(false); // oldest evicted
-    expect(result.current.isDismissed(dismissalKey(50, 'abandoned'))).toBe(true); // newest kept
+    expect(result.current.isDismissed(dismissalKey(0, 'abandoned'))).toBe(false);
+    expect(result.current.isDismissed(dismissalKey(50, 'abandoned'))).toBe(true);
   });
 
   it('falls back to in-memory list when localStorage.getItem throws (no crash)', () => {
@@ -97,7 +97,6 @@ describe('dismissal store (F55)', () => {
     const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota'); });
     const { result } = renderHook(() => useAttentionDismissal());
     act(() => result.current.dismiss(dismissalKey(7, 'abandoned')));
-    // Hook state reflects it, AND the store-level read (in-memory fallback) retains it.
     expect(result.current.isDismissed(dismissalKey(7, 'abandoned'))).toBe(true);
     expect(loadDismissedKeys()).toContain('7:abandoned');
     spy.mockRestore();
@@ -109,8 +108,8 @@ describe('dismissal store (F55)', () => {
     act(() => {
       for (let i = 0; i < 51; i++) result.current.dismiss(dismissalKey(i, 'abandoned'));
     });
-    expect(loadDismissedKeys()).toHaveLength(50); // capped in memory too
-    expect(result.current.isDismissed(dismissalKey(0, 'abandoned'))).toBe(false); // oldest evicted
+    expect(loadDismissedKeys()).toHaveLength(50);
+    expect(result.current.isDismissed(dismissalKey(0, 'abandoned'))).toBe(false);
     expect(result.current.isDismissed(dismissalKey(50, 'abandoned'))).toBe(true);
     spy.mockRestore();
   });
@@ -134,7 +133,7 @@ describe('patchImportHistoryCache (F86/F89)', () => {
     const p2 = qc.getQueryData(['importSubmissions', 'list', { limit: 20, offset: 20 }]) as typeof page2;
     expect(p1.data.find((r) => r.id === 1)!.status).toBe('complete');
     expect(p2.data.find((r) => r.id === 1)!.status).toBe('complete');
-    expect(p1.data.find((r) => r.id === 2)!.status).toBe('complete'); // untouched
+    expect(p1.data.find((r) => r.id === 2)!.status).toBe('complete');
   });
 
   it('does not regress a header when the detail is less terminal (monotonic)', () => {
@@ -142,6 +141,6 @@ describe('patchImportHistoryCache (F86/F89)', () => {
     qc.setQueryData(['importSubmissions', 'list', { limit: 20, offset: 0 }], { data: [summary(1, 'complete', 3)], total: 1 });
     patchImportHistoryCache(qc, detailFor(1, 'processing', 1));
     const p = qc.getQueryData(['importSubmissions', 'list', { limit: 20, offset: 0 }]) as { data: SubmissionSummary[] };
-    expect(p.data[0]!.status).toBe('complete'); // not reverted
+    expect(p.data[0]!.status).toBe('complete');
   });
 });

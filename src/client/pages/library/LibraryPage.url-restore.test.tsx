@@ -1,11 +1,4 @@
-/**
- * Route-level URL restoration tests for LibraryPage (#352).
- *
- * Separate file because the main LibraryPage.test.tsx globally mocks
- * useNavigate, which blocks real router history navigation. These tests
- * use real router navigation to prove filter state is restored after
- * navigating to /books/:id and back.
- */
+// This file uses real router history because LibraryPage.test.tsx mocks useNavigate.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -18,7 +11,6 @@ import type { BookListParams } from '@/lib/api';
 import { simulateStatusFilter } from '@/__tests__/library-server-sim';
 import type { StatusFilter } from './helpers';
 
-// Mock api — same pattern as LibraryPage.test.tsx but WITHOUT mocking useNavigate
 vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual('@/lib/api');
   return {
@@ -67,12 +59,7 @@ const mockBooks = [
   }),
 ];
 
-// Hand-authored server order for this suite's `mockBooks`, keyed by
-// `${sortField}:${sortDirection}` — book ids in the order `buildOrderBy`
-// (src/server/services/book-list.service.ts) produces. `title` asc strips the
-// leading article ("The Way of Kings" → "Way of Kings"), so "Project Hail Mary"
-// sorts first. Unmapped keys fall through to the `createdAt` desc default, so no
-// key resolves to undefined.
+// Hand-authored order keeps the fixture independent of the server comparator it represents.
 const MOCK_BOOKS_ORDER: Record<string, number[]> = {
   'createdAt:desc': [2, 1],
   'createdAt:asc': [1, 2],
@@ -108,7 +95,6 @@ function mockLibraryData() {
   vi.mocked(api.getSettings).mockResolvedValue(createMockSettings());
 }
 
-/** Minimal book detail page with a back button for route-tree testing */
 function BookDetailStub() {
   const navigate = useNavigate();
   return (
@@ -119,7 +105,6 @@ function BookDetailStub() {
   );
 }
 
-/** Render library + book routes with real navigation (no useNavigate mock) */
 function renderWithRoutes(initialRoute: string) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -145,15 +130,12 @@ describe('LibraryPage — route-level URL param restoration (#352)', () => {
   it('restores filter state from URL after navigating to /books/:id and back', async () => {
     const user = userEvent.setup();
 
-    // Start on filtered library page
     renderWithRoutes('/library?status=wanted&sortField=title&sortDirection=asc');
 
-    // Wait for library to load with filtered results
     await waitFor(() => {
       expect(api.listLibraryBooks).toHaveBeenCalled();
     });
 
-    // Verify first fetch used URL-derived params
     const firstCallArgs = vi.mocked(api.listLibraryBooks).mock.calls[0]?.[0];
     expect(firstCallArgs).toMatchObject({
       status: 'wanted',
@@ -161,46 +143,29 @@ describe('LibraryPage — route-level URL param restoration (#352)', () => {
       sortDirection: 'asc',
     });
 
-    // Wait for book cards to render
     await waitFor(() => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Click a book card to navigate to /books/:id
     await user.click(screen.getByText('The Way of Kings'));
 
-    // Verify we navigated to book detail
     await waitFor(() => {
       expect(screen.getByTestId('book-detail')).toBeInTheDocument();
     });
 
-    // Navigate back using router's history (MemoryRouter doesn't use window.history)
     await user.click(screen.getByText('Back to Library'));
 
-    // Library page should be restored with the filtered view (status=wanted).
-    // TanStack Query may serve cached data (no re-fetch), but the hook
-    // re-initializes from URL params and the UI reflects the filtered state.
     await waitFor(() => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Verify we're back on the library page (not book detail)
     expect(screen.queryByTestId('book-detail')).not.toBeInTheDocument();
 
-    // The restored view must differ from the default unfiltered view.
-    // 'Project Hail Mary' has status='imported' — it should NOT appear
-    // when status=wanted filter is active. This distinguishes restored
-    // filtered state from default (which would show all books).
     expect(screen.queryByText('Project Hail Mary')).not.toBeInTheDocument();
   });
 
   it('restores keyed fixture ordering for title:asc from URL params (id=2 before id=1)', async () => {
-    // Unfiltered route so both books render — makes the keyed `(sortField,
-    // sortDirection)` fixture order observable. `buildOrderBy` strips the
-    // leading article ("The Way of Kings" → "Way of Kings"), so "Project Hail
-    // Mary" sorts ahead of it under title:asc; MOCK_BOOKS_ORDER encodes that as
-    // [2, 1]. Removing the applyServerOrder call would leave input order
-    // (id=1 first) and fail this assertion.
+    // Server title sorting strips the leading article; input order is deliberately opposite.
     renderWithRoutes('/library?sortField=title&sortDirection=asc');
 
     await waitFor(() => {
@@ -208,7 +173,6 @@ describe('LibraryPage — route-level URL param restoration (#352)', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Confirm the restored params reached the API boundary.
     expect(vi.mocked(api.listLibraryBooks).mock.calls[0]?.[0]).toMatchObject({
       sortField: 'title',
       sortDirection: 'asc',

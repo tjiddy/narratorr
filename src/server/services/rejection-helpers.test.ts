@@ -82,7 +82,6 @@ describe('blacklistAndRetrySearch', () => {
       blacklistService: inject<BlacklistService>({ create: vi.fn().mockRejectedValue(new Error('DB error')) }),
     });
 
-    // Should not throw
     await blacklistAndRetrySearch(req);
   });
 
@@ -97,7 +96,6 @@ describe('blacklistAndRetrySearch', () => {
     expect(retrySearch).not.toHaveBeenCalled();
   });
 
-  // #301 — overrideRetry flag bypasses redownloadFailed setting
   it('triggers re-search when overrideRetry is true even if redownloadFailed is false', async () => {
     const req = makeRequest({
       settingsService: inject<SettingsService>({ get: vi.fn().mockResolvedValue({ redownloadFailed: false }) }),
@@ -110,7 +108,6 @@ describe('blacklistAndRetrySearch', () => {
     });
   });
 
-  // #396 — overrideRetry: true must bypass settings lookup entirely
   it('triggers re-search when overrideRetry is true even if settingsService.get rejects', async () => {
     const req = makeRequest({
       settingsService: inject<SettingsService>({ get: vi.fn().mockRejectedValue(new Error('no settings')) }),
@@ -148,7 +145,6 @@ describe('blacklistAndRetrySearch', () => {
     expect(retrySearch).not.toHaveBeenCalled();
   });
 
-  // #504 — blacklistType passthrough
   describe('blacklistType passthrough (#504)', () => {
     it('passes blacklistType: temporary to blacklistService.create() when provided', async () => {
       const req = makeRequest({ blacklistType: 'temporary' });

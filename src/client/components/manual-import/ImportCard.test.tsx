@@ -62,14 +62,12 @@ describe('ImportCard', () => {
       expect(badge.firstChild?.nodeName.toLowerCase()).toBe('svg');
     });
 
-    // #1895 — a genuinely-new pending row renders "Paused" (no spinner) when paused=true.
     it('paused=true: genuinely-new pending row shows "Paused" badge with NO spinner', () => {
       render(<ImportCard {...defaultProps} row={makeRow()} paused />);
       expect(screen.getByText('Paused')).toBeInTheDocument();
       expect(screen.queryByText('Matching')).not.toBeInTheDocument();
       const badge = screen.getByTestId('badge');
       expect(badge).toHaveClass('bg-muted/50', 'ring-1', 'ring-border/20');
-      // No icon: the muted paused badge drops the LoadingSpinner svg entirely.
       expect(badge.querySelector('svg')).not.toBeInTheDocument();
     });
 
@@ -111,7 +109,6 @@ describe('ImportCard', () => {
     });
 
     it('renders a Review (medium) row with selected=false as an unchecked checkbox (#1318)', () => {
-      // Medium-confidence rows default to unchecked so the human reviews before import.
       render(
         <ImportCard
           {...defaultProps}
@@ -119,7 +116,6 @@ describe('ImportCard', () => {
         />,
       );
       expect(screen.getByText('Review')).toBeInTheDocument();
-      // Unchecked rows expose the "Select" affordance; checked rows expose "Deselect".
       expect(screen.getByLabelText('Select')).toBeInTheDocument();
       expect(screen.queryByLabelText('Deselect')).not.toBeInTheDocument();
     });
@@ -155,17 +151,12 @@ describe('ImportCard', () => {
     });
   });
 
-  // #1927 AC6 — the row reads series/#position EDITED-FIRST, then falls back to the
-  // matched metadata's primary series (mirroring displayNarrator, #1660). The row
-  // always shows the EFFECTIVE value that will be imported, so row/modal/server agree.
   describe('series / #position display', () => {
     it('renders the EDITED series/#position when a non-empty edited series differs from metadata (#1927 AC6)', () => {
       render(<ImportCard
         {...defaultProps}
         row={makeRow({
           matchResult: makeMatchResult(),
-          // User edited the series to a value that differs from the matched metadata primary — the
-          // row must show the EDITED value (what imports item-first), not the metadata primary.
           edited: { title: 'Book Title', author: 'Author Name', series: 'The Dresden Files', seriesPosition: 10, metadata: { title: 'Book Title', authors: [{ name: 'Author Name' }], seriesPrimary: { name: 'Children of Time', position: 3 } } },
         })}
       />);
@@ -174,8 +165,6 @@ describe('ImportCard', () => {
     });
 
     it('renders an untouched matched row from its metadata-seeded edited series (#1927 AC4 no-op)', () => {
-      // buildEditedFromBestMatch seeds edited.series from the metadata primary, so an untouched
-      // matched row's edited series already equals the primary — the row shows that value.
       render(<ImportCard
         {...defaultProps}
         row={makeRow({
@@ -191,8 +180,6 @@ describe('ImportCard', () => {
         {...defaultProps}
         row={makeRow({
           matchResult: makeMatchResult(),
-          // Series cleared in the modal → edited.series is empty. The row shows the metadata
-          // primary (what the server imports on the defer path), identical to cleared-narrators.
           edited: { title: 'Book Title', author: 'Author Name', series: '', metadata: { title: 'Book Title', authors: [{ name: 'Author Name' }], seriesPrimary: { name: 'Children of Time', position: 3 } } },
         })}
       />);
@@ -216,10 +203,6 @@ describe('ImportCard', () => {
         {...defaultProps}
         row={makeRow({
           matchResult: makeMatchResult(),
-          // Padded edited series with a DIFFERENT metadata primary — the row must render the item's
-          // ORIGINAL padded value (edited.series is trimmed only to classify present-vs-absent, never
-          // rewritten), matching what toConfirmItem ships and the DB stores. A `.trim()` in the render
-          // path would drop the surrounding whitespace and re-introduce row/server disagreement.
           edited: { title: 'Book Title', author: 'Author Name', series: paddedName, seriesPosition: 5, metadata: { title: 'Book Title', authors: [{ name: 'Author Name' }], seriesPrimary: { name: 'Different Primary', position: 9 } } },
         })}
       />);
@@ -281,9 +264,6 @@ describe('ImportCard', () => {
       expect(screen.getByText(/12 files/)).toBeInTheDocument();
     });
 
-    // #1660 — the row must display the top-level edited.narrators (where the Edit
-    // Book modal saves the user's narrator), preferring it over metadata.narrators,
-    // mirroring the import-confirm + server narrator precedence.
     it('shows top-level edited.narrators on a No-Match row (no metadata)', () => {
       render(<ImportCard
         {...defaultProps}
@@ -321,8 +301,6 @@ describe('ImportCard', () => {
     });
 
     it('falls back to metadata.narrators when the top-level narrator is cleared on a matched row', () => {
-      // Display mirrors import precedence: clearing is display-only, so the row shows
-      // metadata.narrators — exactly what the server will import via its fallback.
       render(<ImportCard
         {...defaultProps}
         row={makeRow({
@@ -341,7 +319,7 @@ describe('ImportCard', () => {
 
     it('shows file size', () => {
       render(<ImportCard {...defaultProps} row={makeRow()} />);
-      expect(screen.getByText(/500/)).toBeInTheDocument(); // 524288000 bytes ~ 500 MB
+      expect(screen.getByText(/500/)).toBeInTheDocument();
     });
   });
 
@@ -435,9 +413,6 @@ describe('ImportCard', () => {
     });
   });
 
-  // ===========================================================================
-  // #114 — duplicate row rendering
-  // ===========================================================================
   describe('duplicate rows (isDuplicate: true)', () => {
     const dupRow = makeRow({
       book: makeBook({ isDuplicate: true, existingBookId: 42, duplicateReason: 'slug' }),
@@ -472,7 +447,7 @@ describe('ImportCard', () => {
       const selectedDupRow = makeRow({
         book: makeBook({ isDuplicate: true, existingBookId: 42 }),
         selected: true,
-        // no matchResult → confidence is undefined, as in Manual Import force-import path
+        // Mirrors Manual Import's force-import path: no match result.
       });
       const { container } = render(<ImportCard {...defaultProps} row={selectedDupRow} />);
       const rowEl = container.firstChild as HTMLElement;
@@ -500,9 +475,6 @@ describe('ImportCard', () => {
     });
   });
 
-  // ===========================================================================
-  // #1712 — three-way recording-review badge ladder
-  // ===========================================================================
   describe('recording-verdict badge ladder (#1712)', () => {
     it('recordingVerdict same-recording → "Already owned"', () => {
       const row = makeRow({ book: makeBook({ isDuplicate: true, duplicateReason: 'slug', recordingVerdict: 'same-recording' }) });
@@ -514,7 +486,6 @@ describe('ImportCard', () => {
       const row = makeRow({ book: makeBook({ isDuplicate: false, recordingVerdict: 'different-recording' }) });
       render(<ImportCard {...defaultProps} row={row} />);
       expect(screen.getByText('New version of an owned title')).toBeInTheDocument();
-      // Not a hard duplicate — checkbox is present (deliberate new copy).
       expect(screen.getByRole('button', { name: /select|deselect/i })).toBeInTheDocument();
     });
 
@@ -541,9 +512,7 @@ describe('ImportCard', () => {
     it('a non-duplicate row carrying ONLY reviewReason renders the tooltip indicator but NOT the review badge', () => {
       const row = makeRow({ book: makeBook({ isDuplicate: false, reviewReason: 'Additional non-book content possibly merged' }) });
       render(<ImportCard {...defaultProps} row={row} />);
-      // The absorbed-content tooltip indicator still renders…
       expect(screen.getByTestId('review-reason-indicator')).toBeInTheDocument();
-      // …but no "Possible duplicate (review)" badge (reviewReason is not a ladder rung).
       expect(screen.queryByText('Possible duplicate (review)')).not.toBeInTheDocument();
     });
 
@@ -555,7 +524,6 @@ describe('ImportCard', () => {
     });
   });
 
-  // ── #415 Match confidence reason on badge ───────────────────────────
   describe('confidence reason display (#415)', () => {
     it('medium confidence with reason string → reason text visible via title attribute', () => {
       const row = makeRow({
@@ -602,7 +570,6 @@ describe('ImportCard', () => {
       expect(titleEl === null || titleEl.getAttribute('title') === '').toBe(true);
     });
 
-    // ── #1052 Capped-attempt review reason renders in tooltip ─────────
     it('AC5 — medium + "Low confidence match. Please verify." reason → Review badge with that tooltip', () => {
       const row = makeRow({
         matchResult: makeMatchResult({
@@ -698,13 +665,11 @@ describe('ImportCard — relativePath prop (#133)', () => {
   it('falls back to existing short-path display when relativePath absent', () => {
     const row = makeRow({ book: makeBook({ path: '/media/audiobooks/Author/Book' }) });
     render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} />);
-    // Should show last 3 path segments (short path fallback)
     expect(screen.getByText('audiobooks/Author/Book')).toBeInTheDocument();
   });
 
   describe('former within-scan rows (#1925)', () => {
-    // A within-scan title collision is no longer hard-flagged: it arrives as a normal
-    // candidate (isDuplicate=false) carrying a display-only review hint.
+    // Former within-scan collisions are normal candidates carrying only a review hint.
     const WITHIN_SCAN_HINT = 'Possible duplicate folder in this scan';
 
     it('renders the review-reason indicator and no "Duplicate in scan" badge', () => {
@@ -718,8 +683,6 @@ describe('ImportCard — relativePath prop (#133)', () => {
       expect(indicator).toHaveAttribute('title', WITHIN_SCAN_HINT);
     });
 
-    // #1925: a former within-scan row is a normal candidate, so a result-less paused run
-    // renders the ordinary "Paused" badge (it no longer has a special within-scan badge).
     it('paused=true: a result-less former within-scan row shows the normal "Paused" badge', () => {
       const row = makeRow({
         book: makeBook({ isDuplicate: false, reviewReason: WITHIN_SCAN_HINT }),
@@ -785,8 +748,6 @@ describe('ImportCard — relativePath prop (#133)', () => {
         matchResult: makeMatchResult({ confidence: 'high' }),
       });
       render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} />);
-      // Confidence badge is "Matched" (no medium-only reason title), and a
-      // separate review indicator carries the reason.
       expect(screen.getByText('Matched')).toBeInTheDocument();
       expect(screen.getByTestId('review-reason-indicator')).toHaveAttribute(
         'title',

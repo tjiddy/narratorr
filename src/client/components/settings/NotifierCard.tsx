@@ -1,4 +1,4 @@
-// Does not use useSettingsForm: entity form for notifier CRUD, not a settings category patch.
+// Notifier CRUD entity form, not a settings-category patch.
 import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -34,16 +34,8 @@ function settingsFromNotifier(notifier: Notifier): CreateNotifierFormData['setti
   const defaults = meta?.defaultSettings ?? {};
   const ownKeys = new Set(Object.keys(defaults));
   const result: Record<string, unknown> = { ...defaults };
-  // Overlay only non-null stored values that belong to this notifier type. Dropping stale
-  // foreign keys (e.g. a Telegram `botToken` left on a webhook row by a legacy or hand-edited
-  // DB) keeps them out of the form state and therefore out of the per-type strict server
-  // schema, which would otherwise 400. Safe because notifier `defaultSettings` keys ≡ the
-  // strict per-type schema keys for every type — pinned by the schema-alignment test in
-  // NotifierCard.test.tsx — so this never drops a valid key. (Null values are skipped so the
-  // registry default backfills, e.g. discord `includeCover`.) The sibling overlays
-  // `settingsFromIndexer`/`settingsFromClient` are deliberately NOT filtered this way: their
-  // valid key set is the schema, a superset of `defaultSettings` (MAM `isVip`/`classname`,
-  // download-client `useSsl`), so a defaults-based filter there would drop valid keys.
+  // Notifier defaults equal strict schema keys, so they safely allowlist non-null stored values.
+  // This drops stale foreign keys and lets nulls backfill; indexer/client defaults are not complete allowlists.
   for (const [key, val] of Object.entries(notifier.settings)) {
     if (val != null && ownKeys.has(key)) result[key] = val;
   }
@@ -60,8 +52,7 @@ const defaultValues: CreateNotifierFormData = {
   name: '',
   type: NOTIFIER_TYPES[0],
   enabled: true,
-  // Derived from the registry so a newly-registered event (e.g. import_run_finished)
-  // is default-checked without touching this list.
+  // Registry-derived so newly added events default on automatically.
   events: [...NOTIFICATION_EVENTS],
   settings: NOTIFIER_REGISTRY[NOTIFIER_TYPES[0]].defaultSettings,
 };

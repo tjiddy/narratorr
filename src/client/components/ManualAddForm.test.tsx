@@ -76,7 +76,7 @@ describe('ManualAddForm', () => {
       renderForm();
 
       await user.type(screen.getByLabelText(/title/i), 'Test Book');
-      // Bypass type="number" browser guard by setting value directly via fireEvent
+      // fireEvent bypasses the number input's browser validation.
       const positionInput = screen.getByLabelText(/position/i);
       fireEvent.change(positionInput, { target: { value: 'abc' } });
       await user.click(screen.getByRole('button', { name: /add book/i }));
@@ -100,13 +100,11 @@ describe('ManualAddForm', () => {
       await waitFor(() => {
         expect(api.addBook).toHaveBeenCalled();
       });
-      // Producer-omit pattern: whitespace seriesPosition results in key
-      // omission, not explicit undefined (eopt invariant per #939 AC4).
+      // exactOptionalPropertyTypes requires omission rather than explicit undefined.
       const payload = (api.addBook as ReturnType<typeof vi.fn>).mock.calls[0]![0];
       expect(payload).not.toHaveProperty('seriesPosition');
     });
 
-    // #287 — seriesPosition "0" regression coverage
     it('converts series position "0" to number 0, not undefined', async () => {
       const user = userEvent.setup();
       (api.addBook as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, title: 'Test' });

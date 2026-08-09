@@ -1,11 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { api, apiModules } from './index.js';
 
-/**
- * The module set under test is read from the barrel's own exported `apiModules`
- * collection (the same one `api` is built from), so any module added to
- * `index.ts` is covered automatically with no edit here.
- */
+/** apiModules drives both the barrel and this collision check. */
 function findCollisions(modules: { name: string; api: object }[]): string[] {
   const seen = new Map<string, string>();
   const collisions: string[] = [];
@@ -31,9 +27,7 @@ describe('API barrel export collision detection', () => {
   });
 
   it('barrel key count equals the sum of per-module key counts (no key lost to overwrite)', () => {
-    // Object spread is silent on duplicate keys: the rightmost wins and the
-    // barrel shrinks. This structural check trips even when both colliding
-    // methods have legitimate-looking names.
+    // A duplicate silently overwrites the earlier key, shrinking the barrel.
     const summedKeys = apiModules.reduce((total, { api: mod }) => total + Object.keys(mod).length, 0);
 
     expect(Object.keys(api).length).toBe(summedKeys);
@@ -48,7 +42,6 @@ describe('API barrel export collision detection', () => {
     const collisions = findCollisions(modulesWithDuplicate);
 
     expect(collisions.length).toBeGreaterThan(0);
-    // Failure message names the colliding key AND both modules that define it.
     expect(collisions[0]).toContain('getAuthStatus');
     expect(collisions[0]).toContain('authApi');
     expect(collisions[0]).toContain('fakeApi');

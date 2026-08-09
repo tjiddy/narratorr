@@ -6,7 +6,6 @@ const mockLog = { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn(), 
 
 describe('notifyImportFailure', () => {
   it('skips notification when notifierService is undefined', () => {
-    // Should not throw when notifierService is undefined
     expect(() =>
       notifyImportFailure({
         notifierService: undefined,
@@ -76,7 +75,6 @@ describe('recordImportFailedEvent', () => {
       source: 'auto',
       reason: { error: 'copy failed' },
     });
-    // narratorName should NOT be present on the payload when not passed
     expect(createMock.mock.calls[0]![0]).not.toHaveProperty('narratorName');
   });
 
@@ -177,7 +175,7 @@ describe('recordImportFailedEvent', () => {
       log,
     });
 
-    // Flush the rejected promise
+    // Flush the rejected promise.
     await new Promise(r => setImmediate(r));
 
     expect(warn).toHaveBeenCalledWith(

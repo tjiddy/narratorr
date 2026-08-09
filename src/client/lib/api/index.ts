@@ -52,12 +52,8 @@ import { submissionsApi } from './submissions.js';
 import { companionEbookApi } from './companion-ebook.js';
 
 /**
- * Single source of truth for the API barrel. Both the runtime `api` object and
- * the collision test (`api-collision.test.ts`) derive from this one collection,
- * so a module added here is automatically merged into `api` AND covered by the
- * collision guard — there is no second list to keep in sync. Each entry carries
- * its module name so the collision test can report which modules define a
- * duplicate key (see CLAUDE.md: domain-prefixed API method names).
+ * Single source for runtime merging and collision checks. Names let failures
+ * identify both modules defining a duplicate method.
  */
 export const apiModules = [
   { name: 'booksApi', api: booksApi },
@@ -90,7 +86,7 @@ type UnionToIntersection<U> = (U extends unknown ? (arg: U) => void : never) ext
   ? I
   : never;
 
-/** Merged shape of every module's exported methods — the intersection of all `apiModules[*].api` types. */
+/** Intersection of every module's exported API methods. */
 export type Api = UnionToIntersection<(typeof apiModules)[number]['api']>;
 
 export const api = Object.assign({}, ...apiModules.map((m) => m.api)) as Api;

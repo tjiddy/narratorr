@@ -1,4 +1,3 @@
-/** Milliseconds per minute — used for seed time calculations. */
 const MS_PER_MINUTE = 60_000;
 
 interface DeferralDownload {
@@ -26,14 +25,12 @@ export function isTorrentRemovalDeferred(
 ): boolean {
   if (download.protocol !== 'torrent') return false;
 
-  // Seed time check: if minSeedTime > 0 and completedAt exists, verify elapsed time
   if (settings.minSeedTime > 0 && download.completedAt) {
     const elapsedMs = Date.now() - download.completedAt.getTime();
     const minSeedMs = settings.minSeedTime * MS_PER_MINUTE;
     if (elapsedMs < minSeedMs) return true;
   }
 
-  // Seed ratio check: if minSeedRatio > 0, verify current ratio
   if (settings.minSeedRatio > 0 && currentRatio < settings.minSeedRatio) {
     return true;
   }

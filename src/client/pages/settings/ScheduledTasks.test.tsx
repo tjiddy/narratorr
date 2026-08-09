@@ -139,7 +139,7 @@ describe('ScheduledTasks', () => {
       expect(spinner).toBeInTheDocument();
     });
 
-    // Resolve so mutation settles and cleanup happens
+    // Let the mutation settle before test cleanup.
     resolveTask!({ ok: true });
   });
 

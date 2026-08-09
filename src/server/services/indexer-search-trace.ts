@@ -3,12 +3,6 @@ import type { IndexerSearchResponse } from '@core/index.js';
 import type { IndexerRow } from './types.js';
 import { sanitizeLogUrl } from '../utils/sanitize-log-url.js';
 
-/**
- * Emit the per-indexer "Indexer search complete" summary and one debug
- * line per dropped item. AC2 trace point — every search call site uses
- * this so `grep 'Indexer search complete'` returns a homogeneous stream
- * regardless of which call path produced the search.
- */
 export function logIndexerSearchTrace(
   log: FastifyBaseLogger,
   indexer: IndexerRow,

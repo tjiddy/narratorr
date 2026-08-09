@@ -36,7 +36,7 @@ vi.mock('@/lib/api', async () => {
   };
 });
 
-// Import mocked modules after mock setup
+// Load mocked modules only after mock registration.
 const { api } = await import('@/lib/api');
 const { toast } = await import('sonner');
 const mockToast = toast as unknown as {
@@ -126,7 +126,6 @@ describe('SystemSettings', () => {
         expect(mockToast.success).toHaveBeenCalledWith(expect.stringContaining('Backup created'));
       });
 
-      // Cache invalidation causes backup list to be refetched
       await waitFor(() => {
         expect(mockApi.getBackups.mock.calls.length).toBeGreaterThanOrEqual(2);
       });
@@ -167,7 +166,7 @@ describe('SystemSettings', () => {
         expect(screen.getByText(backupEntry.filename)).toBeInTheDocument();
       });
 
-      // Set up spy after render to avoid interfering with React's createElement calls
+      // Install after render so React's createElement calls are untouched.
       const mockAnchor = {
         href: '',
         download: '',
@@ -202,7 +201,6 @@ describe('SystemSettings', () => {
         expect(screen.getByText(/restore from backup/i)).toBeInTheDocument();
       });
 
-      // Create a mock file and trigger upload
       const file = new File(['fake-zip-content'], 'backup.zip', { type: 'application/zip' });
       const input = document.querySelector('input[type="file"]') as HTMLInputElement;
       await user.upload(input, file);
@@ -211,11 +209,9 @@ describe('SystemSettings', () => {
         expect(screen.getByText(/confirm restore/i)).toBeInTheDocument();
       });
 
-      // Modal shows supervisor/manual restart warning
       expect(screen.getByText(/process supervisor/i)).toBeInTheDocument();
       expect(screen.getByText(/restart manually/i)).toBeInTheDocument();
 
-      // Modal shows backup filename (not migration counts)
       expect(screen.getByText(/backup\.zip/)).toBeInTheDocument();
     });
 
@@ -325,7 +321,6 @@ describe('SystemSettings', () => {
         expect(screen.getByText(/confirm restore/i)).toBeInTheDocument();
       });
 
-      // Modal shows backup filename in the confirmation message (not migration counts)
       const modal = screen.getByRole('dialog');
       expect(modal).toHaveTextContent(backupEntry.filename);
     });
@@ -347,7 +342,6 @@ describe('SystemSettings', () => {
         expect(mockToast.error).toHaveBeenCalledWith('Zip does not contain narratorr.db');
       });
 
-      // Modal should NOT open
       expect(screen.queryByText(/confirm restore/i)).not.toBeInTheDocument();
     });
 
@@ -399,22 +393,19 @@ describe('SystemSettings', () => {
         expect(screen.getAllByTitle('Restore backup')).toHaveLength(2);
       });
 
-      // Click first backup's restore
       await user.click(screen.getAllByTitle('Restore backup')[0]!);
       expect(mockApi.restoreBackupDirect).toHaveBeenCalledWith(backupEntry.filename);
 
-      // Click second backup's restore while first is still pending
       await user.click(screen.getAllByTitle('Restore backup')[1]!);
       expect(mockApi.restoreBackupDirect).toHaveBeenCalledWith(secondBackup.filename);
 
-      // Second resolves immediately — modal opens with second backup's filename
       await waitFor(() => {
         expect(screen.getByText(/confirm restore/i)).toBeInTheDocument();
       });
       const modal = screen.getByRole('dialog');
       expect(modal).toHaveTextContent(secondBackup.filename);
 
-      // Clean up first promise
+      // Settle the abandoned first request before cleanup.
       resolveFirst({ valid: true, backupMigrationCount: 2, appMigrationCount: 3 });
     });
   });
@@ -439,7 +430,6 @@ describe('SystemSettings', () => {
 
       await user.click(screen.getByTitle('Delete backup'));
 
-      // Confirmation modal appears
       await waitFor(() => {
         expect(screen.getByText(/delete backup/i)).toBeInTheDocument();
       });
@@ -456,7 +446,6 @@ describe('SystemSettings', () => {
         expect(mockToast.success).toHaveBeenCalledWith('Backup deleted');
       });
 
-      // Cache invalidation refetches the backup list
       await waitFor(() => {
         expect(mockApi.getBackups.mock.calls.length).toBeGreaterThanOrEqual(2);
       });
@@ -507,7 +496,6 @@ describe('SystemSettings', () => {
         expect(mockToast.error).toHaveBeenCalledWith('Failed to delete backup');
       });
 
-      // Row remains
       expect(screen.getByText(backupEntry.filename)).toBeInTheDocument();
     });
 
@@ -641,7 +629,6 @@ describe('#324 — restore modal contract change', () => {
       expect(screen.getByText(/confirm restore/i)).toBeInTheDocument();
     });
 
-    // Shows backup name, not migration counts
     expect(screen.getByText(/my-backup\.zip/)).toBeInTheDocument();
     expect(screen.queryByText(/migrations/i)).not.toBeInTheDocument();
   });
@@ -693,7 +680,6 @@ describe('#324 — restore modal contract change', () => {
       expect(screen.getByText(/restore failed/i)).toBeInTheDocument();
     });
 
-    // "Restore Now" should not be present — only "Close"
     expect(screen.queryByText(/restore now/i)).not.toBeInTheDocument();
     expect(screen.getByText(/close/i)).toBeInTheDocument();
   });
@@ -717,20 +703,16 @@ describe('#324 — restore modal contract change', () => {
     });
   });
 
-  // Page-level wiring: guards against deleting <ThirdPartyNotices /> from the returned
-  // tree (deletion heuristic — the isolated ThirdPartyNotices tests stay green if the
-  // parent stops composing it). The api mock resolves getThirdPartyNotices with notice text.
+  // Isolated ThirdPartyNotices tests cannot catch its removal from this page.
   describe('licenses section composition (#1862)', () => {
     it('composes the Licenses & Third-Party Notices section with its notice content', async () => {
       mockApi.getBackups.mockResolvedValue([]);
 
       renderWithProviders(<SystemSettings />);
 
-      // Section heading comes from the composed <ThirdPartyNotices /> SettingsSection.
       await waitFor(() => {
         expect(screen.getByText('Licenses & Third-Party Notices')).toBeInTheDocument();
       });
-      // The mocked notice body is rendered, proving the child query actually ran in-page.
       expect(screen.getByText(/FFmpeg/)).toBeInTheDocument();
     });
   });

@@ -129,7 +129,6 @@ describe('fake qBittorrent client', () => {
     it('returns 400 when the uploaded torrent bytes are missing or malformed', async () => {
       const cookie = await login();
       const form = new FormData();
-      // No `torrents` file part.
       form.append('savepath', downloadsPath);
       const res = await fetch(`${fake.url}/api/v2/torrents/add`, {
         method: 'POST', headers: { Cookie: cookie }, body: form,
@@ -217,7 +216,7 @@ describe('fake qBittorrent client', () => {
 
       const [after] = fake.listTorrents();
       expect(after!.content_path).toBeDefined();
-      // mapState in qbittorrent.ts rejects content_path that isn't inside save_path via relative(save_path, content_path).
+      // `mapState` downgrades completion when `content_path` escapes `save_path`.
       expect(after!.content_path!.startsWith(after!.save_path)).toBe(true);
     });
 

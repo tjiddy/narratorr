@@ -13,7 +13,7 @@ import { v1CapabilitiesRoutes } from './capabilities.js';
 import { v1SystemRoutes } from './system.js';
 import { capabilitiesV1Schema } from '@shared/schemas/v1/capabilities.js';
 
-// Mock config so the auth plugin runs with authBypass off (mirrors system.test).
+// Run the auth plugin with authBypass off.
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));
 
 const VALID_KEY = 'valid-key';
@@ -42,8 +42,6 @@ describe('v1 capabilities route', () => {
     await app.register(cookie);
     await app.register(authPlugin, { authService });
     await v1CapabilitiesRoutes(app, { settingsService });
-    // Registered alongside so the "/api/v1/system is unchanged" regression (AC 6)
-    // runs against the same composition a real server has.
     await v1SystemRoutes(app);
     await app.ready();
   });
@@ -69,7 +67,6 @@ describe('v1 capabilities route', () => {
 
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({ companionEpub: { enabled: true } });
-      // Sourced from the parsed settings category, never a raw settings row read.
       expect(settingsService.get as Mock).toHaveBeenCalledTimes(1);
       expect(settingsService.get as Mock).toHaveBeenCalledWith('companionEpub');
     });
@@ -85,8 +82,7 @@ describe('v1 capabilities route', () => {
 
     it('fails CLOSED to { enabled: false } with a warn — never a 5xx — when the settings read rejects (AC 4)', async () => {
       (settingsService.get as Mock).mockRejectedValue(new Error('settings db down'));
-      // With logger:false the abstract logger is a singleton, so request.log
-      // delegates to app.log (the metadata.test precedent).
+      // With logger:false, request.log delegates to app.log.
       const warnSpy = vi.spyOn(app.log, 'warn');
 
       const res = await get();
@@ -122,8 +118,6 @@ describe('v1 capabilities route', () => {
     });
   });
 
-  // AC 6 — `/api/v1/system` is a documented stable five-field contract and this
-  // issue does NOT touch it. Capability discovery lives at its own endpoint.
   describe('GET /api/v1/system is unchanged (AC 6)', () => {
     it('returns exactly the five system fields, with no companionEpub or capability key', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/v1/system', headers: keyHeaders });
@@ -136,12 +130,8 @@ describe('v1 capabilities route', () => {
     });
   });
 
-  // AC 9a — the producer side of the older-server "unsupported" signal. An older
-  // Narratorr has no `/api/v1/capabilities` route, so the consumer's signal is
-  // that server's ambient 404. This repo cannot run an older build; what it CAN
-  // own is that on the current server's routing/auth ordering the signal is a
-  // `404` for a KEYED probe and a `401` for a keyless one — so the consumer must
-  // probe with a valid API key and must never read `401` as "unsupported".
+  // Older servers signal unsupported with an authenticated 404. Keyless probes fail auth first
+  // and cannot distinguish feature support.
   describe('404 signal channel for an unregistered v1 path (AC 9a)', () => {
     const UNREGISTERED = '/api/v1/definitely-not-a-route';
 
@@ -151,8 +141,6 @@ describe('v1 capabilities route', () => {
     });
 
     it('returns 401 — NOT 404 — for an unauthenticated request to the same path', async () => {
-      // The auth hook runs `onRequest`, before routing, so a keyless probe cannot
-      // distinguish "feature unsupported" from "auth problem".
       const res = await app.inject({ method: 'GET', url: UNREGISTERED });
       expect(res.statusCode).toBe(401);
       expect(res.statusCode).not.toBe(404);
@@ -160,15 +148,12 @@ describe('v1 capabilities route', () => {
 
     it('an unmatched route never enters the encapsulated v1 plugin, so the 404 body is ambient (consumers key on the STATUS)', async () => {
       const res = await app.inject({ method: 'GET', url: UNREGISTERED, headers: keyHeaders });
-      // `v1ErrorHandler` did not run — no `{ error: { code, message } }` envelope.
       expect(res.json()).not.toHaveProperty('error.code');
     });
   });
 });
 
-// AC 2 / F13 — `.strict()` at BOTH levels. One fixture can only prove one level,
-// so each level gets its own fail-closed case at BOTH layers: a direct parse and
-// Fastify response serialization (which must 500 rather than strip-and-ship).
+// Strictness must fail closed at both schema levels and through Fastify serialization.
 describe('strict / fail-closed schema at both levels (AC 2, F13)', () => {
   const valid = { companionEpub: { enabled: true } };
 

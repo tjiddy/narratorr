@@ -132,7 +132,6 @@ describe('Secret Migration', () => {
       expect(db.insert).toHaveBeenCalled();
     });
 
-    // F2 (PR #1135 review): startup encryption loop covers metadata.hardcoverApiKey
     it('#1133 encrypts plaintext metadata.hardcoverApiKey on startup', async () => {
       db.select.mockReturnValueOnce(mockDbChain([])); // indexers
       db.select.mockReturnValueOnce(mockDbChain([])); // downloadClients
@@ -144,11 +143,10 @@ describe('Secret Migration', () => {
 
       await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
 
-      // The settings upsert is the FIRST insert call (no indexer/download/notifier updates happened).
+      // With no row updates, the settings upsert is the first insert.
       const insertChain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
       const storedValue = insertChain.values.mock.calls[0]![0]!.value;
       expect(isEncrypted(storedValue.hardcoverApiKey as string)).toBe(true);
-      // Non-secret metadata fields pass through unchanged
       expect(storedValue.audibleRegion).toBe('us');
       expect(storedValue.languages).toEqual(['english']);
       expect(storedValue.minDurationMinutes).toBe(0);
@@ -306,14 +304,13 @@ describe('Secret Migration', () => {
       await migrateSecretsToEncrypted(inject<Db>(db), TEST_KEY, inject<FastifyBaseLogger>(log));
 
       expect(db.update).toHaveBeenCalledTimes(2);
-      // mockReturnValue hands back one shared chain, so both .set() calls land on it.
+      // mockReturnValue shares one chain, so both set calls land here.
       const setCalls = db.update.mock.results[0]!.value.set.mock.calls;
       const pushoverSettings = setCalls[0][0].settings;
       expect(isEncrypted(pushoverSettings.pushoverToken)).toBe(true);
       expect(isEncrypted(pushoverSettings.pushoverUser)).toBe(true);
       const ntfySettings = setCalls[1][0].settings;
       expect(isEncrypted(ntfySettings.ntfyTopic)).toBe(true);
-      // Non-secret sibling stays plaintext
       expect(ntfySettings.ntfyServer).toBe('https://ntfy.sh');
     });
 
@@ -332,10 +329,6 @@ describe('Secret Migration', () => {
     });
 
     it('#1357 realistic upgrade row: pushoverToken already $ENC$, pushoverUser plaintext — only pushoverUser is rewritten, token ciphertext byte-identical', async () => {
-      // The universal post-#731 upgrade state: a row whose token was encrypted by
-      // the prior build but whose user key is still plaintext. Encrypting the
-      // sibling must NOT touch the already-encrypted token (idempotent skip via
-      // isEncrypted) — the token ciphertext must come back byte-for-byte identical.
       const tokenCiphertext = encrypt('po-token', TEST_KEY);
       db.select.mockReturnValueOnce(mockDbChain([])); // indexers
       db.select.mockReturnValueOnce(mockDbChain([])); // downloadClients
@@ -350,9 +343,7 @@ describe('Secret Migration', () => {
       expect(db.update).toHaveBeenCalledTimes(1);
       const setCalls = db.update.mock.results[0]!.value.set.mock.calls;
       const updatedSettings = setCalls[0][0].settings;
-      // The plaintext user key is now encrypted...
       expect(isEncrypted(updatedSettings.pushoverUser)).toBe(true);
-      // ...and the pre-encrypted token is untouched, byte-identical to the seed.
       expect(updatedSettings.pushoverToken).toBe(tokenCiphertext);
     });
 

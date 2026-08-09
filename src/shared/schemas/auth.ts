@@ -1,9 +1,5 @@
 import { z } from 'zod';
 
-// ============================================================================
-// Auth schemas
-// ============================================================================
-
 export const authModeSchema = z.enum(['none', 'basic', 'forms']);
 export type AuthMode = z.infer<typeof authModeSchema>;
 

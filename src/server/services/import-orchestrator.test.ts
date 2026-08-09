@@ -12,12 +12,10 @@ import type { RetrySearchDeps } from './retry-search.js';
 import { createMockLogger, createMockSettingsService, inject } from '../__tests__/helpers.js';
 import { ContentFailureError } from '../utils/import-helpers.js';
 
-// Mock rejection-helpers for blacklist dispatch testing
 vi.mock('./rejection-helpers.js', () => ({
   blacklistAndRetrySearch: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Mock enqueue helper for processCompletedDownloads testing
 vi.mock('../utils/enqueue-auto-import.js', () => ({
   enqueueAutoImport: vi.fn().mockResolvedValue(true),
 }));
@@ -26,7 +24,7 @@ import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
 
 import { blacklistAndRetrySearch } from './rejection-helpers.js';
 
-// Mock import-steps — passthrough isContentFailure to real implementation, spy on the rest
+// Pass through the real isContentFailure implementation; spy on the remaining import steps.
 vi.mock('../utils/import-steps.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
   return {
@@ -51,15 +49,14 @@ import {
   embedTagsForImport, runImportPostProcessing,
 } from '../utils/import-steps.js';
 
-// Mock the OPF writer — orchestrator wiring is asserted by the spy; the writer's own behavior
-// (fresh reload, XML shape, nonfatal failure) is covered in opf-writer.test.ts.
+// This suite owns OPF orchestration; opf-writer.test.ts owns reload, XML, and failure behavior.
 vi.mock('../utils/opf-writer.js', () => ({
   writeOpfForImport: vi.fn().mockResolvedValue(undefined),
 }));
 import { writeOpfForImport } from '../utils/opf-writer.js';
 import type { BookService } from './book.service.js';
 
-// Mock node:fs/promises — the orchestrator's only fs use is the auto-merge admission readdir.
+// The orchestrator only reads the filesystem for auto-merge admission.
 vi.mock('node:fs/promises', () => ({
   readdir: vi.fn().mockResolvedValue([]),
 }));
@@ -139,8 +136,7 @@ describe('ImportOrchestrator', () => {
 
     orchestrator = new ImportOrchestrator(importService, settingsService, log, notifier, tagging, eventHistory, broadcaster, inject<never>(connector), bookService, mergeService);
 
-    // Default wire — most tests need wired deps. Tests that exercise the unwired
-    // contract construct their own orchestrator and skip the wire() call.
+    // Wire the shared fixture; unwired-contract tests construct separate instances.
     const defaultBlacklistService = inject<BlacklistService>({ create: vi.fn().mockResolvedValue({}) });
     const defaultRetrySearchDeps = { log: createMockLogger() } as unknown as RetrySearchDeps;
     orchestrator.wire({
@@ -183,7 +179,6 @@ describe('ImportOrchestrator', () => {
       await orchestrator.importDownload(1);
 
       expect(emitDownloadImporting).not.toHaveBeenCalled();
-      // Book SSE should still fire
       expect(emitBookImporting).toHaveBeenCalled();
     });
 
@@ -216,7 +211,7 @@ describe('ImportOrchestrator', () => {
         bookId: 1,
         bookFolder: '/audiobooks/Brandon Sanderson/The Way of Kings',
       }));
-      // Freshness contract: the helper receives the bookId (it reloads), never the pre-enrichment snapshot.
+      // The helper reloads by bookId instead of accepting the stale pre-enrichment snapshot.
       const opfArg = vi.mocked(writeOpfForImport).mock.calls[0]![0] as unknown as Record<string, unknown>;
       expect(opfArg).not.toHaveProperty('book');
     });
@@ -232,15 +227,12 @@ describe('ImportOrchestrator', () => {
       orchestrator = new ImportOrchestrator(importService, settingsService, log, notifier, tagging, eventHistory, broadcaster, inject<never>(connector), bookService);
       vi.mocked(writeOpfForImport).mockRejectedValueOnce(new Error('disk full'));
 
-      // Import still succeeds — the OPF rejection is swallowed by the best-effort catch.
       await expect(orchestrator.importDownload(1)).resolves.toEqual(mockResult);
 
-      // Side effects after the OPF write still fire (the catch did not abort the success path).
       expect(runImportPostProcessing).toHaveBeenCalled();
       expect(emitImportStatusSuccess).toHaveBeenCalled();
       expect(connector.notifyRefresh).toHaveBeenCalled();
 
-      // The continuation is logged at warn with the book id.
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ bookId: 1 }),
         'OPF write failed during import — continuing',
@@ -253,7 +245,7 @@ describe('ImportOrchestrator', () => {
       expect(emitImportStatusSuccess).toHaveBeenCalledWith(expect.objectContaining({
         downloadId: 1, bookId: 1,
       }));
-      // #1108 — bookTitle is no longer part of the status-success helper's contract.
+      // Queue workers, not this status helper, own completion titles.
       const callArg = vi.mocked(emitImportStatusSuccess).mock.calls[0]![0] as unknown as Record<string, unknown>;
       expect(callArg).not.toHaveProperty('bookTitle');
     });
@@ -282,8 +274,6 @@ describe('ImportOrchestrator', () => {
       expect(result).toEqual(mockResult);
     });
 
-    // #1491 — connector refresh fires fire-and-forget after the DB commit, with
-    // reason 'import' and the final target path.
     it('enqueues a connector refresh on import success', async () => {
       await orchestrator.importDownload(1);
 
@@ -315,7 +305,6 @@ describe('ImportOrchestrator', () => {
     it('dispatches failure SSE with the real prior lifecycle (snapshot) as reverted status', async () => {
       await expect(orchestrator.importDownload(1)).rejects.toThrow('Import pipeline crashed');
 
-      // mockContext.bookStatusAtGrab === 'wanted' → reverted status mirrors the snapshot.
       expect(emitImportFailure).toHaveBeenCalledWith(expect.objectContaining({
         downloadId: 1, bookId: 1, revertedBookStatus: 'wanted',
       }));
@@ -342,8 +331,6 @@ describe('ImportOrchestrator', () => {
     });
 
     it('uses the real prior lifecycle (failed) even when the book has a path — path no longer drives the value', async () => {
-      // A book in 'failed' before this import, but with a path on disk. The old
-      // path-derived logic would force 'imported'; the snapshot must win.
       const failedCtx = { ...mockContext, bookStatusAtGrab: 'failed' as const, bookPath: '/audiobooks/old/path' };
       (importService.getImportContext as ReturnType<typeof vi.fn>).mockResolvedValue(failedCtx);
 
@@ -355,7 +342,6 @@ describe('ImportOrchestrator', () => {
     });
 
     it('falls back to the conservative REVERT_FALLBACK_STATUS when the snapshot is null (legacy rows)', async () => {
-      // Null snapshot + a path present: must NOT path-infer; falls back to 'imported'.
       const legacyCtx = { ...mockContext, bookStatusAtGrab: null, bookPath: '/audiobooks/old/path' };
       (importService.getImportContext as ReturnType<typeof vi.fn>).mockResolvedValue(legacyCtx);
 
@@ -392,17 +378,13 @@ describe('ImportOrchestrator', () => {
 
       await orchestrator.importDownload(1);
 
-      // Fire-and-forget should still be called
       expect(emitImportStatusSuccess).toHaveBeenCalled();
       expect(notifyImportComplete).toHaveBeenCalled();
       expect(recordImportEvent).toHaveBeenCalled();
     });
   });
 
-  // ── #1836 — opt-in auto-merge for multi-file downloads ──────────────────
   describe('auto-merge multi-file downloads (#1836)', () => {
-    // Build an orchestrator whose settings have the toggle in the given state. The default
-    // settingsService (toggle off, from DEFAULT_SETTINGS) drives the toggle-off cases.
     function withToggle(autoMergeDownloads: boolean): ImportOrchestrator {
       const svc = createMockSettingsService({ processing: { autoMergeDownloads } });
       return new ImportOrchestrator(importService, svc, log, notifier, tagging, eventHistory, broadcaster, inject<never>(connector), bookService, mergeService);
@@ -415,9 +397,9 @@ describe('ImportOrchestrator', () => {
       await orch.importDownload(1);
 
       expect(mergeService.enqueueMerge).toHaveBeenCalledTimes(1);
-      // Auto-merge records provenance so unattended merge events aren't mislabelled 'manual' (#1838).
+      // Explicit provenance prevents unattended merges being recorded as manual.
       expect(mergeService.enqueueMerge).toHaveBeenCalledWith(1, 'auto');
-      // Admission reads the COMMITTED folder live — the ImportResult.targetPath.
+      // Admission reads the committed target rather than source-result counts.
       expect(readdir).toHaveBeenCalledWith('/audiobooks/Brandon Sanderson/The Way of Kings');
     });
 
@@ -430,8 +412,7 @@ describe('ImportOrchestrator', () => {
       expect(mergeService.enqueueMerge).not.toHaveBeenCalled();
     });
 
-    // #1852 F4 — auto-merge admission must not count a born-hidden temp as the second file.
-    // Load-bearing: reverting the isHiddenName predicate would count 2 here and wrongly enqueue.
+    // Hidden staging files must not inflate the live admission count.
     it('#1852 F4: toggle ON + one visible + one hidden top-level file → does not enqueue', async () => {
       vi.mocked(readdir).mockResolvedValue(['01.mp3', '.02.tmp.mp3'] as never);
       const orch = withToggle(true);
@@ -461,8 +442,6 @@ describe('ImportOrchestrator', () => {
     });
 
     it('counts a live top-level readdir, NOT the recursive source ImportResult.fileCount', async () => {
-      // fileCount is 12 (recursive source count) but the committed folder has 1 top-level audio
-      // file (nested layout) — the live count wins and no merge is enqueued.
       vi.mocked(readdir).mockResolvedValue(['audiobook.m4b', 'disc1'] as never);
       const orch = withToggle(true);
 
@@ -472,8 +451,6 @@ describe('ImportOrchestrator', () => {
     });
 
     it('enqueues on a live ≥2 count even when the persisted topLevelAudioFileCount is a stale 0 (enrichment-failure case)', async () => {
-      // The orchestrator never consults books.topLevelAudioFileCount — it reads the folder live.
-      // A stale-0 persisted field on the ctx book must not suppress a genuine multi-file merge.
       bookService = inject<BookService>({ getById: vi.fn().mockResolvedValue({ id: 1, topLevelAudioFileCount: 0 }) });
       vi.mocked(readdir).mockResolvedValue(['01.mp3', '02.mp3'] as never);
       const svc = createMockSettingsService({ processing: { autoMergeDownloads: true } });
@@ -491,12 +468,9 @@ describe('ImportOrchestrator', () => {
       await orch.importDownload(1);
 
       const enqueueOrder = vi.mocked(mergeService.enqueueMerge).mock.invocationCallOrder[0]!;
-      // After the three awaited import side effects.
       expect(enqueueOrder).toBeGreaterThan(vi.mocked(embedTagsForImport).mock.invocationCallOrder[0]!);
       expect(enqueueOrder).toBeGreaterThan(vi.mocked(writeOpfForImport).mock.invocationCallOrder[0]!);
       expect(enqueueOrder).toBeGreaterThan(vi.mocked(runImportPostProcessing).mock.invocationCallOrder[0]!);
-      // The fire-and-forget status/notification/event/connector calls are dispatched first (last
-      // awaited step), so the enqueue never delays them.
       expect(enqueueOrder).toBeGreaterThan(vi.mocked(emitImportStatusSuccess).mock.invocationCallOrder[0]!);
       expect(enqueueOrder).toBeGreaterThan(vi.mocked(recordImportEvent).mock.invocationCallOrder[0]!);
     });
@@ -528,8 +502,7 @@ describe('ImportOrchestrator', () => {
         expect.objectContaining({ bookId: 1 }),
         expect.stringContaining('Auto-merge enqueue failed'),
       );
-      // The orchestrator never records a merge_failed event — that surfaces only on MergeService's
-      // own mid-run path (recordImportEvent is the success event; assert no failure-event spy fired).
+      // The orchestrator never records merge_failed; only MergeService's mid-run path owns that event.
       expect(recordImportFailedEvent).not.toHaveBeenCalled();
     });
 
@@ -563,8 +536,6 @@ describe('ImportOrchestrator', () => {
 
   describe('processCompletedDownloads — batch enqueue (#636)', () => {
     beforeEach(() => {
-      // Orchestrator is already wired in the parent beforeEach with default
-      // db + nudgeImportWorker; just reset the enqueue mock for these cases.
       vi.mocked(enqueueAutoImport).mockResolvedValue(true);
     });
 
@@ -615,11 +586,8 @@ describe('ImportOrchestrator', () => {
 
       const count = await orchestrator.processCompletedDownloads();
 
-      // Only the non-conflict count is reflected
       expect(count).toBe(1);
-      // Conflicts logged at debug level — the underlying helper's "skipping" info
-      // log fires only when enqueue actually returns conflict (mock here returns
-      // the boolean directly, so we assert on the orchestrator's debug log only).
+      // The mocked helper bypasses its own info log, so only orchestrator debug logging is observable here.
       expect(log.debug).toHaveBeenCalledWith(
         expect.objectContaining({ downloadId: 2 }),
         expect.stringContaining('conflict'),
@@ -628,7 +596,6 @@ describe('ImportOrchestrator', () => {
         expect.objectContaining({ downloadId: 3 }),
         expect.stringContaining('conflict'),
       );
-      // No warn log fired because conflict is not a failure
       expect(log.warn).not.toHaveBeenCalled();
     });
 
@@ -646,7 +613,6 @@ describe('ImportOrchestrator', () => {
     });
   });
 
-  // ── #504 — import failure blacklisting ──────────────────────────────────
   describe('import failure blacklisting (#504)', () => {
     let blacklistService: BlacklistService;
     let retrySearchDeps: RetrySearchDeps;
@@ -654,8 +620,7 @@ describe('ImportOrchestrator', () => {
     beforeEach(() => {
       blacklistService = inject<BlacklistService>({ create: vi.fn().mockResolvedValue({}) });
       retrySearchDeps = { log: createMockLogger() } as unknown as RetrySearchDeps;
-      // Re-construct + wire so this scope's blacklistService/retrySearchDeps
-      // (the ones the assertions reference) are the wired instances.
+      // Wire this scope's spies instead of the parent fixture's defaults.
       orchestrator = new ImportOrchestrator(importService, settingsService, log, notifier, tagging, eventHistory, broadcaster);
       orchestrator.wire({
         bookImportService: {} as never,
@@ -678,7 +643,6 @@ describe('ImportOrchestrator', () => {
         book: { id: 1 },
       }));
 
-      // F2: verify retry-gating contract — settingsService and retrySearchDeps present, no overrideRetry
       const callArg = vi.mocked(blacklistAndRetrySearch).mock.calls[0]![0];
       expect(callArg.settingsService).toBe(settingsService);
       expect(callArg.retrySearchDeps).toBe(retrySearchDeps);
@@ -686,8 +650,7 @@ describe('ImportOrchestrator', () => {
     });
 
     it('typed ContentFailureError with a reworded message still routes to bad_quality/temporary (#1304)', async () => {
-      // Proves classification rides the instanceof path, not the message text: a reworded
-      // ContentFailureError (no 'Copy verification failed' substring) still blacklists + retries.
+      // Removing the legacy message substring proves classification uses instanceof.
       const typedError = new ContentFailureError('audio bytes mismatch after copy');
       (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(typedError);
 
@@ -750,7 +713,7 @@ describe('ImportOrchestrator', () => {
 
       await expect(orchestrator.importDownload(1)).rejects.toBe(contentError);
 
-      // F4: verify the fire-and-forget failure is observable via log.warn
+      // waitFor observes the asynchronous fire-and-forget rejection.
       await vi.waitFor(() => {
         expect(log.warn).toHaveBeenCalledWith(
           expect.objectContaining({ error: expect.objectContaining({ message: 'DB blacklist error', type: 'Error' }), downloadId: 1 }),
@@ -760,7 +723,6 @@ describe('ImportOrchestrator', () => {
     });
 
     it('batch path: content failure blacklisting verified via importDownload (not processCompletedDownloads which now enqueues)', async () => {
-      // processCompletedDownloads now enqueues jobs — blacklisting happens when the adapter runs importDownload
       const contentError = new ContentFailureError('No audio files found in /path');
       (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(contentError);
 
@@ -770,7 +732,6 @@ describe('ImportOrchestrator', () => {
     });
   });
 
-  // ── #739 — required-wiring contract ────────────────────────────────────
   describe('required-wiring contract', () => {
     function makeUnwiredOrchestrator(): ImportOrchestrator {
       return new ImportOrchestrator(importService, settingsService, log, notifier, tagging, eventHistory, broadcaster);
@@ -788,8 +749,7 @@ describe('ImportOrchestrator', () => {
       const contentError = new ContentFailureError('No audio files found in /path');
       (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(contentError);
 
-      // The throw happens inside dispatchFailureSideEffects; it replaces the
-      // original error because the dispatch is synchronous in the catch handler.
+      // Synchronous failure dispatch replaces the original content error with the wiring error.
       await expect(unwired.importDownload(1)).rejects.toThrow(/ImportOrchestrator used before wire/);
     });
 

@@ -42,7 +42,6 @@ describe('pickPrimarySeries (seriesPrimary ?? series[0])', () => {
     const primary = { name: 'WithAsin', position: 1, asin: 'B00SERIES' };
     const result = pickPrimarySeries({ seriesPrimary: primary });
     expect(result).toEqual({ name: 'WithAsin', position: 1, asin: 'B00SERIES' });
-    // Type-level: asin is accessible on the returned ref.
     expect(result?.asin).toBe('B00SERIES');
   });
 

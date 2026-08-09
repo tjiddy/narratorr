@@ -10,7 +10,6 @@ import type { Db, DbOrTx } from '@db/index.js';
 const mockAuthor = createMockDbAuthor();
 const mockBook = createMockDbBook();
 
-/** Queue the three getById selects onto whichever handle hydration runs on. */
 function queueGetById(handle: ReturnType<typeof createMockDb>) {
   handle.select
     .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
@@ -32,7 +31,6 @@ describe('BookService — user-cleared fields (#2069)', () => {
     db.update.mockReturnValue(updateChain);
   });
 
-  /** The `.set(...)` payload the book UPDATE was actually issued with. */
   function issuedSet(chain = updateChain): Record<string, unknown> {
     return chain.set.mock.calls[0]![0] as Record<string, unknown>;
   }
@@ -72,8 +70,8 @@ describe('BookService — user-cleared fields (#2069)', () => {
       await service.update(1, { seriesName: null, seriesPosition: null, publisher: null });
 
       expect(issuedSet()).not.toHaveProperty('userClearedFields');
-      // No precondition re-read either — the recompute never ran.
-      expect(db.select).toHaveBeenCalledTimes(3); // getById only
+      // No precondition re-read ran; only getById hydration reads.
+      expect(db.select).toHaveBeenCalledTimes(3);
     });
 
     it('the userAsserted opt-in recomputes and writes the canonical set', async () => {
@@ -84,16 +82,13 @@ describe('BookService — user-cleared fields (#2069)', () => {
 
       const set = issuedSet();
       expect(set.userClearedFields).toBe('["publisher","seriesName"]');
-      // AC7: the stored values are normalized so they cannot contradict the tombstone.
+      // Tombstoned fields cannot retain contradictory stored values.
       expect(set.seriesName).toBeNull();
       expect(set.publisher).toBeNull();
     });
   });
 
-  // #2152 F11 — the widened tuple and AC4's rule **b** change the issued UPDATE
-  // shape at this layer, so the service pins them alongside the pure recompute.
   describe('#2152 — the series matrix reaches the issued UPDATE verbatim', () => {
-    /** Drive one `userAsserted` update over a given stored tombstone column. */
     async function issuedFor(stored: string | null, body: Record<string, unknown>): Promise<Record<string, unknown>> {
       db.select.mockReturnValueOnce(mockDbChain([{ userClearedFields: stored }]));
       queueGetById(db);
@@ -142,10 +137,8 @@ describe('BookService — user-cleared fields (#2069)', () => {
 
   describe('AC8 / F24 — the set is re-read INSIDE the write transaction', () => {
     it('merges a clear that commits between the caller entering update() and the transaction opening', async () => {
-      // The stored set is empty in the pre-transaction world; a concurrent operator
-      // edit commits `["subtitle"]` exactly as this transaction opens. An
-      // implementation that reads the set BEFORE `db.transaction` computes
-      // `["publisher"]` and silently erases that clear.
+      // Simulate a concurrent subtitle clear committed as the transaction opens; an earlier read
+      // would overwrite it.
       let stored: string | null = null;
       let selectCall = 0;
       db.select.mockImplementation(() => {
@@ -187,8 +180,7 @@ describe('BookService — user-cleared fields (#2069)', () => {
       expect(db.transaction).not.toHaveBeenCalled();
       expect(tx.transaction).not.toHaveBeenCalled();
       expect(tx.update).toHaveBeenCalledTimes(1);
-      // F20: the hydration read stays ON the handle, so it observes the write just
-      // made — a `this.db` read could not see the caller's uncommitted transaction.
+      // Hydration must use the caller's handle to see its uncommitted write.
       expect(db.update).not.toHaveBeenCalled();
       expect(db.select).not.toHaveBeenCalled();
     });

@@ -11,8 +11,7 @@ type GqlBody = { query: string; variables?: Record<string, unknown> };
 const isTrendingIdsQuery = (query: string): boolean => query.includes('books_trending');
 const isBooksByIdsQuery = (query: string): boolean => query.includes('books(where');
 
-// Branches a single POST URL on the request body's `query` string so the two
-// trending legs (`books_trending` then `books(where...)`) get the right payload.
+// Route the two trending GraphQL legs by operation text.
 function trendingTwoStep(opts: {
   ids: unknown;
   books?: unknown;
@@ -72,7 +71,7 @@ describe('HardcoverProvider', () => {
       expect(items[0]).toEqual({
         title: 'Project Hail Mary',
         author: 'Andy Weir',
-        asin: 'B08G9XR74C', // audio edition wins over print PRINT_ASIN
+        asin: 'B08G9XR74C',
         isbn: '9780593135228',
         coverUrl: 'https://hc.app/phm.jpg',
         description: 'Space.',
@@ -90,7 +89,6 @@ describe('HardcoverProvider', () => {
     it('re-sorts books into the original ids rank order and drops ids with no row (AC1)', async () => {
       server.use(trendingTwoStep({
         ids: [10, 20, 30],
-        // Returned out of order, and id 20 is absent from the books response.
         books: [
           { id: 30, title: 'Third', contributions: [] },
           { id: 10, title: 'First', contributions: [] },
@@ -100,7 +98,6 @@ describe('HardcoverProvider', () => {
       const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
       const items = await provider.fetchItems();
 
-      // Rank order 10, 30 preserved; missing id 20 dropped (no hole).
       expect(items.map((i) => i.title)).toEqual(['First', 'Third']);
     });
 
@@ -115,7 +112,6 @@ describe('HardcoverProvider', () => {
       await provider.fetchItems();
 
       expect(idsBody).not.toBeNull();
-      // 7-day window ending today; bare dates, not full ISO timestamps.
       expect(idsBody!.variables).toMatchObject({ from: '2026-06-17', to: '2026-06-24', limit: 50, offset: 0 });
     });
 
@@ -151,9 +147,7 @@ describe('HardcoverProvider', () => {
       expect(postCount).toBe(1);
     });
 
-    // Distinct from the null case: `ids` absent entirely (the field is omitted, not
-    // explicitly null). A schema regression from `.nullish()` to nullable-only would
-    // let the null case pass while this one threw instead of returning [] (F1).
+    // Omission separately pins .nullish(); the preceding case covers explicit null.
     it('skips the second query and returns [] when ids is missing entirely (AC3)', async () => {
       let postCount = 0;
       server.use(http.post(GQL_URL, async ({ request }) => {
@@ -234,7 +228,6 @@ describe('HardcoverProvider', () => {
       }]);
     });
 
-    // #732 — shelfId must be a GraphQL variable, never spliced into the query string.
     it('sends shelfId as the status_id variable, not interpolated into the query (AC4)', async () => {
       let capturedBody: GqlBody | null = null;
       server.use(http.post(GQL_URL, async ({ request }) => {
@@ -251,7 +244,6 @@ describe('HardcoverProvider', () => {
       expect(capturedBody!.query).not.toContain('123');
     });
 
-    // AC4 — bearer-scoped contract: no user_id arg, no `me {` nesting.
     it('shelf query filters on status_id only — no user_id arg and no me nesting (AC4)', async () => {
       let capturedBody: GqlBody | null = null;
       server.use(http.post(GQL_URL, async ({ request }) => {
@@ -286,14 +278,14 @@ describe('HardcoverProvider', () => {
       const items = await provider.fetchItems();
 
       expect(items[0]!.asin).toBe('PRINT_ASIN');
-      expect(items[0]!.isbn).toBe('0593135202'); // isbn_10 fallback when no isbn_13
+      expect(items[0]!.isbn).toBe('0593135202');
     });
 
     it('yields undefined asin/isbn (not null, not a crash) when no editions exist (AC5)', async () => {
       server.use(trendingTwoStep({
         ids: [1, 2],
         books: [
-          { id: 1, title: 'No Editions', contributions: [] }, // both edition fields missing
+          { id: 1, title: 'No Editions', contributions: [] },
           { id: 2, title: 'Empty Editions', contributions: [], editions: [] },
         ],
       }));
@@ -325,7 +317,6 @@ describe('HardcoverProvider', () => {
     });
   });
 
-  // ── #1634 Layer 1 — prefer the audio-edition cover over the print cover ──
   describe('mapBook — cover resolution (#1634)', () => {
     it('prefers the default_audio_edition cover over the book (print) image', async () => {
       server.use(trendingTwoStep({
@@ -365,7 +356,7 @@ describe('HardcoverProvider', () => {
           title: 'No Audio Cover',
           contributions: [],
           image: { url: 'https://hc.app/print.jpg' },
-          default_audio_edition: { asin: 'B0AUDIO' }, // no image field
+          default_audio_edition: { asin: 'B0AUDIO' },
         }],
       }));
 
@@ -415,7 +406,7 @@ describe('HardcoverProvider', () => {
         ids: [1, 2],
         books: [
           { id: 1, title: 'A', subtitle: null, description: null, image: null, contributions: null, editions: null, default_audio_edition: null },
-          { id: 2, title: 'B' }, // everything optional missing
+          { id: 2, title: 'B' },
         ],
       }));
 
@@ -432,7 +423,7 @@ describe('HardcoverProvider', () => {
         ids: [1, 2],
         books: [
           { id: 1, title: 'X', new_field: 'unknown', contributions: [] },
-          { id: 2, title: null, contributions: [] }, // dropped (no title)
+          { id: 2, title: null, contributions: [] },
         ],
       }));
 
@@ -523,7 +514,6 @@ describe('HardcoverProvider', () => {
       expect(capturedBody!.variables).toMatchObject({ statusId: 3, limit: 1 });
     });
 
-    // The regression guard for the "green test, broken preview" class of bug.
     it('returns success:false with the GraphQL error message when the queried field is missing', async () => {
       server.use(http.post(GQL_URL, () => HttpResponse.json({
         errors: [{ message: "field 'trending_books' not found in type: 'query_root'" }],
@@ -584,7 +574,6 @@ describe('HardcoverProvider', () => {
     });
   });
 
-  // ── #1879 — custom list by URL ──────────────────────────────────────────────
   describe('fetchItems — custom list (#1879)', () => {
     const CUSTOM_URL = 'https://hardcover.app/@LisaRae/lists/2025-year-in-books';
 
@@ -602,8 +591,7 @@ describe('HardcoverProvider', () => {
     const listResponse = (rows: unknown, booksCount: number | null = null, extra: Record<string, unknown> = {}) =>
       ({ data: { lists: [{ id: 1, name: 'L', ranked: true, books_count: booksCount, list_books: rows, ...extra }] } });
 
-    // Serves paged windows from a virtual list of `total` rows, honouring the
-    // request `offset`/`limit`. `booksCount` defaults to `total`.
+    // Serve offset/limit windows from a virtual list; booksCount defaults to total.
     function pagedHandler(opts: { total: number; booksCount?: number | null; onRequest?: (vars: Record<string, unknown>) => void }) {
       return http.post(GQL_URL, async ({ request }) => {
         const body = await request.json() as GqlBody;
@@ -616,7 +604,6 @@ describe('HardcoverProvider', () => {
       });
     }
 
-    // Serves pre-scripted full responses in order, one per request.
     function scriptedHandler(pages: unknown[], onRequest?: (vars: Record<string, unknown>, index: number) => void) {
       let i = 0;
       return http.post(GQL_URL, async ({ request }) => {
@@ -630,10 +617,6 @@ describe('HardcoverProvider', () => {
 
     const PAGE_SIZE = 100;
 
-    // F3 — the provider-level invalid/missing-URL failure (`requireParsedUrl`) is a
-    // trust boundary shared by fetchItems() and test(); assert its consequence
-    // directly (parser/schema tests don't cover the provider throw) and prove no
-    // network request is issued.
     describe('invalid / missing List URL (F3)', () => {
       const guardNoNetwork = () => {
         let hits = 0;
@@ -683,7 +666,6 @@ describe('HardcoverProvider', () => {
         expect(body!.query).toContain('$offset: Int!');
         expect(body!.query).toContain('public: { _eq: true }');
         expect(body!.query).toContain('order_by: [{ position: asc_nulls_last }, { id: asc }]');
-        // Parsed from the URL, sent as variables (never interpolated).
         expect(body!.variables).toMatchObject({ username: 'LisaRae', slug: '2025-year-in-books', limit: 50, offset: 0 });
       });
 
@@ -777,7 +759,7 @@ describe('HardcoverProvider', () => {
         server.use(pagedHandler({ total: 100, onRequest: () => { count += 1; } }));
 
         const items = await makeProvider({ importMax: 'all' }).fetchItems();
-        expect(count).toBe(2); // full page (0) then empty page (100)
+        expect(count).toBe(2);
         expect(items).toHaveLength(100);
       });
 
@@ -817,7 +799,7 @@ describe('HardcoverProvider', () => {
         let count = 0;
         server.use(pagedHandler({ total: 5100, booksCount: 5100, onRequest: () => { count += 1; } }));
         await expect(makeProvider({ importMax: 'all' }).fetchItems()).rejects.toBeInstanceOf(ImportListError);
-        expect(count).toBe(51); // 50 full pages accepted, throws on the 51st full page
+        expect(count).toBe(51);
       });
 
       it('a large/corrupt books_count is still clamped at MAX_LIST_PAGES full pages (F34)', async () => {
@@ -829,22 +811,20 @@ describe('HardcoverProvider', () => {
 
       it('books_count-derived budget throws on the first full page beyond it (F28)', async () => {
         let count = 0;
-        // books_count 250 → ceil(250/100)=3 full-page budget; server keeps serving full pages.
         server.use(pagedHandler({ total: 500, booksCount: 250, onRequest: () => { count += 1; } }));
         await expect(makeProvider({ importMax: 'all' }).fetchItems()).rejects.toThrow(ImportListError);
-        expect(count).toBe(4); // 3 full pages accepted, throws on the 4th
+        expect(count).toBe(4);
       });
 
       it('advances past a full page with an unmappable row; the row still consumes its id slot (F14)', async () => {
         const page1 = rowsRange(0, 100);
-        page1[50] = row(50, { id: 50, title: null, contributions: [] }); // titleless → dropped
+        page1[50] = row(50, { id: 50, title: null, contributions: [] });
         server.use(scriptedHandler([
           listResponse(page1),
-          listResponse(rowsRange(100, 120)), // short second page of new rows
+          listResponse(rowsRange(100, 120)),
         ]));
 
         const items = await makeProvider({ importMax: 'all' }).fetchItems();
-        // 99 mappable from page 1 (row 50 dropped) + 20 from page 2.
         expect(items).toHaveLength(119);
         expect(items.some((i) => i.title === 'Book 50')).toBe(false);
       });
@@ -857,47 +837,38 @@ describe('HardcoverProvider', () => {
         expect(count).toBe(2);
       });
 
-      // F5 — deletion-sensitive proof that a row's RAW id enters `seen` BEFORE (and
-      // independently of) book mapping. The repeated page's ONLY unmappable row is the
-      // titleless one at id 50; every other row is mappable and would enter `seen`
-      // regardless. If `seen.add(id)` were moved after successful mapping, id 50 would be
-      // "new" on page 2, the zero-new-id guard would NOT fire, and pagination would run
-      // past the second request (eventually a runaway, not a repeated-page error). Pinning
-      // exactly two requests + the repeated-page error kills that mutation.
+      // The sole unmappable row proves raw IDs enter seen before mapping; otherwise the
+      // repeated page would appear to contain one new ID and evade the loop guard.
       it('an exact-repeat full page whose only unmappable row is titleless still triggers the repeated-page guard after the 2nd request (F5)', async () => {
         let count = 0;
         const page = rowsRange(0, 100);
-        page[50] = row(50, { id: 50, title: null, contributions: [] }); // titleless → dropped from output, id must still be consumed
+        page[50] = row(50, { id: 50, title: null, contributions: [] });
         server.use(scriptedHandler([listResponse(page), listResponse(page)], () => { count += 1; }));
         await expect(makeProvider({ importMax: 'all' }).fetchItems()).rejects.toThrow(/repeated page/i);
         expect(count).toBe(2);
       });
 
-      // F5 companion — overlap (not exact repeat): page 2 re-sends the titleless row 50
-      // plus genuinely new ids. The titleless row is never emitted, and because its raw id
-      // was already consumed on page 1 it is not re-counted; pagination continues to the
-      // short page rather than erroring.
+      // An already-consumed unmappable ID must not block genuinely new overlapping rows.
       it('an overlapping page re-sending an already-seen titleless row does not re-emit or error (F5)', async () => {
         const page1 = rowsRange(0, 100);
         page1[50] = row(50, { id: 50, title: null, contributions: [] });
-        const page2 = [page1[50], ...rowsRange(100, 199)]; // full page: titleless id 50 (seen) + 99 new ids
+        const page2 = [page1[50], ...rowsRange(100, 199)];
         server.use(scriptedHandler([
           listResponse(page1),
           listResponse(page2),
-          listResponse(rowsRange(199, 210)), // short terminal page
+          listResponse(rowsRange(199, 210)),
         ]));
 
         const items = await makeProvider({ importMax: 'all' }).fetchItems();
         expect(items.some((i) => i.title === 'Book 50')).toBe(false);
-        // 99 mappable from page 1 + 99 new from page 2 + 11 from the short page.
         expect(items).toHaveLength(209);
       });
 
       it('partially overlapping full pages are de-duplicated by raw id and continue (F19)', async () => {
         server.use(scriptedHandler([
-          listResponse(rowsRange(0, 100)),    // ids 0..99
-          listResponse(rowsRange(50, 150)),   // overlap 50..99, new 100..149
-          listResponse(rowsRange(150, 170)),  // short
+          listResponse(rowsRange(0, 100)),
+          listResponse(rowsRange(50, 150)),
+          listResponse(rowsRange(150, 170)),
         ]));
 
         const items = await makeProvider({ importMax: 'all' }).fetchItems();
@@ -942,9 +913,9 @@ describe('HardcoverProvider', () => {
       it('null/missing/titleless book rows are dropped (not errors); the mappable remainder returns (F32)', async () => {
         server.use(http.post(GQL_URL, () => HttpResponse.json(listResponse([
           row(1, null),
-          row(2),                                   // mappable
-          { id: 3, position: 3 },                   // omitted book
-          row(4, { id: 4, title: null, contributions: [] }), // titleless
+          row(2),
+          { id: 3, position: 3 },
+          row(4, { id: 4, title: null, contributions: [] }),
         ]))));
 
         const items = await makeProvider({ importMax: 50 }).fetchItems();

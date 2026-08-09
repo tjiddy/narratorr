@@ -32,8 +32,7 @@ vi.mock('./chapter-resolver.js', () => ({
   resolveChapterTitle: vi.fn(),
 }));
 
-// Passthrough spy on the encode-strategy seam — real behavior by default, so only the test
-// that pins "the caller does not re-derive resolver predicates" overrides it.
+// Keep real resolver behavior except where a test verifies the caller trusts this seam.
 vi.mock('./encode-strategy.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
   return {
@@ -42,9 +41,7 @@ vi.mock('./encode-strategy.js', async (importOriginal) => {
   };
 });
 
-// Passthrough spy on the error-message reducer. `processAudioFiles` swallows every throw into the
-// unsuccessful `ProcessingResult`, which carries only a string — so this is the one observation
-// point that can still see the THROWN VALUE's type (#2062 AC4). Behaviour is unchanged.
+// ProcessingResult keeps only a message, so this spy exposes the caught value's type.
 vi.mock('@shared/error-message.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
   return {
@@ -53,7 +50,6 @@ vi.mock('@shared/error-message.js', async (importOriginal) => {
   };
 });
 
-// Spy on naming.js — passthrough to real implementation
 vi.mock('./naming.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
   return {
@@ -69,13 +65,11 @@ import { renderFilename } from './naming.js';
 import { resolveCodecArgs } from './encode-strategy.js';
 import { getErrorMessage } from '@shared/error-message.js';
 
-// The real implementations, re-installed on the spies in beforeEach. `vi.clearAllMocks()` clears
-// call history but neither drains `*Once()` queues nor restores implementations, so an
-// override in one test would otherwise leak into every test after it.
+// clearAllMocks keeps implementations, so restore these passthrough spies between tests.
 const actualEncodeStrategy = await vi.importActual<typeof import('./encode-strategy.js')>('./encode-strategy.js');
 const actualErrorMessage = await vi.importActual<typeof import('@shared/error-message.js')>('@shared/error-message.js');
 
-// execFile is callback-based; mock the promisified version (used by probeFfmpeg, detectFfmpegPath, getFileDurations)
+// execFile remains callback-based when production wraps it with promisify.
 const mockExecFile = vi.mocked(execFile);
 const mockSpawn = vi.mocked(spawn);
 
@@ -101,23 +95,20 @@ function mockExecFileFailure(message: string, stderr = '') {
   });
 }
 
-/** Create a mock ChildProcess for spawn-based tests. */
 class MockChildProcess extends EventEmitter {
   stdout = new EventEmitter();
   stderr = new EventEmitter();
   kill = vi.fn();
 }
 
-/** Mock spawn to resolve successfully (exit code 0). Returns the mock child for further interaction. */
 function mockSpawnSuccess(): MockChildProcess {
   const child = new MockChildProcess();
   mockSpawn.mockReturnValue(child as never);
-  // Defer close so callers can attach listeners first
+  // Defer close until production attaches listeners.
   process.nextTick(() => child.emit('close', 0));
   return child;
 }
 
-/** Mock spawn to fail with given exit code. */
 function mockSpawnFailure(code = 1): MockChildProcess {
   const child = new MockChildProcess();
   mockSpawn.mockReturnValue(child as never);
@@ -145,48 +136,34 @@ const defaultContext: ProcessingContext = {
   title: 'The Way of Kings',
 };
 
-/** An ffprobe `stream=codec_name,bit_rate,sample_rate,channels` payload for one source file. */
 interface StreamInfoFixture {
   codec_name?: string;
-  /** bps, as ffprobe reports it — the collector is what floors it to kbps. */
+  /** ffprobe reports bps; production floors to kbps. */
   bit_rate?: string;
   sample_rate?: string;
   channels?: number;
 }
 
-/**
- * Per-file stream-info fixtures for the encode-strategy probe collector, keyed by file path.
- * A missing entry (or an explicit null) makes that file's probe return null, which is what an
- * unreadable stream looks like to the resolver. Reset in beforeEach — never queued with
- * `mockResolvedValueOnce`, since `vi.clearAllMocks()` does not drain `*Once()` queues.
- */
+/** Missing or null entries model unreadable streams without queued mock leakage. */
 let streamInfoByFile: Record<string, StreamInfoFixture | null> = {};
 
 function setStreamInfo(map: Record<string, StreamInfoFixture | null>): void {
-  // Fixture maps are keyed by path strings that tests write either as POSIX literals or via
-  // join() (backslashes on Windows). Re-key POSIX so both styles hit on every platform.
+  // Normalize fixtures because join-built probes use backslashes on Windows.
   streamInfoByFile = Object.fromEntries(
     Object.entries(map).map(([k, v]) => [k.split('\\').join('/'), v]),
   );
 }
 
 /**
- * Install an execFile mock that dispatches on argv AND returns the callback shape each caller
- * expects.
- *
- * Two shapes, not one: the duration and cover-detection callers go through
- * `promisify(execFile)` and receive a single `{ stdout, stderr }` object, while
- * `getFFprobeStreamInfo` calls raw `execFile` and receives `(error, stdout, stderr)`
- * positionally. A dispatcher preserving only one shape either breaks the duration tests or
- * silently makes every stream probe null — which would disable the copy path without failing
- * anything. `asserts a parsed stream probe` below pins that it does not happen.
+ * Preserves execFile's two callback contracts: promisified callers receive an object, while raw
+ * stream probes receive positional output. Mixing them silently turns probes into null and
+ * disables copy-mode coverage.
  */
 function installExecFileDispatcher(opts: {
   durations?: number[];
   videoStreams?: Record<string, number>;
 } = {}): void {
   let durationIdx = 0;
-  // Same POSIX re-keying as setStreamInfo: callers key this map both ways.
   const videoStreams = Object.fromEntries(
     Object.entries(opts.videoStreams ?? {}).map(([k, v]) => [k.split('\\').join('/'), v]),
   );
@@ -195,8 +172,7 @@ function installExecFileDispatcher(opts: {
     if (typeof cb !== 'function') return {} as never;
     const execArgs = (args[1] as string[] | undefined) ?? [];
     const filePath = execArgs[execArgs.length - 1] ?? '';
-    // Production probes join()-built paths (backslashes on Windows); fixture maps are keyed
-    // POSIX. Normalize at the lookup boundary or every keyed probe silently misses on Windows.
+    // Fixture keys are POSIX literals; production probes may be join-built Windows paths.
     const posixPath = filePath.split('\\').join('/');
 
     if (execArgs.includes('stream=codec_name,bit_rate,sample_rate,channels')) {
@@ -220,14 +196,13 @@ function installExecFileDispatcher(opts: {
   });
 }
 
-/** The argv the encode-strategy collector probes each source file with. */
 function streamProbeCalls(): unknown[][] {
   return mockExecFile.mock.calls.filter(
     (call) => (call[1] as string[] | undefined)?.includes('stream=codec_name,bit_rate,sample_rate,channels') ?? false,
   );
 }
 
-/** The ffmpeg encode spawn — selected by argv, since cover art adds extract/reattach spawns. */
+/** Selects the encode argv because cover handling adds other spawns. */
 function encodeSpawnArgs(index = 0): string[] {
   const encodes = mockSpawn.mock.calls
     .map((call) => call[1] as string[])
@@ -276,8 +251,7 @@ describe('probeFfmpeg', () => {
 });
 
 describe('detectFfmpegPath', () => {
-  // Isolate the ambient FFMPEG_PATH override: a dev box with it set would otherwise probe
-  // the override first and break the '/usr/bin/ffmpeg' expectations (passes on CI, flakes locally).
+  // Isolate ambient FFMPEG_PATH so local overrides cannot reorder probes.
   let savedFfmpegPathEnv: string | undefined;
   beforeEach(() => { savedFfmpegPathEnv = process.env.FFMPEG_PATH; delete process.env.FFMPEG_PATH; });
   afterEach(() => {
@@ -303,8 +277,8 @@ describe('detectFfmpegPath', () => {
     mockExecFile.mockImplementation((...args: unknown[]) => {
       const file = args[0] as string;
       const cb = args[args.length - 1] as (err: Error | null, result?: { stdout: string }) => void;
-      if (file === '/bad/ffmpeg') cb(new Error('spawn ENOENT')); // override rejected
-      else cb(null, { stdout: 'ffmpeg version 8.0.1' }); // /usr/bin/ffmpeg wins
+      if (file === '/bad/ffmpeg') cb(new Error('spawn ENOENT'));
+      else cb(null, { stdout: 'ffmpeg version 8.0.1' });
       return {} as never;
     });
     const result = await detectFfmpegPath();
@@ -312,14 +286,12 @@ describe('detectFfmpegPath', () => {
   });
 
   it('falls back to which ffmpeg when /usr/bin/ffmpeg probe fails', async () => {
-    // Arg-keyed single implementation rather than a mockImplementationOnce queue: clearAllMocks
-    // (file-level beforeEach) does not drain *Once() queues, so a leftover queued impl could leak
-    // into later tests (vitest-clearallmocks-once-queue). `/usr/bin/ffmpeg` probe fails; `which` wins.
+    // Dispatch by command because clearAllMocks does not drain mockImplementationOnce queues.
     mockExecFile.mockImplementation((...args: unknown[]) => {
       const file = args[0] as string;
       const cb = args[args.length - 1] as (err: Error | null, result?: { stdout: string }) => void;
       if (file === 'which') cb(null, { stdout: '/usr/local/bin/ffmpeg\n' });
-      else if (file === '/usr/local/bin/ffmpeg') cb(null, { stdout: 'ffmpeg version 8.0.1' }); // which candidate probes OK
+      else if (file === '/usr/local/bin/ffmpeg') cb(null, { stdout: 'ffmpeg version 8.0.1' });
       else cb(new Error('spawn ENOENT'));
       return {} as never;
     });
@@ -335,14 +307,12 @@ describe('detectFfmpegPath', () => {
   });
 
   it('returns null when the `which` candidate resolves but fails to probe (finding 2)', async () => {
-    // `which` finds a PATH entry, but running it as `-version` fails (broken/partial install).
-    // An unprobed candidate must NOT be trusted — otherwise service gates admit work the status
-    // route's fresh probe reports unavailable (the two-definitions-of-available gap).
+    // `which` is not proof that the candidate can run.
     mockExecFile.mockImplementation((...args: unknown[]) => {
       const file = args[0] as string;
       const cb = args[args.length - 1] as (err: Error | null, result?: { stdout: string }) => void;
       if (file === 'which') cb(null, { stdout: '/usr/local/bin/ffmpeg\n' });
-      else cb(new Error('spawn ENOENT')); // every probe (incl the which candidate) fails
+      else cb(new Error('spawn ENOENT'));
       return {} as never;
     });
     const result = await detectFfmpegPath();
@@ -364,7 +334,7 @@ describe('resolveFfmpegPath (memoization)', () => {
     expect(await resolveFfmpegPath()).toBe('/usr/bin/ffmpeg');
     const callsAfterFirst = mockExecFile.mock.calls.length;
     expect(await resolveFfmpegPath()).toBe('/usr/bin/ffmpeg');
-    expect(mockExecFile.mock.calls.length).toBe(callsAfterFirst); // served from cache, no re-detect
+    expect(mockExecFile.mock.calls.length).toBe(callsAfterFirst);
   });
 
   it('coalesces concurrent callers onto ONE detection — single-flight (finding 7)', async () => {
@@ -372,7 +342,7 @@ describe('resolveFfmpegPath (memoization)', () => {
     const [a, b] = await Promise.all([resolveFfmpegPath(), resolveFfmpegPath()]);
     expect(a).toBe('/usr/bin/ffmpeg');
     expect(b).toBe('/usr/bin/ffmpeg');
-    expect(mockExecFile.mock.calls.length).toBe(1); // both shared one in-flight probe
+    expect(mockExecFile.mock.calls.length).toBe(1);
   });
 
   it('holds a miss under the negative TTL — does NOT re-spawn within the window (finding 7)', async () => {
@@ -380,7 +350,7 @@ describe('resolveFfmpegPath (memoization)', () => {
     expect(await resolveFfmpegPath()).toBeNull();
     const callsAfterFirst = mockExecFile.mock.calls.length;
     expect(await resolveFfmpegPath()).toBeNull();
-    // The whole point: a degraded library scan must not re-probe `which`+`/usr/bin/ffmpeg` per book.
+    // Avoid two subprocesses per book during degraded scans.
     expect(mockExecFile.mock.calls.length).toBe(callsAfterFirst);
   });
 
@@ -390,9 +360,9 @@ describe('resolveFfmpegPath (memoization)', () => {
       mockExecFileFailure('spawn ENOENT');
       expect(await resolveFfmpegPath()).toBeNull();
       const callsAfterFirst = mockExecFile.mock.calls.length;
-      vi.advanceTimersByTime(31_000); // past FFMPEG_MISS_TTL_MS (30s)
+      vi.advanceTimersByTime(31_000);
       expect(await resolveFfmpegPath()).toBeNull();
-      expect(mockExecFile.mock.calls.length).toBeGreaterThan(callsAfterFirst); // window elapsed → re-detected
+      expect(mockExecFile.mock.calls.length).toBeGreaterThan(callsAfterFirst);
     } finally {
       vi.useRealTimers();
     }
@@ -400,7 +370,7 @@ describe('resolveFfmpegPath (memoization)', () => {
 });
 
 describe('media-tool env sanitization', () => {
-  // execFile/spawn options object is the 3rd positional arg (file, args, options[, cb]).
+  // execFile and spawn place options at index 2.
   const optsOf = (call: unknown[]): { env?: Record<string, string> } =>
     (call[2] ?? {}) as { env?: Record<string, string> };
 
@@ -422,15 +392,12 @@ describe('media-tool env sanitization', () => {
   });
 
   it('detectFfmpegPath passes a sanitized env to the `which ffmpeg` fallback', async () => {
-    // Single arg-keyed implementation (not a mockImplementationOnce queue): the file-level
-    // beforeEach uses clearAllMocks, which does NOT drain *Once() queues, so a queued impl could
-    // leak into later tests if control flow changed (vitest-clearallmocks-once-queue learning).
-    // Branch on the command instead: the `/usr/bin/ffmpeg` probe fails, `which ffmpeg` succeeds.
+    // Dispatch by command because clearAllMocks does not drain mockImplementationOnce queues.
     mockExecFile.mockImplementation((...args: unknown[]) => {
       const file = args[0] as string;
       const cb = args[args.length - 1] as (err: Error | null, result?: { stdout: string }) => void;
       if (file === 'which') cb(null, { stdout: '/usr/local/bin/ffmpeg\n' });
-      else if (file === '/usr/local/bin/ffmpeg') cb(null, { stdout: 'ffmpeg version 8.0.1' }); // which candidate probes OK
+      else if (file === '/usr/local/bin/ffmpeg') cb(null, { stdout: 'ffmpeg version 8.0.1' });
       else cb(new Error('spawn ENOENT'));
       return {} as never;
     });
@@ -438,7 +405,7 @@ describe('media-tool env sanitization', () => {
     const result = await detectFfmpegPath();
     expect(result).toBe('/usr/local/bin/ffmpeg');
 
-    // Second call is the `which ffmpeg` invocation.
+    // The first call probes /usr/bin; the second invokes which.
     const whichCall = mockExecFile.mock.calls[1]!;
     expect(whichCall[0]).toBe('which');
     const { env } = optsOf(whichCall);
@@ -465,7 +432,6 @@ describe('media-tool env sanitization', () => {
 
     await processAudioFiles('/lib/book', defaultConfig, defaultContext);
 
-    // The execFile calls in the merge path are the ffprobe duration queries.
     expect(mockExecFile).toHaveBeenCalled();
     const { env } = optsOf(mockExecFile.mock.calls[0]!);
     expect(env).toBeDefined();
@@ -474,7 +440,6 @@ describe('media-tool env sanitization', () => {
   });
 });
 
-/** Setup helpers for merge path tests. */
 function setupMergeFiles(durations: number[] = [300, 300, 300]) {
   const fileCount = durations.length;
   const files = Array.from({ length: fileCount }, (_, i) => ({
@@ -506,9 +471,7 @@ describe('processAudioFiles', () => {
       expect(result.outputFiles).toEqual([join('/lib/book', 'Brandon Sanderson - The Way of Kings.m4b')]);
     }
 
-    // Should have written concat file and metadata file
     expect(mockWriteFile).toHaveBeenCalledTimes(2);
-    // spawn should have been called for ffmpeg (not execFile for merge)
     expect(mockSpawn).toHaveBeenCalledTimes(1);
   });
 
@@ -605,18 +568,8 @@ describe('processAudioFiles', () => {
   });
 });
 
-// ============================================================================
-// #2062 — the processor is merge-only, and fails closed below the merge minimum
-// ============================================================================
-
 describe('#2062 fail-closed below the merge minimum', () => {
-  /**
-   * Seed a directory whose merge would OTHERWISE succeed — chapter sources, probes and a
-   * successful spawn are all installed. Installing a mock implementation is not calling it, so
-   * the "touched nothing" assertions still hold; what this buys is the counterfactual. With the
-   * guard deleted these cases fail on the assertions themselves rather than hanging on an
-   * unmocked ffprobe, which is the difference between a red that names the defect and a timeout.
-   */
+  /** Installs a success path so a missing guard fails assertions instead of hanging on a probe. */
   function seedDirectory(names: string[]): void {
     mockReaddir.mockResolvedValue(
       names.map((name) => ({ name, isFile: () => true, isDirectory: () => false })) as never,
@@ -629,7 +582,6 @@ describe('#2062 fail-closed below the merge minimum', () => {
     mockSpawnSuccess();
   }
 
-  /** Nothing downstream of the guard may run: no probe, no encode, no deletion, no output. */
   function expectNoWork(): void {
     expect(mockReadChapterSources).not.toHaveBeenCalled();
     expect(mockSpawn).not.toHaveBeenCalled();
@@ -653,16 +605,12 @@ describe('#2062 fail-closed below the merge minimum', () => {
 
     await processAudioFiles('/lib/book', defaultConfig, defaultContext);
 
-    // Asserted at the throw site: `getErrorMessage` flattens any Error subclass to its message,
-    // so the ProcessingResult alone cannot tell this class from `new Error(sameString)`.
     const thrown = caughtError();
     expect(thrown).toBeInstanceOf(InsufficientAudioFilesError);
     expect((thrown as InsufficientAudioFilesError).count).toBe(1);
   });
 
   it('refuses an EMPTY directory instead of succeeding with no output files', async () => {
-    // Behaviour change, not a refactor: this returned `{ success: true, outputFiles: [] }` before
-    // #2062 — a success that produced nothing, on a path whose caller then deletes the originals.
     seedDirectory([]);
 
     const result = await processAudioFiles('/lib/book', defaultConfig, defaultContext);
@@ -677,15 +625,12 @@ describe('#2062 fail-closed below the merge minimum', () => {
 
     const result = await processAudioFiles('/lib/book', defaultConfig, defaultContext);
 
-    // collectAudioFiles filters by extension before the guard sees the set, so this is a zero.
     expect(!result.success && result.error).toBe('Merge requires at least 2 audio files, found 0');
     expectNoWork();
   });
 
   it('does not count dot-prefixed audio toward the minimum', async () => {
-    // The premise the whole deletion rests on: the processor's collector and the eligibility
-    // gate's `listTopLevelAudioFiles` share `isHiddenName`, so a born-hidden transient is not a
-    // part on either side. One real file plus a dotfile is still a single-file book.
+    // Processor and eligibility must both ignore born-hidden transient audio.
     seedDirectory(['01.mp3', '.02.tmp.mp3']);
 
     const result = await processAudioFiles('/lib/book', defaultConfig, defaultContext);
@@ -707,8 +652,6 @@ describe('#2062 fail-closed below the merge minimum', () => {
   });
 
   it('turns a failed directory read into an unsuccessful result, not a rejection', async () => {
-    // #2062 moved collection inside the try, so a rejected readdir now lands on the same catch
-    // as every other processing failure instead of rejecting out of the module.
     mockReaddir.mockRejectedValue(Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }));
 
     const result = await processAudioFiles('/lib/book', defaultConfig, defaultContext);
@@ -722,8 +665,7 @@ describe('#2062 fail-closed below the merge minimum', () => {
 
 describe('#2062 the notices the deleted keep-original short circuit used to carry', () => {
   it('surfaces the unusable-target notice on a merge set', async () => {
-    // The single-m4b early return was the only direct `noticeMessages` call site. The merge path
-    // has to deliver the same notice through `resolveCodecArgs`.
+    // Unusable-target warnings must reach merge results through resolveCodecArgs.
     setupMergeSet(['01.m4b', '02.m4b']);
     mockSpawnSuccess();
 
@@ -827,10 +769,6 @@ describe('bitrate capping — sourceBitrateKbps', () => {
   });
 });
 
-// ============================================================================
-// #257 — Merge observability: spawn migration, progress callbacks, ffmpeg args
-// ============================================================================
-
 describe('#257 merge observability — audio-processor', () => {
   describe('mergeFiles() ffmpeg args', () => {
     it('passes -max_muxing_queue_size 4096 in ffmpeg args', async () => {
@@ -863,10 +801,8 @@ describe('#257 merge observability — audio-processor', () => {
 
       await processAudioFiles('/lib/book', defaultConfig, defaultContext);
 
-      // spawn called once for ffmpeg merge, execFile only for ffprobe
       expect(mockSpawn).toHaveBeenCalledTimes(1);
       expect(mockSpawn.mock.calls[0]![0]).toBe('/usr/bin/ffmpeg');
-      // execFile calls should all be ffprobe (duration probing)
       for (const call of mockExecFile.mock.calls) {
         expect(call[0]).toContain('ffprobe');
       }
@@ -875,7 +811,7 @@ describe('#257 merge observability — audio-processor', () => {
 
   describe('onProgress callback', () => {
     it('invoked with phase processing and percentage (0..1 ratio) when stdout emits out_time_us', async () => {
-      setupMergeFiles([100, 100]); // 200s total
+      setupMergeFiles([100, 100]);
       const onProgress = vi.fn();
 
       const child = new MockChildProcess();
@@ -886,10 +822,9 @@ describe('#257 merge observability — audio-processor', () => {
         { onProgress },
       );
 
-      // Wait for spawn to be called
       await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
 
-      // Emit progress on stdout (100s out of 200s = 0.5)
+      // Emit 100 seconds of progress against the 200-second total (0.5).
       child.stdout.emit('data', Buffer.from('out_time_us=100000000\n'));
       child.emit('close', 0);
 
@@ -898,7 +833,7 @@ describe('#257 merge observability — audio-processor', () => {
     });
 
     it('percentage clamped to 0..1 when out_time_us exceeds total duration', async () => {
-      setupMergeFiles([100, 100]); // 200s total
+      setupMergeFiles([100, 100]);
       const onProgress = vi.fn();
 
       const child = new MockChildProcess();
@@ -911,7 +846,6 @@ describe('#257 merge observability — audio-processor', () => {
 
       await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
 
-      // Emit progress beyond total (300s out of 200s)
       child.stdout.emit('data', Buffer.from('out_time_us=300000000\n'));
       child.emit('close', 0);
 
@@ -920,7 +854,7 @@ describe('#257 merge observability — audio-processor', () => {
     });
 
     it('percentage is 0 when totalDuration is 0 (no division by zero)', async () => {
-      setupMergeFiles([0, 0]); // 0s total
+      setupMergeFiles([0, 0]);
       const onProgress = vi.fn();
 
       const child = new MockChildProcess();
@@ -937,12 +871,12 @@ describe('#257 merge observability — audio-processor', () => {
       child.emit('close', 0);
 
       await promise;
-      // With 0 totalDuration, onProgress should not be called (guard check)
+      // With zero totalDuration, onProgress is not called.
       expect(onProgress).not.toHaveBeenCalled();
     });
 
     it('negative out_time_us treated as 0 percentage', async () => {
-      setupMergeFiles([100, 100]); // 200s total
+      setupMergeFiles([100, 100]);
       const onProgress = vi.fn();
 
       const child = new MockChildProcess();
@@ -1018,9 +952,7 @@ describe('#257 merge observability — audio-processor', () => {
       );
 
       expect(result.success).toBe(false);
-      // Temp files cleaned up
       expect(mockRm).toHaveBeenCalled();
-      // Source files NOT removed (unlink not called for source files)
       expect(mockUnlink).not.toHaveBeenCalled();
     });
   });
@@ -1030,16 +962,11 @@ describe('#257 merge observability — audio-processor', () => {
       setupMergeFiles([120, 120]);
       mockSpawnSuccess();
 
-      // Call without callbacks (3-arg form)
       const result = await processAudioFiles('/lib/book', defaultConfig, defaultContext);
       expect(result.success).toBe(true);
     });
   });
 });
-
-// ============================================================================
-// #424 — M4B merge: embedded cover art muxer overflow fix
-// ============================================================================
 
 describe('#424 stream mapping — unconditional -vn flag', () => {
   it('mergeFiles includes -vn flag in ffmpeg args', async () => {
@@ -1070,7 +997,6 @@ describe('#424 spawnFfmpeg — stall timeout', () => {
     const promise = processAudioFiles('/lib/book', defaultConfig, defaultContext);
     await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
 
-    // Advance past 60s stall timeout
     vi.advanceTimersByTime(61_000);
 
     const result = await promise;
@@ -1109,16 +1035,12 @@ describe('#424 spawnFfmpeg — stall timeout', () => {
     );
     await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
 
-    // Advance 50s — not yet timed out
     vi.advanceTimersByTime(50_000);
-    // Emit progress to reset the clock
     child.stdout.emit('data', Buffer.from('out_time_us=100000000\n'));
-    // Advance another 50s — would be 100s total without reset, but only 50s since last progress
     vi.advanceTimersByTime(50_000);
 
     expect(child.kill).not.toHaveBeenCalled();
 
-    // Complete normally
     child.emit('close', 0);
     const result = await promise;
     expect(result.success).toBe(true);
@@ -1133,7 +1055,6 @@ describe('#424 spawnFfmpeg — stall timeout', () => {
     const promise = processAudioFiles('/lib/book', defaultConfig, defaultContext);
     await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
 
-    // Complete well before timeout
     vi.advanceTimersByTime(5_000);
     child.emit('close', 0);
 
@@ -1143,10 +1064,6 @@ describe('#424 spawnFfmpeg — stall timeout', () => {
   });
 });
 
-/**
- * Mock execFile to handle ffprobe calls with stream detection.
- * For each file path, returns ffprobe output with the specified number of video streams.
- */
 function mockExecFileWithStreams(fileStreamMap: Record<string, number>) {
   installExecFileDispatcher({ videoStreams: fileStreamMap });
 }
@@ -1159,7 +1076,7 @@ describe('#424 cover art detection and extraction', () => {
       '/lib/book/02.mp3': 0,
     });
 
-    // spawn called: 1=extract, 2=encode, 3=reattach
+    // Cover pipeline order: extract, encode, reattach.
     let spawnCallCount = 0;
     mockSpawn.mockImplementation(() => {
       spawnCallCount++;
@@ -1172,10 +1089,8 @@ describe('#424 cover art detection and extraction', () => {
       '/lib/book', defaultConfig, defaultContext,
     );
     expect(result.success).toBe(true);
-    // 3 spawn calls: extract + encode + reattach
     expect(spawnCallCount).toBe(3);
 
-    // First spawn call should be cover extraction
     const extractArgs = mockSpawn.mock.calls[0]![1] as string[];
     expect(extractArgs).toContain('-an');
     expect(extractArgs).toContain('-vcodec');
@@ -1201,7 +1116,6 @@ describe('#424 cover art detection and extraction', () => {
     );
     expect(result.success).toBe(true);
 
-    // First spawn call = extraction, should reference second file
     const extractArgs = mockSpawn.mock.calls[0]![1] as string[];
     expect(extractArgs).toContain('/lib/book/02.mp3');
     expect(extractArgs).toContain('-an');
@@ -1224,7 +1138,6 @@ describe('#424 cover art detection and extraction', () => {
       '/lib/book', defaultConfig, defaultContext,
     );
     expect(result.success).toBe(true);
-    // Only 1 spawn call: encode (no extract, no reattach)
     expect(mockSpawn).toHaveBeenCalledTimes(1);
   });
 
@@ -1261,10 +1174,8 @@ describe('#424 cover art detection and extraction', () => {
       callIdx++;
       const child = new MockChildProcess();
       if (callIdx === 1) {
-        // Extraction fails
         process.nextTick(() => child.emit('close', 1));
       } else {
-        // Encode succeeds
         process.nextTick(() => child.emit('close', 0));
       }
       return child as never;
@@ -1273,9 +1184,7 @@ describe('#424 cover art detection and extraction', () => {
     const result = await processAudioFiles(
       '/lib/book', defaultConfig, defaultContext,
     );
-    // Merge still succeeds despite extraction failure
     expect(result.success).toBe(true);
-    // Only 2 calls: extract (failed) + encode (no reattach since no cover)
     expect(mockSpawn).toHaveBeenCalledTimes(2);
   });
 
@@ -1328,7 +1237,6 @@ describe('#424 cover art detection and extraction', () => {
       return child as never;
     });
 
-    // No callbacks — exercises the optional-callback path
     const result = await processAudioFiles(
       '/lib/book', defaultConfig, defaultContext,
     );
@@ -1353,14 +1261,12 @@ describe('#424 cover art detection and extraction', () => {
       return child as never;
     });
 
-    // Override stat to return 0 bytes for extracted cover
     mockStat.mockResolvedValueOnce({ size: 0 } as never);
 
     const result = await processAudioFiles(
       '/lib/book', defaultConfig, defaultContext,
     );
     expect(result.success).toBe(true);
-    // Only 2 calls: extract + encode (no reattach for zero-byte cover)
     expect(mockSpawn).toHaveBeenCalledTimes(2);
   });
 });
@@ -1383,7 +1289,7 @@ describe('#424 cover art reattach (M4B only)', () => {
       '/lib/book', defaultConfig, defaultContext,
     );
 
-    // Third spawn call = reattach
+    // Cover pipeline order makes index 2 the reattach.
     expect(mockSpawn).toHaveBeenCalledTimes(3);
     const reattachArgs = mockSpawn.mock.calls[2]![1] as string[];
     expect(reattachArgs).toContain('-disposition:v:0');
@@ -1432,7 +1338,6 @@ describe('#424 cover art reattach (M4B only)', () => {
       '/lib/book', { ...defaultConfig, outputFormat: 'mp3' }, defaultContext,
     );
 
-    // 2 calls: extract + encode. No reattach for MP3.
     expect(mockSpawn).toHaveBeenCalledTimes(2);
   });
 
@@ -1448,7 +1353,6 @@ describe('#424 cover art reattach (M4B only)', () => {
       callIdx++;
       const child = new MockChildProcess();
       if (callIdx === 3) {
-        // Reattach fails
         process.nextTick(() => child.emit('close', 1));
       } else {
         process.nextTick(() => child.emit('close', 0));
@@ -1459,9 +1363,7 @@ describe('#424 cover art reattach (M4B only)', () => {
     const result = await processAudioFiles(
       '/lib/book', defaultConfig, defaultContext,
     );
-    // 3 spawn calls happened: extract + encode + reattach (failed)
     expect(mockSpawn).toHaveBeenCalledTimes(3);
-    // Merge still succeeds — audio-only M4B is the output
     expect(result.success).toBe(true);
   });
 
@@ -1514,7 +1416,6 @@ describe('#424 cover art reattach (M4B only)', () => {
       return child as never;
     });
 
-    // No callbacks — exercises the optional-callback path
     const result = await processAudioFiles(
       '/lib/book', defaultConfig, defaultContext,
     );
@@ -1545,7 +1446,6 @@ describe('#424 cover art temp file cleanup', () => {
       '/lib/book', defaultConfig, defaultContext,
     );
 
-    // rm called for temp cover file
     expect(mockRm).toHaveBeenCalledWith(
       expect.stringContaining('_cover'),
       expect.objectContaining({ force: true }),
@@ -1564,7 +1464,6 @@ describe('#424 cover art temp file cleanup', () => {
       callIdx++;
       const child = new MockChildProcess();
       if (callIdx === 3) {
-        // Reattach fails
         process.nextTick(() => child.emit('close', 1));
       } else {
         process.nextTick(() => child.emit('close', 0));
@@ -1576,7 +1475,6 @@ describe('#424 cover art temp file cleanup', () => {
       '/lib/book', defaultConfig, defaultContext,
     );
 
-    // rm still called for temp cover file despite reattach failure
     expect(mockRm).toHaveBeenCalledWith(
       expect.stringContaining('_cover'),
       expect.objectContaining({ force: true }),
@@ -1595,7 +1493,6 @@ describe('#424 cover art temp file cleanup', () => {
       callIdx++;
       const child = new MockChildProcess();
       if (callIdx === 2) {
-        // Encode step fails (after successful extraction)
         process.nextTick(() => child.emit('close', 1));
       } else {
         process.nextTick(() => child.emit('close', 0));
@@ -1608,7 +1505,6 @@ describe('#424 cover art temp file cleanup', () => {
     );
     expect(result.success).toBe(false);
 
-    // Cover temp file still cleaned up despite encode failure
     expect(mockRm).toHaveBeenCalledWith(
       expect.stringContaining('_cover'),
       expect.objectContaining({ force: true }),
@@ -1632,7 +1528,6 @@ describe('#424 cover art temp file cleanup', () => {
       '/lib/book', defaultConfig, defaultContext,
     );
 
-    // rm should only be called for concat/metadata temp files, not cover
     for (const call of mockRm.mock.calls) {
       const path = call[0] as string;
       expect(path).not.toContain('_cover');
@@ -1641,7 +1536,6 @@ describe('#424 cover art temp file cleanup', () => {
 
   describe('AbortSignal support', () => {
     it('kills the child process when signal is aborted during processing', async () => {
-      // Setup: 2 files so merge path is taken
       mockReaddir.mockResolvedValue([
         { name: '01.mp3', isFile: () => true, isDirectory: () => false },
         { name: '02.mp3', isFile: () => true, isDirectory: () => false },
@@ -1656,22 +1550,19 @@ describe('#424 cover art temp file cleanup', () => {
       const child = new MockChildProcess();
       mockSpawn.mockReturnValue(child as never);
 
-      // Start processAudioFiles — it will await spawnFfmpeg
       const promise = processAudioFiles(
         '/lib/book', defaultConfig, defaultContext,
         undefined, controller.signal,
       );
 
-      // Let setup (readdir, readChapterSources, getFileDurations, writeFile) settle
+      // Let setup settle so spawnFfmpeg owns the child before aborting.
       await new Promise((r) => setTimeout(r, 50));
 
-      // Abort while ffmpeg is running
       controller.abort();
 
-      // The child process should be killed
       expect(child.kill).toHaveBeenCalledWith('SIGTERM');
 
-      // Simulate process exit after kill
+      // Resolve the mocked process after SIGTERM.
       child.emit('close', 1);
 
       const result = await promise;
@@ -1690,7 +1581,7 @@ describe('#424 cover art temp file cleanup', () => {
       mockExecFileSuccess('30.0');
 
       const controller = new AbortController();
-      controller.abort(); // Abort before calling
+      controller.abort();
 
       const result = await processAudioFiles(
         '/lib/book', defaultConfig, defaultContext,
@@ -1702,8 +1593,7 @@ describe('#424 cover art temp file cleanup', () => {
       expect(mockSpawn).not.toHaveBeenCalled();
     });
 
-    // #2080 — the cover phases now take the same signal as the encode, and an abort there
-    // propagates AS an abort rather than degrading into a cover warning.
+    // Cover-phase aborts propagate as aborts instead of degrading into cover warnings.
     it('cancel during the cover reattach fails the merge and leaves the sources on disk', async () => {
       setupMergeFiles([120, 120]);
       mockExecFileWithStreams({ '/lib/book/01.mp3': 1, '/lib/book/02.mp3': 0 });
@@ -1714,10 +1604,10 @@ describe('#424 cover art temp file cleanup', () => {
       mockSpawn.mockImplementation(() => {
         spawnCall++;
         const child = new MockChildProcess();
-        // Spawn order on the merge path: 1 = cover extract, 2 = encode, 3 = cover reattach.
+        // Cover pipeline order: extract, encode, reattach.
         if (spawnCall === 3) {
           reattachChild = child;
-          // The operator hits Cancel mid-reattach: SIGTERM, then ffmpeg closes with a null code.
+          // Abort mid-reattach, then model ffmpeg closing after SIGTERM.
           process.nextTick(() => { controller.abort(); child.emit('close', null); });
         } else {
           process.nextTick(() => child.emit('close', 0));
@@ -1730,21 +1620,16 @@ describe('#424 cover art temp file cleanup', () => {
         undefined, controller.signal,
       );
 
-      // Never throws out of the module — MergeService's cancelled classification keys on the
-      // unsuccessful result plus its own aborted controller.
+      // MergeService classifies cancellation from this failure plus its aborted controller.
       expect(result.success).toBe(false);
       expect(!result.success && result.error).not.toContain('Cover art');
       expect(reattachChild!.kill).toHaveBeenCalledWith('SIGTERM');
-      // The throw routes through mergeFiles' catch, which never reaches removeSourceFiles.
       expect(mockUnlink).not.toHaveBeenCalled();
     });
 
   });
 });
 
-// #1720 — the merged output renders the configured fileFormat + book-level tokens. (#1720's
-// convert-side stem disambiguation went with the convert path itself in #2062; `disambiguateStems`
-// is now pinned only through its surviving consumer, `planFileRenames`.)
 describe('processAudioFiles — fileFormat token threading (#1720)', () => {
   describe('merge book-level token rendering', () => {
     it('renders {series}/{seriesPosition}/{edition} into the collapsed merged filename', async () => {
@@ -1772,7 +1657,7 @@ describe('processAudioFiles — fileFormat token threading (#1720)', () => {
       const ctx: ProcessingContext = {
         author: 'Brandon Sanderson',
         title: 'The Way of Kings',
-        // Detailed preset (#1829): conditional per-file `{ - ?trackNumber:000}` wrapper.
+        // Detailed preset uses a conditional track-number wrapper.
         fileFormat: '{author} - {series? - }{seriesPosition:00? - }{title}{ (?edition?)}{ - ?trackNumber:000}',
         bookTokens: { series: 'The Stormlight Archive', seriesPosition: 1, edition: 'Full Cast' },
       };
@@ -1781,7 +1666,6 @@ describe('processAudioFiles — fileFormat token threading (#1720)', () => {
 
       expect(result.success).toBe(true);
       if (!result.success) return;
-      // The absent trackNumber wrapper disappears — no ' - ' artifact, no empty parens.
       expect(result.outputFiles).toEqual([
         join('/lib/book', 'Brandon Sanderson - The Stormlight Archive - 01 - The Way of Kings (Full Cast).m4b'),
       ]);
@@ -1790,7 +1674,6 @@ describe('processAudioFiles — fileFormat token threading (#1720)', () => {
     it('bare (non-conditional) per-file separator parity — residual " - " matches planFileRenames single-file output (F3)', async () => {
       setupMergeFiles([120, 120]);
       mockSpawnSuccess();
-      // Hand-written non-conditional per-file separator: partName absent → residual ' - '.
       const ctx: ProcessingContext = {
         author: 'Author',
         title: 'Title',
@@ -1801,8 +1684,7 @@ describe('processAudioFiles — fileFormat token threading (#1720)', () => {
 
       expect(result.success).toBe(true);
       if (!result.success) return;
-      // stripEmptyWrappers collapses the doubled space but keeps the bare ' - ' literals —
-      // byte-for-byte what planFileRenames produces for the same single-file book (not a defect here).
+      // Bare separators survive empty-token cleanup, matching planFileRenames.
       expect(result.outputFiles).toEqual([join('/lib/book', 'Author - - Title.m4b')]);
     });
 
@@ -1812,7 +1694,7 @@ describe('processAudioFiles — fileFormat token threading (#1720)', () => {
       const ctx: ProcessingContext = {
         author: 'Tolkien',
         title: 'The Hobbit',
-        bookTokens: { series: 'Ignored', edition: 'Ignored' }, // present but unused on the fallback path
+        bookTokens: { series: 'Ignored', edition: 'Ignored' },
       };
 
       const result = await processAudioFiles('/lib/book', defaultConfig, ctx);
@@ -1823,10 +1705,6 @@ describe('processAudioFiles — fileFormat token threading (#1720)', () => {
     });
   });
 });
-
-// ============================================================================
-// #2068 — keepOriginalBitrate: stream copy, and an explicit -b:a on every encode
-// ============================================================================
 
 /** Merge-path setup with explicit file names, so extension-sensitive cases are constructible. */
 function setupMergeSet(names: string[], durations?: number[]): string[] {
@@ -1870,10 +1748,7 @@ describe('#2068 stream-copy path (AC1–AC4)', () => {
       '-safe', '0',
       '-i', join('/lib/book', '_concat.txt'),
       '-i', join('/lib/book', '_metadata.txt'),
-      // #2078: the first source is opened as an extra input purely so its global tags can be
-      // mapped forward. `-map 0:a` keeps the concat input the only audio source.
-      // The donor input is audioFiles[0] passed VERBATIM (a POSIX fixture literal), not a
-      // join()-built path — asserting join() here fails on Windows.
+      // The donor path stays verbatim; map 0:a keeps concat as the audio source.
       '-i', '/lib/book/01.m4b',
       '-map', '0:a',
       '-map_metadata', '2',
@@ -1899,8 +1774,6 @@ describe('#2068 stream-copy path (AC1–AC4)', () => {
 
     await processAudioFiles('/lib/book', KEEP_ORIGINAL, defaultContext);
 
-    // A dispatcher returning the wrong callback shape makes every probe null, which silently
-    // disables the copy path — the copy decision below is only reachable from parsed fields.
     expect(streamProbeCalls()).toHaveLength(2);
     expect(encodeSpawnArgs()).toContain('copy');
   });
@@ -1919,17 +1792,9 @@ describe('#2068 stream-copy path (AC1–AC4)', () => {
 
     const args = encodeSpawnArgs();
     expect(args[args.indexOf('-c:a') + 1]).toBe('copy');
-    // #2083: this assertion was `not.toContain('-map_chapters')` until the metadata donor's
-    // internal chapters started landing on the merged mp3. Asserted as the LITERAL `-1` and
-    // deliberately NOT through `mappedInput()`: the suppression sentinel is not an input index,
-    // so mappedInput would return `undefined` — indistinguishable from the flag being absent,
-    // i.e. from the exact pre-fix state this assertion exists to detect.
+    // Assert literal -1: mappedInput cannot distinguish suppression from an omitted flag.
     expect(args[args.indexOf('-map_chapters') + 1]).toBe('-1');
-    // #2078: mp3 has no generated-chapter input, so the first source is input 1 and carries
-    // the global tags forward. `-map_metadata` is now present on this path — pointed at the
-    // SOURCE, never at a chapter file (there isn't one here).
     expect(args[args.indexOf('-map_metadata') + 1]).toBe('1');
-    // Verbatim donor path (POSIX fixture literal), never join()-built — see the m4b twin above.
     expect(args[args.indexOf('-i', args.indexOf('-i') + 1) + 1]).toBe('/lib/book/01.mp3');
     expect(args[args.length - 1]).toBe(MERGED_MP3);
   });
@@ -1945,8 +1810,7 @@ describe('#2068 stream-copy path (AC1–AC4)', () => {
 
     const args = encodeSpawnArgs();
     expect(args[args.indexOf('-i', args.indexOf('-i') + 1) + 1]).toBe(join('/lib/book', '_metadata.txt'));
-    // #2078 moved global metadata onto the first source (input 2); chapters stay on the
-    // generated ffmetadata input (1), which is the #2068 guarantee.
+    // Global metadata comes from source input 2; chapters remain on generated input 1.
     expect(args[args.indexOf('-map_metadata') + 1]).toBe('2');
     expect(args[args.indexOf('-map_chapters') + 1]).toBe('1');
     expect(args[args.indexOf('-c:a') + 1]).toBe('aac');
@@ -2140,9 +2004,7 @@ describe('#2068 probe cost and notice preservation (AC12)', () => {
     expect(streamProbeCalls()).toHaveLength(2);
   });
 
-  // The convert path's `keeps earlier notices when a later convert command fails` case died with
-  // it (#2062). This is the same contract on the surviving path: `warnings` is on BOTH
-  // ProcessingResult variants, so an adjustment made before the encode failed is still reported.
+  // Warnings belong to both result variants and must survive a later encode failure.
   it('keeps the resolver notices when the merge encode fails', async () => {
     const paths = setupMergeSet(['01.wav', '02.wav']);
     setStreamInfo(streamInfoFor(paths, { codec_name: 'pcm_s16le', sample_rate: '44100', channels: 2 }));
@@ -2225,10 +2087,6 @@ describe('#2068 the caller delivers the resolver notices verbatim (AC14)', () =>
   });
 });
 
-// ============================================================================
-// #2078 — merge carries the source parts' global tags into the output
-// ============================================================================
-
 /** The ordered `-i` operands of a spawn argv — ffmpeg input N is `inputPaths(args)[N]`. */
 function inputPaths(args: string[]): string[] {
   const paths: string[] = [];
@@ -2238,13 +2096,7 @@ function inputPaths(args: string[]): string[] {
   return paths;
 }
 
-/**
- * Resolve a `-map_metadata` / `-map_chapters` operand back to the FILE it points at.
- *
- * The index is computed by production, so asserting the literal digit would pin a
- * position rather than the mapping. Reading the operand back through the input list
- * asserts the property the AC is actually about: which file the flag resolves to.
- */
+/** Resolves a mapping to its file so tests avoid brittle literal input positions. */
 function mappedInput(args: string[], flag: '-map_metadata' | '-map_chapters'): string | undefined {
   const idx = args.indexOf(flag);
   if (idx === -1) return undefined;
@@ -2278,8 +2130,7 @@ describe('#2078 merge preserves the source files\' global tags (AC1–AC4)', () 
 
     await processAudioFiles('/lib/book', KEEP_ORIGINAL, defaultContext);
 
-    // The pre-#2078 defect exactly: input 1 is the generated FFMETADATA1 file, which carries
-    // only [CHAPTER] blocks, so mapping global metadata from it wrote an EMPTY tag set.
+    // Generated FFMETADATA1 contains chapters but no global tags.
     expect(mappedInput(encodeSpawnArgs(), '-map_metadata')).not.toBe(FFMETADATA);
   });
 
@@ -2294,7 +2145,7 @@ describe('#2078 merge preserves the source files\' global tags (AC1–AC4)', () 
 
     const args = encodeSpawnArgs();
     expect(mappedInput(args, '-map_chapters')).toBe(FFMETADATA);
-    expect(args).toContain('-b:a'); // encode mode, not copy
+    expect(args).toContain('-b:a');
   });
 
   it('m4b: -map_chapters resolves to the generated ffmetadata input in copy mode too (AC3)', async () => {
@@ -2323,11 +2174,9 @@ describe('#2078 merge preserves the source files\' global tags (AC1–AC4)', () 
     );
 
     const args = encodeSpawnArgs();
-    // These two pin that #2083's fix added no input and moved no mapping.
     expect(inputPaths(args)).toEqual([CONCAT, paths[0]]);
     expect(mappedInput(args, '-map_metadata')).toBe(paths[0]);
-    // #2083 — literal sentinel, not `mappedInput()`: `-1` resolves to no input at all, so
-    // reading it back through the input list cannot tell suppression from omission.
+    // Assert literal -1 because resolving it cannot distinguish suppression from omission.
     expect(args[args.indexOf('-map_chapters') + 1]).toBe('-1');
   });
 
@@ -2338,7 +2187,7 @@ describe('#2078 merge preserves the source files\' global tags (AC1–AC4)', () 
     }));
     mockSpawnSuccess();
 
-    // A usable explicit bitrate always re-encodes: defaultConfig keeps `bitrate`, KEEP_ORIGINAL drops it.
+    // A usable explicit bitrate forces encode mode.
     await processAudioFiles(
       '/lib/book', { ...defaultConfig, outputFormat: 'mp3' }, defaultContext,
     );
@@ -2347,7 +2196,7 @@ describe('#2078 merge preserves the source files\' global tags (AC1–AC4)', () 
     expect(args[args.indexOf('-c:a') + 1]).toBe('libmp3lame');
     expect(args).toContain('-b:a');
     expect(args[args.indexOf('-map_chapters') + 1]).toBe('-1');
-    // Still exactly the copy-mode input layout: the encode branch opens no chapter input.
+    // Encode mode opens no chapter input.
     expect(inputPaths(args)).toEqual([CONCAT, paths[0]]);
     expect(args[args.length - 1]).toBe(MERGED_MP3);
   });
@@ -2361,9 +2210,7 @@ describe('#2078 merge preserves the source files\' global tags (AC1–AC4)', () 
 
     await processAudioFiles('/lib/book', KEEP_ORIGINAL, defaultContext);
 
-    // Two audio-bearing inputs are now open (concat + the first source). Without an explicit
-    // map, ffmpeg picks the "best" audio stream across ALL inputs, which can silently emit the
-    // first part alone. Assert the operand resolves to the concat input, not its position.
+    // Both inputs carry audio; resolve the map to concat rather than pinning its index.
     const args = encodeSpawnArgs();
     const mapIdx = args.indexOf('-map');
     expect(mapIdx).toBeGreaterThan(-1);

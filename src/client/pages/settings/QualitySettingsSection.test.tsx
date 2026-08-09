@@ -146,7 +146,6 @@ describe('QualitySettingsSection', () => {
       });
     });
 
-    // Verify no extra fields leak into the payload
     const callArg = mockApi.updateSettings.mock.calls[0]![0];
     expect(callArg.quality).not.toHaveProperty('protocolPreference');
     expect(callArg.quality).not.toHaveProperty('rejectWords');
@@ -279,7 +278,6 @@ describe('QualitySettingsSection', () => {
     await waitFor(() => {
       expect(screen.getByLabelText('Min download size')).toBeInTheDocument();
     });
-    // The unit moved out of the label into a control-side suffix ('MB/hr' is a different exact string).
     expect(screen.getByText('MB')).toBeInTheDocument();
   });
 
@@ -302,8 +300,7 @@ describe('QualitySettingsSection', () => {
       expect(screen.getByLabelText('Min download size')).toBeInTheDocument();
     });
 
-    // 75, not the 50 default — typing the value the field already holds leaves the form clean
-    // (no Save button) and would prove nothing about the payload.
+    // Use 75 instead of the default 50 so Save renders and the payload path is exercised.
     const input = screen.getByLabelText('Min download size');
     await user.tripleClick(input);
     await user.keyboard('75');

@@ -1,8 +1,7 @@
 import { fetchApi } from './client.js';
 
-// The bulk wire contract is declared ONCE in `src/shared` (#2063) and re-exported here so every
-// existing `@/lib/api` consumer keeps its import unchanged. The local `import type` is what the
-// call signatures below bind to — a bare `export … from` re-export creates no local binding.
+// Re-export shared wire types for existing consumers; export-from alone creates no
+// local binding for the signatures below, so the import remains required.
 import type { BulkJobStatus } from '@shared/bulk-operation-types.js';
 
 export type { BulkOpType, BulkJobFailure, BulkJobStatus } from '@shared/bulk-operation-types.js';

@@ -8,13 +8,6 @@ export interface PreSearchRefreshDeps {
   update: (id: number, data: { settings: Record<string, unknown> }) => Promise<unknown>;
 }
 
-/**
- * Pre-search status refresh for adapters that support it (e.g., MAM).
- * Returns { skip: true, error } if the indexer should be skipped (Mouse class).
- *
- * Extracted from IndexerService to keep that file under the 400-line limit;
- * the function is invoked from both `searchAll` and `searchAllStreaming`.
- */
 export async function preSearchRefresh(
   adapter: IndexerAdapter,
   indexer: IndexerRow,
@@ -40,7 +33,6 @@ export async function preSearchRefresh(
 
   const existingSettings = (indexer.settings ?? {}) as Record<string, unknown>;
 
-  // Mouse class — block search
   if (status.classname === 'Mouse') {
     try {
       await update(indexer.id, { settings: { ...existingSettings, isVip: status.isVip, classname: status.classname } });
@@ -51,7 +43,6 @@ export async function preSearchRefresh(
     return { skip: true, error: 'Searches disabled — Mouse class' };
   }
 
-  // Class changed — persist updated status
   if (existingSettings.isVip !== status.isVip || existingSettings.classname !== status.classname) {
     try {
       await update(indexer.id, { settings: { ...existingSettings, isVip: status.isVip, classname: status.classname } });

@@ -3,7 +3,6 @@ import { EXPECTED_COUNT_MAX, MAX_SUBMISSION_BYTES, type StagedImportItem } from 
 import { preflightSubmission, cumulativeStagedBytes, stagedItemBytes, PREFLIGHT_COPY } from './preflight.js';
 
 const item = (path: string): StagedImportItem => ({ path, title: 'T' });
-/** A staged item whose serialized bytes are approximately `bytes`. */
 const itemOfBytes = (path: string, bytes: number): StagedImportItem => {
   const base = stagedItemBytes(item(path));
   return { path: path + 'x'.repeat(Math.max(0, bytes - base)), title: 'T' };
@@ -41,8 +40,7 @@ describe('preflightSubmission — individual gates', () => {
     expect(PREFLIGHT_COPY.rowCount).toBe('Too many books selected (max 10,000) — import in smaller batches');
   });
 
-  // F13: `itemOfBytes` is byte-exact for ASCII (each padded char adds exactly one UTF-8 byte),
-  // so these fixtures let us probe the `> MAX_SUBMISSION_BYTES` comparison at the exact boundary.
+  // ASCII padding makes exact-byte boundary fixtures.
   it('F30/F13: a cumulative sum EXACTLY at the cap is allowed (inclusive lower bound)', () => {
     const items = [itemOfBytes('/a', MAX_SUBMISSION_BYTES)];
     expect(cumulativeStagedBytes(items)).toBe(MAX_SUBMISSION_BYTES);
@@ -63,15 +61,14 @@ describe('preflightSubmission — individual gates', () => {
   });
 
   it('F30/F13: the boundary is measured in UTF-8 BYTES, not JS chars (multibyte)', () => {
-    // 'あ' = 3 UTF-8 bytes. Fill exactly to cap+1 bytes; the CHAR count is ~1/3 of the cap,
-    // so a char-length regression would wrongly admit this batch.
+    // A character-count implementation would admit this three-byte-per-character payload.
     const base = stagedItemBytes({ path: '/m', title: '' });
     const need = MAX_SUBMISSION_BYTES + 1 - base;
     const triples = Math.floor(need / 3);
     const remainderAscii = need - triples * 3;
     const big: StagedImportItem = { path: '/m', title: 'あ'.repeat(triples) + 'x'.repeat(remainderAscii) };
     expect(cumulativeStagedBytes([big])).toBe(MAX_SUBMISSION_BYTES + 1);
-    expect(big.title.length).toBeLessThan(MAX_SUBMISSION_BYTES); // char count well under the byte cap
+    expect(big.title.length).toBeLessThan(MAX_SUBMISSION_BYTES);
     expect(preflightSubmission([big]).kind).toBe('byte-budget');
   });
 });
@@ -82,7 +79,6 @@ describe('preflightSubmission — precedence (F41)', () => {
   });
 
   it('reports row-count before byte-budget when BOTH are exceeded', () => {
-    // 10,001 items each ~7 KiB ⇒ over 10,000 rows AND over 64 MiB.
     const items = Array.from({ length: EXPECTED_COUNT_MAX + 1 }, (_, i) => itemOfBytes(`/${i}`, 7 * 1024));
     expect(cumulativeStagedBytes(items)).toBeGreaterThan(MAX_SUBMISSION_BYTES);
     expect(preflightSubmission(items)).toEqual({ kind: 'row-count', count: EXPECTED_COUNT_MAX + 1 });

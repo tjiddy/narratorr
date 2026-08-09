@@ -109,7 +109,6 @@ describe('LibraryToolbar', () => {
 
     it('does not render 6 individual status pill buttons', () => {
       renderWithProviders(<LibraryToolbar {...defaultProps()} />);
-      // Should have one dropdown trigger, not 6 pills. The trigger opens options on click.
       expect(screen.queryByRole('option', { name: /wanted/i })).not.toBeInTheDocument();
     });
 
@@ -160,7 +159,6 @@ describe('LibraryToolbar', () => {
 
     it('hides active filter count badge when count is 0', () => {
       renderWithProviders(<LibraryToolbar {...defaultProps()} />);
-      // The only numbers visible should be status counts, not a filter badge
       const filtersButton = screen.getByLabelText('Toggle filters');
       expect(filtersButton.textContent).not.toContain('0');
     });
@@ -183,9 +181,7 @@ describe('LibraryToolbar', () => {
   describe('sort dropdown', () => {
     it('renders a combined sort dropdown trigger (not a separate field select + direction button)', () => {
       renderWithProviders(<LibraryToolbar {...defaultProps()} />);
-      // The combined trigger shows "Date Added (Newest)" for createdAt/desc defaults
       expect(screen.getByRole('button', { name: /date added.*newest/i })).toBeInTheDocument();
-      // No more separate field select or direction button
       expect(screen.queryByLabelText('Sort field')).not.toBeInTheDocument();
       expect(screen.queryByLabelText('Sort descending')).not.toBeInTheDocument();
     });
@@ -242,7 +238,6 @@ describe('LibraryToolbar', () => {
       renderWithProviders(
         <LibraryToolbar {...defaultProps({ filtersOpen: true })} />,
       );
-      // FilterRow renders All Authors, All Series, All Narrators selects
       expect(screen.getByText('All Authors')).toBeInTheDocument();
       expect(screen.getByText('All Series')).toBeInTheDocument();
       expect(screen.getByText('All Narrators')).toBeInTheDocument();
@@ -292,7 +287,6 @@ describe('LibraryToolbar', () => {
   describe('view toggle (must remain top-level)', () => {
     it('view toggle is still rendered as a top-level element', () => {
       renderWithProviders(<LibraryToolbar {...defaultProps()} />);
-      // ViewToggle renders grid/table toggle buttons
       expect(screen.getByLabelText('Grid view')).toBeInTheDocument();
     });
 

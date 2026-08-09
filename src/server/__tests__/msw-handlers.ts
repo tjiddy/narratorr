@@ -1,10 +1,4 @@
-/**
- * Shared MSW handler factories for E2E flow tests.
- * Each factory returns an MSW handler that can be passed to setupServer.use() or server.use().
- */
 import { http, HttpResponse } from 'msw';
-
-// ─── Constants ──────────────────────────────────────────────────────────
 
 export const QB_BASE = 'http://localhost:8080';
 export const INDEXER_BASE = 'http://indexer.test';
@@ -31,8 +25,6 @@ export const TORZNAB_SEARCH_XML = `<?xml version="1.0" encoding="UTF-8"?>
     </item>
   </channel>
 </rss>`;
-
-// ─── qBittorrent Handlers ───────────────────────────────────────────────
 
 export function qbLoginHandler(base = QB_BASE) {
   return http.post(`${base}/api/v2/auth/login`, () => {
@@ -87,8 +79,6 @@ export function qbDeleteTorrentHandler(base = QB_BASE) {
   });
 }
 
-// ─── Torznab Indexer Handlers ───────────────────────────────────────────
-
 export function torznabSearchHandler(apiUrl = INDEXER_BASE, xml = TORZNAB_SEARCH_XML) {
   return http.get(`${apiUrl}/api`, () => {
     return new HttpResponse(xml, {
@@ -97,8 +87,6 @@ export function torznabSearchHandler(apiUrl = INDEXER_BASE, xml = TORZNAB_SEARCH
   });
 }
 
-// ─── Webhook Handlers ───────────────────────────────────────────────────
-
 export interface CapturedRequest {
   url: string;
   method: string;
@@ -106,10 +94,6 @@ export interface CapturedRequest {
   headers: Record<string, string>;
 }
 
-/**
- * Creates a webhook handler that captures requests for later assertion.
- * Returns the handler and the captured requests array.
- */
 export function webhookCaptureHandler(url = WEBHOOK_URL): {
   handler: ReturnType<typeof http.post>;
   captured: CapturedRequest[];
@@ -128,10 +112,6 @@ export function webhookCaptureHandler(url = WEBHOOK_URL): {
   return { handler, captured };
 }
 
-/**
- * Creates a Discord webhook handler that captures requests for later assertion.
- * Returns 204 (Discord's success response).
- */
 export function discordCaptureHandler(url = DISCORD_WEBHOOK_URL): {
   handler: ReturnType<typeof http.post>;
   captured: CapturedRequest[];
@@ -150,10 +130,6 @@ export function discordCaptureHandler(url = DISCORD_WEBHOOK_URL): {
   return { handler, captured };
 }
 
-/**
- * Polls until at least `count` requests have been captured, with a bounded timeout.
- * Throws if timeout is reached.
- */
 export async function waitForRequests(
   captured: CapturedRequest[],
   count: number,

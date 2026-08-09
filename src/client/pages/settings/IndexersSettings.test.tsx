@@ -16,8 +16,7 @@ import { IndexersSettings } from './IndexersSettings';
 import type { Mock } from 'vitest';
 
 vi.mock('@/lib/api', async (importOriginal) => ({
-  // Preserve the real ApiError export — useCrudSettings references it at runtime
-  // (#1404) when surfacing server error messages on mutation rejection.
+  // useCrudSettings needs the real ApiError export at runtime.
   ...(await importOriginal<typeof import('@/lib/api')>()),
   api: {
     getIndexers: vi.fn(),
@@ -261,13 +260,11 @@ describe('IndexersSettings', () => {
       renderWithProviders(<IndexersSettings />);
       await waitForListLoad('My ABB');
 
-      // Open edit modal for indexer id 1
       await user.click(screen.getByLabelText('Edit My ABB'));
       await waitFor(() => {
         expect(screen.getByText('Edit Indexer')).toBeInTheDocument();
       });
 
-      // Click the form-test button inside the modal (not the in-list view-mode test)
       await user.click(within(modalContainer()).getByRole('button', { name: /^test$/i }));
 
       await waitFor(() => {

@@ -429,7 +429,6 @@ describe('SABnzbdClient', () => {
       );
 
       const item = await client.getDownload('SABnzbd_nzo_abc123');
-      // SABnzbd computes kbpersec as bytes_per_sec / 1024, so reversing yields * 1024.
       expect(item!.downloadSpeed).toBe(1_048_576);
     });
 
@@ -467,10 +466,9 @@ describe('SABnzbdClient', () => {
       expect(item!.downloadSpeed).toBeUndefined();
     });
 
-    // #1778 — kbpersec/storage are nullish; a null must parse and map like absence.
     it('parses null kbpersec/storage and maps them identically to omitting them', async () => {
       const withNullsSlot = { ...queueSlot, kbpersec: null, storage: null };
-      const { storage: _s, ...omittedSlot } = queueSlot; // storage & kbpersec absent
+      const { storage: _s, ...omittedSlot } = queueSlot;
 
       server.use(
         http.get(`${API_BASE}/api`, ({ request }) => {
@@ -490,7 +488,7 @@ describe('SABnzbdClient', () => {
       );
       const omitted = await client.getDownload('SABnzbd_nzo_abc123');
 
-      // addedAt is stamped with the current clock per call, so compare everything else.
+      // addedAt uses the current clock independently for each mapping.
       const { addedAt: _a, ...withNullsRest } = withNulls!;
       const { addedAt: _b, ...omittedRest } = omitted!;
       expect(withNullsRest).toEqual(omittedRest);
@@ -701,7 +699,6 @@ describe('SABnzbdClient', () => {
 
       await client.removeDownload('SABnzbd_nzo_abc123');
 
-      // Should call delete on both queue and history
       expect(capturedUrls).toHaveLength(2);
 
       const queueUrl = new URL(capturedUrls[0]!);
@@ -929,7 +926,7 @@ describe('SABnzbdClient', () => {
       );
 
       const item = await client.getDownload('SABnzbd_nzo_abc123');
-      expect(item!.eta).toBe(5445); // 1*3600 + 30*60 + 45
+      expect(item!.eta).toBe(5445); // 1*3600 + 30*60 + 45 seconds
     });
 
     it('returns undefined for zero timeleft', async () => {
@@ -999,8 +996,6 @@ describe('SABnzbdClient', () => {
     });
 
     it('throws DownloadClientError with ZodError cause when categories field is missing', async () => {
-      // Behavior change from #743: a malformed get_cats response (missing
-      // `categories`) is a boundary failure, not a graceful empty list.
       server.use(
         http.get(`${API_BASE}/api`, ({ request }) => {
           const url = new URL(request.url);
@@ -1112,10 +1107,8 @@ describe('SABnzbdClient', () => {
 
       const item = await client.getDownload('SABnzbd_nzo_abc123');
       expect(item).not.toBeNull();
-      // parseFloat('notanumber') || 0 = 0
       expect(item!.size).toBe(0);
       expect(item!.downloaded).toBe(0);
-      // parseInt('abc') || 0 = 0
       expect(item!.progress).toBe(0);
     });
 
@@ -1135,7 +1128,6 @@ describe('SABnzbdClient', () => {
       );
 
       const item = await client.getDownload('SABnzbd_nzo_abc123');
-      // 2 parts instead of 3 → undefined
       expect(item!.eta).toBeUndefined();
     });
 
@@ -1155,7 +1147,6 @@ describe('SABnzbdClient', () => {
       );
 
       const item = await client.getDownload('SABnzbd_nzo_abc123');
-      // 4 parts → undefined (only 3-part format supported)
       expect(item!.eta).toBeUndefined();
     });
 
@@ -1170,7 +1161,7 @@ describe('SABnzbdClient', () => {
             history: {
               slots: [{
                 ...historySlot,
-                download_time: 99999999, // Way more than completed timestamp
+                download_time: 99999999,
                 completed: 1000,
               }],
             },
@@ -1180,7 +1171,6 @@ describe('SABnzbdClient', () => {
 
       const item = await client.getDownload('SABnzbd_nzo_def456');
       expect(item).not.toBeNull();
-      // addedAt = completed - download_time → negative epoch, but still a valid Date
       expect(item!.addedAt.getTime()).toBeLessThan(item!.completedAt!.getTime());
     });
 

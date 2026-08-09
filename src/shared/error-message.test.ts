@@ -69,8 +69,6 @@ describe('getErrorMessage (shared)', () => {
 });
 
 describe('isUniqueViolation (shared)', () => {
-  // Throwaway pattern mirroring the two real call-site forms: a named index and
-  // a `table.column` form. Both production regexes share this shape.
   const PATTERN = /UNIQUE constraint failed.*(?:idx_x|tbl\.col)/;
 
   it('matches a top-level message (no cause)', () => {
@@ -85,10 +83,6 @@ describe('isUniqueViolation (shared)', () => {
   });
 
   it('matches a top-level message independently of a present, nonmatching cause.message', () => {
-    // The inverse of the nested-cause case: proves the top-level path is
-    // load-bearing even when a cause.message exists but does NOT match. A
-    // collapse to getErrorMessageWithCause's cause-OR-message semantics (cause
-    // wins) would test only the nonmatching cause string and return false here.
     const error = Object.assign(new Error('UNIQUE constraint failed: tbl.col'), {
       cause: { message: 'SQLITE_BUSY: database is locked' },
     });

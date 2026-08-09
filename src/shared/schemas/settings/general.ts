@@ -10,11 +10,7 @@ export const generalSettingsSchema = z.object({
   welcomeSeen: z.boolean().default(false),
 });
 
-// Form schema derived from generalSettingsSchema via stripDefaults(), excluding
-// welcomeSeen — it's managed by Layout.tsx for onboarding, not by the General
-// settings form. Including it would overwrite onboarding state.
-// Cast to typed ZodObject for zodResolver/z.infer compatibility (Zod v4 limitation:
-// stripDefaults returns untyped shape; runtime behavior is correct).
+// `welcomeSeen` is Layout-owned onboarding state; submitting it here could overwrite it.
 export const generalFormSchema = stripDefaults(generalSettingsSchema).pick({
   logLevel: true,
   housekeepingRetentionDays: true,

@@ -29,7 +29,6 @@ vi.mock('sonner', () => ({
   },
 }));
 
-// Mock EventSource
 class MockEventSource {
   static instances: MockEventSource[] = [];
   url: string;
@@ -55,7 +54,6 @@ class MockEventSource {
     this.readyState = 2;
   }
 
-  // Test helpers
   simulateOpen() {
     this.readyState = 1;
     this.onopen?.(new Event('open'));
@@ -82,7 +80,6 @@ class MockEventSource {
   }
 }
 
-// Install mock
 const originalEventSource = globalThis.EventSource;
 beforeEach(() => {
   MockEventSource.instances = [];
@@ -137,7 +134,7 @@ describe('useEventSource', () => {
       const es = MockEventSource.instances[0];
       unmount();
 
-      expect(es!.readyState).toBe(2); // CLOSED
+      expect(es!.readyState).toBe(2);
     });
 
     it('invalidates all query keys on reconnect', () => {
@@ -147,7 +144,6 @@ describe('useEventSource', () => {
       renderHook(() => useEventSource('key'), { wrapper });
       const es = MockEventSource.instances[0];
 
-      // Simulate error then reconnect
       act(() => {
         es!.simulateError();
         es!.simulateOpen();
@@ -156,9 +152,7 @@ describe('useEventSource', () => {
       expect(invalidateSpy).toHaveBeenCalledWith();
     });
 
-    // #1776 — the real bug: an error re-mints the token, which tears down and
-    // rebuilds the effect. The catch-up must survive that rebuild (ref-backed
-    // error flag) and fire exactly once on the fresh instance's open.
+    // A remint rebuilds the effect; the error flag must survive and catch up once on fresh open (#1776).
     it('fires the catch-up exactly once on a remint-driven reopen', () => {
       const { wrapper, queryClient } = createWrapper();
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
@@ -170,21 +164,20 @@ describe('useEventSource', () => {
       );
 
       const es1 = MockEventSource.instances[0];
-      act(() => es1!.simulateOpen());        // healthy connect — no catch-up
-      act(() => es1!.simulateError());       // drop → onStreamError re-mints
+      act(() => es1!.simulateOpen());
+      act(() => es1!.simulateError());
 
-      // Parent re-mints: a new token string flows in and drives the reopen.
       rerender({ token: 'token-2' });
       expect(MockEventSource.instances).toHaveLength(2);
 
       const es2 = MockEventSource.instances[1];
       const argless = invalidateSpy.mock.calls.filter((c) => c.length === 0);
-      expect(argless).toHaveLength(0);       // not yet — reopen hasn't happened
+      expect(argless).toHaveLength(0);
 
       act(() => es2!.simulateOpen());
 
       const arglessAfter = invalidateSpy.mock.calls.filter((c) => c.length === 0);
-      expect(arglessAfter).toHaveLength(1);  // exactly one whole-cache catch-up
+      expect(arglessAfter).toHaveLength(1);
     });
 
     it('does not catch up on the initial, no-prior-error connect', () => {
@@ -198,7 +191,6 @@ describe('useEventSource', () => {
       expect(invalidateSpy).not.toHaveBeenCalledWith();
     });
 
-    // #1776 — the 4-minute healthy token refresh must not churn the stream.
     it('does not tear down an OPEN stream when only the token refreshes', () => {
       const { wrapper } = createWrapper();
 
@@ -208,16 +200,14 @@ describe('useEventSource', () => {
       );
 
       const es1 = MockEventSource.instances[0];
-      act(() => es1!.simulateOpen());        // readyState OPEN
+      act(() => es1!.simulateOpen());
 
-      rerender({ token: 'token-2' });        // healthy refresh, no error
+      rerender({ token: 'token-2' });
 
-      expect(MockEventSource.instances).toHaveLength(1); // no reopen
-      expect(es1!.readyState).not.toBe(2);              // not closed
+      expect(MockEventSource.instances).toHaveLength(1);
+      expect(es1!.readyState).not.toBe(2);
     });
 
-    // #1787 F1 — clearing the token to null (logout / revocation) must close the
-    // live stream, not leave it open on the revoked token until unmount.
     it('closes the open stream when the token is cleared to null', () => {
       const { wrapper } = createWrapper();
 
@@ -227,12 +217,12 @@ describe('useEventSource', () => {
       );
 
       const es1 = MockEventSource.instances[0];
-      act(() => es1!.simulateOpen());        // readyState OPEN
+      act(() => es1!.simulateOpen());
 
-      act(() => rerender({ token: null }));  // token revoked
+      act(() => rerender({ token: null }));
 
-      expect(es1!.readyState).toBe(2);                   // existing stream CLOSED
-      expect(MockEventSource.instances).toHaveLength(1); // no new stream opened
+      expect(es1!.readyState).toBe(2);
+      expect(MockEventSource.instances).toHaveLength(1);
     });
 
     it('reconnects with a fresh token after a null gap (token cleared then re-minted)', () => {
@@ -245,8 +235,8 @@ describe('useEventSource', () => {
 
       const es1 = MockEventSource.instances[0];
       act(() => es1!.simulateOpen());
-      act(() => rerender({ token: null }));   // close
-      act(() => rerender({ token: 'token-3' })); // re-mint after the gap
+      act(() => rerender({ token: null }));
+      act(() => rerender({ token: 'token-3' }));
 
       expect(MockEventSource.instances).toHaveLength(2);
       expect(MockEventSource.instances[1]!.url).toBe('/api/events?token=token-3');
@@ -257,7 +247,6 @@ describe('useEventSource', () => {
     it('patches activity row in-place on download_progress across cached pages', () => {
       const { wrapper, queryClient } = createWrapper();
 
-      // Seed a cached activity page (paginated format)
       const queueKey = ['activity', { section: 'queue', limit: 50, offset: 0 }];
       queryClient.setQueryData(queueKey, {
         data: [
@@ -275,11 +264,10 @@ describe('useEventSource', () => {
         es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: null, eta: null });
       });
 
-      // Verify the data was patched correctly in the cached page
       const cached = queryClient.getQueryData<{ data: { id: number; progress: number }[]; total: number }>(queueKey);
       expect(cached!.data).toHaveLength(2);
-      expect(cached!.data[0]!.progress).toBe(0.5);  // patched
-      expect(cached!.data[1]!.progress).toBe(0.9);  // untouched
+      expect(cached!.data[0]!.progress).toBe(0.5);
+      expect(cached!.data[1]!.progress).toBe(0.9);
     });
 
     it('patches downloadSpeed onto the cached row from the download_progress event', () => {
@@ -348,7 +336,6 @@ describe('useEventSource', () => {
     it('does not invalidate activity queries on download_progress when download is in cache', () => {
       const { wrapper, queryClient } = createWrapper();
 
-      // Seed cache with the download present
       const queueKey = ['activity', { section: 'queue', limit: 50, offset: 0 }];
       queryClient.setQueryData(queueKey, {
         data: [{ id: 1, bookId: 2, title: 'Book', progress: 0.1, status: 'downloading' }],
@@ -371,7 +358,6 @@ describe('useEventSource', () => {
     it('falls back to invalidation when download_progress arrives for a download not in any cached page', () => {
       const { wrapper, queryClient } = createWrapper();
 
-      // Seed cache with a DIFFERENT download — download_id 99 is not in the cache
       const queueKey = ['activity', { section: 'queue', limit: 50, offset: 0 }];
       queryClient.setQueryData(queueKey, {
         data: [{ id: 99, bookId: 10, title: 'Other Book', progress: 0.5, status: 'downloading' }],
@@ -393,7 +379,6 @@ describe('useEventSource', () => {
 
     it('does not invalidate when activity cache is completely empty (no pages loaded to miss from)', () => {
       const { wrapper, queryClient } = createWrapper();
-      // No activity data seeded — cache is empty, no page queries exist
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
       renderHook(() => useEventSource('key'), { wrapper });
@@ -404,7 +389,6 @@ describe('useEventSource', () => {
         es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.3, speed: null, eta: null });
       });
 
-      // #312: No page queries cached — can't "miss" from a page that isn't loaded
       expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['activity'] });
       expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: queryKeys.activityCounts() });
     });
@@ -412,7 +396,6 @@ describe('useEventSource', () => {
     it('does not invalidate when download_progress patches an existing download successfully', () => {
       const { wrapper, queryClient } = createWrapper();
 
-      // Seed cache with the exact download that will receive the progress event
       const queueKey = ['activity', { section: 'queue', limit: 50, offset: 0 }];
       queryClient.setQueryData(queueKey, {
         data: [{ id: 1, bookId: 2, title: 'Book', progress: 0.1, status: 'downloading' }],
@@ -429,7 +412,6 @@ describe('useEventSource', () => {
         es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: null, eta: null });
       });
 
-      // Should NOT invalidate — patched in-place instead
       expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['activity'] });
       expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: queryKeys.activityCounts() });
     });
@@ -647,7 +629,6 @@ describe('useEventSource', () => {
       act(() => es!.simulateError());
       expect(connectedResult.result.current).toBe(false);
 
-      // Re-open then unmount
       act(() => es!.simulateOpen());
       expect(connectedResult.result.current).toBe(true);
 
@@ -658,7 +639,6 @@ describe('useEventSource', () => {
     it('useSSEConnected reactively updates when connection state changes', () => {
       const { wrapper } = createWrapper();
 
-      // Render both hooks in the same wrapper
       const eventSourceResult = renderHook(() => useEventSource('key'), { wrapper });
       const connectedResult = renderHook(() => useSSEConnected(), { wrapper });
 
@@ -681,10 +661,6 @@ describe('useEventSource', () => {
     });
   });
 });
-
-// ============================================================================
-// #257 — Merge observability: SSE handler cache/toast integration
-// ============================================================================
 
 describe('#257 merge observability — useEventSource', () => {
   describe('cache invalidation', () => {
@@ -713,7 +689,6 @@ describe('#257 merge observability — useEventSource', () => {
         active: [{ book_id: 42, book_title: 'My Book', phase: 'processing', percentage: 0.5 }], queued: [],
       }));
 
-      // merge_state has a deliberately empty invalidation rule — no invalidation calls
       expect(invalidateSpy).not.toHaveBeenCalled();
     });
 
@@ -789,7 +764,7 @@ describe('#257 merge observability — useEventSource', () => {
         expect(handlers).toBeDefined();
         expect(handlers!.length).toBeGreaterThan(0);
       }
-      // Retired in #2142 — no listener may come back without re-adding the event to the schema.
+      // Retired merge events stay absent unless restored to the schema (#2142).
       for (const type of ['merge_progress', 'merge_queued', 'merge_queue_updated']) {
         expect((es as unknown as { listeners: Map<string, unknown[]> }).listeners.get(type)).toBeUndefined();
       }
@@ -801,13 +776,10 @@ describe('#257 merge observability — useEventSource', () => {
       resetMergeStore();
     });
     afterEach(() => {
-      // Clean up store state between tests
       setMergeProgress(42, null);
     });
 
-    // #2129 — non-terminal state has ONE source now: the merge_state snapshot. merge_started
-    // is the sole surviving incremental (toast + event history, #2142) and must not write the
-    // store — a second writer would recreate the dual-source fight #2129 eliminated.
+    // `merge_started` must not reintroduce a second non-terminal writer (#2129/#2142).
     it('merge_started does not write the store (AC8)', () => {
       const { wrapper } = createWrapper();
       renderHook(() => useEventSource('key'), { wrapper });
@@ -989,15 +961,10 @@ describe('#257 merge observability — useEventSource', () => {
   });
 });
 
-// ============================================================================
-// #312 — Cache-miss scoping: exclude activityCounts from patchActivityProgress
-// ============================================================================
-
 describe('#312 cache-miss scoping — patchActivityProgress', () => {
   it('does not trigger invalidation when only activityCounts is cached (no queue/history pages)', () => {
     const { wrapper, queryClient } = createWrapper();
 
-    // Seed ONLY activityCounts — no queue/history page queries
     queryClient.setQueryData(['activity', 'counts'], { active: 1, completed: 0 });
 
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
@@ -1010,7 +977,6 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: null, eta: null });
     });
 
-    // No queue/history pages loaded — should NOT fall back to invalidation
     expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['activity'] });
     expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: queryKeys.activityCounts() });
   });
@@ -1018,7 +984,6 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
   it('still triggers invalidation fallback when queue pages are cached but download is missing', () => {
     const { wrapper, queryClient } = createWrapper();
 
-    // Seed a queue page that does NOT contain download_id=1
     const queueKey = ['activity', { section: 'queue', limit: 50, offset: 0 }];
     queryClient.setQueryData(queueKey, {
       data: [{ id: 99, bookId: 10, title: 'Other Book', progress: 0.5, status: 'downloading' }],
@@ -1035,7 +1000,6 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.3, speed: null, eta: null });
     });
 
-    // Queue page IS cached but download is missing — invalidation fallback MUST fire
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['activity'] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.activityCounts() });
   });
@@ -1059,7 +1023,6 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.7, speed: null, eta: null });
     });
 
-    // Download found in cache — should patch in-place, no invalidation
     const cached = queryClient.getQueryData<{ data: { id: number; progress: number }[]; total: number }>(queueKey);
     expect(cached!.data[0]!.progress).toBe(0.7);
     expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['activity'] });
@@ -1069,7 +1032,6 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
   it('skips activityCounts query gracefully when it coexists with a page query containing the download', () => {
     const { wrapper, queryClient } = createWrapper();
 
-    // Seed both activityCounts and a page query with the target download
     queryClient.setQueryData(['activity', 'counts'], { active: 1, completed: 0 });
     const queueKey = ['activity', { section: 'queue', limit: 50, offset: 0 }];
     queryClient.setQueryData(queueKey, {
@@ -1087,13 +1049,11 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.6, speed: null, eta: null });
     });
 
-    // Should patch page query, skip counts query, no invalidation
     const cached = queryClient.getQueryData<{ data: { id: number; progress: number }[]; total: number }>(queueKey);
     expect(cached!.data[0]!.progress).toBe(0.6);
     expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['activity'] });
     expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: queryKeys.activityCounts() });
 
-    // Counts query should be untouched
     const counts = queryClient.getQueryData<{ active: number; completed: number }>(['activity', 'counts']);
     expect(counts).toEqual({ active: 1, completed: 0 });
   });
@@ -1101,14 +1061,12 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
   it('patches download in page 2 when present there but missing from page 1 — no invalidation', () => {
     const { wrapper, queryClient } = createWrapper();
 
-    // Page 1 does NOT have the target download
     const page1Key = ['activity', { section: 'queue', limit: 50, offset: 0 }];
     queryClient.setQueryData(page1Key, {
       data: [{ id: 99, bookId: 10, title: 'Other Book', progress: 0.5, status: 'downloading' }],
       total: 2,
     });
 
-    // Page 2 HAS the target download
     const page2Key = ['activity', { section: 'queue', limit: 50, offset: 50 }];
     queryClient.setQueryData(page2Key, {
       data: [{ id: 1, bookId: 2, title: 'Book', progress: 0.1, status: 'downloading' }],
@@ -1125,7 +1083,6 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.8, speed: null, eta: null });
     });
 
-    // Found in page 2 — patched, no invalidation
     const cached = queryClient.getQueryData<{ data: { id: number; progress: number }[]; total: number }>(page2Key);
     expect(cached!.data[0]!.progress).toBe(0.8);
     expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['activity'] });
@@ -1181,10 +1138,6 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       expect(toast.warning).toHaveBeenCalledWith('Merge succeeded but metadata update failed');
     });
   });
-
-  // ============================================================================
-  // #392 — Search progress event routing
-  // ============================================================================
 
   describe('#392 search progress event routing', () => {
     it('subscribes to all 5 new search event types', () => {
@@ -1246,10 +1199,6 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
       expect(handleSearchEvent).toHaveBeenCalledWith('search_complete', payload);
     });
 
-    // #1157 — grab_error outcome surfaces a global error toast.
-    // The toast must use sonner's title (1st arg) + description (options.description)
-    // slots — NOT a concatenated single string — so the book title and error message
-    // render in their dedicated UI slots.
     it('search_complete with outcome grab_error dispatches an error toast using book_title as title and error_message in description slot', () => {
       const { wrapper } = createWrapper();
       renderHook(() => useEventSource('test-api-key'), { wrapper });
@@ -1430,15 +1379,10 @@ describe('#312 cache-miss scoping — patchActivityProgress', () => {
   });
 });
 
-// ============================================================================
-// #637 — Import SSE event behaviors
-// ============================================================================
-
 describe('#637 import SSE cache/toast behaviors', () => {
   it('import_progress patches the matching cached job row with _progress and _byteCounter', () => {
     const { wrapper, queryClient } = createWrapper();
 
-    // Seed cache with two import jobs
     queryClient.setQueryData(queryKeys.importJobs(), [
       { id: 1, bookId: 42, status: 'processing', phase: 'copying' },
       { id: 2, bookId: 43, status: 'pending', phase: 'queued' },
@@ -1455,12 +1399,9 @@ describe('#637 import SSE cache/toast behaviors', () => {
       });
     });
 
-    // Verify the actual cached data was patched
     const cached = queryClient.getQueryData(queryKeys.importJobs()) as Record<string, unknown>[];
     expect(cached).toHaveLength(2);
-    // Matching row should have _progress, _byteCounter, and _progressPhase
     expect(cached[0]).toMatchObject({ id: 1, _progress: 0.5, _byteCounter: { current: 5000, total: 10000 }, _progressPhase: 'copying' });
-    // Non-matching row should be unchanged
     expect(cached[1]).toMatchObject({ id: 2, status: 'pending' });
     expect(cached[1]).not.toHaveProperty('_progress');
     expect(cached[1]).not.toHaveProperty('_progressPhase');
@@ -1470,7 +1411,6 @@ describe('#637 import SSE cache/toast behaviors', () => {
     const { wrapper, queryClient } = createWrapper();
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
-    // No cached importJobs data — cache miss
     renderHook(() => useEventSource('key'), { wrapper });
     const es = MockEventSource.instances[0];
 
@@ -1540,10 +1480,6 @@ describe('#637 import SSE cache/toast behaviors', () => {
   });
 });
 
-// ============================================================================
-// #707 — Nullable book_id in import event payloads
-// ============================================================================
-
 describe('#707 nullable book_id in import event payloads', () => {
   it('import_complete with null book_id does not invalidate per-book key but still invalidates books list', () => {
     const { wrapper, queryClient } = createWrapper();
@@ -1559,9 +1495,7 @@ describe('#707 nullable book_id in import event payloads', () => {
       });
     });
 
-    // No runtime error and per-book key NOT invalidated (book_id is null)
     expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: queryKeys.book(0) });
-    // But the books list invalidation still fires
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
   });
 
@@ -1632,22 +1566,15 @@ describe('#514 useEventSource type safety', () => {
     const registeredTypes = [...(es as unknown as { listeners: Map<string, unknown[]> }).listeners.keys()];
     const schemaOptions = [...sseEventTypeSchema.options];
 
-    // The `hb` liveness heartbeat (#1798) is a deliberate non-domain listener —
-    // absent from the schema — so exclude it before comparing domain coverage.
+    // Heartbeat is deliberately outside the domain-event schema (#1798).
     const domainTypes = registeredTypes.filter((t) => t !== 'hb');
     expect(domainTypes.sort()).toEqual(schemaOptions.sort());
     expect(registeredTypes).toContain('hb');
   });
 });
 
-// ============================================================================
-// #706 — CACHE_INVALIDATION_MATRIX runtime semantics
-// ============================================================================
-
 describe('#706 CACHE_INVALIDATION_MATRIX runtime semantics', () => {
-  // Independent literal — flipping any matrix value without updating this fails the
-  // top-level equality check AND the per-event behavioral assertions (closes the
-  // self-reference loophole where a test driven by the matrix can't catch a flip).
+  // Keep this fixture independent of the matrix so a flipped rule fails equality and behavior.
   const EXPECTED_RULES: Record<SSEEventType, CacheInvalidationRule> = {
     download_progress: { activity: 'patch' },
     download_status_change: { activity: 'invalidate', activityCounts: 'invalidate' },
@@ -1669,7 +1596,6 @@ describe('#706 CACHE_INVALIDATION_MATRIX runtime semantics', () => {
     search_complete: { eventHistory: 'invalidate' },
   };
 
-  // Minimal valid payloads — only fields the consumer reads.
   const PAYLOADS: Record<SSEEventType, Record<string, unknown>> = {
     download_progress: { download_id: 7, book_id: 42, percentage: 0.5, speed: 1024, eta: 30 },
     download_status_change: { download_id: 7, book_id: 42, old_status: 'downloading', new_status: 'completed' },
@@ -1777,7 +1703,6 @@ describe('#706 CACHE_INVALIDATION_MATRIX runtime semantics', () => {
       es!.simulateEvent(type, payload);
     });
 
-    // Positive assertions: each declared family is invalidated with the consumer's exact call shape.
     if (rule.activity === 'invalidate') {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['activity'] });
     }
@@ -1797,7 +1722,6 @@ describe('#706 CACHE_INVALIDATION_MATRIX runtime semantics', () => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['importJobs'] });
     }
 
-    // Negative assertions: tracked families absent from the rule must NOT be invalidated.
     if (!rule.activity) {
       expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['activity'] });
     }
@@ -1840,9 +1764,8 @@ describe('#706 CACHE_INVALIDATION_MATRIX runtime semantics', () => {
     },
   );
 
-  // Documentation test for MockEventSource — NOT a substitute for the matrix-completeness
-  // assertion above. useEventSource only registers listeners for sseEventTypeSchema.options,
-  // so dispatching an unknown event type is a silent no-op at the harness layer.
+  // Harness behavior only: matrix completeness is asserted separately because unknown events
+  // have no registered listener and are silent here.
   it('MockEventSource.simulateEvent for an unregistered type reaches no listener', () => {
     const { wrapper } = createWrapper();
     renderHook(() => useEventSource('key'), { wrapper });
@@ -1852,10 +1775,6 @@ describe('#706 CACHE_INVALIDATION_MATRIX runtime semantics', () => {
     expect(registered).not.toContain('not_in_matrix');
   });
 });
-
-// ============================================================================
-// #722 — Wave 2.5: Zod schema validation of incoming SSE messages
-// ============================================================================
 
 describe('#722 SSE schema validation', () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;
@@ -2035,10 +1954,6 @@ describe('#722 SSE schema validation', () => {
   });
 });
 
-// ============================================================================
-// #722 — SSE_PARSERS registry completeness
-// ============================================================================
-
 describe('#722 SSE_PARSERS registry completeness', () => {
   it('SSE_PARSERS keys cover every sseEventTypeSchema option (compile-time enforced via SSEParserMap)', async () => {
     const { SSE_PARSERS } = await import('@/lib/sse/safe-parse-event');
@@ -2046,15 +1961,8 @@ describe('#722 SSE_PARSERS registry completeness', () => {
   });
 });
 
-// ============================================================================
-// #1798 — SSE liveness watchdog: named heartbeat + client-side silence detection
-// ============================================================================
-//
-// A deaf (half-open) stream delivers no frames while `readyState` stays OPEN and
-// `error` never fires. The watchdog polls on the heartbeat cadence and, once
-// silence exceeds ~3 heartbeat intervals, force-reopens the stream so the
-// existing recovery + catch-up path runs. Fake ONLY the interval timers + Date
-// (never setTimeout — that deadlocks TanStack Query; vitest-faketimers-react-query).
+// Fake only intervals and Date for watchdog tests; faking setTimeout deadlocks TanStack Query.
+// Half-open streams remain OPEN without errors, so silence must enter normal recovery (#1798).
 describe('#1798 SSE liveness watchdog', () => {
   const THRESHOLD_MS = HEARTBEAT_INTERVAL_MS * 3;
 
@@ -2075,7 +1983,6 @@ describe('#1798 SSE liveness watchdog', () => {
     const es = MockEventSource.instances[0]!;
     act(() => es.simulateOpen());
 
-    // A heartbeat arrives every interval, then the watchdog ticks — never stale.
     for (let i = 0; i < 5; i++) {
       act(() => {
         es.simulateEvent('hb', {});
@@ -2083,8 +1990,8 @@ describe('#1798 SSE liveness watchdog', () => {
       });
     }
 
-    expect(MockEventSource.instances).toHaveLength(1); // no reopen
-    expect(es.readyState).not.toBe(2);                 // not closed
+    expect(MockEventSource.instances).toHaveLength(1);
+    expect(es.readyState).not.toBe(2);
     expect(arglessInvalidations(invalidateSpy)).toHaveLength(0);
   });
 
@@ -2093,19 +2000,18 @@ describe('#1798 SSE liveness watchdog', () => {
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
     renderHook(() => useEventSource('key'), { wrapper });
     const es1 = MockEventSource.instances[0]!;
-    act(() => es1.simulateOpen());                     // healthy connect — no catch-up
+    act(() => es1.simulateOpen());
     expect(arglessInvalidations(invalidateSpy)).toHaveLength(0);
 
-    // No frames for > threshold — watchdog trips.
     act(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 4));
 
-    expect(es1.readyState).toBe(2);                    // proactively closed
-    expect(MockEventSource.instances).toHaveLength(2); // reopened
+    expect(es1.readyState).toBe(2);
+    expect(MockEventSource.instances).toHaveLength(2);
 
     const es2 = MockEventSource.instances[1]!;
-    expect(arglessInvalidations(invalidateSpy)).toHaveLength(0); // not until reopen
+    expect(arglessInvalidations(invalidateSpy)).toHaveLength(0);
     act(() => es2.simulateOpen());
-    expect(arglessInvalidations(invalidateSpy)).toHaveLength(1); // exactly one catch-up
+    expect(arglessInvalidations(invalidateSpy)).toHaveLength(1);
   });
 
   it('flips sseConnected false during the outage window, back true after reopen (AC #4)', () => {
@@ -2118,11 +2024,11 @@ describe('#1798 SSE liveness watchdog', () => {
     expect(connected.result.current).toBe(true);
 
     act(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 4));
-    expect(connected.result.current).toBe(false);      // polling fallbacks re-engage
+    expect(connected.result.current).toBe(false);
 
     const es2 = MockEventSource.instances[1]!;
     act(() => es2.simulateOpen());
-    expect(connected.result.current).toBe(true);        // reopen succeeded
+    expect(connected.result.current).toBe(true);
   });
 
   it('a named `hb` event refreshes liveness — resetting it prevents the watchdog firing (AC #2)', () => {
@@ -2131,33 +2037,26 @@ describe('#1798 SSE liveness watchdog', () => {
     const es = MockEventSource.instances[0]!;
     act(() => es.simulateOpen());
 
-    act(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 2)); // 40s — under threshold
-    act(() => es.simulateEvent('hb', {}));                        // liveness reset
-    act(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 2)); // 40s more, but reset
+    act(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 2));
+    act(() => es.simulateEvent('hb', {}));
+    act(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 2));
 
-    // Total 80s > threshold, yet no single silence gap exceeded it.
     expect(MockEventSource.instances).toHaveLength(1);
     expect(es.readyState).not.toBe(2);
   });
 
-  // F1 — every received frame refreshes liveness, not just `hb`. Deletion-proof:
-  // if the `refreshLiveness()` call in the domain-event listener were removed, the
-  // domain event below would not reset the silence timer and the watchdog would
-  // close/reopen the stream at the 80s tick, failing this test.
   it('a domain SSE event refreshes liveness just like a heartbeat (AC #2)', () => {
     const { wrapper } = createWrapper();
     renderHook(() => useEventSource('key'), { wrapper });
     const es = MockEventSource.instances[0]!;
     act(() => es.simulateOpen());
 
-    act(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 2)); // 40s — under threshold
-    // A normal schema event (not `hb`) must count as liveness for an active stream.
+    act(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 2));
     act(() => es.simulateEvent('download_status_change', {
       download_id: 1, book_id: 2, old_status: 'downloading', new_status: 'completed',
     }));
-    act(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 2)); // 40s more, but reset
+    act(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 2));
 
-    // Total 80s > threshold, yet the domain event reset the silence timer.
     expect(MockEventSource.instances).toHaveLength(1);
     expect(es.readyState).not.toBe(2);
   });
@@ -2168,13 +2067,12 @@ describe('#1798 SSE liveness watchdog', () => {
     const es1 = MockEventSource.instances[0]!;
     act(() => es1.simulateOpen());
 
-    // Cross the threshold in a gap between watchdog ticks (checks land at 20/40/60s;
-    // at exactly 60s it is not yet stale, so no tick reconnects before 80s).
+    // Cross just after the 60s tick; strict `>` keeps the watchdog from reconnecting until 80s.
     act(() => vi.advanceTimersByTime(THRESHOLD_MS + 1));
     expect(MockEventSource.instances).toHaveLength(1);
 
     act(() => window.dispatchEvent(new Event('online')));
-    expect(MockEventSource.instances).toHaveLength(2);  // online forced the reopen
+    expect(MockEventSource.instances).toHaveLength(2);
   });
 
   it('reopens a stale stream on visibilitychange when the document is visible', () => {
@@ -2189,9 +2087,6 @@ describe('#1798 SSE liveness watchdog', () => {
     expect(MockEventSource.instances).toHaveLength(2);
   });
 
-  // F2 — the visibilitychange handler only reconnects when the tab is visible.
-  // Deletion-proof: if the `visibilityState === 'visible'` guard were removed or
-  // inverted, a stale hidden tab would reconnect here and this test would fail.
   it('does not reconnect a stale stream on visibilitychange while the tab is hidden', () => {
     Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
     try {
@@ -2200,14 +2095,14 @@ describe('#1798 SSE liveness watchdog', () => {
       const es1 = MockEventSource.instances[0]!;
       act(() => es1.simulateOpen());
 
-      act(() => vi.advanceTimersByTime(THRESHOLD_MS + 1)); // stale, in a gap between ticks
+      act(() => vi.advanceTimersByTime(THRESHOLD_MS + 1));
       expect(MockEventSource.instances).toHaveLength(1);
 
       act(() => document.dispatchEvent(new Event('visibilitychange')));
-      expect(MockEventSource.instances).toHaveLength(1);   // hidden → no reconnect
+      expect(MockEventSource.instances).toHaveLength(1);
       expect(es1.readyState).not.toBe(2);
     } finally {
-      // Remove the own-property override so the jsdom prototype getter is restored.
+      // Restore jsdom's prototype getter after the own-property override.
       delete (document as unknown as Record<string, unknown>).visibilityState;
     }
   });
@@ -2216,7 +2111,7 @@ describe('#1798 SSE liveness watchdog', () => {
     const { wrapper } = createWrapper();
     renderHook(() => useEventSource('key'), { wrapper });
     const es1 = MockEventSource.instances[0]!;
-    act(() => es1.simulateOpen());                      // fresh liveness, nothing elapsed
+    act(() => es1.simulateOpen());
 
     act(() => {
       window.dispatchEvent(new Event('online'));
@@ -2239,16 +2134,11 @@ describe('#1798 SSE liveness watchdog', () => {
     expect(winRemove).toHaveBeenCalledWith('online', expect.any(Function));
     expect(docRemove).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
 
-    // The watchdog interval is cleared — advancing past the threshold opens no new
-    // stream (a leaked timer would fire on the now-closed stream and reconnect).
+    // A leaked watchdog would reopen the closed stream after this advance.
     act(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 5));
     expect(MockEventSource.instances).toHaveLength(1);
   });
 });
-
-// ============================================================================
-// #2129 — merge_state snapshot handling
-// ============================================================================
 
 describe('#2129 merge_state — snapshot handling in useEventSource', () => {
   beforeEach(() => { resetMergeStore(); });
@@ -2261,7 +2151,7 @@ describe('#2129 merge_state — snapshot handling in useEventSource', () => {
     const { result } = renderHook(() => useMergeActivityCards());
     const es = MockEventSource.instances[0];
     act(() => es!.simulateOpen());
-    invalidateSpy.mockClear(); // the reconnect catch-up on open is a separate path
+    invalidateSpy.mockClear();
 
     act(() => es!.simulateEvent('merge_state', {
       active: [{ book_id: 42, book_title: 'Dogs of War', phase: 'processing', percentage: 0.35 }],
@@ -2272,7 +2162,6 @@ describe('#2129 merge_state — snapshot handling in useEventSource', () => {
       { bookId: 42, bookTitle: 'Dogs of War', phase: 'processing', percentage: 0.35 },
       { bookId: 43, bookTitle: 'The Shining', phase: 'queued', position: 1 },
     ]);
-    // A frame per progress tick must never refetch anything, and must never toast.
     expect(invalidateSpy).not.toHaveBeenCalled();
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.info).not.toHaveBeenCalled();
@@ -2292,8 +2181,7 @@ describe('#2129 merge_state — snapshot handling in useEventSource', () => {
     }));
     expect(result.current).toHaveLength(1);
 
-    // A terminal phase in `active` is off-contract — safeParseSseEvent must drop the whole frame
-    // rather than let it clear the live chip.
+    // A terminal phase in `active` is off-contract and must not clear the last valid chip.
     act(() => es!.simulateEvent('merge_state', { active: [{ book_id: 42, book_title: 'Dogs of War', phase: 'complete' }], queued: [] }));
     act(() => es!.simulateEvent('merge_state', { active: [{ book_id: 42 }], queued: [] }));
     act(() => es!.simulateEvent('merge_state', 'not-an-object'));
@@ -2313,7 +2201,7 @@ describe('#2129 merge_state — snapshot handling in useEventSource', () => {
       act(() => es!.simulateEvent('merge_state', {
         active: [{ book_id: 42, book_title: 'Dogs of War', phase: 'committing' }], queued: [],
       }));
-      // The production order: the terminal event, then the snapshot that already excludes it.
+      // Production sends the terminal event before the snapshot that excludes the book.
       act(() => es!.simulateEvent('merge_complete', {
         book_id: 42, book_title: 'Dogs of War', success: true, message: 'Merged 3 files',
       }));

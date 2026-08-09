@@ -11,37 +11,24 @@ import {
   UnsupportedRedirectSchemeError,
 } from './network-service.js';
 
-// ── Types ─────────────────────────────────────────────────────────────
 export type DownloadArtifact =
   | { type: 'torrent-bytes'; data: Buffer; infoHash: string }
   | { type: 'magnet-uri'; uri: string; infoHash: string }
   | { type: 'nzb-url'; url: string; lanAllowlist?: LanAllowlist }
   | { type: 'nzb-bytes'; data: Buffer };
 
-// ── Constants ─────────────────────────────────────────────────────────
 const DATA_TORRENT_URI_PREFIX = 'data:application/x-bittorrent;base64,';
 const DATA_NZB_URI_PREFIX = 'data:application/x-nzb;base64,';
 
 /**
- * Two-layer allowlist that lets a torrent fetch reach LAN-hosted indexers
- * (the universal Prowlarr setup) without widening the SSRF policy:
- *
- * - `hostPort` — pre-flight host:port-exact set used by `fetchWithSsrfRedirect`.
- *   Authoritative; a redirect to a different LAN host:port is refused.
- * - `hostname` — socket-time hostname-only set used by the dispatcher's
- *   `connect.lookup` hook (defeats DNS rebinding between pre-flight and
- *   socket connect). Port-level specificity is enforced upstream by pre-flight.
- *
- * Both sets are derived from the same parsed-URL pass (see
- * `download.service.ts:grab`) — never by splitting host:port strings, which
- * would be ambiguous for unbracketed IPv6 literals like `::1:8080`.
+ * `hostPort` is authoritative during preflight; `hostname` repeats validation at socket connect to
+ * resist DNS rebinding. Derive both from parsed URLs because splitting host:port is ambiguous for IPv6.
  */
 export interface LanAllowlist {
   hostPort: Set<string>;
   hostname: Set<string>;
 }
 
-// ── DownloadUrl value object ──────────────────────────────────────────
 export class DownloadUrl {
   constructor(
     readonly raw: string,
@@ -69,9 +56,7 @@ export class DownloadUrl {
       return this.resolveDataUri();
     }
 
-    // Usenet HTTP URLs — passthrough as nzb-url (adapters handle URL submission).
-    // Carry the LAN allowlist so the Blackhole self-download can reach private/
-    // LAN configured-indexer NZB URLs through the SSRF-safe helper (#1243).
+    // Blackhole downloads nzb-url artifacts itself, so carry the LAN allowlist with them.
     if (this.protocol === 'usenet' && this.isHttp) {
       return { type: 'nzb-url', url: this.raw, ...(lanAllowlist && { lanAllowlist }) };
     }
@@ -139,8 +124,6 @@ export class DownloadUrl {
   }
 }
 
-// ── HTTP helpers ──────────────────────────────────────────────────────
-
 async function processResponseBody(response: Response): Promise<DownloadArtifact> {
   const buffer = Buffer.from(await response.arrayBuffer());
 
@@ -164,10 +147,7 @@ async function processResponseBody(response: Response): Promise<DownloadArtifact
   return { type: 'torrent-bytes', data: buffer, infoHash };
 }
 
-// ── Helpers (exported for use by resolver and tests) ──────────────────
-
-/** Extract info_hash by finding '4:info' marker and hashing the bencode dict that follows.
- *  Searches all occurrences of '4:info' in case earlier string payloads contain the same bytes. */
+/** Hashes the first valid bencoded info dictionary, skipping marker bytes inside string payloads. */
 export function extractInfoHashFromTorrent(torrent: Buffer): string | null {
   const marker = Buffer.from('4:info');
   let searchFrom = 0;
@@ -177,35 +157,33 @@ export function extractInfoHashFromTorrent(torrent: Buffer): string | null {
     if (idx === -1) return null;
 
     const infoStart = idx + marker.length;
-    // The info value must be a bencoded dictionary starting with 'd'
+    // 0x64 (`d`) is the only valid type for the info value.
     if (infoStart < torrent.length && torrent[infoStart] === 0x64) {
       const result = hashBencodeDict(torrent, infoStart);
       if (result !== null) return result;
     }
 
-    // This occurrence wasn't a valid info dict — try the next one
     searchFrom = idx + 1;
   }
 
   return null;
 }
 
-/** Hash a bencoded dictionary starting at `start` in the buffer. Returns null on parse failure. */
 function hashBencodeDict(torrent: Buffer, start: number): string | null {
   let depth = 0;
   let pos = start;
   do {
     const byte = torrent[pos]!;
-    if (byte === 0x64 || byte === 0x6C) depth++; // 'd' or 'l'
-    else if (byte === 0x65) depth--; // 'e'
-    else if (byte === 0x69) { // 'i' — integer, skip to closing 'e' (not a container end)
+    if (byte === 0x64 || byte === 0x6C) depth++; // `d` dictionary or `l` list
+    else if (byte === 0x65) depth--; // `e` container terminator
+    else if (byte === 0x69) { // An integer's closing `e` is not a container terminator.
       pos = torrent.indexOf(0x65, pos + 1);
       if (pos === -1) return null;
-    } else if (byte >= 0x30 && byte <= 0x39) { // digit — string length prefix
+    } else if (byte >= 0x30 && byte <= 0x39) { // String length prefix
       const colonIdx = torrent.indexOf(0x3A, pos); // ':'
       if (colonIdx === -1) return null;
       const len = parseInt(torrent.subarray(pos, colonIdx).toString(), 10);
-      pos = colonIdx + len; // skip past the string content
+      pos = colonIdx + len;
     }
     pos++;
   } while (depth > 0 && pos < torrent.length);
@@ -216,12 +194,10 @@ function hashBencodeDict(torrent: Buffer, start: number): string | null {
   return createHash('sha1').update(infoDict).digest('hex');
 }
 
-/** Check if a response appears to be HTML (login page / auth proxy intercept). */
 function isHtmlResponse(response: Response, buffer: Buffer): boolean {
   const contentType = response.headers.get('Content-Type') ?? '';
   if (contentType.includes('text/html')) return true;
 
-  // Check for HTML markers in first 100 bytes
   const head = buffer.subarray(0, Math.min(100, buffer.length)).toString('utf-8').trim().toLowerCase();
   return head.startsWith('<!doctype') || head.startsWith('<html');
 }

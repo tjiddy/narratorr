@@ -13,10 +13,6 @@ import {
   searchResponseSchema,
 } from '@shared/schemas/search-stream.js';
 
-// ============================================================================
-// Types
-// ============================================================================
-
 export type IndexerStatus = 'pending' | 'complete' | 'error' | 'cancelled';
 
 export interface IndexerState {
@@ -45,27 +41,15 @@ export interface SearchStreamActions {
   cancelIndexer: (indexerId: number) => void;
   showResults: () => void;
   reset: () => void;
-  /** Drop all held results matching the blacklist identity. A held row is
-   *  removed when EITHER non-empty identifier in `ref` equals the row's
-   *  corresponding identifier (independent OR-match, mirroring server-side
-   *  blacklist gating). Empty/absent identifiers never match; an empty/absent
-   *  `ref` is a no-op. */
+  /** Match non-empty infoHash and guid independently, mirroring the server blacklist gate. */
   removeResult: (ref: { infoHash?: string; guid?: string }) => void;
 }
 
-// Ranking-context caps (F15). The stream route validates context independently of
-// `q`: `title` ≤ 500, `author` ≤ 200 (`searchQuerySchema`, src/shared/schemas/search.ts).
-// Valid book metadata is unbounded, so a pathological book (title > 500 / author > 200)
-// would 400 on EVERY request no matter how the user trims the editable `q`. Clamp the
-// book-keyed context to the route maxima here so every structurally valid book stays
-// searchable; the user's `q` is never touched. Kept as client-local literals — the
-// clamp is a client URL-builder concern and this issue is scoped to `src/client` (no
-// schema change); the route schema remains the authoritative validator.
+// The route validates context independently of editable `q`; unbounded book metadata could make
+// every request fail. Clamp only context to route maxima and leave the route schema authoritative.
 const MAX_CONTEXT_TITLE = 500;
 const MAX_CONTEXT_AUTHOR = 200;
 
-/** Build the SSE stream URL with query, context, and stream-token params (#1453).
- *  Context `title`/`author` are clamped to the route maxima (F15); `query` is untouched. */
 function buildStreamUrl(query: string, context: SearchContext | undefined, token: string): string {
   const params = new URLSearchParams({ q: query });
   if (context?.author) params.set('author', context.author.slice(0, MAX_CONTEXT_AUTHOR));
@@ -75,18 +59,10 @@ function buildStreamUrl(query: string, context: SearchContext | undefined, token
   return `${URL_BASE}/api/search/stream?${params.toString()}`;
 }
 
-// Re-mint the stream token before its server-side TTL (5 min, #1453) lapses so an
-// on-demand search never opens with a stale token.
+// Refresh before the server's five-minute token TTL lapses (#1453).
 const STREAM_TOKEN_REFRESH_MS = 4 * 60 * 1000;
 
-/** Drop all results matching `ref` from a held response. A row matches when
- *  EITHER non-empty identifier in `ref` equals the row's corresponding
- *  identifier — an independent OR-match mirroring the server blacklist gate
- *  (`filterBlacklistedResults` in `search-pipeline.ts`, which OR-matches
- *  `infoHash` and `guid` independently). The per-identifier truthiness guard
- *  makes empty-string identifiers no-ops, and an empty/absent `ref` removes
- *  nothing. Returns the same reference when nothing matches so the setState is
- *  a no-op (no spurious re-render). */
+/** Return the original response when nothing matches so setState remains a no-op. */
 function removeResultsMatching(
   prev: SearchResponse | null,
   ref: { infoHash?: string; guid?: string },
@@ -98,10 +74,6 @@ function removeResultsMatching(
   if (filtered.length === prev.results.length) return prev;
   return { ...prev, results: filtered };
 }
-
-// ============================================================================
-// Hook
-// ============================================================================
 
 export interface SearchStreamOptions {
   finalizingTimeoutMs?: number;
@@ -119,12 +91,7 @@ interface SearchStreamListeners {
   markResultsShown: () => void;
 }
 
-/**
- * Wire the data-event listeners (search-start, indexer-*, search-complete) onto
- * an SSE stream. Pure with respect to connection lifecycle — onerror handling and
- * token re-mint/reconnect stay in the hook. Extracted to keep the hook body under
- * the max-lines-per-function cap.
- */
+/** Data listeners stay lifecycle-free; extraction keeps the hook under the lint line cap. */
 function attachSearchDataListeners(es: EventSource, l: SearchStreamListeners): void {
   es.addEventListener('search-start', (event: MessageEvent) => {
     const data = safeParseEvent('search-start', event, searchStartEventSchema);
@@ -199,31 +166,21 @@ export function useSearchStream(
   const esRef = useRef<EventSource | null>(null);
   const cancelledRef = useRef(new Set<number>());
   const finalizingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Token-expiry recovery (#1453): the first stream error during an active search
-  // (before results are shown) is most likely an expired stream token — re-mint
-  // once and reconnect transparently before surfacing a terminal failure. Both
-  // refs reset at the start of every search.
+  // Before results, one stream error gets a transparent token remint; later errors are terminal.
   const remintAttemptedRef = useRef(false);
   const resultsShownRef = useRef(false);
-  // Holds the latest openStream so a reconnect can call it from inside onerror
-  // without making openStream depend on itself.
+  // Break the onerror → openStream self-dependency.
   const openStreamRef = useRef<(token: string) => void>(() => {});
-  // Search-session contract (F11/F14/F17/F18). `start()` captures an immutable
-  // session: a monotonically increasing generation plus the exact query/context it
-  // submitted. The generation advances SYNCHRONOUSLY on start / reset / unmount. The
-  // token re-mint continuation captures the generation at schedule time and no-ops
-  // (neither reopens a stream nor mutates phase/error) if it has since advanced —
-  // and, when still live, reopens the CAPTURED snapshot, never the latest render.
-  // A value-compared generation is StrictMode-safe: unmount advances it and a fresh
-  // mount begins a new session, so the dev setup→cleanup→setup probe cannot wedge it.
+  // Each start snapshots query/context under a generation advanced synchronously by start, reset,
+  // and unmount. Stale remint continuations become no-ops; live ones reopen the snapshot, never a
+  // later render. A numeric generation remains safe under StrictMode cleanup/setup probes.
   const sessionGenRef = useRef(0);
   const sessionSnapshotRef = useRef<{ query: string; context: SearchContext | undefined }>({
     query,
     context,
   });
 
-  // Mint a short-lived stream token (#1453) for SSE auth instead of reading the
-  // long-lived API key — the search-stream endpoint is no longer key-reachable.
+  // The SSE endpoint accepts only short-lived stream tokens, not the long-lived API key (#1453).
   const { data: streamToken } = useQuery({
     queryKey: queryKeys.auth.streamToken(),
     queryFn: api.mintStreamToken,
@@ -253,15 +210,11 @@ export function useSearchStream(
     setPhase('idle');
   }, [clearFinalizingTimeout]);
 
-  // Open (or re-open) the SSE stream with a given token. Extracted so the
-  // onerror handler can transparently reconnect with a freshly minted token.
   const openStream = useCallback((token: string) => {
     if (esRef.current) {
       esRef.current.close();
     }
-    // Reopen the SESSION snapshot's query/context — never the latest render — so a
-    // token re-mint reconnect re-fires the query the search actually submitted even
-    // if the persistent input has since been edited (F14).
+    // A remint replays the submitted snapshot, not edits made while the search was running (F14).
     const { query: sessionQuery, context: sessionContext } = sessionSnapshotRef.current;
     const url = buildStreamUrl(sessionQuery, sessionContext, token);
     const es = new EventSource(url);
@@ -279,19 +232,10 @@ export function useSearchStream(
 
     es.onerror = () => {
       es.close();
-      // Transparent token-expiry recovery (#1453): the first error during an
-      // active search (results not yet shown) is most likely an expired stream
-      // token. Re-mint a fresh token and reconnect once before failing, so an
-      // expired token never drops the user's search permanently. A second error,
-      // or one after results are shown, is treated as a terminal failure.
       if (!resultsShownRef.current && !remintAttemptedRef.current) {
         remintAttemptedRef.current = true;
-        // Bind this recovery to the session live at schedule time. If start/reset/
-        // unmount advances the generation before the mint settles, the recovery is
-        // abandoned on BOTH paths (F11/F17/F18): fulfillment opens no stream, and
-        // rejection does not force `Search connection failed`/idle onto the newer
-        // search. A recovery within the still-live session reopens (fulfillment) or
-        // fails generically (rejection).
+        // Bind both fulfillment and rejection to this session; neither may reopen or fail a newer
+        // session after start, reset, or unmount advances the generation (F11/F17/F18).
         const scheduledGen = sessionGenRef.current;
         api.mintStreamToken()
           .then(({ token: fresh }) => {
@@ -308,17 +252,12 @@ export function useSearchStream(
     };
   }, [clearFinalizingTimeout, failConnection]);
 
-  // Keep openStreamRef pointed at the latest openStream so onerror reconnects
-  // (using the captured session snapshot) without a self-referential dependency.
   useEffect(() => { openStreamRef.current = openStream; }, [openStream]);
 
   const start = useCallback(() => {
-    // Gate on stream-token readiness — don't open an unauthenticated stream
     if (!streamToken) return;
 
     cleanup();
-    // Open a new search session: advance the generation (superseding any in-flight
-    // recovery) and snapshot the exact query/context being submitted (F11/F14).
     sessionGenRef.current += 1;
     sessionSnapshotRef.current = { query, context };
     setPhase('searching');
@@ -337,32 +276,27 @@ export function useSearchStream(
     if (!sessionId || cancelledRef.current.has(indexerId)) return;
     cancelledRef.current.add(indexerId);
 
-    // Optimistically mark as cancelled
     setIndexers(prev => prev.map(idx =>
       idx.id === indexerId ? { ...idx, status: 'cancelled' as IndexerStatus } : idx,
     ));
 
     api.cancelSearchIndexer(sessionId, indexerId).catch(() => {
-      // Cancel failure is non-critical — the indexer may have already completed
+      // The indexer may already have completed, so cancellation failure is non-critical.
     });
   }, [sessionId]);
 
   const showResults = useCallback(() => {
-    // Cancel all pending indexers
     for (const idx of indexers) {
       if (idx.status === 'pending') {
         cancelIndexer(idx.id);
       }
     }
-    // Transition to Phase 2 immediately — don't wait for search-complete
-    // The search-complete event will still arrive and set results data.
-    // Past this point a stream error is terminal, not a token-expiry remint —
-    // the user has already moved to the results view.
+    // Enter results immediately; search-complete fills data later. From here, stream errors are
+    // terminal because the user has already left the active-search view.
     resultsShownRef.current = true;
     setPhase('results');
 
-    // Start a finalizing timeout — if search-complete doesn't arrive in time,
-    // fall back to error state so the user isn't stuck on the spinner forever
+    // Bound the wait for search-complete so finalizing cannot hang forever.
     clearFinalizingTimeout();
     finalizingTimeoutRef.current = setTimeout(() => {
       finalizingTimeoutRef.current = null;
@@ -378,7 +312,6 @@ export function useSearchStream(
 
   const reset = useCallback(() => {
     cleanup();
-    // Supersede any in-flight recovery bound to the prior session (F17/F18).
     sessionGenRef.current += 1;
     setPhase('idle');
     setSessionId(null);
@@ -390,14 +323,9 @@ export function useSearchStream(
     resultsShownRef.current = false;
   }, [cleanup]);
 
-  // Cleanup on unmount. Advancing the session generation MUST happen on a
-  // synchronous (layout-phase) seam, not a passive `useEffect` cleanup (F1): during a
-  // keyed book switch or close, React runs this layout cleanup during the commit —
-  // before the next book's body is interactive and before passive effects flush. A
-  // passive cleanup runs AFTER the new UI commits, leaving a window in which a pending
-  // token re-mint that settles can still see `scheduledGen === sessionGenRef.current`
-  // and reopen a superseded/orphan stream. A value-compared generation (not a boolean)
-  // keeps this StrictMode-safe under the dev setup→cleanup→setup probe.
+  // Layout cleanup advances the generation before the next keyed UI becomes interactive. Passive
+  // cleanup leaves a commit window where a remint can reopen an orphan stream; numeric generation
+  // comparison keeps the synchronous seam StrictMode-safe.
   useLayoutEffect(() => () => {
     sessionGenRef.current += 1;
     cleanup();

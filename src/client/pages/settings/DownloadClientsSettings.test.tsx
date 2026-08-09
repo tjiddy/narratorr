@@ -16,8 +16,7 @@ import { DownloadClientsSettings } from './DownloadClientsSettings';
 import type { Mock } from 'vitest';
 
 vi.mock('@/lib/api', async (importOriginal) => ({
-  // Preserve the real ApiError export — useCrudSettings references it at runtime
-  // (#1404) when surfacing server error messages on mutation rejection.
+  // useCrudSettings needs the real ApiError export at runtime.
   ...(await importOriginal<typeof import('@/lib/api')>()),
   api: {
     getClients: vi.fn(),
@@ -106,30 +105,24 @@ describe('DownloadClientsSettings', () => {
     renderWithProviders(<DownloadClientsSettings />);
     await waitForListLoad('My qBittorrent');
 
-    // Open create form
     await user.click(screen.getByText('Add Client').closest('button')!);
 
-    // Fill required fields
     fireEvent.change(screen.getByPlaceholderText('qBittorrent'), { target: { value: 'Remote Client' } });
     fireEvent.change(screen.getByPlaceholderText('localhost'), { target: { value: '192.168.1.100' } });
 
-    // Add a path mapping via PathMappingEditor
     await user.click(screen.getByRole('button', { name: /add mapping/i }));
     fireEvent.change(screen.getByLabelText(/remote path/i), { target: { value: '/mnt/downloads' } });
     fireEvent.change(screen.getByLabelText(/local path/i), { target: { value: '/local/downloads' } });
     await user.click(screen.getByRole('button', { name: /^add$/i }));
 
-    // Verify mapping row appears
     expect(screen.getByText('/mnt/downloads')).toBeInTheDocument();
     expect(screen.getByText('/local/downloads')).toBeInTheDocument();
 
-    // Submit form
     await user.click(screen.getByText('Add Client', { selector: 'button[type="submit"]' }));
 
     await waitFor(() => {
       expect(api.createClient).toHaveBeenCalled();
     });
-    // Verify pathMappings survived the full DownloadClientsSettings → CrudSettingsPage → useCrudSettings → api.createClient chain
     expect((api.createClient as Mock).mock.calls[0]![0]).toMatchObject({
       name: 'Remote Client',
       pathMappings: [{ remotePath: '/mnt/downloads', localPath: '/local/downloads' }],

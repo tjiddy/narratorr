@@ -15,14 +15,6 @@ export interface V1NarratorsRouteDeps {
   referenceReadService: ReferenceReadService;
 }
 
-/**
- * Native public API v1 — Narrators (read). Registers `GET /api/v1/narrators` and
- * `GET /api/v1/narrators/:publicId` inside an ENCAPSULATED plugin so the
- * v1-scoped `v1ErrorHandler` does not leak onto internal `/api/*` routes.
- * Mirrors `v1BooksRoutes` (#1449): `.strict()` `response` schemas fail closed on
- * leaked internal fields, and auth is inherited from the global `/api/v*` hook.
- * Narrators are listable regardless of book linkage.
- */
 export async function v1NarratorsRoutes(app: FastifyInstance, deps: V1NarratorsRouteDeps, db: Db): Promise<void> {
   await app.register(
     async (v1) => {

@@ -21,18 +21,14 @@ export function getAudioMimeType(ext: string): string {
   return AUDIO_MIME_MAP[ext] ?? 'application/octet-stream';
 }
 
-/**
- * Parse an HTTP Range header. Returns `{ start: -1, end: -1 }` for any invalid
- * range — including non-finite numbers from failed parseInt — so callers map
- * to a 416 response without ever seeing NaN.
- */
+/** Invalid ranges return `{ start: -1, end: -1 }` so callers never receive NaN. */
 export function parseRangeHeader(rangeHeader: string, fileSize: number): { start: number; end: number } {
   const match = /bytes=(-?\d*)-(\d*)/.exec(rangeHeader);
   if (!match) return { start: -1, end: -1 };
 
   const [, rawStart, rawEnd] = match as unknown as [string, string, string];
 
-  // Suffix range: bytes=-500 (last 500 bytes)
+  // Suffix range: bytes=-500.
   if (rawStart === '') {
     const suffixLen = parseInt(rawEnd, 10);
     if (!Number.isFinite(suffixLen) || suffixLen <= 0) return { start: -1, end: -1 };
@@ -40,7 +36,6 @@ export function parseRangeHeader(rangeHeader: string, fileSize: number): { start
     return { start, end: fileSize - 1 };
   }
 
-  // Negative start: bytes=-500
   if (rawStart.startsWith('-')) {
     const suffixLen = parseInt(rawStart.slice(1), 10);
     if (!Number.isFinite(suffixLen) || suffixLen <= 0) return { start: -1, end: -1 };
@@ -57,16 +52,7 @@ export function parseRangeHeader(rangeHeader: string, fileSize: number): { start
   return { start, end: Math.min(end, fileSize - 1) };
 }
 
-/**
- * Resolve a path to a single audio file. Supports both file targets (returns
- * directly if audio extension) and directory targets (recursive search).
- *
- * Disc-folder ordering: uses `collectAudioFilePaths` (unsorted) and applies a
- * path-aware locale-numeric sort. The shared helper's `sort: 'locale-numeric'`
- * mode sorts by basename only, which TIES on `Disc 1/track1.mp3` vs
- * `Disc 2/track1.mp3` (both basenames are `track1.mp3`). Path-aware sort is
- * required for deterministic ordering across discs.
- */
+/** Sort full paths numerically; basename-only sorting ties identical track names across discs. */
 export async function resolvePreviewAudioFile(inputPath: string): Promise<string | null> {
   let s;
   try {
@@ -75,7 +61,7 @@ export async function resolvePreviewAudioFile(inputPath: string): Promise<string
     return null;
   }
   if (s.isFile()) {
-    // Direct-file branch: a hidden file (`.foo.mp3`) is a born-hidden transient, never previewable.
+    // Born-hidden transient files are never previewable.
     return !isHiddenName(basename(inputPath)) && AUDIO_EXTENSIONS.has(extname(inputPath).toLowerCase()) ? inputPath : null;
   }
   if (s.isDirectory()) {
@@ -92,10 +78,7 @@ export async function resolvePreviewAudioFile(inputPath: string): Promise<string
   return null;
 }
 
-/**
- * Stream an audio file with HTTP range support. Always sets `Cache-Control: no-store`
- * so per-row tokenized previews are not cached across token rotations.
- */
+/** Disable caching so previews cannot outlive token rotation. */
 export async function streamAudioFile(
   filePath: string,
   request: FastifyRequest,

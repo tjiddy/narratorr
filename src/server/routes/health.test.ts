@@ -63,9 +63,6 @@ describe('Health routes', () => {
   });
 
   describe('POST /api/system/health/run', () => {
-    // The manual route delegates to runManualChecks (which fires a live version
-    // check before reading the report, #1411) — NOT runAllChecks directly, which
-    // is the scheduled-cron path that stays cache-only.
     it('triggers immediate health check via runManualChecks and returns results', async () => {
       const mockResults = [{ checkName: 'disk-space', state: 'healthy' }];
       (services.healthCheck.runManualChecks as Mock).mockResolvedValue(mockResults);
@@ -76,7 +73,6 @@ describe('Health routes', () => {
       const payload = JSON.parse(res.payload);
       expect(payload).toEqual(mockResults);
       expect(services.healthCheck.runManualChecks).toHaveBeenCalledOnce();
-      // Delegates to the manual entry point, not the scheduled cache-only path.
       expect(services.healthCheck.runAllChecks).not.toHaveBeenCalled();
     });
 
@@ -92,8 +88,6 @@ describe('Health routes', () => {
     });
 
     it('returns latest cached results with 200 when check already in progress', async () => {
-      // runManualChecks resolves to runAllChecks' cached results when a pass is
-      // already running (mutex in service).
       const cachedResults = [{ checkName: 'ffmpeg', state: 'error', message: 'not found' }];
       (services.healthCheck.runManualChecks as Mock).mockResolvedValue(cachedResults);
 
@@ -170,7 +164,6 @@ describe('Task routes', () => {
       expect(JSON.parse(res.payload)).toEqual({ error: 'Internal server error' });
     });
 
-    // #149 — typed error routing via plugin (ERR-1)
     it('returns 404 when task registry throws TaskRegistryError NOT_FOUND (plugin-routed)', async () => {
       (services.taskRegistry.runTask as Mock).mockRejectedValue(new TaskRegistryError('Task "nonexistent" not found', 'NOT_FOUND'));
 
@@ -288,11 +281,9 @@ describe('System info routes', () => {
 
       const res = await app.inject({ method: 'GET', url: '/api/system/info' });
       const payload = JSON.parse(res.payload);
-      // getCommit() is mocked to return 'abc1234def' — proves dynamic read, not hardcoded
       expect(payload.commit).toBe('abc1234def');
     });
 
-    // L-14: version should come from getVersion() instead of hardcoded '0.1.0'
     it('returns version from getVersion() instead of hardcoded string', async () => {
       (services.settings.get as Mock).mockResolvedValue({ path: '/audiobooks' });
       (mockDb.run as Mock).mockResolvedValue({ rows: [[10, 4096]] });
@@ -301,8 +292,6 @@ describe('System info routes', () => {
       const res = await app.inject({ method: 'GET', url: '/api/system/info' });
       const payload = JSON.parse(res.payload);
 
-      // getVersion() is mocked to return '99.88.77' — if the route
-      // uses getVersion(), we'll see that; if hardcoded, we'll see '0.1.0'
       expect(payload.version).toBe('99.88.77');
     });
   });

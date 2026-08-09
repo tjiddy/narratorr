@@ -226,7 +226,6 @@ function WedgeFields({ register }: { register: IndexerFieldsProps['register'] })
 export function MamFields({ register, errors, watch, setValue, formTestResult, indexerId }: Pick<IndexerFieldsProps, 'register' | 'errors' | 'watch' | 'setValue' | 'formTestResult' | 'indexerId'>) {
   const { mamStatus, detectError, isDetecting, detect, setMamStatus } = useMamDetection(watch, setValue, deriveInitialMamStatus(watch), indexerId);
 
-  // Bridge: update card from explicit Test button result
   useEffect(() => {
     if (formTestResult?.success && formTestResult.metadata && 'isVip' in formTestResult.metadata) {
       setMamStatus(metadataToMamStatus(formTestResult.metadata, formTestResult.ip));
@@ -237,9 +236,7 @@ export function MamFields({ register, errors, watch, setValue, formTestResult, i
     <>
       <MamIdField register={register} errors={errors} watch={watch} mamStatus={mamStatus} detectError={detectError} detect={detect} />
       {isDetecting && <DetectionOverlay />}
-      {/* settings.baseUrl is API-only (#1886): no form input, but the schema still declares it,
-          so a persisted custom value hydrates into defaultValues, round-trips on save, and is
-          read by useMamDetection's watch('settings.baseUrl') for detection requests. */}
+      {/* baseUrl is schema-only; hydration preserves API-set values for saves and detection. */}
       <WedgeFields register={register} />
     </>
   );

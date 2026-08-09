@@ -3,13 +3,6 @@ import { applyOpfOverlay, classifyNarratorSource } from './import-opf-overlay.js
 import type { OpfMetadata } from '../utils/opf-reader.js';
 import type { ImportConfirmItem } from './library-scan.service.js';
 
-/**
- * Unit coverage for the overlay's two pure decisions. The end-to-end consequences (which value
- * reaches the persisted row, which rung of the ladder wins) are pinned against real DBs in
- * `import-submission-runner.integration.test.ts` and `import-opf-ladder.integration.test.ts`; this
- * file exists for the edge cases those suites cannot express cheaply.
- */
-
 const EMPTY_OPF: OpfMetadata = {
   title: null, subtitle: null, authors: [], narrators: [], description: null, publisher: null,
   publishedDate: null, asin: null, isbn: null, seriesName: null, seriesPosition: null, genres: [],
@@ -76,7 +69,6 @@ describe('applyOpfOverlay', () => {
     };
     const { item } = applyOpfOverlay(original, opf({ narrators: ['Opf'] }));
     expect(item.narrators).toEqual(['Opf']);
-    // `buildBookCreatePayload` reads item.narrators first, so this is the field that decides.
     expect(item.metadata?.narrators).toEqual(['Wire']);
   });
 

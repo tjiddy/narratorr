@@ -15,13 +15,7 @@ import { useSearchStream } from '@/hooks/useSearchStream';
 import { useReplaceGrab } from '@/hooks/useReplaceGrab';
 import { getErrorMessage } from '@/lib/error-message.js';
 
-// ============================================================================
-// Props
-// ============================================================================
-
-/** Structural minimum the modal reads off the book. Satisfied by both
- *  `BookWithAuthor` (book detail page) and `LibraryBookListItem` (library
- *  list card). The extra fields on BookWithAuthor are unused here. */
+// Shared minimum accepted from book details and library cards.
 export interface SearchReleasesBookInput {
   id: number;
   title: string;
@@ -41,10 +35,6 @@ interface SearchReleasesModalProps {
   book: SearchReleasesBookInput;
   onClose: () => void;
 }
-
-// ============================================================================
-// Header
-// ============================================================================
 
 function SearchReleasesHeader({
   book,
@@ -96,14 +86,6 @@ function SearchReleasesHeader({
   );
 }
 
-// ============================================================================
-// Query input (persistent across all phases — the editable-query escape hatch)
-// ============================================================================
-
-/** The editable, book-derived query input + Search button. Rendered persistently
- *  across every phase (searching / results / empty / error) so the user can always
- *  re-fire an edited query. Enter and Search both route through `onSearch`
- *  (`runSearch`), which self-gates on `canSearch` — never an unconditional fire. */
 function SearchReleasesQueryInput({
   query,
   isSearching,
@@ -149,18 +131,11 @@ function SearchReleasesQueryInput({
   );
 }
 
-// ============================================================================
-// Component
-// ============================================================================
-
-/** Fields from grabSchema that are NOT sourced from a SearchResult: `bookId` comes
- *  from UI context, and `replace` (#1857) is set only on a user-confirmed replace —
- *  excluding it here keeps the picker from treating it as a SearchResult field. */
+// UI-only grab fields excluded from the SearchResult projection.
 const CONTEXT_KEYS = new Set(['bookId', 'replace']);
 const GRAB_RESULT_KEYS = Object.keys(grabSchema.shape).filter(k => !CONTEXT_KEYS.has(k));
 
-/** Pick SearchResult-sourced grab-contract fields dynamically from grabSchema.shape.
- *  Caller must guard `result.downloadUrl` before calling — the return type assumes it is present. */
+// Keep the projection aligned with grabSchema; callers must require downloadUrl.
 function pickGrabFields(result: SearchResult): Omit<GrabPayload, 'bookId'> {
   const picked: Record<string, unknown> = {};
   for (const key of GRAB_RESULT_KEYS) {
@@ -169,20 +144,11 @@ function pickGrabFields(result: SearchResult): Omit<GrabPayload, 'bookId'> {
   return picked as Omit<GrabPayload, 'bookId'>;
 }
 
-/** Prefill mirrors the Fix Match modal: `"{title} {author}"`, author omitted if
- *  absent, trimmed (no trailing space). Read only at mount — the stateful body is
- *  keyed by `book.id`, so a book change remounts and re-seeds rather than copying
- *  a stale value into existing state (see the `derived-state-over-copied` learning). */
 function deriveQuery(book: SearchReleasesBookInput): string {
   return `${book.title} ${book.authors[0]?.name ?? ''}`.trim();
 }
 
-/**
- * Stateful modal body. Rendered `key={book.id}` by the outer shell so a book change
- * REMOUNTS it — discarding results/indexers/query/pending-replace synchronously in
- * the same commit (F7/F8). Owns the query `useState`, `useSearchStream`,
- * `useReplaceGrab`, handlers, and the single guarded start path (F6/F9).
- */
+// key={book.id} makes book changes synchronously discard all body-owned state.
 function SearchReleasesBody({
   book,
   onClose,
@@ -201,14 +167,10 @@ function SearchReleasesBody({
   });
   const { start: startSearch } = actions;
 
-  // Single eligibility predicate + single start helper (F6). EVERY start trigger
-  // (Search / Enter / Refresh / Retry / auto-start) routes through `runSearch`,
-  // the only place the server's 2..500-and-not-searching contract is enforced —
-  // `useSearchStream.start()` has no length/phase guard of its own.
+  // Every trigger must pass this server-aligned guard; startSearch() does not validate it.
   const trimmedLength = query.trim().length;
   const canSearch = trimmedLength >= 2 && trimmedLength <= 500 && state.phase !== 'searching';
-  // Snapshot of the query each search actually ran with, so the relaxed-query
-  // adoption below can tell "untouched since firing" from "user edited mid-search".
+  // Adopt a relaxed query only if the user has not edited since this search started.
   const lastSearchedRef = useRef<string | null>(null);
   const runSearch = useCallback(() => {
     if (canSearch) {
@@ -217,18 +179,9 @@ function SearchReleasesBody({
     }
   }, [canSearch, query, startSearch]);
 
-  // When a relaxed rung won (#2104), the box adopts the query that actually
-  // produced these results — the canonical string it replaces provably returned
-  // nothing, and the winning string is the honest editing base for a re-search.
-  // Guarded so a mid-search hand-edit is never clobbered, and a no-result or
-  // rung-1 search (no relaxedQuery) leaves the box exactly as typed.
   const relaxedQuery = state.results?.relaxedQuery;
   useEffect(() => {
     if (relaxedQuery === undefined || relaxedQuery === query) return;
-    // Adopt only when the box still holds exactly what this search ran with —
-    // a mid-search hand-edit wins. The ref write stays OUT of the setQuery
-    // updater: updaters must be pure (dev-mode double-invocation re-runs them,
-    // and an in-updater ref mutation makes the second run revert the adoption).
     if (lastSearchedRef.current === null || query !== lastSearchedRef.current) return;
     lastSearchedRef.current = relaxedQuery;
     setQuery(relaxedQuery);
@@ -237,12 +190,7 @@ function SearchReleasesBody({
   const results = state.results?.results;
   const resultKeys = useMemo(() => deduplicateKeys((results ?? []).map(searchResultKey)), [results]);
 
-  // Auto-start once on mount (fresh book). Gated on `canSearch` (which subsumes the
-  // 2..500 check, closing the over-500 programmatic-prefill hole) plus idle + no
-  // prior error + authReady. Requiring `!state.error` is what keeps a failed search
-  // from auto-retrying AND makes StrictMode's setup→cleanup→setup probe converge on
-  // exactly one live stream: each `start()` closes the prior one, and once the phase
-  // leaves 'idle' the effect stops firing (F8/F12).
+  // Error blocks auto-retry; phase plus stream replacement makes StrictMode converge on one stream.
   useEffect(() => {
     if (state.phase === 'idle' && !state.error && state.authReady) {
       runSearch();
@@ -254,10 +202,6 @@ function SearchReleasesBody({
     onSuccess: (_data, variables) => {
       toast.success('Release blacklisted');
       queryClient.invalidateQueries({ queryKey: queryKeys.blacklist() });
-      // Drop the blacklisted row(s) from the open results immediately (local-state
-      // only, no refetch). The mutation variables already carry `{ infoHash?, guid? }`,
-      // so pass them straight through — the hook owns identity matching (independent
-      // OR-match on either identifier), NOT the render key, which never consults `guid`.
       actions.removeResult(variables);
     },
     onError: (err: Error) => {
@@ -279,16 +223,9 @@ function SearchReleasesBody({
     });
   };
 
-  // Grab + cancel-&-replace state machine (#1857) — owns the multi-code 409
-  // branching, the confirm dialog, and pending-replace state.
   const { grab, isGrabbing, confirm, reset: resetReplace } = useReplaceGrab(onClose, book.title);
 
-  // Advance the replace-grab lifecycle generation on a SYNCHRONOUS seam at teardown
-  // (F10/F16). This body unmounts on both close (outer returns null) and book change
-  // (key remount); a layout-phase cleanup runs before the next book's body is
-  // interactive, whereas a passive `useEffect` cleanup runs after B has committed —
-  // leaving a window in which an old in-flight grab that settles could toast/confirm
-  // against, or close, book B. The always-run cache invalidations stay unconditional.
+  // Layout cleanup invalidates old grabs before a replacement book becomes interactive.
   useLayoutEffect(() => resetReplace, [resetReplace]);
 
   const handleGrab = (result: SearchResult) => {
@@ -357,9 +294,6 @@ function SearchReleasesBody({
   );
 }
 
-/** Thin outer shell: `<Modal>` chrome + `isOpen` gate. The stateful body is keyed
- *  by `book.id` so a book change remounts it, discarding the previous book's search
- *  state synchronously (F7). */
 export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesModalProps) {
   if (!isOpen) return null;
 

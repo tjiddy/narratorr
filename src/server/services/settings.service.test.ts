@@ -9,10 +9,7 @@ import { initializeKey, _resetKey, isEncrypted } from '../utils/secret-codec.js'
 
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 
-// Extract { table, row } for the Nth insert call.
-// db.insert.mockReturnValue(...) hands the SAME chain to every call, so
-// chain.values.mock.calls accumulates across all inserts; index by `n`
-// to find the row paired with the Nth insert.
+// createMockDb reuses one insert chain, so index both mocks by n to pair each table and row.
 function getInsertCall(
   db: ReturnType<typeof createMockDb>,
   n: number,
@@ -43,7 +40,6 @@ describe('SettingsService', () => {
       db.select.mockReturnValue(mockDbChain([{ key: 'library', value: stored }]));
 
       const result = await service.get('library');
-      // Zod fills missing fields with defaults
       expect(result).toEqual({ path: '/my-audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' });
     });
 
@@ -61,12 +57,7 @@ describe('SettingsService', () => {
       expect(result).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'accuracy' });
     });
 
-    // #1345: post-#1301 upgraded installs still carry the removed `seriesCacheRetentionDays`
-    // key in their stored general blob. Zod's default strip mode must drop the fossil key
-    // WITHOUT routing parseCategory down its failure branch — that branch returns the whole
-    // DEFAULT_SETTINGS.general and silently resets non-default siblings. The logLevel: 'debug'
-    // assertion is what distinguishes strip-tolerance from full-category-reset; making
-    // generalSettingsSchema .strict() flips this test to red (logLevel falls back to 'info').
+    // Fossil keys must be stripped, not rejected; parse failure would reset non-default siblings (#1345).
     it('strips removed seriesCacheRetentionDays key while preserving non-default siblings', async () => {
       const fossilGeneral = { logLevel: 'debug', housekeepingRetentionDays: 90, welcomeSeen: false, seriesCacheRetentionDays: 30 };
       db.select.mockReturnValue(mockDbChain([{ key: 'general', value: fossilGeneral }]));
@@ -78,11 +69,7 @@ describe('SettingsService', () => {
       expect(result).toEqual({ logLevel: 'debug', housekeepingRetentionDays: 90, welcomeSeen: false });
     });
 
-    // #2056: the same fossil-key shape for the removed `processing.mergeBehavior` knob. The
-    // load-bearing assertions are the SURVIVING non-default values, not the removed key's absence
-    // — a parse failure would fall back to DEFAULT_SETTINGS.processing, which is also missing the
-    // key but would silently reset bitrate/outputFormat/maxConcurrentProcessing too. Making
-    // processingSettingsSchema `.strict()` flips this test red on those three, not on the absence.
+    // Surviving non-defaults distinguish fossil-key stripping from full processing-category fallback (#2056).
     it('strips a stored mergeBehavior key while preserving non-default siblings', async () => {
       const log = createMockLogger();
       const svc = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(log));
@@ -114,9 +101,7 @@ describe('SettingsService', () => {
       );
 
       const result = await service.getAll();
-      // Zod fills missing fileFormat with default
       expect(result.library).toEqual({ path: '/custom', folderFormat: '{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' });
-      // Other sections fall back to defaults
       expect(result.search).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'accuracy' });
       expect(result.import).toEqual({ deleteAfterImport: false, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true });
       expect(result.general).toEqual({ logLevel: 'info', housekeepingRetentionDays: 90, welcomeSeen: false });
@@ -135,7 +120,6 @@ describe('SettingsService', () => {
 
   describe('malformed DB JSON', () => {
     it('falls back to defaults when stored value has wrong shape', async () => {
-      // Stored value is a string instead of an object
       db.select.mockReturnValue(mockDbChain([{ key: 'library', value: 'not-an-object' }]));
 
       const result = await service.get('library');
@@ -143,7 +127,6 @@ describe('SettingsService', () => {
     });
 
     it('falls back to defaults when stored value has invalid field types', async () => {
-      // path should be a string but is a number
       db.select.mockReturnValue(mockDbChain([{ key: 'library', value: { path: 123 } }]));
 
       const result = await service.get('library');
@@ -157,9 +140,8 @@ describe('SettingsService', () => {
       ]));
 
       const result = await service.getAll();
-      // Both should fall back to defaults
       expect(result.library.path).toBe('/audiobooks');
-      expect(result.search.intervalMinutes).toBe(360); // application default
+      expect(result.search.intervalMinutes).toBe(360);
     });
   });
 
@@ -194,20 +176,17 @@ describe('SettingsService', () => {
 
   describe('network encryption', () => {
     it('set("network") encrypts proxyUrl before storing', async () => {
-      // For set(), first call is sentinel lookup (select), second is upsert (insert)
-      db.select.mockReturnValue(mockDbChain([])); // No existing value
+      db.select.mockReturnValue(mockDbChain([]));
       db.insert.mockReturnValue(mockDbChain());
 
       await service.set('network', { proxyUrl: 'http://user:pass@proxy:8080' });
 
-      // The value passed to insert().values() should have encrypted proxyUrl
       const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
       const storedValue = chain.values.mock.calls[0]![0]!.value;
       expect(isEncrypted(storedValue.proxyUrl as string)).toBe(true);
     });
 
     it('get("network") decrypts stored encrypted proxyUrl', async () => {
-      // Manually create an encrypted value to store
       const { encrypt } = await import('../utils/secret-codec.js');
       const encrypted = encrypt('http://user:pass@proxy:8080', TEST_KEY);
       db.select.mockReturnValue(mockDbChain([{ key: 'network', value: { proxyUrl: encrypted } }]));
@@ -230,23 +209,18 @@ describe('SettingsService', () => {
     it('set("network") with sentinel proxyUrl preserves existing encrypted value', async () => {
       const { encrypt } = await import('../utils/secret-codec.js');
       const existingEncrypted = encrypt('http://real-proxy:8080', TEST_KEY);
-      // Sentinel lookup returns existing row with encrypted value
       db.select.mockReturnValue(mockDbChain([{ key: 'network', value: { proxyUrl: existingEncrypted } }]));
       db.insert.mockReturnValue(mockDbChain());
 
       await service.set('network', { proxyUrl: '********' });
 
-      // The stored value should keep the original encrypted proxyUrl, not literal '********'
       const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
       const storedValue = chain.values.mock.calls[0]![0]!.value;
       expect(storedValue.proxyUrl).toBe(existingEncrypted);
     });
 
-    // #844 — entity-aware allowlist on resolveSentinelFields. The only field
-    // in the network allowlist is proxyUrl; any other sentinel must throw.
+    // Only proxyUrl is sentinel-enabled for network; any other sentinel must throw (#844).
     it('set("network") rejects sentinel on non-secret key rather than substituting it', async () => {
-      // Existing record happens to have a value at the bogus key — still must
-      // throw, never silently substitute.
       db.select.mockReturnValue(mockDbChain([{ key: 'network', value: { proxyUrl: 'real', stranger: 'persisted' } }]));
       db.insert.mockReturnValue(mockDbChain());
 
@@ -256,10 +230,9 @@ describe('SettingsService', () => {
     });
   });
 
-  // F2 (PR #1135 review): symmetric round-trip coverage for metadata.hardcoverApiKey.
   describe('metadata.hardcoverApiKey encryption (#1133)', () => {
     it('set("metadata") encrypts hardcoverApiKey before storing', async () => {
-      db.select.mockReturnValue(mockDbChain([])); // no existing row
+      db.select.mockReturnValue(mockDbChain([]));
       db.insert.mockReturnValue(mockDbChain());
 
       await service.set('metadata', { audibleRegion: 'us', languages: ['english'], minDurationMinutes: 0, hardcoverApiKey: 'sk-plain-1234' });
@@ -267,7 +240,6 @@ describe('SettingsService', () => {
       const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
       const storedValue = chain.values.mock.calls[0]![0]!.value;
       expect(isEncrypted(storedValue.hardcoverApiKey as string)).toBe(true);
-      // Non-secret fields are written as-is
       expect(storedValue.audibleRegion).toBe('us');
       expect(storedValue.languages).toEqual(['english']);
     });
@@ -292,7 +264,6 @@ describe('SettingsService', () => {
 
       const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
       const storedValue = chain.values.mock.calls[0]![0]!.value;
-      // Ciphertext preserved verbatim — the sentinel never reaches the DB
       expect(storedValue.hardcoverApiKey).toBe(existingEncrypted);
     });
 
@@ -325,16 +296,15 @@ describe('SettingsService', () => {
   describe('update deep-merge', () => {
     it('preserves other fields when updating a single field in a category', async () => {
       const existingSearch = { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' };
-      // First select for get() inside update, second for getAll()
+      // Selects get('search'), the sentinel lookup in set(), then getAll().
       db.select
-        .mockReturnValueOnce(mockDbChain([{ key: 'search', value: existingSearch }]))  // get('search')
-        .mockReturnValueOnce(mockDbChain([{ key: 'search', value: existingSearch }]))  // sentinel lookup in set()
-        .mockReturnValueOnce(mockDbChain([])); // getAll()
+        .mockReturnValueOnce(mockDbChain([{ key: 'search', value: existingSearch }]))
+        .mockReturnValueOnce(mockDbChain([{ key: 'search', value: existingSearch }]))
+        .mockReturnValueOnce(mockDbChain([]));
       db.insert.mockReturnValue(mockDbChain());
 
       await service.update({ search: { intervalMinutes: 120 } });
 
-      // The stored value should have merged: intervalMinutes changed, others preserved
       const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
       const storedValue = chain.values.mock.calls[0]![0]!.value as Record<string, unknown>;
       expect(storedValue).toEqual({ intervalMinutes: 120, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' });
@@ -343,9 +313,9 @@ describe('SettingsService', () => {
     it('preserves other flat fields in quality when updating minSeeders', async () => {
       const existingQuality = { grabFloor: 10, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, rejectWords: '', requiredWords: '' };
       db.select
-        .mockReturnValueOnce(mockDbChain([{ key: 'quality', value: existingQuality }]))  // get('quality')
-        .mockReturnValueOnce(mockDbChain([]))  // sentinel lookup in set()
-        .mockReturnValueOnce(mockDbChain([])); // getAll()
+        .mockReturnValueOnce(mockDbChain([{ key: 'quality', value: existingQuality }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
       db.insert.mockReturnValue(mockDbChain());
 
       await service.update({ quality: { minSeeders: 5 } });
@@ -386,14 +356,14 @@ describe('SettingsService', () => {
     });
 
     it('results in no changes for empty partial object', async () => {
-      db.select.mockReturnValue(mockDbChain([])); // getAll() only
+      db.select.mockReturnValue(mockDbChain([]));
       await service.update({});
 
       expect(db.insert).not.toHaveBeenCalled();
     });
 
     it('skips category when value is undefined', async () => {
-      db.select.mockReturnValue(mockDbChain([])); // getAll() only
+      db.select.mockReturnValue(mockDbChain([]));
       await service.update({});
 
       expect(db.insert).not.toHaveBeenCalled();
@@ -404,8 +374,8 @@ describe('SettingsService', () => {
     it('preserves existing intervalMinutes and blacklistTtlDays when patching enabled', async () => {
       const existingSearch = { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' };
       db.select
-        .mockReturnValueOnce(mockDbChain([{ key: 'search', value: existingSearch }]))  // get('search')
-        .mockReturnValueOnce(mockDbChain([]));  // sentinel lookup in set()
+        .mockReturnValueOnce(mockDbChain([{ key: 'search', value: existingSearch }]))
+        .mockReturnValueOnce(mockDbChain([]));
       db.insert.mockReturnValue(mockDbChain());
 
       const result = await service.patch('search', { enabled: false });
@@ -417,12 +387,11 @@ describe('SettingsService', () => {
     });
 
     it('no-migration: stored keepOriginalBitrate: false survives a patch of an unrelated field', async () => {
-      // Existing user opted out of keep-original before the 1.0 default flip to true.
-      // Patching an unrelated field must NOT overwrite their stored false with the new default.
+      // A pre-1.0 keep-original opt-out must survive the later default flip.
       const existingProcessing = { ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 256, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 };
       db.select
-        .mockReturnValueOnce(mockDbChain([{ key: 'processing', value: existingProcessing }]))  // get('processing')
-        .mockReturnValueOnce(mockDbChain([]));  // sentinel lookup in set()
+        .mockReturnValueOnce(mockDbChain([{ key: 'processing', value: existingProcessing }]))
+        .mockReturnValueOnce(mockDbChain([]));
       db.insert.mockReturnValue(mockDbChain());
 
       const result = await service.patch('processing', { bitrate: 192 });
@@ -492,8 +461,8 @@ describe('SettingsService', () => {
 
     it('merges into defaults when no existing DB row', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([]))  // get() returns default
-        .mockReturnValueOnce(mockDbChain([]));  // sentinel lookup
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
       db.insert.mockReturnValue(mockDbChain());
 
       const result = await service.patch('search', { enabled: false });
@@ -508,8 +477,8 @@ describe('SettingsService', () => {
       const { encrypt } = await import('../utils/secret-codec.js');
       const existingEncrypted = encrypt('http://real-proxy:8080', TEST_KEY);
       db.select
-        .mockReturnValueOnce(mockDbChain([{ key: 'network', value: { proxyUrl: existingEncrypted } }]))  // get() decrypts
-        .mockReturnValueOnce(mockDbChain([{ key: 'network', value: { proxyUrl: existingEncrypted } }]));  // sentinel lookup in set()
+        .mockReturnValueOnce(mockDbChain([{ key: 'network', value: { proxyUrl: existingEncrypted } }]))
+        .mockReturnValueOnce(mockDbChain([{ key: 'network', value: { proxyUrl: existingEncrypted } }]));
       db.insert.mockReturnValue(mockDbChain());
 
       await service.patch('network', { proxyUrl: '********' });
@@ -524,9 +493,9 @@ describe('SettingsService', () => {
     it('accepts partial category values via UpdateSettingsInput', async () => {
       const existingSearch = { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7, searchPriority: 'quality' };
       db.select
-        .mockReturnValueOnce(mockDbChain([{ key: 'search', value: existingSearch }]))  // get('search') in patch
-        .mockReturnValueOnce(mockDbChain([]))  // sentinel lookup in set()
-        .mockReturnValueOnce(mockDbChain([])); // getAll()
+        .mockReturnValueOnce(mockDbChain([{ key: 'search', value: existingSearch }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
       db.insert.mockReturnValue(mockDbChain());
 
       const input: UpdateSettingsInput = { search: { enabled: false } };
@@ -548,9 +517,9 @@ describe('SettingsService', () => {
     it('preserves welcomeSeen when patching logLevel in general category', async () => {
       const existingGeneral = { logLevel: 'info', housekeepingRetentionDays: 90, welcomeSeen: true };
       db.select
-        .mockReturnValueOnce(mockDbChain([{ key: 'general', value: existingGeneral }]))  // get('general') in patch
-        .mockReturnValueOnce(mockDbChain([]))  // sentinel lookup in set()
-        .mockReturnValueOnce(mockDbChain([])); // getAll()
+        .mockReturnValueOnce(mockDbChain([{ key: 'general', value: existingGeneral }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
       db.insert.mockReturnValue(mockDbChain());
 
       const input: UpdateSettingsInput = { general: { logLevel: 'debug' } };
@@ -564,9 +533,9 @@ describe('SettingsService', () => {
     it('stores welcomeSeen: false when only welcomeSeen is patched', async () => {
       const existingGeneral = { logLevel: 'info', housekeepingRetentionDays: 90, welcomeSeen: true };
       db.select
-        .mockReturnValueOnce(mockDbChain([{ key: 'general', value: existingGeneral }]))  // get('general') in patch
-        .mockReturnValueOnce(mockDbChain([]))  // sentinel lookup in set()
-        .mockReturnValueOnce(mockDbChain([])); // getAll()
+        .mockReturnValueOnce(mockDbChain([{ key: 'general', value: existingGeneral }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
       db.insert.mockReturnValue(mockDbChain());
 
       const input: UpdateSettingsInput = { general: { welcomeSeen: false } };
@@ -575,7 +544,6 @@ describe('SettingsService', () => {
       const chain = db.insert.mock.results[0]!.value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
       const storedValue = chain.values.mock.calls[0]![0]!.value as Record<string, unknown>;
       expect(storedValue.welcomeSeen).toBe(false);
-      // Other fields preserved
       expect(storedValue.logLevel).toBe('info');
       expect(storedValue.housekeepingRetentionDays).toBe(90);
     });
@@ -612,7 +580,6 @@ describe('SettingsService.get(processing) — forward-compat', () => {
 
 
   it('forward-compat: historical row with enabled=true returns parsed object without enabled key', async () => {
-    // Simulate a pre-migration DB row that still has `enabled`
     db.select.mockReturnValue(mockDbChain([{ key: 'processing', value: { enabled: true, outputFormat: 'mp3' } }]));
 
     const result = await service.get('processing');
@@ -639,20 +606,18 @@ describe('migrateLanguageSettings', () => {
   });
 
   it('migrates non-empty preferredLanguage to metadata.languages', async () => {
-    // metadata row has no languages key
     let callCount = 0;
     db.select.mockImplementation(() => {
       callCount++;
-      if (callCount === 1) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]); // metadata check
-      if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, preferredLanguage: 'spanish', rejectWords: 'abridged' } }]); // quality read
-      if (callCount === 3) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]); // patch->get
+      if (callCount === 1) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]);
+      if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, preferredLanguage: 'spanish', rejectWords: 'abridged' } }]);
+      if (callCount === 3) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]);
       return mockDbChain([]);
     });
     db.insert.mockReturnValue(mockDbChain([]));
 
     await service.migrateLanguageSettings();
 
-    // Should have written metadata with languages and cleaned up quality
     const insertCalls = db.insert.mock.calls;
     expect(insertCalls.length).toBeGreaterThanOrEqual(2);
   });
@@ -661,7 +626,6 @@ describe('migrateLanguageSettings', () => {
     db.select.mockImplementation(() => {
       return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]);
     });
-    // Second call: quality with empty preferredLanguage
     let callCount = 0;
     db.select.mockImplementation(() => {
       callCount++;
@@ -673,9 +637,7 @@ describe('migrateLanguageSettings', () => {
 
     await service.migrateLanguageSettings();
 
-    // Should still clean up quality blob but not patch metadata languages
     const insertCalls = db.insert.mock.calls;
-    // Only the quality cleanup write, no metadata patch
     expect(insertCalls.length).toBe(1);
   });
 
@@ -692,7 +654,6 @@ describe('migrateLanguageSettings', () => {
 
     await service.migrateLanguageSettings();
 
-    // Only quality cleanup, no metadata patch
     expect(db.insert.mock.calls.length).toBe(1);
   });
 
@@ -701,7 +662,6 @@ describe('migrateLanguageSettings', () => {
 
     await service.migrateLanguageSettings();
 
-    // Should not write anything
     expect(db.insert).not.toHaveBeenCalled();
   });
 
@@ -711,14 +671,13 @@ describe('migrateLanguageSettings', () => {
       callCount++;
       if (callCount === 1) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]);
       if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 10, protocolPreference: 'torrent', rejectWords: 'abridged', requiredWords: 'unabridged', preferredLanguage: 'german' } }]);
-      if (callCount === 3) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]); // patch->get
+      if (callCount === 3) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]);
       return mockDbChain([]);
     });
     db.insert.mockReturnValue(mockDbChain([]));
 
     await service.migrateLanguageSettings();
 
-    // The quality blob write should preserve other fields
     expect(db.insert.mock.calls.length).toBeGreaterThanOrEqual(1);
   });
 
@@ -736,7 +695,6 @@ describe('migrateLanguageSettings', () => {
 
     await service.migrateLanguageSettings();
 
-    // Verify the quality write does NOT include preferredLanguage
     expect(db.insert).toHaveBeenCalled();
   });
 
@@ -746,14 +704,13 @@ describe('migrateLanguageSettings', () => {
       callCount++;
       if (callCount === 1) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]);
       if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, preferredLanguage: 'eng' } }]);
-      if (callCount === 3) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]); // patch->get
+      if (callCount === 3) return mockDbChain([{ key: 'metadata', value: { audibleRegion: 'us' } }]);
       return mockDbChain([]);
     });
     db.insert.mockReturnValue(mockDbChain([]));
 
     await service.migrateLanguageSettings();
 
-    // Should have written metadata — normalizeLanguage('eng') → 'english' which is canonical
     expect(db.insert.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -769,19 +726,16 @@ describe('migrateLanguageSettings', () => {
 
     await service.migrateLanguageSettings();
 
-    // Should warn about non-canonical value
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({ preferredLanguage: 'klingon' }),
       expect.stringContaining('not a canonical language'),
     );
-    // Still cleans up quality blob (1 insert for quality cleanup, no metadata patch)
     expect(db.insert.mock.calls.length).toBe(1);
   });
 
   it('logs warning and does not block startup on migration error', async () => {
     db.select.mockImplementation(() => { throw new Error('DB connection failed'); });
 
-    // Should not throw
     await service.migrateLanguageSettings();
 
     expect(log.warn).toHaveBeenCalled();
@@ -808,7 +762,7 @@ describe('migrateRejectWordsDefault', () => {
     let callCount = 0;
     db.select.mockImplementation(() => {
       callCount++;
-      if (callCount === 1) return mockDbChain([]); // migration flag check
+      if (callCount === 1) return mockDbChain([]);
       if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, rejectWords: '' } }]);
       return mockDbChain([]);
     });
@@ -816,13 +770,11 @@ describe('migrateRejectWordsDefault', () => {
 
     await service.migrateRejectWordsDefault();
 
-    // Two writes expected: quality update + flag insert
     expect(db.insert.mock.calls.length).toBe(2);
     const qualityWrite = getInsertCall(db, 0);
     expect(qualityWrite.table).toBe(settings);
     expect(qualityWrite.row).toMatchObject({ key: 'quality', value: expect.objectContaining({ rejectWords: NEW_DEFAULT, grabFloor: 0 }) });
 
-    // Flag write: must target settingsMigrations with the exact durable id.
     const flagWrite = getInsertCall(db, 1);
     expect(flagWrite.table).toBe(settingsMigrations);
     expect(flagWrite.row).toEqual({ id: FLAG_ID });
@@ -832,7 +784,7 @@ describe('migrateRejectWordsDefault', () => {
     let callCount = 0;
     db.select.mockImplementation(() => {
       callCount++;
-      if (callCount === 1) return mockDbChain([]); // flag check — not run
+      if (callCount === 1) return mockDbChain([]);
       if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, rejectWords: 'My Custom Word' } }]);
       return mockDbChain([]);
     });
@@ -840,7 +792,6 @@ describe('migrateRejectWordsDefault', () => {
 
     await service.migrateRejectWordsDefault();
 
-    // Only one insert: the flag.
     expect(db.insert.mock.calls.length).toBe(1);
     const flagWrite = getInsertCall(db, 0);
     expect(flagWrite.table).toBe(settingsMigrations);
@@ -851,15 +802,14 @@ describe('migrateRejectWordsDefault', () => {
     let callCount = 0;
     db.select.mockImplementation(() => {
       callCount++;
-      if (callCount === 1) return mockDbChain([]); // flag check — not run
-      if (callCount === 2) return mockDbChain([]); // no quality row
+      if (callCount === 1) return mockDbChain([]);
+      if (callCount === 2) return mockDbChain([]);
       return mockDbChain([]);
     });
     db.insert.mockReturnValue(mockDbChain());
 
     await service.migrateRejectWordsDefault();
 
-    // Only one insert: the flag.
     expect(db.insert.mock.calls.length).toBe(1);
     const flagWrite = getInsertCall(db, 0);
     expect(flagWrite.table).toBe(settingsMigrations);
@@ -867,12 +817,11 @@ describe('migrateRejectWordsDefault', () => {
   });
 
   it('end-to-end: no-row install -> migration sets flag -> user later clears rejectWords -> rerun does not re-migrate', async () => {
-    // First boot: no quality row, no flag row — migration writes only the flag.
     let phase1Calls = 0;
     db.select.mockImplementation(() => {
       phase1Calls++;
-      if (phase1Calls === 1) return mockDbChain([]); // flag check
-      if (phase1Calls === 2) return mockDbChain([]); // no quality row
+      if (phase1Calls === 1) return mockDbChain([]);
+      if (phase1Calls === 2) return mockDbChain([]);
       return mockDbChain([]);
     });
     db.insert.mockReturnValue(mockDbChain());
@@ -883,17 +832,13 @@ describe('migrateRejectWordsDefault', () => {
     expect(getInsertCall(db, 0).table).toBe(settingsMigrations);
     expect(getInsertCall(db, 0).row).toEqual({ id: FLAG_ID });
 
-    // Simulate a later boot: user has now written quality with empty rejectWords (deliberate clear),
-    // and the flag row from the first boot is present. Migration must NOT re-fire.
     db.insert.mockClear();
     db.select.mockReset();
     db.select.mockReturnValueOnce(mockDbChain([{ id: FLAG_ID, appliedAt: new Date() }]));
 
     await service.migrateRejectWordsDefault();
 
-    // No writes whatsoever — '' stays ''.
     expect(db.insert).not.toHaveBeenCalled();
-    // Only the flag check happened; no quality read either.
     expect(db.select).toHaveBeenCalledTimes(1);
   });
 
@@ -903,17 +848,14 @@ describe('migrateRejectWordsDefault', () => {
     await service.migrateRejectWordsDefault();
 
     expect(db.insert).not.toHaveBeenCalled();
-    // Only one DB read — the flag check
     expect(db.select).toHaveBeenCalledTimes(1);
   });
 
   it('post-migration user-cleared empty string is preserved (does not re-migrate)', async () => {
-    // Flag is already set from the previous run
     db.select.mockReturnValueOnce(mockDbChain([{ id: 'rejectWords-defaults-v1', appliedAt: new Date() }]));
 
     await service.migrateRejectWordsDefault();
 
-    // No writes — stored '' stays '' on subsequent reads
     expect(db.insert).not.toHaveBeenCalled();
   });
 
@@ -948,7 +890,6 @@ describe('migrateRejectWordsDefault', () => {
       rejectWords: NEW_DEFAULT,
       requiredWords: 'M4B',
     });
-    // Flag identity backstop on this path too.
     const flagWrite = getInsertCall(db, 1);
     expect(flagWrite.table).toBe(settingsMigrations);
     expect(flagWrite.row).toEqual({ id: FLAG_ID });
@@ -958,25 +899,19 @@ describe('migrateRejectWordsDefault', () => {
     let callCount = 0;
     db.select.mockImplementation(() => {
       callCount++;
-      // 1st call: prime cache with legacy ''
+      // Prime legacy cache, check the flag, read the raw row, then expose the migrated row after invalidation.
       if (callCount === 1) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, rejectWords: '' } }]);
-      // 2nd call: migration flag check (no flag yet)
       if (callCount === 2) return mockDbChain([]);
-      // 3rd call: migration reads raw quality blob
       if (callCount === 3) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, rejectWords: '' } }]);
-      // 4th call onward: post-migration get returns new value (cache miss)
       return mockDbChain([{ key: 'quality', value: { grabFloor: 0, rejectWords: NEW_DEFAULT } }]);
     });
     db.insert.mockReturnValue(mockDbChain());
 
-    // Prime cache with legacy value
     const before = await service.get('quality');
     expect(before.rejectWords).toBe('');
 
-    // Run migration — should invalidate cache after writing new defaults
     await service.migrateRejectWordsDefault();
 
-    // Read after migration should hit DB (cache invalidated) and see new value
     const after = await service.get('quality');
     expect(after.rejectWords).toBe(NEW_DEFAULT);
   });
@@ -1003,7 +938,7 @@ describe('migrateRejectWordsAbridgedDefault (#993)', () => {
     let callCount = 0;
     db.select.mockImplementation(() => {
       callCount++;
-      if (callCount === 1) return mockDbChain([]); // v2 flag check — not present
+      if (callCount === 1) return mockDbChain([]);
       if (callCount === 2) return mockDbChain([{ key: 'quality', value: { grabFloor: 0, rejectWords: OLD_PACKAGED_DEFAULT } }]);
       return mockDbChain([]);
     });
@@ -1011,7 +946,6 @@ describe('migrateRejectWordsAbridgedDefault (#993)', () => {
 
     await service.migrateRejectWordsAbridgedDefault();
 
-    // Two writes: quality update + flag insert
     expect(db.insert.mock.calls.length).toBe(2);
     const qualityWrite = getInsertCall(db, 0);
     expect(qualityWrite.table).toBe(settings);
@@ -1153,7 +1087,7 @@ describe('migrateMaxConcurrentProcessingDefaults (#1367)', () => {
     let callCount = 0;
     db.select.mockImplementation(() => {
       callCount++;
-      if (callCount === 1) return mockDbChain([]); // flag check — not present
+      if (callCount === 1) return mockDbChain([]);
       if (callCount === 2) return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 2, postProcessingScript: '/x.sh' } }]);
       return mockDbChain([]);
     });
@@ -1161,7 +1095,6 @@ describe('migrateMaxConcurrentProcessingDefaults (#1367)', () => {
 
     await service.migrateMaxConcurrentProcessingDefaults();
 
-    // Two writes: processing update + flag insert
     expect(db.insert.mock.calls.length).toBe(2);
     const processingWrite = getInsertCall(db, 0);
     expect(processingWrite.table).toBe(settings);
@@ -1181,7 +1114,7 @@ describe('migrateMaxConcurrentProcessingDefaults (#1367)', () => {
     db.select.mockImplementation(() => {
       callCount++;
       if (callCount === 1) return mockDbChain([]);
-      // 10 would fail the .max(8) Zod schema; raw read still sees it.
+      // Value 10 fails Zod's max(8), so the migration must read the raw blob.
       if (callCount === 2) return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 10, postProcessingScript: '/x.sh' } }]);
       return mockDbChain([]);
     });
@@ -1253,7 +1186,6 @@ describe('migrateMaxConcurrentProcessingDefaults (#1367)', () => {
 
     await service.migrateMaxConcurrentProcessingDefaults();
 
-    // Only the flag insert — no processing write.
     expect(db.insert.mock.calls.length).toBe(1);
     expect(getInsertCall(db, 0).table).toBe(settingsMigrations);
     expect(getInsertCall(db, 0).row).toEqual({ id: FLAG_ID });
@@ -1281,7 +1213,7 @@ describe('migrateMaxConcurrentProcessingDefaults (#1367)', () => {
     db.select.mockImplementation(() => {
       callCount++;
       if (callCount === 1) return mockDbChain([]);
-      if (callCount === 2) return mockDbChain([]); // no processing row
+      if (callCount === 2) return mockDbChain([]);
       return mockDbChain([]);
     });
     db.insert.mockReturnValue(mockDbChain());
@@ -1294,7 +1226,6 @@ describe('migrateMaxConcurrentProcessingDefaults (#1367)', () => {
   });
 
   it('does not rewrite when the field is missing or a non-numeric "2" string, but marks flag applied', async () => {
-    // Missing field
     let callCount = 0;
     db.select.mockImplementation(() => {
       callCount++;
@@ -1310,7 +1241,6 @@ describe('migrateMaxConcurrentProcessingDefaults (#1367)', () => {
     expect(getInsertCall(db, 0).table).toBe(settingsMigrations);
     expect(getInsertCall(db, 0).row).toEqual({ id: FLAG_ID });
 
-    // String "2" — strict === 2 fails on the string.
     db.insert.mockClear();
     db.select.mockReset();
     callCount = 0;
@@ -1335,17 +1265,15 @@ describe('migrateMaxConcurrentProcessingDefaults (#1367)', () => {
     await service.migrateMaxConcurrentProcessingDefaults();
 
     expect(db.insert).not.toHaveBeenCalled();
-    // Only the flag check happened — no processing read, so a stored 2 is never re-flipped.
     expect(db.select).toHaveBeenCalledTimes(1);
   });
 
   it('end-to-end: no-row install sets flag -> user later stores 2 -> rerun does not re-flip it', async () => {
-    // First boot: no flag, no processing row — writes only the flag.
     let phase1 = 0;
     db.select.mockImplementation(() => {
       phase1++;
-      if (phase1 === 1) return mockDbChain([]); // flag check
-      if (phase1 === 2) return mockDbChain([]); // no processing row
+      if (phase1 === 1) return mockDbChain([]);
+      if (phase1 === 2) return mockDbChain([]);
       return mockDbChain([]);
     });
     db.insert.mockReturnValue(mockDbChain());
@@ -1355,7 +1283,6 @@ describe('migrateMaxConcurrentProcessingDefaults (#1367)', () => {
     expect(db.insert.mock.calls.length).toBe(1);
     expect(getInsertCall(db, 0).table).toBe(settingsMigrations);
 
-    // Later boot: flag present (user has since deliberately stored 2). Migration must NOT re-fire.
     db.insert.mockClear();
     db.select.mockReset();
     db.select.mockReturnValueOnce(mockDbChain([{ id: FLAG_ID, appliedAt: new Date() }]));
@@ -1370,10 +1297,10 @@ describe('migrateMaxConcurrentProcessingDefaults (#1367)', () => {
     let callCount = 0;
     db.select.mockImplementation(() => {
       callCount++;
-      if (callCount === 1) return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 2 } }]); // prime cache
-      if (callCount === 2) return mockDbChain([]); // flag check
-      if (callCount === 3) return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 2 } }]); // raw read
-      return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 1 } }]); // post-migration get
+      if (callCount === 1) return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 2 } }]);
+      if (callCount === 2) return mockDbChain([]);
+      if (callCount === 3) return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 2 } }]);
+      return mockDbChain([{ key: 'processing', value: { ffmpegPath: '/usr/bin/ffmpeg', maxConcurrentProcessing: 1 } }]);
     });
     db.insert.mockReturnValue(mockDbChain());
 
@@ -1540,13 +1467,11 @@ describe('SettingsService — cache (#554)', () => {
     });
 
     it('migrateLanguageSettings() invalidates quality cache after cleanup write', async () => {
-      // Prime quality cache
       db.select.mockReturnValue(mockDbChain([{ key: 'quality', value: { minBitrate: 64 } }]));
       await service.get('quality');
       db.select.mockClear();
 
-      // migrateLanguageSettings: metadata has no languages, quality has no preferredLanguage
-      // → skips migration but still cleans up quality blob
+      // With no preferredLanguage, only the cleanup write can invalidate the quality cache.
       db.select
         .mockReturnValueOnce(mockDbChain([{ key: 'metadata', value: {} }]))
         .mockReturnValueOnce(mockDbChain([{ key: 'quality', value: { minBitrate: 64 } }]));
@@ -1554,17 +1479,14 @@ describe('SettingsService — cache (#554)', () => {
       await service.migrateLanguageSettings();
       db.select.mockClear();
 
-      // quality cache should be invalidated after the cleanup write
       db.select.mockReturnValue(mockDbChain([{ key: 'quality', value: { minBitrate: 64 } }]));
       await service.get('quality');
       expect(db.select).toHaveBeenCalled();
     });
 
     it('update() returns fresh aggregate reflecting the write', async () => {
-      // patch('library') → get('library') returns empty (defaults)
       db.select.mockReturnValueOnce(mockDbChain([]));
       db.insert.mockReturnValue(mockDbChain());
-      // getAll() after patch returns the updated row
       db.select.mockReturnValueOnce(mockDbChain([{ key: 'library', value: { path: '/updated', folderFormat: '{author}/{title}' } }]));
 
       const result = await service.update({ library: { path: '/updated' } } as UpdateSettingsInput);
@@ -1599,7 +1521,7 @@ describe('SettingsService — cache (#554)', () => {
       db.select.mockReturnValueOnce(mockDbChain([{ key: 'search', value: { intervalMinutes: 120 } }]));
       await service.get('search');
 
-      // At +31s, library expired but search (cached at +15s) still valid
+      // At +31s library is expired, while search is only 16s old.
       vi.spyOn(Date, 'now').mockReturnValue(baseNow + 31_000);
       db.select.mockClear();
 
@@ -1657,15 +1579,13 @@ describe('SettingsService — cache (#554)', () => {
   });
 });
 
-// #1404 — SettingsService threads `this.log` into decryptFields so the
-// network/metadata secret read paths surface a lost/regenerated `secret.key`.
+// Logger propagation through secret reads surfaces lost or regenerated secret.key failures (#1404).
 describe('SettingsService decrypt-failure diagnostic (#1404)', () => {
   let db: ReturnType<typeof createMockDb>;
   let log: ReturnType<typeof createMockLogger>;
   let service: SettingsService;
 
-  // A registered secret value whose auth tag is corrupted under the right key —
-  // the lost/regenerated-key symptom (#1404).
+  // Corrupt the auth tag while retaining the registered encrypted-value shape.
   async function corruptBlob(plaintext: string): Promise<string> {
     const { encrypt } = await import('../utils/secret-codec.js');
     const valid = encrypt(plaintext, TEST_KEY);
@@ -1674,7 +1594,7 @@ describe('SettingsService decrypt-failure diagnostic (#1404)', () => {
     return '$ENC$' + payload.toString('base64');
   }
 
-  /** The decrypt diagnostic warn (vs. the unrelated parse-fallback warn). */
+  // Filters out unrelated parse-fallback warnings.
   function decryptWarn(): Array<[unknown, unknown]> {
     return (log.warn as ReturnType<typeof vi.fn>).mock.calls.filter(
       (call) => typeof call[1] === 'string' && call[1].includes('secret.key'),
@@ -1701,7 +1621,7 @@ describe('SettingsService decrypt-failure diagnostic (#1404)', () => {
     const warns = decryptWarn();
     expect(warns).toHaveLength(1);
     expect(warns[0]![0]).toEqual({ entity: 'network', failedFields: ['proxyUrl'] });
-    // Negative-leak: neither the plaintext nor the raw blob may appear in the warn args.
+    // Neither plaintext nor the encrypted blob may leak into diagnostics.
     const serialized = JSON.stringify(warns);
     expect(serialized).not.toContain('proxy:8080');
     expect(serialized).not.toContain('$ENC$');
@@ -1729,11 +1649,9 @@ describe('SettingsService decrypt-failure diagnostic (#1404)', () => {
     expect(decryptWarn()).toHaveLength(0);
   });
 
-  // getAll() decrypts every secret category through its own decryptFields call; the
-  // logger must thread there too (the `:105` caller, distinct from get()'s `:83`).
+  // getAll has its own decryptFields call, so logger propagation needs separate coverage.
   it('getAll() warns for the network category when its stored proxyUrl fails to decrypt', async () => {
     const blob = await corruptBlob('http://user:pass@proxy:8080');
-    // getAll() does an unfiltered select over all settings rows.
     db.select.mockReturnValue(mockDbChain([{ key: 'network', value: { proxyUrl: blob } }]));
 
     await service.getAll();

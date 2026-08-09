@@ -56,7 +56,6 @@ describe('removeOrDeferTorrent', () => {
   it('ratio gating OFF → does not fetch live ratio, defers on seed time only', async () => {
     const clientService = createClientService();
     const { deps } = createDeps(clientService);
-    // minSeedTime 120 min, completed 1h ago → seed time not met → deferred
     const download = makeDownload({ completedAt: new Date(Date.now() - 3600_000) });
 
     const result = await removeOrDeferTorrent(download, { minSeedTime: 120, minSeedRatio: 0 }, deps, { deferOnUnavailableRatio: false });
@@ -127,7 +126,6 @@ describe('removeOrDeferTorrent', () => {
 
     const result = await removeOrDeferTorrent(download, { minSeedTime: 0, minSeedRatio: 1.0 }, deps, { deferOnUnavailableRatio: false });
 
-    // 0 < minSeedRatio → deferred for a torrent
     expect(result).toEqual({ outcome: 'deferred', currentRatio: 0 });
     expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
   });

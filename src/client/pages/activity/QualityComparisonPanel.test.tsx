@@ -159,7 +159,6 @@ describe('QualityComparisonPanel — narrator names', () => {
   it('shows narrator row with dashes when narratorMatch is not null but names are missing (legacy)', () => {
     const { container } = render(<QualityComparisonPanel data={{ ...baseGateData, narratorMatch: false, existingNarrator: null, downloadNarrator: null }} />);
     expect(screen.getByText('Narrator')).toBeInTheDocument();
-    // Two em-dashes appear in narrator current and downloaded columns
     const dashes = container.querySelectorAll('*');
     const dashElements = Array.from(dashes).filter(el => el.textContent === '—');
     expect(dashElements.length).toBeGreaterThanOrEqual(2);
@@ -198,7 +197,6 @@ describe('QualityComparisonPanel — probe error display', () => {
     render(<QualityComparisonPanel data={{ ...baseGateData, probeFailure: true, probeError: 'Audio files present but no readable codec — unsupported or corrupt format', holdReasons: ['unreadable_codec'] }} />);
     expect(screen.getByText(/no readable codec/i)).toBeInTheDocument();
     expect(screen.getByText(/unsupported by this server's FFmpeg/i)).toBeInTheDocument();
-    // Distinct from the empty-dir copy
     expect(screen.queryByText(/No audio files found/)).not.toBeInTheDocument();
     expect(screen.queryByText(/unable to determine download quality/i)).not.toBeInTheDocument();
   });
@@ -224,13 +222,11 @@ describe('QualityComparisonPanel — existing audio metadata display', () => {
 
   it('renders existing duration formatted as "Xh Ym" when existingDuration is non-null', () => {
     render(<QualityComparisonPanel data={{ ...baseGateData, existingDuration: 51840, downloadedDuration: 51840, durationDelta: 0 }} />);
-    // 51840s = 14h 24m
     expect(screen.getAllByText('14h 24m')).toHaveLength(2);
   });
 
   it('renders downloadedDuration formatted as "Xh Ym" in Downloaded column', () => {
     render(<QualityComparisonPanel data={{ ...baseGateData, existingDuration: null, downloadedDuration: 3660, durationDelta: null }} />);
-    // 3660s = 1h 1m
     expect(screen.getByText('1h 1m')).toBeInTheDocument();
   });
 
@@ -238,14 +234,10 @@ describe('QualityComparisonPanel — existing audio metadata display', () => {
     render(<QualityComparisonPanel data={{ ...baseGateData, existingDuration: 7200, downloadedDuration: 7500, durationDelta: 0.042 }} />);
     expect(screen.getByText('2h 0m')).toBeInTheDocument();
     expect(screen.getByText('2h 5m')).toBeInTheDocument();
-    // Should NOT render delta percentage
     expect(screen.queryByText('+4%')).not.toBeInTheDocument();
   });
 
-  // #1854: the duration row now flags off the server's persisted hold decision
-  // (`holdReasons.includes('duration_delta')`), not an independent 15% ratio test,
-  // so the visible warning tracks the actual 90s server hold. `narratorMatch: null`
-  // suppresses the narrator row so the only possible flag icon is the duration row.
+  // Null narrator isolates the persisted duration hold icon.
   it('flags duration row when holdReasons includes duration_delta (independent of ratio value)', () => {
     const { container } = render(<QualityComparisonPanel data={{
       ...baseGateData, existingDuration: 7200, downloadedDuration: 7500,
@@ -263,9 +255,6 @@ describe('QualityComparisonPanel — existing audio metadata display', () => {
     expect(container.querySelectorAll('svg')).toHaveLength(0);
   });
 
-  // Divergence (a) — AC9: a +91s upgrade on a 10h (36000s) incumbent is a TINY ratio
-  // (~0.25%) the old 15% UI would pass, but it is outside the 90s band so the server
-  // held. Flag off the server decision → flagged.
   it('flags on a small ratio when the server held it (old 15% policy would not)', () => {
     const { container } = render(<QualityComparisonPanel data={{
       ...baseGateData, existingDuration: 36000, downloadedDuration: 36091,
@@ -274,9 +263,6 @@ describe('QualityComparisonPanel — existing audio metadata display', () => {
     expect(container.querySelectorAll('svg')).toHaveLength(1);
   });
 
-  // Divergence (b) — AC9: a +90s upgrade on a 5-minute (300s) incumbent is a LARGE
-  // ratio (~30%) the old 15% UI would flag, but it is inside the inclusive 90s band
-  // so the server did not hold. Flag off the server decision → unflagged.
   it('does NOT flag on a large ratio when the server did not hold (old 15% policy would)', () => {
     const { container } = render(<QualityComparisonPanel data={{
       ...baseGateData, existingDuration: 300, downloadedDuration: 390,
@@ -324,7 +310,6 @@ describe('QualityComparisonPanel — existing audio metadata display', () => {
 
 describe('QualityComparisonPanel — legacy backward compatibility', () => {
   it('renders correctly when new fields are absent from data (legacy event)', () => {
-    // Simulate a legacy event object missing the new fields entirely
     const legacyData = {
       action: 'held' as const,
       mbPerHour: 60,
@@ -340,7 +325,6 @@ describe('QualityComparisonPanel — legacy backward compatibility', () => {
       holdReasons: [],
     } as unknown as QualityGateData;
 
-    // Should not throw — legacy fields missing should render as dashes/hidden
     render(<QualityComparisonPanel data={legacyData} />);
     expect(screen.getByText('Quality Comparison')).toBeInTheDocument();
     expect(screen.getByText('AAC')).toBeInTheDocument();
@@ -352,7 +336,6 @@ describe('QualityComparisonPanel — stereo flag removal', () => {
   it('renders Stereo without warning icon for channels=2', () => {
     const { container } = render(<QualityComparisonPanel data={{ ...baseGateData, channels: 2, probeFailure: false, durationDelta: null, narratorMatch: null }} />);
     expect(screen.getByText('Stereo')).toBeInTheDocument();
-    // No AlertTriangleIcon SVGs when no rows are flagged
     expect(container.querySelectorAll('svg')).toHaveLength(0);
   });
 

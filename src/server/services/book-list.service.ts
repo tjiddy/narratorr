@@ -9,9 +9,7 @@ import type { BookWithAuthor } from './book.service.js';
 import type { BookRow } from './types.js';
 import { stripClearedFields } from './book-row-public.js';
 
-/** Server-side row shape for the library list — same fields as the wire
- *  LibraryBookListItem but with Drizzle Date timestamps (Fastify serializes
- *  them to ISO strings on the way out). */
+/** Wire list shape before Fastify serializes Drizzle dates to ISO strings. */
 export type LibraryBookListItemRow = Omit<LibraryBookListItem, 'createdAt' | 'updatedAt'> & {
   createdAt: Date;
   updatedAt: Date;
@@ -38,27 +36,11 @@ export interface BookListOptions {
   narrator?: string;
   sortField?: BookSortField;
   sortDirection?: BookSortDirection;
-  /**
-   * Filter `status` by EXACT canonical match instead of bucket-expanding the
-   * overlapping keys (`downloading`/`imported`) through `BUCKET_EXPANSION`.
-   * Default `false` preserves the legacy bucket-aware behavior for internal
-   * `/api/books` and library callers; the native public `/api/v1` boundary sets
-   * it `true` so `status=downloading` means exactly-`downloading`, not the
-   * library `searching+downloading` bucket (#1449).
-   */
+  /** Bypass overlapping library buckets so public v1 statuses match exactly (#1449). */
   exactStatus?: boolean;
 }
 
-/**
- * Filter-value → canonical DB status values. The library route passes a
- * `LibraryFilterBucket` (bucket key); the generic `/api/books` route passes a
- * `BookStatus`. Both expand through the single canonical map: a bucket key
- * resolves to its member states (`downloading` → `[searching, downloading]`),
- * and a non-bucket `BookStatus` (e.g. `searching`) falls through to an exact
- * `eq` match. This preserves the legacy generic-route behavior — `downloading`
- * and `imported` are both bucket keys, so passing them to `/api/books` still
- * expands exactly as the retired `TAB_STATUS_MAP` did.
- */
+/** Legacy bucket names such as `downloading`/`imported` expand; other statuses match exactly. */
 const BUCKET_EXPANSION: Record<string, readonly BookStatus[]> = LIBRARY_FILTER_BUCKETS;
 
 export interface BookStats {
@@ -68,9 +50,7 @@ export interface BookStats {
   narrators: string[];
 }
 
-/** Project options→filter shape with only defined values, so the helper
- *  in buildListWhere() doesn't see undefined keys (keeps cyclomatic
- *  complexity low at the call sites). */
+/** Omit undefined keys while keeping callers below the cyclomatic-complexity cap. */
 function pickFilters(options?: { search?: string; author?: string; series?: string; narrator?: string }): { search?: string; author?: string; series?: string; narrator?: string } {
   const out: { search?: string; author?: string; series?: string; narrator?: string } = {};
   if (options?.search !== undefined) out.search = options.search;
@@ -85,11 +65,7 @@ export class BookListService {
     private db: Db,
   ) {}
 
-  /** Compose status + search + author/series/narrator WHERE filters shared by
-   *  getAll() and getAllForLibrary(). Search semantics match #365:
-   *  title/series/genres + author name subquery, no narrator subquery.
-   *  Author/series/narrator filters (#1143) are case-insensitive exact matches
-   *  pushed to the DB so pagination operates on the filtered set. */
+  /** Shared DB filters: #365 search excludes narrator; #1143 exact filters run before pagination. */
   private buildListWhere(status?: BookStatus | LibraryFilterBucket, filters?: { search?: string; author?: string; series?: string; narrator?: string }, exactStatus = false): SQL | undefined {
     const conditions: SQL[] = [];
 
@@ -132,21 +108,17 @@ export class BookListService {
     pagination?: { limit?: number; offset?: number },
     options?: BookListOptions,
   ): Promise<{ data: BookWithAuthor[]; total: number }> {
-    // Destructure once (single `?? {}` branch) instead of repeated `options?.`
-    // optional chains — keeps getAll under the cyclomatic-complexity cap.
+    // One fallback branch keeps this method below the cyclomatic-complexity cap.
     const { slim, sortField, sortDirection, exactStatus } = options ?? {};
     const where = this.buildListWhere(status, pickFilters(options), exactStatus);
 
-    // Get total count (filters only, no pagination)
     const [{ value: total } = { value: 0 }] = await this.db
       .select({ value: countFn() })
       .from(books)
       .where(where);
 
-    // Build select — slim mode excludes description, genres for list views
     const bookFields = slim ? getSlimBookColumns() : books;
 
-    // Build ORDER BY — join position-0 author for author sort
     const orderClauses = this.buildOrderBy(sortField, sortDirection);
 
     let query = this.db
@@ -173,21 +145,18 @@ export class BookListService {
 
     const bookIds = results.map((r) => (r.book as BookRow).id);
 
-    // Batch-load authors for this page
     const authorResults = await this.db
       .select({ bookId: bookAuthors.bookId, author: authors, position: bookAuthors.position })
       .from(bookAuthors)
       .innerJoin(authors, eq(bookAuthors.authorId, authors.id))
       .where(inArray(bookAuthors.bookId, bookIds));
 
-    // Batch-load narrators for this page
     const narratorResults = await this.db
       .select({ bookId: bookNarrators.bookId, narrator: narrators, position: bookNarrators.position })
       .from(bookNarrators)
       .innerJoin(narrators, eq(bookNarrators.narratorId, narrators.id))
       .where(inArray(bookNarrators.bookId, bookIds));
 
-    // Build lookup maps
     const authorsMap = new Map<number, Array<{ author: AuthorRow; position: number }>>();
     for (const r of authorResults) {
       if (!authorsMap.has(r.bookId)) authorsMap.set(r.bookId, []);
@@ -210,9 +179,7 @@ export class BookListService {
         .map((n) => n.narrator);
 
       return {
-        // Drop the raw `user_cleared_fields` text (#2069 AC16): this list spreads
-        // whole `books` rows and its declared `BookWithAuthor` return type omits
-        // the column, but the `as` cast below cannot enforce that at runtime.
+        // The return-type cast cannot strip raw `user_cleared_fields` at runtime (#2069 AC16).
         ...stripClearedFields(r.book as BookRow),
         importListName: r.importListName ?? null,
         authors: sortedAuthors,
@@ -344,17 +311,8 @@ export class BookListService {
       case 'series':
         return [sql`CASE WHEN ${books.seriesName} IS NULL THEN 1 ELSE 0 END`, dir(books.seriesName), sql`CASE WHEN ${books.seriesName} IS NULL THEN 0 WHEN ${books.seriesPosition} IS NULL THEN 1 ELSE 0 END`, asc(sql`CASE WHEN ${books.seriesName} IS NOT NULL THEN ${books.seriesPosition} ELSE NULL END`), dir(books.id)];
       case 'quality': {
-        // Quality = MB/hr = size(bytes) / duration(seconds). The canonical unit
-        // contract lives in resolveBookQualityInputs() (src/core/utils/quality.ts):
-        // size prefers `audioTotalSize` then `size` (both bytes); duration prefers
-        // `audioDuration` (already seconds), else the `duration` column which is
-        // MINUTES and must be ×60. This SQL is a necessary re-expression of that
-        // helper (DRY-3 single-home rule) and mirrors it bit-for-bit in intent —
-        // the `WHEN … > 0` precedence also matches the helper's zero-as-absent
-        // semantics, so `audioDuration = 0` falls back to `duration * 60` here
-        // exactly as it does there (rather than the old COALESCE routing it to the
-        // unknown bucket). Editing units on one side without the other reintroduces
-        // the #1797/#1814 minutes-vs-seconds divergence.
+        // Mirror resolveBookQualityInputs: prefer positive audio values; fallback duration is
+        // minutes and needs ×60. Zero means absent (#1797/#1814).
         const usableSize = sql`CASE WHEN ${books.audioTotalSize} > 0 THEN ${books.audioTotalSize} ELSE ${books.size} END`;
         const usableDurationSeconds = sql`CASE WHEN ${books.audioDuration} > 0 THEN ${books.audioDuration} ELSE ${books.duration} * 60 END`;
         return [
@@ -373,15 +331,7 @@ export class BookListService {
     }
   }
 
-  /**
-   * Lightweight list of all book identifiers for duplicate detection (no pagination).
-   *
-   * `id` is part of the projection (#1916) because this is also the client's
-   * ownership source for the Add-Book search card, which links its "In Library"
-   * badge at the matched book. Deliberately has no `where`, no `limit`, and no
-   * `ORDER BY`: it must stay status-blind and uncapped, and every consumer
-   * matches by identity rather than depending on row order.
-   */
+  /** Unfiltered, uncapped dedupe/ownership projection; `id` supports Add-Book links (#1916). */
   async getIdentifiers(): Promise<{ id: number; asin: string | null; title: string; authorName: string | null; authorSlug: string | null }[]> {
     const results = await this.db
       .select({
@@ -399,7 +349,6 @@ export class BookListService {
   }
 
   async getStats(): Promise<BookStats> {
-    // Get per-status counts
     const statusRows = await this.db
       .select({ status: books.status, count: countFn() })
       .from(books)
@@ -407,15 +356,12 @@ export class BookListService {
 
     const statusMap = new Map(statusRows.map((r) => [r.status, Number(r.count)]));
 
-    // Derive per-bucket counts from the canonical partition so every BookStatus
-    // is summed into exactly one bucket — no state can be silently uncounted, and
-    // a future status added to a bucket is picked up automatically.
+    // Sum the canonical partition so new statuses inherit their configured bucket automatically.
     const counts = Object.fromEntries(
       (Object.entries(LIBRARY_FILTER_BUCKETS) as [LibraryFilterBucket, readonly BookStatus[]][])
         .map(([bucket, states]) => [bucket, states.reduce((sum, s) => sum + (statusMap.get(s) ?? 0), 0)]),
     ) as Record<LibraryFilterBucket, number>;
 
-    // Get unique filter values
     const [authorRows, seriesRows, narratorRows] = await Promise.all([
       this.db
         .select({ name: authors.name })

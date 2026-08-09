@@ -16,16 +16,7 @@ export class CoverUploadError extends Error {
   }
 }
 
-/**
- * Upload a custom cover image for a book.
- * Atomic write (temp file → rename), stale sibling cleanup, immediate DB update.
- * Follows the same pattern as downloadRemoteCover in cover-download.ts.
- *
- * Returns a {@link CoverWriteOutcome}: `'written'` once the `cover.*` rename commits (even if the
- * subsequent DB `coverUrl` update throws — see {@link finalizeCoverWrite}). Pre-rename failures
- * (unsupported MIME, rename error) still THROW so the upload request keeps its existing error
- * response rather than reporting a spurious success — there is no `'failed'`/`'skipped'` path here.
- */
+/** Atomically write a cover. Pre-commit failures throw; post-commit finalization is nonfatal. */
 export async function uploadBookCover(
   bookId: number,
   bookPath: string,
@@ -43,19 +34,14 @@ export async function uploadBookCover(
   const finalPath = join(bookPath, keepFilename);
   const tempPath = join(bookPath, `.cover-upload-${randomUUID()}.tmp`);
 
-  // Atomic write: temp file → rename (rename() overwrites target). A pre-rename failure throws
-  // (preserving the upload's existing error response); once the rename commits the cover has
-  // materialized and the outcome is 'written' regardless of the DB update below.
   await writeFile(tempPath, buffer);
   try {
     await rename(tempPath, finalPath);
   } catch (error: unknown) {
-    // Clean up temp file on rename failure — no partial state
     await unlink(tempPath).catch(() => { /* best-effort */ });
     throw error;
   }
 
-  // Cover committed on disk. Sibling cleanup + DB `coverUrl` update are nonfatal from here.
   await finalizeCoverWrite(bookId, bookPath, keepFilename, db, log);
 
   log.info({ bookId, path: finalPath }, 'Custom cover uploaded');

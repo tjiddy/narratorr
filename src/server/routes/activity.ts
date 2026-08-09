@@ -19,7 +19,6 @@ const activityListQuerySchema = z.object({
 type ActivityListQuery = z.infer<typeof activityListQuerySchema>;
 
 export async function activityRoutes(app: FastifyInstance, downloadService: DownloadService, downloadOrchestrator: DownloadOrchestrator, qualityGateService: QualityGateService, qualityGateOrchestrator: QualityGateOrchestrator, bookImportService: BookImportService, nudgeImportWorker: () => void) {
-  // GET /api/activity
   app.get<{ Querystring: ActivityListQuery }>(
     '/api/activity',
     { schema: { querystring: activityListQuerySchema } },
@@ -29,7 +28,6 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
       const pagination = { limit: limit ?? DEFAULT_LIMITS.activity, ...(offset !== undefined && { offset }) };
       const result = await downloadService.getAll(status, pagination, section);
 
-      // Augment pending_review downloads with quality gate comparison data (batch)
       const pendingIds = result.data
         .filter((dl) => dl.status === 'pending_review')
         .map((dl) => dl.id);
@@ -47,18 +45,15 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
     },
   );
 
-  // GET /api/activity/active
   app.get('/api/activity/active', async () => {
     return downloadService.getActive();
   });
 
-  // GET /api/activity/counts
   app.get('/api/activity/counts', async (request) => {
     request.log.debug('Fetching activity counts');
     return downloadService.getCounts();
   });
 
-  // GET /api/activity/:id
   app.get<{ Params: IdParam }>(
     '/api/activity/:id',
     { schema: { params: idParamSchema } },
@@ -74,13 +69,11 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
     },
   );
 
-  // DELETE /api/activity/history (bulk clear)
   app.delete('/api/activity/history', async (request) => {
     request.log.info('Bulk deleting download history');
     return downloadService.deleteHistory();
   });
 
-  // DELETE /api/activity/:id/history (single history delete)
   app.delete<{ Params: IdParam }>(
     '/api/activity/:id/history',
     { schema: { params: idParamSchema } },
@@ -96,7 +89,6 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
     },
   );
 
-  // DELETE /api/activity/:id (cancel)
   app.delete<{ Params: IdParam }>(
     '/api/activity/:id',
     { schema: { params: idParamSchema } },
@@ -113,7 +105,6 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
     },
   );
 
-  // POST /api/activity/:id/retry (search-based retry)
   app.post<{ Params: IdParam }>(
     '/api/activity/:id/retry',
     { schema: { params: idParamSchema } },
@@ -129,8 +120,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
         case 'no_candidates':
           return reply.status(200).send({ status: 'no_candidates' });
         case 'already_active':
-          // #1857/#1861 — book already served by a grab blocker (a live download /
-          // replacement winner, a QG-eligible completed row, or a pending auto import job).
+          // A grab blocker already serves this book; retry is idempotently satisfied.
           return reply.status(200).send({ status: 'already_active' });
         case 'retry_error':
           return reply.status(200).send({ status: 'retry_error' });
@@ -138,7 +128,6 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
     },
   );
 
-  // POST /api/activity/:id/approve (quality gate approval)
   app.post<{ Params: IdParam }>(
     '/api/activity/:id/approve',
     { schema: { params: idParamSchema } },
@@ -148,10 +137,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
       request.log.info({ id }, 'Download approved');
       const result = await qualityGateOrchestrator.approve(id);
 
-      // Enqueue auto import job — creates import_jobs row, nudges worker.
-      // Conflict (active job already exists) is a benign idempotency outcome:
-      // log info and return the approve result unchanged. Do NOT surface 409 —
-      // the user-visible approve action itself succeeded.
+      // An existing import job is a benign race because approval already succeeded.
       if (result.bookId) {
         await enqueueAutoImport(bookImportService, id, result.bookId, nudgeImportWorker, request.log);
       }
@@ -160,7 +146,6 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
     },
   );
 
-  // POST /api/activity/:id/reject (quality gate rejection)
   const rejectBodySchema = z.object({ retry: z.boolean().optional().default(false) });
 
   app.post<{ Params: IdParam }>(

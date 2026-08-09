@@ -161,7 +161,7 @@ export function createMockConnector(overrides?: Partial<Connector>): Connector {
     name: 'My ABS',
     type: 'audiobookshelf',
     enabled: true,
-    // baseUrl and apiKey are registered connector secrets — the API masks both in responses (#1491).
+    // Connector secrets are masked in API responses.
     settings: { baseUrl: '********', apiKey: '********', libraryId: 'lib-1' },
     createdAt: '2024-01-01T00:00:00Z',
     updatedAt: '2024-01-01T00:00:00Z',

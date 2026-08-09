@@ -11,8 +11,7 @@ describe('InfoTip', () => {
   });
 
   it('toggles via keyboard activation with no hover involved (touch/keyboard path)', async () => {
-    // Enter on the focused trigger exercises the PIN state alone — a mouse click always
-    // carries a mouseenter with it, so this is the only way to test the toggle in isolation.
+    // Enter exercises pinning alone; a mouse click also carries mouseenter.
     const user = userEvent.setup();
     render(<InfoTip label="Script environment variables">Extra detail here</InfoTip>);
     const trigger = screen.getByRole('button', { name: 'Script environment variables' });

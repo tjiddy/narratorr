@@ -34,7 +34,6 @@ import type { ImportJobPhase } from '@shared/schemas/import-job.js';
 
 export type { ImportResult } from '../utils/import-helpers.js';
 
-/** Optional phase/progress callbacks threaded from the adapter through the orchestrator. */
 export interface ImportProgressCallbacks {
   setPhase?: (phase: ImportJobPhase) => Promise<void>;
   emitProgress?: (phase: ImportJobPhase, progress: number, byteCounter?: { current: number; total: number }) => void;
@@ -56,7 +55,6 @@ function bindRenameProgress(callbacks?: ImportProgressCallbacks) {
   return (current: number, total: number) => emit('renaming', total > 0 ? current / total : 1, { current, total });
 }
 
-/** Lightweight context for orchestrator side-effect dispatch. */
 export interface ImportContext {
   downloadId: number;
   downloadTitle: string;
@@ -64,7 +62,7 @@ export interface ImportContext {
   bookId: number;
   bookTitle: string;
   bookStatus: BookStatus;
-  /** Pre-grab lifecycle snapshot — the real prior status to revert to on failure. */
+  /** Durable pre-grab status used for failure rollback. */
   bookStatusAtGrab: BookStatus | null;
   bookPath: string | null;
   authorName: string | null;
@@ -84,10 +82,6 @@ export class ImportService {
     private bookService?: BookService,
   ) {}
 
-  /**
-   * Load context for orchestrator side-effect dispatch.
-   * Returns download + book + author data needed for SSE, notifications, event recording.
-   */
   async getImportContext(downloadId: number): Promise<ImportContext> {
     const download = await this.getDownload(downloadId);
     if (!download) throw new Error(`Download ${downloadId} not found`);
@@ -116,11 +110,7 @@ export class ImportService {
     };
   }
 
-  /**
-   * Import a single completed download into the library.
-   * Core import lifecycle: copies files, updates DB records, enriches from audio, handles torrent removal.
-   * Side effects (SSE, notifications, events, tagging, post-processing) are dispatched by the orchestrator.
-   */
+  /** Execute filesystem/DB import; the orchestrator owns external side effects. */
   async importDownload(downloadId: number, callbacks?: ImportProgressCallbacks): Promise<ImportResult> {
     const startMs = Date.now();
     const download = await this.getDownload(downloadId);
@@ -131,7 +121,6 @@ export class ImportService {
     if (!book) throw new Error(`Book ${download.bookId} not found`);
     const authorName = book.authors[0]?.name ?? null;
 
-    // Pipeline-only write: claim the download for import.
     await transitionDownloadState(this.db, downloadId, { pipelineStage: 'importing' });
 
     let targetPath: string | undefined;
@@ -149,20 +138,12 @@ export class ImportService {
       const namingOptions = toNamingOptions(librarySettings);
       libraryRoot = librarySettings.path;
       targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, book, authorName, namingOptions, book.editionLabel);
-      // Same-path re-import: targetPath IS the user's existing book folder, so the
-      // commit must back-up-and-rollback rather than destroy, and failure cleanup
-      // must never blanket-rm it. First import / move-path: targetPath is disposable.
-      // Computed BEFORE the #1341 preflight so a marker-collision abort can't reach
-      // handleImportFailure with protectTarget still false (which would blanket-rm a
-      // re-import's existing audio).
+      // Same-path re-imports own existing audio and must never be blanket-removed on failure.
+      // Compute before marker preflight so collision cleanup already has protection set.
       protectTarget = book.path != null && normalize(targetPath) === normalize(book.path);
-      // #1341 marker-path collision preflight — before the sibling paths are even derived, so a
-      // throw reaches handleImportFailure with stagingPath/backupPath still undefined (no
-      // sibling cleanup runs, an adjacent pre-existing `.import-bak` survives) and protectTarget
-      // already set. Aborts before prepareImportSiblings can strict-clear any sibling.
+      // Check marker collision before deriving/clearing siblings; an adjacent backup must survive.
       await assertMarkerPathWritable(targetPath);
-      // Active born-hidden scratch (#1911) via the ONE shared helper: `.import-staging` /
-      // `.import-backup`, dot-led so an ABS scan mid-copy ingests nothing from the staging dir.
+      // Dot-led scratch prevents concurrent library scans from ingesting partial copies.
       ({ stagingPath, backupPath } = deriveImportSiblings(targetPath));
       this.log.debug({ downloadId, bookTitle: book.title, targetPath, protectTarget }, 'Built target path');
 
@@ -171,10 +152,7 @@ export class ImportService {
       const diskSpace = await checkDiskSpace({ sourcePath, sourceStats, libraryPath: librarySettings.path, minFreeSpaceGB: importSettings.minFreeSpaceGB });
       this.log.debug({ downloadId, bookTitle: book.title, freeGB: diskSpace.freeGB, requiredGB: diskSpace.requiredGB }, 'Disk space check passed');
 
-      // ── Phase 1: stage + verify into a sibling (non-destructive) ──────────
-      // Copy, rename and verify the new version into `.import-tmp`. The existing
-      // targetPath is never touched here, so a copy failure can't destroy the
-      // current book — old audio, cover and metadata all remain in place.
+      // Stage and verify without touching the existing target, so copy failure preserves it.
       await prepareImportSiblings({ targetPath, libraryRoot, log: this.log });
       await notifyPhase(callbacks, 'copying');
       await copyToLibrary({
@@ -192,25 +170,18 @@ export class ImportService {
       const targetSize = await verifyCopy({ targetPath: stagingPath, sourcePath });
       this.log.debug({ downloadId, bookTitle: book.title, sourceSize: sourceStats.size, targetSize }, 'Copy verified');
 
-      // ── Phase 2: commit (backup existing audio, move staged in, rollback) ─
-      // Only after Phase 1 verifies do we touch targetPath. The swap backs up the
-      // old audio before moving the new files in and rolls back on any failure,
-      // so a mid-commit error can't leave the book missing or half-replaced.
+      // After verification, backup/swap with rollback so mid-commit cannot leave a partial target.
       await commitStagedImport({ stagingPath, targetPath, backupPath, libraryRoot, log: this.log });
-      // Committed: targetPath now holds the new version. Protect it so a later
-      // failure never blanket-rm's the committed files (matters for move re-imports
-      // and first imports, where protectTarget started false).
+      // Later failures must never remove the committed target.
       protectTarget = true;
 
       await this.db.transaction(async (tx) => {
-        // Book promotion + pipeline write commit together (single transaction).
+        // Promote book and pipeline atomically.
         await transitionBookStatus(tx, book.id, { status: 'imported', path: targetPath!, size: targetSize, lastGrabGuid: download.guid ?? null, lastGrabInfoHash: download.infoHash ?? null });
         await transitionDownloadState(tx, downloadId, { pipelineStage: 'imported' });
       });
 
-      // Delete the old folder only after the DB durably points the book at
-      // targetPath. Deleting earlier would strand the DB on a deleted path if the
-      // transaction rolled back. No-op for first import / same-path re-import.
+      // Delete the old folder only after DB commit; otherwise rollback can strand its path.
       await cleanupOldBookPath({ bookPath: book.path, targetPath, libraryRoot: librarySettings.path, log: this.log });
 
       const ffprobePath = resolveFfprobePathFromSettings(await resolveFfmpegPath());
@@ -224,8 +195,7 @@ export class ImportService {
       }
       return { downloadId, bookId: book.id, targetPath, fileCount, totalSize: targetSize };
     } catch (error: unknown) {
-      // handleImportFailure does core cleanup (rm files, revert DB) then rethrows.
-      // Orchestrator catches the rethrow for failure-path side effects.
+      // Core cleanup rethrows for orchestrator failure side effects.
       return handleImportFailure({
         error, targetPath, stagingPath, backupPath, libraryRoot, protectTarget,
         db: this.db, downloadId, book, bookStatusAtGrab: download.bookStatusAtGrab ?? null,
@@ -245,15 +215,8 @@ export class ImportService {
     }
   }
 
-  /**
-   * Query eligible downloads for import enqueueing.
-   * Returns download IDs + bookIds. No slot admission — caller enqueues to import_jobs.
-   *
-   * Consumes the shared `qualityGateEligibleDownloadCondition()` (completed display
-   * + non-empty `externalId`) so this third eligibility path can never diverge from
-   * the QG batch query and the replace blocker classifier (#1861); the extra
-   * `completedAt`/`bookId` guards remain import-specific.
-   */
+  // Shared quality-gate eligibility prevents drift; completedAt/bookId remain import-specific.
+  // This returns queue candidates, not slot admission.
   async getEligibleDownloads(): Promise<Array<{ id: number; bookId: number }>> {
     const eligibleDownloads = await this.db
       .select({ id: downloads.id, bookId: downloads.bookId })
@@ -283,10 +246,8 @@ export class ImportService {
     if (!download.downloadClientId || !download.externalId) return;
 
     try {
-      // For torrents the import path defers when the live ratio cannot be fetched — it treats
-      // "unknown state" as "not yet safe to remove". For usenet, seed ratio is meaningless, so an
-      // unfetchable ratio must not defer; the protocol gate then folds the missing ratio to proceed.
-      // outputPath-nulling is intentionally NOT done here.
+      // Unknown live ratio defers torrents but not usenet, where ratio is meaningless.
+      // This stage intentionally leaves outputPath intact.
       const deferOnUnavailableRatio = download.protocol === 'torrent';
       const result = await removeOrDeferTorrent(download, importSettings,
         { downloadClientService: this.downloadClientService, log: this.log },
@@ -297,7 +258,6 @@ export class ImportService {
     }
   }
 
-  /** Map the shared removal result onto the initial-import bookkeeping (defer markers + logs). */
   private async applyImportRemovalResult(download: DownloadRow, importSettings: { minSeedTime: number; minSeedRatio: number }, result: TorrentRemovalResult): Promise<void> {
     switch (result.outcome) {
       case 'live-state-unavailable':
@@ -321,11 +281,7 @@ export class ImportService {
     }
   }
 
-  /**
-   * Re-check imported downloads with pendingCleanup set.
-   * Removes torrent from client when seed time + ratio conditions are met, then clears pendingCleanup.
-   * Called by the import job on a 60-second schedule.
-   */
+  /** Re-check pendingCleanup imports and clear the marker only after torrent removal. */
   async cleanupDeferredImports(): Promise<void> {
     let importSettings: { minSeedTime: number; minSeedRatio: number; deleteAfterImport: boolean };
     try {
@@ -355,7 +311,6 @@ export class ImportService {
     }
   }
 
-  /** Map the shared removal result onto the deferred-import retry bookkeeping (clears pendingCleanup on success). */
   private async applyDeferredImportResult(download: DownloadRow, result: TorrentRemovalResult): Promise<void> {
     switch (result.outcome) {
       case 'no-adapter':
@@ -370,8 +325,7 @@ export class ImportService {
         await this.db.update(downloads).set({ pendingCleanup: null }).where(eq(downloads.id, download.id));
         return;
       }
-      // 'deferred' (seed conditions not yet met) and 'live-state-unavailable' (unreachable with
-      // deferOnUnavailableRatio: false) both leave the existing pendingCleanup marker for next cycle.
+      // Both outcomes retain pendingCleanup; live-state-unavailable is unreachable with this policy.
       case 'deferred':
       case 'live-state-unavailable':
         return;

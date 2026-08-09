@@ -33,7 +33,6 @@ export function LibraryImportPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="animate-fade-in-up">
         <div className="flex items-center gap-3 mb-1">
           <Link
@@ -56,14 +55,11 @@ export function LibraryImportPage() {
         </p>
       </div>
 
-      {/* In-session staged-submit recoverable/error banner (#1902) */}
       <StagedSubmitBanner message={banner} onDismiss={dismissBanner} />
 
-      {/* Durable last-import panel + attention banner (#1894) */}
       <LastImportPanel source="library" />
       <ImportAttentionBanner source="library" onImportAgain={() => handleRetry()} />
 
-      {/* No library path configured */}
       {!hasLibraryPath && (
         <div className="glass-card rounded-xl p-8 flex flex-col items-center gap-4 text-center animate-fade-in-up">
           <AlertCircleIcon className="w-10 h-10 text-muted-foreground/50" />
@@ -82,7 +78,6 @@ export function LibraryImportPage() {
         </div>
       )}
 
-      {/* Scanning spinner */}
       {hasLibraryPath && step === 'scanning' && !scanError && (
         <div className="glass-card rounded-xl p-8 flex items-center justify-center gap-3">
           <LoadingSpinner className="w-5 h-5 text-primary" />
@@ -90,7 +85,6 @@ export function LibraryImportPage() {
         </div>
       )}
 
-      {/* Scan error */}
       {scanError && (
         <div className="glass-card rounded-xl p-6 flex flex-col items-center gap-3 text-center">
           <AlertCircleIcon className="w-8 h-8 text-red-400" />
@@ -105,7 +99,6 @@ export function LibraryImportPage() {
         </div>
       )}
 
-      {/* All caught up — no new books to register */}
       {emptyResult && (
         <div className="glass-card rounded-xl p-8 flex flex-col items-center gap-4 text-center animate-fade-in-up">
           <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
@@ -120,9 +113,6 @@ export function LibraryImportPage() {
         </div>
       )}
 
-      {/* Match-phase recovery banner (#1864) — inline recovery that retains the
-          still-useful review list. Resume re-matches only the remainder; Restart
-          rebuilds from current row values. */}
       {paused && pausedReason && step === 'review' && !scanError && (
         <MatchPausedBanner
           reason={pausedReason}
@@ -134,20 +124,15 @@ export function LibraryImportPage() {
         />
       )}
 
-      {/* Held for recording review (#1711) — items the server could not confirm as
-          the same vs a different recording of a book you own. Not imported; re-confirm
-          to keep both recordings. */}
       <HeldReviewPanel
         heldReview={heldReview}
         onReconfirm={handleReconfirmHeld}
         isPending={registerMutation.isPending}
       />
 
-      {/* Review list */}
       {step === 'review' && !scanError && !emptyResult && (
         <div className="animate-fade-in-up stagger-1">
           <div className="glass-card rounded-xl overflow-hidden">
-            {/* Select all header */}
             <div className="flex items-center gap-3 px-4 py-2.5 border-b border-white/5">
               <button
                 type="button"
@@ -164,9 +149,7 @@ export function LibraryImportPage() {
               <span className="text-xs font-medium text-muted-foreground">
                 {selectedCount} of {rows.filter(r => !isLibraryDbDuplicate(r.book)).length} new selected
               </span>
-              {/* Deselect-pending affordance (#1895) — page-local (NOT in MatchPausedBanner,
-                  which stays shared/unchanged). Only while paused with selected pending rows;
-                  clears them so the matched subset can import. */}
+              {/* Keep this affordance page-local; MatchPausedBanner is shared with Manual Import. */}
               {paused && selectedPendingCount > 0 && (
                 <button
                   type="button"
@@ -187,7 +170,6 @@ export function LibraryImportPage() {
               )}
             </div>
 
-            {/* Card list */}
             <div className="max-h-[55vh] overflow-y-auto divide-y divide-white/5">
               {displayedRows.map((row) => (
                 <ImportCard
@@ -202,7 +184,6 @@ export function LibraryImportPage() {
               ))}
             </div>
 
-            {/* Summary bar */}
             <ImportSummaryBar
               readyCount={readyCount}
               reviewCount={reviewCount}
@@ -217,10 +198,7 @@ export function LibraryImportPage() {
               importing={registerMutation.isPending}
               hideMode
               paused={paused}
-              // #1895: the paused gate is relaxed — the button's own selection gate
-              // (selectedUnmatchedCount/selectedPendingCount) supplies the clean-selection
-              // requirement while paused. `recovering` (automatic retry/remainder in flight)
-              // stays an unconditional disabler (#1864 fail-closed, unchanged).
+              // Paused imports rely on selection counts; recovery remains fail-closed.
               disabled={recovering}
               registerLabel={
                 registerMutation.isPending
@@ -234,7 +212,6 @@ export function LibraryImportPage() {
         </div>
       )}
 
-      {/* Edit Modal */}
       {editIndex !== null && rows[editIndex] && (
         <BookEditModal
           book={rows[editIndex].book}

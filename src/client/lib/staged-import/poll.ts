@@ -2,24 +2,8 @@ import { ApiError, type Api, type SubmissionResponse } from '@/lib/api';
 import { runWithRetry, type RetryOptions } from './retry.js';
 import type { StagedBannerKey } from './messages.js';
 
-/**
- * Processing-poll lifecycle for a finalized submission (#1902, F2/F62/F65/F67/F68).
- *
- * Polls the SUMMARY (`includeItems=false`) at {@link POLL_INTERVAL_MS}, SINGLE-FLIGHT:
- * a tick that fires while a poll / its backoff / the terminal detail chain is still
- * active is skipped (a `busy` guard over `setInterval`, mirroring the match-engine
- * scheduler). On `status='complete'` exactly ONE terminal DETAIL fetch
- * (`includeItems=true`) runs — a second `complete` observation from a queued tick
- * cannot launch a duplicate. Transient failures retry per the shared constants; an
- * epoch/abort guard discards results from a stopped chain so a late resolve can't
- * clobber newer state.
- *
- * Failure copy is state-accurate: a processing-poll transport exhaustion says the run
- * CONTINUES on the server (hint retained); a terminal-detail exhaustion says the
- * import FINISHED but its results failed to load (hint retained, reattempt on
- * remount); a finalized (processing/complete) 404 is an invariant/data-loss error,
- * surfaced once, then the hint auto-evicts.
- */
+// Summary polling is single-flight; the first complete result stops polling and fetches detail once.
+// Finalized 404s evict as data loss; other exhausted summary/detail requests retain the hint.
 
 export const POLL_INTERVAL_MS = 2_000;
 
@@ -73,16 +57,14 @@ export function createPollController(deps: PollControllerDeps): PollController {
       await onComplete(detail);
     } catch (error: unknown) {
       if (stopped) return;
-      // A finalized header is never GC'd, so a 404 on the terminal-detail arm is the SAME
-      // invariant/data-loss signal as a summary-poll 404 (F3): surface `finalizedMissing`
-      // once, evict the now-dead hint, and stop — not a retryable results-load failure.
+      // A finalized record cannot legitimately 404; evict the dead hint.
       if (error instanceof ApiError && error.status === 404) {
         onBanner('finalizedMissing');
         onEvictHint?.();
         stop();
         return;
       }
-      // Otherwise the import IS done; only its results failed to load. Hint retained, reattempt on remount.
+      // Import is complete; retain the hint so remount can retry detail.
       onBanner('detailLoadFailed');
     }
   }
@@ -96,19 +78,18 @@ export function createPollController(deps: PollControllerDeps): PollController {
       onSummary?.(summary);
       if (summary.status === 'complete' && !completeHandled) {
         completeHandled = true;
-        clearTimer(); // the detail chain supersedes polling
+        clearTimer();
         await runTerminalDetail();
       }
     } catch (error: unknown) {
       if (stopped) return;
       if (error instanceof ApiError && error.status === 404) {
-        // A finalized header is never GC'd → a 404 is invariant/data-loss. Surface once, evict.
         onBanner('finalizedMissing');
         onEvictHint?.();
         stop();
         return;
       }
-      // Transport/5xx/429 exhaustion → the run continues server-side; hint retained.
+      // The run continues server-side; retain the hint.
       onBanner('pollLostContact');
       stop();
     } finally {
@@ -119,7 +100,7 @@ export function createPollController(deps: PollControllerDeps): PollController {
   const start = () => {
     if (stopped || intervalId !== undefined) return;
     intervalId = setInterval(() => void tick(), POLL_INTERVAL_MS);
-    void tick(); // immediate first poll
+    void tick();
   };
 
   return { start, stop };

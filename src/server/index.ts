@@ -4,9 +4,7 @@ import fs from 'fs';
 import { serializeError } from './utils/serialize-error.js';
 import { logCrash } from './utils/crash-logger.js';
 
-// Crash handlers registered at module load so they catch errors during the
-// import phase too. logCrash bypasses Pino's async buffer (sonic-boom) so
-// fatal logs flush before process.exit() actually terminates.
+// Register before imports; logCrash bypasses Pino buffering so fatal output survives exit.
 process.on('uncaughtException', (err) => {
   logCrash('Uncaught exception — process will exit', err);
   process.exit(1);
@@ -16,9 +14,7 @@ process.on('unhandledRejection', (reason) => {
   process.exit(1);
 });
 
-// Log every process exit (including external process.exit() calls) so silent
-// terminations surface in the logs. Synchronous stderr.write so output flushes
-// before Node actually leaves.
+// Synchronously log every exit so otherwise silent terminations remain visible.
 process.on('exit', (code) => {
   try {
     process.stderr.write(JSON.stringify({
@@ -34,10 +30,7 @@ process.on('exit', (code) => {
   }
 });
 
-// Wrap process.exit to capture call site of any code that hard-exits the process.
-// Some libraries (especially older CLI-style ones or broken native modules) call
-// process.exit() directly on errors, bypassing JS exception handlers AND Node's
-// --report-* writers. This wrapper logs who's calling exit and with what code.
+// Capture callers that hard-exit and bypass exception handlers and Node reports.
 const __originalExit = process.exit.bind(process);
 process.exit = ((code?: number): never => {
   try {
@@ -57,9 +50,8 @@ process.exit = ((code?: number): never => {
 }) as typeof process.exit;
 
 
-// Load .env from repo root if present. Production Docker doesn't ship one —
-// env vars come from compose/Portainer — so silently skip when missing.
-try { process.loadEnvFile('.env'); } catch { /* no .env file (expected in production) */ }
+// Production does not ship .env, so absence is expected.
+try { process.loadEnvFile('.env'); } catch { /* expected */ }
 
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
@@ -93,29 +85,21 @@ import { gracefulShutdown } from './shutdown.js';
 async function main() {
   const app = Fastify(buildFastifyOptions()).withTypeProvider<ZodTypeProvider>();
 
-  // Request logging at trace level (Fastify defaults to info which is too noisy).
-  // request.url is sanitized to strip the query string (?apikey=) before logging.
   registerRequestTraceLogging(app);
 
-  // Set up Zod validation
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
-  // CORS — dev uses an explicit allowlist (vite client + server self-origin); prod uses configured origin.
-  // Reflecting any origin (`origin: true`) with credentials would let any malicious page visited during
-  // local dev read authenticated responses from localhost.
+  // Never reflect arbitrary origins with credentials; hostile pages could read localhost responses.
   await app.register(cors, buildCorsOptions(config));
 
-  // Security headers
   await registerSecurityPlugins(app, config.isDev);
 
-  // Rate limiting (per-route only — global: false prevents auto-applying to all routes)
+  // Rate limits are opt-in per route.
   await app.register(rateLimit, { global: false });
 
-  // Multipart support for file uploads (restore)
   await app.register(multipart, { limits: { fileSize: 500 * 1024 * 1024 } });
 
-  // Ensure config directory exists
   const configDir = path.dirname(config.dbPath);
   if (!fs.existsSync(configDir)) {
     fs.mkdirSync(configDir, { recursive: true });
@@ -124,12 +108,10 @@ async function main() {
   // Check for pending restore before DB is opened
   applyPendingRestore(config.configPath, config.dbPath, app.log);
 
-  // Initialize database with migrations
   app.log.info({ dbPath: config.dbPath }, 'Initializing database');
   await runMigrations(config.dbPath);
   const db = createDb(config.dbPath);
 
-  // Initialize encryption key and migrate plaintext secrets
   const keyResult = loadEncryptionKey(process.env.NARRATORR_SECRET_KEY, config.configPath);
   initializeKey(keyResult.key);
   if (keyResult.source === 'generated') {
@@ -139,10 +121,8 @@ async function main() {
   }
   await migrateSecretsToEncrypted(db, keyResult.key, app.log);
 
-  // Create services (async — reads settings from DB for provider config)
   const services = await createServices(db, app.log);
 
-  // Apply persisted log level
   try {
     const generalSettings = await services.settings.get('general');
     if (generalSettings?.logLevel) {
@@ -152,50 +132,33 @@ async function main() {
     app.log.warn({ error: serializeError(error) }, 'Failed to load log level setting, using default');
   }
 
-  // Initialize auth and register cookie/auth plugins
   await services.auth.initialize();
 
-  // Loud boot warning when AUTH_BYPASS is on with a real user account (#742).
   await warnIfAuthBypassWithUser(config.authBypass, services.auth, app.log);
 
-  // Warn when reverse-proxy auth features are active but TRUSTED_PROXIES is unset (#1174).
   await checkReverseProxyBootConfig(services.auth, config.trustedProxies, app.log);
 
-  // Log the detected ffmpeg/ffprobe versions once (best-effort) so an ffmpeg<8
-  // regression is visible in boot output, not just inferred from holds (#1679).
   await checkFfmpegVersionAtBoot(app.log, services.settings);
   await app.register(cookie);
   await app.register(authPlugin, { authService: services.auth, urlBase: config.urlBase });
   await app.register(errorHandlerPlugin);
 
-  // URL_BASE prefix — routes, static files, and SPA fallback are scoped under urlBase
+  // URL_BASE scopes routes and the SPA; root maps to Fastify's empty prefix.
   const urlBasePrefix = config.urlBase === '/' ? '' : config.urlBase;
 
-  // OpenAPI/Swagger for the native /api/v1 surface (#1454). MUST register before
-  // the routes so the swagger `onRoute` hook captures the v1 routes registered
-  // below. The docs subtree is public (exempted in the auth plugin).
+  // Register before routes so Swagger's onRoute hook captures v1; docs remain public.
   await registerV1OpenApi(app, urlBasePrefix);
 
-  // Register API routes under URL_BASE scope
   await app.register(async (scoped) => {
     await registerRoutes(scoped, services, db);
   }, { prefix: urlBasePrefix || '/' });
 
-  // Serve static files and SPA fallback in production
   if (!config.isDev) {
     await registerStaticAndSpa(app, urlBasePrefix);
   }
 
-  // Start the runtime in the load-bearing order (import worker → staged runner →
-  // background jobs). Extracted to startRuntime() so the ordering contract is
-  // unit-tested without booting the server (mirrors gracefulShutdown).
   const jobScheduler = await startRuntime(app, services, db);
 
-  // Graceful shutdown — ensures port is released on tsx watch restarts. The
-  // ordered teardown (job scheduler stop → import worker → connector queue drain →
-  // app.close) lives in gracefulShutdown() so its contract is unit-tested without
-  // booting the server. The scheduler stop runs first so no cron/timeout callback
-  // can enqueue work into the queues being drained (#1515).
   const shutdown = async () => {
     await gracefulShutdown(app, services, jobScheduler);
     process.exit(0);

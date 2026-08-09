@@ -180,7 +180,6 @@ describe('NytProvider', () => {
       expect(err).toBeInstanceOf(ImportListError);
       const zod = await import('zod');
       expect((err as ImportListError).cause).toBeInstanceOf(zod.ZodError);
-      // Message carries the dotted Zod path so operators see WHERE it broke.
       expect((err as ImportListError).message).toMatch(/NYT returned unexpected response: results/);
     });
 

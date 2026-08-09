@@ -16,8 +16,7 @@ export function HealthIndicator() {
   const dotColor = isError ? 'bg-red-500' : 'bg-amber-500';
   const glowColor = isError ? 'shadow-red-500/40' : 'shadow-amber-500/40';
 
-  // A Link (not a programmatic navigate) so the unsaved-changes guard can
-  // intercept it while a settings form is dirty (#1888).
+  // Keep this a Link so the unsaved-changes guard can intercept dirty-form navigation.
   return (
     <Link
       to="/settings/system"

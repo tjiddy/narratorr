@@ -73,7 +73,6 @@ describe('useAudnexusSearch', () => {
 
     const { result } = renderHook(() => useAudnexusSearch(), { wrapper: createWrapper() });
 
-    // First search succeeds
     act(() => {
       result.current.search('good query');
     });
@@ -82,7 +81,6 @@ describe('useAudnexusSearch', () => {
       expect(result.current.searchResults).toEqual(books);
     });
 
-    // Second search fails — prior results preserved
     mockApi.searchMetadata.mockRejectedValueOnce(new Error('API error'));
 
     act(() => {

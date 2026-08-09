@@ -1,17 +1,7 @@
 /**
- * Real-ffmpeg round-trip tests for the #2068 encode strategy.
- *
- * `audio-processor.test.ts` mocks `node:child_process` wholesale, so it can prove what argv
- * this module CONSTRUCTS but not that ffmpeg accepts it — and the two defects this issue is
- * really about live on that boundary: whether the concat demuxer will stream-copy the set at
- * all, and whether `libmp3lame` accepts the bitrate we picked. This file fills that gap with
- * real fixtures, following the harness pattern in `src/server/services/tagging.roundtrip.test.ts`.
- *
- * It guards on ffmpeg PRESENCE (that suite's ffmpeg-8 floor is an xHE-AAC concern that does
- * not apply here). Fixtures are non-silent on purpose: `anullsrc` silence encodes to almost
- * nothing, which makes a nominal `-b:a` an unstable expectation, so every fixture is a 440 Hz
- * sine and every bitrate expectation is compared against the fixture's own MEASURED stream
- * bit_rate rather than the flag it was generated with.
+ * Exercises real ffmpeg where mocked argv tests cannot prove codec acceptance or stream copy.
+ * Sine-wave fixtures avoid silence's unstable bitrate, and assertions use measured rates.
+ * Requires ffmpeg and ffprobe presence but no version floor.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync } from 'node:child_process';
@@ -64,11 +54,7 @@ function chapterTitles(file: string): string[] {
     .map((c) => c.tags?.title ?? '');
 }
 
-/**
- * md5 of the file's copied audio PACKETS. The md5 muxer hashes packet payloads, so this is
- * container-agnostic: two files carrying the same encoded frames digest identically, and any
- * re-encode changes it. This is the primary no-re-encode oracle.
- */
+/** Hashes audio packet payloads as a container-independent no-reencode oracle. */
 function audioPacketDigest(inputArgs: string[]): string {
   const out = execFileSync(FFMPEG, ['-v', 'quiet', ...inputArgs, '-map', '0:a', '-c', 'copy', '-f', 'md5', '-'], { encoding: 'utf8' });
   return out.trim();
@@ -92,17 +78,14 @@ describe.skipIf(!FFMPEG_PRESENT)('#2068 encode strategy round-trip (real ffmpeg)
     if (root) rmSync(root, { recursive: true, force: true });
   });
 
-  /** A fresh per-test directory, since mergeFiles deletes its sources on success. */
+  /** Uses a fresh directory because a successful merge deletes its sources. */
   function caseDir(): string {
     const dir = join(root, `case-${caseIndex++}`);
     mkdirSync(dir, { recursive: true });
     return dir;
   }
 
-  /**
-   * Generate one deterministic, non-silent part. `extraArgs` sets the codec and any bitrate;
-   * the caller reads back the MEASURED bit_rate rather than trusting the flag.
-   */
+  /** Generates deterministic audio; tests probe its bitrate instead of trusting the request. */
   function makePart(dir: string, name: string, opts: {
     seconds?: number;
     sampleRate?: number;
@@ -140,7 +123,7 @@ describe.skipIf(!FFMPEG_PRESENT)('#2068 encode strategy round-trip (real ffmpeg)
       makePart(dir, name, { codecArgs: ['-c:a', 'aac', '-b:a', '256k'] }));
     const measured = probeStream(parts[0]!);
 
-    // Both computed BEFORE the run — mergeFiles deletes its sources on success.
+    // Compute source-dependent oracles before the successful merge deletes its inputs.
     const listPath = concatListFor(dir, parts);
     const reference = audioPacketDigest(['-f', 'concat', '-safe', '0', '-i', listPath]);
 
@@ -148,10 +131,9 @@ describe.skipIf(!FFMPEG_PRESENT)('#2068 encode strategy round-trip (real ffmpeg)
     expect(result.success).toBe(true);
 
     const merged = outputIn(dir, '.m4b');
-    // Primary oracle: identical packets ⇒ no re-encode happened.
     expect(audioPacketDigest(['-i', merged])).toBe(reference);
 
-    // Secondary, readable: a re-encode at ffmpeg's implicit ~128k default would blow this band.
+    // A default-rate re-encode would fall outside this band.
     const out = probeStream(merged);
     expect(out.codecName).toBe('aac');
     expect(Math.abs(out.bitRate - measured.bitRate) / measured.bitRate).toBeLessThan(0.1);
@@ -167,9 +149,7 @@ describe.skipIf(!FFMPEG_PRESENT)('#2068 encode strategy round-trip (real ffmpeg)
     const result = await processAudioFiles(dir, keepOriginal('m4b'), CONTEXT);
     expect(result.success).toBe(true);
 
-    // A well-conditioned case on purpose: 128 is comfortably inside both encoders' legal
-    // domains, so the observed rate is a stable expectation. This is NOT a general
-    // "output >= source" claim — no such claim is made anywhere.
+    // 128 kbps is legal for both encoders; this makes no general output-versus-source claim.
     const out = probeStream(outputIn(dir, '.m4b'));
     expect(out.codecName).toBe('aac');
     expect(Math.abs(out.bitRate - 128_000) / 128_000).toBeLessThan(0.1);
@@ -177,25 +157,19 @@ describe.skipIf(!FFMPEG_PRESENT)('#2068 encode strategy round-trip (real ffmpeg)
 
   it('reaches the real MPEG-2 encoder for a 22.05 kHz source, where a naive 320k is re-rated', async () => {
     const dir = caseDir();
-    // The sources must be INELIGIBLE for a stream copy, or this proves nothing about the
-    // encoder command: a homogeneous 22.05 kHz `.mp3`/mp3 set into mp3 output is copy-eligible,
-    // so it would take `-c:a copy` and the read-back would only observe the fixture's own rate.
-    // `.wav`/pcm_s16le can never copy into mp3, so the production call genuinely reaches
-    // libmp3lame — which is the boundary AC8a exists to defend.
+    // WAV/PCM forces encode mode; homogeneous MP3 would stream-copy and never exercise LAME.
     ['01.wav', '02.wav'].forEach((name) =>
       makePart(dir, name, { sampleRate: 22_050, codecArgs: ['-c:a', 'pcm_s16le'] }));
     const source = join(dir, '01.wav');
 
-    // Counterfactual first, while the sources still exist: at 22.05 kHz LAME does not deliver
-    // the MPEG-1 answer. Observed on ffmpeg 6.0, it silently re-rates 320k down to 160k rather
-    // than failing — silent re-rating is exactly why the target is snapped before it is emitted.
+    // At 22.05 kHz, ffmpeg may silently rerate a naive 320k request instead of rejecting it.
     const naive = join(dir, 'naive.mp3');
     let naiveRate: number | null;
     try {
       execFileSync(FFMPEG, ['-y', '-v', 'quiet', '-i', source, '-c:a', 'libmp3lame', '-b:a', '320k', naive], { stdio: 'ignore' });
       naiveRate = probeStream(naive).bitRate;
     } catch {
-      naiveRate = null; // an outright rejection is the other legal way for the naive path to break
+      naiveRate = null; // An outright rejection is the other legal failure mode.
     }
     expect(naiveRate).not.toBe(320_000);
     rmSync(naive, { force: true });
@@ -203,15 +177,12 @@ describe.skipIf(!FFMPEG_PRESENT)('#2068 encode strategy round-trip (real ffmpeg)
     const result = await processAudioFiles(dir, keepOriginal('mp3'), CONTEXT);
     expect(result.success).toBe(true);
 
-    // Proves the ENCODE branch was taken, not the copy branch: only an encode records an
-    // `mp3-table` step, and 705 kbps is the PCM source rate snapped to the MPEG-2 maximum.
+    // The mp3-table warning proves encode mode snapped 705 kbps PCM to MPEG-2's maximum.
     expect(result.warnings!.some((w) => w.includes('705') && w.includes('160'))).toBe(true);
 
     const out = probeStream(outputIn(dir, '.mp3'));
-    // A pcm_s16le source cannot yield an mp3 stream without a real encode.
     expect(out.codecName).toBe('mp3');
-    // Asserted against the constant table rather than a hand-typed literal, so a future edit
-    // to MP3_BITRATES_MPEG2 cannot silently make the "legal at this rate" claim false.
+    // Use MP3_BITRATES_MPEG2 so table edits cannot invalidate this legality claim.
     expect(MP3_BITRATES_MPEG2.map((k) => k * 1000)).toContain(out.bitRate);
     expect(out.bitRate).toBeLessThanOrEqual(160_000);
     expect(out.sampleRate).toBe(22_050);
@@ -254,11 +225,8 @@ describe.skipIf(!FFMPEG_PRESENT)('#2068 encode strategy round-trip (real ffmpeg)
 
     const result = await processAudioFiles(dir, keepOriginal('m4b'), CONTEXT);
     expect(result.success).toBe(true);
-    // 44.1 kHz mono PCM is 705 kbps; we request the 512 cap and say so.
     expect(result.warnings!.some((w) => w.includes('705') && w.includes('512'))).toBe(true);
-    // Deliberately NO assertion relating the output bitrate to the request or to the source:
-    // FFmpeg's AAC encoder clamps to its per-frame limit (~265 kbps here), and this module
-    // neither predicts nor claims that.
+    // AAC may clamp further; this module promises the request and warning, not output bitrate.
     expect(probeStream(outputIn(dir, '.m4b')).codecName).toBe('aac');
   });
 
@@ -274,16 +242,8 @@ describe.skipIf(!FFMPEG_PRESENT)('#2068 encode strategy round-trip (real ffmpeg)
   });
 });
 
-// ============================================================================
-// #2078 — a merge must not destroy the metadata and cover art its sources had.
-//
-// The mocked suite can only prove what argv this module CONSTRUCTS. The production defect was
-// downstream of that: `-map_metadata 1` pointed at the generated FFMETADATA1 file, which has
-// only [CHAPTER] blocks, so ffmpeg wrote an EMPTY global tag set and every auto-merged m4b came
-// out carrying nothing but `major_brand`/`encoder`. Only a real read-back can see that.
-//
-// Gated on ffmpeg PRESENCE, like the block above: nothing here needs the ffmpeg-8 xHE-AAC floor.
-// ============================================================================
+// Mocked argv tests cannot detect ffmpeg mapping global tags from a chapter-only input;
+// these cases require real output read-back.
 
 /** Format-level tags as a lowercased-key map (ffprobe casing varies by container). */
 function readFormatTags(file: string): Record<string, string> {
@@ -292,7 +252,6 @@ function readFormatTags(file: string): Record<string, string> {
   return Object.fromEntries(Object.entries(tags).map(([k, v]) => [k.toLowerCase(), String(v)]));
 }
 
-/** True when the file carries a video stream flagged `attached_pic` (an embedded cover). */
 function hasAttachedPic(file: string): boolean {
   const out = execFileSync(FFPROBE, [
     '-v', 'quiet', '-select_streams', 'v', '-show_entries', 'stream_disposition=attached_pic',
@@ -302,13 +261,7 @@ function hasAttachedPic(file: string): boolean {
     .some((s) => s.disposition?.attached_pic === 1);
 }
 
-/**
- * The AUDIO STREAM's duration — deliberately NOT `format=duration`.
- *
- * In an m4b the chapter track counts toward the container duration, so `format=duration` reads
- * the full 9 s even when only the 3 s first part was muxed: it CANNOT see the truncation
- * `-map 0:a` exists to prevent. The audio stream's own duration can.
- */
+/** Probes audio because container duration can hide truncation behind chapter duration. */
 function audioStreamDuration(file: string): number {
   const out = execFileSync(FFPROBE, [
     '-v', 'quiet', '-select_streams', 'a:0', '-show_entries', 'stream=duration', '-of', 'json', file,
@@ -351,12 +304,7 @@ describe.skipIf(!FFMPEG_PRESENT)('#2078 merge preserves source metadata and cove
     return path;
   }
 
-  /**
-   * One tagged, non-silent part. `cover` embeds an attached picture; `internalChapters` gives
-   * the part its OWN chapter set, which is what makes the `-map_chapters` assertion real —
-   * ffmpeg's default takes chapters from the FIRST chapter-bearing input (#2083), so a part
-   * carrying its own chapters would win over the generated set without the explicit map.
-   */
+  /** Internal chapters make ffmpeg's default chapter selection observable. */
   function makeTaggedPart(dir: string, name: string, opts: {
     codecArgs: string[];
     title: string;
@@ -398,17 +346,7 @@ describe.skipIf(!FFMPEG_PRESENT)('#2078 merge preserves source metadata and cove
     return join(dir, found);
   }
 
-  /**
-   * The output must carry the WHOLE book, not just the metadata donor's single part.
-   *
-   * A band rather than `toBeCloseTo`: an AAC re-encode adds encoder priming/padding that
-   * differs by ffmpeg version (~24 ms on copy, ~42 ms at 64 kbps here). `toBeCloseTo`'s window
-   * is `10**-precision / 2` — the default precision 2 is 0.005 and precision 1 is 0.05, both
-   * tighter than the padding; precision 0 happens to equal this ±0.5 band, but the explicit band
-   * states the intended tolerance instead of hiding it in a precision digit. Half a second still
-   * separates the 9 s whole from a truncated 3 s first part by a factor the assertion can never
-   * confuse.
-   */
+  /** Uses a ±0.5s band for version-dependent codec padding while still catching one-part output. */
   function expectFullBookDuration(file: string): void {
     const total = PART_SECONDS * 3;
     const actual = audioStreamDuration(file);
@@ -416,15 +354,7 @@ describe.skipIf(!FFMPEG_PRESENT)('#2078 merge preserves source metadata and cove
     expect(actual, `audio-stream duration of ${file}`).toBeLessThan(total + 0.5);
   }
 
-  /**
-   * Every tag the sources carried, INCLUDING the global `title`.
-   *
-   * `title` is passed per scenario rather than folded into SOURCE_TAGS because it is the one
-   * field whose expected value differs by fixture: a merge inherits the metadata DONOR's title
-   * (part 01's `Part 1`), while a convert keeps the single file's own. Leaving it out of the
-   * shared set is exactly how a merge or convert could silently drop or overwrite the global
-   * title with the whole real-ffmpeg suite still green.
-   */
+  /** Checks shared tags plus the scenario-specific title inherited from the metadata donor. */
   function expectSourceTagsPreserved(file: string, expectedTitle: string): void {
     const tags = readFormatTags(file);
     for (const [key, value] of Object.entries(SOURCE_TAGS)) {
@@ -450,15 +380,10 @@ describe.skipIf(!FFMPEG_PRESENT)('#2078 merge preserves source metadata and cove
     expect(result.success).toBe(true);
 
     const merged = outputIn(dir, '.m4b');
-    // AC1/AC5 — pre-#2078 this read `{major_brand, minor_version, compatible_brands, encoder}`.
     expectSourceTagsPreserved(merged, 'Part 1');
-    // AC8 — the extract/reattach lifecycle survives the 60 s stall timer and lands the picture.
     expect(hasAttachedPic(merged)).toBe(true);
-    // AC3/F5 — the generated set (3, from the parts' title tags) beats part 01's competing 5.
     expect(chapterTitles(merged)).toEqual(['Part 1', 'Part 2', 'Part 3']);
-    // AC2 — the whole book, not just the metadata donor's 3 s.
     expectFullBookDuration(merged);
-    // AC4 — the extra input forced no re-encode.
     expect(probeStream(merged).codecName).toBe('aac');
     expect(result.warnings ?? []).toEqual([]);
   });
@@ -467,7 +392,7 @@ describe.skipIf(!FFMPEG_PRESENT)('#2078 merge preserves source metadata and cove
     const dir = caseDir();
     buildParts(dir, 'm4b', ['-c:a', 'aac', '-b:a', '128k']);
 
-    // A usable explicit target always re-encodes, whatever the source codec.
+    // A usable explicit target forces encode mode.
     const result = await processAudioFiles(dir, { ...keepOriginal('m4b'), bitrate: 64 }, CONTEXT);
     expect(result.success).toBe(true);
 
@@ -486,35 +411,27 @@ describe.skipIf(!FFMPEG_PRESENT)('#2078 merge preserves source metadata and cove
     expect(result.success).toBe(true);
 
     const merged = outputIn(dir, '.mp3');
-    // The mp3 merge path has no generated-chapter input, so the first source is input 1.
     expectSourceTagsPreserved(merged, 'Part 1');
-    // Pinned, not implied: `withCoverArtPipeline` gains no MP3 reattach arm in this issue.
     expect(hasAttachedPic(merged)).toBe(false);
-    // #2083 AC3 — the missing observation point. Part 01 is built with 5 internal CHAP chapters
-    // and is opened as the metadata donor, so before the `-map_chapters -1` fix ffmpeg's default
-    // chapter mapping copied all 5 onto a 9 s output where they spanned the first 3 s.
+    // Part 01 has five internal chapters; mp3 must suppress the metadata donor's chapter set.
     expect(chapterTitles(merged)).toEqual([]);
-    // #2083 AC7 — the suppression introduces no new warning on the copy path.
     expect(result.warnings ?? []).toEqual([]);
   });
 
   it('mp3 encode mode: chapters stay suppressed, tags and full duration survive (#2083 AC4–AC6)', async () => {
     const dir = caseDir();
-    // aac/`.m4b` sources are structurally copy-ineligible for an mp3 output, so `libmp3lame`
-    // genuinely runs. Building mp3/libmp3lame parts and ASSUMING the encode branch would leave
-    // this case silently duplicating the copy-mode one above.
+    // AAC/m4b inputs force the MP3 encoder; MP3 inputs would duplicate the copy-mode case.
     buildParts(dir, 'm4b', ['-c:a', 'aac', '-b:a', '128k']);
 
     const result = await processAudioFiles(dir, keepOriginal('mp3'), CONTEXT);
     expect(result.success).toBe(true);
 
     const merged = outputIn(dir, '.mp3');
-    expect(probeStream(merged).codecName).toBe('mp3'); // the encode branch really ran
-    expect(chapterTitles(merged)).toEqual([]);         // AC4
-    expectSourceTagsPreserved(merged, 'Part 1');       // AC5
-    expectFullBookDuration(merged);                    // AC6
-    // Deliberately NOT `toEqual([])`: an encode legitimately emits bitrate-legalization
-    // notices here, which are pre-existing #2068 behaviour, not something this fix introduced.
+    expect(probeStream(merged).codecName).toBe('mp3');
+    expect(chapterTitles(merged)).toEqual([]);
+    expectSourceTagsPreserved(merged, 'Part 1');
+    expectFullBookDuration(merged);
+    // Bitrate legalization warnings are valid here; chapter suppression must add none.
     expect((result.warnings ?? []).filter((w) => /chapter/i.test(w))).toEqual([]);
   });
 

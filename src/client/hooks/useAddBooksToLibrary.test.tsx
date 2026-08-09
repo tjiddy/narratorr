@@ -158,7 +158,6 @@ describe('useAddBooksToLibrary', () => {
         result.current.addBook(book);
       });
 
-      // mutationFn sets addingAsins synchronously before the await
       await waitFor(() => {
         expect(result.current.addingAsins.has('B003')).toBe(true);
       });
@@ -167,7 +166,6 @@ describe('useAddBooksToLibrary', () => {
         resolveAdd!({} as BookWithAuthor);
       });
 
-      // After success, removed from adding
       await waitFor(() => {
         expect(result.current.addingAsins.has('B003')).toBe(false);
       });
@@ -248,7 +246,6 @@ describe('useAddBooksToLibrary', () => {
         expect(toast.error).toHaveBeenCalledWith("Failed to add 'Failing Book': Network error");
       });
 
-      // Key should be removed from addingAsins
       expect(result.current.addingAsins.has('B005')).toBe(false);
     });
   });
@@ -328,11 +325,10 @@ describe('useAddBooksToLibrary', () => {
     });
 
     it('continues adding remaining books when one mutation fails — no rollback', async () => {
-      // Second call fails, first and third should still succeed
       vi.mocked(api.addBook)
-        .mockResolvedValueOnce({} as BookWithAuthor)   // Book 1 succeeds
-        .mockRejectedValueOnce(new Error('DB error'))  // Book 2 fails
-        .mockResolvedValueOnce({} as BookWithAuthor);  // Book 3 succeeds
+        .mockResolvedValueOnce({} as BookWithAuthor)
+        .mockRejectedValueOnce(new Error('DB error'))
+        .mockResolvedValueOnce({} as BookWithAuthor);
 
       const books = [
         makeBook({ asin: 'B010', title: 'Series Book 1' }),
@@ -349,18 +345,15 @@ describe('useAddBooksToLibrary', () => {
         result.current.addAllInSeries(books);
       });
 
-      // All three mutations fired — no early exit on failure
       await waitFor(() => {
         expect(api.addBook).toHaveBeenCalledTimes(3);
       });
 
-      // First and third succeed
       await waitFor(() => {
         expect(toast.success).toHaveBeenCalledWith("Added 'Series Book 1' to library");
         expect(toast.success).toHaveBeenCalledWith("Added 'Series Book 3' to library");
       });
 
-      // Second shows error toast
       expect(toast.error).toHaveBeenCalledWith("Failed to add 'Series Book 2': DB error");
     });
   });

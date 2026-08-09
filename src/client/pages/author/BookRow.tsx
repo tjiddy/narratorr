@@ -16,15 +16,13 @@ export function BookRow({
   onAdd: (overrides: { searchImmediately: boolean }) => void;
   isAdding: boolean;
 }) {
-  // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) — `series[0]`
-  // on Audible can be a broader universe entry rather than the real book series.
+  // Audible series[0] may be a broader universe; use canonical seriesPrimary.
   const seriesPos = pickPrimarySeries(book)?.position;
   const duration = formatDurationMinutes(book.duration);
   const narratorNames = book.narrators?.join(', ');
 
   return (
     <div className="flex items-center gap-3 sm:gap-4 py-3 group">
-      {/* Cover thumbnail */}
       <div className="shrink-0">
         <div className="relative w-10 sm:w-12 aspect-square rounded-lg overflow-hidden ring-1 ring-black/10 transition-transform duration-200 group-hover:scale-105">
           {book.coverUrl ? (
@@ -42,7 +40,6 @@ export function BookRow({
         </div>
       </div>
 
-      {/* Book info */}
       <div className="flex-1 min-w-0">
         <span className="text-sm font-medium line-clamp-1">
           {seriesPos != null && (
@@ -57,7 +54,6 @@ export function BookRow({
         </div>
       </div>
 
-      {/* Add button */}
       <div className="shrink-0">
         {inLibrary ? (
           <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-success/10 text-success" role="img" aria-label="In library">

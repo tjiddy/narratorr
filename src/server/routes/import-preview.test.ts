@@ -13,16 +13,13 @@ import { initializeKey, _resetKey } from '../utils/secret-codec.js';
 import { mintPreviewToken } from '../services/preview-token.js';
 import { importPreviewRoute } from './import-preview.js';
 
-// Mock node:path's `relative` with fall-through to actual implementation;
-// individual tests can override per-call to simulate Windows cross-drive
-// scenarios that Linux CI cannot produce naturally.
+// Permit platform-independent simulation of Windows cross-drive paths.
 vi.mock('node:path', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:path')>();
   return { ...actual, relative: vi.fn(actual.relative) };
 });
 
-// Mock only realpath so the symlink-containment regression can simulate a
-// symlink escape without requiring Windows symlink privileges in local tests.
+// Simulate symlink escapes without requiring symlink privileges.
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return { ...actual, realpath: vi.fn(actual.realpath) };
@@ -115,7 +112,7 @@ describe('GET /api/import/preview/:token', () => {
     await writeFile(file, Buffer.alloc(64));
     const token = mintPreviewToken(file, workDir);
 
-    vi.setSystemTime(new Date('2026-01-01T05:00:00Z')); // 5h later, past the 4-hour TTL
+    vi.setSystemTime(new Date('2026-01-01T05:00:00Z')); // Past the four-hour TTL.
     const res = await app.inject({ method: 'GET', url: `/api/import/preview/${token}` });
     vi.useRealTimers();
 
@@ -132,13 +129,7 @@ describe('GET /api/import/preview/:token', () => {
   });
 
   it('returns 403 when path.relative returns an absolute path', async () => {
-    // The route's containment check has TWO guards: `rel.startsWith('..')` AND
-    // `isAbsolute(rel)`. The second covers Windows cross-drive where
-    // `relative('C:\\root', 'D:\\file')` returns the destination as-is rather
-    // than a `..`-prefixed string. We can't produce that natively on Linux CI,
-    // so we mock `relative` to return a path that's absolute on the test platform
-    // (Linux: '/...', Windows: also accepts '/...' as absolute) and verify the
-    // `isAbsolute(rel)` branch fires and returns 403 vs streaming the file.
+    // Windows cross-drive relative() can return an absolute path instead of `..`; mock that branch.
     const file = join(workDir, 'track.mp3');
     await writeFile(file, Buffer.alloc(64));
     const token = mintPreviewToken(file, workDir);

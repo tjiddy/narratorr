@@ -17,7 +17,7 @@ vi.mock('@/hooks/useLibrary', async (importOriginal) => {
   };
 });
 
-// vi.hoisted() so the mock fn exists before vi.mock's factory runs at the top of the module.
+// vi.hoisted makes these mocks available when vi.mock's factory runs.
 const { getBookSeriesMock, getCompanionEbookStateMock, getCompanionEbookMetadataMock } = vi.hoisted(() => ({
   getBookSeriesMock: vi.fn(),
   getCompanionEbookStateMock: vi.fn(),
@@ -41,13 +41,10 @@ vi.mock('@/lib/api', async (importOriginal) => {
 beforeEach(() => {
   getBookSeriesMock.mockReset();
   getBookSeriesMock.mockResolvedValue({ series: null });
-  // Every book with a path now issues the Ebook panel's /state query. A rejection is enough
-  // for the cases that don't care: #1963 AC3 makes an initial-load failure silently absent.
+  // Every book with a path queries Ebook state; rejection renders no panel.
   getCompanionEbookStateMock.mockReset();
   getCompanionEbookStateMock.mockRejectedValue(new Error('no companion state in this fixture'));
-  // #2022 — the panel reads /metadata on `available`. Stubbed rather than left real, because a
-  // spread-`actual.api` factory leaves an unstubbed method issuing a genuine fetch
-  // (`vimock-barrel-replace-drops-named-exports`).
+  // Stub metadata too so an available fixture cannot reach the real barrel export.
   getCompanionEbookMetadataMock.mockReset();
   getCompanionEbookMetadataMock.mockRejectedValue(new Error('no companion metadata in this fixture'));
 });
@@ -56,10 +53,7 @@ function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
   return createMockBook({ audioCodec: 'AAC', ...overrides });
 }
 
-// #2043 — the standing no-real-network guard from `vimock-barrel-replace-drops-named-exports`,
-// copied from BookPage.test.tsx. The api mock above spreads `actual.api`, so an unstubbed
-// method a child newly reaches issues a GENUINE jsdom fetch that degrades silently. The render
-// carries a path so the Ebook panel (the newest query-firing child) mounts too.
+// Partial API mocks can silently fall through to real fetches; render with every query-firing child mounted.
 describe('BookDetailsContent — no real network', () => {
   it('issues no real network request while rendering with every section mounted', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
@@ -102,10 +96,7 @@ describe('BookDetailsContent — Location section wiring', () => {
     expect(screen.queryByRole('heading', { name: /^location$/i })).not.toBeInTheDocument();
   });
 
-  // #1963 — the Ebook section shares Location's `hasPath` gate, so a pathless book must not
-  // even MOUNT the panel. Asserting only that the heading is absent is not enough: the panel
-  // renders nothing on a failed load either (AC3), so an unconditionally mounted section would
-  // 404 and retry against every wanted/pathless book while the DOM assertions stayed green.
+  // Assert no query, not just no heading: failed loads also render nothing.
   const pathlessCases: Array<[string, string | null]> = [['null', null], ['an empty string', '']];
 
   for (const [label, path] of pathlessCases) {
@@ -130,9 +121,7 @@ describe('BookDetailsContent — Location section wiring', () => {
       />,
     );
 
-    // The paired positive case: without it, the two no-call assertions above would also pass
-    // for a section that never queries at all. The id is pinned so this also proves the
-    // section is keyed to the rendered book rather than to some ambient default.
+    // The positive call prevents pathless assertions from passing if the panel never queries.
     await waitFor(() => expect(getCompanionEbookStateMock).toHaveBeenCalledWith(4242));
   });
 
@@ -166,9 +155,7 @@ describe('BookDetailsContent — Location section wiring', () => {
 
 describe('BookDetailsContent — series sidebar gate (#1071)', () => {
   it('renders sidebar with Series card when only seriesName is set (no audio/genres/path)', async () => {
-    // Use a clean book without audioCodec — only series metadata
     const seriesOnlyBook = createMockBook({ status: 'wanted', audioCodec: null, path: null, seriesName: 'The Band', seriesPosition: 1 });
-    // Simulate the no-key library-only response so the card renders
     getBookSeriesMock.mockResolvedValueOnce({
       series: {
         id: null,
@@ -186,14 +173,10 @@ describe('BookDetailsContent — series sidebar gate (#1071)', () => {
       />,
     );
 
-    // Without the series-aware gate, the whole component returns null and Series header never renders.
-    // With the fix, the sidebar renders and the SeriesCard's heading appears once the query settles.
     expect(await screen.findByRole('heading', { name: /^series$/i })).toBeInTheDocument();
   });
 
   it('renders sidebar with Series card when ONLY a DB-cache link exists (no scalar seriesName) — F9', async () => {
-    // Book has no scalar seriesName but the backend has cached a series row
-    // for it via member ASIN. The page should still surface the Series card.
     getBookSeriesMock.mockResolvedValueOnce({
       series: {
         id: 7,
@@ -206,7 +189,6 @@ describe('BookDetailsContent — series sidebar gate (#1071)', () => {
         ],
       },
     });
-    // No scalar series fields — only the cache link should surface the card
     const cacheOnlyBook = createMockBook({ status: 'wanted', audioCodec: null, path: null, seriesName: null, seriesPosition: null, asin: 'B01NA0JA51' });
     renderWithProviders(
       <BookDetailsContent
@@ -215,8 +197,6 @@ describe('BookDetailsContent — series sidebar gate (#1071)', () => {
       />,
     );
 
-    // F9: the sidebar gate must trigger on the cached series result.
-    // The card's internal name/member rendering is covered by SeriesCard.test.tsx.
     expect(await screen.findByRole('heading', { name: /^series$/i })).toBeInTheDocument();
   });
 
@@ -226,20 +206,13 @@ describe('BookDetailsContent — series sidebar gate (#1071)', () => {
     const { container } = renderWithProviders(
       <BookDetailsContent libraryBook={bareBook} merged={{}} />,
     );
-    // Wait a tick so the resolved query updates state
+    // Let the resolved query update the sidebar gate.
     await new Promise((r) => setTimeout(r, 0));
     expect(container.querySelector('h2')).toBeNull();
   });
 });
 
-// ---------------------------------------------------------------------------
-// #1963 AC1 — the Ebook section sits IMMEDIATELY before Location.
-//
-// Adjacency, not mere ordering: the `none` copy says "shown under Location below", so an
-// interposed sidebar section would make that sentence wrong while a precedes-check stayed
-// green. The fixture deliberately carries series, audio, and genres so an interposed section
-// would actually be caught.
-// ---------------------------------------------------------------------------
+// Require adjacency, not mere order; the fixture mounts every possible intervening section.
 describe('BookDetailsContent — Ebook section placement', () => {
   it('renders the Ebook heading immediately before the Location heading', async () => {
     getBookSeriesMock.mockResolvedValue({ series: { name: 'Stormlight', position: 1, members: [] } });
@@ -260,9 +233,7 @@ describe('BookDetailsContent — Ebook section placement', () => {
     const ebookIndex = headings.indexOf('Ebook');
     expect(headings[ebookIndex + 1]).toBe('Location');
 
-    // Same claim through the DOM: the section wrapper's next sibling holds Location.
-    // The h2 sits inside the header's flex wrapper (label + icon row, the Series idiom),
-    // so the SECTION wrapper is two levels up, not one.
+    // The heading's section wrapper is two levels up.
     const section = ebookHeading.parentElement!.parentElement!;
     expect(section.nextElementSibling?.querySelector('h2')?.textContent).toBe('Location');
     expect(container.querySelectorAll('h2')).not.toHaveLength(0);

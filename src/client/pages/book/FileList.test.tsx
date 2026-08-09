@@ -29,7 +29,6 @@ describe('FileList', () => {
 
     const { container } = renderWithProviders(<FileList bookId={1} />);
 
-    // Wait for query to settle — header should show "Files (0)"
     await screen.findByText('Files (0)');
     expect(container.querySelector('ul')).not.toBeInTheDocument();
   });
@@ -41,7 +40,6 @@ describe('FileList', () => {
 
     const header = await screen.findByText('Files (3)');
     expect(header).toBeInTheDocument();
-    // File names should not be visible when collapsed
     expect(screen.queryByText('Chapter 01.m4b')).not.toBeInTheDocument();
   });
 
@@ -80,11 +78,8 @@ describe('FileList', () => {
 
     await user.click(await screen.findByText('Files (3)'));
 
-    // 52428800 bytes = 50 MB
     expect(screen.getByText('50 MB')).toBeInTheDocument();
-    // 1048576 bytes = 1 MB
     expect(screen.getByText('1 MB')).toBeInTheDocument();
-    // 1536 bytes = 1.5 KB, rounds to whole KB
     expect(screen.getByText('2 KB')).toBeInTheDocument();
   });
 

@@ -34,7 +34,6 @@ export class NewznabIndexer implements IndexerAdapter {
   private proxyUrl?: string;
 
   constructor(config: NewznabConfig, name?: string) {
-    // Normalize: strip trailing slash
     this.apiUrl = normalizeBaseUrl(config.apiUrl);
     this.apiKey = config.apiKey;
     const flareSolverrUrl = normalizeBaseUrl(config.flareSolverrUrl);
@@ -60,8 +59,7 @@ export class NewznabIndexer implements IndexerAdapter {
 
     const url = `${this.apiUrl}/api?${params.toString()}`;
 
-    // All errors (fetch, parse, proxy) bubble up to IndexerService.searchAll()
-    // which catches and logs warnings per-indexer, then continues with remaining indexers
+    // Let the service isolate and log per-indexer failures.
     const fetched = await this.fetchXml(url, options?.signal);
     const parsed = this.parseSearchResults(fetched.body, limit);
     return {
@@ -106,7 +104,7 @@ export class NewznabIndexer implements IndexerAdapter {
   }
 
   private async fetchXml(url: string, signal?: AbortSignal) {
-    // FlareSolverr takes precedence over standard proxy
+    // FlareSolverr takes precedence over the standard proxy.
     if (this.flareSolverrUrl) {
       return fetchWithProxy({
         url,
@@ -126,9 +124,8 @@ export class NewznabIndexer implements IndexerAdapter {
   private parseSearchResults(xml: string, limit: number): { results: SearchResult[]; parseStats: IndexerSearchResponse['parseStats']; debugTrace: IndexerParseTrace[] } {
     const $ = cheerio.load(xml, { xmlMode: true });
 
-    // Validate RSS structure — invalid/non-RSS payloads must throw, not silently return []
+    // Invalid/non-RSS payloads are boundary failures, not empty result sets.
     if ($('rss').length === 0 && $('channel').length === 0) {
-      // Check for newznab API error responses
       const apiError = $('error').attr('description') || $('error').attr('code');
       if (apiError) {
         throw new Error(`Newznab API error: ${apiError}`);
@@ -236,7 +233,6 @@ export class NewznabIndexer implements IndexerAdapter {
   ): Record<string, string> {
     const attrs: Record<string, string> = {};
 
-    // newznab:attr elements have name and value attributes
     $item.find('newznab\\:attr, attr').each((_, el) => {
       const name = $(el).attr('name');
       const value = $(el).attr('value');

@@ -19,7 +19,7 @@ vi.mock('node:fs/promises', async () => {
 
 const fakeTorrentFile = Buffer.from('d8:announce35:http://tracker.example.com/announce4:infod6:lengthi12345e4:name8:test.txte');
 
-// Torrent where an earlier string value contains '4:info' bytes before the real info key
+// The bytes '4:info' appear inside a string before the real info key.
 const fakeTorrentWithInfoInString = Buffer.from(
   'd7:comment26:tracker says: see 4:infod8:announce35:http://tracker.example.com/announce4:infod6:lengthi12345e4:name8:test.txte',
 );
@@ -196,7 +196,7 @@ describe('Torrent file handoff — DownloadArtifact pipeline', () => {
             { headers: { 'Set-Cookie': '_session_id=test; path=/' } },
           );
         }
-        // Short-circuit the daemon handshake: report the web already connected.
+        // Skip the daemon handshake.
         if (body.method === 'web.connected') {
           return HttpResponse.json({ id: body.id, result: true, error: null });
         }
@@ -223,8 +223,7 @@ describe('Torrent file handoff — DownloadArtifact pipeline', () => {
               { headers: { 'Set-Cookie': '_session_id=test; path=/' } },
             );
           }
-          // Short-circuit the daemon handshake so the first captured method below
-          // is the artifact-specific core.add_torrent_file call, not web.connected.
+          // Keep the handshake out of capturedMethod.
           if (body.method === 'web.connected') {
             return HttpResponse.json({ id: body.id, result: true, error: null });
           }

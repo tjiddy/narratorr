@@ -6,8 +6,7 @@ import { ImportListsSettings } from './ImportListsSettings';
 import type { Mock } from 'vitest';
 
 vi.mock('@/lib/api', async (importOriginal) => ({
-  // Preserve the real ApiError export — useCrudSettings references it at runtime
-  // (#1404) when surfacing server error messages on mutation rejection.
+  // useCrudSettings needs the real ApiError export at runtime.
   ...(await importOriginal<typeof import('@/lib/api')>()),
   api: {
     getImportLists: vi.fn(),
@@ -76,7 +75,6 @@ describe('ImportListsSettings', () => {
 
     await user.click(screen.getByText('Add Import List').closest('button')!);
 
-    // NYT fields (nyt is the default provider): API Key + Bestseller List
     expect(screen.getByLabelText('API Key')).toBeInTheDocument();
     expect(screen.getByLabelText('Bestseller List')).toBeInTheDocument();
   });
@@ -92,14 +90,11 @@ describe('ImportListsSettings', () => {
 
     await user.click(screen.getByText('Add Import List').closest('button')!);
 
-    // Switch to Hardcover
     const typeSelect = screen.getByLabelText('Provider Type');
     await user.selectOptions(typeSelect, 'hardcover');
 
-    // Hardcover fields: API Key + List Type dropdown
     expect(screen.getByLabelText('API Key')).toBeInTheDocument();
     expect(screen.getByLabelText('List Type')).toBeInTheDocument();
-    // NYT-specific field gone
     expect(screen.queryByLabelText('Bestseller List')).not.toBeInTheDocument();
   });
 
@@ -115,10 +110,8 @@ describe('ImportListsSettings', () => {
     await user.click(screen.getByText('Add Import List').closest('button')!);
     await user.selectOptions(screen.getByLabelText('Provider Type'), 'hardcover');
 
-    // Default listType is trending — no shelf ID field
     expect(screen.queryByLabelText('Shelf ID')).not.toBeInTheDocument();
 
-    // Switch to shelf
     await user.selectOptions(screen.getByLabelText('List Type'), 'shelf');
     expect(screen.getByLabelText('Shelf ID')).toBeInTheDocument();
   });
@@ -152,7 +145,6 @@ describe('ImportListsSettings', () => {
 
     await user.click(screen.getByText('Add Import List').closest('button')!);
 
-    // Clear default name and type new one
     const nameInput = screen.getByLabelText('Name');
     await user.clear(nameInput);
     await user.type(nameInput, 'New List');
@@ -222,7 +214,6 @@ describe('ImportListsSettings', () => {
     await waitFor(() => {
       expect(screen.getByRole('dialog')).toBeInTheDocument();
     });
-    // CrudSettingsPage uses deleteTitle + name in message
     expect(screen.getByText('Delete Import List')).toBeInTheDocument();
     expect(screen.getByText(/Are you sure you want to delete/)).toBeInTheDocument();
 
@@ -466,7 +457,6 @@ describe('ImportListsSettings', () => {
 
       await user.click(headerButton);
 
-      // In modal mode, header button stays enabled (aligns with CrudSettingsPage shared behavior)
       const headerButtons = screen.getAllByText('Add Import List');
       const headerBtn = headerButtons.find(el => el.closest('button')?.getAttribute('type') !== 'submit')?.closest('button');
       expect(headerBtn).not.toBeDisabled();
@@ -474,7 +464,7 @@ describe('ImportListsSettings', () => {
 
     it('Cancel button is blocked while create mutation is pending (intentional change)', async () => {
       (api.getImportLists as Mock).mockResolvedValue([mockList]);
-      // Never-resolving promise keeps mutation in pending state
+      // Keep the mutation pending.
       (api.createImportList as Mock).mockImplementation(() => new Promise(() => {}));
       const user = userEvent.setup();
       renderWithProviders(<ImportListsSettings />);
@@ -485,13 +475,11 @@ describe('ImportListsSettings', () => {
 
       await user.click(screen.getByText('Add Import List').closest('button')!);
 
-      // Fill name (clear default, type new) and submit to enter pending state
       const nameInput = screen.getByLabelText('Name');
       await user.clear(nameInput);
       await user.type(nameInput, 'Pending List');
       await user.click(screen.getByText('Add Import List', { selector: 'button[type="submit"]' }));
 
-      // Verify mutation was called and submit button shows pending state
       await waitFor(() => {
         expect(api.createImportList).toHaveBeenCalled();
       });
@@ -499,11 +487,9 @@ describe('ImportListsSettings', () => {
         expect(screen.getByText('Saving...')).toBeInTheDocument();
       });
 
-      // Cancel button click should NOT close modal while pending (shared modal contract)
       const cancelButton = screen.getByRole('button', { name: 'Cancel' });
       await user.click(cancelButton);
 
-      // Form should still be open (modal blocked close during pending)
       expect(screen.getByLabelText('Name')).toBeInTheDocument();
     });
   });
@@ -631,14 +617,11 @@ describe('ImportListsSettings', () => {
 
       renderWithProviders(<ImportListsSettings />);
 
-      // Enter edit mode (opens modal)
       await user.click(await screen.findByText('Edit'));
       expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
 
-      // Cancel editing via Cancel button in modal form
       await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
-      // Modal should close and view mode restored
       await waitFor(() => {
         expect(screen.queryByTestId('modal-backdrop')).not.toBeInTheDocument();
       });
@@ -686,7 +669,7 @@ describe('ImportListsSettings', () => {
       await screen.findByText('No import lists configured');
       await user.click(screen.getByText('Add Import List').closest('button')!);
 
-      // Form is portaled to body in modal mode, so use document.querySelector
+      // Modal forms are portaled to document.body.
       const label = document.querySelector('label[for="il-enabled"]');
       expect(label).not.toBeNull();
       expect(label!.textContent).toContain('Enabled');

@@ -14,36 +14,7 @@ import {
 import type { EpubValidation } from './result.js';
 import { validateEpub } from './validate.js';
 
-/**
- * `validateEpub` — the structural pipeline, its precedence, and the
- * `encryption.xml` classifier (#1989, design §4).
- *
- * **Mocked at the OS / library edge only** — `node:fs/promises` for `lstat` and
- * `open`, and `unzipper` for the reader. `validate.ts` calls its own helpers
- * through local bindings, so a `vi.mock` factory overriding *its* exports would
- * not intercept those calls, and adding `__internal` indirection to production
- * code to make it mockable is exactly the shape to avoid. Both mocks delegate to
- * the real implementation by default, so nearly every row below is a genuine
- * end-to-end run against a real file on disk and the pinned reader.
- *
- * The spies answer questions no black-box assertion can: was `open()` reached at
- * all, which archive members were streamed, in what order, and did the handle
- * close.
- */
-
-/**
- * Can this machine create a symlink at all?
- *
- * Windows needs Developer Mode or an elevated shell for `symlink()`; without one
- * it raises `EPERM` and the symlink-rejection fixture cannot be built. A junction
- * is not a substitute — it is directory-only and `lstat().isSymbolicLink()` is
- * what the production path actually tests.
- *
- * Probed rather than gated on `process.platform === 'win32'`, because a Windows
- * dev box with Developer Mode enabled *can* run this, and the assertion guards a
- * security property (a symlink named `book.epub` pointing at `<config>/secret.key`)
- * that should be skipped as rarely as possible.
- */
+/** Capability probe: Windows may require Developer Mode, and a junction is not equivalent. */
 const CAN_SYMLINK = await (async (): Promise<boolean> => {
   const { mkdtemp, writeFile, symlink, rm } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
@@ -63,12 +34,7 @@ const CAN_SYMLINK = await (async (): Promise<boolean> => {
 type ReadArgs = [buffer: Buffer, offset: number, length: number, position: number];
 type ReadResult = { bytesRead: number; buffer: Buffer };
 
-/**
- * The reader as the spies below need to see it — a directory of members whose
- * `stream` can be wrapped. Deliberately not `unzipper`'s own `CentralDirectory`:
- * `@types/unzipper@0.10.11` misdeclares the `Open.custom` source contract
- * (#1997), so naming its types here would pin the wrong shape.
- */
+/** `@types/unzipper@0.10.11` misdeclares the `Open.custom` result shape. */
 type ReaderCustom = (
   source: unknown,
   options: unknown,
@@ -85,9 +51,7 @@ const h = vi.hoisted(() => ({
   },
   onStat: undefined as (() => Promise<Stats>) | undefined,
   onRead: undefined as ((raw: FileHandle, args: ReadArgs) => Promise<ReadResult>) | undefined,
-  /** Every positional read the pipeline performed, in order. */
   reads: [] as Array<{ position: number; length: number; preOpen: boolean }>,
-  /** Every archive member whose inflated stream was opened, in order. */
   streamed: [] as string[],
   handles: [] as Array<{ closes: number }>,
 }));
@@ -106,12 +70,10 @@ vi.mock('unzipper', async (importOriginal) => {
   return { ...actual, default: { ...real, Open: { ...real.Open, custom: h.openCustom } } };
 });
 
-/** Only the three members production uses are forwarded; everything else is absent by design. */
 function wrapHandle(raw: FileHandle, record: { closes: number }): FileHandle {
   return {
     async read(...args: ReadArgs): Promise<ReadResult> {
-      // Recorded on *attempt*, not on success — the injected-failure rows below
-      // assert which reads were reached, and a read that rejects still happened.
+      // Record attempts, including reads that an injected failure rejects.
       h.reads.push({
         position: args[3],
         length: args[2],
@@ -133,19 +95,9 @@ function errno(code: string): Error {
   return Object.assign(new Error(`simulated ${code}`), { code });
 }
 
-/** A `Stats` stand-in carrying only the two fields the pipeline reads. */
 function fakeStats(options: { isFile: boolean; size: number }): Stats {
   return { isFile: () => options.isFile, size: options.size } as unknown as Stats;
 }
-
-// --- EPUB fixture shapes ----------------------------------------------------
-
-/**
- * The EPUB-document builders (`containerXml`, `packageXml`, `padTo`,
- * `epubEntries`, `buildEpub`, …) live in the shared fixture module — #1990's
- * `extract.test.ts` needs the same shapes. Only the `encryption.xml` builders
- * below stay local: this is the only suite that classifies one.
- */
 
 const {
   CHAPTER_ITEM,
@@ -162,16 +114,10 @@ const {
 type EpubOptions = F.EpubOptions;
 type ManifestItem = F.ManifestItem;
 
-// --- encryption.xml shapes --------------------------------------------------
-
 interface CipherSpec {
-  /** `undefined` omits the `URI` attribute entirely. */
   uri?: string;
-  /** Write the attribute under a prefixed name instead of the exact `URI`. */
   uriAttributeName?: string;
-  /** Emit an `<EncryptedData>` carrying no `<CipherReference>` at all. */
   withoutReference?: boolean;
-  /** Namespace prefix applied to all three element names. */
   prefix?: string;
   algorithm?: string;
 }
@@ -197,8 +143,6 @@ function encryptionXml(specs: CipherSpec[], options: { padTo?: number } = {}): s
   return options.padTo === undefined ? document : padTo(document, options.padTo);
 }
 
-// --- suite scaffolding ------------------------------------------------------
-
 let dir: string;
 let sequence = 0;
 
@@ -207,7 +151,6 @@ async function place(bytes: Buffer, extension = 'epub'): Promise<string> {
   return F.writeArchive(dir, `fixture-${sequence}.${extension}`, bytes);
 }
 
-/** Build an EPUB, write it out, and validate it. */
 async function validateBuilt(options: EpubOptions = {}): Promise<EpubValidation> {
   return validateEpub(await place(await buildEpub(options)));
 }
@@ -222,7 +165,7 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
-  // `*Once()` queues are used below; `vi.clearAllMocks()` does not drain them.
+  // `clearAllMocks` does not drain `*Once` queues.
   vi.resetAllMocks();
   h.onStat = undefined;
   h.onRead = undefined;
@@ -252,8 +195,6 @@ beforeEach(() => {
     return directory;
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('happy paths', () => {
   it('validates a minimal EPUB 3 with a nav item and a cover image', async () => {
@@ -318,15 +259,11 @@ describe('happy paths', () => {
   });
 
   it('resolves a root-level package, so dirname normalises to the container root', async () => {
-    // `path.posix.dirname('content.opf')` is `'.'`; a base of `'.'` and a base of
-    // `''` must resolve `ch1.xhtml` to the same archive key.
     const result = await validateBuilt({ packageName: 'content.opf' });
 
     expect(result).toEqual({ status: 'available' });
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('not_a_zip', () => {
   it('rejects a text file renamed .epub', async () => {
@@ -369,8 +306,6 @@ describe('not_a_zip', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('truncated', () => {
   it('rejects an archive with its trailing bytes lopped off, never reaching the reader', async () => {
     const bytes = await buildEpub();
@@ -381,9 +316,6 @@ describe('truncated', () => {
   });
 
   it('rejects an accepted EOCD whose central directory is unreachable', async () => {
-    // The EOCD passes our preflight — the disk fields and record counts agree —
-    // but its `offsetToStartOfCentralDirectory` points at four bytes of payload,
-    // so the pinned reader runs out of bytes parsing the first 46-byte record.
     const bytes = await buildEpub();
     const eocd = F.eocdOffset(bytes);
     const filePath = await place(
@@ -396,8 +328,6 @@ describe('truncated', () => {
     expect(h.openCustom).toHaveBeenCalledTimes(1);
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('bad_mimetype', () => {
   it('rejects a plain ZIP of loose files with no mimetype entry', async () => {
@@ -425,8 +355,6 @@ describe('bad_mimetype', () => {
   });
 
   it('accepts a mimetype that is deflated and not first in the archive', async () => {
-    // Position and compression method are deliberately not checked — that is the
-    // epubcheck-strict rule and it would reject readable, Kindle-sendable books.
     expect(await validateBuilt({ mimetypeLast: true, store: false })).toEqual({ status: 'available' });
   });
 
@@ -450,8 +378,6 @@ describe('bad_mimetype', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('missing_container', () => {
   it('rejects an archive with no META-INF/container.xml', async () => {
     expect(await validateBuilt({ container: false })).toEqual({
@@ -460,8 +386,6 @@ describe('missing_container', () => {
     });
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('unresolvable_package', () => {
   const UNRESOLVABLE: EpubValidation = { status: 'invalid', code: 'unresolvable_package' };
@@ -500,9 +424,6 @@ describe('unresolvable_package', () => {
   ];
 
   it.each(NO_PACKAGE)('rejects %s without letting a TypeError escape', async (_label, container) => {
-    // `attrByExactName` returns `undefined` for an absent attribute, and
-    // `undefined` is never handed to `resolveHref` — the absent case is decided
-    // before the call.
     await expect(validateBuilt({ container })).resolves.toEqual(UNRESOLVABLE);
   });
 
@@ -516,8 +437,6 @@ describe('unresolvable_package', () => {
     expect(await validateBuilt({ container })).toEqual(UNRESOLVABLE);
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('empty_manifest', () => {
   it('rejects an empty manifest element', async () => {
@@ -540,8 +459,6 @@ describe('empty_manifest', () => {
     ).toEqual({ status: 'invalid', code: 'empty_manifest' });
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('empty_spine', () => {
   const EMPTY_SPINE: EpubValidation = { status: 'invalid', code: 'empty_spine' };
@@ -616,7 +533,6 @@ describe('empty_spine', () => {
   });
 
   it('accepts a mixed spine where one linear itemref resolves and one does not', async () => {
-    // Decision 6 — partial damage must not mark a readable book invalid.
     expect(
       await validateBuilt({
         packageOptions: {
@@ -630,8 +546,6 @@ describe('empty_spine', () => {
     ).toEqual({ status: 'available' });
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('malformed_xml', () => {
   it('rejects a container.xml containing plain text', async () => {
@@ -649,8 +563,6 @@ describe('malformed_xml', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('limit_exceeded', () => {
   it('rejects a file over MAX_ARCHIVE_BYTES before opening it', async () => {
     const filePath = await place(await buildEpub());
@@ -661,15 +573,7 @@ describe('limit_exceeded', () => {
   });
 
   it('rejects an otherwise-valid EPUB whose central directory is over the span cap', async () => {
-    // Everything an EPUB needs is present — mimetype, container, package
-    // document, content — and none of it is ever read: the span ceiling is a
-    // pre-open structural bound, so the reader is never called and this maps
-    // straight through as `limit_exceeded`. The span-arithmetic, boundary,
-    // precedence, and ZIP64-parity rows live with the preflight in
-    // `zip-source.test.ts`; this row is the public outcome only.
-    //
-    // The ~17 MB fixture is unavoidable: `span ≤ eocdOffset ≤ fileSize`, so an
-    // over-cap central directory cannot be forged into a small file.
+    // This must be ~17 MB: the central-directory span cannot exceed the EOCD offset or file size.
     const filePath = await place(
       await F.buildArchiveWithCentralDirectorySpan({
         span: MAX_CENTRAL_DIRECTORY_BYTES + 1,
@@ -682,9 +586,6 @@ describe('limit_exceeded', () => {
   });
 
   it('validates a conformant EPUB carrying several hundred small resources', async () => {
-    // The false-positive guard for the span cap: 300 extra members is a
-    // perfectly ordinary illustrated book, and its whole central directory is
-    // three orders of magnitude under the ceiling.
     const bytes = await buildEpub({
       files: Array.from({ length: 300 }, (_, index) => ({
         name: `OEBPS/text/section-${index}.xhtml`,
@@ -696,8 +597,6 @@ describe('limit_exceeded', () => {
     expect(await validateEpub(await place(bytes))).toEqual({ status: 'available' });
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('the 1.1c passthrough arms', () => {
   it('maps unsafe_entry_path straight through and stops there', async () => {
@@ -723,8 +622,6 @@ describe('the 1.1c passthrough arms', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('fstat is the size and file-kind authority', () => {
   it('rejects a directory the stubbed lstat called a regular file, after opening', async () => {
     const { mkdir } = await import('node:fs/promises');
@@ -747,8 +644,6 @@ describe('fstat is the size and file-kind authority', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('consumer-level exact boundaries', () => {
   it('does not reject an lstat size of exactly MAX_ARCHIVE_BYTES', async () => {
     const filePath = await place(await buildEpub());
@@ -762,18 +657,13 @@ describe('consumer-level exact boundaries', () => {
     const filePath = await place(await buildEpub());
     h.onStat = async () => fakeStats({ isFile: true, size: MAX_ARCHIVE_BYTES });
 
-    // The stubbed size exceeds the real fixture, so the run fails at the
-    // preflight — the assertion is that it is not `limit_exceeded`, which is
-    // exactly what a `>=` slip would produce.
+    // The fake size forces a later truncation; only limit_exceeded would expose a `>=` bug.
     expect(await validateEpub(filePath)).toEqual({ status: 'invalid', code: 'truncated' });
     expect(h.reads.some((read) => read.position === 0 && read.length === 4)).toBe(true);
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('ZIP-level encryption', () => {
-  /** Set general-purpose bit 0 on one member, in both header copies. */
   async function withEncryptionBit(options: EpubOptions, name: string): Promise<string> {
     const bytes = await buildEpub(options);
     const index = F.listCentralDirectory(bytes).findIndex(
@@ -799,8 +689,6 @@ describe('ZIP-level encryption', () => {
   });
 
   it('passes no password argument to any read or stream call in src/core/epub/', async () => {
-    // Comments are stripped: the folder's prose discusses passwords at length,
-    // and only real call sites are the violation.
     const sources = await scanProductionSources(import.meta.dirname, { stripComments: true });
     const offenders = sources
       .filter(({ code }) => /\b(?:stream|read)\s*\(\s*[^)]*password/i.test(code))
@@ -809,8 +697,6 @@ describe('ZIP-level encryption', () => {
     expect(offenders).toEqual([]);
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('precedence', () => {
   it('prefers empty_spine over an encryption.xml encrypting a content document', async () => {
@@ -857,10 +743,7 @@ describe('precedence', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('the declared uncompressed size is never consulted', () => {
-  /** Patch a member's declared uncompressed size in both header copies. */
   function patchDeclaredSize(bytes: Buffer, name: string, value: number): Buffer {
     const entries = F.listCentralDirectory(bytes);
     const index = entries.findIndex((entry) => entry.rawName.toString('utf8') === name);
@@ -888,8 +771,6 @@ describe('the declared uncompressed size is never consulted', () => {
     expect(await validateEpub(filePath)).toEqual({ status: 'available' });
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('error lifecycle', () => {
   const THROWN: Array<[string, unknown]> = [
@@ -946,9 +827,7 @@ describe('error lifecycle', () => {
 
   it('propagates a ZipSourceProtocolError', async () => {
     const filePath = await place(await buildEpub());
-    // A reader returning a different member count than the validated declared
-    // count raises `ZipSourceProtocolError` — a dependency-bump signal, never a
-    // book verdict.
+    // A member-count mismatch is a dependency contract failure, not a book verdict.
     h.openCustom.mockResolvedValueOnce({ files: [] });
 
     await expect(validateEpub(filePath)).rejects.toThrow(/pinned reader returned 0 members/);
@@ -972,8 +851,6 @@ describe('error lifecycle', () => {
       ),
     );
     const corrupted = Buffer.from(bytes);
-    // Scramble the middle of the deflate stream: the header still parses, the
-    // inflate does not.
     corrupted.fill(0xff, local.dataOffset + 8, local.dataOffset + 40);
     const filePath = await place(corrupted);
 
@@ -990,7 +867,6 @@ describe('error lifecycle', () => {
 
     await expect(validateEpub(filePath)).rejects.toBe(failure);
     expect(h.openCustom).not.toHaveBeenCalled();
-    // Only the signature read happened — the preflight never ran.
     expect(h.reads).toEqual([{ position: 0, length: 4, preOpen: true }]);
     expect(h.handles[0]?.closes).toBe(1);
   });
@@ -1016,12 +892,9 @@ describe('error lifecycle', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('the encryption.xml classifier', () => {
   const FONTS = 'OEBPS/Fonts';
 
-  /** The real library EPUB's shape: Adobe RC obfuscation over manifest-declared fonts. */
   function adobeFontShape(count = 4): EpubOptions {
     const fonts = Array.from({ length: count }, (_, index) => ({
       id: `font${index}`,
@@ -1050,16 +923,6 @@ describe('the encryption.xml classifier', () => {
   });
 
   it('accepts The Shining shape: Adobe obfuscation over x-font-truetype manifest fonts (dev UAT 2026-07-29)', async () => {
-    // The first live false positive. A DRM-free commercial EPUB: three embedded
-    // fonts, Adobe RC obfuscation algorithm, all manifest-declared and unspined —
-    // exactly the shape isObfuscatedFont exists to accept — but the manifest spells
-    // the media type `application/x-font-truetype`, and only the `x-font-ttf`
-    // sibling was in FONT_MEDIA_TYPES. Verdict was drm_protected; every reader
-    // opened the book fine. This pins the spelling end-to-end through the real
-    // classifier rather than only via the MEDIA_TYPES matrix, because the matrix is
-    // easy to edit in lockstep with the production set while a named regression is
-    // not. The classifier's own doc comment was built from ONE real book; this is
-    // the second real book, the one that falsified it.
     const fonts = [1, 2, 3].map((n) => ({
       id: `id${n}`,
       href: `Fonts/0000${n}.ttf`,
@@ -1104,7 +967,6 @@ describe('the encryption.xml classifier', () => {
   });
 
   it('reports drm_protected for an encrypted spine document named chapter.ttf', async () => {
-    // The extension says font; the manifest media type and the spine say content.
     const result = await validateBuilt({
       packageOptions: {
         items: [{ id: 'ch1', href: 'chapter.ttf', mediaType: 'application/xhtml+xml' }],
@@ -1148,9 +1010,6 @@ describe('the encryption.xml classifier', () => {
     'application/vnd.ms-opentype',
     'application/font-woff',
     'application/x-font-ttf',
-    // The legacy x- family has no canonical spelling — each of these is a distinct
-    // coinage real tooling emitted. `x-font-truetype` is the one The Shining proved
-    // live (see the regression test below); the rest are its documented siblings.
     'application/x-font-truetype',
     'application/x-truetype-font',
     'application/x-font-otf',
@@ -1197,8 +1056,7 @@ describe('the encryption.xml classifier', () => {
   });
 
   const ALIAS_FONT = { id: 'font-id', href: 'Fonts/a.ttf', mediaType: 'font/ttf' };
-  // A syntactically different spelling that `resolveHref` maps to the same key,
-  // so an implementation grouping by the raw attribute fails here.
+  // `resolveHref` collapses both href spellings to the same archive key.
   const ALIAS_CHAPTER = { id: 'chapter-id', href: 'Fonts/./a.ttf', mediaType: 'application/xhtml+xml' };
 
   it.each([
@@ -1308,16 +1166,13 @@ describe('the encryption.xml classifier', () => {
   });
 
   it('reports malformed_xml for an encryption.xml that does not decode', async () => {
-    // A lone 0xFF byte is not legal UTF-8 and has no BOM, so the fatal decoder
-    // rejects it before the parser ever runs.
+    // A BOM-less 0xFF forces the fatal UTF-8 decoder path before XML parsing.
     expect(await validateBuilt({ encryption: Buffer.from([0x3c, 0xff, 0xfe, 0x21]) })).toEqual({
       status: 'invalid',
       code: 'malformed_xml',
     });
   });
 });
-
-// ---------------------------------------------------------------------------
 
 describe('encryption — mixed-reference precedence', () => {
   const COVER = { id: 'cover', href: 'cover.png', mediaType: 'image/png' };
@@ -1354,8 +1209,6 @@ describe('encryption — mixed-reference precedence', () => {
   });
 
   it('scans totally rather than stopping at the first match', async () => {
-    // The font reference comes first in document order; a first-match
-    // implementation would return `available`.
     expect(await classify([FONT_REF, TRAVERSAL])).toEqual({
       status: 'invalid',
       code: 'unsafe_entry_path',
@@ -1363,29 +1216,14 @@ describe('encryption — mixed-reference precedence', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-
-/**
- * The shared `drmProtectedEpub()` fixture (#2041).
- *
- * Three suites used to hand-roll a `META-INF/encryption.xml` naming a content
- * document, and none of them could see the verdict it produced: the route and e2e
- * suites flatten every archive rejection to one 404, so a fixture that trips some
- * *other* guard is indistinguishable there from one that works
- * (`vacuous-assertion-observation-points`). This is the one suite that classifies
- * an `encryption.xml` directly, so the shared fixture's contract is pinned here.
- */
+/** Pins the shared fixture here because route and e2e tests flatten every rejection to 404. */
 describe('the shared drmProtectedEpub fixture', () => {
   it('classifies drm_protected at the default package location', async () => {
     expect(await validateBuilt(drmProtectedEpub())).toEqual({ status: 'drm_protected' });
   });
 
   it('tracks a non-default package directory rather than a hardcoded OEBPS/', async () => {
-    // AC2. `epubEntries` puts the chapter beside the package document, so a
-    // hardcoded `OEBPS/ch1.xhtml` would name an entry ABSENT from this archive —
-    // and an absent entry still reads `drm_protected` (`isObfuscatedFont` answers
-    // `false` when it cannot find the name). The verdict alone therefore cannot
-    // catch the drift; the reference itself is the observable that can.
+    // Assert the URI: an absent entry also returns drm_protected, making the verdict vacuous.
     const options = drmProtectedEpub({ packageName: 'EPUB/package.opf' });
 
     expect(options.encryption).toContain('URI="EPUB/ch1.xhtml"');
@@ -1408,9 +1246,7 @@ describe('the shared drmProtectedEpub fixture', () => {
   });
 
   it('overrides a caller-supplied encryption — the helper wins', async () => {
-    // The documented precedence, pinned on the discriminating value: an
-    // `encryption.xml` that encrypts nothing classifies `available`, so the first
-    // assertion proves the second one can tell the two orders apart.
+    // Empty encryption is the discriminating input for spread-order precedence.
     expect(await validateBuilt({ encryption: EMPTY_ENCRYPTION_XML })).toEqual({ status: 'available' });
     expect(await validateBuilt(drmProtectedEpub({ encryption: EMPTY_ENCRYPTION_XML }))).toEqual({
       status: 'drm_protected',
@@ -1418,8 +1254,7 @@ describe('the shared drmProtectedEpub fixture', () => {
   });
 
   it('changes `encryption` and leaves every other EpubOptions field alone', () => {
-    // Typed `Required<EpubOptions>`, so a field added to the type fails to compile
-    // here rather than quietly escaping the assertion.
+    // `Required` makes newly added option fields fail this completeness check at compile time.
     const everyField: Required<EpubOptions> = {
       packageName: 'EPUB/package.opf',
       mimetype: 'application/sentinel',
@@ -1441,22 +1276,14 @@ describe('the shared drmProtectedEpub fixture', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('the inspection budget', () => {
   it('holds the arithmetic that makes cumulative exhaustion unreachable here', () => {
-    // `validateEpub` performs at most four mandatory reads — `mimetype`,
-    // `container.xml`, the package document, `encryption.xml` — each ceilinged at
-    // `MAX_XML_BYTES`. This equality is why the worst case consumes the budget
-    // exactly and never crosses it, so `cap-exceeded` is reachable here only from
-    // a single oversized read. Retune either constant and that reasoning stops
-    // being true — this assertion is what says so.
+    // Four mandatory reads can exactly consume, but never cumulatively exceed, the budget.
     expect(4 * MAX_XML_BYTES).toBe(MAX_INSPECTION_BYTES);
   });
 
   it('charges four exactly-MAX_XML_BYTES reads once each, consuming the budget exactly', async () => {
-    // An implementation that double-charges drives the remainder to zero after
-    // the second read, caps the third at 0, and returns `limit_exceeded`.
+    // Double-charging would cap the third read at zero and return limit_exceeded.
     const result = await validateBuilt({
       mimetype: padTo(EPUB_MEDIA_TYPE, MAX_XML_BYTES),
       container: padTo(containerXml(DEFAULT_PACKAGE), MAX_XML_BYTES),
@@ -1468,45 +1295,18 @@ describe('the inspection budget', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-
 describe('public surface and guardrails', () => {
   it('exports validateEpub and inspectEpub and nothing else at runtime', async () => {
     const module = await import('./validate.js');
 
-    // The two path-taking functions `src/core/epub/` offers outside the folder,
-    // and the only runtime exports at all. The shared pipeline, the structure,
-    // its budget, and the encryption classifier are private, so no caller can
-    // name a context, hold one, or close one (#1989 Decision 1).
-    //
-    // **Sorted, because the key order here is not ours to predict.** A native ES
-    // module namespace is an exotic object that sorts its own keys (ES2026
-    // §10.4.6), but under Vitest this import resolves through Vite's SSR
-    // transform to an ordinary object that preserves *source* order — measured,
-    // not assumed. Neither order is the property under test, so both are removed
-    // from the question. The source scan below is separate and deliberately stays
-    // in file order: it reads the file, not the namespace.
+    // Module namespace and Vite SSR objects order keys differently; order is not the contract.
     expect(Object.keys(module).sort()).toEqual(['inspectEpub', 'validateEpub']);
     expect(module.validateEpub.length).toBe(1);
     expect(module.inspectEpub.length).toBe(1);
   });
 
-  // The "no module outside `src/core/epub/` imports zip-source.ts" guard — the
-  // externally-reachable half of #1990 Decision 2, and what keeps the exported
-  // `withZipSource(filePath, …)` folder-internal — is **not** re-asserted here.
-  // `zip-source.test.ts` › `describe('the internal-only surface')` already owns
-  // it, over the whole of `src/` outside this folder. A second scan of the same
-  // boundary would restate a decision that now has one home (#2000) and, being
-  // `from`-anchored, would be the weaker of the two.
-
   it('exports no type either, so the internal structure cannot escape the open', async () => {
-    // Type-only exports are erased at runtime, so the runtime check above cannot
-    // see them — this is the assertion that catches a re-added
-    // `export type EpubStructure` or a re-exported continuation seam. The
-    // structure is only valid inside `runEpubPipeline`'s callback; an exported
-    // continuation with an unconstrained return type would let a caller write
-    // `pipeline(path, async (outcome) => outcome)` and receive the structure
-    // *after* `withZipSource` ran its closing `finally`.
+    // Runtime keys miss type exports; scan source to keep the handle-scoped structure private.
     const { readFile } = await import('node:fs/promises');
     const source = await readFile(path.join(import.meta.dirname, 'validate.ts'), 'utf8');
     const exported = source
@@ -1514,8 +1314,6 @@ describe('public surface and guardrails', () => {
       .filter((line) => /^export\b/.test(line))
       .map((line) => line.trim());
 
-    // File order, not the namespace's lexicographic order — this reads the
-    // source, not the module.
     expect(exported).toEqual([
       'export async function validateEpub(filePath: string): Promise<EpubValidation> {',
       'export async function inspectEpub(filePath: string): Promise<EpubInspection> {',
@@ -1539,14 +1337,11 @@ describe('public surface and guardrails', () => {
 
   it('is picked up by the folder layer guard with no edit to its named-file list', async () => {
     const { readFile } = await import('node:fs/promises');
-    // The *same* preset call `layer-guard.test.ts` makes, so this proves that
-    // guard's real reach instead of re-deriving the selection here.
+    // Use the guard's own scan preset so this tests its real reach.
     const scanned = (await scanProductionSources(import.meta.dirname)).map(({ file }) => file);
     const guard = await readFile(path.join(import.meta.dirname, 'layer-guard.test.ts'), 'utf8');
 
     expect(scanned).toContain('validate.ts');
-    // `arrayContaining` over a named list, so a new production module extends the
-    // guard's reach without editing it.
     expect(guard).toContain('expect.arrayContaining');
     expect(guard).not.toContain("'validate.ts'");
   });
@@ -1558,8 +1353,7 @@ describe('public surface and guardrails', () => {
       'utf8',
     );
 
-    // Narratorr *observes* an ebook the owner placed beside an audiobook; it
-    // never *acquires* one. This slate must not relax that gate.
+    // Companion ebooks are observed, never acquired; this gate must remain ebook-only.
     expect(source).toContain(
       'const EBOOK_FORMAT_RE = /(?<![a-zA-Z\\d])(azw3|epub|pdf|mobi)(?![a-zA-Z\\d])/i;',
     );

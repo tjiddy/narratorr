@@ -1,8 +1,3 @@
-/**
- * Generic adapter cache — Map<id, Adapter> with clear/delete lifecycle.
- * Used by IndexerService and DownloadClientService to avoid duplicate
- * Map boilerplate.
- */
 export class AdapterCache<T> {
   private cache = new Map<number, T>();
 

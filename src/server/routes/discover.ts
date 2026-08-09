@@ -5,7 +5,6 @@ import type { DiscoveryService, SettingsService } from '../services/index.js';
 import type { TaskRegistry } from '../services/task-registry.js';
 import type { SuggestionRowWithLibraryBookId } from '../services/types.js';
 
-/** Maps an enriched DB suggestion row to the API response contract. */
 function toSuggestionResponse(row: SuggestionRowWithLibraryBookId): SuggestionRowResponse {
   return {
     id: row.id,
@@ -50,7 +49,6 @@ type SuggestionsQuery = z.infer<typeof suggestionsQuerySchema>;
 export async function discoverRoutes(app: FastifyInstance, deps: DiscoverRouteDeps) {
   const { discoveryService, settingsService, taskRegistry } = deps;
 
-  // GET /api/discover/suggestions
   app.get<{ Querystring: SuggestionsQuery }>(
     '/api/discover/suggestions',
     { schema: { querystring: suggestionsQuerySchema } },
@@ -64,7 +62,6 @@ export async function discoverRoutes(app: FastifyInstance, deps: DiscoverRouteDe
     },
   );
 
-  // POST /api/discover/suggestions/:id/dismiss
   app.post<{ Params: IdParam }>(
     '/api/discover/suggestions/:id/dismiss',
     { schema: { params: idParamSchema } },
@@ -77,7 +74,6 @@ export async function discoverRoutes(app: FastifyInstance, deps: DiscoverRouteDe
     },
   );
 
-  // POST /api/discover/suggestions/:id/mark-added — status flip only (#524)
   app.post<{ Params: IdParam }>(
     '/api/discover/suggestions/:id/mark-added',
     { schema: { params: idParamSchema } },
@@ -96,7 +92,6 @@ export async function discoverRoutes(app: FastifyInstance, deps: DiscoverRouteDe
     },
   );
 
-  // POST /api/discover/refresh
   app.post('/api/discover/refresh', async (_request, reply) => {
     const settings = await settingsService.get('discovery');
     if (!settings.enabled) {

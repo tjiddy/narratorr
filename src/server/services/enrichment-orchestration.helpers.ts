@@ -20,22 +20,18 @@ import { serializeError } from '../utils/serialize-error.js';
 import { parseClearedFields } from '../utils/cleared-fields.js';
 import type { ClearableBookField } from '@shared/schemas/book.js';
 
-
-// ─── Shared types ───────────────────────────────────────────────────────
-
 export interface EnrichmentBookInput {
   narrators: Array<{ name: string }> | null;
   duration: number | null;
   coverUrl: string | null;
   existingGenres: string[] | null;
-  /** #2158 AC8 — see `AudioEnrichmentBook.narratorSource`. Absent keeps today's semantics. */
+  /** Absent keeps existing narrator semantics. */
   narratorSource?: NarratorSource | undefined;
 }
 
 export interface AudnexusConfig {
   primaryAsin?: string | null | undefined;
   alternateAsins?: string[] | undefined;
-  /** Search-fallback query inputs (post-import path): title + author from the import payload. */
   title?: string | null | undefined;
   author?: string | null | undefined;
   existingNarrator?: string | null | undefined;
@@ -53,14 +49,7 @@ export interface EnrichmentDeps {
   metadataService: MetadataService;
 }
 
-// ─── Enrichment orchestration ───────────────────────────────────────────
-
-/**
- * Shared enrichment orchestration: audio metadata → audnexus.
- *
- * Callers own: status transitions, event recording (success/failure), error propagation.
- * This helper owns only the enrichment sequence and propagates all errors to the caller.
- */
+/** Runs audio before provider enrichment; callers own statuses, events, and errors. */
 export async function orchestrateBookEnrichment(
   bookId: number,
   finalPath: string,
@@ -68,7 +57,6 @@ export async function orchestrateBookEnrichment(
   deps: EnrichmentDeps,
   audnexusConfig: AudnexusConfig,
 ): Promise<{ audioEnriched: boolean }> {
-  // Audio file metadata enrichment
   const ffprobePath = resolveFfprobePathFromSettings(await resolveFfmpegPath());
   const audioResult = await enrichBookFromAudio(
     bookId,
@@ -77,8 +65,7 @@ export async function orchestrateBookEnrichment(
       narrators: book.narrators ?? null,
       duration: book.duration ?? null,
       coverUrl: book.coverUrl ?? null,
-      // Conditionally spread so the argument stays byte-identical for every caller that supplies no
-      // provenance — the exact-argument mocks across the enrichment suites depend on it.
+      // Preserve the legacy argument shape when provenance is absent.
       ...(book.narratorSource !== undefined && { narratorSource: book.narratorSource }),
     },
     deps.db,
@@ -87,13 +74,10 @@ export async function orchestrateBookEnrichment(
     ffprobePath,
   );
 
-  // Audnexus enrichment
   await applyAudnexusEnrichment(bookId, audnexusConfig, deps);
 
   return { audioEnriched: audioResult.enriched };
 }
-
-// ─── Audnexus enrichment ────────────────────────────────────────────────
 
 export async function applyAudnexusEnrichment(
   bookId: number,
@@ -102,54 +86,34 @@ export async function applyAudnexusEnrichment(
 ): Promise<void> {
   const asinsToTry = [opts.primaryAsin, ...(opts.alternateAsins ?? [])].filter((a): a is string => !!a);
   const title = opts.title?.trim();
-  // Nothing to resolve from: no ASIN to look up AND no title to search.
   if (asinsToTry.length === 0 && !title) return;
 
-  // The row's ASIN as of BEFORE the provider fetch (#2069 AC11). `resolveAsinWriteback`
-  // is not an identity guard: it canonicalizes the FETCHED asin, compares it to the
-  // caller-supplied `primaryAsin`, and checks cross-row collision — it never reads the
-  // row's current ASIN, so a Fix Match committed during the fetch is invisible to it.
-  // The write transaction re-reads and compares against this captured value instead.
+  // Capture identity before provider I/O; the write transaction drops results if Fix Match repointed the row.
   const capturedAsin = await readBookAsin(deps.db, bookId);
 
-  // ASIN recovery loop — precise identity fast path; first hit wins.
   for (const asin of asinsToTry) {
     let data;
     try {
       data = await deps.metadataService.enrichBook(asin);
     } catch (error: unknown) {
-      // A rate limit is a transient provider state, not a miss — propagate so the
-      // caller leaves the book pending/retryable (matches the import-list + job paths).
+      // Rate limits remain retryable; ordinary provider failures fall through to another identity.
       if (error instanceof RateLimitError) throw error;
       deps.log.warn({ error: serializeError(error), bookId, asin }, 'Audnexus enrichment failed');
       continue;
     }
-    // `applyEnrichmentData` deliberately sits OUTSIDE that catch (#2075): the recovery
-    // is for a PROVIDER miss, and only `enrichBook` can produce one. A durable failure
-    // (the collision query, the identity re-read, the write transaction) used to be
-    // caught here, logged under the provider's name, and followed by another candidate
-    // and then the search fallback — a second write with a different payload against a
-    // row whose commit state is ambiguous. Do not re-widen this `try`; the search-
-    // fallback arm below keeps its own write outside its catch for the same reason.
+    // Keep durable writes outside the provider catch; retrying after an ambiguous write failure can corrupt identity.
     if (data) {
       await applyEnrichmentData(bookId, asin, data, opts, deps, capturedAsin);
       return;
     }
   }
 
-  // Search fallback — every ASIN missed (or there were none). When every embedded
-  // ASIN is a print/Kindle ASIN (or 404s), a title+author search re-finds the real
-  // audiobook. Skipped with no title (never called with an empty query).
   if (!title) return;
   let resolved;
   try {
     resolved = await deps.metadataService.resolveBook({ title, author: opts.author?.trim() || undefined });
   } catch (error: unknown) {
-    // A RateLimitError propagates by design (the manual adapter treats it as a
-    // retryable import). Any OTHER thrown error is a transient provider failure
-    // during a SUPPLEMENTARY post-import fetch — treat it as a non-fatal miss so
-    // the import still completes and the book stays pending for the scheduled job
-    // to retry. Mirrors the ASIN-recovery loop's catch above.
+    // Rate limits propagate; other search failures stay non-fatal so the scheduled job can retry.
     if (error instanceof RateLimitError) throw error;
     deps.log.warn({ error: serializeError(error), bookId, title }, 'Audnexus search fallback failed (transient) — leaving book pending');
     return;
@@ -159,29 +123,18 @@ export async function applyAudnexusEnrichment(
   }
 }
 
-/** The row's current ASIN, canonicalized — the identity value AC11's write transaction re-checks. */
 async function readBookAsin(db: Db, bookId: number): Promise<string | null> {
   const rows = await db.select({ asin: books.asin }).from(books).where(eq(books.id, bookId)).limit(1);
   return canonicalizeAsin(rows[0]?.asin);
 }
 
-/**
- * Decide the ASIN to write back. The resolved ASIN (a concrete loop ASIN, or the
- * search candidate's optional `asin`) is written only when it is a real string
- * differing from `primaryAsin` AND collision-free — `books.asin` is uniquely
- * indexed (`idx_books_asin_unique`). On collision we keep the just-fetched fields
- * but skip the ASIN write (the deliberate divergence from the background job,
- * which marks the row failed). Returns `undefined` when nothing should be written.
- */
+/** Write a canonical, collision-free ASIN only when it differs; fetched fields still apply on collision. */
 async function resolveAsinWriteback(
   bookId: number,
   resolvedAsin: string | null | undefined,
   primaryAsin: string | null | undefined,
   deps: Pick<EnrichmentDeps, 'log' | 'bookService'>,
 ): Promise<string | undefined> {
-  // Canonicalize the resolved ASIN at this write boundary (#1733) and compare
-  // case-insensitively against the primary so a case-only "change" isn't written
-  // back. The returned value is the canonical form actually persisted.
   const canonical = canonicalizeAsin(resolvedAsin);
   if (!canonical || canonical === canonicalizeAsin(primaryAsin)) return undefined;
   const collision = await deps.bookService.findAsinCollision(bookId, canonical);
@@ -196,26 +149,8 @@ async function resolveAsinWriteback(
 }
 
 /**
- * Persist one Audnexus result. This is the SECOND fill-empty writer, so it honors
- * the same tombstones as the scheduled job, independently per field (#2069 AC10):
- * `subtitle` and `publisher` are dropped from the scalar payload when tombstoned,
- * and the genres fill is skipped when `genres` is. It writes NO series field, so
- * `seriesName`/`publishedDate` need no guard here — that asymmetry with AC9 is
- * deliberate, not an omission.
- *
- * Both writes now live in ONE transaction (AC11). They used to commit separately,
- * so `enrichmentStatus: 'enriched'` could land while a later write did not — and
- * the row is then permanently outside the scheduled candidate selector, which only
- * picks `pending`/`skipped`/retryable `failed`. Completion status and the field
- * writes now commit or roll back together.
- *
- * The tombstone set that drives the three suppressions is read INSIDE that
- * transaction, not from the caller's pre-fetch `db.select({ genres, subtitle,
- * publisher })`: that earlier read still supplies the `existing*` fill-empty
- * inputs, but it happens before a provider fetch a clear can commit during.
- *
- * `resolveAsinWriteback` stays OUTSIDE the transaction — it issues a collision
- * query on `this.db`, which must not run on (or alongside) the open handle.
+ * Commit status and fill-empty writes atomically. Re-read identity and tombstones inside the
+ * transaction so user edits made during provider I/O win; resolve ASIN collisions before opening it.
  */
 async function applyEnrichmentData(
   bookId: number,
@@ -234,9 +169,7 @@ async function applyEnrichmentData(
       .where(eq(books.id, bookId))
       .limit(1);
     const row = rows[0];
-    // Identity guard: a Fix Match committed during the provider fetch re-pointed
-    // this row, so the payload no longer describes it. A missing row is the same
-    // outcome — there is nothing to enrich.
+    // Drop provider data when the row disappeared or changed identity during the fetch.
     if (!row || canonicalizeAsin(row.asin) !== capturedAsin) return { applied: false, genresWritten: null };
 
     const cleared = new Set(parseClearedFields(row.userClearedFields, deps.log, bookId));
@@ -260,18 +193,12 @@ async function applyEnrichmentData(
     return { applied: true, genresWritten };
   });
 
-  // A stale drop is not a success — do not log one.
   if (!committed.applied) {
     deps.log.debug({ bookId, asin: capturedAsin }, 'stale post-import enrichment dropped (identity re-read)');
     return;
   }
 
-  // Deferred effect, run only now that the write transaction has COMMITTED (#2069
-  // F21/F5). `bookService.update`'s caller-owned-tx arm deliberately emits no
-  // post-commit side effects — a rollback the owner may still perform would strand
-  // them — so this owner runs the telemetry itself, after its own commit. Awaited
-  // rather than fire-and-forget so the import cannot outlive its own telemetry;
-  // still non-fatal, matching the `update()` wrapper.
+  // Emit genre telemetry only after commit; a rollback must not strand side effects.
   if (committed.genresWritten) {
     await deps.bookService.trackUnmatchedGenres(committed.genresWritten).catch((error: unknown) => {
       deps.log.debug({ error: serializeError(error) }, 'Failed to track unmatched genres');
@@ -284,26 +211,7 @@ async function applyEnrichmentData(
   );
 }
 
-/**
- * Fill-guarded narrator/genre writes (separate rows, so they bypass the scalar
- * `updates` set). Runs on the caller's transaction handle — `bookService.update`
- * must not open a second one, since nesting `db.transaction` throws
- * `NestedTransactionError`. `narrators` is not clearable, so only the genres fill
- * consults the tombstone set.
- *
- * Returns the genre payload that actually landed, or `null` — the caller runs the
- * unmatched-genre telemetry for it AFTER the owning transaction commits (#2069
- * F21/F5). Narrators carry no telemetry, so only the genre arm reports back.
- */
-/**
- * Whether the row currently has ANY narrator, read on the caller's transaction handle (#2158 AC9).
- *
- * `opts.existingNarrator` is a snapshot of the PRE-import item, taken before the provider fetch — so
- * when the provider had no narrators and the embedded-tag fill supplied them moments earlier, that
- * snapshot is stale and the Audnexus write would clobber a value the files just contributed. The
- * live re-read runs inside the write transaction for the same reason the tombstone set does: a
- * caller's pre-fetch cannot see a write that committed during the fetch.
- */
+/** Use the caller's transaction; the pre-fetch narrator snapshot may miss audio-tag writes. */
 async function rowHasNarrators(tx: DbOrTx, bookId: number): Promise<boolean> {
   const rows = await tx
     .select({ narratorId: bookNarrators.narratorId })
@@ -331,8 +239,6 @@ async function applyEnrichmentArrayFields(
   return null;
 }
 
-// ─── Book creation payload ──────────────────────────────────────────────
-
 export interface ImportConfirmItem {
   path: string;
   title: string;
@@ -344,9 +250,6 @@ export interface ImportConfirmItem {
   coverUrl?: string | null;
   metadata?: BookMetadata | null;
 }
-
-// ─── Enrichment input builders ──────────────────────────────────────────
-// Extracted to reduce cyclomatic complexity in callers (each ?? and || counts as a branch).
 
 export function buildEnrichmentBookInput(
   book: {
@@ -385,10 +288,6 @@ export function buildImportedEventPayload(
   };
 }
 
-/**
- * Extract metadata fields from an import item for the background import flow.
- * Centralizes the nullable coalescing that inflates cyclomatic complexity.
- */
 function resolveEnrichmentNarrators(
   itemNarrators: string[] | undefined,
   metaNarrators: string[] | undefined,
@@ -424,8 +323,6 @@ export function buildBackgroundAudnexusConfig(
   return {
     primaryAsin: item.asin || extracted.meta?.asin,
     alternateAsins: extracted.meta?.alternateAsins,
-    // Search-fallback query: title/author come from the import payload (NOT the
-    // currentBook re-read, which does not select them).
     title: item.title ?? null,
     author: item.authorName ?? null,
     existingNarrator: extracted.narratorName,
@@ -436,24 +333,17 @@ export function buildBackgroundAudnexusConfig(
   };
 }
 
-// ─── Book creation payload ──────────────────────────────────────────────
-
 // eslint-disable-next-line complexity -- flat metadata coalescing across item + meta sources
 export function buildBookCreatePayload(
   item: ImportConfirmItem,
   meta: BookMetadata | null,
   status: 'imported' | 'importing',
 ) {
-  // Item-first, two-state, pair-locked series resolution (#1927) — shared with
-  // `copyToLibrary`'s `targetBook` so the DB record and the physical folder agree.
-  // A user's explicit series edit wins over the matched metadata's primary series;
-  // an absent (empty/whitespace) item series defers to metadata. `pickPrimarySeries`
-  // (`seriesPrimary` over `series[0]`, #1088/#1097) still selects the defer-path ref.
+  // Explicit import series wins as a name/position pair; otherwise use the provider's primary series.
   const series = resolveImportSeries(item, pickPrimarySeries(meta));
   return {
     title: item.title,
-    // When metadata provides multiple authors (co-authored books), preserve the full array.
-    // For single-author metadata, defer to the parsed folder author (allows user override).
+    // Preserve provider co-authors; for one author, the parsed import value may override.
     authors: (meta?.authors && meta.authors.length > 1)
       ? meta.authors
       : (item.authorName ? [{ name: item.authorName }] : (meta?.authors?.length ? meta.authors : [])),
@@ -470,8 +360,6 @@ export function buildBookCreatePayload(
     publishedDate: meta?.publishedDate,
     genres: meta?.genres,
     providerId: meta?.providerId,
-    // Recording production form (#1710). Only this manual-import/enrichment path
-    // populates it in story 1; every other create path takes the column default.
     productionType: normalizeProductionType(meta?.formatType),
     status,
   };

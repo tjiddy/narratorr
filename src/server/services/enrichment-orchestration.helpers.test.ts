@@ -23,45 +23,20 @@ import { orchestrateBookEnrichment, applyAudnexusEnrichment } from './enrichment
 import { mockDbChain } from '../__tests__/helpers.js';
 import { RateLimitError, TransientError } from '@core/index.js';
 
-/** One mock handle — the root connection and the transaction handle are built from this. */
 interface MockHandle {
   update: ReturnType<typeof vi.fn>;
   select: ReturnType<typeof vi.fn>;
 }
 
-/** The `select` calls on `handle` that asked for the `book_narrators` projection. */
+// Filter by projection rather than brittle select-call order.
 function narratorReads(handle: MockHandle): unknown[] {
   return handle.select.mock.calls.filter(
     ([projection]) => projection && typeof projection === 'object' && 'narratorId' in (projection as object),
   );
 }
 
-/**
- * A db whose `update().set().where()` chain resolves; returns the captured chain
- * for assertions.
- *
- * Also carries the two seams #2069 AC11 added to this path: a `select` (the
- * pre-fetch ASIN capture AND the in-transaction re-read of
- * `{ asin, user_cleared_fields }`) and a `transaction` that runs its callback.
- *
- * #2158 AC9 added a THIRD read — the in-transaction `book_narrators` re-read that
- * stops the Audnexus write from clobbering narrators the embedded-tag fill supplied
- * moments earlier. It is discriminated by PROJECTION rather than by call order
- * (`shared-test-double-defaults-ripple` §2): a call-index counter desynchronises the
- * moment a test issues a different number of reads. `narratorRows` defaults to EMPTY,
- * i.e. "the row has no narrators yet", which is what every pre-#2158 test in this
- * suite implicitly assumed.
- *
- * **The root and the transaction are DISTINCT objects (#2160 F1).** They used to be
- * the same object, which made handle routing unobservable: a read that regressed from
- * the callback's `tx` to `deps.db` landed on the very same `select` spy and every
- * assertion stayed green. `db.transaction` now hands the callback its own `tx`, so
- * WHICH handle a read or write used is a directly assertable fact — see
- * {@link narratorReads} and the AC9 handle test. The two `update` spies deliberately
- * share ONE `updateChain` so the existing scalar-write assertions read the same
- * object regardless of which handle issued the write; the handle question is answered
- * by the spies, not by the chain.
- */
+/** Root and transaction handles are distinct so routing regressions are observable. Narrator
+ * reads are selected by projection; both update spies share the assertion chain. */
 function dbWithUpdateChain(
   row?: { asin?: string | null; userClearedFields?: string | null },
   narratorRows: { narratorId: number }[] = [],
@@ -195,11 +170,8 @@ describe('orchestrateBookEnrichment', () => {
     });
 
     it('does not emit events — eventHistory is not part of EnrichmentDeps', async () => {
-      // orchestrateBookEnrichment has no access to eventHistory — callers own events.
       await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null }, deps, { primaryAsin: null });
 
-      // The deps passed in (which the test built from createMockDeps) must not carry an eventHistory,
-      // and orchestrateBookEnrichment must not have synthesized a call against one.
       expect('eventHistory' in deps).toBe(false);
       expect(Object.keys(deps).sort()).toEqual(['bookService', 'db', 'log', 'metadataService', 'settingsService']);
     });
@@ -264,8 +236,6 @@ describe('applyAudnexusEnrichment', () => {
     expect(setArg).not.toHaveProperty('subtitle');
     expect(setArg).not.toHaveProperty('publisher');
   });
-
-  // ─── #1625: title/author search fallback ──────────────────────────────
 
   const mockEnrichBook = (d: typeof deps) => d.metadataService.enrichBook as ReturnType<typeof vi.fn>;
   const mockResolveBook = (d: typeof deps) => d.metadataService.resolveBook as ReturnType<typeof vi.fn>;
@@ -338,8 +308,6 @@ describe('applyAudnexusEnrichment', () => {
 
     await applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book', author: 'An Author' }, { ...deps, db });
 
-    // The collision check sees the canonical (uppercase) form, and the persisted
-    // ASIN is canonical — never the lowercase provider value.
     expect(mockFindCollision(deps)).toHaveBeenCalledWith(42, 'B0NEWEDITION');
     const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
     expect(setArg).toMatchObject({ asin: 'B0NEWEDITION', enrichmentStatus: 'enriched' });
@@ -352,7 +320,6 @@ describe('applyAudnexusEnrichment', () => {
 
     await applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book', author: 'An Author' }, { ...deps, db });
 
-    // A case-only "difference" from the primary is not a real ASIN change.
     expect(mockFindCollision(deps)).not.toHaveBeenCalled();
     const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
     expect(setArg).not.toHaveProperty('asin');
@@ -441,17 +408,11 @@ describe('applyAudnexusEnrichment', () => {
     expect(updateChain.set).not.toHaveBeenCalled();
   });
 
-  // #1628 — a transient (non-rate-limit) error on the supplementary post-import
-  // search fallback is a NON-FATAL miss: the import completes, nothing is written,
-  // the book stays pending for the scheduled job to retry. (Contrast the
-  // RateLimitError case above, which still propagates and fails the import.)
   it('#1628: TransientError on the search fallback is a non-fatal miss (no throw, no writes)', async () => {
     const { db, updateChain } = dbWithUpdateChain();
     mockEnrichBook(deps).mockResolvedValue(null);
     mockResolveBook(deps).mockRejectedValueOnce(new TransientError('Audible.com', 'HTTP 503'));
 
-    // Resolves without throwing — the manual import must not be failed by a
-    // transient during supplementary enrichment.
     await applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book' }, { ...deps, db });
 
     expect(updateChain.set).not.toHaveBeenCalled();
@@ -471,19 +432,9 @@ describe('applyAudnexusEnrichment', () => {
     expect(updateChain.set).not.toHaveBeenCalled();
   });
 
-  // ─── #2075: a DURABLE failure is not a provider miss ──────────────────
-  //
-  // The per-candidate catch exists to recover from `metadataService.enrichBook`.
-  // It used to wrap `applyEnrichmentData` too, so a rolled-back write was logged as
-  // 'Audnexus enrichment failed', the loop moved to the next ASIN, and the search
-  // fallback then attempted a SECOND write with a different payload — against a row
-  // whose commit state is ambiguous. Every assertion below is a negative, so each of
-  // these rows was verified red against the pre-#2075 shape (`applyEnrichmentData`
-  // back inside the `try`).
+  // A durable failure is not a provider miss: only `metadataService.enrichBook` may recover per candidate.
   it('#2075: a durable write failure propagates — no alternate candidate, no fallback, not warned as a provider miss', async () => {
     const { db } = dbWithUpdateChain();
-    // Named so the assertion pins error IDENTITY: a future implementation that caught
-    // this and rethrew a look-alike with the same message would fail here.
     const writeError = new Error('db write boom');
     (db as unknown as { transaction: ReturnType<typeof vi.fn> }).transaction.mockRejectedValueOnce(writeError);
     mockEnrichBook(deps).mockResolvedValueOnce({ duration: 7200 });
@@ -495,17 +446,13 @@ describe('applyAudnexusEnrichment', () => {
     expect(mockEnrichBook(deps)).toHaveBeenCalledTimes(1);
     expect(mockEnrichBook(deps)).not.toHaveBeenCalledWith('B002');
     expect(mockResolveBook(deps)).not.toHaveBeenCalled();
-    // Matched on the MESSAGE argument specifically — a blanket "warn not called" would
-    // be both weaker and wrong, since the ASIN-collision path legitimately warns.
     expect(deps.log.warn).not.toHaveBeenCalledWith(expect.anything(), 'Audnexus enrichment failed');
   });
 
   it('#2075: a collision-query failure propagates too — the boundary moved for all of applyEnrichmentData', async () => {
     const { db } = dbWithUpdateChain();
     const collisionError = new Error('collision query boom');
-    // `resolveAsinWriteback` short-circuits when the resolved ASIN equals the primary,
-    // so the collision query is only REACHED once an alternate resolves. B003 exists so
-    // "no candidate followed the failure" is an observable fact rather than a vacuous one.
+    // B003 makes "no later candidate" observable after B002's collision-query failure.
     mockEnrichBook(deps).mockResolvedValueOnce(null).mockResolvedValueOnce({ duration: 7200 });
     mockFindCollision(deps).mockRejectedValueOnce(collisionError);
 
@@ -517,8 +464,6 @@ describe('applyAudnexusEnrichment', () => {
     expect(mockEnrichBook(deps)).not.toHaveBeenCalledWith('B003');
     expect(mockResolveBook(deps)).not.toHaveBeenCalled();
     expect(deps.log.warn).not.toHaveBeenCalledWith(expect.anything(), 'Audnexus enrichment failed');
-    // This failure lands BEFORE the transaction opens — the other half of "the whole of
-    // applyEnrichmentData propagates", not just its `db.transaction` call.
     expect((db as unknown as { transaction: ReturnType<typeof vi.fn> }).transaction).not.toHaveBeenCalled();
   });
 
@@ -533,7 +478,6 @@ describe('applyAudnexusEnrichment', () => {
       expect.objectContaining({ bookId: 42, asin: 'B001' }),
       'Audnexus enrichment failed',
     );
-    // The continuation, not just the log line — narrowing the catch must not narrow this.
     expect(mockEnrichBook(deps)).toHaveBeenCalledTimes(2);
     expect(mockEnrichBook(deps)).toHaveBeenCalledWith('B002');
     expect(mockResolveBook(deps)).toHaveBeenCalledWith({ title: 'My Book', author: 'An Author' });
@@ -558,8 +502,6 @@ describe('applyAudnexusEnrichment', () => {
 });
 
 describe('buildBackgroundAudnexusConfig (#1625 — search-fallback title/author threading)', () => {
-  // AC2: title/author must be threaded from the import payload into the config so the
-  // production manual-import path can call resolveBook after the ASIN loop misses.
   it('threads title/author from the import payload onto the config', async () => {
     const { buildBackgroundAudnexusConfig, extractImportMetadata } = await import('./enrichment-orchestration.helpers.js');
     const item = { path: '/x', title: 'Mistborn', authorName: 'Brandon Sanderson', asin: 'B001' };
@@ -678,7 +620,6 @@ describe('buildBookCreatePayload (#1028)', () => {
     expect(payload.publisher).toBeUndefined();
   });
 
-  // #1927 — item-first, two-state, pair-locked series resolution (was #1071 metadata-first).
   it('item supplies series + position → payload uses the ITEM values, not metadata (#1927 AC1)', async () => {
     const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
     const payload = buildBookCreatePayload(
@@ -766,7 +707,6 @@ describe('buildBookCreatePayload (#1028)', () => {
     expect(payload.seriesPosition).toBeUndefined();
   });
 
-  // #1097 — canonical primary-series preference over series[0]
   it('prefers seriesPrimary over series[0] when both are present (#1097)', async () => {
     const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
     const payload = buildBookCreatePayload(
@@ -786,7 +726,6 @@ describe('buildBookCreatePayload (#1028)', () => {
     expect(payload.seriesPosition).toBe(2);
   });
 
-  // #1710 — production_type populated from meta.formatType on this path only
   it('populates productionType from meta.formatType (#1710)', async () => {
     const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
     const payload = buildBookCreatePayload(
@@ -814,12 +753,7 @@ describe('buildBookCreatePayload (#1028)', () => {
   });
 });
 
-// ─── #2069 AC10/AC11: the post-import fill surface honors tombstones ───
-//
-// This is the SECOND fill-empty writer. It writes no series field, so only
-// `subtitle`, `publisher` and `genres` are guardable here — that asymmetry with the
-// scheduled job (AC9) is deliberate. Its scalar write and its array writes now also
-// share ONE transaction, and re-read the row identity inside it.
+// This fill-empty path guards subtitle, publisher, and genres; scalar and array writes share one transaction.
 describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
   let deps: ReturnType<typeof createMockDeps>;
 
@@ -889,14 +823,7 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
     }
   });
 
-  // The F14 rollback proof deliberately does NOT live here. #2160 F1 split the root
-  // and the transaction into distinct spies, so this suite can now tell WHICH handle
-  // a statement used — but it still cannot prove ROLLBACK, because these doubles never
-  // roll anything back: every write "succeeds" against an in-memory chain regardless of
-  // whether the surrounding transaction later throws. Atomicity therefore stays with a
-  // real migrated DB, with the split-transaction counterfactual executed alongside it:
-  // see `src/db/user-cleared-fields-schema.integration.test.ts`,
-  // 'AC11 / F14 — post-import atomicity, against a real DB'.
+  // These doubles prove handle routing, not rollback; the migrated-DB integration suite proves atomicity.
 
   describe('F21 / F5 — the genre telemetry is a DEFERRED post-commit effect', () => {
     it('runs the telemetry with the written payload, AFTER the write transaction resolves', async () => {
@@ -915,8 +842,6 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
       await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
 
       expect(deps.bookService.trackUnmatchedGenres).toHaveBeenCalledWith(['Fantasy']);
-      // Running this before the commit would strand it on a rollback — the tx arm of
-      // `update` emits no post-commit effects precisely so the owner can sequence it.
       expect(order).toEqual(['tx-committed', 'telemetry']);
     });
 
@@ -956,16 +881,10 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
       expect(deps.bookService.trackUnmatchedGenres).not.toHaveBeenCalled();
     });
 
-    // ─── #2158 AC9: the narrator write re-reads the row inside its own transaction ───
-    //
-    // `existingNarrator` is a snapshot of the PRE-import item, taken before the provider fetch. When
-    // the provider had no narrators, the embedded-tag fill can supply them between that snapshot and
-    // this write — and the caller's pre-fetch cannot see it. The re-read is the fix; these two rows
-    // are its positive and negative control.
+    // Re-read narrators in the transaction; embedded-tag fill may have changed the pre-fetch snapshot.
     it('AC9: skips the narrator write when the row already carries narrators the snapshot missed', async () => {
       const { db } = dbWithUpdateChain(undefined, [{ narratorId: 7 }]);
-      // A DIFFERENT narrator, otherwise the assertion cannot distinguish "skipped" from "wrote the
-      // same value" — the vacuous-observation trap this suite has hit before.
+      // Use a different narrator so "skipped" cannot pass vacuously.
       (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce({ narrators: ['Audnexus Narrator'] });
 
@@ -991,16 +910,10 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
 
       await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
 
-      // The root and the transaction are distinct spies, so "which handle" is a fact rather than an
-      // inference. Routing the re-read to `deps.db` would move the projection to `root` — verified
-      // red by mutating `applyEnrichmentArrayFields(..., tx)` to `(..., deps.db)`. It matters twice
-      // over: on libSQL a second connection cannot see the open transaction's uncommitted rows, and
-      // `bookService.update` opening its own transaction throws NestedTransactionError.
+      // Root reads miss uncommitted libSQL state; distinct spies make this routing observable.
       expect(narratorReads(tx)).toHaveLength(1);
       expect(narratorReads(root)).toHaveLength(0);
 
-      // …and the write rides that SAME handle object — `toBe`, not a structural match, so a
-      // different-but-similar handle cannot satisfy it.
       const updateCall = (deps.bookService.update as ReturnType<typeof vi.fn>).mock.calls[0]!;
       expect((updateCall[2] as { tx: unknown }).tx).toBe(tx);
     });
@@ -1018,15 +931,13 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
   });
 
   it('F15: a Fix Match committed during the provider fetch aborts the write, tombstones held constant', async () => {
-    // The pre-fetch capture reads 'B001'; the in-transaction re-read sees the
-    // re-identified row. The tombstone column is NULL on both sides, so a
-    // tombstone-only guard could not catch this.
+    // Keep tombstones equal while ASIN changes between pre-fetch and transaction reads.
     const updateChain = mockDbChain();
     const db = {
       update: vi.fn().mockReturnValue(updateChain),
       select: vi.fn()
-        .mockReturnValueOnce(mockDbChain([{ asin: 'B001' }]))                                  // pre-fetch capture
-        .mockReturnValue(mockDbChain([{ asin: 'B999_REIDENTIFIED', userClearedFields: null }])), // in-tx re-read
+        .mockReturnValueOnce(mockDbChain([{ asin: 'B001' }]))
+        .mockReturnValue(mockDbChain([{ asin: 'B999_REIDENTIFIED', userClearedFields: null }])),
     } as unknown as Db & { transaction: unknown };
     db.transaction = vi.fn().mockImplementation((cb: (tx: Db) => Promise<unknown>) => cb(db as Db));
     (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
@@ -1039,16 +950,13 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
   });
 
   it('#2075 AC9: a stale drop still ENDS the call — no search fallback even with a title configured', async () => {
-    // The F15 row above has no `title`, so it cannot answer the fallback question. A
-    // stale drop resolves normally rather than throwing, so the `return` after the write
-    // is what stops it — that return has to stay unconditional now that the call sits
-    // outside the recovery `try`.
+    // Include a title so any fallback after the stale drop is observable.
     const updateChain = mockDbChain();
     const db = {
       update: vi.fn().mockReturnValue(updateChain),
       select: vi.fn()
-        .mockReturnValueOnce(mockDbChain([{ asin: 'B001' }]))                                  // pre-fetch capture
-        .mockReturnValue(mockDbChain([{ asin: 'B999_REIDENTIFIED', userClearedFields: null }])), // in-tx re-read
+        .mockReturnValueOnce(mockDbChain([{ asin: 'B001' }]))
+        .mockReturnValue(mockDbChain([{ asin: 'B999_REIDENTIFIED', userClearedFields: null }])),
     } as unknown as Db & { transaction: unknown };
     db.transaction = vi.fn().mockImplementation((cb: (tx: Db) => Promise<unknown>) => cb(db as Db));
     (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);

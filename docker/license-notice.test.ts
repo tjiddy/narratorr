@@ -9,18 +9,10 @@ const dockerignore = path.join(__dirname, '..', '.dockerignore');
 const notice = path.join(__dirname, '..', 'THIRD_PARTY_NOTICES.md');
 
 /**
- * Static assertions for the FFmpeg license notice (#1862, simplified 2026-07-15).
- *
- * Posture: ONE authored notice — FFmpeg attribution + its GPL-2.0/LGPL-2.1 texts +
- * pointers (linked libraries via the image's apk database, corresponding source via
- * Alpine aports, base image acknowledged) — deliberately NOT a per-component
- * enumeration (that 43-component gate was retired; see killed #1867 for the rationale).
- * Split of duties: the Dockerfile build gate only proves the files SHIP non-empty;
- * this test owns content sanity. Do not re-add component/marker lists here.
+ * One authored FFmpeg notice owns attribution, full license texts, and source pointers.
+ * Docker gates presence; this suite owns content. Do not restore per-component inventory.
  */
 
-// SPDX placeholder tokens that must never appear — the license texts are real
-// downloaded texts, not templates (F1 from the original #1862 review).
 const PLACEHOLDER_TOKENS = ['<year>', '<owner>', '<copyright holders>', '[Owner Organization]'];
 
 describe('ffmpeg license-notice shipping gate (Dockerfile)', () => {
@@ -53,7 +45,7 @@ describe('THIRD_PARTY_NOTICES.md content', () => {
   it('reproduces both FFmpeg license texts in full', () => {
     expect(content).toContain('GNU GENERAL PUBLIC LICENSE, Version 2');
     expect(content).toContain('GNU LESSER GENERAL PUBLIC LICENSE, Version 2.1');
-    // Full texts, not just headings — each text body ends with this marker.
+    // Full texts, not just headings: each body ends with this marker.
     expect(content.match(/END OF TERMS AND CONDITIONS/g)).toHaveLength(2);
   });
 
@@ -64,10 +56,7 @@ describe('THIRD_PARTY_NOTICES.md content', () => {
   });
 
   it('is version-agnostic — no ffmpeg version-release pin to go stale', () => {
-    // The old notice pinned `ffmpeg-8.0.1-r1` and a Dockerfile gate blocked every
-    // Alpine revision bump until the pin was updated. The simplified notice must
-    // never regress to that: no "Recorded version-release" phrasing, no Alpine
-    // version-release form (e.g. 8.0.1-r1, 8.1-r0) anywhere in the notice.
+    // Reject Alpine's version-release form so package revisions cannot stale the notice.
     expect(content).not.toContain('Recorded version-release');
     expect(content).not.toMatch(/\b\d+\.\d+(\.\d+)?-r\d+\b/);
   });

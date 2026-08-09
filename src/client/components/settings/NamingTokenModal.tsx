@@ -61,7 +61,6 @@ export function NamingTokenModal({
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {/* Token groups */}
         {groups.map((group) => (
           <div key={group.label}>
             <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1.5">
@@ -79,8 +78,6 @@ export function NamingTokenModal({
                 </button>
               ))}
             </div>
-            {/* #1774 — {edition} is the only token with mandatory auto-behavior, so it gets the only
-                per-token descriptor; every other chip stays bare. */}
             {group.tokens.includes('edition') && (
               <p className="mt-1.5 text-xs text-muted-foreground">
                 Added automatically to the folder for multiple editions — place it to control where it appears; in filenames it renders only where you put it.
@@ -89,7 +86,6 @@ export function NamingTokenModal({
           </div>
         ))}
 
-        {/* Syntax reference */}
         <div className="pt-3 border-t border-border/30">
           <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
             Syntax Reference
@@ -118,7 +114,6 @@ export function NamingTokenModal({
           </div>
         </div>
 
-        {/* Good to know */}
         <div className="pt-3 border-t border-border/30">
           <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
             Good to know
@@ -132,7 +127,6 @@ export function NamingTokenModal({
         </div>
       </div>
 
-      {/* Sticky footer with preview */}
       <div className="p-3 border-t border-border/30 bg-muted/30">
         <p className="text-xs text-muted-foreground mb-1">Preview</p>
         <p className="text-sm font-mono break-all">

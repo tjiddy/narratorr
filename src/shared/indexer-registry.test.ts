@@ -149,7 +149,6 @@ describe('INDEXER_REGISTRY', () => {
         expect(typeof lang.id).toBe('number');
         expect(typeof lang.label).toBe('string');
       }
-      // Verify English is present
       expect(MAM_LANGUAGES.find(l => l.id === 1)?.label).toBe('English');
     });
 
@@ -161,7 +160,6 @@ describe('INDEXER_REGISTRY', () => {
         expect(typeof st.value).toBe('string');
         expect(typeof st.label).toBe('string');
       }
-      // Verify specific values
       expect(MAM_SEARCH_TYPES.map(s => s.value)).toEqual(['all', 'active', 'fl', 'fl-VIP', 'VIP', 'nVIP']);
     });
   });

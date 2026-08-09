@@ -30,7 +30,6 @@ export class IndexerSearchService {
     return { log: this.log, update: (id: number, data: { settings: Record<string, unknown> }) => this.indexerService.update(id, data) };
   }
 
-  /** Parse release names to extract author/title for results that don't already have them */
   private parseReleaseNames(results: SearchResult[], indexerName?: string): void {
     for (const result of results) {
       if (result.author) continue;
@@ -47,10 +46,8 @@ export class IndexerSearchService {
     }
   }
 
-  /** RSS-capable adapter types that support empty-query polling. */
   private static readonly RSS_CAPABLE_TYPES = ['newznab', 'torznab'];
 
-  /** Get enabled indexers filtered to RSS-capable types. */
   async getRssCapableIndexers(): Promise<IndexerRow[]> {
     const all = await this.db
       .select()
@@ -60,7 +57,6 @@ export class IndexerSearchService {
     return all.filter((i) => IndexerSearchService.RSS_CAPABLE_TYPES.includes(i.type));
   }
 
-  /** Poll a single indexer with empty query (RSS feed). Returns results with parsed release names. */
   async pollRss(indexer: IndexerRow): Promise<SearchResult[]> {
     const adapter = await this.indexerService.getAdapter(indexer);
     const response = await adapter.search('');
@@ -79,7 +75,7 @@ export class IndexerSearchService {
     return rows;
   }
 
-  /** Query all enabled indexer rows (full select) and inject language preferences into search options. */
+  /** Load enabled rows and inject default languages when callers omit them. */
   private async getEnabledIndexerRows(options?: SearchOptions) {
     const enabledIndexers = await this.db
       .select()
@@ -96,13 +92,7 @@ export class IndexerSearchService {
     return { enabledIndexers, searchOptions };
   }
 
-  /**
-   * Shared search preamble: clean transport query + options, fetch enabled indexers
-   * with language injection. Returns null when query collapses to empty so callers
-   * can short-circuit. Centralizes the transport-cleaning + short-circuit logic so
-   * searchAll and searchAllStreaming can't drift apart on the load-bearing
-   * transport/ranking split (#1015).
-   */
+  /** Clean transport inputs once; null means the query normalized to empty. */
   private async prepareSearch(
     query: string,
     options: SearchOptions | undefined,
@@ -123,16 +113,8 @@ export class IndexerSearchService {
   }
 
   /**
-   * Shared scoring postamble: matchScore against RAW options (NOT cleaned
-   * transport values) + sort descending. Centralizes the transport/ranking
-   * split — scoreResult runs Dice on the result side raw, so cleaning the
-   * context side asymmetrically would drop matchScore by 0.4-0.7 on
-   * punctuated cases. See #1015.
-   *
-   * `rankingAuthor ?? author` (#2104 D8) is the same split applied one level
-   * deeper: a query-relaxation rung that drops the author for TRANSPORT still
-   * ranks against the canonical author, so results rank in the same order on an
-   * author-OFF rung as on rung 1.
+   * Score against raw context, never cleaned transport values; asymmetric cleaning destroys Dice
+   * scores. rankingAuthor preserves canonical ranking on author-relaxed query rungs.
    */
   private applyMatchScore(results: SearchResult[], options: SearchOptions | undefined): void {
     if (!options?.title) return;
@@ -147,27 +129,13 @@ export class IndexerSearchService {
     results.sort((a, b) => (b.matchScore ?? 0) - (a.matchScore ?? 0));
   }
 
-  /**
-   * Aggregate search, results only. Thin wrapper over
-   * {@link searchAllWithStatus} — the settlement counts are what the query
-   * ladder needs and every pre-#2104 caller ignores.
-   */
   async searchAll(query: string, options?: SearchOptions): Promise<SearchResult[]> {
     return (await this.searchAllWithStatus(query, options)).results;
   }
 
   /**
-   * Aggregate search plus how many indexers ANSWERED.
-   *
-   * The fold below collapses a rejected indexer into `[]`, so an empty aggregate
-   * cannot be distinguished from "everything failed" — and the query ladder
-   * (#2104 D16) must not burn eight queries and a 24-hour cooldown during an
-   * outage. `succeeded === 0` is an outage; `succeeded > 0 && results.length === 0`
-   * is a real, answered zero.
-   *
-   * A query that normalizes away short-circuits with `succeeded: 0`, which the
-   * ladder reads as "stop" — preserving the pre-ladder `prepareSearch`
-   * short-circuit exactly.
+   * Distinguish an answered empty result from total outage: zero successes tells the query ladder
+   * to stop. Queries that normalize empty also report zero settlements.
    */
   async searchAllWithStatus(
     query: string,
@@ -223,11 +191,7 @@ export class IndexerSearchService {
     return { results, succeeded, failed };
   }
 
-  /**
-   * Streaming search: calls per-indexer callbacks as each settles.
-   * Returns aggregate results (same shape as searchAll) for post-processing.
-   * Each indexer gets its own signal from the controllers map.
-   */
+  /** Stream per-indexer settlement callbacks and return aggregate noncancelled results. */
   async searchAllStreaming(
     query: string,
     options: SearchOptions | undefined,
@@ -252,12 +216,7 @@ export class IndexerSearchService {
         const controller = controllers.get(indexer.id);
         const signal = controller?.signal;
 
-        // Pre-adapter abort guard (#2104 D11). Controllers are STICKY across the
-        // query ladder's rungs, but the `signal?.aborted` classification below
-        // lives only in the catch block — so without this an indexer the user
-        // cancelled on rung 1 would be re-queried on every later rung. Emits no
-        // callback: the indexer already displays as cancelled from the rung that
-        // cancelled it, and a duplicate `indexer-cancelled` frame is noise.
+        // Controllers persist across ladder rungs; skip prior cancellations without another callback.
         if (signal?.aborted) {
           this.log.debug({ indexer: indexer.name }, 'Indexer skipped — already cancelled');
           return;
@@ -282,7 +241,6 @@ export class IndexerSearchService {
           callbacks.onComplete(indexer.id, indexer.name, mapped.length, elapsedMs);
         } catch (error: unknown) {
           const elapsedMs = Date.now() - indexerStartMs;
-          // Cancelled indexers report as cancelled, not error
           if (signal?.aborted) {
             this.log.debug({ indexer: indexer.name }, 'Indexer search cancelled');
             callbacks.onCancelled?.(indexer.id, indexer.name);
@@ -295,7 +253,6 @@ export class IndexerSearchService {
       }),
     );
 
-    // Aggregate results from non-cancelled indexers
     const results: SearchResult[] = [];
     const perIndexerCounts: Record<string, number> = {};
     for (const indexer of enabledIndexers) {

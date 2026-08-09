@@ -4,13 +4,7 @@ import type { Services } from './services/di.js';
 import type { JobScheduler } from './jobs/index.js';
 import { gracefulShutdown } from './shutdown.js';
 
-/**
- * Regression guard for AC2 of #1498 and the scheduler-first ordering of #1515:
- * the production shutdown handler must stop the job scheduler FIRST, then stop
- * the import worker, drain the connector refresh queue, and close the app LAST.
- * These tests fail if the scheduler stop is removed/moved, or if `connector.stop`
- * is deleted or moved after `app.close()`.
- */
+/** Guard the producer-to-consumer shutdown order. */
 describe('gracefulShutdown', () => {
   function makeApp(order: string[]): FastifyInstance {
     return {
@@ -41,10 +35,6 @@ describe('gracefulShutdown', () => {
 
     await gracefulShutdown(app, services, jobScheduler);
 
-    // Scheduler stop is FIRST; heartbeat stop follows before the awaited drains
-    // (#1776); connector drain is both PRESENT and ordered before app.close —
-    // catches a missing scheduler/heartbeat stop, a deleted connector stop(),
-    // and a stop() moved after close().
     expect(order).toEqual(['jobScheduler.stopAll', 'eventBroadcaster.stop', 'importSubmissionRunner.stop', 'importQueueWorker.stop', 'companionEbook.stop', 'connector.stop', 'app.close']);
     expect(jobScheduler.stopAll).toHaveBeenCalledTimes(1);
     expect(services.eventBroadcaster.stop).toHaveBeenCalledTimes(1);
@@ -69,10 +59,9 @@ describe('gracefulShutdown', () => {
     } as unknown as Services;
 
     const done = gracefulShutdown(app, services, jobScheduler);
-    // Park on the still-pending import-worker drain.
+    // Let shutdown reach the deferred import-worker drain.
     await new Promise<void>((resolve) => { setImmediate(resolve); });
 
-    // Heartbeat is already stopped while the import-worker drain is mid-flight.
     expect(services.eventBroadcaster.stop).toHaveBeenCalledTimes(1);
     expect(order).toEqual(['jobScheduler.stopAll', 'eventBroadcaster.stop', 'importSubmissionRunner.stop']);
 
@@ -100,11 +89,11 @@ describe('gracefulShutdown', () => {
     } as unknown as Services;
 
     const done = gracefulShutdown(app, services, jobScheduler);
-    // Flush all pending microtasks so execution parks on the awaited connector.stop().
+    // Flush pending microtasks until execution parks on the deferred connector drain.
     await new Promise<void>((resolve) => { setImmediate(resolve); });
 
     expect(services.connector.stop).toHaveBeenCalledTimes(1);
-    expect(app.close).not.toHaveBeenCalled(); // blocked on the still-pending connector drain
+    expect(app.close).not.toHaveBeenCalled();
 
     releaseConnectorStop();
     await done;
@@ -112,10 +101,6 @@ describe('gracefulShutdown', () => {
     expect(order).toEqual(['jobScheduler.stopAll', 'eventBroadcaster.stop', 'importSubmissionRunner.stop', 'importQueueWorker.stop', 'companionEbook.stop', 'connector.stop', 'app.close']);
   });
 
-  // #1515 — the scheduler must be quiesced BEFORE the awaited drains run, not just
-  // before app.close(). Park importQueueWorker.stop() on a deferred promise and
-  // assert the scheduler stopAll has ALREADY fired while that drain is pending —
-  // proving no cron/timeout callback can enqueue work into the queues being drained.
   it('stops the scheduler BEFORE the awaited import-worker / connector drains begin', async () => {
     const order: string[] = [];
     let releaseImportStop!: () => void;
@@ -134,11 +119,9 @@ describe('gracefulShutdown', () => {
     } as unknown as Services;
 
     const done = gracefulShutdown(app, services, jobScheduler);
-    // Park on the still-pending import-worker drain.
+    // Let shutdown reach the deferred import-worker drain.
     await new Promise<void>((resolve) => { setImmediate(resolve); });
 
-    // The scheduler + heartbeat are already stopped while the import-worker drain
-    // is mid-flight, and the connector drain + close have not started yet.
     expect(jobScheduler.stopAll).toHaveBeenCalledTimes(1);
     expect(services.importQueueWorker.stop).toHaveBeenCalledTimes(1);
     expect(services.connector.stop).not.toHaveBeenCalled();
@@ -151,12 +134,7 @@ describe('gracefulShutdown', () => {
     expect(order).toEqual(['jobScheduler.stopAll', 'eventBroadcaster.stop', 'importSubmissionRunner.stop', 'importQueueWorker.stop', 'companionEbook.stop', 'connector.stop', 'app.close']);
   });
 
-  // #1959 (F3) — the companion drain must be AWAITED, not fired and forgotten. Every other
-  // case in this file uses a companion stop that resolves immediately and records its order
-  // synchronously, so dropping the `await` in shutdown.ts satisfies all of them: the ordering
-  // array comes out identical either way. Parking the drain on a deferred promise is the only
-  // shape that can tell the two apart — with the `await` removed, `connector.stop` and
-  // `app.close` both run while the reconciler still has a guarded observation write in flight.
+  // An immediately resolved companion stop cannot distinguish await from fire-and-forget.
   it('awaits companionEbook.stop() before the connector drain and app.close (drain is not fire-and-forget)', async () => {
     const order: string[] = [];
     let releaseCompanionStop!: () => void;
@@ -175,11 +153,10 @@ describe('gracefulShutdown', () => {
     } as unknown as Services;
 
     const done = gracefulShutdown(app, services, jobScheduler);
-    // Flush all pending microtasks so execution parks on the awaited companion drain.
+    // Let shutdown reach the deferred companion drain.
     await new Promise<void>((resolve) => { setImmediate(resolve); });
 
     expect(services.companionEbook.stop).toHaveBeenCalledTimes(1);
-    // Blocked on the still-pending companion drain — neither of these may have run.
     expect(services.connector.stop).not.toHaveBeenCalled();
     expect(app.close).not.toHaveBeenCalled();
     expect(order).toEqual(['jobScheduler.stopAll', 'eventBroadcaster.stop', 'importSubmissionRunner.stop', 'importQueueWorker.stop']);

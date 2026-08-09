@@ -69,7 +69,7 @@ describe('EnrichmentCache', () => {
       cache.set('k-new', resolved('german'));
 
       expect(cache.size).toBe(MAX_ENTRIES);
-      expect(cache.get('k0')).toBeUndefined(); // oldest-inserted evicted
+      expect(cache.get('k0')).toBeUndefined();
       expect(cache.get('k1')).toBeDefined();
       expect(cache.get('k-new')).toBeDefined();
     });
@@ -77,11 +77,11 @@ describe('EnrichmentCache', () => {
     it('overwriting an existing key refreshes its position to the tail, so the next-oldest evicts first', () => {
       for (let i = 0; i < MAX_ENTRIES; i++) cache.set(`k${i}`, resolved('german'));
 
-      // Refresh the genuinely-oldest key in place (e.g. fetch-failed → resolved 23h later).
+      // Refresh the oldest entry so it moves to the insertion-order tail.
       cache.set('k0', resolved('french'));
-      expect(cache.size).toBe(MAX_ENTRIES); // pure overwrite neither grows nor evicts
+      expect(cache.size).toBe(MAX_ENTRIES);
 
-      // Insert one more — eviction now targets k1 (next-oldest), NOT the just-refreshed k0.
+      // The next insert must evict k1, not refreshed k0.
       cache.set('k-new', resolved('german'));
       expect(cache.get('k1')).toBeUndefined();
       expect(cache.get('k0')).toEqual({ outcome: 'resolved', language: 'french', nzbName: undefined });
@@ -94,7 +94,7 @@ describe('EnrichmentCache', () => {
       cache.set('k123', resolved('french'));
 
       expect(cache.size).toBe(MAX_ENTRIES);
-      expect(cache.get('k0')).toBeDefined(); // nothing evicted on a pure overwrite
+      expect(cache.get('k0')).toBeDefined();
       expect(cache.get('k123')).toEqual({ outcome: 'resolved', language: 'french', nzbName: undefined });
     });
   });

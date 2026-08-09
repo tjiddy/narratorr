@@ -13,10 +13,6 @@ import { systemSettingsSchema } from './system.js';
 import { discoverySettingsSchema } from './discovery.js';
 import { companionEpubSettingsSchema } from './companion-epub.js';
 
-// ---------------------------------------------------------------------------
-// Registry entry helper — enforces defaults match schema at compile time
-// ---------------------------------------------------------------------------
-
 function defineCategory<S extends z.ZodObject<z.ZodRawShape>>(entry: {
   schema: S;
   defaults: z.infer<S>;
@@ -24,10 +20,6 @@ function defineCategory<S extends z.ZodObject<z.ZodRawShape>>(entry: {
 }) {
   return entry;
 }
-
-// ---------------------------------------------------------------------------
-// Settings registry — single source of truth for all settings categories
-// ---------------------------------------------------------------------------
 
 export const settingsRegistry = {
   library: defineCategory({
@@ -103,10 +95,6 @@ export const settingsRegistry = {
   }),
 };
 
-// ---------------------------------------------------------------------------
-// Derived types
-// ---------------------------------------------------------------------------
-
 type Registry = typeof settingsRegistry;
 export type SettingsCategory = keyof Registry;
 export type AppSettings = {
@@ -116,10 +104,6 @@ export type UpdateSettingsInput = {
   [K in SettingsCategory]?: Partial<AppSettings[K]>;
 };
 export type UpdateSettingsFormData = AppSettings;
-
-// ---------------------------------------------------------------------------
-// Derived constants
-// ---------------------------------------------------------------------------
 
 export const SETTINGS_CATEGORIES = Object.keys(settingsRegistry) as SettingsCategory[];
 
@@ -131,12 +115,7 @@ export const CATEGORY_SCHEMAS = Object.fromEntries(
   SETTINGS_CATEGORIES.map((key) => [key, settingsRegistry[key].schema]),
 ) as { [K in SettingsCategory]: Registry[K]['schema'] };
 
-// ---------------------------------------------------------------------------
-// Form schema derivation
-// ---------------------------------------------------------------------------
-
-// Re-export from standalone module to avoid circular imports
-// (category files like quality.ts need stripDefaults but registry imports them)
+// Keeping this helper separate breaks the registry -> category -> stripDefaults cycle.
 export { stripDefaults } from './strip-defaults.js';
 import { stripDefaults } from './strip-defaults.js';
 
@@ -144,10 +123,7 @@ function getFormSchema(entry: { schema: z.ZodObject<z.ZodRawShape>; formSchema?:
   return entry.formSchema ?? stripDefaults(entry.schema);
 }
 
-// ---------------------------------------------------------------------------
-// Composed schemas — dynamically built, typed via assertions
-// ---------------------------------------------------------------------------
-
+// Dynamically composed schemas lose registry-key types through Object.fromEntries; assertions restore them.
 export const appSettingsSchema = z.object(
   Object.fromEntries(
     SETTINGS_CATEGORIES.map((key) => [key, settingsRegistry[key].schema]),
@@ -175,10 +151,6 @@ const _formSchemaBase = z.object(
   }
 });
 export const updateSettingsFormSchema: z.ZodType<UpdateSettingsFormData, UpdateSettingsFormData> = _formSchemaBase as never;
-
-// ---------------------------------------------------------------------------
-// Utility: convert API settings response to form data with fallback defaults
-// ---------------------------------------------------------------------------
 
 export function settingsToFormData(settings: AppSettings): UpdateSettingsFormData {
   return Object.fromEntries(

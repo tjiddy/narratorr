@@ -1,9 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Mock } from 'vitest';
 
-// Mock the production probes so the boot orchestration (`checkFfmpegVersionAtBoot`)
-// can be exercised with the SAME real dependency module it wires in production —
-// proving the wiring, not just the deps-injected helper.
+// Mock the production probe seam so orchestration wiring is exercised directly.
 vi.mock('@core/utils/audio-processor.js', () => ({
   detectFfmpegPath: vi.fn(),
   probeFfmpeg: vi.fn(),
@@ -48,8 +46,7 @@ describe('logFfmpegVersionAtBoot (#1679)', () => {
 
     expect(log.info).not.toHaveBeenCalled();
     expect(log.warn).toHaveBeenCalledTimes(1);
-    // Error routes through serializeError() — payload carries a structured error,
-    // not a raw Error instance (narratorr/no-raw-error-logging).
+    // serializeError keeps raw Error instances out of log payloads.
     const [payload] = calls(log.warn)[0]! as [Record<string, unknown>, string];
     expect(payload.error).toMatchObject({ message: 'spawn ENOENT', type: 'Error' });
   });
@@ -61,11 +58,9 @@ describe('logFfmpegVersionAtBoot (#1679)', () => {
 
     await logFfmpegVersionAtBoot({ detectFfmpegPath, probeFfmpeg }, log);
 
-    // The existing info log is NOT suppressed by the new warn.
     expect(log.info).toHaveBeenCalledTimes(1);
     expect(log.warn).toHaveBeenCalledTimes(1);
     const [payload, message] = calls(log.warn)[0]! as [Record<string, unknown>, string];
-    // Plain object payload, not an Error — the value never traced a catch binding.
     expect(payload).not.toBeInstanceOf(Error);
     expect(payload).toMatchObject({ ffmpegVersion: '7.1.2', ffmpegPath: '/usr/bin/ffmpeg' });
     expect(message).toMatch(/xHE-AAC|< 8/);
@@ -102,7 +97,6 @@ describe('logFfmpegVersionAtBoot (#1679)', () => {
 
     await logFfmpegVersionAtBoot({ detectFfmpegPath, probeFfmpeg }, log);
 
-    // extractFfmpegMajor returns null here — must stay info-only, never warn.
     expect(log.info).toHaveBeenCalledTimes(1);
     expect(log.warn).not.toHaveBeenCalled();
   });
@@ -139,7 +133,7 @@ describe('logFfmpegVersionAtBoot (#1679)', () => {
 
     await logFfmpegVersionAtBoot({ detectFfmpegPath, probeFfmpeg, getFfmpegOverride }, log);
 
-    expect(log.info).toHaveBeenCalledTimes(1); // version log still emitted
+    expect(log.info).toHaveBeenCalledTimes(1);
     expect(log.warn).toHaveBeenCalledTimes(1);
     const [payload, message] = calls(log.warn)[0]! as [Record<string, unknown>, string];
     expect(payload).toMatchObject({ ffmpegPath: '/custom/ffmpeg', resolved: '/usr/bin/ffmpeg' });
@@ -166,7 +160,7 @@ describe('logFfmpegVersionAtBoot (#1679)', () => {
     await logFfmpegVersionAtBoot({ detectFfmpegPath, probeFfmpeg, getLegacyFfmpegPath }, log);
 
     expect(probeFfmpeg).not.toHaveBeenCalled();
-    expect(log.warn).toHaveBeenCalledTimes(2); // "not found" + guided-migration
+    expect(log.warn).toHaveBeenCalledTimes(2);
     const legacyWarn = calls(log.warn).find(([p]) => (p as Record<string, unknown>)?.legacyFfmpegPath);
     expect(legacyWarn).toBeDefined();
     expect((legacyWarn![0] as Record<string, unknown>).legacyFfmpegPath).toBe('/opt/custom/ffmpeg');
@@ -181,8 +175,6 @@ describe('logFfmpegVersionAtBoot (#1679)', () => {
 
     await logFfmpegVersionAtBoot({ detectFfmpegPath, probeFfmpeg, getLegacyFfmpegPath }, log);
 
-    // The dangerous case is a SILENT binary swap: a configured custom path is dropped while a
-    // different system ffmpeg is used. It must warn (naming both paths + FFMPEG_PATH), not stay quiet.
     expect(getLegacyFfmpegPath).toHaveBeenCalledTimes(1);
     const legacyWarn = calls(log.warn).find(([p]) => (p as Record<string, unknown>)?.legacyFfmpegPath);
     expect(legacyWarn).toBeDefined();
@@ -194,7 +186,7 @@ describe('logFfmpegVersionAtBoot (#1679)', () => {
     const log = inject<FastifyBaseLogger>(createMockLogger());
     const detectFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg');
     const probeFfmpeg = vi.fn().mockResolvedValue('8.0.1');
-    const getLegacyFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg'); // same as resolved → no swap
+    const getLegacyFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg');
 
     await logFfmpegVersionAtBoot({ detectFfmpegPath, probeFfmpeg, getLegacyFfmpegPath }, log);
 
@@ -203,8 +195,7 @@ describe('logFfmpegVersionAtBoot (#1679)', () => {
 });
 
 describe('checkFfmpegVersionAtBoot — production wiring (#1679 F2)', () => {
-  // Isolate FFMPEG_PATH: checkFfmpegVersionAtBoot binds the real env override, so a dev box
-  // with it set would spuriously fire the P3-10 warning and skew warn-count assertions.
+  // Isolate the production-bound override from the developer's environment.
   let savedFfmpegPathEnv: string | undefined;
   beforeEach(() => {
     savedFfmpegPathEnv = process.env.FFMPEG_PATH;
@@ -241,7 +232,6 @@ describe('checkFfmpegVersionAtBoot — production wiring (#1679 F2)', () => {
     (detectFfmpegPath as Mock).mockResolvedValue('/usr/bin/ffmpeg');
     (probeFfmpeg as Mock).mockRejectedValue(new Error('spawn ENOENT'));
 
-    // Resolving without throwing is the contract that lets main() reach listen().
     await expect(checkFfmpegVersionAtBoot(log)).resolves.toBeUndefined();
 
     expect(log.warn).toHaveBeenCalledTimes(1);
@@ -256,6 +246,6 @@ describe('checkFfmpegVersionAtBoot — production wiring (#1679 F2)', () => {
     await checkFfmpegVersionAtBoot(log, settingsService);
 
     expect(settingsService.getLegacyFfmpegPath).toHaveBeenCalledTimes(1);
-    expect(log.warn).toHaveBeenCalledTimes(2); // not-found + dropped-config
+    expect(log.warn).toHaveBeenCalledTimes(2);
   });
 });

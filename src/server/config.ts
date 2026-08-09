@@ -22,13 +22,10 @@ const envSchema = z.object({
     .string()
     .default('/')
     .transform((v) => {
-      // Normalize empty string to /
       if (!v || v === '/') return '/';
-      // Strip trailing slash
       return v.endsWith('/') ? v.slice(0, -1) : v;
     }),
-  // Monitor poll cadence. Default is 30s (production). E2E harness overrides to '*/2 * * * * *' so
-  // the test doesn't spend 30 seconds of every run waiting for one poll cycle.
+  // E2E overrides the 30-second production poll to two seconds.
   MONITOR_INTERVAL_CRON: z
     .string()
     .default('*/30 * * * * *')
@@ -40,16 +37,11 @@ const envSchema = z.object({
       const parts = (v ?? '').split(',').map((s) => s.trim()).filter(Boolean);
       return parts.length === 0 ? false : parts;
     }),
-  // Initial Pino log level applied at boot. Persisted general.logLevel from
-  // the database overrides this once the server is up; the env var is the
-  // pre-boot default and the only path operators have without DB access.
+  // Persisted settings override this boot-time level after database startup.
   LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
     .default('info'),
-  // Optional free-form instance badge (e.g. 'dev'). When set, the client recolors the
-  // favicon and prefixes the tab title so a dev instance is distinguishable from prod.
-  // Coalesce empty/whitespace-only to undefined (a `.default()` would NOT — see the
-  // zod-default-ignores-empty-string / zod-trim-min-one learnings); trim a set value.
+  // Distinguishes instances in the favicon/title; blank values remain unset.
   INSTANCE_BADGE: z
     .string()
     .optional()
@@ -65,7 +57,6 @@ if (!parsed.success) {
   throw new Error(`Invalid environment config: ${parsed.error.message}`);
 }
 
-// Validate URL_BASE format after transform (must start with / unless it's the default /)
 if (parsed.data.URL_BASE !== '/' && !parsed.data.URL_BASE.startsWith('/')) {
   throw new Error(`Invalid URL_BASE: "${process.env.URL_BASE}" — must start with /`);
 }

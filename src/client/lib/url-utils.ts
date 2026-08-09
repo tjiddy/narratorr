@@ -1,10 +1,6 @@
 import { URL_BASE } from './api/client.js';
 
-/**
- * Prepends URL_BASE to app-relative paths (starting with /).
- * Leaves absolute URLs (http://, https://) unchanged.
- * Browser/UI-only — server-side consumers use raw stored values as-is.
- */
+/** Prefixes app-relative URLs with `URL_BASE`; absolute URLs pass through. */
 export function resolveUrl(url: string | undefined | null): string | undefined {
   if (!url) return undefined;
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
@@ -12,11 +8,7 @@ export function resolveUrl(url: string | undefined | null): string | undefined {
   return `${URL_BASE}${url}`;
 }
 
-/**
- * Resolves a cover URL with cache-busting for local covers.
- * Appends `?v=<epoch>` derived from `updatedAt` so the browser
- * refetches when the cover changes. External URLs pass through unchanged.
- */
+/** Adds an `updatedAt` cache key only to local cover URLs. */
 export function resolveCoverUrl(
   url: string | undefined | null,
   updatedAt: string | null | undefined,

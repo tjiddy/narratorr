@@ -8,7 +8,6 @@ import {
 import { serializeError } from '../utils/serialize-error.js';
 import { matchPassesValidation } from './match-validation.js';
 
-/** Input to {@link resolveBook}. */
 export interface ResolveBookInput {
   asin?: string | undefined;
   title: string;
@@ -16,19 +15,11 @@ export interface ResolveBookInput {
 }
 
 /**
- * How many top candidates {@link resolveBook} validates before giving up.
- * `applyBookFilters` preserves provider order and does NOT relevance-rank
- * (metadata.service.ts), so `books[0]` is not reliably the best match for a
- * keyword query — validate a small window and take the first that passes.
+ * Provider filtering preserves order rather than relevance-ranking, so validate a small result
+ * window instead of trusting the first item.
  */
 const VALIDATION_WINDOW = 5;
 
-/**
- * Collaborators {@link resolveBook} needs from {@link MetadataService}. Mirrors
- * the `metadata-fix-match` deps pattern so the orchestration lives outside the
- * service file (which is at its `max-lines` budget) while still using the
- * service's throttle/rate-limit/provider-selection internals.
- */
 export interface ResolveBookDeps {
   provider: MetadataSearchProvider | undefined;
   enrichBook(asin: string): Promise<BookMetadata | null>;
@@ -42,31 +33,9 @@ export interface ResolveBookDeps {
 }
 
 /**
- * Robust audiobook resolution — the ONE shared path used by both the
- * import-list add flow and the background enrichment job, so "how to resolve a
- * book to audiobook metadata" no longer lives in two inconsistent
- * implementations.
- *
- * 1. A (trimmed, non-empty) `asin` is tried first via `enrichBook` — the precise
- *    identity fast path. A blank/whitespace ASIN is treated as absent.
- * 2. On miss (or no ASIN) it falls back to a **title + author** search and
- *    validates the top candidates (up to {@link VALIDATION_WINDOW}) with
- *    {@link matchPassesValidation}, returning the first that passes. Amazon
- *    assigns a separate ASIN per format, so a print/Kindle ASIN 404s on the
- *    audiobook-only Audnexus service — the search re-finds the real audiobook.
- *    A whitespace-only `author` is normalized to absent so the query stays
- *    title-only and validation does not run author overlap against junk.
- * 3. Returns the matched {@link BookMetadata} (carrying the correct audiobook
- *    ASIN it resolved) or `null` when genuinely unresolvable.
- *
- * Transient failures propagate: a provider {@link RateLimitError} is re-thrown
- * (on BOTH the `enrichBook` path and the fallback search via
- * {@link searchBooksThrowing}), and any OTHER error caught during the fallback
- * search (timeout / 5xx / malformed JSON — a provider `TransientError`) is also
- * re-thrown, so the caller can distinguish a transient provider state from a
- * real no-match. `null` is reserved for a genuine no-match: an empty search
- * result (or no provider configured). Any thrown error means "transient, retry
- * later", never "no such book".
+ * Try a nonblank ASIN, then validate a small title/author search window; format-specific ASIN
+ * misses can therefore recover the audiobook edition. Null means a genuine miss, while transient
+ * provider failures propagate for retry.
  */
 export async function resolveBook(deps: ResolveBookDeps, input: ResolveBookInput): Promise<BookMetadata | null> {
   const asin = input.asin?.trim();
@@ -86,15 +55,8 @@ export async function resolveBook(deps: ResolveBookDeps, input: ResolveBookInput
 }
 
 /**
- * Provider search that PROPAGATES transient failures instead of swallowing them
- * to `[]` like the public `search`/`searchBooks` (which exist for discovery/UI
- * where a provider wobble is just an incomplete result). Used only by
- * {@link resolveBook}, where a transient provider failure must be
- * distinguishable from a real no-match: a `RateLimitError` re-throws (after
- * recording the rate-limit state) and ANY other caught error (timeout / 5xx /
- * malformed JSON — a provider `TransientError`, or a generic `Error`) also
- * re-throws. `[]` is reserved for the genuine no-match cases only — no provider
- * configured, or a provider that returns an empty `books` array.
+ * Unlike discovery search, propagate provider failures; reserve an empty array for no provider or
+ * a genuine empty result.
  */
 async function searchBooksThrowing(deps: ResolveBookDeps, query: string): Promise<BookMetadata[]> {
   const { provider } = deps;
@@ -115,9 +77,6 @@ async function searchBooksThrowing(deps: ResolveBookDeps, query: string): Promis
     } else {
       deps.log.warn({ query, error: serializeError(error) }, 'Resolver fallback search failed (transient)');
     }
-    // A caught fallback-search error is transient by default — propagate it so
-    // callers leave the book pending/retryable. Only a genuinely empty result
-    // (or no provider) is a no-match; that path returns `[]` above.
     throw error;
   }
 }

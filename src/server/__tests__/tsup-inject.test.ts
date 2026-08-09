@@ -4,12 +4,6 @@ import { readFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
 import { sanitizedEnv } from '@core/utils/sanitized-env.js';
 
-/**
- * Build-level verification: confirms that tsup's esbuildOptions.define
- * inlines GIT_COMMIT into the emitted server bundle, not left as a
- * runtime process.env lookup. Catches regressions in tsup.config.ts
- * wiring that unit tests on version.ts alone cannot detect.
- */
 describe('tsup GIT_COMMIT build-time injection', () => {
   const bundlePath = resolve('dist/server/index.js');
 
@@ -42,7 +36,6 @@ describe('tsup GIT_COMMIT build-time injection', () => {
   }, 60_000);
 
   it('inlines "unknown" when GIT_COMMIT env var is absent', () => {
-    // sanitizedEnv's allowlist has no GIT_COMMIT, so omitting the extra IS the absent case.
     const result = spawnSync('pnpm', ['build:server'], { shell: true,
       env: sanitizedEnv(),
       encoding: 'utf-8',

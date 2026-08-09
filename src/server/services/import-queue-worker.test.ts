@@ -43,10 +43,7 @@ function createMockDb() {
     update: vi.fn().mockReturnValue({ ...chainMethods, where: vi.fn().mockImplementation(() => updateWhereTerminus()) }),
     insert: vi.fn().mockReturnValue(chainMethods),
     delete: vi.fn().mockReturnValue(chainMethods),
-    // Default transaction executes the callback and delegates `tx.update` to the live
-    // `db.update` (resolved at call time, so tests that reassign `db.update` to a
-    // payload-recording spy transparently capture the transactional writes). Rollback
-    // tests override `db.transaction` per-test with their own staging impl.
+    // Resolve db.update at call time so reassigned spies also capture transactional writes.
     transaction: vi.fn((cb: (tx: { update: (...args: unknown[]) => unknown }) => Promise<unknown>) =>
       cb({ update: (...args: unknown[]) => db.update(...(args as [])) })),
   };
@@ -58,15 +55,8 @@ function createMockDb() {
   };
 }
 
-/**
- * An `update().set().where(...)` terminus that is BOTH awaitable (unguarded
- * writes — import_jobs writes and the CAS claim — `await ...where()` directly)
- * AND exposes `.returning()` (the #1470 guarded book write: `transitionBookStatus`
- * with `expected: { status: 'importing' }` compiles to `.where(...).returning(...)`).
- * `rows` controls the guard outcome the source reads — non-empty = match, [] = miss.
- * Default match (`[{ id: 1 }]`) preserves the prior "book settles to failed" behavior
- * for the still-importing case every legacy test implicitly exercises.
- */
+// Models both direct-await writes and guarded writes that call returning().
+// rows controls the guard: non-empty matches; [] misses.
 function updateWhereTerminus(rows: Array<{ id: number }> = [{ id: 1 }]) {
   return {
     then: (resolve: (v: { rowsAffected: number }) => void) => resolve({ rowsAffected: 1 }),
@@ -74,16 +64,8 @@ function updateWhereTerminus(rows: Array<{ id: number }> = [{ id: 1 }]) {
   };
 }
 
-/**
- * A transaction `update` mock that faithfully models `transitionBookStatus`'s
- * #1470 expected-guard against a mutable book status. `import_jobs` writes
- * (payload carries `phase`) always land. `books` writes (no `phase`) take the
- * guarded path — `.where(...).returning(...)` — and only mutate `state.bookStatus`
- * when it is still `'importing'`; otherwise `.returning()` resolves `[]` (guard
- * miss) and the prior status survives, exactly as the production guard behaves.
- * This lets a worker test prove "the failure write no longer clobbers an
- * already-reverted book" end-state without a live DB.
- */
+// import_jobs writes always land; books writes mutate only while status is importing,
+// matching transitionBookStatus's guarded returning() behavior without a live DB.
 function makeGuardedTxUpdate(state: { bookStatus: BookStatus | null }) {
   const jobWrites: Record<string, unknown>[] = [];
   const bookWrites: Array<{ payload: Record<string, unknown>; returningCalled: boolean; guardMatched: boolean }> = [];
@@ -99,7 +81,6 @@ function makeGuardedTxUpdate(state: { bookStatus: BookStatus | null }) {
         where: vi.fn().mockImplementation(() => ({
           returning: vi.fn().mockImplementation(async () => {
             rec.returningCalled = true;
-            // Guard predicate: `expected: { status: 'importing' }`.
             if (state.bookStatus === 'importing') {
               rec.guardMatched = true;
               state.bookStatus = payload.status as BookStatus;
@@ -131,13 +112,7 @@ describe('ImportQueueWorker', () => {
   });
 
   describe('boot recovery (#1663 requeue-eligibility)', () => {
-    /**
-     * Wires a boot-recovery orphan select (call #1) plus drain-loop selects (empty),
-     * and a per-orphan transaction whose `tx.select` resolves the linked book's status
-     * and whose `tx.update` records the (job-only) write payload. Boot recovery now writes
-     * ONLY the import_jobs row, so `txWrites.length === orphans.length` proves no book write.
-     * Orphans are processed sequentially, so the Nth transaction handles `orphans[N]`.
-     */
+    // Orphan N uses transaction N; each transaction reads its book and records job-only writes.
     function setupBootRecovery(orphans: Array<{ id: number; bookId: number | null; bookStatus?: BookStatus | null }>) {
       let selectCallCount = 0;
       mockDb.db.select = vi.fn().mockImplementation(() => {
@@ -164,7 +139,6 @@ describe('ImportQueueWorker', () => {
         const idx = txIdx++;
         const orphan = orphans[idx]!;
         const tx = {
-          // Boot recovery reads the linked book's status within the tx (never writes it).
           select: vi.fn().mockImplementation(() => {
             bookReads.push(idx);
             return {
@@ -194,11 +168,9 @@ describe('ImportQueueWorker', () => {
       await worker.start();
       await new Promise(r => setTimeout(r, 50));
 
-      // Exactly one write (import_jobs only — no book write) and it is a requeue, not a fail.
       expect(txWrites).toHaveLength(1);
       expect(txWrites[0]!.payload).toMatchObject({ status: 'pending', phase: 'queued', lastError: null });
       expect(txWrites[0]!.payload.status).not.toBe('failed');
-      // The decision was keyed on a book-status READ; the book row was never written.
       expect(bookReads).toEqual([0]);
 
       const logMock = log as unknown as { info: ReturnType<typeof vi.fn> };
@@ -221,7 +193,6 @@ describe('ImportQueueWorker', () => {
       await worker.start();
       await new Promise(r => setTimeout(r, 50));
 
-      // One write per orphan and no more — a book write would push the count past 5.
       expect(txWrites).toHaveLength(5);
       expect(txWrites.find(x => x.orphanIdx === 0)!.payload).toMatchObject({ status: 'pending', phase: 'queued', lastError: null });
       for (const idx of [1, 2, 3, 4]) {
@@ -230,9 +201,7 @@ describe('ImportQueueWorker', () => {
         const err = JSON.parse(w.payload.lastError as string);
         expect(err).toMatchObject({ message: 'Interrupted by server restart', type: 'ProcessRestart' });
       }
-      // No orphan is left in `processing`: every write is pending (requeue) or failed (settle).
       expect(txWrites.every(w => w.payload.status === 'pending' || w.payload.status === 'failed')).toBe(true);
-      // Book status was read for every non-null bookId, never for the null one.
       expect([...bookReads].sort((a, b) => a - b)).toEqual([0, 1, 2, 3]);
 
       const logMock = log as unknown as { info: ReturnType<typeof vi.fn> };
@@ -250,7 +219,6 @@ describe('ImportQueueWorker', () => {
         { id: 3, bookId: 30, bookStatus: 'imported' },
       ]);
 
-      // Override the transaction so orphan B (index 1) throws; A and C resolve.
       const committed: Array<{ orphanIdx: number; payload: Record<string, unknown> }> = [];
       let txIdx = 0;
       mockDb.db.transaction = vi.fn().mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
@@ -275,11 +243,9 @@ describe('ImportQueueWorker', () => {
       await worker.start();
       await new Promise(r => setTimeout(r, 50));
 
-      // A and C settled failed; B committed nothing (its tx threw).
       expect(committed.map(c => c.orphanIdx).sort((a, b) => a - b)).toEqual([0, 2]);
       for (const c of committed) expect(c.payload).toMatchObject({ status: 'failed', phase: 'failed' });
 
-      // B is logged at error level with a serialized error (plain object) + jobId/bookId context.
       const logErrMock = log as unknown as { error: ReturnType<typeof vi.fn> };
       const bErr = logErrMock.error.mock.calls.find((call: unknown[]) => {
         const ctx = call[0] as Record<string, unknown>;
@@ -290,7 +256,6 @@ describe('ImportQueueWorker', () => {
       expect(errCtx.error.message).toBe('orphan B blew up');
       expect(errCtx.error).not.toBeInstanceOf(Error);
 
-      // Summary: 2 settled, 0 requeued, 1 failed.
       const logMock = log as unknown as { info: ReturnType<typeof vi.fn> };
       const summaryCall = logMock.info.mock.calls.find((call: unknown[]) => {
         const ctx = call[0] as Record<string, unknown>;
@@ -326,15 +291,11 @@ describe('ImportQueueWorker', () => {
   });
 
   describe('drainOne CAS claim', () => {
-    // Private-method bypass seam for direct assertion. `start()` fire-and-forgets
-    // `drainLoop()` (import-queue-worker.ts:124-145) so drainOne() rejections
-    // never surface through the public API — direct invocation is the only seam.
+    // start() fire-and-forgets drainLoop, so direct invocation is the only rejection seam.
     type DrainSeam = { drainOne(): Promise<boolean> };
 
     function setupSingleCandidate(claimResult: unknown) {
-      // The drain runs inside a running worker; the F72 pre-claim barrier
-      // (`this.stopping || !this.running`) aborts otherwise, so flip `running`
-      // to exercise the CAS path directly.
+      // Direct calls must pass the production pre-claim running check.
       (worker as unknown as { running: boolean }).running = true;
       mockDb.db.select = vi.fn().mockReturnValueOnce({
         from: vi.fn().mockReturnThis(),
@@ -373,9 +334,6 @@ describe('ImportQueueWorker', () => {
       ).rejects.toThrow(/rowsAffected/);
     });
 
-    // F72: a drain that resumes from the candidate SELECT after stop() set
-    // `stopping` must abort at the pre-claim barrier — no atomic claim UPDATE runs,
-    // so the durable `import_jobs` row stays `pending` for boot recovery.
     it('F72 pre-claim barrier: aborts before the claim UPDATE when stopping is set (row stays pending)', async () => {
       (worker as unknown as { running: boolean; stopping: boolean }).running = true;
       (worker as unknown as { running: boolean; stopping: boolean }).stopping = true;
@@ -394,11 +352,6 @@ describe('ImportQueueWorker', () => {
       expect(updateSpy).not.toHaveBeenCalled();
     });
 
-    // F72: the FULL lifecycle boundary — a real drain launched by start() and parked
-    // in the candidate SELECT when stop() is called. stop() must AWAIT that launched
-    // drain (proving `runDrainPromise` is awaited), and when the drain resumes the
-    // pre-claim barrier must abort it so NO claim UPDATE runs and the row stays pending.
-    // A fresh, running worker then claims the same still-pending row.
     it('F72 lifecycle: stop() awaits a drain parked in the candidate SELECT and the barrier prevents any claim; a fresh worker then claims the row', async () => {
       let releaseSelect!: () => void;
       const selectGate = new Promise<void>((res) => { releaseSelect = res; });
@@ -406,10 +359,9 @@ describe('ImportQueueWorker', () => {
       mockDb.db.select = vi.fn().mockImplementation(() => {
         selectCall++;
         if (selectCall === 1) {
-          // bootRecovery orphan scan — no orphans.
           return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
         }
-        // The drain's candidate SELECT — park here until released, then surface a pending row.
+        // Park the candidate select until stop() is waiting.
         return {
           from: vi.fn().mockReturnThis(),
           where: vi.fn().mockReturnThis(),
@@ -420,36 +372,29 @@ describe('ImportQueueWorker', () => {
       const claimSpy = vi.fn(() => updateWhereTerminus());
       mockDb.db.update = claimSpy;
 
-      await worker.start(); // launches a drain that parks in the gated candidate SELECT
+      await worker.start();
 
-      // stop() sets `stopping` and awaits the launched drain — it must NOT resolve while
-      // the drain is still parked in the SELECT.
       let stopResolved = false;
       const stopP = worker.stop().then(() => { stopResolved = true; });
       await new Promise((r) => setTimeout(r, 20));
-      expect(stopResolved).toBe(false); // stop() is awaiting the parked drain
+      expect(stopResolved).toBe(false);
 
-      releaseSelect(); // drain resumes from the SELECT
+      releaseSelect();
       await stopP;
       expect(stopResolved).toBe(true);
 
-      // Pre-claim barrier: the resumed drain aborted BEFORE the atomic claim — no
-      // UPDATE ran, so the durable import_jobs row is left `pending`.
       expect(claimSpy).not.toHaveBeenCalled();
 
-      // F20: a fresh worker started through its PUBLIC api boot-recovers, claims the
-      // still-pending row, runs the adapter, and drives it to a terminal 'completed'
-      // write — proving the barrier-left-pending row is genuinely recovered on restart.
       const processedIds: number[] = [];
       registerImportAdapter({ type: 'manual', async process(job) { processedIds.push(job.id); } });
 
       let freshSelect = 0;
       mockDb.db.select = vi.fn().mockImplementation(() => {
         freshSelect++;
-        if (freshSelect === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) }; // bootRecovery: no orphans
-        if (freshSelect === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 42 }]) }; // drain candidate
-        if (freshSelect === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 42, bookId: 10, type: 'manual', status: 'processing', metadata: '{}' }]) }; // full job fetch
-        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) }; // resolveBookTitle + no more candidates
+        if (freshSelect === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
+        if (freshSelect === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 42 }]) };
+        if (freshSelect === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 42, bookId: 10, type: 'manual', status: 'processing', metadata: '{}' }]) };
+        return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
       });
       const setPayloads: Record<string, unknown>[] = [];
       mockDb.db.update = vi.fn().mockImplementation(() => ({
@@ -457,22 +402,16 @@ describe('ImportQueueWorker', () => {
       }));
 
       const fresh = new ImportQueueWorker(inject<Db>(mockDb.db), log);
-      await fresh.start(); // public boot: bootRecovery → drainLoop → claim → adapter
+      await fresh.start();
       await new Promise((r) => setTimeout(r, 100));
       await fresh.stop();
 
-      expect(processedIds).toContain(42); // the durable pending row was claimed + processed
-      expect(setPayloads.some((p) => p.status === 'completed')).toBe(true); // reached terminal completed
+      expect(processedIds).toContain(42);
+      expect(setPayloads.some((p) => p.status === 'completed')).toBe(true);
     });
   });
 
-  // #1122 — Within the worker, `requestDrain()` coalesces nudges and safety-poll
-  // ticks behind a `drainInProgress` guard so only one drain runner is active at
-  // a time. The atomic CAS UPDATE in drainOne() still backs row ownership, but
-  // the in-process serialization is the load-bearing guarantee: imports run
-  // exactly one at a time per Narratorr process. The "single-active enforcement"
-  // and "nudge during in-flight job" tests below exercise that guarantee and
-  // would fail against the pre-#1122 unguarded drain.
+  // requestDrain serializes in-process work; CAS still owns rows across workers (#1122).
   describe('drain loop', () => {
     it('failure of one job does NOT stop drain of subsequent jobs', async () => {
       const processedIds: number[] = [];
@@ -488,14 +427,12 @@ describe('ImportQueueWorker', () => {
       let selectCallCount = 0;
       mockDb.db.select = vi.fn().mockImplementation(() => {
         selectCallCount++;
-        // Boot recovery: no orphans
         if (selectCallCount === 1) {
           return {
             from: vi.fn().mockReturnThis(),
             where: vi.fn().mockResolvedValue([]),
           };
         }
-        // Drain candidates
         if (selectCallCount === 2) {
           return {
             from: vi.fn().mockReturnThis(),
@@ -505,7 +442,6 @@ describe('ImportQueueWorker', () => {
           };
         }
         if (selectCallCount === 3) {
-          // Full job fetch for job 1
           return {
             from: vi.fn().mockReturnThis(),
             where: vi.fn().mockReturnThis(),
@@ -513,7 +449,6 @@ describe('ImportQueueWorker', () => {
           };
         }
         if (selectCallCount === 4) {
-          // resolveBookTitle for the failed job 1 — no row → fallback to 'Unknown'
           return {
             from: vi.fn().mockReturnThis(),
             where: vi.fn().mockReturnThis(),
@@ -529,14 +464,12 @@ describe('ImportQueueWorker', () => {
           };
         }
         if (selectCallCount === 6) {
-          // Full job fetch for job 2
           return {
             from: vi.fn().mockReturnThis(),
             where: vi.fn().mockReturnThis(),
             limit: vi.fn().mockResolvedValue([{ id: 2, bookId: 20, type: 'manual', status: 'processing', metadata: '{}' }]),
           };
         }
-        // No more
         return {
           from: vi.fn().mockReturnThis(),
           where: vi.fn().mockReturnThis(),
@@ -559,8 +492,6 @@ describe('ImportQueueWorker', () => {
     });
 
     it('unknown adapter type marks row failed with books.status=failed', async () => {
-      // No adapters registered — type 'manual' is unknown
-
       let selectCallCount = 0;
       mockDb.db.select = vi.fn().mockImplementation(() => {
         selectCallCount++;
@@ -601,7 +532,6 @@ describe('ImportQueueWorker', () => {
       await worker.start();
       await new Promise(r => setTimeout(r, 100));
 
-      // Should have: claim update, job failed update, book failed update
       const failedJob = updateSets.find(s => s.status === 'failed' && s.phase === 'failed');
       expect(failedJob).toBeDefined();
       expect(failedJob!.lastError).toBeDefined();
@@ -613,16 +543,7 @@ describe('ImportQueueWorker', () => {
     });
   });
 
-  // ===========================================================================
-  // #1122 — Re-entrancy guard: at most one active drain runner per process
-  // ===========================================================================
-
   describe('#1122 drain re-entrancy guard', () => {
-    /**
-     * Stages two pending jobs with a single shared "gate" the test resolves
-     * to release the first job's adapter. Tracks active concurrency inside
-     * the adapter so the test can assert maxActive===1 across the sequence.
-     */
     function setupTwoPendingJobs() {
       let gateResolve: () => void = () => {};
       const gate = new Promise<void>((resolve) => { gateResolve = resolve; });
@@ -650,9 +571,7 @@ describe('ImportQueueWorker', () => {
       };
       registerImportAdapter(adapter);
 
-      // selectCallCount walks: boot recovery, candidate-1, fetch-1,
-      // resolveBookTitle-1 (post-completion books lookup), candidate-2,
-      // fetch-2, resolveBookTitle-2, idle…
+      // Select order: recovery, candidate/fetch/title for job 1, candidate/fetch/title for job 2, idle.
       let selectCallCount = 0;
       mockDb.db.select = vi.fn().mockImplementation(() => {
         selectCallCount++;
@@ -666,7 +585,6 @@ describe('ImportQueueWorker', () => {
           return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 1, bookId: 10, type: 'manual', status: 'processing', metadata: '{}' }]) };
         }
         if (selectCallCount === 4) {
-          // resolveBookTitle for job 1 — falls back to 'Unknown'.
           return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
         }
         if (selectCallCount === 5) {
@@ -699,21 +617,17 @@ describe('ImportQueueWorker', () => {
       await worker.start();
       await harness.awaitEntered1();
 
-      // Job 1 is parked at the gate. Pile on nudges.
       worker.nudge();
       worker.nudge();
       worker.nudge();
       worker.nudge();
 
-      // Yield enough turns for any leaked drain runners to claim job 2.
       await new Promise(r => setTimeout(r, 20));
 
-      // Job 2 must NOT have entered while job 1 is still running.
       expect(harness.getActiveCount()).toBe(1);
       expect(harness.getMaxActive()).toBe(1);
       expect(harness.getProcessedIds()).toEqual([]);
 
-      // Release the gate; the in-flight runner should then pick up job 2.
       harness.releaseGate();
       await new Promise(r => setTimeout(r, 50));
 
@@ -722,21 +636,13 @@ describe('ImportQueueWorker', () => {
     });
 
     it('nudge fired between drainOne() calls coalesces into the active runner instead of spawning a second', async () => {
-      // F: setupTwoPendingJobs() stages a select chain that returns job 1, then
-      // job 2, then idle. After job 1 finishes, job 2 is still pending. A nudge
-      // fired now (while the runner is between drainOne() calls) MUST be
-      // serviced by the same runner, not by a fresh concurrent one — otherwise
-      // the maxActive guarantee breaks.
       const harness = setupTwoPendingJobs();
 
       await worker.start();
       await harness.awaitEntered1();
 
-      // Pile a nudge on top of the in-flight runner.
       worker.nudge();
 
-      // Now release the gate — runner finishes job 1, the queued drainRequested
-      // forces another pass, runner picks up and finishes job 2.
       harness.releaseGate();
       await new Promise(r => setTimeout(r, 50));
 
@@ -745,9 +651,6 @@ describe('ImportQueueWorker', () => {
     });
 
     it('nudge after the runner has cleared starts a fresh drain — no missed wake-up', async () => {
-      // Stage: boot recovery empty, then drain candidate select returns nothing
-      // (no pending jobs at boot). After the runner exits, fire a nudge with
-      // a single pending job staged. The new drain runner must pick it up.
       const processedIds: number[] = [];
       const adapter: ImportAdapter = {
         type: 'manual',
@@ -757,29 +660,19 @@ describe('ImportQueueWorker', () => {
       };
       registerImportAdapter(adapter);
 
-      // Walk through the select-call sequence with an index. Boot recovery
-      // resolves via from().where(); candidate selects walk from().where()
-      // .orderBy().limit(); full-row fetch walks from().where().limit().
       let pendingJobReady = false;
       let candidateDelivered = false;
       let fullRowDelivered = false;
 
       mockDb.db.select = vi.fn().mockImplementation(() => {
-        // Single chain object reused for both shapes; the awaited terminal
-        // (where for boot recovery, limit for drainOne) is what matters.
         const chain = {
           from: vi.fn().mockReturnThis(),
           where: vi.fn().mockImplementation(() => {
-            // For boot recovery this is awaited directly → resolve to [].
-            // For drainOne candidate/full-row paths, this returns `this`
-            // so .orderBy()/.limit() chain further. The default resolve to
-            // [] supports the boot-recovery shape.
+            // Awaitable for boot recovery and chainable for candidate/full-row reads.
             return Object.assign(Promise.resolve([]), {
               orderBy: vi.fn().mockReturnThis(),
               limit: vi.fn().mockImplementation(() => {
                 if (!pendingJobReady) return Promise.resolve([]);
-                // Candidate select → return id once; subsequent passes idle.
-                // Full-row select → return row once after candidate delivered.
                 if (!candidateDelivered) {
                   candidateDelivered = true;
                   return Promise.resolve([{ id: 9 }]);
@@ -803,12 +696,9 @@ describe('ImportQueueWorker', () => {
       }));
 
       await worker.start();
-      // Initial drain runs with pendingJobReady=false → exits cleanly.
       await new Promise(r => setTimeout(r, 30));
       expect(processedIds).toEqual([]);
 
-      // Drain runner has cleared (drainInProgress === false). Arm a pending
-      // job and nudge — a fresh runner must spawn and pick up job 9.
       pendingJobReady = true;
       worker.nudge();
       await new Promise(r => setTimeout(r, 30));
@@ -822,13 +712,9 @@ describe('ImportQueueWorker', () => {
       await worker.start();
       await harness.awaitEntered1();
 
-      // Issue stop() while job 1 is still parked at the gate. stop() must
-      // await the current job. We don't await stop() here — we resolve the
-      // gate first, then await stop(), to assert it returns once job 1 finishes.
+      // Release the gated job before awaiting stop; stop intentionally waits for it.
       const stopPromise = worker.stop();
 
-      // A stale runner would pick up job 2 between gate-release and stop's
-      // completion. The guard + stopping flag should prevent that.
       worker.nudge();
       harness.releaseGate();
 
@@ -839,21 +725,8 @@ describe('ImportQueueWorker', () => {
     });
 
     it('safety-poll interval routes through the guard — leaked poll runners would claim job 2; the guard must prevent it', async () => {
-      // F1 (round 2): An unguarded poll callback would spawn a fresh drain
-      // runner whose drainOne() must be able to ACTUALLY claim and process
-      // job 2 — otherwise the test passes for the wrong reason (e.g. a
-      // call-count mock that has no .orderBy() at the 4th call would make
-      // a leaked runner throw before it could enter job 2, leaving the
-      // maxActive===1 assertion accidentally true).
-      //
-      // Solution: structure the mock by chain SHAPE, not call count. Any
-      // candidate-shaped select (.from().where().orderBy().limit()) drains
-      // a FIFO of pending ids; any full-row-shaped select (.from().where()
-      // .limit() without .orderBy()) returns the row paired with the most
-      // recent candidate. Under the guard-intact path the runner walks
-      // job 1 → resolveBookTitle → job 2 in order; under regression the
-      // leaked poll runner can claim job 2 concurrently and maxActive flips
-      // to 2, failing the test for the intended reason.
+      // Shape-based mocks let a leaked runner really claim job 2; a call-count mock
+      // could throw first and make the concurrency assertion pass accidentally.
       const candidateQueue: number[] = [1, 2];
       type JobRow = { id: number; bookId: number; type: string; status: string; metadata: string };
       const rowsById: Record<number, JobRow> = {
@@ -911,9 +784,7 @@ describe('ImportQueueWorker', () => {
         return {
           from: vi.fn().mockReturnThis(),
           where: vi.fn().mockImplementation(() => {
-            // Boot recovery's first select awaits where() directly with no
-            // limit/orderBy chaining. Mark it done so it can't accidentally
-            // re-enter; subsequent where() calls feed the drainOne chain.
+            // The first where() is boot recovery; later calls return drain chains.
             if (!bootRecoveryDone) {
               bootRecoveryDone = true;
               return Promise.resolve([]);
@@ -934,26 +805,16 @@ describe('ImportQueueWorker', () => {
         await worker.start();
         await entered1;
 
-        // Job 1 is parked at the gate. Fire several safety-poll ticks. Under
-        // the guard, each callback merely sets drainRequested. Under regression
-        // (e.g. `void drain()` in the interval), each tick spawns a fresh
-        // runner whose drainOne would shift '2' off the queue and run the
-        // adapter for job 2 concurrently with job 1 → maxActive becomes 2.
         vi.advanceTimersByTime(120_000); // 4 × SAFETY_POLL_INTERVAL_MS
 
         vi.useRealTimers();
         await new Promise(r => setTimeout(r, 20));
 
-        // The load-bearing assertions: maxActive===1 AND processedIds===[]
-        // AND the candidate queue still contains job 2. If any of those flip,
-        // a leaked runner got through.
         expect(activeCount).toBe(1);
         expect(maxActive).toBe(1);
         expect(processedIds).toEqual([]);
         expect(candidateQueue).toEqual([2]);
 
-        // Release the gate. The drainRequested set by the poll callbacks
-        // should drive the same runner to claim and process job 2.
         gateResolve();
         await new Promise(r => setTimeout(r, 50));
 
@@ -965,14 +826,7 @@ describe('ImportQueueWorker', () => {
     });
 
     it('unexpected drain-runner error is caught and logged via serializeError() with the canonical "Drain runner failed unexpectedly" message', async () => {
-      // F2: runDrain() now catches drain-level rejections so the guard does
-      // not latch on. Without a test, deleting the catch/log or logging the
-      // raw error (skipping serializeError) would not fail any other test.
-      // We force drainOne() to throw by rejecting the candidate-select limit()
-      // — this propagates through drainOne → runDrain's catch.
       mockDb.db.select = vi.fn().mockImplementation(() => {
-        // First call is boot recovery (from().where()), which we resolve to
-        // an empty orphan list. After that, every candidate select must throw.
         return {
           from: vi.fn().mockReturnThis(),
           where: vi.fn().mockImplementation(() => {
@@ -985,7 +839,6 @@ describe('ImportQueueWorker', () => {
       });
 
       await worker.start();
-      // Allow the scheduled drain runner to spin up, throw, and reach the catch.
       await new Promise(r => setTimeout(r, 30));
 
       const logErrMock = log as unknown as { error: ReturnType<typeof vi.fn> };
@@ -994,8 +847,7 @@ describe('ImportQueueWorker', () => {
       });
       expect(runnerErrCalls).toHaveLength(1);
 
-      // The error payload must carry serializeError()'s shape — a plain object
-      // with `message` and `type`, NOT a raw Error (which Pino would dump as {}).
+      // Pino renders a raw Error as {}; require serializeError's plain object.
       const errCtx = runnerErrCalls[0]![0] as { error: Record<string, unknown> };
       expect(errCtx.error).toBeTypeOf('object');
       expect(errCtx.error).not.toBeInstanceOf(Error);
@@ -1004,16 +856,11 @@ describe('ImportQueueWorker', () => {
     });
   });
 
-  // ===========================================================================
-  // #637 — Phase history persistence + event wiring
-  // ===========================================================================
-
   describe('#637 phase history persistence', () => {
     it('setPhase appends new phaseHistory entry with startedAt', async () => {
       const mockBroadcaster = { emit: vi.fn() };
       const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
 
-      // Register a simple adapter that calls setPhase
       const adapter: ImportAdapter = {
         type: 'manual',
         async process(_job: ImportJob, ctx) {
@@ -1022,7 +869,6 @@ describe('ImportQueueWorker', () => {
       };
       registerImportAdapter(adapter);
 
-      // Mock: boot recovery = no orphans, 1 pending job, then no more
       let selectCallCount = 0;
       mockDb.db.select = vi.fn().mockImplementation(() => {
         selectCallCount++;
@@ -1044,7 +890,6 @@ describe('ImportQueueWorker', () => {
       await new Promise(r => setTimeout(r, 100));
       await workerWithBroadcaster.stop();
 
-      // Find the setPhase update that includes phaseHistory
       const phaseUpdate = updateSets.find(s => s.phase === 'analyzing' && s.phaseHistory);
       expect(phaseUpdate).toBeDefined();
       const history = JSON.parse(phaseUpdate!.phaseHistory as string);
@@ -1055,11 +900,6 @@ describe('ImportQueueWorker', () => {
     });
 
     it('#745 worker hydration: malformed persisted phaseHistory does not strand the job — falls back to [], warns, and completion proceeds', async () => {
-      // F1 regression guard: if the worker hydration line reverts to a bare
-      // JSON.parse(), this test fails because (a) JSON.parse('not-json') throws
-      // before the adapter dispatches, so the completion update is never made,
-      // and (b) no warn is logged. The whole point of the parsePhaseHistory
-      // fallback is that one corrupt row cannot strand a claimed job.
       const mockBroadcaster = { emit: vi.fn() };
       const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
 
@@ -1092,28 +932,21 @@ describe('ImportQueueWorker', () => {
       await new Promise(r => setTimeout(r, 100));
       await workerWithBroadcaster.stop();
 
-      // Warn was emitted by parsePhaseHistory for the malformed JSON. The payload is
-      // `{ jobId }` ONLY — the parse error used to ride along, and V8 quotes a window
-      // of the offending source into its message (#2069 F2 sibling).
+      // Never log the parse error: V8 may quote persisted content in its message.
       expect(log.warn).toHaveBeenCalledWith(
         { jobId: 42 },
         expect.stringContaining('Unparseable phaseHistory'),
       );
 
-      // Job was NOT stranded — completion update fired with status 'completed'.
       const completionUpdate = updateSets.find(s => s.status === 'completed' && s.phaseHistory);
       expect(completionUpdate).toBeDefined();
 
-      // The corrupt history was discarded (length 1 = only the freshly
-      // appended 'analyzing' phase, not 1+ residual entries from the bad row).
       const history = JSON.parse(completionUpdate!.phaseHistory as string) as Array<{ phase: string; startedAt: number; completedAt?: number }>;
       expect(history).toHaveLength(1);
       expect(history[0]!.phase).toBe('analyzing');
     });
 
     it('#745 worker hydration: wrong-shape persisted phaseHistory falls back to [] with warn', async () => {
-      // F1 regression guard (companion): valid JSON but shape mismatch must
-      // also be caught by safeParse, not propagate as an uncaught throw.
       const mockBroadcaster = { emit: vi.fn() };
       const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
 
@@ -1146,8 +979,7 @@ describe('ImportQueueWorker', () => {
       await new Promise(r => setTimeout(r, 100));
       await workerWithBroadcaster.stop();
 
-      // Issue PATHS, not the ZodError — its message renders the `received` values,
-      // which for this column is persisted content (#2069 F2 sibling, #1404 rule).
+      // Log issue paths, not ZodError messages that can render persisted values.
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ jobId: 43, issuePaths: expect.any(Array) }),
         expect.stringContaining('Malformed phaseHistory'),
@@ -1193,7 +1025,6 @@ describe('ImportQueueWorker', () => {
       await new Promise(r => setTimeout(r, 100));
       await workerWithBroadcaster.stop();
 
-      // The completion update should have phaseHistory with completedAt set
       const completionUpdate = updateSets.find(s => s.status === 'completed' && s.phaseHistory);
       expect(completionUpdate).toBeDefined();
       const history = JSON.parse(completionUpdate!.phaseHistory as string);
@@ -1234,12 +1065,10 @@ describe('ImportQueueWorker', () => {
       await new Promise(r => setTimeout(r, 100));
       await workerWithBroadcaster.stop();
 
-      // Should have emitted import_phase_change events
       const phaseChangeCalls = emitSpy.mock.calls.filter(
         (call: unknown[]) => call[0] === 'import_phase_change'
       );
       expect(phaseChangeCalls.length).toBeGreaterThanOrEqual(1);
-      // First phase change: queued → analyzing
       expect(phaseChangeCalls[0]![1]).toMatchObject({
         job_id: 1,
         book_id: 10,
@@ -1264,9 +1093,7 @@ describe('ImportQueueWorker', () => {
         selectCallCount++;
         if (selectCallCount === 1) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
         if (selectCallCount === 2) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 5 }]) };
-        // Metadata title intentionally differs from the DB row — DB must win.
         if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 5, bookId: 50, type: 'manual', status: 'processing', metadata: '{"path":"/lib/MyBook","title":"User Manual Title"}', phaseHistory: null }]) };
-        // #1094 — resolveBookTitle reads the books row with the canonical (enriched) title.
         if (selectCallCount === 4) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ title: 'My Book' }]) };
         return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
       });
@@ -1286,7 +1113,6 @@ describe('ImportQueueWorker', () => {
       expect(completeCalls[0]![1]).toMatchObject({
         job_id: 5,
         book_id: 50,
-        // DB title wins — the manual metadata's "User Manual Title" must not leak through.
         book_title: 'My Book',
       });
       expect(completeCalls[0]![1].book_title).not.toBe('User Manual Title');
@@ -1367,7 +1193,6 @@ describe('ImportQueueWorker', () => {
       await new Promise(r => setTimeout(r, 100));
       await workerWithBroadcaster.stop();
 
-      // The failed-row update should include phaseHistory with closed entry
       const failedUpdate = updateSets.find(s => s.status === 'failed' && s.phaseHistory);
       expect(failedUpdate).toBeDefined();
       const history = JSON.parse(failedUpdate!.phaseHistory as string);
@@ -1379,28 +1204,15 @@ describe('ImportQueueWorker', () => {
 
     it('EventBroadcasterService is injected via constructor', () => {
       const mockBroadcaster = { emit: vi.fn() };
-      // Should not throw with 3rd arg
       const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
       expect(w).toBeDefined();
     });
   });
 
-  // ===========================================================================
-  // #1448 (S2e) — Import-job failure-window atomicity (phase/status)
-  //
-  // markJobFailed wraps its import_jobs + books failed-state writes in a single
-  // transaction so an observer joining the two rows never sees the job
-  // status='failed' while the book is still importing. Mirrors bootRecovery.
-  // The SSE emit stays OUTSIDE the transaction (side effect, must not roll back
-  // the durable DB write on a broadcaster error).
-  // ===========================================================================
+  // Job and book failure states commit together; SSE stays outside the transaction
+  // so broadcaster failure cannot roll back durable state (#1448).
 
   describe('#1448 failure-window atomicity', () => {
-    /**
-     * Drives a single pending manual job whose adapter throws, through the
-     * claim → process → failure path. selectCallCount walks: boot recovery
-     * (empty), candidate select, full-row fetch, then idle.
-     */
     function setupFailingJob(jobRow: Record<string, unknown>) {
       const adapter: ImportAdapter = {
         type: 'manual',
@@ -1419,13 +1231,8 @@ describe('ImportQueueWorker', () => {
     }
 
     it('a normal job failure commits BOTH the import_jobs (status+phase) and books (status) writes via the tx handle', async () => {
-      // Locks the within-row invariant (status='failed' AND phase='failed' in one
-      // import_jobs write) AND the cross-row commit (books status='failed' too),
-      // both routed through the default callback-executing transaction handle.
       setupFailingJob({ id: 8, bookId: 80, type: 'manual', status: 'processing', phase: 'copying', metadata: '{"title":"Failed Book"}', phaseHistory: null });
 
-      // The default createMockDb transaction delegates tx.update → live db.update,
-      // so reassigning db.update to a recorder captures the transactional writes.
       const updateSets: Record<string, unknown>[] = [];
       mockDb.db.update = vi.fn().mockImplementation(() => ({
         set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
@@ -1437,28 +1244,19 @@ describe('ImportQueueWorker', () => {
       await worker.start();
       await new Promise(r => setTimeout(r, 100));
 
-      // The failure ran through a transaction (not two bare writes).
       expect(mockDb.db.transaction).toHaveBeenCalled();
 
-      // import_jobs failed write carries BOTH status AND phase in one payload.
       const failedJob = updateSets.find(s => s.status === 'failed' && s.phase === 'failed');
       expect(failedJob).toBeDefined();
       expect(failedJob!.lastError).toBeDefined();
 
-      // books failed write carries status only — no phase / lastError discriminator.
       const failedBook = updateSets.find(s => s.status === 'failed' && !('phase' in s) && !('lastError' in s));
       expect(failedBook).toBeDefined();
     });
 
     it('atomicity: when the books write throws inside the failure transaction, the import_jobs failed-state write is rolled back', async () => {
-      // Mirror of the bootRecovery rollback test: stage writes inside the tx
-      // callback; only commit them if the callback resolves cleanly. The second
-      // write (books) throws, so the staged import_jobs failed write is discarded.
       setupFailingJob({ id: 9, bookId: 90, type: 'manual', status: 'processing', phase: 'copying', metadata: '{"title":"Failed Book"}', phaseHistory: null });
 
-      // Record bare (non-transactional) db.update payloads — the CAS claim
-      // (status:'processing') and any setPhase (phase-only) writes legitimately
-      // run outside a transaction and must NEVER carry status:'failed'.
       const bareUpdateSets: Record<string, unknown>[] = [];
       mockDb.db.update = vi.fn().mockImplementation(() => ({
         set: vi.fn().mockImplementation((payload: Record<string, unknown>) => {
@@ -1475,11 +1273,9 @@ describe('ImportQueueWorker', () => {
           update: vi.fn().mockImplementation(() => ({
             set: vi.fn().mockImplementation((payload: Record<string, unknown>) => ({
               where: vi.fn().mockImplementation(() => {
-                // First write in the tx = import_jobs, second = books (source order).
+                // Source writes import_jobs first, then guarded books returning().
                 const isBooks = writeCount > 0;
                 writeCount++;
-                // Guarded book write (#1470): source does `.where(...).returning(...)`.
-                // The tx-aborting throw surfaces at the returning() round-trip.
                 if (isBooks) return { returning: vi.fn().mockImplementation(async () => { throw new Error('books write failed'); }) };
                 staged.push(payload);
                 return Promise.resolve({ rowsAffected: 1 });
@@ -1487,8 +1283,7 @@ describe('ImportQueueWorker', () => {
             })),
           })),
         };
-        // Commit staged writes only if the callback resolves cleanly (rollback
-        // contract: an exception aborts the tx and discards staged changes).
+        // Commit only after the callback resolves to model rollback.
         await cb(tx);
         committed.push(...staged);
       });
@@ -1496,24 +1291,12 @@ describe('ImportQueueWorker', () => {
       await worker.start();
       await new Promise(r => setTimeout(r, 100));
 
-      // The failure transaction was attempted...
       expect(mockDb.db.transaction).toHaveBeenCalled();
-      // ...but nothing committed — the books throw rolled back the import_jobs write.
       expect(committed).toEqual([]);
-      // No failed-state write leaked through the bare (non-transactional) path.
-      // (CAS claim / setPhase writes are legitimate but must not be status:'failed'.)
       expect(bareUpdateSets.find(s => s.status === 'failed')).toBeUndefined();
-
-      // No manual settle/clear of currentJobPromise needed: drainOne's finally
-      // (#1462) nulls the parked rejected promise, so the shared afterEach stop()
-      // does not re-await a rejection.
     });
 
     it('#1462: a job whose markJobFailed transaction aborts leaves currentJobPromise null', async () => {
-      // Drive the adapter-throws → markJobFailed path, and make markJobFailed's
-      // transaction reject (guarded books write's .returning() throws, mirroring
-      // the rollback test). drainOne's finally must null the parked rejected
-      // promise on the failure outcome — asserted WITHOUT any manual settle.
       setupFailingJob({ id: 10, bookId: 100, type: 'manual', status: 'processing', phase: 'copying', metadata: '{"title":"Failed Book"}', phaseHistory: null });
 
       mockDb.db.update = vi.fn().mockImplementation(() => ({
@@ -1544,8 +1327,6 @@ describe('ImportQueueWorker', () => {
     });
 
     it('#1462: stop() after a job whose markJobFailed transaction aborts resolves without rejecting', async () => {
-      // Regression the prior #1448 workaround masked: with the parked rejected
-      // promise cleared, stop() must not re-await/re-reject during shutdown.
       setupFailingJob({ id: 11, bookId: 110, type: 'manual', status: 'processing', phase: 'copying', metadata: '{"title":"Failed Book"}', phaseHistory: null });
 
       mockDb.db.update = vi.fn().mockImplementation(() => ({
@@ -1575,9 +1356,6 @@ describe('ImportQueueWorker', () => {
     });
 
     it('#1462: a rejected processJob still reaches runDrain — the canonical failure log is emitted', async () => {
-      // The fix only clears the parked promise; it must not swallow the drain
-      // error. After a markJobFailed transaction abort, runDrain's catch still
-      // logs 'Drain runner failed unexpectedly'.
       setupFailingJob({ id: 12, bookId: 120, type: 'manual', status: 'processing', phase: 'copying', metadata: '{"title":"Failed Book"}', phaseHistory: null });
 
       mockDb.db.update = vi.fn().mockImplementation(() => ({
@@ -1609,8 +1387,6 @@ describe('ImportQueueWorker', () => {
     });
 
     it('#1462: a successful import also leaves currentJobPromise null (finally guards the resolve path)', async () => {
-      // Guards against a finally that mishandles the resolve path: success must
-      // still null the promise, same observable end state as today.
       const okAdapter: ImportAdapter = { type: 'manual', async process() { /* resolves */ } };
       registerImportAdapter(okAdapter);
 
@@ -1635,22 +1411,9 @@ describe('ImportQueueWorker', () => {
     });
   });
 
-  // ===========================================================================
-  // #1470 — Failure write must not clobber a reverted books.status. The
-  // failure-time `books.status='failed'` write is guarded with
-  // `expected: { status: 'importing' }`, so once `handleImportFailure`'s
-  // `bookStatusAtGrab` revert has moved the book off `importing` the guarded
-  // write is a no-op and the reverted status stands.
-  // ===========================================================================
+  // A failure write may change books.status only while it is still importing (#1470).
 
   describe('#1470 guarded failure write preserves the bookStatusAtGrab revert', () => {
-    /**
-     * Drives a single pending manual job whose adapter throws, through claim →
-     * process → failure. selectCallCount walks: boot recovery (empty), candidate
-     * select, full-row fetch, then idle. Wires a bare `db.update` recorder (the
-     * CAS claim / setPhase writes) and a stateful guarded `db.transaction` so the
-     * test observes the end-state of the guarded `books` write.
-     */
     function setupGuardedFailingJob(jobRow: Record<string, unknown>, state: { bookStatus: BookStatus | null }) {
       const adapter: ImportAdapter = {
         type: 'manual',
@@ -1667,7 +1430,6 @@ describe('ImportQueueWorker', () => {
         return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
       });
 
-      // Bare writes (claim / setPhase) are import_jobs writes — awaitable terminus.
       mockDb.db.update = vi.fn().mockImplementation(() => ({
         set: vi.fn().mockImplementation(() => ({ where: vi.fn().mockImplementation(() => updateWhereTerminus()) })),
       }));
@@ -1678,9 +1440,6 @@ describe('ImportQueueWorker', () => {
     }
 
     it('re-import failure: a book already reverted to imported is NOT clobbered to failed (guard miss)', async () => {
-      // Models the headline bug: handleImportFailure already reverted the book off
-      // `importing` (to its `imported` pre-grab snapshot) before markJobFailed runs
-      // in the worker catch. The guarded failure write must miss and leave it.
       const state = { bookStatus: 'imported' as BookStatus | null };
       const guarded = setupGuardedFailingJob(
         { id: 8, bookId: 80, type: 'manual', status: 'processing', phase: 'copying', metadata: '{"title":"Reimported Book"}', phaseHistory: null },
@@ -1690,14 +1449,12 @@ describe('ImportQueueWorker', () => {
       await worker.start();
       await new Promise(r => setTimeout(r, 100));
 
-      // import_jobs is still durably failed...
       expect(guarded.jobWrites.find(s => s.status === 'failed' && s.phase === 'failed')).toBeDefined();
-      // ...but the guarded books write was attempted, missed, and left the revert.
       expect(guarded.bookWrites).toHaveLength(1);
       expect(guarded.bookWrites[0]!.payload).toMatchObject({ status: 'failed' });
-      expect(guarded.bookWrites[0]!.returningCalled).toBe(true); // guarded path, not unconditional
+      expect(guarded.bookWrites[0]!.returningCalled).toBe(true);
       expect(guarded.bookWrites[0]!.guardMatched).toBe(false);
-      expect(state.bookStatus).toBe('imported'); // NOT 'failed'
+      expect(state.bookStatus).toBe('imported');
     });
 
     it('fresh-grab failure: a book already reverted to wanted is NOT clobbered to failed (guard miss)', async () => {
@@ -1712,12 +1469,10 @@ describe('ImportQueueWorker', () => {
 
       expect(guarded.jobWrites.find(s => s.status === 'failed' && s.phase === 'failed')).toBeDefined();
       expect(guarded.bookWrites[0]!.guardMatched).toBe(false);
-      expect(state.bookStatus).toBe('wanted'); // NOT 'failed'
+      expect(state.bookStatus).toBe('wanted');
     });
 
     it('no revert ran: a still-importing book settles to failed (guard match)', async () => {
-      // The no-revert path (e.g. a failure before handleImportFailure's revert):
-      // the book is still `importing`, the guard matches, and it settles to failed.
       const state = { bookStatus: 'importing' as BookStatus | null };
       const guarded = setupGuardedFailingJob(
         { id: 10, bookId: 100, type: 'manual', status: 'processing', phase: 'copying', metadata: '{"title":"Importing Book"}', phaseHistory: null },
@@ -1733,14 +1488,9 @@ describe('ImportQueueWorker', () => {
       expect(state.bookStatus).toBe('failed');
     });
 
-    // NOTE: boot-recovery orphan handling no longer writes the book at all (#1663) —
-    // it reads book status and either re-queues the job (book still `importing`) or
-    // terminal-fails it, leaving the book untouched. That matrix is covered in the
-    // 'boot recovery (#1663 requeue-eligibility)' describe above. The guarded book
-    // write tested here remains in force only on the drain-time markJobFailed path.
+    // Boot recovery never writes books; this guard covers only drain-time markJobFailed.
 
     it('unknown adapter: a still-importing book settles to failed via the guarded markJobFailed write', async () => {
-      // No adapters registered — 'manual' is unknown, routes through markJobFailed.
       const state = { bookStatus: 'importing' as BookStatus | null };
       const guarded = makeGuardedTxUpdate(state);
 
@@ -1752,7 +1502,6 @@ describe('ImportQueueWorker', () => {
         if (selectCallCount === 3) return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ id: 5, bookId: 50, type: 'manual', status: 'processing', metadata: '{}' }]) };
         return { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([]) };
       });
-      // The CAS claim runs through bare db.update — awaitable terminus.
       mockDb.db.update = vi.fn().mockImplementation(() => ({
         set: vi.fn().mockImplementation(() => ({ where: vi.fn().mockImplementation(() => updateWhereTerminus()) })),
       }));
@@ -1770,10 +1519,6 @@ describe('ImportQueueWorker', () => {
     });
   });
 
-  // ===========================================================================
-  // #681 — Auto-import phase history (analyzing → copying → renaming → fetching_metadata)
-  // ===========================================================================
-
   describe('#681 auto-import phase history', () => {
     function setupAutoJob(jobRow: Record<string, unknown>) {
       let selectCallCount = 0;
@@ -1790,10 +1535,6 @@ describe('ImportQueueWorker', () => {
       const mockBroadcaster = { emit: vi.fn() };
       const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
 
-      // Orchestrator stub stands in for the real copy/rename/enrich pipeline —
-      // it exercises the callback bag the adapter forwards, so removing the
-      // forwarding in auto.ts would break this test. Orchestrator → service
-      // → helper forwarding is verified at those layers' own unit tests.
       let receivedCallbacks: ImportProgressCallbacks | undefined;
       const orchestratorStub = inject<ImportOrchestrator>({
         importDownload: vi.fn().mockImplementation(async (_id: number, callbacks?: ImportProgressCallbacks) => {
@@ -1820,9 +1561,6 @@ describe('ImportQueueWorker', () => {
       await new Promise(r => setTimeout(r, 100));
       await workerWithBroadcaster.stop();
 
-      // The adapter must have forwarded the context's callback bag to the orchestrator —
-      // otherwise the orchestrator stub could not invoke setPhase, and the history
-      // would stop at 'analyzing'.
       expect(orchestratorStub.importDownload).toHaveBeenCalledWith(99, expect.objectContaining({
         setPhase: expect.any(Function),
         emitProgress: expect.any(Function),
@@ -1830,7 +1568,6 @@ describe('ImportQueueWorker', () => {
       expect(receivedCallbacks?.setPhase).toBeDefined();
       expect(receivedCallbacks?.emitProgress).toBeDefined();
 
-      // Final completion update carries the canonical phaseHistory snapshot
       const completionUpdate = updateSets.find(s => s.status === 'completed' && s.phaseHistory);
       expect(completionUpdate).toBeDefined();
       const history = JSON.parse(completionUpdate!.phaseHistory as string) as Array<{ phase: string; startedAt: number; completedAt?: number }>;
@@ -1846,9 +1583,6 @@ describe('ImportQueueWorker', () => {
       const mockBroadcaster = { emit: vi.fn() };
       const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
 
-      // Stubbed orchestrator models a mid-copy failure — requires the adapter to
-      // forward callbacks so setPhase('copying') lands in phaseHistory before
-      // the pipeline throws.
       const orchestratorStub = inject<ImportOrchestrator>({
         importDownload: vi.fn().mockImplementation(async (_id: number, callbacks?: ImportProgressCallbacks) => {
           await callbacks?.setPhase?.('copying');
@@ -1879,10 +1613,6 @@ describe('ImportQueueWorker', () => {
       expect(lastEntry!.completedAt).toBeTypeOf('number');
     });
   });
-
-  // ===========================================================================
-  // #707 — Nullable book_id / download_id in SSE payloads
-  // ===========================================================================
 
   describe('#707 nullable book_id propagation in SSE payloads', () => {
     function setupNullBookIdJob(adapter: ImportAdapter) {
@@ -1956,8 +1686,6 @@ describe('ImportQueueWorker', () => {
     });
 
     it('boot recovery: an orphan with null bookId skips the book-status read and writes only the job row', async () => {
-      // #1663: a null bookId is not requeue-eligible — no book-status read happens, the
-      // job is terminal-failed, and the book row is never touched (only one tx.update).
       const orphanRows = [{ id: 77, bookId: null }];
 
       let selectCallCount = 0;
@@ -1975,13 +1703,10 @@ describe('ImportQueueWorker', () => {
       await worker.start();
       await new Promise(r => setTimeout(r, 50));
 
-      // tx.update was called exactly once (importJobs only) — no books update because bookId is null
       expect(txUpdate).toHaveBeenCalledTimes(1);
     });
 
     it('markJobFailed still uses null comparison (not sentinel) — failed job with null bookId skips books update', async () => {
-      // Re-asserts AC #3: internal DB-facing guard at markJobFailed continues to
-      // compare against null after the sentinel removal at the SSE boundary.
       const emitSpy = vi.fn();
       const mockBroadcaster = { emit: emitSpy };
       const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
@@ -2003,38 +1728,18 @@ describe('ImportQueueWorker', () => {
       await new Promise(r => setTimeout(r, 100));
       await workerWithBroadcaster.stop();
 
-      // No books update should have happened — only job-status updates (claim + failed)
       const booksFailedUpdate = updateSets.find(s => s.status === 'failed' && !('phase' in s) && !('lastError' in s));
       expect(booksFailedUpdate).toBeUndefined();
 
-      // Job failed update DID happen
       const jobFailedUpdate = updateSets.find(s => s.status === 'failed' && s.phase === 'failed');
       expect(jobFailedUpdate).toBeDefined();
     });
   });
 
-  // ===========================================================================
-  // #717 — Adapter contract regression: real adapters reject null bookId
-  //
-  // Companion to #707 (which tested the SSE-emission boundary with a no-op
-  // adapter). These tests register the real ManualImportAdapter and
-  // AutoImportAdapter and drive the worker end-to-end with a null-bookId job,
-  // verifying the adapter's typed-error reject path AND the SSE payload shape.
-  // The pair guards against:
-  //   (a) a regression that re-introduces `?? 0` upstream of adapter dispatch
-  //       — the adapter would no longer see null and would not throw the
-  //       contract error, failing the error_message assertion.
-  //   (b) a regression that re-introduces `?? 0` in the SSE payload —
-  //       book_id would emit as 0 instead of null, failing that assertion.
-  // ===========================================================================
+  // Real adapters must receive null unchanged; coercing to 0 bypasses their guards
+  // and corrupts the SSE book_id (#717).
 
   describe('#717 real adapters reject null bookId end-to-end', () => {
-    /**
-     * Wires the same selects as setupNullBookIdJob — boot recovery (empty),
-     * candidate select (id 11), full row fetch (bookId:null) — but accepts a
-     * caller-supplied job type and metadata so we can exercise either real
-     * adapter through the same dispatch path used in production.
-     */
     function setupNullBookIdRealAdapter(adapter: ImportAdapter, jobType: 'manual' | 'auto', metadataJson: string) {
       registerImportAdapter(adapter);
       let selectCallCount = 0;
@@ -2055,10 +1760,6 @@ describe('ImportQueueWorker', () => {
       const mockBroadcaster = { emit: emitSpy };
       const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
 
-      // Real ManualImportAdapter — null guard at manual.ts:34-36 throws before
-      // any deps method is touched, so the deps stubs need only satisfy the
-      // constructor type. We track each stub method to assert the throw
-      // happened before reaching DB/service work.
       const bookServiceGetById = vi.fn();
       const settingsServiceGet = vi.fn();
       const eventHistoryCreate = vi.fn();
@@ -2078,14 +1779,11 @@ describe('ImportQueueWorker', () => {
       await new Promise(r => setTimeout(r, 100));
       await workerWithBroadcaster.stop();
 
-      // AC #2 — adapter threw a typed error with the contract message.
       const failedCall = emitSpy.mock.calls.find(c => c[0] === 'import_failed');
       expect(failedCall).toBeDefined();
       const payload = failedCall![1];
       expect(payload.error_message).toContain('requires a bookId');
 
-      // AC #3 — payload validates against the SSE schema; book_id is null,
-      // every other contract field is populated (no unexpected nulls).
       const parsed = importFailedPayload.safeParse(payload);
       expect(parsed.success).toBe(true);
       expect(payload.book_id).toBeNull();
@@ -2097,14 +1795,9 @@ describe('ImportQueueWorker', () => {
       expect(payload.error_message).toBeTypeOf('string');
       expect(payload.error_message.length).toBeGreaterThan(0);
 
-      // AC #4 — the throw fired before any FK lookup against books or any
-      // service call. If `?? 0` were re-introduced upstream, bookId would be
-      // 0 and the adapter would proceed to bookService/db.select(books).
       expect(bookServiceGetById).not.toHaveBeenCalled();
       expect(settingsServiceGet).not.toHaveBeenCalled();
-      // Total selects: 1 boot recovery + 1 candidate + 1 row fetch + 1 next
-      // drain iteration (empty). Any 5th select means the adapter reached
-      // its own books query — the regression we're guarding against.
+      // A fifth select would mean the adapter reached its own books lookup.
       expect(mockDb.db.select.mock.calls.length).toBeLessThanOrEqual(4);
     });
 
@@ -2113,9 +1806,6 @@ describe('ImportQueueWorker', () => {
       const mockBroadcaster = { emit: emitSpy };
       const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
 
-      // Real AutoImportAdapter — null guard at auto.ts:12-15 throws before
-      // importDownload is invoked. The stub records calls so we can assert
-      // the orchestrator was never reached.
       const orchestratorStub = inject<ImportOrchestrator>({
         importDownload: vi.fn(),
       });
@@ -2127,27 +1817,18 @@ describe('ImportQueueWorker', () => {
       await new Promise(r => setTimeout(r, 100));
       await workerWithBroadcaster.stop();
 
-      // AC #4 — the null guard fires before any orchestrator work; if `?? 0`
-      // were re-introduced upstream, this stub would have been invoked.
       expect(orchestratorStub.importDownload).not.toHaveBeenCalled();
 
-      // AC #2 — adapter threw the contract error; worker routed through
-      // markJobFailed and emitted import_failed.
       const failedCall = emitSpy.mock.calls.find(c => c[0] === 'import_failed');
       expect(failedCall).toBeDefined();
       const payload = failedCall![1];
       expect(payload.error_message).toContain('requires a bookId');
 
-      // AC #3 — schema-conformant payload with book_id:null and every other
-      // field populated.
       const parsed = importFailedPayload.safeParse(payload);
       expect(parsed.success).toBe(true);
       expect(payload.book_id).toBeNull();
       expect(payload.book_id).not.toBe(0);
       expect(payload.job_id).toBe(11);
-      // #836 — auto schema has no `title` field, so the stray "Orphan Auto"
-      // in legacy metadata is ignored. extractTitle returns 'Unknown' for
-      // every auto job regardless of metadata contents.
       expect(payload.book_title).toBe('Unknown');
       expect(payload.phase).toBeTypeOf('string');
       expect(payload.phase.length).toBeGreaterThan(0);
@@ -2156,18 +1837,8 @@ describe('ImportQueueWorker', () => {
     });
   });
 
-  // ===========================================================================
-  // #836 — extractTitle uses Zod schemas with a type discriminator
-  //
-  // Guards the contract that:
-  //   (a) manual jobs validate metadata against `manualImportJobPayloadSchema`
-  //       so a non-string `title` (number, object, array, null) cannot leak
-  //       into SSE payloads as `book_title`.
-  //   (b) auto jobs unconditionally return 'Unknown' — `autoImportJobPayloadSchema`
-  //       has no `title` field, so a stray title in legacy auto metadata
-  //       must NOT surface as `book_title`.
-  //   (c) the function never throws for any malformed input.
-  // ===========================================================================
+  // The schema discriminator blocks malformed manual titles from SSE; auto titles
+  // are always Unknown, and extractTitle must never throw (#836).
   describe('#836 extractTitle', () => {
     type WithExtractTitle = {
       extractTitle(metadata: string, type: 'manual' | 'auto'): string;
@@ -2216,7 +1887,6 @@ describe('ImportQueueWorker', () => {
 
       it("returns 'Unknown' for the literal string 'null' (does not throw TypeError)", () => {
         const fn = getExtractTitle();
-        // JSON.parse('null') === null; reaching .title would throw — schema rejects null.
         expect(() => fn('null', 'manual')).not.toThrow();
         expect(fn('null', 'manual')).toBe('Unknown');
       });
@@ -2230,26 +1900,13 @@ describe('ImportQueueWorker', () => {
 
       it("returns 'Unknown' even when legacy auto metadata carries a stray title", () => {
         const fn = getExtractTitle();
-        // Auto schema has no title field — the stray key must be ignored.
         expect(fn('{"title":"X","downloadId":42}', 'auto')).toBe('Unknown');
       });
     });
 
-    // Call-site coverage for the three SSE paths that pass `job.type` into
-    // extractTitle but had no `book_title` assertion before this PR. Pinning
-    // each event's `book_title` against an auto job carrying a stray legacy
-    // `title` guards against a regression that hard-codes `'manual'` (or
-    // forgets to thread `job.type`) at any of these call sites — the helper
-    // unit tests above would still pass under that regression, but these
-    // worker-level tests would catch it because the event would leak the
-    // stray title instead of emitting 'Unknown'.
+    // Helper tests cannot catch a call site hard-coding manual or dropping job.type;
+    // a valid-manual-shaped auto payload exposes that regression by leaking its title.
     describe('call-site book_title coverage on auto stray-title metadata', () => {
-      // Includes BOTH `path` and `title` so the metadata would parse as a
-      // valid manual payload — meaning a regression that hard-codes
-      // `'manual'` at any of the three call sites below would extract
-      // 'Stray Auto' instead of 'Unknown'. The discriminator-driven
-      // implementation must reach the auto branch and short-circuit to
-      // 'Unknown' regardless of the parseable title.
       const STRAY_TITLE_METADATA = '{"path":"/lib/Stray","title":"Stray Auto","downloadId":42}';
 
       function setupAutoJobRow(metadata: string, opts: { id: number; bookId: number | null }) {
@@ -2307,11 +1964,6 @@ describe('ImportQueueWorker', () => {
       it('import_failed on unknown-adapter path with orphan bookId=null emits book_title:"Unknown" (call site at import-queue-worker.ts:188)', async () => {
         const emitSpy = vi.fn();
         const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, { emit: emitSpy } as never);
-        // Intentionally do NOT register an auto adapter — drives the worker
-        // through the `if (!adapter)` branch where extractTitle's title
-        // leakage would surface in the failure event.
-        // #1094 — orphan case: bookId is null, so resolveBookTitle short-circuits
-        // to the fallback ('Unknown' from the auto extractTitle path).
         setupAutoJobRow(STRAY_TITLE_METADATA, { id: 202, bookId: null });
 
         await w.start();
@@ -2328,9 +1980,6 @@ describe('ImportQueueWorker', () => {
       it('#1094 import_failed on unknown-adapter path with bookId set resolves book_title from the DB row', async () => {
         const emitSpy = vi.fn();
         const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, { emit: emitSpy } as never);
-        // Same orphan-adapter trigger, but bookId is populated and the books
-        // row exists with an enriched title — DB title must win over the
-        // 'Unknown' auto-extractTitle fallback.
         let selectCallCount = 0;
         mockDb.db.select = vi.fn().mockImplementation(() => {
           selectCallCount++;
@@ -2358,28 +2007,14 @@ describe('ImportQueueWorker', () => {
     });
   });
 
-  // ===========================================================================
-  // #1094 — Import-complete / import-failed book_title resolved from books row
-  //
-  // Guards the contract that:
-  //   (a) auto-import success/failure emits the enriched title from the books
-  //       row, never the literal 'Unknown' extractTitle fallback when the row
-  //       exists.
-  //   (b) manual-import success prefers the books row title over the
-  //       Zod-validated metadata title (DB wins).
-  //   (c) when bookId is null OR the books row can't be read (missing row or
-  //       DB throw), the call site silently falls back to the existing
-  //       extractTitle value ('Unknown' for auto, validated title for manual).
-  // ===========================================================================
+  // A DB title wins when present; null, missing, or failed lookups silently fall
+  // back to the schema-derived title (#1094).
   describe('#1094 import_complete/import_failed book_title resolved from books row', () => {
     function setupJobWithBooksRow(opts: {
       jobRow: Record<string, unknown>;
       booksRow: Array<Record<string, unknown>> | (() => Promise<never>);
     }) {
-      // Sequence: [1] boot recovery, [2] candidates, [3] full job fetch,
-      // [4] resolveBookTitle (only when bookId !== null — otherwise the helper
-      // short-circuits and this slot is consumed by the next drainOne
-      // candidates probe, which needs the orderBy-bearing empty chain).
+      // Select 4 is title lookup when bookId exists; otherwise it is the next candidate probe.
       const expectsBooksLookup = opts.jobRow.bookId !== null;
       let selectCallCount = 0;
       mockDb.db.select = vi.fn().mockImplementation(() => {
@@ -2416,9 +2051,6 @@ describe('ImportQueueWorker', () => {
       await new Promise(r => setTimeout(r, 100));
       await w.stop();
 
-      // #1108 — tightened to count: the worker is the canonical (and only) emitter
-      // of import_complete for the auto path now. .find() would let a regression
-      // double-emit slip through.
       const completes = emitSpy.mock.calls.filter(c => c[0] === 'import_complete');
       expect(completes).toHaveLength(1);
       expect(completes[0]![1].book_title).toBe('Enriched Auto Title');
@@ -2432,7 +2064,6 @@ describe('ImportQueueWorker', () => {
         type: 'auto',
         async process() { /* success */ },
       });
-      // booksRow array is never consumed — bookId=null short-circuits resolveBookTitle.
       setupJobWithBooksRow({
         jobRow: { id: 402, bookId: null, type: 'auto', status: 'processing', metadata: '{"downloadId":99}', phaseHistory: null },
         booksRow: [{ title: 'Should Not Surface' }],
@@ -2484,8 +2115,6 @@ describe('ImportQueueWorker', () => {
       await new Promise(r => setTimeout(r, 100));
       await w.stop();
 
-      // AC: no new error logs on the high-volume job-finish path — the
-      // resolveBookTitle catch is silent.
       const completeCall = emitSpy.mock.calls.find(c => c[0] === 'import_complete');
       expect(completeCall).toBeDefined();
       expect(completeCall![1].book_title).toBe('Unknown');
@@ -2515,8 +2144,6 @@ describe('ImportQueueWorker', () => {
       await new Promise(r => setTimeout(r, 100));
       await w.stop();
 
-      // #1108 — count assertion: the worker is the canonical (and only) emitter
-      // of import_complete on the manual path.
       const completes = emitSpy.mock.calls.filter(c => c[0] === 'import_complete');
       expect(completes).toHaveLength(1);
       expect(completes[0]![1].book_title).toBe('Enriched Title');
@@ -2541,7 +2168,6 @@ describe('ImportQueueWorker', () => {
 
       const complete = emitSpy.mock.calls.find(c => c[0] === 'import_complete');
       expect(complete).toBeDefined();
-      // Fallback chain: DB miss → extractTitle's manual path → "User Title".
       expect(complete![1].book_title).toBe('User Title');
     });
 
@@ -2569,17 +2195,8 @@ describe('ImportQueueWorker', () => {
     });
   });
 
-  // ===========================================================================
-  // #1108 — Auto-import path: import_complete emitted exactly once
-  //
-  // Pre-fix the orchestrator's success-side-effects helper emitted
-  // `import_complete` and the worker's processJob emitted it again, so SSE
-  // clients received two events per auto-import completion. The fix splits the
-  // helper so it no longer emits `import_complete`; the worker remains the
-  // canonical (and only) emitter. This test wires the REAL ImportOrchestrator
-  // and REAL AutoImportAdapter so a regression that re-adds the helper's emit
-  // would surface here as `import_complete` count === 2.
-  // ===========================================================================
+  // Wire the real orchestrator and adapter so any second import_complete emitter
+  // is observable; the worker owns job completion, not the orchestrator (#1108).
   describe('#1108 single import_complete emit on auto-import success', () => {
     const mockContext: ImportContext = {
       downloadId: 99,
@@ -2613,14 +2230,9 @@ describe('ImportQueueWorker', () => {
       const mockBroadcaster = { emit: emitSpy };
       const workerWithBroadcaster = new ImportQueueWorker(inject<Db>(mockDb.db), log, mockBroadcaster as never);
 
-      // Real orchestrator with mocked ImportService. The orchestrator owns
-      // download/book status-change SSE transitions but MUST NOT emit
-      // import_complete (job-lifecycle is the worker's responsibility).
       const importService = inject<ImportService>({
         getImportContext: vi.fn().mockResolvedValue(mockContext),
         importDownload: vi.fn().mockImplementation(async (_id: number, callbacks?: ImportProgressCallbacks) => {
-          // Drive phase callbacks the way real import work would so the worker's
-          // phaseHistory matches a production trace.
           await callbacks?.setPhase?.('copying');
           return mockResult;
         }),
@@ -2633,8 +2245,7 @@ describe('ImportQueueWorker', () => {
       );
       registerImportAdapter(new AutoImportAdapter(orchestrator));
 
-      // Worker selects: [1] boot recovery (empty) → [2] candidates → [3] job row
-      // → [4] resolveBookTitle reads books row for SSE title enrichment.
+      // Select order: recovery, candidate, job, DB title.
       let selectCallCount = 0;
       mockDb.db.select = vi.fn().mockImplementation(() => {
         selectCallCount++;
@@ -2652,8 +2263,6 @@ describe('ImportQueueWorker', () => {
       await new Promise(r => setTimeout(r, 100));
       await workerWithBroadcaster.stop();
 
-      // AC: exactly one import_complete, originating from ImportQueueWorker.processJob
-      // (carries job_id + elapsed_ms; the orchestrator's older payload had neither).
       const completes = emitSpy.mock.calls.filter(c => c[0] === 'import_complete');
       expect(completes).toHaveLength(1);
       expect(completes[0]![1]).toMatchObject({
@@ -2663,8 +2272,6 @@ describe('ImportQueueWorker', () => {
       });
       expect(completes[0]![1].elapsed_ms).toBeTypeOf('number');
 
-      // AC: orchestrator's status-change emits still fire (no regression to
-      // status-transition listeners on the auto path).
       const downloadStatusEmits = emitSpy.mock.calls.filter(c => c[0] === 'download_status_change');
       const bookStatusEmits = emitSpy.mock.calls.filter(c => c[0] === 'book_status_change');
       expect(downloadStatusEmits.some(c => (c[1] as { new_status: string }).new_status === 'imported')).toBe(true);
@@ -2680,7 +2287,6 @@ describe('ImportQueueWorker', () => {
         if (selectCallCount === 1) {
           return { from: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue([]) };
         }
-        // All selects: no pending
         return {
           from: vi.fn().mockReturnThis(),
           where: vi.fn().mockReturnThis(),
@@ -2724,13 +2330,11 @@ describe('ImportQueueWorker', () => {
       worker.nudge();
       await new Promise(r => setTimeout(r, 20));
 
-      // No additional selects after stop
       expect(selectCallCount).toBe(countAfterStop);
     });
   });
 
   describe('startup marker sweep (#1338)', () => {
-    /** Mock select so call #1 is boot-recovery (orphans []), the rest are drain selects ([]). */
     function trackingSelect(): () => number {
       let selectCount = 0;
       mockDb.db.select = vi.fn().mockImplementation(() => {
@@ -2751,23 +2355,19 @@ describe('ImportQueueWorker', () => {
     it('awaits the marker sweep before the drain loop issues its first job select (single recovery actor)', async () => {
       const selectCount = trackingSelect();
       const root = mkdtempSync(join(tmpdir(), 'narratorr-1338-order-'));
-      // Block the sweep on library-root resolution so we can observe that the drain loop has
-      // NOT issued any select while the sweep is still in flight.
+      // Gate root resolution to keep the sweep in flight.
       let releaseRoot!: (value: string) => void;
       const rootReady = new Promise<string>((res) => { releaseRoot = res; });
       const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, undefined, () => rootReady);
 
       const startPromise = w.start();
-      // Drain boot-recovery's microtasks.
+      // Let boot recovery finish while the sweep remains gated.
       await new Promise((r) => setImmediate(r));
-      // Boot recovery selected once; the sweep is parked on the resolver, so the drain loop
-      // has NOT started — no second (drain) select has happened.
       expect(selectCount()).toBe(1);
 
       releaseRoot(root);
       await startPromise;
 
-      // Sweep resolved → drain loop started and issued its first job select.
       expect(selectCount()).toBeGreaterThan(1);
 
       await w.stop();
@@ -2787,7 +2387,6 @@ describe('ImportQueueWorker', () => {
       const w = new ImportQueueWorker(inject<Db>(mockDb.db), log, undefined, async () => root);
       await w.start();
 
-      // The sweep converged the marker as part of boot — backup + marker cleared, original restored.
       const exists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
       expect(await exists(marker)).toBe(false);
       expect(await exists(backup)).toBe(false);
@@ -2799,7 +2398,6 @@ describe('ImportQueueWorker', () => {
 
     it('is a no-op when no library-root resolver is injected', async () => {
       trackingSelect();
-      // The default unit-test worker has no resolver — start() must not throw and must still drain.
       await expect(worker.start()).resolves.toBeUndefined();
     });
 
@@ -2811,32 +2409,19 @@ describe('ImportQueueWorker', () => {
         () => Promise.reject(resolverError),
       );
 
-      // start() must not reject even though the resolver throws inside the sweep.
       await expect(w.start()).resolves.toBeUndefined();
 
-      // The failure is surfaced as a warn (not swallowed silently)...
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ error: expect.anything() }),
         expect.stringContaining('failed to resolve library root'),
       );
-      // ...and startup continued: the drain loop issued its first job select.
       expect(selectCount()).toBeGreaterThan(1);
 
       await w.stop();
     });
   });
 
-  // ===========================================================================
-  // #1960 — the companion-ebook trigger on import completion (AC4–AC8)
-  // ===========================================================================
-
   describe('#1960 companion-ebook reconcile on import completion', () => {
-    /**
-     * Drive exactly one job of the given shape to its terminal disposition and hand back
-     * everything the ACs assert on: the ordered trace, the `import_jobs` payloads, and the
-     * SSE emits. `adapterProcess` decides success vs failure; `reconcileBook` is the stub
-     * under test.
-     */
     async function runOneJob(opts: {
       jobRow: Record<string, unknown>;
       reconcileBook: (bookId: number) => Promise<void>;
@@ -2848,8 +2433,6 @@ describe('ImportQueueWorker', () => {
         trace.push('reconcile');
         return opts.reconcileBook(bookId);
       });
-      // No cast: `{ reconcileBook }` IS a `CompanionBookReconcileTrigger` now that the trigger
-      // interface is split per method (#1960 PR review F5).
       const w = new ImportQueueWorker(
         inject<Db>(mockDb.db), log, { emit: emitSpy } as never,
         undefined, undefined,
@@ -2876,10 +2459,6 @@ describe('ImportQueueWorker', () => {
           jobWrites.push(payload);
           return {
             where: vi.fn().mockImplementation(() => {
-              // Issuance order only — this trace cannot distinguish "issued" from "persisted",
-              // which is exactly why the AC4 ordering contract has its own gated test below
-              // (`does not start until the completion UPDATE has RESOLVED`) rather than being
-              // asserted from here.
               if (payload.status === 'completed') trace.push('completion-update');
               if (payload.status === 'failed') trace.push('failure-update');
               return updateWhereTerminus();
@@ -2900,8 +2479,6 @@ describe('ImportQueueWorker', () => {
       metadata: '{"title":"Test"}', phaseHistory: null, ...overrides,
     });
 
-    // AC5 — every adapter form reaches the same success tail, so each fires exactly once.
-    // Adopt is the manual adapter with `mode === undefined`; there is no separate seam.
     it.each([
       ['auto', { type: 'auto', metadata: '{"downloadId":7}' }],
       ['manual copy', { type: 'manual', metadata: '{"title":"Test","mode":"copy"}' }],
@@ -2927,18 +2504,8 @@ describe('ImportQueueWorker', () => {
       expect(jobWrites.some(w => w.status === 'completed' && w.phase === 'done')).toBe(true);
     });
 
-    /**
-     * AC4's REAL ordering contract: "after the completion UPDATE has **persisted** (not before
-     * it, not inside the same statement)".
-     *
-     * The issuance trace above cannot prove this. `where()` runs synchronously when the
-     * statement is built, so if production dropped the `await` on `finalizeCompletedImport(…)`
-     * the helper would still reach `where()`, push its trace entry, and let the worker fire the
-     * trigger while the database promise was still pending — and the weak assertion would stay
-     * green. This test gates the completion terminus instead: the write cannot settle until the
-     * test releases it, so "no reconcile yet" is a real observation rather than a side effect of
-     * synchronous mock bookkeeping.
-     */
+    // where() records issuance synchronously, so an issuance trace cannot prove the
+    // completion write was awaited. Gate its terminus to observe real persistence order.
     it('AC4: reconciliation does not start until the completion UPDATE has RESOLVED, not merely been issued', async () => {
       const events: string[] = [];
       let releasePersistence!: () => void;
@@ -2973,8 +2540,7 @@ describe('ImportQueueWorker', () => {
             if (payload.status !== 'completed') return updateWhereTerminus();
             events.push('completion-issued');
             markIssued();
-            // Awaitable AND `.returning()`-capable, but neither settles until the test
-            // releases it (`guarded-transition-needs-returning-in-tx-mocks`).
+            // Awaitable and returning()-capable; neither settles until the test releases it.
             const settle = () => persisted.then(() => { events.push('completion-persisted'); });
             return {
               then: (resolve: (v: { rowsAffected: number }) => void, reject: (e: unknown) => void) =>
@@ -2987,8 +2553,7 @@ describe('ImportQueueWorker', () => {
 
       await w.start();
       await issued;
-      // Ample room for every pending microtask AND a macrotask turn: if production dropped the
-      // `await`, the trigger would already have fired by now.
+      // Include a macrotask turn so a missing await cannot hide in queued work.
       await new Promise(r => setTimeout(r, 50));
 
       expect(events).toEqual(['completion-issued']);
@@ -3011,7 +2576,6 @@ describe('ImportQueueWorker', () => {
       });
 
       expect(reconcileBook).not.toHaveBeenCalled();
-      // The job still completes — the null-bookId guard skips the trigger, not the tail.
       expect(jobWrites.some(w => w.status === 'completed')).toBe(true);
     });
 
@@ -3044,8 +2608,7 @@ describe('ImportQueueWorker', () => {
     it('AC7: a SYNCHRONOUSLY THROWING reconcileBook is equally isolated — the case fireAndForget alone does not cover', async () => {
       const { reconcileBook, trace, jobWrites, emitSpy } = await runOneJob({
         jobRow: completedJob(),
-        // `fireAndForget(promise, …)` evaluates its argument eagerly, so this throw escapes
-        // it entirely (`fire-and-forget-preflight`). Only the seam's own `try` catches it.
+        // fireAndForget evaluates its promise argument before it can catch a synchronous throw.
         reconcileBook: () => { throw new Error('reconcile threw synchronously'); },
       });
 

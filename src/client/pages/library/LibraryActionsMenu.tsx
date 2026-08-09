@@ -108,7 +108,6 @@ interface ActionMenuItemsProps {
   onRemoveMissing: () => void;
 }
 
-/** The grouped menu items — extracted to bound the main component's length. */
 function ActionMenuItems(props: ActionMenuItemsProps) {
   const { isRunning, jobType, progress, anyBulkBusy } = props;
   return (
@@ -192,7 +191,6 @@ interface RovingMenu {
 
 const MENUITEM_QUERY = '[role="menuitem"]:not([disabled])';
 
-/** Open/focus state + arrow-key roving focus for the dropdown, mirroring the prior OverflowMenu. */
 function useRovingMenu(): RovingMenu {
   const [open, setOpen] = useState(false);
   const [focusIndex, setFocusIndex] = useState(0);
@@ -228,15 +226,10 @@ function useRovingMenu(): RovingMenu {
   return { open, setOpen, triggerRef, menuRef, close, handleKeyDown };
 }
 
-/**
- * The failure indicator beside the trigger, as an expandable disclosure (#2159). Collapsed it reads
- * exactly as it did before ("N failure(s)"); expanded it names each book, because "1 failure" with
- * no name meant grepping container logs to find out WHICH book. Renders for a completed job too —
- * the hook's progress survives completion, and the answer matters most after the run.
- */
+/** Failure details remain available after completion, when diagnosis matters most. */
 function BulkFailureDisclosure({ failures, failureDetails }: { failures: number; failureDetails: BulkJobFailure[] }) {
   const [expanded, setExpanded] = useState(false);
-  // `failures` is uncapped and `failureDetails` is capped server-side, so the gap is real.
+  // Failure count is uncapped; the server retains only a capped detail list.
   const undisclosed = failures - failureDetails.length;
 
   return (
@@ -250,9 +243,7 @@ function BulkFailureDisclosure({ failures, failureDetails }: { failures: number;
         <span>{failures} failure{failures !== 1 ? 's' : ''}</span>
         <ChevronDownIcon className={`w-3 h-3 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
       </button>
-      {/* z-30 is the repository's dropdown tier (CSS-1). This panel sits beside the Library Actions
-          menu, which portals at z-30 via ToolbarDropdown — anything lower is painted underneath it,
-          which would hide the very failure rows this disclosure exists to show. */}
+      {/* Match ToolbarDropdown's z-30 tier or its portal will cover this panel. */}
       {expanded && (
         <ul className="absolute right-0 top-full mt-1 z-30 max-h-64 w-80 overflow-y-auto glass-card rounded-xl border border-border shadow-lg p-2 space-y-1 animate-fade-in">
           {failureDetails.map(detail => (
@@ -269,7 +260,6 @@ function BulkFailureDisclosure({ failures, failureDetails }: { failures: number;
   );
 }
 
-/** Rename/retag/write-sidecars confirmations — kept separate to bound the menu's complexity. */
 function BulkActionModals({ pendingOp, retagCount, onStartRename, onConfirm, onCancel }: {
   pendingOp: PendingOp;
   retagCount: number | null;
@@ -317,7 +307,6 @@ export interface LibraryActionsMenuProps {
   isSearchingAllWanted: boolean;
   onRescan: () => void;
   isRescanning: boolean;
-  /** Gate for the sidecar action — present only when tagging.writeOpf is enabled. */
   writeOpf: boolean;
 }
 
@@ -338,14 +327,12 @@ export function LibraryActionsMenu({
   const [isLoadingCount, setIsLoadingCount] = useState(false);
   const anyBulkBusy = isRunning || isLoadingCount;
 
-  // Run a non-navigation action: close the menu, refocus the trigger, then act.
   function runAction(fn: () => void) {
     close();
     fn();
   }
 
-  // Retag pre-fetches a count for its count-only confirm; the trigger shows a
-  // busy state while the count loads so there's no silent gap before the modal.
+  // Expose the count prefetch gap as a busy state before opening confirmation.
   async function handleRetag() {
     close();
     setIsLoadingCount(true);

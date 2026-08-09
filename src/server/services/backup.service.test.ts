@@ -8,11 +8,7 @@ import { EventEmitter } from 'events';
 import { BackupService, RestoreUploadError, applyPendingRestore } from './backup.service.js';
 import { createMockSettingsService } from '../__tests__/helpers.js';
 
-// Mock archiver — finalize() triggers 'close' on the piped output stream.
-// The implementation is a `function` expression, not an arrow: production calls
-// `new ZipArchive(...)`, and vi.fn passes the implementation through to
-// Reflect.construct rather than wrapping it, so an arrow throws "is not a
-// constructor". Returning an object from a constructor call yields that object.
+// This must stay constructible: production calls `new ZipArchive(...)`, so an arrow-backed vi.fn throws.
 vi.mock('archiver', () => ({
   ZipArchive: vi.fn(function () {
     let _output: EventEmitter | undefined;
@@ -28,7 +24,6 @@ vi.mock('archiver', () => ({
   }),
 }));
 
-// Mock libSQL client
 const mockExecute = vi.fn();
 const mockClose = vi.fn();
 vi.mock('@libsql/client', () => ({
@@ -95,11 +90,10 @@ describe('BackupService', () => {
       const backupsDir = path.join(configPath, 'backups');
       await fs.mkdir(backupsDir, { recursive: true });
 
-      // Create two backup files with different mtimes
       const file1 = 'narratorr-backup-20260101T000000000Z.zip';
       const file2 = 'narratorr-backup-20260102T000000000Z.zip';
       await fs.writeFile(path.join(backupsDir, file1), 'data1');
-      // Small delay to ensure different mtime
+      // Ensure distinct mtimes.
       await new Promise(r => setTimeout(r, 50));
       await fs.writeFile(path.join(backupsDir, file2), 'data2');
 
@@ -107,7 +101,6 @@ describe('BackupService', () => {
       const result = await service.list();
 
       expect(result).toHaveLength(2);
-      // Most recent first
       expect(result[0]!.filename).toBe(file2);
       expect(result[1]!.filename).toBe(file1);
     });
@@ -148,10 +141,9 @@ describe('BackupService', () => {
     beforeEach(() => {
       mockExecute.mockResolvedValue({ rows: [] });
 
-      // Mock mkdir so tests don't depend on filesystem permissions
       mkdirSpy = vi.spyOn(fs, 'mkdir').mockResolvedValue(undefined);
 
-      // Mock createWriteStream to return an EventEmitter (archiver mock triggers 'close' on it)
+      // The archiver mock emits `close` on this stream.
       const mockStream = new EventEmitter();
       createWriteStreamSpy = vi.spyOn(fss, 'createWriteStream').mockReturnValue(mockStream as unknown as fss.WriteStream);
     });
@@ -185,7 +177,6 @@ describe('BackupService', () => {
 
       await service.create();
 
-      // The VACUUM INTO SQL should have the single quote doubled
       const sqlArg = mockExecute.mock.calls[0]![0] as string;
       expect(sqlArg).toContain("it''s-a-path");
       expect(sqlArg).not.toMatch(/it's-a-path/);
@@ -201,7 +192,6 @@ describe('BackupService', () => {
       await service.create();
 
       const sqlArg = mockExecute.mock.calls[0]![0] as string;
-      // Path should start with configPath and contain backup-temp- prefix
       expect(sqlArg).toContain(configPath.replace(/'/g, "''"));
       expect(sqlArg).toContain('backup-temp-');
       expect(sqlArg).toMatch(/VACUUM INTO '.*backup-temp-\d{4}-\d{2}-\d{2}T\d+Z\.db'/);
@@ -229,7 +219,6 @@ describe('BackupService', () => {
 
       await service.create();
 
-      // The temp db file should be cleaned up (first unlink call is the temp db)
       expect(unlinkSpy).toHaveBeenCalledWith(expect.stringContaining('backup-temp-'));
 
       statSpy.mockRestore();
@@ -244,7 +233,6 @@ describe('BackupService', () => {
 
       await expect(service.create()).rejects.toThrow('VACUUM failed');
 
-      // Should attempt to clean up both temp db and zip file
       const unlinkCalls = unlinkSpy.mock.calls.map(c => c[0] as string);
       expect(unlinkCalls.some(p => p.includes('backup-temp-'))).toBe(true);
       expect(unlinkCalls.some(p => p.endsWith('.zip'))).toBe(true);
@@ -260,7 +248,6 @@ describe('BackupService', () => {
 
       await expect(service.create()).rejects.toThrow('VACUUM failed');
 
-      // Second call should not throw "already in progress"
       mockExecute.mockResolvedValue({ rows: [] });
       const statSpy = vi.spyOn(fs, 'stat').mockResolvedValue({ size: 100 } as unknown as Awaited<ReturnType<typeof fs.stat>>);
 
@@ -297,14 +284,12 @@ describe('BackupService', () => {
       const backupsDir = path.join(configPath, 'backups');
       await fs.mkdir(backupsDir, { recursive: true });
 
-      // Create 4 backups with retention=2 → should try to delete 2
       for (let i = 1; i <= 4; i++) {
         const name = `narratorr-backup-2026010${i}T000000000Z.zip`;
         await fs.writeFile(path.join(backupsDir, name), `data${i}`);
         await new Promise(r => setTimeout(r, 20));
       }
 
-      // Make fs.unlink fail for one file, succeed for others
       const unlinkSpy = vi.spyOn(fs, 'unlink')
         .mockRejectedValueOnce(new Error('EACCES: permission denied'))
         .mockResolvedValueOnce(undefined as never);
@@ -313,7 +298,6 @@ describe('BackupService', () => {
       const service = new BackupService(configPath, dbPath, createMockSettingsService({ system: { backupRetention: 2 } }), mockLog as never);
       const deleted = await service.prune();
 
-      // 1 succeeded, 1 failed
       expect(deleted).toBe(1);
       expect(mockLog.warn).toHaveBeenCalledWith(
         expect.objectContaining({ filename: expect.any(String) }),
@@ -406,7 +390,6 @@ describe('BackupService', () => {
 
       const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
 
-      // Valid-format filename that was never written — unlink rejects with ENOENT, tolerated like the pruner.
       await expect(service.deleteBackup('narratorr-backup-20260101T000000000Z.zip')).resolves.toBeUndefined();
     });
 
@@ -424,18 +407,15 @@ describe('BackupService', () => {
 
   describe('validateRestore', () => {
     it('falls back to appMigrationCount=0 and logs warning when app DB query fails', async () => {
-      // First call: getAppMigrationCount — app DB query fails
+      // getAppMigrationCount runs first; sqlite_master and the backup migration count follow.
       mockExecute.mockRejectedValueOnce(new Error('database is locked'));
-      // Second call: sqlite_master check on backup DB — table exists
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
-      // Third call: backup migration count
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
 
       const mockLog = createMockLog() as unknown as { warn: ReturnType<typeof vi.fn>; [k: string]: unknown };
       const service = new BackupService(configPath, dbPath, createMockSettingsService(), mockLog as never);
       const result = await service.validateRestore('/tmp/test.db');
 
-      // appMigrationCount fell back to 0, so backup (1) > app (0) → invalid
       expect(result.valid).toBe(false);
       expect(result.appMigrationCount).toBe(0);
       expect(result.backupMigrationCount).toBe(1);
@@ -455,11 +435,9 @@ describe('BackupService', () => {
     });
 
     it('returns valid=true for DB with fewer migrations than app', async () => {
-      // First call: getAppMigrationCount — app has 2 migrations
+      // getAppMigrationCount runs first; sqlite_master and the backup migration count follow.
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 2 }] });
-      // Second call: sqlite_master table check (table exists)
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
-      // Third call: backup migration count — backup has 1
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
 
       const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
@@ -471,11 +449,9 @@ describe('BackupService', () => {
     });
 
     it('returns valid=false for DB with more migrations than app', async () => {
-      // First call: getAppMigrationCount — app has 1
+      // getAppMigrationCount runs first; sqlite_master and the backup migration count follow.
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
-      // Second call: sqlite_master table check (table exists)
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
-      // Third call: backup migration count — backup has 99
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 99 }] });
 
       const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
@@ -485,11 +461,9 @@ describe('BackupService', () => {
       expect(result.error).toContain('newer version');
     });
 
-    // #197 — structured table-existence check replaces string matching (ERR-1)
     it('detects missing migrations table via structured sqlite_master query (not message.includes)', async () => {
-      // First call: getAppMigrationCount — app has 1
+      // First call gets the app migration count; second checks sqlite_master on the backup DB.
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
-      // Second call: sqlite_master returns 0 — table does not exist
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 0 }] });
 
       const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
@@ -497,16 +471,14 @@ describe('BackupService', () => {
 
       expect(result.valid).toBe(false);
       expect(result.error).toContain('missing migrations table');
-      // Verify it used the structured query, not the migration count query
       expect(mockExecute).toHaveBeenCalledWith(
         expect.stringContaining('sqlite_master'),
       );
     });
 
     it('returns valid=false for DB without __drizzle_migrations table', async () => {
-      // First call: getAppMigrationCount — app has 1
+      // First call gets the app migration count; second checks sqlite_master on the backup DB.
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
-      // Second call: sqlite_master returns 0 — table does not exist
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 0 }] });
 
       const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
@@ -517,9 +489,8 @@ describe('BackupService', () => {
     });
 
     it('returns valid=false for invalid database file', async () => {
-      // First call: getAppMigrationCount — succeeds
+      // First call gets the app migration count; second checks sqlite_master on the backup DB.
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
-      // Second call: backup DB sqlite_master query fails — not a real DB
       mockExecute.mockRejectedValueOnce(new Error('file is not a database'));
 
       const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
@@ -539,14 +510,12 @@ describe('BackupService', () => {
     it('rejects with error when pendingRestore is expired', async () => {
       const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
 
-      // Create a temp file in a subdirectory (matching real extraction pattern)
       const extractDir = path.join(tempDir, 'restore-expired');
       await fs.mkdir(extractDir, { recursive: true });
       const tempPath = path.join(extractDir, 'restore.db');
       await fs.writeFile(tempPath, 'test');
       await service.setPendingRestore(tempPath);
 
-      // Manually expire the pending restore by manipulating internal state
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (service as any)._pendingRestore.validatedAt = Date.now() - 6 * 60 * 1000;
 
@@ -556,7 +525,6 @@ describe('BackupService', () => {
     it('copies validated temp DB to restore-pending.db on confirm', async () => {
       const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
 
-      // Simulate real extraction pattern: file inside a subdirectory
       const extractDir = path.join(tempDir, 'narratorr-restore-test');
       await fs.mkdir(extractDir, { recursive: true });
       const tempPath = path.join(extractDir, 'narratorr-restore.db');
@@ -569,7 +537,6 @@ describe('BackupService', () => {
       const content = await fs.readFile(pendingPath, 'utf-8');
       expect(content).toBe('restored-db-content');
 
-      // Extraction directory should be cleaned up
       await expect(fs.access(extractDir)).rejects.toThrow();
     });
 
@@ -588,10 +555,8 @@ describe('BackupService', () => {
       await service.setPendingRestore(tempPath1);
       await service.setPendingRestore(tempPath2);
 
-      // Old temp file should be cleaned up
       await expect(fs.access(tempPath1)).rejects.toThrow();
 
-      // Pending should point to new file
       expect(service.pendingRestore?.tempPath).toBe(tempPath2);
     });
   });
@@ -616,7 +581,6 @@ describe('processRestoreUpload', () => {
   });
 
   it('returns valid result and stages pending restore for valid zip', async () => {
-    // validateRestore will call execute to get migration count
     mockExecute.mockResolvedValue({ rows: [{ count: 1 }] });
 
     const zipBuffer = await createZipBuffer([
@@ -646,7 +610,6 @@ describe('processRestoreUpload', () => {
   });
 
   it('returns { valid: false } when validateRestore rejects (no longer throws)', async () => {
-    // Make validateRestore fail by making the "DB" fail migration query
     mockExecute.mockRejectedValue(new Error('no such table: __drizzle_migrations'));
 
     const zipBuffer = await createZipBuffer([
@@ -671,30 +634,25 @@ describe('processRestoreUpload', () => {
       { name: 'narratorr.db', content: Buffer.from('fake-sqlite-db') },
     ]);
 
-    // Mock validateRestore to throw a system-level I/O error (e.g., disk full during DB open)
     const ioError = new Error('ENOSPC: no space left on device') as NodeJS.ErrnoException;
     ioError.code = 'ENOSPC';
     vi.spyOn(service, 'validateRestore').mockRejectedValueOnce(ioError);
 
     const err = await service.processRestoreUpload(Readable.from(zipBuffer)).catch((e: unknown) => e);
-    // System-level errors should NOT be wrapped as RestoreUploadError/INVALID_ZIP
     expect(err).not.toBeInstanceOf(RestoreUploadError);
     expect(err).toBeInstanceOf(Error);
     expect((err as NodeJS.ErrnoException).code).toBe('ENOSPC');
   });
 
   it('cleans up temp directory on failure', async () => {
-    // Track temp dirs before test
     const tmpBefore = (await fs.readdir(os.tmpdir())).filter(f => f.startsWith('narratorr-restore-'));
 
     const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
 
-    // Use non-zip data to trigger INVALID_ZIP
     try {
       await service.processRestoreUpload(Readable.from(Buffer.from('not a zip')));
     } catch { /* expected */ }
 
-    // No new temp dirs should remain after cleanup
     const tmpAfter = (await fs.readdir(os.tmpdir())).filter(f => f.startsWith('narratorr-restore-'));
     expect(tmpAfter.length).toBe(tmpBefore.length);
   });
@@ -704,7 +662,6 @@ describe('processRestoreUpload', () => {
       { name: 'narratorr.db', content: Buffer.alloc(2048, 0x61) },
     ]);
 
-    // Inject a tiny 1KB cap so a small zip trips the uncompressed-byte gate
     const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog(), 1024);
     const err = await service.processRestoreUpload(Readable.from(zipBuffer)).catch((e: unknown) => e);
 
@@ -740,7 +697,7 @@ describe('processRestoreUpload', () => {
       const err = await service.processRestoreUpload(Readable.from(zipBuffer)).catch((e: unknown) => e);
       expect((err as RestoreUploadError).code).toBe('OVERSIZED_DB');
 
-      // Let any stray post-teardown stream 'error' events flush
+      // Flush any post-teardown stream errors.
       await new Promise((r) => setImmediate(r));
       await new Promise((r) => setImmediate(r));
 
@@ -751,7 +708,6 @@ describe('processRestoreUpload', () => {
   });
 
   it('accepts an entry exactly at the cap and rejects one byte over (strict greater-than)', async () => {
-    // Exactly at cap: extraction succeeds, validateRestore runs and stages
     mockExecute.mockResolvedValue({ rows: [{ count: 1 }] });
     const atCapZip = await createZipBuffer([
       { name: 'narratorr.db', content: Buffer.alloc(1024, 0x61) },
@@ -760,7 +716,6 @@ describe('processRestoreUpload', () => {
     const atCapResult = await atCapService.processRestoreUpload(Readable.from(atCapZip));
     expect(atCapResult.valid).toBe(true);
 
-    // One byte over: rejects with OVERSIZED_DB
     const overZip = await createZipBuffer([
       { name: 'narratorr.db', content: Buffer.alloc(1025, 0x61) },
     ]);
@@ -789,7 +744,6 @@ describe('restoreServerBackup', () => {
   });
 
   it('returns valid result and stages pending restore for valid server backup zip', async () => {
-    // Create a valid backup zip on disk
     const backupsDir = path.join(configPath, 'backups');
     await fs.mkdir(backupsDir, { recursive: true });
     const zipBuffer = await createZipBuffer([
@@ -798,10 +752,10 @@ describe('restoreServerBackup', () => {
     const backupFilename = 'narratorr-backup-20260101T000000000Z.zip';
     await fs.writeFile(path.join(backupsDir, backupFilename), zipBuffer);
 
-    // validateRestore: app migration count, then sqlite_master check, then backup migration count
-    mockExecute.mockResolvedValueOnce({ rows: [{ count: 3 }] }); // app migration count
-    mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] }); // sqlite_master table check
-    mockExecute.mockResolvedValueOnce({ rows: [{ count: 2 }] }); // backup migration count
+    // execute order: app count, backup table check, backup count.
+    mockExecute.mockResolvedValueOnce({ rows: [{ count: 3 }] });
+    mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
+    mockExecute.mockResolvedValueOnce({ rows: [{ count: 2 }] });
 
     const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
     const result = await service.restoreServerBackup(backupFilename);
@@ -837,10 +791,10 @@ describe('restoreServerBackup', () => {
     const backupFilename = 'narratorr-backup-20260101T000000000Z.zip';
     await fs.writeFile(path.join(backupsDir, backupFilename), zipBuffer);
 
-    // App has 2 migrations, backup has 5 (newer version)
-    mockExecute.mockResolvedValueOnce({ rows: [{ count: 2 }] }); // app migration count
-    mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] }); // sqlite_master table check
-    mockExecute.mockResolvedValueOnce({ rows: [{ count: 5 }] }); // backup migration count
+    // execute order: app count, backup table check, backup count.
+    mockExecute.mockResolvedValueOnce({ rows: [{ count: 2 }] });
+    mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
+    mockExecute.mockResolvedValueOnce({ rows: [{ count: 5 }] });
 
     const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
     const result = await service.restoreServerBackup(backupFilename);
@@ -898,7 +852,7 @@ describe('restoreServerBackup', () => {
     await fs.writeFile(path.join(backupsDir, 'narratorr-backup-20260101T000000000Z.zip'), zipBuffer1);
     await fs.writeFile(path.join(backupsDir, 'narratorr-backup-20260102T000000000Z.zip'), zipBuffer2);
 
-    // Mock for first call
+    // Mock for each call: app migration count, sqlite_master table check, backup migration count.
     mockExecute.mockResolvedValueOnce({ rows: [{ count: 3 }] });
     mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
     mockExecute.mockResolvedValueOnce({ rows: [{ count: 2 }] });
@@ -907,7 +861,6 @@ describe('restoreServerBackup', () => {
     await service.restoreServerBackup('narratorr-backup-20260101T000000000Z.zip');
     const firstPending = service.pendingRestore?.tempPath;
 
-    // Mock for second call
     mockExecute.mockResolvedValueOnce({ rows: [{ count: 3 }] });
     mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
     mockExecute.mockResolvedValueOnce({ rows: [{ count: 2 }] });
@@ -980,14 +933,12 @@ describe('applyPendingRestore (startup swap)', () => {
     await fs.writeFile(pendingPath, 'restored-data');
     await fs.writeFile(dbPath, 'old-data');
 
-    // Make renameSync throw (simulate cross-device rename)
     const renameSpy = vi.spyOn(fss, 'renameSync').mockImplementation(() => {
       throw new Error('EXDEV: cross-device link not permitted');
     });
 
     applyPendingRestore(configPath, dbPath, mockLog);
 
-    // Should have fallen back to copy + delete
     const content = fss.readFileSync(dbPath, 'utf-8');
     expect(content).toBe('restored-data');
     expect(fss.existsSync(pendingPath)).toBe(false);
@@ -1003,7 +954,6 @@ describe('applyPendingRestore (startup swap)', () => {
     await fs.writeFile(pendingPath, 'restored-data');
     await fs.writeFile(dbPath, 'old-data');
 
-    // Make both renameSync and copyFileSync throw
     const renameSpy = vi.spyOn(fss, 'renameSync').mockImplementation(() => {
       throw new Error('EXDEV: cross-device link not permitted');
     });
@@ -1016,7 +966,6 @@ describe('applyPendingRestore (startup swap)', () => {
     expect(mockLog.warn).toHaveBeenCalledWith(
       expect.stringContaining('Failed to apply pending restore'),
     );
-    // Original db should be unchanged since copy failed
     const content = fss.readFileSync(dbPath, 'utf-8');
     expect(content).toBe('old-data');
 
@@ -1053,11 +1002,11 @@ describe('#324 — restore contract change', () => {
   });
 
   it('processRestoreUpload returns { valid: false, error } for newer-version backup', async () => {
-    // Simulate: migrations table exists, backup has more migrations than app
+    // execute order: app count, backup table check, backup count.
     mockExecute
-      .mockResolvedValueOnce({ rows: [{ count: 5 }] }) // app migration count = 5
-      .mockResolvedValueOnce({ rows: [{ count: 1 }] }) // sqlite_master check — table exists
-      .mockResolvedValueOnce({ rows: [{ count: 99 }] }); // backup migration count = 99
+      .mockResolvedValueOnce({ rows: [{ count: 5 }] })
+      .mockResolvedValueOnce({ rows: [{ count: 1 }] })
+      .mockResolvedValueOnce({ rows: [{ count: 99 }] });
 
     const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
     const result = await service.processRestoreUpload(Readable.from(await createZipBuffer([
@@ -1077,7 +1026,6 @@ describe('#324 — restore contract change', () => {
   });
 
   it('restoreServerBackup returns { valid: false, error } for newer-version backup', async () => {
-    // Create a fake backup zip on disk
     const backupsDir = path.join(configPath, 'backups');
     await fs.mkdir(backupsDir, { recursive: true });
     const zipBuffer = await createZipBuffer([
@@ -1086,11 +1034,11 @@ describe('#324 — restore contract change', () => {
     const backupFilename = 'narratorr-backup-20260101T000000000Z.zip';
     await fs.writeFile(path.join(backupsDir, backupFilename), zipBuffer);
 
-    // Simulate newer-version
+    // Simulate newer-version: restoreServerBackup queries the backup count before the app count.
     mockExecute
-      .mockResolvedValueOnce({ rows: [{ count: 1 }] }) // table exists
-      .mockResolvedValueOnce({ rows: [{ count: 99 }] }) // backup count
-      .mockResolvedValueOnce({ rows: [{ count: 5 }] }); // app count
+      .mockResolvedValueOnce({ rows: [{ count: 1 }] })
+      .mockResolvedValueOnce({ rows: [{ count: 99 }] })
+      .mockResolvedValueOnce({ rows: [{ count: 5 }] });
 
     const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
     const result = await service.restoreServerBackup(backupFilename);

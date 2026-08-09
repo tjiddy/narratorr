@@ -32,10 +32,7 @@ import type { NotifierType } from '@shared/notifier-registry.js';
 import type { SuggestionReason } from '@shared/schemas/discovery.js';
 import type { CompanionEbookStatus } from '@shared/schemas/companion-ebook.js';
 
-// Drizzle's $inferSelect widens enum columns to bare `string` (CLAUDE.md gotcha).
-// Re-narrow the status / enrichmentStatus columns so callers can consume
-// `book.status` directly without re-asserting `as BookStatus`.
-// Canonical home — do not redeclare per-file.
+// Drizzle widens text enums to string; re-narrow them once here instead of per caller.
 export type BookRow = Omit<typeof books.$inferSelect, 'status' | 'enrichmentStatus' | 'productionType'> & {
   status: BookStatus;
   enrichmentStatus: EnrichmentStatus;
@@ -43,23 +40,12 @@ export type BookRow = Omit<typeof books.$inferSelect, 'status' | 'enrichmentStat
 };
 
 /**
- * A `books` row minus the RAW `user_cleared_fields` text (#2069 AC16).
- *
- * The column is plain text, so `BookRow` types it `string | null` — a shape that
- * must never reach an HTTP response. **Any book row that gets serialized is a
- * `BookRowPublic`**; `BookRow` is for consumers that only compare/score it
- * internally (quality gate, discovery). One named type rather than a per-site
- * omission is what makes that rule checkable. Strip with `stripClearedFields`.
- *
- * A caller that needs the tombstones as behavior takes the hydrated `BookDetail`
- * (`book.service.ts`), whose `userClearedFields` is the `parseClearedFields`
- * output — never the raw string.
+ * Serializable row without raw userClearedFields. Internal scoring may use BookRow; behavior that
+ * needs tombstones uses hydrated BookDetail. Strip with stripClearedFields.
  */
 export type BookRowPublic = Omit<BookRow, 'userClearedFields'>;
 
-// Two-axis download state (#1445): narrow both axis columns to their Zod-derived
-// unions (Drizzle's $inferSelect widens text-enum columns to `string`). There is
-// no `status` column anymore — the display status is derived from the tuple.
+// Re-narrow both stored state axes; display status is derived rather than stored.
 export type DownloadRow = Omit<typeof downloads.$inferSelect, 'clientStatus' | 'pipelineStage' | 'protocol' | 'bookStatusAtGrab'> & {
   clientStatus: ClientStatus;
   pipelineStage: PipelineStage;
@@ -112,9 +98,7 @@ export type ImportJobRow = Omit<typeof importJobs.$inferSelect, 'type' | 'status
   phase: ImportJobPhase | null;
 };
 
-// `validationCode` deliberately stays `string | null`: its authority is
-// `EpubValidationCode` (src/core/epub, #1956), which does not exist yet. Narrowing it
-// is 1.5/1.6 work, not this issue's.
+// Keep validationCode broad until a canonical EpubValidationCode type exists.
 export type CompanionEbookRow = Omit<typeof companionEbooks.$inferSelect, 'status'> & {
   status: CompanionEbookStatus;
 };

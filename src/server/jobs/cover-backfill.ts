@@ -8,12 +8,6 @@ import { enqueueBookRefresh } from '../utils/enqueue-book-refresh.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
-/**
- * Startup backfill: download covers for imported books that still have remote coverUrl values.
- * Runs once after boot. Sequential processing with per-item error isolation. Fires a `'metadata'`
- * connector refresh per book whose cover actually materialized (`'written'`, including a post-rename
- * DB-update failure) so a downstream media server picks up the new folder cover.
- */
 export async function runCoverBackfill(db: Db, log: FastifyBaseLogger, connectorService?: ConnectorService): Promise<void> {
   const candidates = await db
     .select({ id: books.id, coverUrl: books.coverUrl, path: books.path, title: books.title })
@@ -44,7 +38,7 @@ export async function runCoverBackfill(db: Db, log: FastifyBaseLogger, connector
           bookId: book.id, title: book.title, authorName: null, libraryPath: book.path!,
         });
       } else {
-        // 'skipped' cannot occur here (the WHERE gates a remote coverUrl); 'failed' is a real failure.
+        // 'skipped' cannot occur because the query requires a remote coverUrl.
         failed++;
         log.warn({ bookId: book.id }, 'Cover backfill: download returned failure');
       }

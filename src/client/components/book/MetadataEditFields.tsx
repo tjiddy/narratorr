@@ -28,7 +28,6 @@ interface MetadataEditFieldsProps {
 const INPUT_CLASS = 'w-full px-3 py-2 glass-card rounded-xl text-sm focus-ring';
 const LABEL_CLASS = 'block text-xs font-medium text-muted-foreground mb-1.5';
 
-/** A labelled single-line text input — the repeated field shape in this editor. */
 function TextField({ id, label, value, onChange, placeholder }: {
   id: string;
   label: string;
@@ -51,15 +50,8 @@ function TextField({ id, label, value, onChange, placeholder }: {
   );
 }
 
-// Edit Metadata is a pure MANUAL field editor (#1609). It edits only the stored,
-// author-supplied columns the detail page renders (now including subtitle and
-// publisher, promoted to stored columns in #1614). Intentionally excluded:
-//   - duration — scanner-derived from the audio files (import/scan), not
-//     author-supplied; manual edits would desync it from the files.
-// Re-matching a book to different provider metadata is Fix Match's job (it
-// re-fetches the full canonical record); there is intentionally no embedded
-// search-and-apply here — that path silently produced inconsistent "Frankenbook"
-// metadata by applying only a subset of a match.
+// Edit only stored operator fields. Duration is scanner-derived, while provider
+// rematching belongs to Fix Match so partial matches cannot create Frankenbooks.
 export function MetadataEditFields({
   title,
   onTitleChange,
@@ -149,8 +141,6 @@ export function MetadataEditFields({
         />
       </div>
 
-      {/* Duration is scanner-derived from the audio files, not author-supplied, so
-          it is intentionally not editable here (#1609 / #1614). */}
       <p className="text-xs text-muted-foreground/50">
         Duration is read from the audio files.
       </p>

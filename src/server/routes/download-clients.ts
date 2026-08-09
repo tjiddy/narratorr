@@ -21,9 +21,7 @@ export async function downloadClientsRoutes(
     secretEntity: 'downloadClient',
   });
 
-  // POST /api/download-clients/categories — fetch categories from unsaved config
-  // Sentinel-aware: edit-mode forms send masked secrets + id so the route can
-  // resolve against the persisted record before dispatching to the adapter.
+  // Resolve edit-mode masked secrets before adapter dispatch.
   const categoriesSchema = makeTestSchema(createDownloadClientSchema, 'downloadClient');
   app.post<{ Body: CreateDownloadClientInput & { id?: number } }>(
     '/api/download-clients/categories',
@@ -56,7 +54,6 @@ export async function downloadClientsRoutes(
     },
   );
 
-  // POST /api/download-clients/:id/categories — fetch categories from saved client
   app.post<{ Params: IdParam }>(
     '/api/download-clients/:id/categories',
     { schema: { params: idParamSchema } },

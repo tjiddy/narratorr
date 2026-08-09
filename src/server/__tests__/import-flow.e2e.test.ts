@@ -18,7 +18,7 @@ import {
   waitForRequests,
 } from './msw-handlers.js';
 
-// Mock audio scanner at module level — enrichment calls this but real parsing needs valid audio files
+// Real audio parsing needs valid media; these fixtures exercise only the import flow.
 vi.mock('@core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn().mockResolvedValue(null),
 }));
@@ -36,11 +36,7 @@ const MOCK_SCAN_RESULT = {
   hasCoverArt: false,
 };
 
-/**
- * Default webhook sink — absorbs fire-and-forget notifications so
- * onUnhandledRequest: 'error' doesn't blow up non-notification tests.
- * Notification-specific tests override this with webhookCaptureHandler().
- */
+// Absorb fire-and-forget notifications; notification tests override this handler.
 const mswServer = setupServer(
   http.post(WEBHOOK_URL, () => new HttpResponse(null, { status: 200 })),
 );
@@ -59,17 +55,14 @@ describe('Import flow E2E', () => {
     mswServer.listen({ onUnhandledRequest: 'error' });
     e2e = await createE2EApp();
 
-    // Temp directories: download source + library target
     downloadParent = await mkdtemp(join(tmpdir(), 'narratorr-import-dl-'));
     libraryDir = await mkdtemp(join(tmpdir(), 'narratorr-import-lib-'));
 
-    // Create download source with audio files
     const downloadSource = join(downloadParent, DOWNLOAD_FOLDER);
     await mkdir(downloadSource, { recursive: true });
     await writeFile(join(downloadSource, 'book.m4b'), Buffer.alloc(FILE_SIZE_1));
     await writeFile(join(downloadSource, 'chapter2.m4b'), Buffer.alloc(FILE_SIZE_2));
 
-    // Seed download client (host/port must match QB_BASE)
     const clientRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/download-clients',
@@ -84,7 +77,6 @@ describe('Import flow E2E', () => {
     expect(clientRes.statusCode).toBe(201);
     downloadClientId = clientRes.json().id;
 
-    // Seed notifier for webhook event tests
     const notifierRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/notifiers',
@@ -98,7 +90,6 @@ describe('Import flow E2E', () => {
     });
     expect(notifierRes.statusCode).toBe(201);
 
-    // Library settings: path + folder format
     await e2e.services.settings.set('library', {
       path: libraryDir,
       folderFormat: '{author}/{title}',
@@ -107,7 +98,6 @@ describe('Import flow E2E', () => {
       namingCase: 'default',
     });
 
-    // Import settings: default — no auto-delete
     await e2e.services.settings.set('import', {
       deleteAfterImport: false,
       minSeedTime: 0,
@@ -122,7 +112,7 @@ describe('Import flow E2E', () => {
     e2e.services.downloadClient.clearAdapterCache();
     vi.mocked(scanAudioDirectory).mockReset();
     vi.mocked(scanAudioDirectory).mockResolvedValue(null);
-    // Restore default import settings (torrent tests modify these)
+    // Torrent tests mutate these defaults.
     await e2e.services.settings.set('import', { deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true });
   });
 
@@ -145,7 +135,6 @@ describe('Import flow E2E', () => {
 
     const result = await e2e.services.import.importDownload(downloadId);
 
-    // Import result
     const expectedTarget = join(libraryDir, 'Brandon Sanderson', 'The Way of Kings').split('\\').join('/');
     expect(result.downloadId).toBe(downloadId);
     expect(result.bookId).toBe(bookId);
@@ -153,17 +142,13 @@ describe('Import flow E2E', () => {
     expect(result.fileCount).toBe(2);
     expect(result.totalSize).toBe(FILE_SIZE_1 + FILE_SIZE_2);
 
-    // Files actually copied to library
     const targetFiles = await readdir(expectedTarget);
-    // Files renamed using fileFormat template '{author} - {title}'. The format
-    // carries no per-file token, so rendered stems collide → every file (including
-    // the first) gets a zero-padded sequential ordinal (#1192), no bare file.
+    // With no per-file token, every rendered stem collides and receives an ordinal (#1192).
     expect(targetFiles.sort()).toEqual([
       'Brandon Sanderson - The Way of Kings (1).m4b',
       'Brandon Sanderson - The Way of Kings (2).m4b',
     ]);
 
-    // Book record: status + path + enrichment fields from mock scan result
     const bookRes = await e2e.app.inject({ method: 'GET', url: `/api/books/${bookId}` });
     const book = bookRes.json();
     expect(book.status).toBe('imported');
@@ -176,7 +161,6 @@ describe('Import flow E2E', () => {
     expect(book.audioDuration).toBe(3600);
     expect(book.enrichmentStatus).toBe('file-enriched');
 
-    // Download record: pipeline stage transitioned to imported
     const [dl] = await e2e.db.select().from(downloads).where(eq(downloads.id, downloadId));
     expect(dl!.pipelineStage).toBe('imported');
   });
@@ -195,7 +179,6 @@ describe('Import flow E2E', () => {
 
     await e2e.services.importOrchestrator.importDownload(downloadId);
 
-    // Bounded-timeout polling for fire-and-forget notification
     await waitForRequests(captured, 1);
 
     expect(captured).toHaveLength(1);
@@ -221,17 +204,14 @@ describe('Import flow E2E', () => {
 
     await expect(e2e.services.importOrchestrator.importDownload(downloadId)).rejects.toThrow();
 
-    // Download status → failed with error message
     const [dl] = await e2e.db.select().from(downloads).where(eq(downloads.id, downloadId));
     expect(dl!.clientStatus).toBe('failed');
     expect(dl!.pipelineStage).toBe('idle');
     expect(dl!.errorMessage).toBeTruthy();
 
-    // Book status recovered — no path so reverts to 'wanted'
     const bookRes = await e2e.app.inject({ method: 'GET', url: `/api/books/${bookId}` });
     expect(bookRes.json().status).toBe('wanted');
 
-    // on_failure notification fired
     await waitForRequests(captured, 1);
     const payload = captured[0]!.body as Record<string, unknown>;
     expect(payload.event).toBe('on_failure');
@@ -241,7 +221,6 @@ describe('Import flow E2E', () => {
   it('calls removeDownload when deleteAfterImport is enabled and seed time is met', async () => {
     await e2e.services.settings.set('import', { deleteAfterImport: true, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true });
 
-    // completedAt 2 hours ago — well past the 60-min seed time
     const { downloadId } = await seedBookAndDownload(e2e, downloadClientId,'Delete After Import Book', 'Test Author', {
       completedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
     });
@@ -266,7 +245,6 @@ describe('Import flow E2E', () => {
   it('does NOT call removeDownload when seed time has not elapsed', async () => {
     await e2e.services.settings.set('import', { deleteAfterImport: true, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true });
 
-    // completedAt 1 minute ago — seed time NOT met (needs 60 min)
     const { downloadId } = await seedBookAndDownload(e2e, downloadClientId,'No Delete Book', 'Test Author', {
       completedAt: new Date(Date.now() - 1 * 60 * 1000),
     });

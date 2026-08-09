@@ -149,10 +149,7 @@ describe('classifyLeafFolder', () => {
     it.each(['BookTitle.mp3', 'Story Book 1.mp3', 'Volume 1.mp3'])(
       'does NOT match "%s" (bare book/volume without separator-prefix is not a marker)',
       (filename) => {
-        // Pair with a duplicate-shaped sibling so we can observe that the marker
-        // guard did NOT short-circuit. Since both files normalize the same way,
-        // we land in duplicate-normalized-stems — but only because the marker
-        // guard correctly let the pipeline continue.
+        // A duplicate-shaped sibling proves the marker guard falls through to later evidence.
         const result = classifyLeafFolder(uniformLarge([
           `/lib/Book/${filename}`,
           `/lib/Book/${filename.replace('.mp3', ' (2).mp3')}`,
@@ -173,7 +170,6 @@ describe('classifyLeafFolder', () => {
     });
 
     it('count = 30 with split-eligible files → split (cap is inclusive)', () => {
-      // Use distinct stems so duplicate-normalized-stems doesn't fire
       const paths = Array.from({ length: 30 }, (_, i) => `/lib/Pack/UniqueBook${i}.mp3`);
       const result = classifyLeafFolder(uniformLarge(paths));
       expect(result).toEqual({
@@ -190,7 +186,7 @@ describe('classifyLeafFolder', () => {
     });
 
     it('exactly 80% large files passes the size guard (boundary inclusive)', () => {
-      // 4 of 5 large = 80%. Unique stems so we land on split.
+      // Unique stems isolate the inclusive size-ratio boundary.
       const result = classifyLeafFolder(files([
         { path: '/lib/Pack/StoryAlpha.mp3', size: LARGE },
         { path: '/lib/Pack/StoryBeta.mp3', size: LARGE },
@@ -205,9 +201,6 @@ describe('classifyLeafFolder', () => {
       });
     });
 
-    // Behavioral flip from #1035: under the old single-ratio guard 60% large
-    // merged. The new condition 2 (largeCount ≥ 3 AND largeRatio ≥ 0.5)
-    // catches mixed-size series collections so 3-of-5 large now splits.
     it('60% large files now splits via condition 2 (3 large, 0.6 ratio)', () => {
       const result = classifyLeafFolder(files([
         { path: '/lib/Pack/StoryAlpha.mp3', size: LARGE },
@@ -225,8 +218,6 @@ describe('classifyLeafFolder', () => {
   });
 
   describe('three-condition size evidence (issue #1035)', () => {
-    // ratio ≥ 0.8 path is exercised by the Mistborn trilogy test (case 1).
-
     it('AC5: Reacher (21 large + 7 small distinct stems) splits with raw sizeEvidence', () => {
       const novels = [
         'Killing Floor', 'Die Trying', 'Tripwire', 'Running Blind', 'Echo Burning',
@@ -248,8 +239,6 @@ describe('classifyLeafFolder', () => {
       expect(result.sizeEvidence?.largeCount).toBe(21);
       expect(result.sizeEvidence?.largeRatio).toBeCloseTo(21 / 28);
     });
-
-    // AC6 is covered by "60% large files now splits via condition 2" above.
 
     it('AC7: 25 files, 10 large + 15 small splits via condition 3 (floor)', () => {
       const large = Array.from({ length: 10 }, (_, i) => ({
@@ -352,9 +341,7 @@ describe('classifyLeafFolder', () => {
     });
 
     it('AC16: title-content fires before size when 5 large files normalize to <3 alpha stems', () => {
-      // After normalizeStemForComparison strips trailing " <digits>", each stem
-      // is two alpha chars (Aa, Bb, …) — distinct lowercased and not a marker
-      // keyword, so this guard exercises the title-content branch in isolation.
+      // Distinct two-letter normalized stems isolate the title-content guard.
       const result = classifyLeafFolder(files([
         { path: '/lib/Tiny/Aa 01.mp3', size: 200 * BYTES_PER_MB },
         { path: '/lib/Tiny/Bb 02.mp3', size: 200 * BYTES_PER_MB },
@@ -367,12 +354,6 @@ describe('classifyLeafFolder', () => {
   });
 
   describe('AC2: marker rule tightening (#1048)', () => {
-    // Pre-#1048 the marker check used `.some()`: a single stray "Part 1" /
-    // "Disc N" / "CD N" / "Chapter N" in any one stem caused the entire batch
-    // to merge. Real titles routinely contain these substrings ("Sixth Realm
-    // Part 1", "Resident Evil CD 2 Edition"). Post-#1048: ALL stems must
-    // match MERGE_MARKER_RE AND share a markerless prefix.
-
     it('does NOT merge when only some stems carry markers', () => {
       const result = classifyLeafFolder(uniformLarge([
         '/lib/Pack/Sixth Realm Part 1.mp3',
@@ -495,11 +476,7 @@ describe('classifyLeafFolder', () => {
     });
 
     it('AC4: Arabic digit run with trailing junk still matches (boundary is Roman-only)', () => {
-      // Pins the AC4 contract: the trailing token boundary `(?=[\s_\-.]|$)` lives
-      // INSIDE the Roman alternative only. If a future edit moved it after the whole
-      // `(?:\d+|…)` alternation, `Part 12abc` would stop matching the `\d+` branch
-      // (the `abc` after `12` is not a separator/EOS) and this batch would fall
-      // through to split. Separator-terminated digit tests can't catch that regression.
+      // The trailing boundary belongs only to Roman numerals; moving it outside breaks Arabic trailing junk.
       const result = classifyLeafFolder(uniformLarge([
         '/lib/Book/Shared Part 12abc.mp3',
         '/lib/Book/Shared Part 13def.mp3',
@@ -559,8 +536,7 @@ describe('classifyLeafFolder', () => {
 
   describe('check-order regression', () => {
     it('duplicate-stem fires BEFORE title-content when both would match', () => {
-      // Three files all normalizing to "Bk" — both guards (duplicate + title-content) would fire.
-      // Order check pins duplicate-normalized-stems as the reported reason.
+      // All stems normalize to `Bk`, so duplicate and title-content guards both qualify.
       const result = classifyLeafFolder(uniformLarge([
         '/lib/Book/a/Bk.mp3',
         '/lib/Book/b/Bk.mp3',
@@ -570,10 +546,6 @@ describe('classifyLeafFolder', () => {
     });
 
     it('marker guard does NOT fire when only one stem has a marker (#1048 AC2)', () => {
-      // Pre-#1048: a single stray "Chapter NN" stem in a batch of distinct
-      // titles caused whole-batch merge via `.some()`. Post-#1048: marker rule
-      // requires ALL stems to match AND share a markerless prefix, so this
-      // batch falls through to the size guard.
       const result = classifyLeafFolder([
         { path: '/lib/Book/Chapter 01.mp3', size: SHORT_STORY },
         { path: '/lib/Book/Other Two.mp3', size: SHORT_STORY },
@@ -583,7 +555,7 @@ describe('classifyLeafFolder', () => {
     });
 
     it('count-cap fires before any other check', () => {
-      // 31 chapter-marker files — would also fire chapter guard, but cap wins.
+      // Chapter markers would also qualify, isolating cap precedence.
       const paths = Array.from({ length: 31 }, (_, i) => `/lib/Book/Chapter ${i + 1}.mp3`);
       const result = classifyLeafFolder(paths.map(p => ({ path: p, size: SMALL })));
       expect(result).toEqual({ decision: 'merge', reason: 'count-exceeds-cap' });
@@ -591,11 +563,7 @@ describe('classifyLeafFolder', () => {
   });
 });
 
-// `hasStrongChapterSetEvidence` is the predicate the mixed-content branch in
-// book-discovery uses INSTEAD of `classifyLeafFolder` (#1048). It must NOT
-// consult count caps, size heuristics, or any subset-duplicate signals — those
-// safety nets are merge-biased on purpose for leaf folders, but catastrophic
-// when applied to recursive subtree absorption.
+// Recursive absorption requires strict positive evidence; leaf count, size, and subset-duplicate guards are unsafe here.
 describe('hasStrongChapterSetEvidence (#1048)', () => {
   describe('marker-set rule', () => {
     it('returns true for bare Chapter NN files (markerless prefix empty → "shared")', () => {
@@ -665,10 +633,7 @@ describe('hasStrongChapterSetEvidence (#1048)', () => {
     });
 
     it('returns false on subset duplicates (Book A Part 1/2 + 20 unrelated)', () => {
-      // Critical AC13 contrast: classifyLeafFolder's `distinct < count` would
-      // mis-fire here (the two "Book A Part" stems normalize identically, so
-      // distinct=21 < count=22). hasStrongChapterSetEvidence requires
-      // distinct === 1 — every stem must collapse to the same value.
+      // Leaf `distinct < count` would fire on this one duplicate pair; absorption requires `distinct === 1`.
       const subsetDup: ClassifierFile[] = [
         { path: '/lib/Pack/Book A Part 1.m4b', size: 200 * BYTES_PER_MB },
         { path: '/lib/Pack/Book A Part 2.m4b', size: 200 * BYTES_PER_MB },
@@ -681,9 +646,6 @@ describe('hasStrongChapterSetEvidence (#1048)', () => {
     });
 
     it('returns false on empty normalized stem (whitespace-only)', () => {
-      // `Bk1`/`Bk2`/`Bk3` would normalize to `Bk` each — distinct, so no merge.
-      // True empty-string collapse only happens in degenerate cases; pin that
-      // an empty-stem all-same scenario does NOT fire (the lower-bound guard).
       expect(hasStrongChapterSetEvidence([
         { path: '/lib/Book/Bk1.mp3', size: LARGE },
         { path: '/lib/Book/Bk2.mp3', size: LARGE },
@@ -694,11 +656,7 @@ describe('hasStrongChapterSetEvidence (#1048)', () => {
 
   describe('safety-net checks NOT consulted', () => {
     it('returns false on 37 distinct large no-marker stems (count cap NOT consulted)', () => {
-      // The pre-#1048 leaf-classifier path returned merge with reason
-      // count-exceeds-cap on count > 30. hasStrongChapterSetEvidence ignores
-      // the cap entirely — distinct titles with no markers stay false.
-      // Use genuinely distinct titles, not "Title NN" — `normalizeStemForComparison`
-      // strips trailing ` \d+` and would collapse the latter to one stem.
+      // Use real titles: `Title NN` would normalize to one stem and trigger positive evidence.
       const titles = [
         'Killing Floor', 'Die Trying', 'Tripwire', 'Running Blind', 'Echo Burning',
         'Without Fail', 'Persuader', 'The Enemy', 'One Shot', 'The Hard Way',
@@ -715,8 +673,6 @@ describe('hasStrongChapterSetEvidence (#1048)', () => {
     });
 
     it('returns false on 5 small stories (size guard NOT consulted)', () => {
-      // The leaf classifier would merge these (files-too-small-for-full-books).
-      // The strict helper returns false because no positive evidence rule fires.
       expect(hasStrongChapterSetEvidence([
         { path: '/lib/Stories/Story One.mp3', size: SHORT_STORY },
         { path: '/lib/Stories/Story Two.mp3', size: SHORT_STORY },
@@ -727,7 +683,6 @@ describe('hasStrongChapterSetEvidence (#1048)', () => {
     });
 
     it('returns false on Bk1/Bk2/Bk3 (title-content guard NOT consulted)', () => {
-      // The leaf classifier would merge these via normalized-stem-lacks-title-content.
       expect(hasStrongChapterSetEvidence([
         { path: '/lib/Book/Bk1.mp3', size: LARGE },
         { path: '/lib/Book/Bk2.mp3', size: LARGE },
@@ -743,14 +698,7 @@ describe('hasStrongChapterSetEvidence (#1048)', () => {
     ])).toBe(false);
   });
 
-  // The original #1031 test fixture used synthetic `Chapter NN.mp3` filenames
-  // which match MERGE_MARKER_RE and pass via the marker-set rule — masking the
-  // fact that real-world torrent naming overwhelmingly uses
-  // `<digits><space><title>` (no "Chapter" keyword), which the marker rule and
-  // the normalizer's `[-_.]`-only separator strip both miss. The rule below
-  // pins the realistic shape so this regression class doesn't slip through
-  // again. NEW chapter-encoded fixtures MUST use real-world torrent naming
-  // patterns, not synthetic marker-keyword filenames.
+  // Use real `<digits><space><title>` torrent names; `Chapter NN` would mask this path via marker evidence.
   describe('leading-numeric-prefix shared-title rule (#1051)', () => {
     it('AC1: real-world Heir filenames "01 Heir to the Empire" through "28 Heir to the Empire" → true', () => {
       const stems = Array.from({ length: 28 }, (_, i) => ({
@@ -792,9 +740,7 @@ describe('hasStrongChapterSetEvidence (#1048)', () => {
     });
 
     it('AC6: numeric-only stems remain mergeable via the existing numeric-only rule', () => {
-      // Empty post-prefix titles (e.g. "01", "02") are rejected by the new
-      // rule's non-empty-title guard, so this case continues to merge through
-      // the existing NUMERIC_ONLY_RE path regardless of rule evaluation order.
+      // Empty post-prefix titles fail this rule and remain owned by the numeric-only rule.
       expect(hasStrongChapterSetEvidence([
         { path: '/lib/Book/01.mp3', size: SHORT_STORY },
         { path: '/lib/Book/02.mp3', size: SHORT_STORY },
@@ -817,7 +763,6 @@ describe('hasStrongChapterSetEvidence (#1048)', () => {
     });
 
     it('AC10 (adversarial counter-test): "01 Book A"/"01 Book B"/"01 Book C" → false', () => {
-      // Each is "track 1" of a different book, not chapters of one book.
       expect(hasStrongChapterSetEvidence([
         { path: '/lib/Pack/01 Book A.mp3', size: LARGE },
         { path: '/lib/Pack/01 Book B.mp3', size: LARGE },
@@ -826,9 +771,7 @@ describe('hasStrongChapterSetEvidence (#1048)', () => {
     });
 
     it('AC9: trailing-digits "Heir to the Empire NN" → true (existing distinct===1 rule)', () => {
-      // The existing normalizeStemForComparison strips trailing `\s+\d+\s*$`,
-      // so all stems collapse to "Heir to the Empire" and merge through the
-      // distinct === 1 rule. Pin the behavior so it doesn't regress.
+      // Trailing-number normalization, not the numeric-prefix rule, supplies this evidence.
       const stems = Array.from({ length: 5 }, (_, i) => ({
         path: `/lib/Book/Heir to the Empire ${String(i + 1).padStart(2, '0')}.mp3`,
         size: SHORT_STORY,

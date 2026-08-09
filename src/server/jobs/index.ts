@@ -37,12 +37,7 @@ interface TimeoutJob {
 
 type JobEntry = CronJob | TimeoutJob;
 
-/**
- * Run one maintenance subtask isolated behind its own guard (F8): a throw is logged
- * and swallowed so it neither suppresses a LATER subtask in the same callback nor an
- * EARLIER unrelated failure prevents this one from running. Used to decouple the
- * staged-submission cleanups from the other housekeeping/import-maintenance steps.
- */
+// Isolate maintenance failures so later subtasks still run.
 async function runGuarded(log: FastifyBaseLogger, label: string, fn: () => Promise<unknown> | unknown): Promise<void> {
   try {
     await fn();
@@ -51,56 +46,34 @@ async function runGuarded(log: FastifyBaseLogger, label: string, fn: () => Promi
   }
 }
 
-/** Stoppable handle for a single timeout-loop job (see `scheduleTimeoutLoop`). */
 interface TimeoutLoopHandle {
   stop(): void;
 }
 
-/**
- * Handle returned by `startJobs` so the graceful-shutdown path can halt the
- * scheduler. BEST-EFFORT / GRACEFUL-ONLY: `stopAll` stops clean firing during a
- * graceful shutdown — it has no durable backing and makes no guarantee against a
- * hard crash (SIGKILL/OOM), mirroring the connector refresh queue's contract
- * (see CLAUDE.md "Connector refresh queue is best-effort, in-memory", #769/#877/
- * #885). It does NOT drain in-flight work; it just guarantees no scheduled job
- * fires again once invoked.
- */
+/** In-memory graceful stop: prevents future fires without draining in-flight work. */
 export interface JobScheduler {
-  /** Stop every cron + timeout-loop job. Idempotent — a second call is a no-op. */
+  /** Idempotent. */
   stopAll(): void;
 }
 
 export function startJobs(db: Db, services: Services, log: FastifyBaseLogger): JobScheduler {
-  // RetrySearchDeps is constructed once in createServices() and exposed on the
-  // Services bag so jobs and the composition root share the same instance.
   const retryDeps = {
     blacklistService: services.blacklist,
     retrySearchDeps: services.retrySearchDeps,
   };
 
-  // When a version-check changes the cached update status, recompute health so
-  // the health card + nav dot reflect it within one UI poll instead of lagging
-  // until the next scheduled health-check tick. Must call the service directly
-  // (not `executeTracked('health-check')`, which silently no-ops mid-pass) so
-  // the coalesced trailing rerun in runAllChecks always consumes the new status.
+  // Bypass TaskRegistry: a health pass already in flight must coalesce a trailing rerun.
   const onUpdateChanged = (): void => {
     fireAndForget(services.healthCheck.runAllChecks(), log, 'Version-check health nudge failed');
   };
 
-  // Expose that same nudge to the manual "Run Now" health route so a manual run
-  // can fire a live version check (`runManualChecks`) using the *identical*
-  // callback the boot/2 AM invocations use — keeping the SSE/health-nudge
-  // side-effects consistent across paths (#1411). The scheduled health-check cron
-  // is untouched: it calls `runAllChecks()` directly and pays no fetch cost.
+  // Manual checks reuse the same health nudge as boot and cron.
   services.healthCheck.setVersionUpdateCallback(onUpdateChanged);
 
-  /** Job registry — adding a new job requires one entry here. */
   const jobRegistry: JobEntry[] = [
     { name: 'monitor', type: 'cron', schedule: MONITOR_CRON_INTERVAL, callback: () => monitorDownloads(db, services.downloadClient, services.notifier, log, retryDeps, services.eventBroadcaster, services.remotePathMapping, services.qualityGateOrchestrator, services.eventHistory) },
     { name: 'enrichment', type: 'cron', schedule: '*/5 * * * *', callback: () => runEnrichment(db, services.metadata, services.book, log) },
     { name: 'import-maintenance', type: 'cron', schedule: '*/5 * * * *', callback: async () => {
-      // Each subtask is independently guarded (F8) so the staged stale-receiving sweep
-      // runs even if the completed-download processing above it fails persistently.
       await runGuarded(log, 'Import-maintenance: completed-download processing failed', async () => {
         await services.qualityGateOrchestrator.processCompletedDownloads();
         await services.importOrchestrator.processCompletedDownloads();
@@ -114,17 +87,12 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger): J
     { name: 'backup', type: 'timeout', getIntervalMinutes: () => services.settings.get('system').then((s) => s.backupIntervalMinutes), callback: () => runBackupJob(services.backup, log) },
     { name: 'housekeeping', type: 'cron', schedule: '0 0 * * 0', callback: async () => {
       await runGuarded(log, 'Housekeeping: VACUUM failed', () => db.run(sql`VACUUM`));
-      // Read retention once. On failure it stays null and BOTH retention prunes are
-      // skipped (conservative: never prune against an unknown window), but the
-      // blacklist cleanup below still runs.
+      // If retention cannot be read, skip both prunes but still clean the blacklist.
       let retentionDays: number | null = null;
       await runGuarded(log, 'Housekeeping: retention read failed', async () => {
         retentionDays = (await services.settings.get('general')).housekeepingRetentionDays ?? 90;
       });
-      // Each retention prune is independently guarded (F8): an event-history failure
-      // must not suppress the staged-detail prune, and vice-versa. The finalized
-      // staged header + aggregate columns are kept indefinitely (detailsPruned becomes
-      // observable, #1893).
+      // Prune staged details only; finalized headers and aggregates remain.
       if (retentionDays !== null) {
         const days = retentionDays;
         await runGuarded(log, 'Housekeeping: event-history prune failed', () => services.eventHistory.pruneOlderThan(days));
@@ -139,8 +107,6 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger): J
     { name: 'series-refresh', type: 'cron', schedule: '0 3 * * 0', callback: () => runSeriesRefreshJob(services.seriesCard, log) },
     { name: 'library-rescan', type: 'cron', schedule: '0 */6 * * *', callback: async () => {
       try {
-        // #1960 AC9 — the SAME wrapper the `POST /api/library/rescan` route uses. The
-        // warn-and-swallow below is unchanged: the wrapper rethrows every error as-is (AC12).
         await rescanLibraryWithCompanionSweep({ libraryScan: services.libraryScan, companionEbook: services.companionEbook, log });
       } catch (error: unknown) {
         if (error instanceof LibraryPathError || error instanceof ScanInProgressError) {
@@ -154,8 +120,6 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger): J
 
   const reg = services.taskRegistry;
 
-  // Capture every scheduler handle so `stopAll` can halt them on shutdown. Both
-  // collections are append-only here and only read by `stopAll`.
   const cronHandles: Cron[] = [];
   const timeoutHandles: TimeoutLoopHandle[] = [];
 
@@ -172,29 +136,15 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger): J
 
   log.info('Background jobs started');
 
-  // Startup recovery: reset stuck downloads and reprocess (#358)
   runStartupRecovery(db, services, log).catch((error: unknown) => {
     log.error({ error: serializeError(error) }, 'Startup recovery failed — jobs continue normally');
   });
 
-  // Run the version check once on boot so the update banner reflects reality
-  // before the 2 AM cron fires (#1225). Route through the registry (rather than
-  // calling checkForUpdate directly) so the boot run stamps `lastRun` — otherwise
-  // the Jobs page shows `Last Run: —` until the 2 AM cron, even though a check
-  // just ran (#1317). runTask invokes the registered `version-check` callback,
-  // which closes over the same `onUpdateChanged` health nudge (#1262). Fire-and-
-  // forget: the trailing .catch guards against any rejection (including a
-  // NOT_FOUND/ALREADY_RUNNING TaskRegistryError) so a failed check never blocks
-  // or crashes startup.
+  // Use TaskRegistry so the boot check stamps lastRun and reuses the cron's health nudge.
   reg.runTask('version-check').catch((error: unknown) => {
     log.error({ error: serializeError(error) }, 'Startup version check failed — jobs continue normally');
   });
 
-  // Best-effort, graceful-only scheduler stop (see JobScheduler doc). Memoized via
-  // `stopped` so a second call is a true no-op: it never re-invokes `Cron.stop()`
-  // or a timeout handle's stop. `gracefulShutdown` calls this FIRST — before the
-  // import-worker / connector drains — so no cron or timeout callback can enqueue
-  // new import jobs or connector refreshes while those drains are awaiting.
   let stopped = false;
   const stopAll = (): void => {
     if (stopped) return;
@@ -207,10 +157,7 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger): J
 }
 
 async function runStartupRecovery(db: Db, services: Services, log: FastifyBaseLogger): Promise<void> {
-  // Reset downloads stuck mid-pipeline back to the `(completed, idle)` entry point
-  // so the orchestrators re-claim them. This resets ONLY the `pipelineStage` axis —
-  // `clientStatus` (still 'completed', the client download had finished) is
-  // preserved. Bulk recovery write; the per-row transition helper does not apply.
+  // Reset only pipelineStage; completed clientStatus is the recovery entry point.
   const resetResult = await db
     .update(downloads)
     .set({ pipelineStage: 'idle' })
@@ -221,21 +168,13 @@ async function runStartupRecovery(db: Db, services: Services, log: FastifyBaseLo
     log.info({ count: resetResult.length }, 'Startup recovery: reset stuck downloads to completed');
   }
 
-  // Reprocess via existing batch methods
   await services.qualityGateOrchestrator.processCompletedDownloads();
   await services.importOrchestrator.processCompletedDownloads();
 
-  // Backfill: download remote covers for imported books (#369)
   await runCoverBackfill(db, log, services.connector);
 }
 
-/**
- * Schedule a cron job via croner. croner is the single source of truth for both
- * firing and the displayed next-run: `job.nextRun()` is the real next fire time,
- * stored on the registry at registration and refreshed after each run (mirroring
- * how timeout-loop jobs use `setNextRun`). The constructed `Cron` is returned so
- * tests can `.stop()` it for deterministic cleanup; production ignores the handle.
- */
+// Croner owns both firing and the next-run timestamp exposed by TaskRegistry.
 export function scheduleCron(reg: TaskRegistry, name: string, expression: string, log: FastifyBaseLogger): Cron {
   const job = new Cron(expression, async () => {
     try {
@@ -243,10 +182,7 @@ export function scheduleCron(reg: TaskRegistry, name: string, expression: string
     } catch (error: unknown) {
       log.error({ error: serializeError(error) }, `${name} job error`);
     } finally {
-      // Refresh the displayed next-run after each fire. Skip on null (no future
-      // occurrence) so a stale value is left untouched rather than crashing
-      // setNextRun, which expects a Date. Never exercised by the recurring
-      // production jobs — defensive only.
+      // A null nextRun means no future occurrence; retain the last displayed value.
       const next = job.nextRun();
       if (next) reg.setNextRun(name, next);
     }
@@ -256,17 +192,8 @@ export function scheduleCron(reg: TaskRegistry, name: string, expression: string
   return job;
 }
 
-/**
- * Schedule a self-re-arming `setTimeout` loop and return a stoppable handle.
- *
- * `stop()` clears the pending timer AND sets a `stopped` flag closed over by
- * `scheduleNext`, so once stopped the loop never schedules another tick or fires
- * its callback again — even if a timer was already pending or a tick's macrotask
- * was already queued at the moment of stop (the callback short-circuits on the
- * flag). Both `setTimeout` sites (the main interval and the retry-on-error timer)
- * are captured and `unref()`'d so a pending tick can't pin the event loop past
- * SIGTERM, mirroring the connector refresh queue's timers (#1498/#1512).
- */
+// stop() blocks pending or queued ticks from firing or rearming. unref() keeps
+// either timer path from pinning process shutdown.
 function scheduleTimeoutLoop(
   reg: TaskRegistry,
   name: string,
@@ -276,7 +203,6 @@ function scheduleTimeoutLoop(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
 
-  // Arm a timer that does not keep the event loop alive (see doc above).
   const arm = (fn: () => void, ms: number): void => {
     timer = setTimeout(fn, ms);
     timer.unref();
@@ -287,11 +213,11 @@ function scheduleTimeoutLoop(
     try {
       const intervalMinutes = await getIntervalMinutes();
       const intervalMs = intervalMinutes * 60 * 1000;
-      if (stopped) return; // could have stopped while awaiting the interval read
+      if (stopped) return; // stop may run during the interval read
       reg.setNextRun(name, new Date(Date.now() + intervalMs));
 
       arm(async () => {
-        if (stopped) return; // a queued tick must not fire after stop
+        if (stopped) return; // queued ticks must not fire after stop
         try {
           await reg.executeTracked(name);
         } catch (error: unknown) {

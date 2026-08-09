@@ -24,10 +24,6 @@ export interface RssJobResult {
   grabbed: number;
 }
 
-/**
- * Run a single RSS sync cycle: poll RSS feeds from RSS-capable indexers,
- * match results to wanted books, and grab the best matches.
- */
 // eslint-disable-next-line complexity -- feed-first matching with per-book dedup and error isolation
 export async function runRssJob(
   settingsService: SettingsService,
@@ -56,7 +52,6 @@ export async function runRssJob(
     return { polled: 0, matched: 0, grabbed: 0 };
   }
 
-  // Get RSS-capable indexers
   const rssIndexers = await indexerSearchService.getRssCapableIndexers();
   if (rssIndexers.length === 0) {
     log.debug('No RSS-capable indexers enabled');
@@ -65,7 +60,6 @@ export async function runRssJob(
 
   log.info({ indexerCount: rssIndexers.length, candidateCount: candidates.length }, 'Starting RSS sync');
 
-  // Poll each indexer and collect all results
   let polled = 0;
   const allResults: SearchResult[] = [];
 
@@ -91,8 +85,6 @@ export async function runRssJob(
 
   const filtered = await filterBlacklistedResults(allResults, blacklistService, log);
 
-  // Match each feed item to the best candidate book
-  // Collect all matching items per book so we can rank the full set after filtering
   const itemsPerBook = new Map<number, { results: SearchResult[]; candidate: BookWithAuthor }>();
 
   for (const item of filtered) {
@@ -120,14 +112,8 @@ export async function runRssJob(
       continue;
     }
 
-    // Persist the match score so BOTH downstream consumers rank by it:
-    // (1) the enrichment Phase-2 fetch cap (`selectCappedCandidates`), and
-    // (2) `canonicalCompare`'s matchScore gate during grab selection — a >0.1
-    // score spread across this book's candidates now overrides the
-    // narrator/MB-hr tiers when picking the best RSS result. RSS computes
-    // bestScore here for matching and would otherwise discard it, leaving both
-    // consumers to rank only by seeders/grabs (usually absent on usenet) and
-    // effectively fall back to feed order (#1315).
+    // Both Phase-2 capping and canonicalCompare consume matchScore; without it,
+    // Usenet candidates tend to fall back to feed order.
     item.matchScore = bestScore;
 
     const existing = itemsPerBook.get(bestCandidate.id);
@@ -141,22 +127,16 @@ export async function runRssJob(
   let matched = 0;
   let grabbed = 0;
 
-  // Build the LAN allowlist once per RSS cycle. The DB read is cheap (indexers
-  // table is tiny) and reusing the same allowlist across every per-book
-  // enrichment in this cycle avoids N reads (#1149).
+  // Reuse one LAN allowlist snapshot for every book in this cycle.
   const lanAllowlist = await indexerService.getLanAllowlist();
 
-  // Process each matched book — filter and rank all candidates together
   for (const [bookId, { results: bookResults, candidate }] of itemsPerBook) {
     matched++;
 
-    // Enrich Usenet results before filtering. Auto-grab path: cap Phase-2
-    // fetches to the top-ranked candidates (#1315).
+    // Enrichment must precede filters that inspect NZB-derived fields; cap its Phase-2 fetches.
     await enrichUsenetLanguages(bookResults, log, lanAllowlist, { maxPhase2Fetches: AUTO_GRAB_PHASE2_CAP });
 
-    // Multi-part filter + quality ranking (shared post-enrichment sub-chain, #1777).
-    // Normalize the minutes-backed duration to seconds via the canonical helper so
-    // the precedence (audioDuration ?? duration*60) matches every other path (#1797).
+    // Preserve canonical audioDuration ?? duration*60 precedence across grab paths.
     const { durationSeconds } = resolveBookQualityInputs(candidate);
     const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, candidate.narrators);
     const { results: ranked } = applyMultiPartFilterAndRank(
@@ -174,7 +154,6 @@ export async function runRssJob(
     const best = ranked.find((r) => r.downloadUrl);
     if (!best) continue;
 
-    // Attempt grab with mutex
     try {
       await downloadOrchestrator.grab(
         buildGrabPayload(best, bookId, { source: 'rss' }),

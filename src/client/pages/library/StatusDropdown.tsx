@@ -22,7 +22,6 @@ export function StatusDropdown({
   const currentTab = filterTabs.find((t) => t.key === statusFilter) ?? filterTabs[0]!;
   const currentCount = statusCounts[statusFilter] ?? 0;
 
-  // Focus the option at focusIndex when open, or when focusIndex changes while open
   useEffect(() => {
     if (!open) return;
     const buttons = menuRef.current?.querySelectorAll<HTMLButtonElement>('button');

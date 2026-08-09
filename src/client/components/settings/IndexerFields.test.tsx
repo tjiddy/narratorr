@@ -85,7 +85,6 @@ describe('IndexerFields', () => {
 
     expect(screen.getByText('MAM ID')).toBeInTheDocument();
     expect(screen.getByText(/Generate from MAM/)).toBeInTheDocument();
-    // settings.baseUrl is API-only (#1886) — the form must not surface it
     expect(screen.queryByText('Base URL')).not.toBeInTheDocument();
   });
 
@@ -107,7 +106,6 @@ describe('IndexerFields', () => {
       const apiUrlInput = screen.getByPlaceholderText('https://indexer.example.com/api');
       await user.type(apiUrlInput, 'should-not-appear');
 
-      // readOnly inputs do not accept typed text
       expect(apiUrlInput).not.toHaveValue('should-not-appear');
     });
 
@@ -212,7 +210,6 @@ describe('IndexerFields', () => {
         expect(screen.getByRole('checkbox')).toBeInTheDocument();
       });
 
-      // Enable the proxy toggle
       await user.click(screen.getByRole('checkbox'));
 
       await waitFor(() => {
@@ -262,7 +259,7 @@ describe('IndexerFields', () => {
       await user.type(mamIdInput, 'my-mam-id');
       await user.tab();
 
-      // Wait a tick to allow any background async to settle, then assert no API call.
+      // Wait a tick for any background async to settle.
       await new Promise(r => setTimeout(r, 50));
       expect((api.testIndexerConfig as Mock)).not.toHaveBeenCalled();
     });
@@ -270,7 +267,7 @@ describe('IndexerFields', () => {
 
   describe('DetectionOverlay modal compatibility', () => {
     it('DetectionOverlay uses relative positioning instead of fixed inset-0 z-50', async () => {
-      (api.testIndexerConfig as Mock).mockReturnValue(new Promise(() => {})); // never resolves — keeps overlay visible
+      (api.testIndexerConfig as Mock).mockReturnValue(new Promise(() => {})); // Keep overlay visible.
 
       function MamPrehydratedWrapper() {
         const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
@@ -344,7 +341,6 @@ describe('IndexerFields', () => {
       const user = userEvent.setup();
       renderWithProviders(<SentinelEditWrapper indexerId={42} />);
 
-      // Badge should be hydrated from persisted values
       await waitFor(() => {
         expect(screen.getByText('OldUser')).toBeInTheDocument();
       });
@@ -369,8 +365,7 @@ describe('IndexerFields', () => {
       });
       const user = userEvent.setup();
 
-      // baseUrl has no form input (#1886) — a persisted API-set value hydrates into
-      // defaultValues and must still reach the detection request via watch().
+      // baseUrl is schema-only; the persisted value must still reach detection.
       function EditableFormWrapper() {
         const { register, watch, setValue, formState: { errors } } = useForm<CreateIndexerFormData>({
           defaultValues: {
@@ -387,7 +382,6 @@ describe('IndexerFields', () => {
         expect(screen.getByText('OldUser')).toBeInTheDocument();
       });
 
-      // Toggle useProxy before clicking refresh to prove live form state is read
       const proxyToggle = screen.getByLabelText('Route through proxy');
       await user.click(proxyToggle);
 
@@ -469,7 +463,7 @@ describe('IndexerFields', () => {
     });
 
     it('#361 refresh with sentinel + indexerId shows DetectionOverlay spinner during API call', async () => {
-      (api.testIndexerConfig as Mock).mockReturnValue(new Promise(() => {})); // never resolves
+      (api.testIndexerConfig as Mock).mockReturnValue(new Promise(() => {})); // Never resolves; keeps spinner visible.
       const user = userEvent.setup();
       renderWithProviders(<SentinelEditWrapper indexerId={42} />);
 
@@ -557,17 +551,14 @@ describe('IndexerFields', () => {
     it('#361 refresh with sentinel mamId but no indexerId (create mode) does not call API', async () => {
       const user = userEvent.setup();
 
-      // SentinelEditWrapper without indexerId simulates create mode with sentinel somehow in field
       renderWithProviders(<SentinelEditWrapper />);
 
-      // Badge is hydrated from persisted isVip/mamUsername defaults
       await waitFor(() => {
         expect(screen.getByText('OldUser')).toBeInTheDocument();
       });
 
       await user.click(screen.getByTitle('Refresh MAM status'));
 
-      // Should not call API — sentinel without indexerId means no saved credentials to resolve
       expect((api.testIndexerConfig as Mock)).not.toHaveBeenCalled();
     });
 
@@ -726,7 +717,6 @@ describe('IndexerFields', () => {
 
     it('missing classname falls back to "User" via deriveInitialMamStatus when isVip is false', () => {
       renderWithProviders(<MamFieldWithStatus isVip={false} />);
-      // deriveInitialMamStatus fills classname as 'User' when not persisted and isVip is false
       expect(screen.getByText('User')).toBeInTheDocument();
       expect(screen.getByText('Non-VIP and freeleech torrents')).toBeInTheDocument();
     });

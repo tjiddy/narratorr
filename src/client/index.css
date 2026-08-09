@@ -1,4 +1,4 @@
-/* Google Fonts loaded via <link> in index.html to avoid render-blocking CSS @import */
+/* Fonts use HTML links to avoid a render-blocking CSS import. */
 @import "tailwindcss";
 
 @variant dark (&:where(.dark, .dark *));
@@ -155,9 +155,7 @@
 
   html {
     scroll-behavior: smooth;
-    /* Reserve the scrollbar gutter even when the page doesn't scroll: conditional content
-       (e.g. a dirty form's fade-in Save button) crossing the viewport-height threshold
-       otherwise summons/dismisses the scrollbar and shifts the whole app sideways. */
+    /* Prevent conditional content from shifting the page when a scrollbar appears. */
     scrollbar-gutter: stable;
   }
 
@@ -166,7 +164,6 @@
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 
-  /* Custom scrollbar */
   * {
     scrollbar-width: thin;
     scrollbar-color: hsl(var(--muted-foreground) / 0.2) transparent;
@@ -198,8 +195,6 @@
     caret-color: currentColor;
   }
 
-  /* Native checkboxes/radios use the brand amber accent instead of the browser-default
-     blue (parity with narratorr-request). One rule covers every checkbox app-wide. */
   input[type="checkbox"],
   input[type="radio"] {
     accent-color: hsl(var(--primary));
@@ -207,7 +202,6 @@
 }
 
 @layer components {
-  /* Animated gradient background */
   .gradient-bg {
     background:
       radial-gradient(ellipse 80% 50% at 50% -20%, hsl(var(--primary) / 0.15), transparent),
@@ -215,7 +209,6 @@
       hsl(var(--background));
   }
 
-  /* Noise texture overlay */
   .noise-overlay::before {
     content: "";
     position: fixed;
@@ -229,7 +222,6 @@
     z-index: 1000;
   }
 
-  /* Glass card effect */
   .glass-card {
     @apply bg-card/80 backdrop-blur-xl border border-border/50 shadow-lg shadow-black/5;
   }
@@ -238,7 +230,6 @@
     @apply bg-card/60 shadow-black/20;
   }
 
-  /* Staggered animation delays */
   .stagger-1 { animation-delay: 50ms; }
   .stagger-2 { animation-delay: 100ms; }
   .stagger-3 { animation-delay: 150ms; }
@@ -283,7 +274,6 @@
   @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-offset-2 focus-visible:ring-offset-background;
 }
 
-/* Skeleton loading shimmer */
 .skeleton::after {
   content: "";
   position: absolute;
@@ -301,7 +291,6 @@
   animation: shimmer 1.5s infinite;
 }
 
-/* Status bar shimmer for active statuses */
 .status-bar-shimmer::after {
   content: "";
   position: absolute;
@@ -318,7 +307,6 @@
   animation: shimmer 3s ease-in-out infinite;
 }
 
-/* Respect reduced motion preference */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

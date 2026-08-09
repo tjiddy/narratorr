@@ -12,7 +12,6 @@ export async function bulkOperationsRoutes(
   app: FastifyInstance,
   bulkOperationService: BulkOperationService,
 ): Promise<void> {
-  // Rename preview — capped from→to folder-mismatch list + true totals (incl. job denominator)
   app.get('/api/books/bulk/rename/preview', async () => {
     return bulkOperationService.previewRenameEligible();
   });
@@ -21,12 +20,10 @@ export async function bulkOperationsRoutes(
     return bulkOperationService.countRetagEligible();
   });
 
-  // Active job discovery
   app.get('/api/books/bulk/active', async () => {
     return bulkOperationService.getActiveJob();
   });
 
-  // Start jobs
   app.post('/api/books/bulk/rename', async (request, reply) => {
     try {
       const jobId = await bulkOperationService.startRenameJob();
@@ -67,7 +64,6 @@ export async function bulkOperationsRoutes(
     }
   });
 
-  // Poll job status
   app.get<{ Params: JobIdParams }>(
     '/api/books/bulk/:jobId',
     { schema: { params: jobIdParamsSchema } },

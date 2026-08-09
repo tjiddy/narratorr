@@ -24,7 +24,6 @@ describe('copyToLibrary onProgress wiring', () => {
     srcDir = join(baseDir, 'src');
     destDir = join(baseDir, 'dest');
     await mkdir(srcDir, { recursive: true });
-    // Two audio files so progress fires across file boundaries
     await writeFile(join(srcDir, '01.mp3'), Buffer.alloc(600));
     await writeFile(join(srcDir, '02.mp3'), Buffer.alloc(400));
   });
@@ -53,7 +52,6 @@ describe('copyToLibrary onProgress wiring', () => {
       expect(call.ratio).toBeLessThanOrEqual(1);
       expect(call.total).toBe(1000);
     }
-    // Final emission should reflect full copy
     const last = progressCalls[progressCalls.length - 1];
     expect(last!.current).toBe(1000);
     expect(last!.ratio).toBe(1);
@@ -76,7 +74,6 @@ describe('copyToLibrary onProgress wiring', () => {
   });
 
   it('single-file source streams progress with total equal to source file size', async () => {
-    // Build a single-file source
     const fileSrc = join(baseDir, 'single.mp3');
     await writeFile(fileSrc, Buffer.alloc(800));
     const fileStats = await stat(fileSrc);

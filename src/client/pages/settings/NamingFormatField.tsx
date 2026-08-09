@@ -4,14 +4,9 @@ import { ChevronRightIcon } from '@/components/icons';
 import { errorInputClass } from '@/components/settings/formStyles';
 import type { TokenGroup } from '@core/utils/naming.js';
 
-// Extracted from NamingSettingsSection (the row-table conversion pushed it over the 400-line
-// max-lines cap) — the format-template EDITOR: mono input with token-aware keydown, error,
-// warnings, collapsible token panel, and the multi-variant live preview block.
-
 export interface FormatFieldProps {
   id: string;
-  /** Accessible name for the input — the row header is a SPAN (it hosts the interactive "?"
-      button, which a <label> may not contain), so the input must label itself. */
+  /** Header contains a button, so the input must provide its own accessible name. */
   inputAriaLabel: string;
   placeholder: string;
   error?: FieldError | undefined;
@@ -34,7 +29,6 @@ export interface FormatFieldProps {
   onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
 }
 
-/** Row-header content for a format editor: label text + the "?" token-reference modal button. */
 export function FormatFieldHeader({ text, ariaLabel, onOpenTokenModal }: { text: string; ariaLabel: string; onOpenTokenModal: () => void }) {
   return (
     <span className="inline-flex items-center gap-2">
@@ -51,9 +45,6 @@ export function FormatFieldHeader({ text, ariaLabel, onOpenTokenModal }: { text:
   );
 }
 
-// The label row lives in the wrapping SettingsRow header (span variant — a <label> may not
-// contain the "?" button, interactive content is invalid inside labels). FormatField renders
-// only the editor body: input, warnings, token panel, previews.
 export function FormatField({ id, inputAriaLabel, placeholder, error, preview, previewNoSeries, previewMultiFile, previewMultiEdition, previewFileEdition, previewSuffix, previewSuffixMultiFile, previewNote, warnings, onInsertToken, tokenGroups, inlinePanelOpen, onToggleInlinePanel, registerProps, inputRef, hasValue, onKeyDown }: FormatFieldProps) {
   const panelId = `${id}-token-panel`;
   return (

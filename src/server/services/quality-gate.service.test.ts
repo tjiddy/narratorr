@@ -75,8 +75,7 @@ describe('QualityGateService', () => {
 
       expect(result).toEqual(expected);
       const chain = db.select.mock.results[0]!.value;
-      // Assert the shared eligibility condition directly so this can't drift from
-      // its internals (now `completed display AND externalId non-null AND != ''`, #1861).
+      // Assert the shared predicate rather than re-spelling its eligibility terms.
       expect(chain.where).toHaveBeenCalledWith(qualityGateEligibleDownloadCondition());
     });
 
@@ -131,7 +130,6 @@ describe('QualityGateService', () => {
 
     it('returns null when download exists but status is not completed', async () => {
       const { service, db } = createService();
-      // Query filters by status=completed, so a non-completed download returns empty result set
       db.select.mockReturnValue(mockDbChain([]));
 
       const result = await service.getCompletedDownloadById(1);
@@ -197,10 +195,6 @@ describe('QualityGateService', () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
 
-      // tagNarrator mismatch produces holdReasons.length > 0, but the imported-book
-      // guard must still append `imported_book_replacement` — the AC requires the
-      // reason to be present for any imported-book replacement, regardless of other
-      // hold reasons.
       const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 600_000_000, tagNarrator: 'Jane Doe' }));
 
       expect(result.action).toBe('held');
@@ -218,7 +212,6 @@ describe('QualityGateService', () => {
       const result = await service.processDownload(download, baseBook, makeScan({ totalSize: 600_000_000 }));
 
       expect(result.reason.holdReasons).not.toContain('imported_book_replacement');
-      // newMbPerHour > existing → auto-import branch
       expect(result.action).toBe('imported');
     });
 
@@ -273,8 +266,6 @@ describe('QualityGateService', () => {
       const download = { ...baseDownload, bookStatusAtGrab: 'wanted' as const };
       const result = await service.processDownload(download, baseBook, makeScan({ totalSize: 600_000_000, tagNarrator: 'Jane Doe' }));
 
-      // narrator_mismatch from buildQualityAssessment must still apply, but
-      // the imported-book guard must NOT add its own reason
       expect(result.reason.holdReasons).toContain('narrator_mismatch');
       expect(result.reason.holdReasons).not.toContain('imported_book_replacement');
       expect(result.action).toBe('held');
@@ -289,7 +280,6 @@ describe('QualityGateService', () => {
 
       const result = await service.processDownload(baseDownload, noQualityBook, makeScan());
 
-      // path === null → first-download path; no hold reasons → auto-import
       expect(result.action).toBe('imported');
     });
 
@@ -300,9 +290,6 @@ describe('QualityGateService', () => {
 
       const result = await service.processDownload(baseDownload, noQualityBook, makeScan({ totalDuration: 0 }));
 
-      // path === null and no hold reasons → first-download auto-import branch (book.path === null)
-      // newDuration is 0, existing is also null — buildQualityAssessment returns newMbPerHour: null
-      // first-download branch fires before the null-quality check
       expect(result.action).toBe('imported');
     });
   });
@@ -315,7 +302,6 @@ describe('QualityGateService', () => {
       const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 600_000_000, tagNarrator: 'John Smith' }));
 
       expect(result.reason.narratorMatch).toBe(true);
-      // book.path !== null and no other hold reasons → imported-book replacement hold (#1103 F2)
       expect(result.action).toBe('held');
       expect(result.reason.holdReasons).toContain('imported_book_replacement');
     });
@@ -486,7 +472,6 @@ describe('QualityGateService', () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
 
-      // "Travis Baldree, , Jeff Hays" splits to ["travis baldree", "", "jeff hays"] — empty token removed
       const result = await service.processDownload(
         baseDownload,
         { ...baseBook, narrators: [{ name: 'Travis Baldree' }, { name: 'Jeff Hays' }] },
@@ -529,23 +514,18 @@ describe('QualityGateService', () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
 
-      // Book has two narrators stored as discrete entities
       const result = await service.processDownload(
         baseDownload,
         { ...baseBook, narrators: [{ name: 'Travis Baldree' }, { name: 'Jeff Hays' }] },
         makeScan({ totalSize: 600_000_000, tagNarrator: 'Travis Baldree' }),
       );
 
-      // Direct array comparison should match 'Travis Baldree' without re-splitting via delimiter heuristics
       expect(result.reason.narratorMatch).toBe(true);
       expect(result.reason.holdReasons).not.toContain('narrator_mismatch');
     });
   });
 
-  // #1854: the hold decision moved from a ±15% relative band to the shared absolute
-  // 90s band. baseBook.audioDuration = 36000s, so the existing durationSeconds is
-  // 36000; the boundary is Δ90s inclusive. The `durationDelta` ratio is still
-  // computed and persisted (unchanged shape) — only the HOLD decision changed.
+  // Hold uses the shared ±240-second inclusive boundary; the persisted ratio does not decide it.
   describe('processDownload — duration delta (absolute 240s band)', () => {
     it('does not hold at exactly +240s duration delta (inclusive boundary)', async () => {
       const { service, db } = createService();
@@ -554,7 +534,6 @@ describe('QualityGateService', () => {
       const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 600_000_000, totalDuration: 36240 }));
 
       expect(result.reason.holdReasons).not.toContain('duration_delta');
-      // Ratio still populated with its unchanged shape.
       expect(result.reason.durationDelta).toBeCloseTo(240 / 36000, 6);
     });
 
@@ -617,7 +596,6 @@ describe('QualityGateService', () => {
 
       const result = await service.processDownload(baseDownload, null, makeScan({ totalSize: 600_000_000 }));
 
-      // With null book, existingMbPerHour is null → holds for no_quality_data
       expect(result.action).toBe('held');
       expect(result.reason.existingMbPerHour).toBeNull();
     });
@@ -703,7 +681,6 @@ describe('QualityGateService', () => {
     it('auto-imports when book.path is null even if quality metadata fields are populated (metadata-only quality)', async () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
-      // Book with path null but size + duration from metadata provider (not from probe)
       const metadataBook = { ...baseBook, path: null };
 
       const result = await service.processDownload(baseDownload, metadataBook, makeScan());
@@ -715,7 +692,6 @@ describe('QualityGateService', () => {
     it('duration_delta IS triggered for existing book (path not null) with large duration change (regression)', async () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
-      // Book has path set (existing files) and a short duration → extreme delta with 36000s new scan
       const existingBook = { ...baseBook, duration: 1, audioDuration: null, audioTotalSize: null };
 
       const result = await service.processDownload(baseDownload, existingBook, makeScan({ totalDuration: 36000 }));
@@ -743,11 +719,9 @@ describe('QualityGateService', () => {
       const result = await service.atomicClaim(1);
 
       expect(result).toBe(true);
-      // SET shape: pipelineStage axis only — never clientStatus.
       const setArg = (chain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
       expect(setArg).toEqual({ pipelineStage: 'checking' });
       expect('clientStatus' in setArg).toBe(false);
-      // WHERE compiles the expected (completed, idle) guard.
       expect(chain.where).toHaveBeenCalledWith(
         and(eq(downloads.id, 1), eq(downloads.clientStatus, 'completed'), eq(downloads.pipelineStage, 'idle')),
       );
@@ -789,11 +763,9 @@ describe('QualityGateService', () => {
       expect(result.download).toBeDefined();
       expect(result.book).toEqual(baseBook);
 
-      // SET shape: pipelineStage axis only — never clientStatus.
       const setArg = (chain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
       expect(setArg).toEqual({ pipelineStage: 'importing' });
       expect('clientStatus' in setArg).toBe(false);
-      // WHERE guards on the expected pending_review stage.
       expect(chain.where).toHaveBeenCalledWith(
         and(eq(downloads.id, 1), eq(downloads.pipelineStage, 'pending_review')),
       );
@@ -838,11 +810,9 @@ describe('QualityGateService', () => {
       expect(result.download).toBeDefined();
       expect(result.book).toEqual(baseBook);
 
-      // Sanctioned cross-axis write: both axes set in ONE update, no extra keys.
       expect(chain.set as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
       const setArg = (chain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
       expect(setArg).toEqual({ clientStatus: 'failed', pipelineStage: 'idle' });
-      // WHERE guards on the expected pending_review stage.
       expect(chain.where).toHaveBeenCalledWith(
         and(eq(downloads.id, 1), eq(downloads.pipelineStage, 'pending_review')),
       );
@@ -910,11 +880,7 @@ describe('QualityGateService', () => {
       expect(result).toEqual(reason);
     });
 
-    // #1362 — the read path safeParses the persisted blob. A present-`null` non-null
-    // field is the live crash class: the old `{ ...NULL_REASON, ...stored }` spread
-    // repaired MISSING keys but a stored `holdReasons: null` overwrote the empty-array
-    // default and survived, crashing `.holdReasons.length` downstream. safeParse rejects
-    // it → null → the activity card takes its no-qualityGate branch.
+    // `safeParse` rejects present-null required fields so no partial object reaches the activity card.
     it('#1362: present-null holdReasons fails safeParse → returns null (crash-class regression)', async () => {
       const { service, db } = createService();
       const reason = {
@@ -933,15 +899,10 @@ describe('QualityGateService', () => {
       expect(result).toBeNull();
     });
 
-    // #1362: observable behavior change — the old cast+spread repaired missing keys via
-    // NULL_REASON; the new safeParse treats the 16 launch fields as required, so a legacy
-    // row missing a key now parse-fails to null (the activity card's no-data branch)
-    // rather than being silently back-filled into a partial object.
     it('#1362: missing required key fails safeParse → returns null (was previously spread-repaired)', async () => {
       const { service, db } = createService();
       const reason = {
         action: 'held' as const,
-        // mbPerHour intentionally omitted
         existingMbPerHour: 40, narratorMatch: false,
         existingNarrator: null, downloadNarrator: null,
         durationDelta: 0.05, existingDuration: null, downloadedDuration: null,
@@ -956,9 +917,7 @@ describe('QualityGateService', () => {
       expect(result).toBeNull();
     });
 
-    // #1404 — a malformed reason row degraded to null with zero diagnostic signal,
-    // so a missing quality card had no greppable cause. Surface one warn with the
-    // downloadId and Zod issue paths (paths exclude input values).
+    // Log only issue paths, never malformed reason values.
     it('#1404: malformed reason logs one warn with downloadId + issue paths, still returns null', async () => {
       const { service, db, log } = createService();
       const reason = {
@@ -981,7 +940,6 @@ describe('QualityGateService', () => {
         { downloadId: 7, issuePaths: ['holdReasons'] },
         expect.stringContaining('Malformed quality-gate reason'),
       );
-      // Negative-leak: issue paths are dotted strings only, no reason VALUES.
       const [arg] = (log.warn as ReturnType<typeof vi.fn>).mock.calls[0]!;
       expect((arg as { issuePaths: string[] }).issuePaths.every((p) => typeof p === 'string')).toBe(true);
     });
@@ -1127,8 +1085,6 @@ describe('QualityGateService', () => {
       expect(result.get(1)).toEqual(newestReason);
     });
 
-    // #1362 — batch feeder safeParses too. A null-feeder row maps to null (not a partial
-    // object), and a valid row in the same batch is unaffected.
     it('#1362: present-null holdReasons row maps to null; valid sibling row unaffected', async () => {
       const { service, db } = createService();
       db.select
@@ -1167,25 +1123,20 @@ describe('QualityGateService', () => {
       expect(result.get(1)).toEqual(batchReason);
     });
 
-    // #1362 F1 — newest-event-wins must hold even when the newest event parses to null.
-    // The desc-ordered events list puts the malformed newest event first; it maps to null,
-    // and the older valid event MUST NOT overwrite it (otherwise the batch path disagrees
-    // with getQualityGateData, which limit(1)s to the newest row).
+    // A malformed newest row must still prevent an older valid event from overwriting it.
     it('#1362 F1: malformed newest event maps to null and is NOT overwritten by an older valid event', async () => {
       const { service, db } = createService();
       db.select
         .mockReturnValueOnce(mockDbChain([{ ...baseDownload, id: 1, bookId: 10, pipelineStage: 'pending_review' }]))
         .mockReturnValueOnce(mockDbChain([
-          { downloadId: 1, reason: { ...batchReason, holdReasons: null } }, // newest (desc), malformed
-          { downloadId: 1, reason: batchReason },                            // older, valid
+          { downloadId: 1, reason: { ...batchReason, holdReasons: null } },
+          { downloadId: 1, reason: batchReason },
         ]));
 
       const result = await service.getQualityGateDataBatch([1]);
       expect(result.get(1)).toBeNull();
     });
 
-    // #1404 — the batch read site logs per malformed event with the correct
-    // per-event downloadId and Zod issue paths, and still maps the entry to null.
     it('#1404: malformed batch row logs one warn with the per-event downloadId + issue paths', async () => {
       const { service, db, log } = createService();
       db.select
@@ -1202,7 +1153,6 @@ describe('QualityGateService', () => {
 
       expect(result.get(1)).toBeNull();
       expect(result.get(2)).toEqual(batchReason);
-      // Exactly one warn — only the malformed row 1, not the valid row 2.
       expect(log.warn).toHaveBeenCalledTimes(1);
       expect(log.warn).toHaveBeenCalledWith(
         { downloadId: 1, issuePaths: ['holdReasons'] },
@@ -1306,18 +1256,10 @@ describe('Quality gate — narrator array comparison (#71)', () => {
     expect(result.reason.narratorMatch).toBeNull();
   });
 
-  // #300/#1362 — Legacy backward compatibility (readback normalization).
-  // BEHAVIOR CHANGE (#1362): the old `{ ...NULL_REASON, ...stored }` spread back-filled
-  // missing keys so legacy rows that predate a field addition still resolved. The read
-  // path now safeParses against the shared schema, where the 16 launch fields are
-  // REQUIRED — so a legacy row missing keys parse-fails to null and the activity card
-  // takes its no-qualityGate branch (no partial object leaks downstream). This is the
-  // intended trade: the field-addition rule (post-1.0 fields must be `.nullish()`) is
-  // what keeps future additions backward-compatible, not the lossy spread.
+  // Required launch fields fail closed; only post-1.0 additions may be nullish for compatibility.
   describe('getQualityGateData — legacy event normalization (#1362 supersedes #300 spread)', () => {
     it('a legacy row missing required keys parse-fails to null (no longer spread-repaired)', async () => {
       const { service, db } = createService();
-      // Legacy reason missing the 4 fields added in a later schema growth.
       const legacyReason = {
         action: 'held' as const,
         mbPerHour: 60, existingMbPerHour: 40, narratorMatch: false,
@@ -1354,7 +1296,6 @@ describe('Quality gate — narrator array comparison (#71)', () => {
     });
   });
 
-  // #299 — getDeferredCleanupCandidates
   describe('getDeferredCleanupCandidates', () => {
     it('queries with where(isNotNull(downloads.pendingCleanup)) and returns matching rows', async () => {
       const { service, db } = createService();

@@ -8,9 +8,7 @@ import { deleteManagedBookFiles } from './delete-managed-files.js';
 import { PathOutsideLibraryError } from './paths.js';
 import { NARRATORR_OPF_MARKER } from '@core/utils/opf-regex.js';
 
-/** A `metadata.opf` body narratorr authored (carries the provenance marker → managed). */
 const MARKED_OPF = `<?xml version="1.0"?><package><metadata>${NARRATORR_OPF_MARKER}<dc:title>X</dc:title></metadata></package>`;
-/** A foreign ABS/Calibre `metadata.opf` body (no marker → preserved). */
 const FOREIGN_OPF = '<?xml version="1.0"?><package><metadata><dc:title>ABS</dc:title></metadata></package>';
 
 function makeLog(): FastifyBaseLogger {
@@ -45,7 +43,7 @@ describe('deleteManagedBookFiles', () => {
     await writeFile(join(book, 'book.epub'), 'd');
     await writeFile(join(book, 'manual.pdf'), 'e');
     await writeFile(join(book, 'subs.srt'), 'f');
-    await writeFile(join(book, 'fanart.jpg'), 'g'); // non-cover image name → foreign
+    await writeFile(join(book, 'fanart.jpg'), 'g');
     await writeFile(join(book, 'metadata.nfo'), 'h');
 
     const result = await deleteManagedBookFiles(book, root, makeLog());
@@ -54,7 +52,6 @@ describe('deleteManagedBookFiles', () => {
     expect(base(result.preservedForeign)).toEqual(['book.epub', 'fanart.jpg', 'manual.pdf', 'metadata.nfo', 'subs.srt']);
     expect(result.failedManaged).toEqual([]);
 
-    // Managed gone, foreign + folder retained.
     expect(await pathExists(join(book, 'chapter1.mp3'))).toBe(false);
     expect(await pathExists(join(book, 'cover.jpg'))).toBe(false);
     expect(await pathExists(join(book, 'book.epub'))).toBe(true);
@@ -65,36 +62,31 @@ describe('deleteManagedBookFiles', () => {
     const book = join(root, 'Book');
     await mkdir(book, { recursive: true });
     await writeFile(join(book, 'chapter1.mp3'), 'a');
-    await writeFile(join(book, '.chapter1.tmp.mp3'), 'b'); // active born-hidden temp
+    await writeFile(join(book, '.chapter1.tmp.mp3'), 'b');
     await mkdir(join(book, '.merge-tmp'), { recursive: true });
-    await writeFile(join(book, '.merge-tmp', 'staged.m4b'), 'c'); // active staging subtree
+    await writeFile(join(book, '.merge-tmp', 'staged.m4b'), 'c');
 
     const result = await deleteManagedBookFiles(book, root, makeLog());
 
-    // Only the real managed audio is deleted; the hidden entries are neither deleted nor
-    // reported as foreign — they are skipped entirely and survive on disk.
     expect(base(result.deletedManaged)).toEqual(['chapter1.mp3']);
     expect(base(result.preservedForeign)).toEqual([]);
     expect(await pathExists(join(book, '.chapter1.tmp.mp3'))).toBe(true);
     expect(await pathExists(join(book, '.merge-tmp', 'staged.m4b'))).toBe(true);
   }));
 
-  // #1852 F9 — a hidden book ROOT is an IDENTITY root for the sweep: only DISCOVERED children are
-  // hidden-filtered, never the root the caller handed in. So the sweep still deletes the root's
-  // visible managed audio while preserving a hidden temp inside it. A regression that self-rejected
-  // a hidden root would leave the visible audio undeleted and fail the first assertion.
+  // A caller-supplied hidden root is descended; only discovered hidden children are skipped.
   it('#1852 F9: a hidden book root still deletes its visible managed audio while preserving a hidden temp', withTmp(async (root) => {
-    const book = join(root, '.Book'); // hidden ROOT handed in by identity
+    const book = join(root, '.Book');
     await mkdir(book, { recursive: true });
-    await writeFile(join(book, 'chapter1.mp3'), 'a');       // visible managed audio → deleted
-    await writeFile(join(book, '.chapter1.tmp.mp3'), 'b');  // active born-hidden temp → survives
+    await writeFile(join(book, 'chapter1.mp3'), 'a');
+    await writeFile(join(book, '.chapter1.tmp.mp3'), 'b');
 
     const result = await deleteManagedBookFiles(book, root, makeLog());
 
     expect(base(result.deletedManaged)).toEqual(['chapter1.mp3']);
     expect(await pathExists(join(book, 'chapter1.mp3'))).toBe(false);
     expect(await pathExists(join(book, '.chapter1.tmp.mp3'))).toBe(true);
-    expect(await pathExists(book)).toBe(true); // retained — the surviving hidden temp keeps it non-empty
+    expect(await pathExists(book)).toBe(true);
   }));
 
   it('is case-insensitive for audio and cover extensions', withTmp(async (root) => {
@@ -107,7 +99,6 @@ describe('deleteManagedBookFiles', () => {
 
     expect(base(result.deletedManaged)).toEqual(['Cover.JPG', 'Track.MP3']);
     expect(result.preservedForeign).toEqual([]);
-    // Only managed files existed → folder removed.
     expect(await pathExists(book)).toBe(false);
   }));
 
@@ -123,7 +114,6 @@ describe('deleteManagedBookFiles', () => {
 
     expect(base(result.deletedManaged)).toEqual(['d1.mp3', 'd2.mp3']);
     expect(base(result.preservedForeign)).toEqual(['ebook.pdf']);
-    // Empty disc subfolders removed, but the book folder is retained for the foreign pdf.
     expect(await pathExists(join(book, 'Disc 1'))).toBe(false);
     expect(await pathExists(join(book, 'Disc 2'))).toBe(false);
     expect(await pathExists(join(book, 'ebook.pdf'))).toBe(true);
@@ -164,22 +154,20 @@ describe('deleteManagedBookFiles', () => {
     const book = join(root, 'Book');
     await mkdir(join(book, 'Disc 1'), { recursive: true });
     await mkdir(join(book, 'Extras'), { recursive: true });
-    await writeFile(join(book, 'cover.jpg'), 'root-cover');        // managed — narratorr's sidecar
-    await writeFile(join(book, 'a.mp3'), 'a');                     // managed
-    await writeFile(join(book, 'Disc 1', 'cover.jpg'), 'per-disc'); // FOREIGN — nested
-    await writeFile(join(book, 'Disc 1', 'd1.mp3'), 'd1');         // managed (audio recurses)
-    await writeFile(join(book, 'Extras', 'cover.png'), 'extras');   // FOREIGN — nested
+    await writeFile(join(book, 'cover.jpg'), 'root-cover');
+    await writeFile(join(book, 'a.mp3'), 'a');
+    await writeFile(join(book, 'Disc 1', 'cover.jpg'), 'per-disc');
+    await writeFile(join(book, 'Disc 1', 'd1.mp3'), 'd1');
+    await writeFile(join(book, 'Extras', 'cover.png'), 'extras');
 
     const result = await deleteManagedBookFiles(book, root, makeLog());
 
     expect(base(result.deletedManaged)).toEqual(['a.mp3', 'cover.jpg', 'd1.mp3']);
-    expect(base(result.preservedForeign)).toEqual(['cover.jpg', 'cover.png']); // both nested covers
-    // Root cover gone; nested covers preserved; nested audio gone.
+    expect(base(result.preservedForeign)).toEqual(['cover.jpg', 'cover.png']);
     expect(await pathExists(join(book, 'cover.jpg'))).toBe(false);
     expect(await pathExists(join(book, 'Disc 1', 'cover.jpg'))).toBe(true);
     expect(await pathExists(join(book, 'Extras', 'cover.png'))).toBe(true);
     expect(await pathExists(join(book, 'Disc 1', 'd1.mp3'))).toBe(false);
-    // Folder retained because the nested foreign covers survive.
     expect(await pathExists(book)).toBe(true);
   }));
 
@@ -187,13 +175,12 @@ describe('deleteManagedBookFiles', () => {
     const book = join(root, 'Book');
     await mkdir(book, { recursive: true });
     await writeFile(join(book, 'a.mp3'), 'a');
-    await writeFile(join(book, 'metadata.opf'), MARKED_OPF); // narratorr-owned → managed
+    await writeFile(join(book, 'metadata.opf'), MARKED_OPF);
 
     const result = await deleteManagedBookFiles(book, root, makeLog());
 
     expect(base(result.deletedManaged)).toEqual(['a.mp3', 'metadata.opf']);
     expect(result.preservedForeign).toEqual([]);
-    // Only managed files existed → folder removed.
     expect(await pathExists(book)).toBe(false);
   }));
 
@@ -201,13 +188,12 @@ describe('deleteManagedBookFiles', () => {
     const book = join(root, 'Book');
     await mkdir(book, { recursive: true });
     await writeFile(join(book, 'a.mp3'), 'a');
-    await writeFile(join(book, 'metadata.opf'), FOREIGN_OPF); // ABS/Calibre file → preserved
+    await writeFile(join(book, 'metadata.opf'), FOREIGN_OPF);
 
     const result = await deleteManagedBookFiles(book, root, makeLog());
 
     expect(base(result.deletedManaged)).toEqual(['a.mp3']);
     expect(base(result.preservedForeign)).toEqual(['metadata.opf']);
-    // The foreign OPF survives and keeps the folder alive.
     expect(await pathExists(join(book, 'metadata.opf'))).toBe(true);
     expect(await pathExists(book)).toBe(true);
   }));
@@ -238,30 +224,28 @@ describe('deleteManagedBookFiles', () => {
   it('preserves a nested metadata.opf regardless of marker — managed only at the root (#1674)', withTmp(async (root) => {
     const book = join(root, 'Book');
     await mkdir(join(book, 'Disc 1'), { recursive: true });
-    await writeFile(join(book, 'metadata.opf'), MARKED_OPF);          // managed — marked root sidecar
-    await writeFile(join(book, 'a.mp3'), 'a');                        // managed
-    await writeFile(join(book, 'Disc 1', 'metadata.opf'), MARKED_OPF); // FOREIGN — nested, even when marked
-    await writeFile(join(book, 'Disc 1', 'd1.mp3'), 'd1');            // managed (audio recurses)
+    await writeFile(join(book, 'metadata.opf'), MARKED_OPF);
+    await writeFile(join(book, 'a.mp3'), 'a');
+    await writeFile(join(book, 'Disc 1', 'metadata.opf'), MARKED_OPF);
+    await writeFile(join(book, 'Disc 1', 'd1.mp3'), 'd1');
 
     const result = await deleteManagedBookFiles(book, root, makeLog());
 
     expect(base(result.deletedManaged)).toEqual(['a.mp3', 'd1.mp3', 'metadata.opf']);
-    expect(base(result.preservedForeign)).toEqual(['metadata.opf']); // nested opf preserved
+    expect(base(result.preservedForeign)).toEqual(['metadata.opf']);
     expect(await pathExists(join(book, 'metadata.opf'))).toBe(false);
     expect(await pathExists(join(book, 'Disc 1', 'metadata.opf'))).toBe(true);
-    // Folder retained because the nested foreign opf survives.
     expect(await pathExists(book)).toBe(true);
   }));
 
   it('fails safe when a root metadata.opf cannot be read (a directory named metadata.opf) — preserved + warned (#1674)', withTmp(async (root) => {
     const book = join(root, 'Book');
-    await mkdir(join(book, 'metadata.opf'), { recursive: true }); // a DIRECTORY named metadata.opf → readFile EISDIR
+    await mkdir(join(book, 'metadata.opf'), { recursive: true });
     await writeFile(join(book, 'a.mp3'), 'a');
     const log = makeLog();
 
     const result = await deleteManagedBookFiles(book, root, log);
 
-    // The unreadable root OPF entry is preserved as foreign (never deleted, never recursed) and warned.
     expect(base(result.deletedManaged)).toEqual(['a.mp3']);
     expect(base(result.preservedForeign)).toEqual(['metadata.opf']);
     expect(await pathExists(join(book, 'metadata.opf'))).toBe(true);
@@ -274,16 +258,12 @@ describe('deleteManagedBookFiles', () => {
     try {
       await writeFile(join(external, 'track.mp3'), 'a');
       await writeFile(join(external, 'book.epub'), 'b');
-      // An in-library book row whose path is a symlink resolving OUTSIDE the library.
       const link = join(root, 'EscapeBook');
-      // Windows can't create 'dir' symlinks without elevation/Developer Mode (EPERM);
-      // junctions need no privilege and Node reports them as isSymbolicLink()===true /
-      // isDirectory()===false with realpath resolving to the target — same semantics here.
+      // Windows junctions avoid symlink privileges while preserving the tested link semantics.
       await symlink(external, link, process.platform === 'win32' ? 'junction' : 'dir');
 
       await expect(deleteManagedBookFiles(link, root, makeLog())).rejects.toBeInstanceOf(PathOutsideLibraryError);
 
-      // The symlink target's files are untouched — no traversal-delete.
       expect(await pathExists(join(external, 'track.mp3'))).toBe(true);
       expect(await pathExists(join(external, 'book.epub'))).toBe(true);
     } finally {
@@ -298,17 +278,13 @@ describe('deleteManagedBookFiles', () => {
       await writeFile(join(external, 'book.epub'), 'b');
       const book = join(root, 'Book');
       await mkdir(book, { recursive: true });
-      await writeFile(join(book, 'real.mp3'), 'r'); // real managed file at root
-      // A disc subfolder that is actually a symlink pointing outside the library.
-      // Junction on Windows (no elevation needed); reads as a non-directory Dirent like a 'dir' symlink.
+      await writeFile(join(book, 'real.mp3'), 'r');
       await symlink(external, join(book, 'Disc 1'), process.platform === 'win32' ? 'junction' : 'dir');
 
       const result = await deleteManagedBookFiles(book, root, makeLog());
 
-      // Real top-level audio deleted; the symlink entry is treated as foreign, never recursed.
       expect(base(result.deletedManaged)).toEqual(['real.mp3']);
       expect(await pathExists(join(book, 'real.mp3'))).toBe(false);
-      // External target untouched.
       expect(await pathExists(join(external, 'track.mp3'))).toBe(true);
       expect(await pathExists(join(external, 'book.epub'))).toBe(true);
     } finally {
@@ -319,22 +295,18 @@ describe('deleteManagedBookFiles', () => {
   it('classifies a top-level directory symlink as a link — does not follow it or delete its target (#1598)', withTmp(async (root) => {
     const external = mkdtempSync(join(tmpdir(), 'narratorr-1598-ext-'));
     try {
-      await writeFile(join(external, 'track.mp3'), 'a');   // managed audio under the symlink target
-      await writeFile(join(external, 'book.epub'), 'b');    // foreign file under the symlink target
-      // The unguarded move-cleanup source: `item.path` is itself a top-level directory symlink/junction.
+      await writeFile(join(external, 'track.mp3'), 'a');
+      await writeFile(join(external, 'book.epub'), 'b');
       const link = join(root, 'LinkedSource');
       await symlink(external, link, process.platform === 'win32' ? 'junction' : 'dir');
 
       const result = await deleteManagedBookFiles(link, root, makeLog(), { assertInsideLibrary: false });
 
-      // The symlink is preserved as a link; the helper never recursed into the target.
       expect(result.deletedManaged).toEqual([]);
       expect(base(result.preservedForeign)).toEqual(['LinkedSource']);
       expect(result.failedManaged).toEqual([]);
-      // The target's files — managed AND foreign — are untouched (no traversal-delete).
       expect(await pathExists(join(external, 'track.mp3'))).toBe(true);
       expect(await pathExists(join(external, 'book.epub'))).toBe(true);
-      // The link itself is left in place (lstat path → never rm'd).
       expect(await pathExists(link)).toBe(true);
     } finally {
       await rm(external, { recursive: true, force: true });
@@ -342,7 +314,6 @@ describe('deleteManagedBookFiles', () => {
   }));
 
   it('does not throw for an external source path in non-containment mode but only deletes managed files', withTmp(async (root) => {
-    // A sibling directory OUTSIDE the library root.
     const external = join(root, '..', `narratorr-1589-ext-${process.pid}`);
     await mkdir(external, { recursive: true });
     await writeFile(join(external, 'a.mp3'), 'a');

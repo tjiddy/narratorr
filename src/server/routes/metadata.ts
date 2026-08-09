@@ -6,7 +6,6 @@ import { metadataSearchQuerySchema, providerIdParamSchema, type MetadataSearchQu
 type ProviderIdParam = z.infer<typeof providerIdParamSchema>;
 
 export async function metadataRoutes(app: FastifyInstance, metadataService: MetadataService) {
-  // GET /api/metadata/search?q=
   app.get<{ Querystring: MetadataSearchQuery }>(
     '/api/metadata/search',
     {
@@ -21,7 +20,6 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
     }
   );
 
-  // GET /api/metadata/authors/:id
   app.get<{ Params: ProviderIdParam }>(
     '/api/metadata/authors/:id',
     {
@@ -42,7 +40,6 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
     }
   );
 
-  // GET /api/metadata/authors/:id/books
   app.get<{ Params: ProviderIdParam }>(
     '/api/metadata/authors/:id/books',
     {
@@ -57,7 +54,6 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
     }
   );
 
-  // GET /api/metadata/books/:id
   app.get<{ Params: ProviderIdParam }>(
     '/api/metadata/books/:id',
     {
@@ -78,12 +74,10 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
     }
   );
 
-  // GET /api/metadata/test
   app.get('/api/metadata/test', async () => {
     return metadataService.testProviders();
   });
 
-  // GET /api/metadata/providers
   app.get('/api/metadata/providers', () => {
     return metadataService.getProviders();
   });

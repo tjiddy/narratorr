@@ -75,7 +75,6 @@ describe('useImportPolling', () => {
       },
     );
 
-    // Transition to 0 importing
     const doneBooks = [
       makeBook({ id: 1, status: 'imported' }),
       makeBook({ id: 2, status: 'imported' }),
@@ -109,7 +108,6 @@ describe('useImportPolling', () => {
       },
     );
 
-    // Still importing (one finished, one new)
     const stillImporting = [
       makeBook({ id: 1, status: 'imported' }),
       makeBook({ id: 3, status: 'importing' }),
@@ -129,7 +127,6 @@ describe('useImportPolling', () => {
       wrapper: ({ children }) => createElement(QueryClientProvider, { client: queryClient }, children),
     });
 
-    // First tick of the 3s interval should invalidate the books query
     act(() => { vi.advanceTimersByTime(3000); });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
   });
@@ -174,16 +171,13 @@ describe('useImportPolling', () => {
       wrapper: ({ children }) => createElement(QueryClientProvider, { client: queryClient }, children),
     });
 
-    // Polling fires while disconnected
     act(() => { vi.advanceTimersByTime(3000); });
     expect(invalidateSpy).toHaveBeenCalledTimes(1);
 
-    // SSE reconnects
     vi.mocked(useSSEConnected).mockReturnValue(true);
     rerender();
     invalidateSpy.mockClear();
 
-    // No more polling after reconnect
     act(() => { vi.advanceTimersByTime(6000); });
     expect(invalidateSpy).not.toHaveBeenCalled();
   });
@@ -216,10 +210,8 @@ describe('useImportPolling', () => {
       },
     );
 
-    // No more importing — should clear the interval
     rerender({ books: [makeBook({ id: 1, status: 'imported' })] });
 
-    // If cleanup failed, the 3s interval would fire during this advance
     act(() => {
       vi.advanceTimersByTime(10000);
     });

@@ -1,4 +1,4 @@
-// Entity form for connector CRUD (not a settings-category patch), mirroring NotifierCard.
+// Connector CRUD entity form, not a settings-category patch.
 import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -33,10 +33,7 @@ function settingsFromConnector(connector: Connector): CreateConnectorFormData['s
   const defaults = meta?.defaultSettings ?? {};
   const ownKeys = new Set(Object.keys(defaults));
   const result: Record<string, unknown> = { ...defaults };
-  // Overlay only non-null stored values belonging to this type. Connector
-  // defaultSettings keys ≡ the strict per-type schema keys (pinned by the
-  // schema-alignment test), so this never drops a valid key while keeping stale
-  // foreign keys out of the strict server schema.
+  // Overlay only this type's non-null schema keys so stale foreign settings cannot reach the server.
   for (const [key, val] of Object.entries(connector.settings)) {
     if (val != null && ownKeys.has(key)) result[key] = val;
   }

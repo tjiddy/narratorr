@@ -1,12 +1,5 @@
-// User-script env vector. Spreading process.env would leak secrets like
-// NARRATORR_SECRET_KEY (the AES-256-GCM key for at-rest encryption) and
-// DATABASE_URL into scripts that don't need them. This allowlist exposes only
-// the keys a typical script needs to find binaries, write tempfiles, and
-// produce localized output.
-//
-// Not re-exported from ./index.ts on purpose — that barrel is consumed by the
-// Vite client build, which excludes Node-only modules. Import this helper by
-// path from both server- and core-side call sites.
+// Never spread process.env into child processes: it contains encryption and database secrets.
+// Keep this Node-only helper out of the Vite-facing barrel and import it directly.
 const SAFE_ENV_KEYS = new Set([
   'PATH',
   'HOME',

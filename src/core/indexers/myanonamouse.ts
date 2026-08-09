@@ -73,7 +73,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     const fetched = await this.fetchWithCookieMeta(url, options?.signal);
     const response = this.parseSearchBody(fetched.body);
 
-    // "Nothing returned, out of ..." is an empty-result message, not an error
+    // MAM reports empty searches as an error string beginning "Nothing returned".
     if (response.error && response.error.startsWith('Nothing returned')) {
       return {
         results: [],
@@ -116,11 +116,10 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       'tor[main_cat][]': '13',
     });
 
-    // Auto-select search type based on VIP status, fall back to saved value for legacy rows
+    // Unknown VIP status falls back to the saved value for legacy rows.
     const effectiveSearchType = this.isVip === true ? 'all' : this.isVip === false ? 'nVIP' : this.searchType;
     params.set('tor[searchType]', effectiveSearchType);
 
-    // Append language filter parameters from per-search options
     const langIds = this.mapLanguagesToMamIds(options?.languages);
     for (let i = 0; i < langIds.length; i++) {
       params.set(`tor[browse_lang][${i}]`, String(langIds[i]));
@@ -165,9 +164,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         continue;
       }
 
-      // Emit a sentinel download URL — the real torrent bytes are fetched lazily
-      // by `resolveDownloadUrl` at grab time so the optional freeleech wedge can
-      // be applied first.
+      // Resolve the sentinel at grab time so the optional freeleech wedge runs first.
       const downloadUrl = item.id != null ? `${MAM_TORRENT_SENTINEL_PREFIX}${item.id}` : undefined;
       const rawBytes = rawTitleBytesHex(item.title);
       if (!downloadUrl) {
@@ -286,10 +283,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     }
   }
 
-  /**
-   * Fetch a URL with the mam_id cookie for authentication.
-   * Throws on HTTP 403 with an auth-specific error message.
-   */
+  /** Fetch with MAM authentication; map HTTP 403 to IndexerAuthError. */
   private async fetchWithCookie(url: string, callerSignal?: AbortSignal): Promise<string> {
     const { body } = await this.fetchWithCookieMeta(url, callerSignal);
     return body;
@@ -348,11 +342,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     }
   }
 
-  /**
-   * Map canonical language names to MAM numeric IDs.
-   * Falls back to cached per-indexer searchLanguages if no per-search languages provided.
-   * Names without a MAM ID mapping are silently skipped.
-   */
+  /** Map canonical names to MAM IDs; undefined uses cached config and [] disables filtering. */
   private mapLanguagesToMamIds(languages?: readonly string[]): number[] {
     if (languages === undefined) {
       return this.searchLanguages;
@@ -367,13 +357,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   }
 
 
-  /**
-   * Grab-time hook. Appends the server-side `&fl` freeleech flag when the
-   * configured mode is `preferred` and the item isn't already freeleech — MAM
-   * applies the wedge itself at download time — then fetches the torrent bytes.
-   * Returns the data URL plus `wedgeRequested` (the one bit the service logs).
-   * Throws `IndexerError` when the torrent id can't be derived or the fetch fails.
-   */
+  /** Resolve a MAM sentinel and optionally request the server-side freeleech wedge. */
   async resolveDownloadUrl(ctx: ResolveDownloadContext): Promise<ResolveDownloadResult> {
     const tid = parseTorrentIdFromContext(ctx);
     if (tid === undefined) {
@@ -401,12 +385,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     return { downloadUrl, wedgeRequested: applyWedge };
   }
 
-  /**
-   * Fetch .torrent file bytes and encode as a data: URI. Appends the bare `&fl`
-   * freeleech flag to the MAM fetch URL (not the resulting data: URI) when
-   * `applyWedge` is set — MAM applies the personal-freeleech wedge server-side.
-   * Returns undefined on failure (result is kept but not grabbable).
-   */
+  /** Fetch torrent bytes as a data URI; applyWedge adds MAM's bare server-side &fl flag. */
   private async fetchTorrentAsDataUri(torrentId: number, applyWedge = false, callerSignal?: AbortSignal): Promise<string | undefined> {
     const url = `${this.baseUrl}/tor/download.php?tid=${torrentId}${applyWedge ? '&fl' : ''}`;
     const controller = new AbortController();
@@ -430,7 +409,6 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       try {
         response = await fetchWithOptionalDispatcher(url, fetchOptions);
       } catch (error: unknown) {
-        // Proxy errors must propagate — not be swallowed as undefined
         if (dispatcher) {
           if (error instanceof DOMException && error.name === 'AbortError') {
             throw new ProxyError(`Proxy timed out after ${Math.round(INDEXER_TIMEOUT_MS / 1000)}s`);
@@ -448,7 +426,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       const buffer = Buffer.from(await response.arrayBuffer());
       return `data:application/x-bittorrent;base64,${buffer.toString('base64')}`;
     } catch (error: unknown) {
-      // ProxyError must propagate up — not be swallowed
+      // ProxyError must propagate; other grab failures return undefined.
       if (error instanceof ProxyError) {
         throw error;
       }

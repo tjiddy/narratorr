@@ -6,17 +6,6 @@ import { generatePublicId } from '../utils/public-id.js';
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
-/**
- * #2175 end to end, through the real Fastify app, the real services and a real
- * migrated DB: two books of ONE series stored with normalized-equal but
- * byte-different `series_name` values ('The Band' vs 'the band').
- *
- * The service-level cases live in `series-card.service.test.ts` /
- * `series-card.integration.test.ts`; what this suite adds is the part the
- * operator actually sees — the JSON `/api/books/:id/series` responds with. The
- * defect was invisible from the drifted book's own card, so a fixture that
- * exercises only one of the two ids cannot see it.
- */
 describe('Series card — normalized series-name drift, E2E (#2175)', () => {
   let e2e: E2EApp;
 
@@ -85,7 +74,6 @@ describe('Series card — normalized series-name drift, E2E (#2175)', () => {
     const members = res.json().series.members as { inLibrary: boolean; libraryBookId: number | null }[];
     expect(members.map((m) => m.libraryBookId)).toEqual([kings, bloody]);
     expect(members.every((m) => m.inLibrary)).toBe(true);
-    // A render/refresh never canonicalizes the stored spelling (#2175 AC10).
     expect((await e2e.db.select().from(books).where(eq(books.id, bloody)))[0]!.seriesName).toBe('the band');
   });
 
@@ -103,8 +91,6 @@ describe('Series card — normalized series-name drift, E2E (#2175)', () => {
     expect(res.statusCode).toBe(200);
     const members = res.json().series.members as { libraryBookId: number | null }[];
     expect(members.map((m) => m.libraryBookId)).toEqual([kings, bloody]);
-    // The bind IS the one path that rewrites names, and it now reaches the
-    // drifted sibling — both rows carry the canonical spelling and position.
     const rows = await e2e.db.select().from(books);
     expect(rows.find((r) => r.id === bloody)!.seriesName).toBe('The Band');
     expect(rows.find((r) => r.id === bloody)!.seriesPosition).toBe(2);

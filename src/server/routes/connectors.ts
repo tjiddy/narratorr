@@ -8,20 +8,13 @@ import { registerCrudRoutes } from './crud-routes.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
 
-// Targets validate an arbitrary connector config (no name required, unlike the
-// CRUD create schema). Sentinel-aware so the masked apiKey resolves against the
-// saved row when an `id` is supplied.
+// Target discovery accepts unsaved configs; an optional id resolves masked secrets from storage.
 const connectorConfigSchema = z.object({
   type: connectorTypeSchema,
   settings: z.record(z.string(), z.unknown()),
 });
 
-// Sentinel-aware update schema: the strict per-type schemas now reject the
-// masked '********' on baseUrl (it is not a valid URL), so a masked baseUrl /
-// apiKey / token edit must round-trip through the sentinel-loosened settings
-// map. Real (non-sentinel) values are still validated strictly. Built here on
-// the server because the loosening machinery (loosenSettingsSchemas) lives with
-// the secret-field registry, not in the shared schema layer.
+// Permit masked sentinels to round-trip while validating every real value strictly.
 const sentinelAwareUpdateSchema = makeUpdateConnectorSchema(
   loosenSettingsSchemas(connectorSettingsSchemas, 'connector'),
 );
@@ -36,11 +29,7 @@ export async function connectorsRoutes(app: FastifyInstance, connectorService: C
     secretEntity: 'connector',
   });
 
-  // POST /api/connectors/targets — populate the dropdown from an UNSAVED config.
-  // Sentinel-aware schema (with optional id) so masked secrets resolve against the
-  // saved row. Uses the targets-scoped settings map so the selector field
-  // (libraryId/sectionId) — the very thing this fetch populates — is NOT required
-  // on a brand-new connector (#1523). Real connect fields are still validated.
+  // Selector fields stay optional because this request discovers their available values.
   const targetsSchema = makeTestSchema(connectorConfigSchema, 'connector', connectorTargetsSettingsSchemas);
   app.post<{ Body: { type: string; settings: Record<string, unknown>; id?: number } }>(
     '/api/connectors/targets',
@@ -53,12 +42,10 @@ export async function connectorsRoutes(app: FastifyInstance, connectorService: C
       };
       if (data.id != null) payload.id = data.id;
       const result = await connectorService.listTargetsConfig(payload);
-      // Success → bare ConnectorTarget[]; failure → field-scoped envelope.
       return result.success ? result.targets : result;
     },
   );
 
-  // GET /api/connectors/:id/targets — populate the dropdown from a SAVED connector.
   app.get<{ Params: IdParam }>(
     '/api/connectors/:id/targets',
     { schema: { params: idParamSchema } },

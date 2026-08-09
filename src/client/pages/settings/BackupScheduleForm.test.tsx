@@ -89,7 +89,7 @@ describe('BackupScheduleForm', () => {
       expect(screen.getByLabelText(/backup interval/i)).toHaveValue(10080);
     });
 
-    // Direct form submit — number inputs can't be made dirty via userEvent in jsdom
+    // jsdom number inputs cannot be made dirty through userEvent.
     fireEvent.submit(screen.getByLabelText(/backup interval/i).closest('form')!);
 
     await waitFor(() => {
@@ -102,7 +102,6 @@ describe('BackupScheduleForm', () => {
       expect(mockToast.success).toHaveBeenCalledWith('System settings saved');
     });
 
-    // Cache invalidation triggers refetch
     await waitFor(() => {
       expect(mockApi.getSettings.mock.calls.length).toBeGreaterThanOrEqual(2);
     });

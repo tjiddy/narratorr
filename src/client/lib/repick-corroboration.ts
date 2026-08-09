@@ -5,60 +5,23 @@ import type { DurationCorroborationBody } from '@shared/schemas/library-scan.js'
 import { upgradeMatchConfidence, promoteMatchToHigh } from './upgrade-match-confidence.js';
 
 /**
- * Chapter-runtime corroboration for the import editor's re-pick path (#2055) — shared by
- * BOTH import surfaces (`useLibraryImport`, `useManualImport`) so the behaviour cannot
- * drift into two copies, the way the twin hooks have before (#1374).
- *
- * The problem: `upgradeMatchConfidence` judges a re-picked edition against the provider's
- * `runtimeLengthMin` SCALAR. For a small slice of the catalog that scalar understates the
- * edition's OWN chapter table by minutes (the live case: Fablehaven Book 1 / `B00CXXEX8W`,
- * scalar 539min vs a 553.66min chapter table that matches the scanned file to 0.02s), so a
- * user who re-picks the CORRECT edition still gets "Duration mismatch". The match job
- * already corroborates against the chapter table (#1942); this module gives the client path
- * the same quality of answer.
- *
- * Shape: the SYNC verdict renders immediately (optimistic), a request goes out only for the
- * one outcome it can change, and a corroborated answer patches the row when it arrives.
- * Suppress-only — the response can promote medium → high and nothing else.
+ * Provider scalar runtimes can disagree with their chapter totals, so qualifying re-picks ask
+ * for chapter evidence. Shared by both import flows; responses can only promote the same live row.
  */
 
-/**
- * The request body for one qualifying re-pick, as a domain-named alias of the canonical
- * Zod-inferred route contract — NOT a parallel declaration. The shared schema stays the one
- * source of truth, so a change to the route body is a compile error here rather than a
- * request the server rejects at runtime.
- *
- * `asin` is already TRIMMED by the time it lands in one of these — see
- * {@link needsChapterCorroboration}'s canonical-value rule.
- */
+/** Domain alias of the shared route contract; its ASIN is already trimmed. */
 export type CorroborationRequest = DurationCorroborationBody;
 
-/** A dispatched request plus everything the staleness guard re-checks on arrival. */
+/** A dispatched request plus everything the staleness guard rechecks on arrival. */
 export interface CorroborationTarget {
-  /** `row.book.path` — the established row key on both surfaces. */
   path: string;
-  /** `ImportRow.matchGeneration` captured at dispatch time. */
   generation: number;
   request: CorroborationRequest;
 }
 
 /**
- * Decide whether a re-pick is worth a chapter-runtime second opinion, and return the
- * request payload when it is.
- *
- * Mirrors #1942's laziness rule exactly (`corroborateDurationVerdict` fires only for
- * `duration-mismatch` + a non-empty ASIN): a non-qualifying re-pick issues ZERO requests.
- * Only outcome (4) of the synchronous re-evaluation — still medium, still
- * `duration-mismatch` — can be changed by chapter data. The in-band clear, both
- * `missing-duration` cannot-verify outcomes, the `no-duration-data`/legacy clear,
- * `none → medium`, a `high` row, and the by-reference no-op all return `undefined`.
- *
- * **The canonical ASIN is the TRIMMED value.** `BookMetadata.asin` is a plain optional
- * string with no whitespace normalization, so the trimmed value returned here is the ONE
- * string that goes in the request body, gets captured on the target, and is compared
- * against `row.edited.metadata?.asin?.trim()` on arrival. A raw-vs-trimmed comparison
- * anywhere in this path would silently discard a successful corroboration for an ASIN this
- * predicate explicitly admits.
+ * Requests chapter evidence only when re-evaluation remains a medium duration mismatch with
+ * scan seconds and a trimmed ASIN. Other outcomes cannot benefit from a second opinion.
  */
 export function needsChapterCorroboration(
   matchResult: MatchResult | undefined,
@@ -66,10 +29,8 @@ export function needsChapterCorroboration(
   currentEditedMetadata: BookMetadata | undefined,
 ): CorroborationRequest | undefined {
   if (!matchResult || !newMetadata) return undefined;
-  // By-reference no-op: the modal handed the pre-populated bestMatch straight back, which
-  // is not a re-pick at all (#1929's by-reference contract).
+  // Returning the pre-populated metadata object is not a re-pick.
   if (newMetadata === currentEditedMetadata) return undefined;
-  // `none → medium` and `high` rows never re-evaluate duration evidence.
   if (matchResult.confidence !== 'medium') return undefined;
 
   const upgraded = upgradeMatchConfidence(matchResult, newMetadata, currentEditedMetadata);
@@ -85,13 +46,8 @@ export function needsChapterCorroboration(
 }
 
 /**
- * Staleness guard (B8) — the generation token AND every evidence field must still agree.
- *
- * The field checks alone do not identify a logical row generation: Restart clears only
- * `matchResult`, and `mergeMatchIntoRow` preserves `edited` for a `userEdited` row, so a
- * fresh match can reproduce the same path + ASIN + `scannedSeconds` + `duration-mismatch`.
- * Without the token a held response would promote a row the user did not just re-pick.
- * Both generations must be defined numbers; an undefined stamp on either side rejects.
+ * Requires generation and evidence to match: a restarted row can recreate identical fields
+ * while an older request remains pending.
  */
 function isLiveTarget(row: ImportRow, target: CorroborationTarget): boolean {
   const match = row.matchResult;
@@ -100,22 +56,14 @@ function isLiveTarget(row: ImportRow, target: CorroborationTarget): boolean {
   if (row.matchGeneration !== target.generation) return false;
   if (match.confidence !== 'medium') return false;
   if (match.reasonKind !== 'duration-mismatch') return false;
-  // Both sides trim — the canonical-value rule from `needsChapterCorroboration`.
+  // Both sides use the trimmed canonical ASIN from `needsChapterCorroboration`.
   if (row.edited.metadata?.asin?.trim() !== target.request.asin) return false;
-  // Exact numeric equality on the RAW unrounded scanner value; it is never rounded or
-  // re-derived anywhere in this path.
+  // Compare exact raw scanner seconds; this path never rounds or re-derives them.
   if (match.scannedSeconds !== target.request.scannedSeconds) return false;
   return true;
 }
 
-/**
- * Apply a `corroborated: true` verdict to the one row that asked for it.
- *
- * Pure and suppress-only: it promotes exactly one medium `duration-mismatch` row to high
- * through the SAME {@link promoteMatchToHigh} the synchronous in-band clear uses, and
- * returns the original array untouched when nothing matches — so an unrelated row, a
- * demotion, and an `alternatives`/`bestMatch` change are all unrepresentable here.
- */
+/** Promotes only the matching live medium mismatch and preserves the original array on no-op. */
 export function applyCorroboration(rows: ImportRow[], target: CorroborationTarget): ImportRow[] {
   let patched = false;
   const next = rows.map((row) => {
@@ -128,54 +76,22 @@ export function applyCorroboration(rows: ImportRow[], target: CorroborationTarge
 }
 
 /**
- * The sanctioned producer of a stamped row — the one place both hooks build a row whose
- * `matchResult` has just been installed, replaced or cleared (#2060).
- *
- * `row` may already carry `matchResult` (from {@link mergeMatchIntoRow}, or from a literal
- * built at the call site); this neither inspects nor derives it. Two invariants it exists to
- * make easy to honour, each machine-enforced only as far as syntax reaches — see
- * `eslint-rules/no-unstamped-match-generation.cjs` (#2182), registered on both hooks:
- *
- * - **B7** — every write that installs, replaces or clears `matchResult` stamps a fresh
- *   `matchGeneration`; every unrelated write stamps not at all. Over-stamping drops a valid
- *   held corroboration; under-stamping promotes a row whose evidence was rebuilt underneath it.
- *   The rule enforces the install half at every CONSTRUCTION site. The converse is undecidable
- *   syntactically — the two scan sites legitimately stamp while never mentioning `matchResult`
- *   — and stays pinned by the over-stamp regression in both hook suites.
- * - **B11** — `generation` must come from a `nextGeneration()` call made OUTSIDE the `setRows`
- *   updater (see {@link useRepickCorroboration}). The rule narrows this to an argument-shape
- *   check (arg-1 must be a plain identifier): every syntactic proxy for the locality condition
- *   itself was escaped during #2060's review, so that half also rests on the runtime regression.
- *
- * {@link applyCorroboration} deliberately does not route through here: it is the terminal
- * write for the generation it answers.
+ * Stamps rows after `matchResult` is installed, replaced, or cleared. A custom lint rule requires
+ * constructed writes in both hooks to use this seam; terminal corroboration patches do not.
  */
 export function stampRow(row: ImportRow, generation: number): ImportRow {
   return { ...row, matchGeneration: generation };
 }
 
 export interface RepickCorroboration {
-  /** The next `ImportRow.matchGeneration` stamp. Monotonic for the hook's lifetime. */
   nextGeneration: () => number;
-  /** Fire the request and patch the row if it is still the live target when it lands. */
   dispatchCorroboration: (target: CorroborationTarget) => void;
 }
 
 /**
- * Own the per-hook generation counter and the request → patch round trip.
- *
- * The counter is a `useRef` seeded at 0 that is ONLY ever incremented — it never resets, so
- * a re-scan that rebuilds a row for the same folder path cannot reuse a value a held
- * request already captured. Call `nextGeneration()` OUTSIDE a `setRows` updater and reuse
- * the one value inside it: React 19 StrictMode double-invokes updater functions, so
- * incrementing in there would stamp a different value than the dispatch captured.
- *
- * The response handler carries NO lifecycle-local side effect — no toast, no banner, no
- * navigation, no unrelated `setState`. The patch is a pure `setRows`, which is what makes a
- * settle after unmount harmless and why no separate mounted-ref guard is needed
- * (`react-query-mutation-callbacks-post-unmount`: a post-unmount callback must not assume a
- * live component). A `corroborated: false`, a non-2xx, and a network/parse failure are all
- * the same outcome — leave the row exactly as the synchronous verdict left it (B6).
+ * Owns a monotonic generation and silent request round trip. Call `nextGeneration()` outside
+ * `setRows`, whose updater React StrictMode may invoke twice. Responses perform only a pure row
+ * patch, so post-unmount settlement is harmless; failures preserve the synchronous verdict.
  */
 export function useRepickCorroboration(setRows: Dispatch<SetStateAction<ImportRow[]>>): RepickCorroboration {
   const generationRef = useRef(0);
@@ -192,8 +108,7 @@ export function useRepickCorroboration(setRows: Dispatch<SetStateAction<ImportRo
         setRows((prev) => applyCorroboration(prev, target));
       })
       .catch(() => {
-        // Silent by contract: no toast, no banner, no thrown error. The scalar-rendered
-        // Review reason the user already sees stays the truthful answer.
+        // Silent: keep the synchronous scalar verdict.
       });
   }, [setRows]);
 

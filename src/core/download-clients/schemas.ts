@@ -1,7 +1,5 @@
 import { z } from 'zod';
 
-// qBittorrent torrent info response schema
-// Non-critical fields default to 0/"" to tolerate partial responses
 export const qbTorrentSchema = z.object({
   hash: z.string(),
   name: z.string(),
@@ -23,9 +21,7 @@ export const qbTorrentSchema = z.object({
 
 export const qbTorrentsResponseSchema = z.array(qbTorrentSchema);
 
-// qBittorrent /api/v2/torrents/categories returns an object map keyed by
-// category name. Inner shape is loose — only the outer record structure is
-// enforced; missing/wrong-typed inner fields don't matter for getCategories().
+// Only category keys matter; tolerate loose inner metadata.
 export const qbCategoriesResponseSchema = z.record(
   z.string(),
   z.object({
@@ -34,13 +30,11 @@ export const qbCategoriesResponseSchema = z.record(
   }).passthrough(),
 );
 
-// Transmission RPC response schema
 export const transmissionRpcResponseSchema = z.object({
   result: z.string(),
   arguments: z.record(z.string(), z.unknown()).nullish(),
 }).passthrough();
 
-// Transmission torrent item — covers every field read by mapTorrent and mapStatus.
 export const transmissionTorrentSchema = z.object({
   hashString: z.string(),
   name: z.string(),
@@ -62,12 +56,10 @@ export const transmissionTorrentSchema = z.object({
 
 export const transmissionTorrentsArraySchema = z.array(transmissionTorrentSchema);
 
-// Transmission session-get response — only `version` is read by test().
 export const transmissionSessionGetSchema = z.object({
   version: z.string().nullish(),
 }).passthrough();
 
-// SABnzbd queue/history response schemas — match only fields the code reads.
 export const sabnzbdQueueSlotSchema = z.object({
   nzo_id: z.string(),
   filename: z.string(),
@@ -118,9 +110,7 @@ export const sabnzbdCategoriesResponseSchema = z.object({
   categories: z.array(z.string()),
 }).passthrough();
 
-// Deluge RPC envelope. result/error semantics — at least one of them must
-// be present, but result may legitimately be `null` (e.g. label.set_torrent
-// returning success-with-no-payload). Use a refine instead of asserting both.
+// result may be null; presence of result or a non-null error makes the envelope valid.
 export const delugeRpcResponseSchema = z.object({
   id: z.number().nullish(),
   result: z.unknown(),
@@ -130,7 +120,6 @@ export const delugeRpcResponseSchema = z.object({
   { message: 'Deluge RPC response missing both "result" and "error" fields' },
 );
 
-// Deluge torrent-status — covers every field read by mapTorrent and mapState.
 export const delugeTorrentStatusSchema = z.object({
   hash: z.string().nullish(),
   name: z.string(),
@@ -152,9 +141,7 @@ export const delugeTorrentStatusSchema = z.object({
 
 export const delugeTorrentsStatusMapSchema = z.record(z.string(), delugeTorrentStatusSchema);
 
-// NZBGet RPC response schema
-// At least one of result or a non-null error must be present. NZBGet returns an
-// explicit `error: null` on success, so use `.nullish()` (mirrors Deluge above).
+// NZBGet returns error:null on success; require result presence or a non-null error.
 export const nzbgetRpcResponseSchema = z.object({
   result: z.unknown().nullish(),
   error: z.object({ name: z.string(), code: z.number(), message: z.string() }).nullish(),
@@ -163,8 +150,6 @@ export const nzbgetRpcResponseSchema = z.object({
   { message: 'NZBGet RPC response missing both "result" and "error" fields' },
 );
 
-// NZBGet group (active download) schema
-// Non-critical fields default to 0/"" to tolerate partial responses
 export const nzbgetGroupSchema = z.object({
   NZBID: z.number(),
   NZBName: z.string(),
@@ -178,7 +163,6 @@ export const nzbgetGroupSchema = z.object({
   MinPostTime: z.number().default(0),
 }).passthrough();
 
-// NZBGet history item schema
 export const nzbgetHistorySchema = z.object({
   NZBID: z.number(),
   Name: z.string(),

@@ -43,8 +43,6 @@ describe('LIBRARY_FILTER_BUCKETS — canonical lifecycle partition (#1444)', () 
   });
 
   it('partitions the state set — buckets are pairwise disjoint (no state in two buckets)', () => {
-    // A correct partition has exactly one bucket per state, so the flattened
-    // membership list has no duplicates and its length equals the state count.
     expect(new Set(bucketStates).size).toBe(bucketStates.length);
     expect(bucketStates.length).toBe(BOOK_STATUSES.length);
   });
@@ -97,9 +95,6 @@ describe('createBookBodySchema — series scalars (#1716)', () => {
     }
   });
 
-  // seriesAsin/seriesProvider were dead fields — never persisted (#1716). The
-  // strict schema now rejects them, which is why the client producers had to
-  // drop them in lockstep: a body still carrying them would 400.
   it('rejects a body carrying the removed seriesAsin field (strict)', () => {
     const result = createBookBodySchema.safeParse({
       ...validBook,

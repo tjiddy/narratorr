@@ -49,37 +49,16 @@ export interface MetadataServiceConfig {
   audibleRegion?: string;
 }
 
-/**
- * Pseudo-narrator markers stripped from the reject-word search surface before
- * `matchesWord` (#1032). Answers "should this fake narrator be removed from the
- * reject-word surface?" — a DIFFERENT question from the fuzzy-match no-signal
- * decision in `NARRATOR_PLACEHOLDERS` (`src/core/utils/similarity.ts`), the
- * single home for the full narrator-placeholder vocabulary (#1657).
- *
- * This set is intentionally NARROWER (a strict subset): widening it to the full
- * 8-value vocabulary would change `isRejectedByWords` at runtime — e.g.
- * stripping `Author`/`Multiple Readers`/`uncredited`/`narrator` from the
- * reject-word surface — which is out of scope. The subset relationship
- * (`PSEUDO_NARRATORS ⊆ NARRATOR_PLACEHOLDERS`) is pinned by a named consistency
- * test in `metadata.service.test.ts`, so adding a junk value to the shared
- * vocabulary can never make the two paths silently disagree.
- */
+// Deliberately narrower than NARRATOR_PLACEHOLDERS: widening this set changes the
+// reject-word surface. metadata.service.test.ts pins the subset relationship.
 export const PSEUDO_NARRATORS = new Set(['full cast', 'various', 'unknown']);
 
 function isPseudoNarrator(name: string): boolean {
   return PSEUDO_NARRATORS.has(name.trim().toLowerCase().replace(/\s+/g, ' '));
 }
 
-/**
- * Single-book reject-words predicate — the ONE source of truth shared by the
- * search filter (`filterRejectedBooks`) and the v1 add-by-ASIN gate
- * (`POST /api/v1/books`), so the two can never drift. The matched surface is
- * `title + subtitle + authors + narrators + formatType` (pseudo-narrators
- * stripped, lower-cased), matched with `matchesWord` over
- * `parseWordList(rejectWords)`. Pure: takes the book + the raw `rejectWords`
- * setting value and returns whether it should be rejected. The per-call settings
- * read and fail-open handling stay at each call site.
- */
+// Shared by search and v1 add-by-ASIN so reject-word behavior cannot drift;
+// settings reads and fail-open handling remain at each call site.
 export function isRejectedByWords(book: BookMetadata, rejectWords: string): boolean {
   const rejectList = parseWordList(rejectWords);
   if (rejectList.length === 0) return false;
@@ -99,7 +78,6 @@ export class MetadataService {
   private audnexus: MetadataEnrichmentProvider;
   private throttle = new RequestThrottle();
   private rateLimitUntil: Map<string, number> = new Map();
-  /** Per-instance chapter-runtime cache + single-flight (#1942) — see {@link createChapterCorroborator}. */
   private chapterCorroborator: ChapterCorroborator;
 
   constructor(private log: FastifyBaseLogger, config?: MetadataServiceConfig, private settingsService?: SettingsService) {
@@ -114,8 +92,7 @@ export class MetadataService {
     this.audnexus = new AudnexusProvider({ region });
     this.log.info({ region }, 'Audnexus enrichment provider loaded');
 
-    // Instance-scoped, so the ASIN-only cache key can never answer a lookup with
-    // another region's chapter data (this service owns exactly one region).
+    // Instance scope keeps the ASIN-only cache from crossing Audible regions.
     this.chapterCorroborator = createChapterCorroborator({
       provider: this.audnexus,
       log: this.log,
@@ -123,24 +100,12 @@ export class MetadataService {
     });
   }
 
-  /**
-   * The matched edition's chapter-table runtime references in SECONDS — the full
-   * published total and the trailing-trim variant (#1942/#2168) — or `{}` when
-   * neither is usable. Thin delegator: the cache, single-flight, throttle bridge,
-   * and outcome classification live in {@link createChapterCorroborator}. Never
-   * throws.
-   */
+  // Returns full and trailing-trim chapter runtimes in seconds, or {}; never throws.
   getChapterRuntimeSeconds(asin: string): Promise<ChapterRuntimeSeconds> {
     return this.chapterCorroborator.getChapterRuntimeSeconds(asin);
   }
 
-  /**
-   * The throttle/backoff collaborators every extracted sibling borrows. One home
-   * (DRY-3): `lookupForFixMatch`, `resolveBook`, and the chapter corroborator all
-   * mediate Audnexus/Audible through the SAME shared throttle slot and the SAME
-   * provider-wide `rateLimitUntil` gate, so a copy that drifts would silently
-   * un-throttle one path.
-   */
+  // All extracted lookup paths must share this throttle and provider backoff state.
   private throttleCollaborators() {
     return {
       acquireThrottle: () => this.throttle.acquire(),
@@ -175,8 +140,7 @@ export class MetadataService {
     }, warnings);
 
     const filteredBooks = await this.applyBookFilters(books);
-    // Derive authors/series from the FILTERED book list so podcast-derived
-    // entities (dropped by applyBookFilters) cannot leak through. See #1020.
+    // Derive references after filtering so dropped podcasts cannot leak entities.
     const authors = deriveAuthorsFromBooks(filteredBooks);
     const series = deriveSeriesFromBooks(filteredBooks);
 
@@ -281,7 +245,6 @@ export class MetadataService {
   }
 
   async getAuthorBooks(id: string): Promise<BookMetadata[]> {
-    // Resolve author name via Audnexus, then search Audible by name
     const author = await this.getAuthor(id);
     if (!author?.name) {
       this.log.debug({ id }, 'Cannot fetch author books — author not found');
@@ -297,9 +260,7 @@ export class MetadataService {
     return this.applyBookFilters(result.books);
   }
 
-  // Single source of truth for the metadata filter chain.
-  // Each helper reads its own settings slice and fails open independently —
-  // see issue #1004 for the symmetric fail-open model.
+  // Each filter owns its settings read and fails open independently (#1004).
   private async applyBookFilters(books: BookMetadata[]): Promise<BookMetadata[]> {
     if (books.length === 0) return books;
     const audiobooksOnly = this.filterToAudiobooksOnly(books);
@@ -402,11 +363,7 @@ export class MetadataService {
 
   async enrichBook(asin: string): Promise<BookMetadata | null> {
     if (this.isRateLimited('Audnexus')) {
-      // An active backoff is a rate-limit state, NOT a miss — throw (like the
-      // fresh-429 path below) so callers (resolveBook → import-list/enrichment
-      // job) keep it distinct from a genuine no-match and leave the book
-      // resolvable later instead of marking it failed. `null` is reserved for a
-      // real Audnexus miss or a non-rate-limit error.
+      // Backoff is not a miss: propagate it so callers leave the book retryable.
       this.log.warn({ asin }, 'Enrichment skipped — Audnexus rate limited');
       throw new RateLimitError(this.getRateLimitRemainingMs('Audnexus'), 'Audnexus');
     }
@@ -424,20 +381,14 @@ export class MetadataService {
     } catch (error: unknown) {
       if (error instanceof RateLimitError) {
         this.setRateLimited(error.provider, error.retryAfterMs);
-        throw error; // Re-throw so enrichment job can handle it
+        throw error;
       }
       this.log.warn({ error: serializeError(error), asin }, 'Audnexus enrichment lookup failed');
       return null;
     }
   }
 
-  /**
-   * Robust audiobook resolution shared by the import-list add flow and the
-   * background enrichment job (ASIN fast path → title/author search fallback +
-   * validation; rate limits propagate). See {@link runResolveBook} for the full
-   * contract — the orchestration lives there so this file stays under its
-   * `max-lines` budget while reusing the throttle/rate-limit/provider internals.
-   */
+  // Shared ASIN fast path and validated title/author fallback; rate limits propagate.
   resolveBook(input: ResolveBookInput): Promise<BookMetadata | null> {
     return runResolveBook({
       provider: this.providers[0],

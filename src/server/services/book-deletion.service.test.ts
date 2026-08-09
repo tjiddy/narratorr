@@ -151,7 +151,6 @@ describe('BookDeletionService', () => {
 
       const result = await service.deleteBook(1, { deleteFiles: false });
 
-      // Event fired before delete, rejection did not propagate, delete still reached.
       const createOrder = create.mock.invocationCallOrder[0]!;
       const deleteOrder = (bookService.delete as Mock).mock.invocationCallOrder[0]!;
       expect(createOrder).toBeLessThan(deleteOrder);
@@ -183,8 +182,6 @@ describe('BookDeletionService', () => {
       const result = await service.deleteBook(1, { deleteFiles: false });
 
       expect(result).toEqual({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
-      // Positive call assertion also consumes the mockRejectedValueOnce queue,
-      // closing the documented clearAllMocks + *Once() leak.
       expect(cleanCoverCache).toHaveBeenCalledWith(1, '/test-config', expect.anything());
     });
   });
@@ -201,8 +198,6 @@ describe('BookDeletionService', () => {
 
       const result = await service.deleteBook(1, { deleteFiles: true });
 
-      // Pin the real PathOutsideLibraryError message pass-through, not just the
-      // outcome — swapping `error: error.message` for a generic string must fail.
       expect(result).toEqual({
         outcome: 'path_outside_library',
         error: expect.stringMatching(/not inside library root/),

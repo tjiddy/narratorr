@@ -7,7 +7,6 @@ async function createApp(isDev: boolean): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   await registerSecurityPlugins(app, isDev);
   app.get('/api/test', async (_request, reply) => {
-    // Access cspNonce to verify it's generated (only in prod mode)
     const nonce = reply.cspNonce?.script;
     return { ok: true, nonce };
   });
@@ -41,8 +40,6 @@ describe('Security Headers (helmet)', () => {
     });
 
     it('test imports shared builder used by index.ts — not a detached fixture', () => {
-      // This test proves the builder is the same module used in production.
-      // If the import path changes in index.ts but not here, the build breaks.
       const prodOptions = buildHelmetOptions(false);
       expect(prodOptions.enableCSPNonces).toBe(true);
       expect(prodOptions.contentSecurityPolicy).toBeTruthy();
@@ -89,9 +86,7 @@ describe('Security Headers (helmet)', () => {
       expect(csp).toBeDefined();
       expect(csp).toContain("default-src 'self'");
       expect(csp).toContain("script-src 'self'");
-      // Semantic check: style-src must allow unsafe-inline AND must NOT contain a nonce.
-      // toContain() would pass even if a 'nonce-...' token were appended by helmet, because
-      // it only checks for a substring. The two-part check below is the correct contract.
+      // A substring check would miss a nonce that disables unsafe-inline.
       const styleSegment = csp.split(';').find((s) => s.trim().startsWith('style-src'));
       expect(styleSegment).toMatch(/'unsafe-inline'/);
       expect(styleSegment).not.toMatch(/'nonce-/);

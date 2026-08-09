@@ -128,7 +128,7 @@ describe('ReleaseCard', () => {
           result={{ ...baseResult, language: 'FRENCH' }}
         />,
       );
-      // result.language.toLowerCase() = 'french', rendered with capitalize CSS
+      // capitalize CSS changes rendering; result.language.toLowerCase() remains the DOM text.
       expect(screen.getByText('french')).toBeInTheDocument();
     });
   });
@@ -136,7 +136,6 @@ describe('ReleaseCard', () => {
   describe('#421 — "In library" badge', () => {
     const IN_LIBRARY = 'In library';
 
-    // Positive matching
     it('renders "In library" badge when result.guid matches lastGrabGuid (usenet path)', () => {
       mockCalculateQuality.mockReturnValue(null);
       renderWithProviders(
@@ -166,7 +165,6 @@ describe('ReleaseCard', () => {
       expect(screen.getByText(IN_LIBRARY)).toBeInTheDocument();
     });
 
-    // Negative / no-match cases
     it('no badge when lastGrabGuid and lastGrabInfoHash are both null', () => {
       mockCalculateQuality.mockReturnValue(null);
       renderWithProviders(
@@ -202,7 +200,6 @@ describe('ReleaseCard', () => {
       expect(screen.queryByText(IN_LIBRARY)).not.toBeInTheDocument();
     });
 
-    // Null safety and falsy edge cases
     it('null guid on result does NOT match null lastGrabGuid (null ≠ null)', () => {
       mockCalculateQuality.mockReturnValue(null);
       const { guid: _guid, infoHash: _infoHash, ...resultNoIds } = baseResult;
@@ -243,7 +240,6 @@ describe('ReleaseCard', () => {
 
     it('only one identifier populated on book, only the other on result → no match', () => {
       mockCalculateQuality.mockReturnValue(null);
-      // Book has guid, result only has infoHash (no guid)
       const { guid: _guid, ...resultNoGuid } = baseResult;
       renderWithProviders(
         <ReleaseCard
@@ -256,7 +252,6 @@ describe('ReleaseCard', () => {
       expect(screen.queryByText(IN_LIBRARY)).not.toBeInTheDocument();
     });
 
-    // Conditional rendering
     it('badge renders independently of quality comparison (no existingBookSizeBytes)', () => {
       mockCalculateQuality.mockReturnValue(null);
       renderWithProviders(
@@ -297,8 +292,6 @@ describe('ReleaseCard', () => {
       renderWithProviders(<ReleaseCard {...defaultProps} result={anthology} />);
 
       const heading = screen.getByRole('heading', { level: 4 });
-      // The live defect: a seven-author anthology roll rendered first pushed the title
-      // past the CSS truncation entirely — the row showed only author names.
       expect(heading.textContent).toBe('Folk & Fairy Tales of Azeroth — Christie Golden, Garth Nix, Madeleine Roux, Catherynne M Valente, Steve Danuser, Molly Knox Ostertag, Avalon Irons');
     });
 

@@ -21,17 +21,9 @@ import { ensureError } from '../utils/ensure-error.js';
 import { buildGrabPayload } from './grab-payload.js';
 import { parseWordList, matchesWord } from '@shared/parse-word-list.js';
 import { BYTES_PER_GB, BYTES_PER_MB } from '@shared/constants.js';
-/**
- * `buildSearchQuery` moved to `indexer-query.ts` (#2104 D1) so the query ladder
- * can share it without an import cycle. Re-exported here — every pre-ladder
- * import site keeps working.
- */
+/** Compatibility re-export; the ladder imports indexer-query directly to avoid a cycle. */
 export { buildSearchQuery } from './indexer-query.js';
 
-/**
- * Build a NarratorPriority config from search settings and book narrators.
- * Returns undefined when priority is 'quality' or book has no narrators.
- */
 export function buildNarratorPriority(
   searchPriority: string,
   bookNarrators?: Array<{ name: string }> | null,
@@ -42,7 +34,6 @@ export function buildNarratorPriority(
   return { bookNarrators: names };
 }
 
-/** Aggregated filter/rank options crossing quality, metadata, and computed settings. */
 export interface SearchFilterOptions {
   grabFloor: number;
   minSeeders: number;
@@ -55,30 +46,16 @@ export interface SearchFilterOptions {
   maxDownloadSize?: number | undefined;
 }
 
-/**
- * Per-gate verdict: `keep: true` passes the result through, `keep: false`
- * drops it and contributes `logFields` to the per-drop debug log payload.
- */
 type GateVerdict = { keep: true } | { keep: false; logFields?: Record<string, unknown> };
 
-/**
- * A single quality-filter gate. `enabled: false` short-circuits — the gate's
- * evaluator is never called, so disabled gates pay nothing per result and
- * cannot accidentally log under their `reason`. Each gate's evaluator is a
- * closure that captures only its own per-gate values (e.g., `maxBytes` for
- * over-max-size, the per-result `mbPerHour` for grab-floor) so disabled-gate
- * inputs cannot leak into other gates' log payloads.
- */
 type Gate = {
   reason: string;
   enabled: boolean;
   evaluate: (r: SearchResult) => GateVerdict;
 };
 
-// Ebook-only format detection: exclude results that contain ebook keywords
-// (AZW3, EPUB, PDF, MOBI) but no audio keywords (M4B, MP3, FLAC, AAC, OGG).
-// Mixed-format results are kept. Use lookahead/lookbehind instead of \b because
-// JS treats _ as a word char, which would miss scene-style titles like "Dune_EPUB".
+// Exclude ebook-only results but retain mixed formats. Do not use \b: underscore is a JS word
+// character, so it misses scene names such as Dune_EPUB.
 const EBOOK_FORMAT_RE = /(?<![a-zA-Z\d])(azw3|epub|pdf|mobi)(?![a-zA-Z\d])/i;
 const AUDIO_FORMAT_RE = /(?<![a-zA-Z\d])(m4b|mp3|flac|aac|ogg)(?![a-zA-Z\d])/i;
 
@@ -120,8 +97,7 @@ function buildQualityGates(
       evaluate: (r) => {
         const sourceTitle = r.nzbName || r.rawTitle || r.title;
         if (!EBOOK_FORMAT_RE.test(sourceTitle)) return { keep: true };
-        // Check all available title fields for audio keywords — ebook and audio markers
-        // may be split across fields (e.g., nzbName=EPUB, rawTitle=MP3).
+        // Ebook and audio markers may be split across title fields.
         if ([r.nzbName, r.rawTitle, r.title].some((t) => t && AUDIO_FORMAT_RE.test(t))) return { keep: true };
         return { keep: false };
       },
@@ -168,25 +144,7 @@ function buildQualityGates(
   ];
 }
 
-/**
- * Apply quality filtering and canonical ranking to search results.
- * Filters by word lists, MB/hr grab floor, and min seeders, then sorts by
- * canonical order: matchScore gate → narrator match → MB/hr → protocol preference → language → indexer priority → grabs → seeders.
- *
- * Quality gates run sequentially (gate N sees the output of gate N-1) in
- * canonical order: reject-word → required-word → ebook-only → min-seeders →
- * grab-floor → min-size → max-size. Language partitioning runs after the gate array
- * because it emits two log branches (mismatch dropped + undetermined passed)
- * that don't fit the keep/drop shape.
- *
- * When `log` is provided, emits a debug log per dropped result at each gate
- * and the critical "language-undetermined passed" line for results that
- * survive solely because we couldn't detect a language.
- *
- * `bookDurationSeconds` is the book's duration in SECONDS (the MB/hr grab floor
- * and quality tiers are seconds-based). Callers holding the minutes-backed
- * `books.duration` column must convert via `resolveBookQualityInputs` first.
- */
+/** bookDurationSeconds is seconds; callers holding books.duration must normalize its minutes first. */
 export function filterAndRankResults(
   results: SearchResult[],
   bookDurationSeconds: number | undefined,
@@ -208,7 +166,6 @@ export function filterAndRankResults(
     });
   }
 
-  // Language filtering: exclude results with explicit non-matching language
   const langs = languages ?? [];
   const langPartition = filterByLanguage(filtered, langs);
   if (log) {
@@ -221,19 +178,12 @@ export function filterAndRankResults(
   }
   filtered = langPartition.kept;
 
-  // Canonical ranking
   filtered.sort((a, b) => canonicalCompare(a, b, bookDurationSeconds, durationUnknown, protocolPreference, langs, narratorPriority));
 
   return { results: filtered, durationUnknown };
 }
 
-/**
- * Build a {@link SearchFilterOptions} from raw quality + metadata settings, the
- * single home for the field-by-field mapping that used to be copied into
- * display, retry, RSS, and the 4 `searchAndGrabForBook` callers. `narratorPriority`
- * is optional (retry and RSS pass it; the display path does not) and is omitted
- * from the result when undefined so `exactOptionalPropertyTypes` stays happy.
- */
+/** Shared settings mapper; omit narratorPriority rather than assigning undefined. */
 export function buildSearchFilterOptions(
   quality: {
     grabFloor: number;
@@ -261,27 +211,8 @@ export function buildSearchFilterOptions(
 }
 
 /**
- * Shared post-enrichment `multipart → rank` sub-chain, the single owner of the
- * step that display and RSS applied but auto-grab and retry historically dropped
- * (#1777). Runs {@link filterMultiPartUsenet} → emits one `multi-part-detected`
- * info log per drop → runs {@link filterAndRankResults} → emits the quality-gate
- * debug log when the count shrinks, and returns the ranked results plus the
- * multipart rejections. `durationUnknown` is passed straight through from
- * {@link filterAndRankResults} so the display path can keep exposing it on the
- * SSE `search-complete` surface; the grab paths continue to ignore it.
- *
- * Every path (display, auto-grab, retry, RSS) is expected to call this after its
- * own enrichment step so a future post-enrichment step lands on all four at once.
- * This is a convention, not a construction: nothing in the type system forces a
- * new path to route through here, so keeping all four converged still requires
- * reviewer discipline — the shared helper only guarantees the paths that already
- * call it stay in lockstep (this is what caused #1777, and the same shape let the
- * duration-unit divergence fixed in #1797 slip in).
- *
- * `bookDurationSeconds` is the book's duration in SECONDS. The grab/retry/RSS
- * callers hold the minutes-backed `books.duration` column and MUST normalize via
- * `resolveBookQualityInputs` before calling; the display path already sends
- * seconds from the client.
+ * Shared post-enrichment multipart→rank step for display, auto-grab, retry, and RSS; every path
+ * must call it to stay converged. bookDurationSeconds is seconds, not the DB column's minutes.
  */
 export function applyMultiPartFilterAndRank(
   results: SearchResult[],
@@ -295,8 +226,7 @@ export function applyMultiPartFilterAndRank(
 } {
   const { filtered, rejectedTitles } = filterMultiPartUsenet(results);
   for (const r of rejectedTitles) {
-    // info (not debug): a multi-part rejection can silently make a wanted book
-    // unobtainable on all four paths, so keep forensics visible without debug logging.
+    // Keep multipart rejection forensics at info because they can make a book unobtainable.
     log?.info({ title: r.title, reason: 'multi-part-detected', matchedPattern: r.matchedPattern }, 'Multi-part Usenet result rejected');
   }
 
@@ -309,13 +239,6 @@ export function applyMultiPartFilterAndRank(
   return { results: ranked.results, durationUnknown: ranked.durationUnknown, multipartRejections: rejectedTitles };
 }
 
-/**
- * Filter out blacklisted releases by infoHash and/or guid.
- * Skips the blacklist lookup entirely when no identifiers are present.
- *
- * When `log` is provided, every dropped result emits a debug log line so
- * operators can see why a candidate was rejected by the blacklist gate.
- */
 export async function filterBlacklistedResults(
   results: SearchResult[],
   blacklistService: BlacklistService,
@@ -342,16 +265,7 @@ export async function filterBlacklistedResults(
   });
 }
 
-/**
- * Shared post-processing pipeline for search results.
- * Applies multi-part Usenet filtering, blacklist filtering, and quality ranking.
- * Used by both JSON and SSE search routes.
- *
- * `indexerService` is required (not optional) so any caller that omits it fails
- * TypeScript — the LAN allowlist for NZB-body fetches (#1149) must reach the
- * leaf, and a missed wrapper would silently degrade enrichment back to the
- * pre-fix "SSRF refuses Prowlarr-on-LAN" behavior.
- */
+/** Shared JSON/SSE pipeline; IndexerService must reach enrichment to permit configured private indexers. */
 export async function postProcessSearchResults(
   allResults: SearchResult[],
   bookDuration: number | undefined,
@@ -366,15 +280,10 @@ export async function postProcessSearchResults(
 }> {
   const filteredResults = await filterBlacklistedResults(allResults, blacklistService, logger);
 
-  // Enrich Usenet results with language from newsgroup metadata. Forwarding
-  // the LAN allowlist lets the NZB fetch reach a configured-indexer host:port
-  // even at a private IP (#1149). This interactive/post-process display path
-  // stays uncapped (omit maxPhase2Fetches) so enrichment is unaffected; it
-  // still benefits from the shared enrichment cache (#1315).
+  // Forward the configured private-indexer allowlist; this interactive path intentionally has no phase-2 cap.
   const lanAllowlist = await indexerService.getLanAllowlist();
   await enrichUsenetLanguages(filteredResults, logger, lanAllowlist);
 
-  // Multi-part filter + quality ranking (shared post-enrichment sub-chain, #1777).
   const qualitySettings = await settingsService.get('quality');
   const metadataSettings = await settingsService.get('metadata');
   const { results, durationUnknown, multipartRejections } = applyMultiPartFilterAndRank(
@@ -384,8 +293,7 @@ export async function postProcessSearchResults(
     logger,
   );
 
-  // Preserve the legacy `unsupportedResults: { count, titles }` API surface — extract
-  // titles only; matchedPattern stays internal to logging.
+  // Preserve the legacy titles-only API; matchedPattern remains internal.
   const unsupportedTitles = multipartRejections.map((r) => r.title);
   return {
     results,
@@ -400,13 +308,6 @@ export type SingleBookSearchResult =
   | { result: 'skipped'; reason: string }
   | { result: 'grab_error'; error: Error };
 
-/**
- * Attempt to grab the best result and return the search outcome. The return type
- * excludes `no_results` — `tryGrab` is only reached once a grabbable result has
- * been selected, so it can only resolve to grabbed/skipped/grab_error. Narrowing
- * here keeps the outcome chain in {@link runSearchAndGrab} statically aligned with
- * the three branches it actually handles (#1330, type-only — no behavior change).
- */
 async function tryGrab(
   best: SearchResult,
   book: { id: number; title: string },
@@ -428,12 +329,6 @@ async function tryGrab(
   }
 }
 
-/**
- * Dependency bag for {@link searchAndGrabForBook} — collapses the former
- * 9-positional-parameter signature. `indexerService` is required so the LAN
- * allowlist (#1149) threads to the enrichment leaf at every caller; `broadcaster`
- * is optional — present selects the streaming/SSE path, absent the no-op path.
- */
 export interface SearchAndGrabDeps {
   indexerSearchService: IndexerSearchService;
   downloadOrchestrator: DownloadOrchestrator;
@@ -444,29 +339,11 @@ export interface SearchAndGrabDeps {
   eventHistory: EventHistoryService;
   broadcaster?: EventBroadcasterService | undefined;
   searchLadderCooldown?: SearchLadderCooldown | undefined;
-  /**
-   * Who is calling, for query-ladder cooldown purposes (#2104 D15).
-   *
-   * `'scheduled'` — consults the cooldown before building the ladder and records
-   * exhaustion. `runSearchJob` is the ONLY caller that passes it.
-   *
-   * `'always'` (the default when omitted, so a future caller fails open to the
-   * generous behaviour) — never consults, never records. That covers
-   * `searchAllWanted` (an explicitly manual trigger), the per-book route, the
-   * immediate trigger, and the SSE modal: a person clicking Search never gets a
-   * degraded ladder because an unattended cycle exhausted six hours ago.
-   */
+  /** Scheduled honors/records cooldown; always bypasses it. Omission defaults manual/new callers to always. */
   ladderMode?: 'scheduled' | 'always' | undefined;
 }
 
-/**
- * Single search→gate→enrich→rank→grab pipeline shared by the streaming and
- * non-streaming entry points. The `searchExecutor` injects the search call
- * (streaming vs aggregate) and the `sink` injects event emission; everything
- * between — blacklist gate, Usenet language enrichment (LAN allowlist #1149 +
- * `AUTO_GRAB_PHASE2_CAP` #1315), quality ranking, best-result selection, grab,
- * and single-record grab-failure handling (#1157) — is identical on both paths.
- */
+/** Shared streaming/aggregate gate→enrich→rank→grab core; the sink alone controls events. */
 async function runSearchAndGrab(
   book: SearchBook,
   deps: SearchAndGrabDeps,
@@ -494,15 +371,11 @@ async function runSearchAndGrab(
 
   await enrichUsenetLanguages(afterBlacklist, log, await indexerService.getLanAllowlist(), { maxPhase2Fetches: AUTO_GRAB_PHASE2_CAP });
 
-  // book.duration is MINUTES; normalize to seconds (audioDuration ?? duration*60)
-  // before the seconds-based quality chain, or the MB/hr floor is inert (#1797).
+  // books.duration is minutes; the quality chain requires seconds or its MB/hour floor is inert.
   const { durationSeconds } = resolveBookQualityInputs(book);
   const { results } = applyMultiPartFilterAndRank(afterBlacklist, durationSeconds ?? undefined, qualitySettings, log);
 
-  // Candidate selection on the winning rung, through the SHARED pure selector so
-  // this path and `retrySearch` cannot drift on floor policy (#2104 D14). On
-  // rung 1 and on a `full` rung it degenerates to the pre-ladder
-  // `results.find(r => r.downloadUrl)`.
+  // Share relaxed-rung selection with retrySearch so floor policy cannot drift.
   const selection = selectRelaxedCandidate(results, ran.rung);
   if (selection.kind === 'hold') {
     recordSearchRelaxedHeldEvent({
@@ -535,19 +408,8 @@ async function runSearchAndGrab(
 }
 
 /**
- * Search indexers for a single book and auto-grab the best result.
- * Core search-and-grab logic shared by all callers (jobs, routes).
- *
- * Pass `deps.broadcaster` to drive the streaming/SSE path (per-indexer events
- * plus `search_complete`); omit it for the silent non-streaming path. Both paths
- * run the identical {@link runSearchAndGrab} core, differing only in the injected
- * per-rung executor and event sink.
- *
- * The QUERY LADDER (#2104) sits between the two: rung 1 is today's canonical
- * query verbatim, so a book findable at rung 1 issues exactly one query per
- * indexer and nothing below this line sees a difference. Only a genuine,
- * answered zero advances a rung; the gate chain below runs ONCE, on the winning
- * rung's results.
+ * Shared auto-grab entry; broadcaster changes events, not the core. The query ladder advances
+ * only on answered zero, then the gate chain runs once on the winning rung.
  */
 export async function searchAndGrabForBook(
   book: SearchBook,

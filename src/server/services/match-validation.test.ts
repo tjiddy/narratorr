@@ -8,12 +8,7 @@ import {
   NO_AUTHOR_TITLE_MATCH_THRESHOLD,
 } from './match-validation.js';
 
-/**
- * Minimal schema-valid candidate builder. `authors` defaults to a single named
- * author (BookMetadataSchema requires `.min(1)` with a non-empty trimmed name);
- * callers override per case. Fields are omitted (not set to `undefined`) to stay
- * compatible with exactOptionalPropertyTypes — see fixture-builder-eopt-overrides.
- */
+// Default author keeps fixtures valid; omit undefined fields for exactOptionalPropertyTypes.
 function candidate(over: { title: string; authors?: BookMetadata['authors'] }): BookMetadata {
   return {
     title: over.title,
@@ -24,7 +19,6 @@ function candidate(over: { title: string; authors?: BookMetadata['authors'] }): 
 describe('matchPassesValidation', () => {
   describe('title dice gate (author present)', () => {
     it('rejects when title dice is below the threshold', () => {
-      // Unrelated titles share almost no bigrams (dice ≈ 0.06).
       const result = matchPassesValidation(
         { title: 'The Way of Kings', author: 'Brandon Sanderson' },
         candidate({ title: 'Pride and Prejudice' }),
@@ -33,8 +27,6 @@ describe('matchPassesValidation', () => {
     });
 
     it('accepts a 0.70–0.84 title with a matching author (author corroborates a fuzzy title)', () => {
-      // Same pair that is rejected title-only below: dice 0.833 clears the loose
-      // 0.7 gate, and the matching author is what makes it safe to adopt.
       expect(diceCoefficient('The Lost Hero', 'The Last Hero')).toBeGreaterThanOrEqual(TITLE_MATCH_THRESHOLD);
       const result = matchPassesValidation(
         { title: 'The Lost Hero', author: 'Rick Riordan' },
@@ -54,8 +46,7 @@ describe('matchPassesValidation', () => {
 
   describe('verbose/subtitle title containment (author present, #1636)', () => {
     it('accepts a verbose item title against a short candidate (containment, not dice)', () => {
-      // The dice branch CANNOT carry this — assert it sits below the gate so the
-      // case proves the significant-token containment branch is what passed.
+      // Pin below the dice threshold so containment is the only passing branch.
       expect(diceCoefficient('The Hobbit, or There and Back Again', 'The Hobbit')).toBeLessThan(
         TITLE_MATCH_THRESHOLD,
       );
@@ -75,8 +66,6 @@ describe('matchPassesValidation', () => {
     });
 
     it('accepts a same-work different-edition title (documented wrong-edition tolerance)', () => {
-      // Different audio production, same book — acceptable per #1636 and
-      // recoverable via Fix Match. dice is below the gate; containment carries it.
       expect(diceCoefficient('The Hobbit', 'The Hobbit: 50th Anniversary Edition')).toBeLessThan(
         TITLE_MATCH_THRESHOLD,
       );
@@ -88,7 +77,6 @@ describe('matchPassesValidation', () => {
     });
 
     it('rejects a different work by the same author (no shared significant tokens)', () => {
-      // dice is also below the gate, so neither branch can carry it.
       expect(diceCoefficient('The Hobbit', 'The Silmarillion')).toBeLessThan(TITLE_MATCH_THRESHOLD);
       const result = matchPassesValidation(
         { title: 'The Hobbit', author: 'Tolkien' },
@@ -98,9 +86,6 @@ describe('matchPassesValidation', () => {
     });
 
     it('rejects a contained title by a different author (author is confirmed first)', () => {
-      // "hobbit" IS contained in "The History of The Hobbit", but the author
-      // check (Rateliff ≠ Tolkien) rejects before containment can apply —
-      // proves containment never bypasses author corroboration.
       const result = matchPassesValidation(
         { title: 'The Hobbit', author: 'J.R.R. Tolkien' },
         candidate({ title: 'The History of The Hobbit', authors: [{ name: 'John Rateliff' }] }),
@@ -109,8 +94,6 @@ describe('matchPassesValidation', () => {
     });
 
     it('does not treat a stopword-only title as a subset of everything', () => {
-      // "The And" reduces to an empty significant-token set; an empty set must
-      // NOT satisfy containment, and dice is below the gate → reject.
       expect(diceCoefficient('The And', 'The Hobbit')).toBeLessThan(TITLE_MATCH_THRESHOLD);
       const result = matchPassesValidation(
         { title: 'The And', author: 'Tolkien' },
@@ -120,9 +103,6 @@ describe('matchPassesValidation', () => {
     });
 
     it('does not let a single-character token drive containment', () => {
-      // A lone "x" is the item's only token; without the single-char guard it
-      // would be a subset of {x, marks, spot}. dice('X', …) is 0, so a reject
-      // here proves the guard dropped the single-char token.
       expect(diceCoefficient('X', 'X Marks the Spot')).toBeLessThan(TITLE_MATCH_THRESHOLD);
       const result = matchPassesValidation(
         { title: 'X', author: 'Tolkien' },
@@ -148,8 +128,6 @@ describe('matchPassesValidation', () => {
     it('rejects a title-only match in the 0.70–0.84 band (no author corroboration)', () => {
       const item = { title: 'The Lost Hero' };
       const cand = candidate({ title: 'The Last Hero' });
-      // Document WHY it's rejected: dice sits in the band that the author path
-      // would accept but the no-author path now will not.
       const dice = diceCoefficient(item.title, cand.title);
       expect(dice).toBeGreaterThanOrEqual(TITLE_MATCH_THRESHOLD);
       expect(dice).toBeLessThan(NO_AUTHOR_TITLE_MATCH_THRESHOLD);
@@ -175,7 +153,6 @@ describe('matchPassesValidation', () => {
     });
 
     it('last-name-only overlap matches (documents known token behavior)', () => {
-      // 'John Smith' vs 'Jane Smith' share the 'smith' last-name token.
       const result = matchPassesValidation(
         { title: 'The Way of Kings', author: 'John Smith' },
         candidate({ title: 'The Way of Kings', authors: [{ name: 'Jane Smith' }] }),
@@ -184,8 +161,6 @@ describe('matchPassesValidation', () => {
     });
 
     it('single-initial last token does not overlap a multi-char last name', () => {
-      // 'Smith J' (last token 'j', length 1) must not match 'Adams J' on the
-      // single-char token — the aLast.length > 1 guard.
       const result = matchPassesValidation(
         { title: 'The Way of Kings', author: 'Smith J' },
         candidate({ title: 'The Way of Kings', authors: [{ name: 'Adams J' }] }),
@@ -194,9 +169,7 @@ describe('matchPassesValidation', () => {
     });
 
     it('rejects when the candidate author name is blank (stripped by filter)', () => {
-      // Schema-bypassing fixture: AuthorRefSchema.name is trim().min(1), so a
-      // blank name cannot parse — cast past the schema to exercise the defensive
-      // filter(Boolean) that drops it, leaving no usable candidate author.
+      // Schema forbids blank names; cast past it to exercise defensive filtering.
       const cand = { title: 'The Way of Kings', authors: [{ name: '' }] } as unknown as BookMetadata;
       const result = matchPassesValidation(
         { title: 'The Way of Kings', author: 'Brandon Sanderson' },
@@ -206,9 +179,7 @@ describe('matchPassesValidation', () => {
     });
 
     it('rejects when the candidate authors array is empty (defensive malformed candidate)', () => {
-      // BookMetadataSchema.authors is .min(1), so an empty array is not a
-      // schema-valid provider candidate — cast past the schema to assert the
-      // defensive guard against a malformed candidate.
+      // Schema requires an author; cast past it to exercise malformed input handling.
       const cand = { title: 'The Way of Kings', authors: [] } as unknown as BookMetadata;
       const result = matchPassesValidation(
         { title: 'The Way of Kings', author: 'Brandon Sanderson' },

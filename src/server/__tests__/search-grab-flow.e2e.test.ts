@@ -37,7 +37,6 @@ describe('Search → Grab flow E2E', () => {
 
     e2e = await createE2EApp();
 
-    // Seed indexer via API
     const indexerRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/indexers',
@@ -52,7 +51,6 @@ describe('Search → Grab flow E2E', () => {
     expect(indexerRes.statusCode).toBe(201);
     indexerId = indexerRes.json().id;
 
-    // Seed download client via API — host/port must match QB_BASE
     const clientRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/download-clients',
@@ -67,7 +65,6 @@ describe('Search → Grab flow E2E', () => {
     expect(clientRes.statusCode).toBe(201);
     downloadClientId = clientRes.json().id;
 
-    // Seed a book (wanted status)
     const bookRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/books',
@@ -82,9 +79,7 @@ describe('Search → Grab flow E2E', () => {
 
   afterEach(() => {
     mswServer.resetHandlers();
-    // Clear adapter cache so each test gets fresh adapter behavior.
-    // The qBittorrent adapter caches its auth session — without clearing,
-    // error-path tests reuse the cached (authenticated) adapter.
+    // qBittorrent caches authentication; clear it so error-path tests cannot reuse a session.
     e2e.services.downloadClient.clearAdapterCache();
   });
 
@@ -105,9 +100,7 @@ describe('Search → Grab flow E2E', () => {
       }),
     );
 
-    // GET /api/search retired in Wave 11.2 (#755); SSE /api/search/stream is
-    // the active surface. Exercise the indexer service directly so the MSW
-    // capture still verifies the outgoing query params.
+    // Search is SSE-only; call the service so MSW can inspect its outgoing query.
     await e2e.services.indexerSearch.searchAll('Brandon Sanderson');
 
     expect(capturedUrl).toBeDefined();
@@ -129,15 +122,13 @@ describe('Search → Grab flow E2E', () => {
       qbAddTorrentHandler(),
     );
 
-    // GET /api/search retired in Wave 11.2 (#755). The grab path under test
-    // here doesn't depend on the search route; exercise the indexer service
-    // directly to obtain a search result for grab.
+    // Obtain a result through the service; grab behavior is independent of the SSE route.
     const results = await e2e.services.indexerSearch.searchAll('Brandon Sanderson');
     expect(results.length).toBeGreaterThan(0);
 
     const firstResult = results[0];
 
-    // Grab using magnet URI (qBittorrent adapter extracts hash from magnet, not .torrent URLs)
+    // qBittorrent extracts the hash from magnets, not .torrent URLs.
     const grabRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/search/grab',
@@ -161,7 +152,6 @@ describe('Search → Grab flow E2E', () => {
     expect(download.infoHash).toBe(TORRENT_HASH);
     expect(download.status).toBe('downloading');
 
-    // Verify book status transitioned to downloading
     const bookRes = await e2e.app.inject({
       method: 'GET',
       url: `/api/books/${bookId}`,
@@ -171,7 +161,6 @@ describe('Search → Grab flow E2E', () => {
   });
 
   it('grab sends on_grab notification to webhook notifier', async () => {
-    // Create a notifier
     const notifierRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/notifiers',
@@ -197,7 +186,7 @@ describe('Search → Grab flow E2E', () => {
       webhookHandler,
     );
 
-    // Need a new book since the previous one may already be 'downloading'
+    // Shared setup book may already be downloading; this notification needs a fresh book.
     const bookRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/books',
@@ -208,7 +197,6 @@ describe('Search → Grab flow E2E', () => {
     });
     const newBookId = bookRes.json().id;
 
-    // Grab with magnet URI
     const grabRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/search/grab',
@@ -223,7 +211,7 @@ describe('Search → Grab flow E2E', () => {
     });
     expect(grabRes.statusCode).toBe(201);
 
-    // Wait for fire-and-forget notification
+    // Notification dispatch is fire-and-forget.
     await waitForRequests(captured, 1);
 
     expect(captured).toHaveLength(1);
@@ -242,7 +230,6 @@ describe('Search → Grab flow E2E', () => {
       qbAddTorrentErrorHandler(500),
     );
 
-    // Create a fresh book
     const bookRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/books',
@@ -253,7 +240,6 @@ describe('Search → Grab flow E2E', () => {
     });
     const rejectedBookId = bookRes.json().id;
 
-    // Grab — should fail
     const grabRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/search/grab',
@@ -269,12 +255,10 @@ describe('Search → Grab flow E2E', () => {
     expect(grabRes.statusCode).toBe(500);
     expect(grabRes.json().error).toBeDefined();
 
-    // No download record should have been created for this book
     const activityRes = await e2e.app.inject({ method: 'GET', url: '/api/activity' });
     const downloads = (activityRes.json() as { data: { bookId: number | null }[] }).data;
     expect(downloads.filter((d) => d.bookId === rejectedBookId)).toHaveLength(0);
 
-    // Book status should remain 'wanted'
     const bookCheck = await e2e.app.inject({
       method: 'GET',
       url: `/api/books/${rejectedBookId}`,
@@ -287,7 +271,6 @@ describe('Search → Grab flow E2E', () => {
       qbLoginErrorHandler(500),
     );
 
-    // Create a fresh book
     const bookRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/books',
@@ -298,7 +281,6 @@ describe('Search → Grab flow E2E', () => {
     });
     const unreachableBookId = bookRes.json().id;
 
-    // Grab — should fail due to auth error
     const grabRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/search/grab',
@@ -314,12 +296,10 @@ describe('Search → Grab flow E2E', () => {
     expect(grabRes.statusCode).toBe(500);
     expect(grabRes.json().error).toBeDefined();
 
-    // No download record should have been created for this book
     const activityRes = await e2e.app.inject({ method: 'GET', url: '/api/activity' });
     const downloads = (activityRes.json() as { data: { bookId: number | null }[] }).data;
     expect(downloads.filter((d) => d.bookId === unreachableBookId)).toHaveLength(0);
 
-    // Book should still be 'wanted'
     const bookCheck = await e2e.app.inject({
       method: 'GET',
       url: `/api/books/${unreachableBookId}`,
@@ -367,8 +347,7 @@ describe('Search → Grab flow E2E', () => {
     });
   });
 
-  // #1857 F14 — end-to-end confirm-&-replace + PIPELINE_ACTIVE-cancels-nothing,
-  // driven through route → orchestrator → claim transaction → download client → DB.
+  // Exercise replacement through route, claim transaction, download client, and DB.
   describe('cancel-&-replace flow (#1857 F14)', () => {
     async function seedBook(title: string): Promise<number> {
       const res = await e2e.app.inject({ method: 'POST', url: '/api/books', payload: { title, authors: [{ name: 'Author' }] } });
@@ -380,7 +359,6 @@ describe('Search → Grab flow E2E', () => {
       mswServer.use(qbLoginHandler(), qbAddTorrentHandler(), qbDeleteTorrentHandler());
       const replaceBookId = await seedBook('Replace Flow Book');
 
-      // First grab → a live downloading download.
       const first = await e2e.app.inject({
         method: 'POST', url: '/api/search/grab',
         payload: { downloadUrl: MAGNET_URI, title: 'Release A', protocol: 'torrent', bookId: replaceBookId, indexerId },
@@ -388,7 +366,6 @@ describe('Search → Grab flow E2E', () => {
       expect(first.statusCode).toBe(201);
       const firstId = first.json().id;
 
-      // Second grab for the same book WITHOUT replace → structured 409 conflict.
       const conflict = await e2e.app.inject({
         method: 'POST', url: '/api/search/grab',
         payload: { downloadUrl: MAGNET_URI_2, title: 'Release B', protocol: 'torrent', bookId: replaceBookId, indexerId },
@@ -396,7 +373,6 @@ describe('Search → Grab flow E2E', () => {
       expect(conflict.statusCode).toBe(409);
       expect(conflict.json()).toEqual({ code: 'ACTIVE_DOWNLOAD_EXISTS', active: { title: 'Release A' }, count: 1 });
 
-      // Confirmed replace → 201, a NEW download row.
       const replace = await e2e.app.inject({
         method: 'POST', url: '/api/search/grab',
         payload: { downloadUrl: MAGNET_URI_2, title: 'Release B', protocol: 'torrent', bookId: replaceBookId, indexerId, replace: true },
@@ -406,7 +382,6 @@ describe('Search → Grab flow E2E', () => {
       expect(newId).not.toBe(firstId);
       expect(replace.json().infoHash).toBe(REPLACEMENT_HASH);
 
-      // Old download claim-cancelled (failed), new one downloading, book still downloading.
       const oldDl = await e2e.app.inject({ method: 'GET', url: `/api/activity/${firstId}` });
       expect(oldDl.json().status).toBe('failed');
       const newDl = await e2e.app.inject({ method: 'GET', url: `/api/activity/${newId}` });
@@ -414,9 +389,7 @@ describe('Search → Grab flow E2E', () => {
       const book = await e2e.app.inject({ method: 'GET', url: `/api/books/${replaceBookId}` });
       expect(book.json().status).toBe('downloading');
 
-      // A THIRD distinct-release confirmed replace RECLASSIFIES against the first
-      // replacement's result — it now sees Release B as the active-to-replace, and
-      // replaces it (Release B → failed, Release C → downloading).
+      // Reclassify each replacement against current state: Release C must replace B, not A.
       const third = await e2e.app.inject({
         method: 'POST', url: '/api/search/grab',
         payload: { downloadUrl: MAGNET_URI_3, title: 'Release C', protocol: 'torrent', bookId: replaceBookId, indexerId, replace: true },
@@ -425,14 +398,14 @@ describe('Search → Grab flow E2E', () => {
       const thirdId = third.json().id;
       expect(thirdId).not.toBe(newId);
       const bDl = await e2e.app.inject({ method: 'GET', url: `/api/activity/${newId}` });
-      expect(bDl.json().status).toBe('failed'); // Release B was reclassified as the active-to-replace
+      expect(bDl.json().status).toBe('failed');
       const cDl = await e2e.app.inject({ method: 'GET', url: `/api/activity/${thirdId}` });
       expect(cDl.json().status).toBe('downloading');
     });
 
     it('a book with a pipeline-stage download returns PIPELINE_ACTIVE and cancels nothing', async () => {
       const pipelineBookId = await seedBook('Pipeline Book');
-      // Insert a download already in the import pipeline (checking) directly.
+      // Seed pipeline state directly; the grab API creates only downloading rows.
       const [inserted] = await e2e.db.insert(downloads).values({
         publicId: generatePublicId('dl'), bookId: pipelineBookId, downloadClientId, title: 'In Pipeline',
         protocol: 'torrent', clientStatus: 'completed', pipelineStage: 'checking', progress: 1, externalId: 'ext-checking',
@@ -445,7 +418,6 @@ describe('Search → Grab flow E2E', () => {
       expect(res.statusCode).toBe(409);
       expect(res.json()).toEqual({ code: 'PIPELINE_ACTIVE', reason: 'processing' });
 
-      // The pipeline download is untouched — replace cancelled nothing.
       const dl = await e2e.app.inject({ method: 'GET', url: `/api/activity/${inserted!.id}` });
       expect(dl.json().status).toBe('checking');
     });

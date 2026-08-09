@@ -1,23 +1,4 @@
-/**
- * Dispatcher-routing regression for fetchWithProxyAgent (F1, PR #907 review).
- *
- * The main proxy.test.ts file mocks `undiciFetch` as a delegate to
- * `globalThis.fetch` so its existing MSW/spy assertions keep working. That
- * forwarding mock means a regression that swapped production back to
- * `globalThis.fetch` would still satisfy those tests — exactly the failure
- * mode that put cover-download at risk for 24 hours after the undici 7→8
- * bump.
- *
- * This file mocks the production seam — `fetchWithOptionalDispatcher` — with
- * a non-forwarding `vi.fn()` and asserts the call-site contract:
- *   - proxied call MUST hit the helper with the dispatcher attached
- *   - no-proxy call MUST hit the helper without a dispatcher
- *
- * The helper's own routing (dispatcher → undiciFetch, no-dispatcher →
- * globalThis.fetch) is asserted in network-service.test.ts under
- * `fetchWithOptionalDispatcher (call-site routing contract)`. Together the
- * two test files protect end-to-end against the regression.
- */
+/** Non-forwarding mock verifies that only proxied calls attach a dispatcher. */
 
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import type * as NetworkServiceModule from '../utils/network-service.js';

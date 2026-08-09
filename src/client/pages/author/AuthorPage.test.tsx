@@ -8,7 +8,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMockBook, createMockAuthor } from '@/__tests__/factories';
 import { AuthorPage } from './AuthorPage';
 
-// Mock api
 vi.mock('@/lib/api', () => ({
   api: {
     getAuthor: vi.fn(),
@@ -19,7 +18,6 @@ vi.mock('@/lib/api', () => ({
   },
 }));
 
-// Mock sonner
 vi.mock('sonner', () => ({
   toast: {
     success: vi.fn(),
@@ -124,10 +122,8 @@ describe('AuthorPage', () => {
     vi.mocked(api.getAuthor).mockReturnValue(new Promise(() => {}));
     renderAuthorPage();
 
-    // Skeleton renders visible placeholder content
     const skeletons = document.querySelectorAll('.skeleton');
     expect(skeletons.length).toBeGreaterThan(5);
-    // Avatar placeholder is a rounded-full skeleton
     expect(document.querySelector('.skeleton.rounded-full')).toBeInTheDocument();
   });
 
@@ -198,7 +194,6 @@ describe('AuthorPage', () => {
     await waitFor(() => {
       expect(screen.getByText('Mistborn')).toBeInTheDocument();
       expect(screen.getByText('Standalone')).toBeInTheDocument();
-      // All book titles present
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       expect(screen.getByText('Words of Radiance')).toBeInTheDocument();
       expect(screen.getByText('The Final Empire')).toBeInTheDocument();
@@ -214,7 +209,6 @@ describe('AuthorPage', () => {
       expect(screen.getByText('Author not found')).toBeInTheDocument();
     });
 
-    // Has a back-to-library link
     await waitFor(() => {
       const backLink = screen.getByText('Back to Library').closest('a');
       expect(backLink).toHaveAttribute('href', '/library');
@@ -228,11 +222,9 @@ describe('AuthorPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // AddBookPopover renders buttons — 4 books not in library + Add All buttons
-    // Each not-in-library book gets an Add popover button
     await waitFor(() => {
       const inLibraryIcons = screen.queryAllByLabelText('In library');
-      expect(inLibraryIcons.length).toBe(0); // no books in library by default
+      expect(inLibraryIcons.length).toBe(0);
     });
   });
 
@@ -246,14 +238,12 @@ describe('AuthorPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Find the first AddBookPopover's trigger button (excludes "Add All" buttons)
     const addButtons = screen.getAllByRole('button').filter(
       (btn) => btn.textContent?.includes('Add') && !btn.textContent?.includes('Add All'),
     );
     expect(addButtons.length).toBeGreaterThan(0);
     await user.click(addButtons[0]!);
 
-    // Click "Add to Library" in the popover
     const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
     await user.click(addToLibrary);
 
@@ -273,7 +263,6 @@ describe('AuthorPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // One book in library shows check icon
     await waitFor(() => {
       const inLibrary = screen.getAllByLabelText('In library');
       expect(inLibrary.length).toBe(1);
@@ -288,11 +277,8 @@ describe('AuthorPage', () => {
       expect(screen.getByText('Back')).toBeInTheDocument();
     });
 
-    // The back button exists and is clickable
     await user.click(screen.getByText('Back'));
-    // Navigation goes through useBackWithFallback (browser-back with a /library
-    // fallback for deep links) — branch behavior is pinned in that hook's own
-    // suite; here clicking must simply not throw
+    // useBackWithFallback branch behavior is pinned in its own suite; here clicking must simply not throw.
   });
 
   it('renders initials avatar when no image', async () => {
@@ -313,7 +299,6 @@ describe('AuthorPage', () => {
 
     await waitFor(() => {
       const addAllButtons = screen.getAllByText(/Add All/);
-      // 3 sections: Stormlight Archive, Mistborn, Standalone
       expect(addAllButtons.length).toBe(3);
     });
   });
@@ -329,7 +314,7 @@ describe('AuthorPage', () => {
     });
 
     const addAllButtons = screen.getAllByText(/Add All/);
-    // Click the first "Add All" (Mistborn comes first alphabetically, 1 book)
+    // Alphabetical order puts one-book Mistborn first.
     await user.click(addAllButtons[0]!);
 
     await waitFor(() => {
@@ -360,7 +345,6 @@ describe('AuthorPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Open popover and click Add to Library
     const addButtons = screen.getAllByRole('button').filter(
       (btn) => btn.textContent?.includes('Add') && !btn.textContent?.includes('Add All'),
     );

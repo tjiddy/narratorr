@@ -38,7 +38,6 @@ function copyOptional<T extends FixMatchReplacement, K extends keyof T>(target: 
   if (value !== undefined) target[key] = value;
 }
 
-/** Project a `BookMetadata` into the partial-update payload BookService.fixMatch expects. */
 function metadataToFixMatchUpdate(meta: BookMetadata): FixMatchReplacement {
   const primarySeries = pickPrimarySeries(meta);
   const out: FixMatchReplacement = {
@@ -60,13 +59,7 @@ function metadataToFixMatchUpdate(meta: BookMetadata): FixMatchReplacement {
   return out;
 }
 
-/**
- * Run Fix-Match's optional post-commit rename + retag. Returns whether the retag actually tagged
- * ≥1 file, so the caller can fold it into the single `'metadata'` refresh. The rename's own
- * `'rename'` connector refresh is fired independently by `RenameService` and is NOT this route's
- * concern (so a `renameFiles=true` book may receive two refreshes total — one `'rename'`, one
- * `'metadata'` — the accepted cross-operation same-book case).
- */
+/** Return whether retagging changed files; RenameService emits its own separate refresh. */
 async function runPostCommitRenameRetag(
   deps: BookRouteDeps,
   bookId: number,
@@ -76,10 +69,7 @@ async function runPostCommitRenameRetag(
 ): Promise<{ retagged: boolean }> {
   if (!hasPath) return { retagged: false };
   if (body.renameFiles) {
-    // #1960 AC20/AC22 — caller 2 of three, gated on `renameFiles`. It fires whether the rename
-    // succeeded materially OR the `catch` below swallowed a failure (the path write lands
-    // before the file rename can throw, so the EPUB may have travelled). The one case that
-    // does NOT fire is a clean "Already organized" — nothing moved.
+    // Reconcile after changes or failures because the persisted path may move before rename throws.
     const reconcile = (): void => triggerCompanionReconcile(
       deps.companionEbook, bookId, log, 'Companion ebook reconcile failed after Fix Match rename',
     );
@@ -103,14 +93,7 @@ async function runPostCommitRenameRetag(
   return { retagged };
 }
 
-/**
- * Refresh the on-disk `metadata.opf` for the (now corrected) book and fire EXACTLY ONE `'metadata'`
- * connector refresh covering Fix-Match's retag + OPF writes (one item, not one per writer). When
- * files were renamed the persisted path moved, so re-read the current folder before writing the
- * sidecar into it (best-effort: fall back to the pre-rename path). The refresh fires when the retag
- * tagged ≥1 file OR the OPF was written — covering the `writeOpf`-off case where only the retag
- * changed a file. The rename's own `'rename'` refresh is fired independently by `RenameService`.
- */
+/** Re-read a possibly renamed path, then emit one metadata refresh for retag and OPF writes. */
 async function refreshSidecarAndNotify(
   deps: BookRouteDeps,
   bookId: number,
@@ -170,9 +153,6 @@ export function registerFixMatchRoute(app: FastifyInstance, deps: BookRouteDeps)
 
       const updated = await deps.bookService.fixMatch(id, metadataToFixMatchUpdate(meta));
       if (!updated) return reply.status(404).send({ error: 'Book not found' });
-
-      // Series card refresh is now lazy via SeriesCardService on the next GET
-      // (per #1133). No imperative enqueue needed here.
 
       if (deps.eventHistory) {
         deps.eventHistory.create({

@@ -33,20 +33,16 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [mode, setMode] = useState<ImportMode>('copy');
   const [editIndex, setEditIndex] = useState<number | null>(null);
-  // Chapter-runtime second opinion for a re-pick (#2055) — shared with the library surface.
-  // Owns this hook instance's monotonic `matchGeneration` counter.
+  // Monotonic match generations reject stale chapter-runtime re-pick results.
   const { nextGeneration, dispatchCorroboration } = useRepickCorroboration(setRows);
 
-  // Held-review recovery (#1732). Re-confirm uses the mode snapshotted at the original
-  // confirm attempt, not the still-editable `mode` selector. `submitRef` breaks the cycle:
-  // held-review's `confirm` needs `staged.submit`, which needs `captureHeld`.
+  // Reconfirmation uses the original mode; this ref breaks the held-review/staged-submit cycle.
   const submitRef = useRef<(items: ImportConfirmItem[], mode: ImportMode | undefined) => void>(() => {});
   const { heldReview, captureHeld, clearHeld, handleReconfirmHeld } = useHeldReview({
     rows,
     confirm: (items, confirmMode) => submitRef.current(items, confirmMode),
   });
 
-  // Staged submit + poll pipeline (#1902) — replaces the direct chunked confirm.
   const staged = useStagedSubmission({
     source: 'manual',
     acceptedVerb: 'queued for import',
@@ -62,7 +58,6 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
   const chunkProgress = staged.chunkProgress;
   const importMutation = { isPending: staged.isPending };
 
-  // Merge match results into rows state (single source of truth)
   const prevMatchCountRef = useRef(0);
   const mergeMatchResults = useCallback((results: MatchResult[]) => {
     const resultMap = new Map<string, MatchResult>();
@@ -70,15 +65,13 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       resultMap.set(r.path, r);
     }
 
-    // One fresh stamp for this merge, taken OUTSIDE the updater: StrictMode double-invokes
-    // updater functions, and a stamp computed in there would not be the value a concurrent
-    // dispatch captured (#2055 B11).
+    // Compute once outside the updater: StrictMode may invoke updater functions twice.
     const generation = nextGeneration();
     setRows(prev => prev.map(row => {
       const match = resultMap.get(row.book.path);
       if (!match) return row;
 
-      // Duplicate rows are not in the match job — if a result somehow arrives, don't auto-select
+      // Duplicate rows are outside the match job; never auto-select a result that somehow arrives.
       if (row.book.isDuplicate) return row;
 
       return stampRow(mergeMatchIntoRow(row, match), generation);
@@ -103,7 +96,6 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       const scanGeneration = nextGeneration();
       const newRows: ImportRow[] = result.discoveries.map((book) => stampRow({
         book,
-        // Duplicate rows start unchecked; new books start checked
         selected: !book.isDuplicate,
         userEdited: false,
         edited: {
@@ -117,19 +109,16 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       setRows(newRows);
       setScanError(null);
       setStep('review');
-      // A new scan supersedes any held rows from a prior directory (#1732) — clear
-      // them so the panel never renders stale titles whose paths are gone.
+      // Held paths belong to the previous scan.
       clearHeld();
 
-      // Start matching only for non-duplicate books
       const candidates = result.discoveries
         .filter(d => !d.isDuplicate)
         .map(d => ({
           path: d.path,
           title: d.parsedTitle,
           ...(d.parsedAuthor && { author: d.parsedAuthor }),
-          // Thread the parsed series position (#1849) so the ranker can break
-          // same-title series ties. `!== undefined` (never `||`) so position 0 survives.
+          // Preserve position 0; the ranker uses series position to break same-title ties.
           ...(d.parsedSeriesPosition !== undefined && { seriesPosition: d.parsedSeriesPosition }),
         }));
       if (candidates.length > 0) {
@@ -161,9 +150,7 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
   }, []);
 
   const handleEdit = useCallback((index: number, state: BookEditState) => {
-    // Read the pre-edit row and take the stamp OUTSIDE the updater (#2055 B3/B11): a
-    // request fired from inside a `setRows` updater goes out twice under StrictMode, and a
-    // stamp taken in there would not be the one the dispatch captured.
+    // Read and stamp outside the updater; StrictMode may invoke updater functions twice.
     const previous = rows[index];
     const generation = nextGeneration();
     const request = previous && needsChapterCorroboration(previous.matchResult, state.metadata, previous.edited.metadata);
@@ -175,21 +162,17 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       return stampRow({ ...r, edited: state, selected: autoCheck, userEdited: true, matchResult }, generation);
     }));
 
-    // Optimistic first: the synchronous verdict above already rendered. The corroborated
-    // answer, if any, patches the row when it arrives and can only promote it to Matched.
+    // Corroboration may only promote the optimistic verdict.
     if (previous && request) dispatchCorroboration({ path: previous.book.path, generation, request });
   }, [rows, nextGeneration, dispatchCorroboration]);
 
   const handleImport = useCallback(() => {
-    // Shared canonical builder (#1732/#1765) — `forceImport` still derives from
-    // `r.book.isDuplicate` for user-selected duplicates (force=false here).
+    // toConfirmItem still forces user-selected duplicates when the explicit force flag is false.
     const items = rows.filter(r => r.selected).map(r => toConfirmItem(r, false));
     staged.submit(items, mode);
   }, [rows, staged, mode]);
 
-  // Restart all (#1864 §5b) — rebuild candidates from CURRENT edited row values,
-  // CLEAR every non-duplicate row's match to pending, and reset the result-offset.
-  // Manual import had no prior re-match affordance; this wiring is new.
+  // Restart from current edits; clear prior matches and reset the append offset.
   const handleRestartMatch = useCallback(() => {
     const candidates = rows
       .filter(r => !r.book.isDuplicate)
@@ -206,20 +189,15 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
     restart(candidates);
   }, [rows, restart, nextGeneration]);
 
-  // Resume remaining (#1864 §5) — re-match only the result-less remainder; already
-  // matched rows keep their result (the engine's observed map is preserved).
+  // useMatchJob preserves matched rows and resumes only the remainder.
   const handleResumeMatch = useCallback(() => resume(), [resume]);
 
-  // Reset the page to the path step WITHOUT navigating away (#1894). This backs the
-  // attention banner's "Import again" on Manual Import: the abandoned banner shows
-  // from the normal `path` state, so calling `handleBack` there would navigate to
-  // /library. `resetToPath` always lands on `path` and never leaves the page.
+  // The attention-banner reset must stay here; handleBack navigates from the path step.
   const resetToPath = useCallback(() => {
     cancelMatching();
     prevMatchCountRef.current = 0;
     setStep('path');
     setRows([]);
-    // Drop held rows so a reset can't leave a stale panel (#1732).
     clearHeld();
   }, [cancelMatching, clearHeld]);
 
@@ -231,7 +209,6 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
     }
   }, [step, resetToPath, navigate]);
 
-  // Computed counts
   const selectedCount = rows.filter(r => r.selected).length;
   const selectedUnmatchedCount = rows.filter(r => r.selected && r.matchResult?.confidence === 'none').length;
   const readyCount = rows.filter(r => r.selected && !r.book.isDuplicate && r.matchResult?.confidence === 'high').length;
@@ -260,7 +237,6 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
       heldReview,
       banner: staged.banner,
       dismissBanner: staged.dismissBanner,
-      // Match-phase recovery (#1864)
       recovering,
       paused,
       pausedReason,

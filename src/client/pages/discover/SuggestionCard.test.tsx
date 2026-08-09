@@ -14,7 +14,7 @@ function makeSuggestion(overrides: Partial<SuggestionRow> = {}): SuggestionRow {
     authorAsin: 'A_SANDERSON',
     narratorName: 'Michael Kramer',
     coverUrl: 'https://example.com/cover.jpg',
-    duration: 270, // 270 minutes = 4h 30m (Audible runtime_length_min)
+    duration: 270, // Audible runtime minutes.
     publishedDate: '2010-08-31',
     language: 'English',
     genres: ['Fantasy', 'Epic'],
@@ -85,7 +85,6 @@ describe('SuggestionCard', () => {
       renderWithProviders(
         <SuggestionCard suggestion={makeSuggestion({ coverUrl: null })} {...defaultProps} />,
       );
-      // CoverImage renders fallback div when src is null
       expect(screen.queryByRole('img')).not.toBeInTheDocument();
     });
 
@@ -117,7 +116,6 @@ describe('SuggestionCard', () => {
         <SuggestionCard suggestion={makeSuggestion({ id: 42 })} {...defaultProps} onAdd={onAdd} />,
       );
 
-      // Click Add to open popover, then confirm via "Add to Library"
       await userEvent.click(screen.getByRole('button', { name: /^add book$/i }));
       await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
       expect(onAdd).toHaveBeenCalledWith(42, expect.objectContaining({
@@ -150,14 +148,11 @@ describe('SuggestionCard', () => {
     });
   });
 
-  // --- #501: AddBookPopover integration and post-add states ---
-
   describe('AddBookPopover integration', () => {
     it('renders AddBookPopover trigger button with Add text', () => {
       renderWithProviders(
         <SuggestionCard suggestion={makeSuggestion()} {...defaultProps} />,
       );
-      // AddBookPopover renders a button with "Add" text
       expect(screen.getByRole('button', { name: /^add book$/i })).toBeInTheDocument();
     });
   });
@@ -226,7 +221,6 @@ describe('SuggestionCard', () => {
         <SuggestionCard suggestion={makeSuggestion()} {...defaultProps} />,
       );
       const coverContainer = container.querySelector('.shrink-0');
-      // Should have square classes (w-20 h-20), not rectangular (w-20 h-28)
       const coverEl = coverContainer?.firstElementChild;
       expect(coverEl?.className).toMatch(/w-20/);
       expect(coverEl?.className).toMatch(/h-20/);
@@ -245,7 +239,6 @@ describe('SuggestionCard', () => {
     });
   });
 
-  // --- #524: SuggestionCard authorAsin in fixture ---
   describe('authorAsin wire contract', () => {
     it('includes authorAsin in makeSuggestion fixture', () => {
       const suggestion = makeSuggestion();

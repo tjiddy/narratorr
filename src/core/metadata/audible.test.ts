@@ -40,7 +40,6 @@ describe('AudibleProvider', () => {
       const { books } = await provider.searchBooks('Harry Potter');
 
       expect(books[0]!.narrators).toEqual(['Jim Dale']);
-      // Second result has multiple narrators (full-cast edition)
       expect(books[1]!.narrators).toContain('Hugh Laurie');
       expect(books[1]!.narrators!.length).toBeGreaterThan(1);
     });
@@ -78,7 +77,6 @@ describe('AudibleProvider', () => {
     it('cleans "Book N" suffix from title', async () => {
       const { books } = await provider.searchBooks('Harry Potter');
 
-      // Original title is "Harry Potter and the Chamber of Secrets, Book 2"
       expect(books[0]!.title).toBe('Harry Potter and the Chamber of Secrets');
     });
 
@@ -97,12 +95,10 @@ describe('AudibleProvider', () => {
     it('preserves full release_date in publishedDate (not truncated to year)', async () => {
       const { books } = await provider.searchBooks('Harry Potter');
 
-      // Fixture has release_date: "2015-11-20" — must preserve full date for sorting
       expect(books[0]!.publishedDate).toBe('2015-11-20');
     });
 
     it('extracts format_type as formatType (unabridged)', async () => {
-      // Fixture sets format_type: "unabridged" on both products
       const { books } = await provider.searchBooks('Harry Potter');
 
       expect(books[0]!.formatType).toBe('unabridged');
@@ -146,7 +142,6 @@ describe('AudibleProvider', () => {
     });
 
     it('extracts content_delivery_type as contentDeliveryType from canonical fixture', async () => {
-      // Fixture sets content_delivery_type: "SinglePartBook" on both products
       const { books } = await provider.searchBooks('Harry Potter');
 
       expect(books[0]!.contentDeliveryType).toBe('SinglePartBook');
@@ -237,7 +232,6 @@ describe('AudibleProvider', () => {
               asin: 'B000TEST',
               title: 'Minimal Book',
               authors: [{ name: 'Author' }],
-              // no narrators, no series, no images, no description
             }],
           });
         }),
@@ -297,9 +291,6 @@ describe('AudibleProvider', () => {
       }
     });
 
-    // ── #1778 Null-intolerant contributor names ────────────────────────────
-    // Audible ships partial contributor records; a null `name` must not fail the
-    // whole raw-array parse (which throws before the per-product mapped loop).
     it('parses null contributor names and degrades per product', async () => {
       server.use(
         http.get('https://api.audible.com/1.0/catalog/products', () => {
@@ -312,8 +303,6 @@ describe('AudibleProvider', () => {
                 narrators: [{ name: 'Valid Narrator' }],
               },
               {
-                // A null narrator name must not throw the whole parse; the null
-                // contributor is dropped, the valid one survives.
                 asin: 'B000000002',
                 title: 'Second Book',
                 authors: [{ name: null }, { name: 'Real Author' }],
@@ -337,7 +326,6 @@ describe('AudibleProvider', () => {
       const second = books.find((b) => b.asin === 'B000000002')!;
       expect(second.authors).toEqual([{ name: 'Real Author' }]);
       expect(second.narrators).toEqual(['Real Narrator']);
-      // Other products are unaffected.
       const first = books.find((b) => b.asin === 'B000000001')!;
       expect(first.authors).toEqual([{ name: 'Valid Author', asin: 'A1' }]);
       expect(first.narrators).toEqual(['Valid Narrator']);
@@ -363,7 +351,6 @@ describe('AudibleProvider', () => {
 
       expect(books).toHaveLength(1);
       expect(books[0]!.authors).toEqual([{ name: 'Kept Author' }]);
-      // Every narrator was name-null → the array is emptied and mapped to undefined.
       expect(books[0]!.narrators).toBeUndefined();
     });
   });
@@ -389,9 +376,6 @@ describe('AudibleProvider', () => {
       expect(book).toBeNull();
     });
 
-    // ── #985 Stub-product rejection ────────────────────────────────────────
-    // Audible's region-mismatched ASIN responses can return a parseable product
-    // with empty title and/or empty authors. getBook must treat these as misses.
     it('returns null when upstream product has empty title (region-mismatched stub)', async () => {
       server.use(
         http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
@@ -497,7 +481,6 @@ describe('AudibleProvider', () => {
       expect(book!.authors).toEqual([{ name: 'Suzanne Collins' }]);
     });
 
-    // ── #1778 Detail path shares audibleProductSchema + mapProduct ──────────
     it('drops a null-named contributor on the detail path rather than throwing', async () => {
       server.use(
         http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
@@ -602,7 +585,6 @@ describe('AudibleProvider', () => {
         }),
       );
 
-      // Default provider uses 'us' region → preferred language is 'english'
       const { books } = await provider.searchBooks('test');
       expect(books[0]!.language).toBe('english');
       expect(books[1]!.language).toBe('french');
@@ -684,19 +666,6 @@ describe('AudibleProvider', () => {
     });
   });
 
-  /**
-   * #1948 — the identical defect #1944 fixed in Audnexus. Both 429 arms (`request`
-   * for the search/catalog path, `requestDetailed` for the Fix Match path) used to
-   * interpret `Retry-After` with an inline `parseInt(header, 10) * 1000`, which
-   * yields `NaN` for the HTTP-date form RFC 9110 equally permits. A `NaN` window is
-   * FALSY at the service's `isRateLimited` gate, so the backoff never engaged and a
-   * rate-limited Audible — the PRIMARY search provider — kept getting hammered. A
-   * test in this file used to pin that as intended (`.toBeNaN()`); it was the bug.
-   *
-   * Both arms now route through the shared `parseRetryAfterMs` (retry-after.ts). A
-   * fix to one arm does not exercise the other, so the matrix runs against both
-   * public surfaces.
-   */
   describe('429 retry-window normalization across both request paths (#1948)', () => {
     function response429(header?: string) {
       return new HttpResponse(null, {
@@ -705,7 +674,6 @@ describe('AudibleProvider', () => {
       });
     }
 
-    /** `searchBooks` → `request` → thrown `RateLimitError`. */
     async function searchWindow(header?: string): Promise<number> {
       server.use(http.get('https://api.audible.com/1.0/catalog/products', () => response429(header)));
       const error = await provider.searchBooks('test').catch((e: unknown) => e);
@@ -713,7 +681,6 @@ describe('AudibleProvider', () => {
       return (error as RateLimitError).retryAfterMs;
     }
 
-    /** `getBookDetailed` → `requestDetailed` → typed `rate_limited` outcome. */
     async function detailedWindow(header?: string): Promise<number> {
       server.use(http.get('https://api.audible.com/1.0/catalog/products/:asin', () => response429(header)));
       const result = await provider.getBookDetailed('B017V4IWVG');
@@ -731,9 +698,7 @@ describe('AudibleProvider', () => {
         expect(await windowFor('120')).toBe(120_000);
       });
 
-      // Clock frozen (Date only — `toFake: ['Date']` leaves MSW's and
-      // `AbortSignal.timeout`'s real timers alone) so the HTTP-date arm asserts an
-      // EXACT window instead of a range.
+      // Fake only Date; MSW and AbortSignal.timeout need real timers.
       describe('HTTP-date arm, frozen clock', () => {
         const NOW = Date.parse('2026-07-29T12:00:00.000Z');
 
@@ -754,10 +719,8 @@ describe('AudibleProvider', () => {
 
       it.each([
         ['absent', undefined],
-        // The pre-#1948 read produced NaN here — the case the old test pinned as intended.
         ['non-numeric', 'not-a-number'],
-        // Overflow guard applies to the PRODUCT: 1e306 in digits is finite until ×1000,
-        // and Date.now() + Infinity is a deadline that never expires.
+        // The operand is finite, but multiplying it by 1,000 overflows to Infinity.
         ['all-digit overflow after ×1000', `1${'0'.repeat(306)}`],
       ])('Retry-After %s → the finite 60000ms default', async (_label, header) => {
         expect(await windowFor(header)).toBe(60_000);
@@ -830,7 +793,6 @@ describe('AudibleProvider', () => {
       );
 
       const { books } = await provider.searchBooks('test');
-      // 0 is falsy, so duration should be undefined
       expect(books[0]!.duration).toBeUndefined();
     });
 
@@ -848,7 +810,6 @@ describe('AudibleProvider', () => {
         await provider.searchBooks('test');
       } catch (error: unknown) {
         expect(error).toBeInstanceOf(RateLimitError);
-        // Empty string is falsy → ternary falls to 60_000
         expect((error as RateLimitError).retryAfterMs).toBe(60000);
       }
     });
@@ -1083,7 +1044,6 @@ describe('AudibleProvider', () => {
     });
   });
 
-  // ── #229 Observability — SearchBooksResult contract ─────────────────────
   describe('SearchBooksResult contract (#229)', () => {
     it('searchBooks() returns { books, rawCount } shape', async () => {
       const result = await provider.searchBooks('Harry Potter');
@@ -1094,14 +1054,12 @@ describe('AudibleProvider', () => {
     });
 
     it('searchBooks() rawCount equals products.length before filtering', async () => {
-      // Default MSW handler returns 2 products that both pass validation
       const result = await provider.searchBooks('Harry Potter');
       expect(result.rawCount).toBe(result.books.length);
     });
 
     it('searchSeries() correctly unwraps .books from internal searchBooks()', async () => {
       const series = await provider.searchSeries('Harry Potter');
-      // Should not throw — searchSeries destructures { books } internally
       expect(Array.isArray(series)).toBe(true);
     });
   });
@@ -1391,8 +1349,6 @@ describe('AudibleProvider', () => {
     it('raw wrapper-schema failure → invalid_record source=raw', async () => {
       server.use(
         http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
-          // The wrapper schema requires `product` to be object|null|undefined and to passthrough.
-          // Returning an entirely wrong root shape (a top-level array) violates the wrapper.
           return HttpResponse.json([{ not: 'an object' }]);
         }),
       );

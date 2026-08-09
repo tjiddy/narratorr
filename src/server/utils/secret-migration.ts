@@ -5,7 +5,6 @@ import { indexers, downloadClients, notifiers, settings } from '@db/schema.js';
 import { isEncrypted, encryptFields, getSecretFieldNames, type SecretEntity } from './secret-codec.js';
 import { SECRET_SETTINGS_CATEGORIES } from './secret-category-map.js';
 
-/** Check if a settings object has any plaintext (non-encrypted) secret fields. */
 function hasPlaintextSecrets(entity: SecretEntity, obj: Record<string, unknown>): boolean {
   for (const field of getSecretFieldNames(entity)) {
     const value = obj[field];
@@ -16,10 +15,7 @@ function hasPlaintextSecrets(entity: SecretEntity, obj: Record<string, unknown>)
   return false;
 }
 
-/**
- * Migrate all plaintext secrets to encrypted form.
- * Idempotent — skips values already prefixed with $ENC$.
- */
+/** Migrates plaintext DB secrets; already-encrypted values are skipped. */
 export async function migrateSecretsToEncrypted(
   db: Db,
   key: Buffer,
@@ -27,7 +23,6 @@ export async function migrateSecretsToEncrypted(
 ): Promise<void> {
   let migratedCount = 0;
 
-  // 1. Indexers
   const allIndexers = await db.select().from(indexers);
   for (const row of allIndexers) {
     const s = (row.settings ?? {}) as Record<string, unknown>;
@@ -37,7 +32,6 @@ export async function migrateSecretsToEncrypted(
     migratedCount++;
   }
 
-  // 2. Download clients
   const allClients = await db.select().from(downloadClients);
   for (const row of allClients) {
     const s = (row.settings ?? {}) as Record<string, unknown>;
@@ -47,7 +41,6 @@ export async function migrateSecretsToEncrypted(
     migratedCount++;
   }
 
-  // 3. Notifiers
   const allNotifiers = await db.select().from(notifiers);
   for (const row of allNotifiers) {
     const s = (row.settings ?? {}) as Record<string, unknown>;
@@ -57,7 +50,6 @@ export async function migrateSecretsToEncrypted(
     migratedCount++;
   }
 
-  // 4. Settings rows (auth, network, metadata)
   const allSettings = await db.select().from(settings);
   for (const category of SECRET_SETTINGS_CATEGORIES) {
     const row = allSettings.find((r) => r.key === category.key);

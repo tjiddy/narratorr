@@ -70,8 +70,6 @@ describe('connectors targets routes', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    // #1523 — Fetch on a brand-new connector must not require the selector field
-    // (libraryId / sectionId) the fetch exists to populate.
     it('accepts an EMPTY libraryId on a new ABS connector (targets-scoped schema)', async () => {
       (services.connector.listTargetsConfig as Mock).mockResolvedValue({ success: true, targets: TARGETS });
 

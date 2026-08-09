@@ -25,12 +25,7 @@ const BASE_PUBLIC_ROUTES = [
 /** Methods that don't require CSRF protection. */
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
-/**
- * Enforce CSRF protection for authenticated basic-auth requests.
- * Browsers replay cached `Authorization: Basic` credentials cross-origin, so we require
- * `X-Requested-With: XMLHttpRequest` on state-changing methods. Browsers cannot set this
- * header cross-origin without a CORS preflight, blocking classic form-submit CSRF.
- */
+/** Require a non-simple header on Basic-auth mutations to block browser-replayed CSRF. */
 function enforceCsrf(request: FastifyRequest, reply: FastifyReply): void {
   if (SAFE_METHODS.has(request.method)) return;
   if (request.headers['x-requested-with'] !== 'XMLHttpRequest') {
@@ -38,10 +33,7 @@ function enforceCsrf(request: FastifyRequest, reply: FastifyReply): void {
   }
 }
 
-/**
- * Private IP ranges for local network bypass.
- * 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, ::1, fe80::/10
- */
+/** RFC1918, loopback, IPv4-mapped loopback, and link-local IPv6 ranges. */
 function isPrivateIp(ip: string): boolean {
   if (ip.startsWith('10.')) return true;
   if (ip.startsWith('192.168.')) return true;
@@ -71,18 +63,8 @@ function extractApiKey(request: FastifyRequest): string | undefined {
 }
 
 /**
- * Authenticate an in-scope (`/api/v*`) API key (#1453). On a valid key it sets
- * `request.user`. On a rejected key (`validateApiKey()` resolves `false`) it
- * sends a 401 whose body is surface-aware (#1472): native v1 routes get the
- * canonical v1 envelope `{ error: { code: 'INVALID_API_KEY', message } }`
- * (`v1ErrorEnvelopeSchema`), while the Prowlarr/Readarr compat shim and any
- * non-envelope surface keep the legacy bare string `{ error: 'Invalid API key' }`.
- * The caller invokes this only for keys inside `/api/v*`; out-of-scope keys are
- * de-god-moded and handled by the ambient chain (see `handleAmbientAuth`).
- *
- * Scope (#1472): only the rejected-key branch is shaped here. A throw out of
- * `validateApiKey()` (uninitialized/parse/decrypt config faults) is intentionally
- * NOT caught — it stays a 500-class server fault, not a `INVALID_API_KEY` 401.
+ * Authenticate v-scoped keys. Rejections use the native v1 envelope except on
+ * compatibility paths; validation faults propagate as 500s instead of bad-key 401s.
  */
 async function authenticateApiKey(
   request: FastifyRequest,
@@ -104,13 +86,7 @@ async function authenticateApiKey(
   reply.status(401).send({ error: 'Invalid API key' });
 }
 
-/**
- * Does the request carry a real ambient (non-key) credential for the active
- * mode? Used so a de-god-moded API key never shadows a genuine credential: when
- * a cookie (forms) or Basic header (basic) is present, the out-of-scope-key
- * rejection is skipped and the normal mode handler runs (and a valid credential
- * wins). `none` already short-circuits before this is consulted.
- */
+/** Detect a real session or Basic credential so stale out-of-scope keys cannot shadow it. */
 function hasAmbientCredential(request: FastifyRequest, mode: 'none' | 'basic' | 'forms'): boolean {
   if (mode === 'forms') return Boolean(request.cookies?.['narratorr_session']);
   if (mode === 'basic') {
@@ -120,13 +96,7 @@ function hasAmbientCredential(request: FastifyRequest, mode: 'none' | 'basic' | 
   return false;
 }
 
-/**
- * Try stream-token auth (#1453). Only consulted on the SSE endpoints. The token
- * travels as a `?token=` query param (EventSource cannot set headers). Returns
- * true only on a valid token (accept); an absent/invalid token returns false so
- * the ambient non-key credential chain still runs — never rejects here, so a
- * stale token cannot shadow a valid cookie.
- */
+/** Accept valid SSE query tokens; absent or invalid tokens fall through to ambient credentials. */
 async function tryStreamToken(
   request: FastifyRequest,
   authService: AuthService,
@@ -144,7 +114,6 @@ async function tryStreamToken(
   return true;
 }
 
-/** Handle Basic auth mode. Returns true if handled. */
 async function handleBasicAuth(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -178,7 +147,6 @@ async function handleBasicAuth(
   return true;
 }
 
-/** Handle Forms auth mode. Returns true if handled. */
 async function handleFormsAuth(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -200,7 +168,7 @@ async function handleFormsAuth(
 
   setUser(request, result.payload.username);
 
-  // Sliding expiry — renew cookie if >50% through TTL
+  // Renew sliding sessions after half their TTL.
   if (result.shouldRenew) {
     const newCookie = authService.createSessionCookie(result.payload.username, secret);
     reply.setCookie('narratorr_session', newCookie, {
@@ -213,12 +181,7 @@ async function handleFormsAuth(
   return true;
 }
 
-/**
- * Authorize via the ambient (non-key, non-stream-token) credential chain:
- * LAN/private-IP bypass, then the active auth mode (`none`/`basic`/`forms`),
- * falling back to 401. Extracted from the onRequest hook to keep that hook under
- * the cyclomatic-complexity cap once the stream-token branch was added (#1453).
- */
+/** Apply LAN bypass, the active non-key auth mode, then the final 401. */
 async function handleAmbientAuth(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -227,7 +190,6 @@ async function handleAmbientAuth(
 ): Promise<void> {
   const status = await authService.getStatus();
 
-  // Local network bypass
   if (status.localBypass && isPrivateIp(request.ip)) {
     request.log.debug({ ip: request.ip }, 'Auth: local bypass for private IP');
     setUser(request, 'local-bypass');
@@ -236,11 +198,8 @@ async function handleAmbientAuth(
 
   if (status.mode === 'none') return;
 
-  // De-god-moded API key (#1453): a key presented on a non-`/api/v*` path does
-  // not authenticate, but when it is the ONLY credential the rejection must carry
-  // the existing API-key contract `{ error: 'Invalid API key' }`, not the generic
-  // ambient 401. A real ambient credential (session cookie / Basic header) still
-  // wins — its presence skips this branch — so a stale `?apikey=` never shadows it.
+  // Out-of-scope keys never authenticate. Key-only requests keep the API-key error,
+  // while real ambient credentials win over stale keys.
   if (outOfScopeApiKey && !hasAmbientCredential(request, status.mode)) {
     request.log.debug('Auth: out-of-scope API key rejected');
     reply.status(401).send({ error: 'Invalid API key' });
@@ -249,8 +208,7 @@ async function handleAmbientAuth(
 
   if (status.mode === 'basic') {
     await handleBasicAuth(request, reply, authService);
-    // Apply CSRF protection only after successful basic-auth (request.user populated).
-    // Unauthenticated requests already received the 401 + WWW-Authenticate challenge.
+    // Failed Basic auth already sent its challenge; only authenticated requests reach CSRF.
     if (request.user) enforceCsrf(request, reply);
     return;
   }
@@ -264,56 +222,39 @@ async function authPlugin(app: FastifyInstance, opts: AuthPluginOptions) {
   const urlBase = rawUrlBase && rawUrlBase !== '/' ? rawUrlBase : '';
   const apiPrefix = `${urlBase}/api/`;
 
-  // Build public routes set with URL_BASE prefix
   const PUBLIC_ROUTES = new Set(
     BASE_PUBLIC_ROUTES.map((route) => `${urlBase}${route}`),
   );
   const setupRoute = `${urlBase}/api/auth/setup`;
 
-  // SSE/stream endpoints (#1453): these accept a short-lived stream token (query
-  // param) in addition to ambient non-key credentials, and reject the API key.
+  // SSE accepts stream tokens and ambient credentials, never API keys.
   const STREAM_ROUTES = new Set([
     `${urlBase}/api/events`,
     `${urlBase}/api/search/stream`,
   ]);
 
-  /**
-   * Is `routePath` under the versioned public surface `/api/v<digit>` (#1453)?
-   * Derived from `urlBase` the same way `apiPrefix` is — never a hardcoded
-   * `/api/` literal — so `URL_BASE=/narratorr` still matches
-   * `/narratorr/api/v1/...`. Pinned to `v` + digit so non-versioned paths that
-   * merely start with `v` (e.g. `/api/version-history`) are NOT swept in. The
-   * Prowlarr-compat shim (`/api/v1/indexer*`, `/api/v1/system/status`) lives
-   * under `/api/v1/` and therefore stays key-reachable by this rule.
-   */
+  /** Match URL_BASE-aware `/api/v<digit>` paths without sweeping in names like version-history. */
   const isApiVScope = (routePath: string): boolean =>
     routePath.startsWith(apiPrefix) && /^v\d/.test(routePath.slice(apiPrefix.length));
 
   app.decorateRequest('user', null);
 
   app.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
-    // Only intercept {urlBase}/api/* routes
     if (!request.url.startsWith(apiPrefix)) return;
 
     const routePath = request.url.split('?')[0]!;
 
-    // Public routes
     if (PUBLIC_ROUTES.has(routePath)) return;
 
-    // OpenAPI/Swagger docs subtree (#1454) — the public v1 contract. Exempted by
-    // PREFIX (not an exact-match Set entry) because swagger-ui serves a whole
-    // subtree (UI root, `/json`, `/yaml`, `/static/*`); a single allowlist entry
-    // would leave the sub-paths 401. Scoped to the docs subtree only — protected
-    // `/api/v1` DATA routes still require an API key.
+    // Swagger UI is a public subtree; ordinary /api/v1 data routes remain protected.
     if (isV1DocsPath(routePath, urlBase)) return;
 
-    // /api/auth/setup is public when no user exists
+    // Setup is public only until the first user exists.
     if (routePath === setupRoute && request.method === 'POST') {
       const hasUser = await authService.hasUser();
       if (!hasUser) return;
     }
 
-    // AUTH_BYPASS env var
     if (config.authBypass) {
       request.log.debug('Auth bypassed via AUTH_BYPASS env var');
       return;
@@ -322,26 +263,17 @@ async function authPlugin(app: FastifyInstance, opts: AuthPluginOptions) {
     const apiKey = extractApiKey(request);
     const inVScope = isApiVScope(routePath);
 
-    // Stream token (#1453) — accepted only on the SSE endpoints, before the API
-    // key is consulted, so a valid token authenticates even when a stale
-    // `?apikey=` is also present. Absent/invalid token falls through.
+    // Check stream tokens first so a stale apikey cannot shadow a valid SSE token.
     if (STREAM_ROUTES.has(routePath) && await tryStreamToken(request, authService)) return;
 
-    // API key auth — scoped to `/api/v*` only (#1453). In-scope: accept the
-    // valid key or reject with a surface-aware 401 body (#1472). The native v1
-    // surface gets the `{ error: { code, message } }` envelope; the Prowlarr/
-    // Readarr compat shim (`/api/v1/system/status`, `/api/v1/indexer*`) stays on
-    // the legacy bare string. Either way the api-key branch is terminal and CSRF
-    // is skipped (api-key clients are exempt).
+    // Key auth is terminal and CSRF-exempt; native v1 uses its envelope, compat stays legacy.
     if (apiKey && inVScope) {
       const useV1Envelope = !isProwlarrCompatPath(routePath, urlBase);
       await authenticateApiKey(request, reply, authService, apiKey, useV1Envelope);
       return;
     }
 
-    // Ambient (non-key) credential chain: LAN bypass → mode handler → 401. An
-    // out-of-scope API key that is the only credential is rejected here with the
-    // API-key contract (so a stale `?apikey=` next to a valid cookie still loses).
+    // Ambient credentials beat stale out-of-scope keys; key-only requests retain key errors.
     await handleAmbientAuth(request, reply, authService, Boolean(apiKey) && !inVScope);
   });
 }

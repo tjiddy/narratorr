@@ -17,7 +17,7 @@ const mockApi = api as unknown as {
   getFfmpegStatus: ReturnType<typeof vi.fn>;
 };
 
-// Engine fields set so the save-subset test can prove they are NOT sent from this page.
+// Seed engine fields so subset assertions can prove this page does not send them.
 const settings = createMockSettings({
   processing: { autoMergeDownloads: false, postProcessingScript: '', postProcessingScriptTimeout: 300, outputFormat: 'm4b', bitrate: 128 },
   tagging: { enabled: false, mode: 'populate_missing', embedCover: false, writeOpf: false },
@@ -53,9 +53,7 @@ describe('ProcessingSettingsSection', () => {
     renderWithProviders(<ProcessingSettingsSection />);
     await waitFor(() => expect(screen.getByLabelText(/Auto-merge multi-file downloads/)).toBeDisabled());
     expect(screen.getByLabelText(/Tag Embedding/)).toBeDisabled();
-    // Both gated rows point the user at Audio Tools.
     expect(screen.getAllByText(/see ffmpeg requirements in Audio Tools/).length).toBeGreaterThanOrEqual(2);
-    // ffmpeg-free automations stay available.
     expect(screen.getByLabelText('OPF metadata sidecar')).toBeEnabled();
     expect(screen.getByLabelText('Post-processing script')).toBeEnabled();
   });
@@ -74,8 +72,7 @@ describe('ProcessingSettingsSection', () => {
       tagging: { enabled: true },
     }));
     renderWithProviders(<ProcessingSettingsSection />);
-    // ffmpeg gone but the automation was ON — the toggle stays interactive so it can be turned OFF
-    // (only false→true is blocked, never true→false; otherwise the setting is stuck-on forever).
+    // Gate only false→true; true→false must remain available to avoid a stuck-on setting.
     await waitFor(() => expect(screen.getByLabelText(/Auto-merge multi-file downloads/)).toBeEnabled());
     expect(screen.getByLabelText(/Tag Embedding/)).toBeEnabled();
   });
@@ -107,18 +104,17 @@ describe('ProcessingSettingsSection', () => {
     const user = userEvent.setup();
     renderWithProviders(<ProcessingSettingsSection />);
     await waitFor(() => expect(screen.getByLabelText('OPF metadata sidecar')).toBeInTheDocument());
-    await user.click(screen.getByLabelText('OPF metadata sidecar')); // make the form dirty
+    await user.click(screen.getByLabelText('OPF metadata sidecar'));
     fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
 
     await waitFor(() => expect(mockApi.updateSettings).toHaveBeenCalled());
     const payload = mockApi.updateSettings.mock.calls[0]![0] as { processing: Record<string, unknown>; tagging: Record<string, unknown> };
     expect(payload.tagging).toEqual(expect.objectContaining({ enabled: false, writeOpf: true }));
     expect(payload.processing).toEqual(expect.objectContaining({ autoMergeDownloads: false }));
-    // Engine fields belong to Audio Tools — this page must not touch them (partial patch).
     expect(payload.processing).not.toHaveProperty('outputFormat');
     expect(payload.processing).not.toHaveProperty('bitrate');
     expect(payload.processing).not.toHaveProperty('maxConcurrentProcessing');
-    // Script fields belong to the Custom Script card's OWN form (per-card Save split).
+    // Custom Script owns these fields in a separate form.
     expect(payload.processing).not.toHaveProperty('postProcessingScript');
     expect(payload.processing).not.toHaveProperty('postProcessingScriptTimeout');
   });
@@ -132,13 +128,12 @@ describe('ProcessingSettingsSection', () => {
     const timeout = screen.getByLabelText('Script timeout');
     await user.tripleClick(timeout);
     await user.keyboard('120');
-    // Two forms live on this page — only the script card is dirty, so exactly one Save renders.
+    // Only the dirty script form renders Save, so getByRole targets it unambiguously.
     fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
 
     await waitFor(() => expect(mockApi.updateSettings).toHaveBeenCalled());
     const payload = mockApi.updateSettings.mock.calls[0]![0] as { processing: Record<string, unknown>; tagging?: Record<string, unknown> };
     expect(payload.processing).toEqual({ postProcessingScript: '/scripts/notify.sh', postProcessingScriptTimeout: 120 });
-    // The automations/tagging subset is the OTHER form's payload — must be absent entirely.
     expect(payload).not.toHaveProperty('tagging');
   });
 });

@@ -1,13 +1,8 @@
-/**
- * Isolated test for replace semantics — mocks useSearchParams to capture
- * the options argument passed to setSearchParams. Separate file because
- * vi.mock is file-scoped and the main test file needs real useSearchParams.
- */
+// Separate because this file-scoped useSearchParams mock would break the real-router tests.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 
-// Capture setSearchParams calls
 const mockSetSearchParams = vi.fn();
 
 vi.mock('react-router', async () => {
@@ -41,13 +36,10 @@ describe('useLibraryFilters — replace semantics (mocked setSearchParams)', () 
   it('calls setSearchParams with { replace: true } on every URL sync', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createWrapper() });
 
-    // Trigger a filter change to cause URL sync
     act(() => { result.current.actions.setStatusFilter('wanted'); });
 
-    // setSearchParams should have been called with (URLSearchParams, { replace: true })
     expect(mockSetSearchParams).toHaveBeenCalled();
 
-    // Every call must include { replace: true }
     for (const call of mockSetSearchParams.mock.calls) {
       const [params, options] = call;
       expect(params).toBeInstanceOf(URLSearchParams);
@@ -63,7 +55,6 @@ describe('useLibraryFilters — replace semantics (mocked setSearchParams)', () 
       result.current.actions.setSortField('title');
     });
 
-    // Get the last call (after both state changes settle)
     const lastCall = mockSetSearchParams.mock.calls.at(-1)!;
     const [params, options] = lastCall;
 

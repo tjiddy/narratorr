@@ -26,7 +26,7 @@ function writeStorage(key: string, entries: FolderEntry[]): void {
   try {
     localStorage.setItem(key, JSON.stringify(entries));
   } catch {
-    // quota exceeded or storage unavailable — noop
+    // Persistence is best-effort; private browsing and quota limits can reject writes.
   }
 }
 
@@ -60,7 +60,6 @@ export function useFolderHistory() {
       setFavorites(prevFavs => {
         const alreadyFavorited = prevFavs.some(e => e.path === path);
         if (alreadyFavorited) {
-          // Just remove the recent copy — keep existing favorite unchanged
           return prevFavs;
         }
         const toAdd = entry ?? { path, lastUsedAt: new Date().toISOString() };
@@ -83,7 +82,7 @@ export function useFolderHistory() {
         const existing = prevRecents.find(e => e.path === path);
         let newRecents: FolderEntry[];
         if (existing) {
-          // Keep max timestamp, re-sort
+          // Keep the max timestamp, then re-sort.
           const favLastUsed = entry?.lastUsedAt ?? new Date().toISOString();
           const maxTime = favLastUsed > existing.lastUsedAt ? favLastUsed : existing.lastUsedAt;
           const others = prevRecents.filter(e => e.path !== path);

@@ -122,7 +122,6 @@ describe('useCrudSettings', () => {
 
       const { result } = renderCrudHook();
 
-      // Open form first
       act(() => {
         result.current.actions.handleToggleForm();
       });
@@ -136,7 +135,6 @@ describe('useCrudSettings', () => {
       expect(createFn).toHaveBeenCalledWith({ name: 'New Indexer', url: 'https://example.com' }, expect.anything());
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey });
       expect(toast.success).toHaveBeenCalledWith('Indexer added successfully');
-      // Form closes on success
       expect(result.current.state.showForm).toBe(false);
     });
 
@@ -161,7 +159,6 @@ describe('useCrudSettings', () => {
 
       const { result } = renderCrudHook();
 
-      // Start editing
       act(() => {
         result.current.actions.handleEdit(1);
       });
@@ -175,7 +172,6 @@ describe('useCrudSettings', () => {
       expect(updateFn).toHaveBeenCalledWith(1, { name: 'Updated', url: 'https://example.com' });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey });
       expect(toast.success).toHaveBeenCalledWith('Indexer updated');
-      // Editing clears on success
       expect(result.current.state.editingId).toBeNull();
     });
 
@@ -221,9 +217,6 @@ describe('useCrudSettings', () => {
     });
   });
 
-  // #1404 — surface the server's error message on ApiError rejections so a
-  // strict-schema 400 ("Unrecognized key(s)…") is actionable instead of a generic
-  // "Failed to …" toast. Non-ApiError rejections (network/plain Error) keep generic.
   describe('#1404 ApiError message surfacing', () => {
     const unrecognizedKey = "Unrecognized key(s) in object: 'foo'";
 
@@ -288,14 +281,12 @@ describe('useCrudSettings', () => {
     it('handleToggleForm opens form and clears editingId', () => {
       const { result } = renderCrudHook();
 
-      // Start editing first
       act(() => {
         result.current.actions.handleEdit(1);
       });
 
       expect(result.current.state.editingId).toBe(1);
 
-      // Toggle form open — should clear editingId
       act(() => {
         result.current.actions.handleToggleForm();
       });
@@ -307,14 +298,12 @@ describe('useCrudSettings', () => {
     it('handleToggleForm closing form clears formTestResult', () => {
       const { result } = renderCrudHook();
 
-      // Open form
       act(() => {
         result.current.actions.handleToggleForm();
       });
 
       expect(result.current.state.showForm).toBe(true);
 
-      // Close form — should clear formTestResult
       act(() => {
         result.current.actions.handleToggleForm();
       });
@@ -326,14 +315,12 @@ describe('useCrudSettings', () => {
     it('handleEdit closes form and clears formTestResult', () => {
       const { result } = renderCrudHook();
 
-      // Open form first
       act(() => {
         result.current.actions.handleToggleForm();
       });
 
       expect(result.current.state.showForm).toBe(true);
 
-      // Start editing — should close form and clear formTestResult
       act(() => {
         result.current.actions.handleEdit(5);
       });
@@ -628,7 +615,6 @@ describe('formTestResult real state transitions (#610 regression)', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     queryClient = createQueryClient();
-    // Get the real implementation for integration tests
     const actual = await vi.importActual('@/hooks/useConnectionTest') as { useConnectionTest: typeof useConnectionTest };
     realUseConnectionTest = actual.useConnectionTest;
     vi.mocked(useConnectionTest).mockImplementation(realUseConnectionTest);
@@ -636,7 +622,6 @@ describe('formTestResult real state transitions (#610 regression)', () => {
   });
 
   afterEach(() => {
-    // Re-mock for any subsequent describe blocks
     vi.mocked(useConnectionTest).mockReturnValue({
       testingId: null, testResult: null, testingForm: false, formTestResult: null,
       handleTest: vi.fn(), handleFormTest: vi.fn(), clearFormTestResult: vi.fn(),
@@ -666,7 +651,6 @@ describe('formTestResult real state transitions (#610 regression)', () => {
     const hook = renderRealHook();
     await seedFormTestResult(hook);
 
-    // Open form — stale formTestResult must be cleared
     act(() => {
       hook.result.current.actions.handleToggleForm();
     });
@@ -678,15 +662,12 @@ describe('formTestResult real state transitions (#610 regression)', () => {
   it('handleToggleForm closing clears a non-null formTestResult to null', async () => {
     const hook = renderRealHook();
 
-    // Open form
     act(() => {
       hook.result.current.actions.handleToggleForm();
     });
 
-    // Seed result while form is open
     await seedFormTestResult(hook);
 
-    // Close form — formTestResult must be cleared
     act(() => {
       hook.result.current.actions.handleToggleForm();
     });
@@ -698,15 +679,12 @@ describe('formTestResult real state transitions (#610 regression)', () => {
   it('handleEdit switching targets clears a non-null formTestResult to null', async () => {
     const hook = renderRealHook();
 
-    // Start editing entity 1
     act(() => {
       hook.result.current.actions.handleEdit(1);
     });
 
-    // Seed result while editing
     await seedFormTestResult(hook);
 
-    // Switch to entity 2 — stale formTestResult must be cleared
     act(() => {
       hook.result.current.actions.handleEdit(2);
     });
@@ -783,7 +761,6 @@ describe('#1065 — URL ?edit=<id> sync', () => {
       result.current.actions.handleEdit(7);
     });
 
-    // editingId tracks immediately; URL effect is gated on items so it doesn't clobber.
     expect(result.current.state.editingId).toBe(7);
   });
 
@@ -851,9 +828,6 @@ describe('#1067 F2 — URL history semantics (push/replace/back/forward)', () =>
     });
   });
 
-  // Combined hook: exposes the CRUD hook plus router state observers so tests
-  // can assert URL search string AND navigation type (PUSH vs REPLACE vs POP).
-  // Using one renderHook keeps state observation in lockstep with the hook under test.
   function useCrudWithRouterProbes() {
     const crud = useCrudSettings<TestItem, TestFormData>({
       queryKey: ['test-entities'], queryFn,
@@ -922,21 +896,18 @@ describe('#1067 F2 — URL history semantics (push/replace/back/forward)', () =>
   });
 
   it('browser Back from ?edit=<id> closes the modal (URL becomes bare, editingId null)', async () => {
-    // Start at bare path so we have an entry to go back TO.
     const { result } = renderProbeAt('/settings/indexers');
 
     await waitFor(() => {
       expect(result.current.crud.state.isLoading).toBe(false);
     });
 
-    // Push ?edit=7 onto history.
     act(() => { result.current.crud.actions.handleEdit(7); });
     await waitFor(() => {
       expect(result.current.location.search).toBe('?edit=7');
       expect(result.current.crud.state.editingId).toBe(7);
     });
 
-    // Simulate browser Back.
     act(() => { result.current.navigate(-1); });
 
     await waitFor(() => {
@@ -952,19 +923,16 @@ describe('#1067 F2 — URL history semantics (push/replace/back/forward)', () =>
       expect(result.current.crud.state.isLoading).toBe(false);
     });
 
-    // Push ?edit=7
     act(() => { result.current.crud.actions.handleEdit(7); });
     await waitFor(() => {
       expect(result.current.crud.state.editingId).toBe(7);
     });
 
-    // Back to bare path.
     act(() => { result.current.navigate(-1); });
     await waitFor(() => {
       expect(result.current.crud.state.editingId).toBeNull();
     });
 
-    // Forward to ?edit=7.
     act(() => { result.current.navigate(1); });
     await waitFor(() => {
       expect(result.current.location.search).toBe('?edit=7');
@@ -998,7 +966,6 @@ describe('#1067 F1 — URL-driven close respects mutation-pending guard', () => 
   }
 
   it('browser Back DURING save mutation does NOT clear editingId (URL-driven close blocked while isPending)', async () => {
-    // Hold the update promise pending until the test resolves it manually.
     let resolveUpdate!: (value: TestItem) => void;
     const pendingUpdate = new Promise<TestItem>((resolve) => { resolveUpdate = resolve; });
     updateFn.mockReturnValue(pendingUpdate);
@@ -1011,13 +978,11 @@ describe('#1067 F1 — URL-driven close respects mutation-pending guard', () => 
       expect(result.current.crud.state.isLoading).toBe(false);
     });
 
-    // Open editor for id 7.
     act(() => { result.current.crud.actions.handleEdit(7); });
     await waitFor(() => {
       expect(result.current.location.search).toBe('?edit=7');
     });
 
-    // Trigger save (mutation goes pending and stays pending).
     act(() => {
       result.current.crud.mutations.updateMutation.mutate({ id: 7, data: { name: 'x', url: 'y' } });
     });
@@ -1025,16 +990,13 @@ describe('#1067 F1 — URL-driven close respects mutation-pending guard', () => 
       expect(result.current.crud.mutations.updateMutation.isPending).toBe(true);
     });
 
-    // Simulate browser Back while save is in flight — URL changes to bare path.
     act(() => { result.current.navigate(-1); });
     await waitFor(() => {
       expect(result.current.location.search).toBe('');
     });
 
-    // Modal must STAY OPEN — editingId preserved despite URL going bare.
     expect(result.current.crud.state.editingId).toBe(7);
 
-    // Resolve the save to let the test finish cleanly.
     await act(async () => {
       resolveUpdate({ id: 7, name: 'NZB-updated' });
       await pendingUpdate;
@@ -1042,7 +1004,6 @@ describe('#1067 F1 — URL-driven close respects mutation-pending guard', () => 
   });
 
   it('failed save with browser Back during pending: modal stays open AND ?edit is restored (failure-path recovery)', async () => {
-    // Hold the update promise pending until the test rejects it manually.
     let rejectUpdate!: (reason: Error) => void;
     const pendingUpdate = new Promise<TestItem>((_resolve, reject) => { rejectUpdate = reject; });
     updateFn.mockReturnValue(pendingUpdate);
@@ -1055,13 +1016,11 @@ describe('#1067 F1 — URL-driven close respects mutation-pending guard', () => 
       expect(result.current.crud.state.isLoading).toBe(false);
     });
 
-    // Open editor for id 7.
     act(() => { result.current.crud.actions.handleEdit(7); });
     await waitFor(() => {
       expect(result.current.location.search).toBe('?edit=7');
     });
 
-    // Trigger save (held pending).
     act(() => {
       result.current.crud.mutations.updateMutation.mutate({ id: 7, data: { name: 'x', url: 'y' } });
     });
@@ -1069,22 +1028,18 @@ describe('#1067 F1 — URL-driven close respects mutation-pending guard', () => 
       expect(result.current.crud.mutations.updateMutation.isPending).toBe(true);
     });
 
-    // User clicks browser Back during the save — URL becomes bare.
     act(() => { result.current.navigate(-1); });
     await waitFor(() => {
       expect(result.current.location.search).toBe('');
     });
     expect(result.current.crud.state.editingId).toBe(7);
 
-    // Save fails. onError should restore ?edit=7 so the URL→state effect (which
-    // runs once isSavePending flips to false) does NOT close the modal.
+    // onError must restore ?edit before the idle URL-sync effect runs.
     await act(async () => {
       rejectUpdate(new Error('Server error'));
       await pendingUpdate.catch(() => {});
     });
 
-    // After the rejection settles, the modal must still be open AND the URL
-    // restored — the user is supposed to recover and retry.
     await waitFor(() => {
       expect(result.current.crud.mutations.updateMutation.isPending).toBe(false);
     });

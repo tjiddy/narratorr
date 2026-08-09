@@ -27,7 +27,6 @@ function detail(id: number, title: string, status: SubmissionResponse['status'] 
   };
 }
 
-/** Stateful harness that lets a test flip the consumed id in place. */
 function Harness() {
   const [id, setId] = useState(1);
   return (
@@ -48,14 +47,12 @@ describe('ImportDetailExpansion (#1894)', () => {
     getImportSubmissionDetail.mockImplementation((id: number) =>
       id === 1
         ? Promise.resolve(detail(1, 'Book One'))
-        : twoGate.then(() => detail(2, 'Book Two'))); // pending until the test opens the gate
+        : twoGate.then(() => detail(2, 'Book Two')));
 
     renderWithProviders(<Harness />);
-    await screen.findByText('Book One'); // id 1 detail rendered
+    await screen.findByText('Book One');
 
-    fireEvent.click(screen.getByRole('button', { name: 'next' })); // switch consumer to id 2 (pending)
-    // The id-1 rows must NOT linger under id 2 (the placeholderData id guard, F3):
-    // the expansion shows loading, not the stale id-1 rows.
+    fireEvent.click(screen.getByRole('button', { name: 'next' }));
     await waitFor(() => expect(screen.getByTestId('import-detail-loading')).toBeInTheDocument());
     expect(screen.queryByText('Book One')).not.toBeInTheDocument();
     expect(screen.queryByText('Book Two')).not.toBeInTheDocument();
@@ -72,13 +69,12 @@ describe('ImportDetailExpansion (#1894)', () => {
 
     renderWithProviders(<ImportDetailExpansion id={1} />);
     await vi.advanceTimersByTimeAsync(10);
-    expect(screen.queryByText('Failed Book')).not.toBeInTheDocument(); // pending → no attention rows yet
+    expect(screen.queryByText('Failed Book')).not.toBeInTheDocument();
 
     phase = 'complete';
-    await vi.advanceTimersByTimeAsync(FAST_POLL_MS + 10); // detail's own poll advances to terminal
+    await vi.advanceTimersByTimeAsync(FAST_POLL_MS + 10);
     expect(screen.getByText('Failed Book')).toBeInTheDocument();
 
-    // Poll STOPS at complete — flipping the mock back to processing has no effect.
     phase = 'processing';
     const calls = getImportSubmissionDetail.mock.calls.length;
     await vi.advanceTimersByTimeAsync(FAST_POLL_MS * 3);
@@ -88,25 +84,20 @@ describe('ImportDetailExpansion (#1894)', () => {
 
   it('drives the REAL hook: a timed poll failure retains last-good rows + refresh retry, and Retry re-hits the API with the same id (F30/F41)', async () => {
     const { ApiError } = await import('@/lib/api');
-    // Real hook, real API mock, REAL timers. First fetch: processing detail with rows,
-    // so the shared hook keeps polling. (Fake timers fight TanStack's rejection timing.)
+    // Real timers avoid TanStack rejection races; 404 disables hook retries.
     getImportSubmissionDetail.mockResolvedValueOnce(detail(1, 'Held Later', 'processing', 'failed'));
     renderWithProviders(<ImportDetailExpansion id={1} />);
     await screen.findByText('Held Later');
 
-    // The next timed poll fails FAST (404 → the hook does not retry).
     getImportSubmissionDetail.mockRejectedValue(new ApiError(404, { error: 'gone' }));
-    await screen.findByTestId('import-detail-refresh-error', {}, { timeout: 8000 }); // the real 3s poll fires + fails
-    expect(screen.getByText('Held Later')).toBeInTheDocument(); // last-good rows RETAINED
-    expect(screen.queryByTestId('import-detail-error')).not.toBeInTheDocument(); // NOT the cold replacement
+    await screen.findByTestId('import-detail-refresh-error', {}, { timeout: 8000 });
+    expect(screen.getByText('Held Later')).toBeInTheDocument();
+    expect(screen.queryByTestId('import-detail-error')).not.toBeInTheDocument();
 
-    // Retry reaches the API again with the SAME id, and the rows update on success.
     getImportSubmissionDetail.mockReset();
     getImportSubmissionDetail.mockResolvedValue(detail(1, 'Held Now', 'complete', 'failed'));
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(getImportSubmissionDetail).toHaveBeenCalledWith(1));
     await screen.findByText('Held Now');
-    // The cold-failure replacement error (no retained data → `import-detail-error`) is
-    // covered by the section's per-card cold-failure test (F23).
   }, 15000);
 });

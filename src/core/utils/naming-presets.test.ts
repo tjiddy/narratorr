@@ -119,10 +119,7 @@ describe('Detailed preset {edition} in fileFormat (#1829)', () => {
       .toBe('Brandon Sanderson - The Stormlight Archive - 01 - The Way of Kings (Full Cast)');
   });
 
-  // No-edition parity: BOTH template deltas ({ (?edition?)} and folding the track
-  // separator space into the conditional prefix) must be pure no-ops when no edition
-  // exists — byte-identical to the pre-#1829 template. The {series? - } and
-  // {seriesPosition:00? - } branches are where whitespace regressions hide.
+  // Without an edition, both template changes must be byte-identical; optional series branches expose whitespace drift.
   const parityCases: [string, Record<string, string | number | undefined>][] = [
     ['full metadata, multi-file', { ...base, trackNumber: 1, trackTotal: 12 }],
     ['full metadata, single-file', { ...base }],
@@ -140,8 +137,7 @@ describe('Detailed preset {edition} in fileFormat (#1829)', () => {
     expect(renderFilename(DETAILED_FILE, tokens)).toBe(renderFilename(OLD_DETAILED_FILE, tokens));
   });
 
-  // F8: unlike the folder {edition} (verbatim), the file-side edition takes the
-  // separator transform like any other token — pin it so the behavior is explicit.
+  // Unlike the verbatim folder token, file-side edition values take separator transforms.
   it('applies the separator transform to the file-side edition value (period separator)', () => {
     expect(renderFilename(DETAILED_FILE, { ...base, edition: 'Full Cast', trackNumber: 1, trackTotal: 12 }, { separator: 'period' }))
       .toBe('Brandon.Sanderson - The.Stormlight.Archive - 01 - The.Way.of.Kings (Full.Cast) - 001');
@@ -160,8 +156,6 @@ describe('detectPreset', () => {
     expect(detectPreset('{author}/{title}', '{title}')).toBe('custom');
   });
 
-  // #1829 — saved templates from before the edition token was added to the Detailed
-  // fileFormat flip to Custom (cosmetic only; their rendering is unchanged, no migration).
   it('detects the pre-edition Detailed fileFormat as "custom"', () => {
     expect(detectPreset('{author}/{series}/{seriesPosition:00? - }{title}', '{author} - {series? - }{seriesPosition:00? - }{title} {- ?trackNumber:000}')).toBe('custom');
   });

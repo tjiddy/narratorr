@@ -39,7 +39,7 @@ const mockToast = toast as unknown as { success: ReturnType<typeof vi.fn>; error
 describe('Layout', () => {
   beforeEach(() => {
     localStorage.clear();
-    // Default: welcomeSeen: true so the welcome modal does not appear in unrelated tests
+    // Keep the welcome modal out of unrelated tests.
     vi.mocked(api.getSettings).mockResolvedValue(
       createMockSettings({ general: { welcomeSeen: true } }),
     );
@@ -93,7 +93,7 @@ describe('Layout', () => {
     renderWithProviders(<Layout />);
 
     const addBookLink = screen.getByRole('link', { name: /add book/i });
-    // PlusIcon has straight-line paths; SearchIcon has a <circle> — regression to SearchIcon fails this
+    // PlusIcon has straight paths; the previously regressed SearchIcon has a circle.
     expect(addBookLink.querySelector('circle')).toBeNull();
     const paths = Array.from(addBookLink.querySelectorAll('path'));
     expect(paths.some(p => p.getAttribute('d') === 'M5 12h14')).toBe(true);
@@ -161,14 +161,12 @@ describe('Layout', () => {
       const { unmount } = renderWithProviders(<Layout />);
       expect(screen.getByText(/authentication is disabled/i)).toBeInTheDocument();
 
-      // Dismiss the banner
       const dismissButton = screen.getByLabelText('Dismiss auth warning');
       await user.click(dismissButton);
 
       expect(screen.queryByText(/authentication is disabled/i)).not.toBeInTheDocument();
       expect(localStorage.getItem('narratorr:auth-banner-dismissed')).toBe('true');
 
-      // Re-render — banner should stay dismissed
       unmount();
       renderWithProviders(<Layout />);
       expect(screen.queryByText(/authentication is disabled/i)).not.toBeInTheDocument();
@@ -187,7 +185,6 @@ describe('Layout', () => {
       expect(formsLink).toHaveAttribute('href', '/settings/security');
 
       const securityLink = screen.getByRole('link', { name: /security\.md/i });
-      // Must point at this repository, not a placeholder org
       expect(securityLink).toHaveAttribute(
         'href',
         'https://github.com/tjiddy/narratorr/blob/main/SECURITY.md#csrf-protection',
@@ -224,7 +221,6 @@ describe('Layout', () => {
       expect(screen.queryByText(/basic authentication is enabled/i)).not.toBeInTheDocument();
       expect(localStorage.getItem('narratorr.basic-auth-csrf-nag.dismissed')).toBe('true');
 
-      // Re-render — banner stays dismissed
       unmount();
       renderWithProviders(<Layout />);
       expect(screen.queryByText(/basic authentication is enabled/i)).not.toBeInTheDocument();
@@ -239,7 +235,6 @@ describe('Layout', () => {
       await user.click(screen.getByLabelText('Dismiss basic-auth warning'));
       unmount();
 
-      // Switch to none-auth — its dismissal flag uses a different storage key, so the banner shows
       mockAuth('none');
       renderWithProviders(<Layout />);
       expect(screen.getByText(/authentication is disabled/i)).toBeInTheDocument();
@@ -298,7 +293,6 @@ describe('Layout', () => {
 
       renderWithProviders(<Layout />);
 
-      // Wait for settings query to settle
       await waitFor(() => {
         expect(screen.getByText('Library')).toBeInTheDocument();
       });
@@ -337,12 +331,10 @@ describe('Layout', () => {
       const settingsLink = screen.getByRole('link', { name: /^settings$/i });
       const healthIndicator = screen.getByTestId('health-indicator');
 
-      // HealthIndicator must follow Settings link in DOM order
       expect(
         settingsLink.compareDocumentPosition(healthIndicator) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
 
-      // HealthIndicator must be the final interactive nav control — no trailing control after it
       const interactiveControls = Array.from(nav.querySelectorAll('a, button'));
       expect(interactiveControls[interactiveControls.length - 1]).toBe(healthIndicator);
     });
@@ -365,12 +357,10 @@ describe('Layout', () => {
       const settingsLink = screen.getByRole('link', { name: /^settings$/i });
       const healthIndicator = screen.getByTestId('health-indicator');
 
-      // HealthIndicator must follow Settings link in DOM order
       expect(
         settingsLink.compareDocumentPosition(healthIndicator) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
 
-      // HealthIndicator must be the final interactive nav control — no trailing control after it
       const interactiveControls = Array.from(nav.querySelectorAll('a, button'));
       expect(interactiveControls[interactiveControls.length - 1]).toBe(healthIndicator);
     });
@@ -589,7 +579,6 @@ describe('Layout', () => {
       await waitFor(() => {
         expect(mockToast.error).toHaveBeenCalledWith('Network error');
       });
-      // Modal stays open on failure
       expect(screen.getByRole('dialog')).toBeInTheDocument();
     });
   });

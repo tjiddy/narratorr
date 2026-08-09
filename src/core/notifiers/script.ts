@@ -4,7 +4,7 @@ import type { NotifierAdapter, NotificationEvent, EventPayload } from './types.j
 
 export interface ScriptConfig {
   path: string;
-  timeout?: number; // seconds, default 30
+  timeout?: number; // seconds
 }
 
 // eslint-disable-next-line complexity -- flat env construction from event-specific payload fields
@@ -42,8 +42,7 @@ function payloadToEnv(event: NotificationEvent, payload: EventPayload): Record<s
     if (payload.health.message) env.NARRATORR_HEALTH_MESSAGE = payload.health.message;
   }
   if (payload.submission) {
-    // Every count env var is always set — `.toString()` (not truthiness) keeps a
-    // required `0` present (F79).
+    // Set every count, including zero.
     env.NARRATORR_SUBMISSION_SOURCE = payload.submission.source;
     env.NARRATORR_SUBMISSION_STATUS = payload.submission.status;
     env.NARRATORR_SUBMISSION_ACCEPTED = payload.submission.counts.accepted.toString();
@@ -84,7 +83,6 @@ export class ScriptNotifier implements NotifierAdapter {
         resolve({ success: true });
       });
 
-      // Feed payload as JSON on stdin
       if (child.stdin) {
         child.stdin.write(JSON.stringify(payload));
         child.stdin.end();

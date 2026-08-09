@@ -12,11 +12,7 @@ import { slugify } from '@core/index.js';
 import { resolveRecordingIdentity, type RecordingCandidate, type LibraryRecording } from '@core/utils/recording-identity.js';
 import type { FastifyBaseLogger } from 'fastify';
 
-// DB-backed coverage for the three-way, multi-incumbent `findDuplicate`, the
-// `findPathOwners` cardinality contract, and the `create()` same-ASIN race
-// (#1711). A mock-chain test cannot prove multi-incumbent precedence or
-// order-independence (the resolver runs over rows returned in DB order); this
-// seeds a real libsql DB and exercises the resolver end-to-end.
+// Real libsql is required to prove multi-incumbent ordering, cardinality, and ASIN races end-to-end.
 
 const noopLog = {
   info() {}, warn() {}, error() {}, debug() {}, fatal() {}, trace() {},
@@ -41,7 +37,7 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {
-      // libsql may keep handles on Windows — best effort
+      // libsql can retain Windows handles; cleanup is best-effort.
     }
   });
 
@@ -95,7 +91,6 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
     });
     expect(res.verdict).toBe('different-recording');
     expect(res.book).toBeNull();
-    // An incumbent existed (an owned title) but resolved different → a NEW recording of an owned title.
     expect(res.hasIncumbent).toBe(true);
   });
 
@@ -111,16 +106,12 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
     const res = await service.findDuplicate({ title: 'Brand New', authors: [{ name: 'Nobody' }], narrators: ['X'] });
     expect(res.verdict).toBe('different-recording');
     expect(res.book).toBeNull();
-    // No incumbent at all → a genuinely new book; the import-review badge stays absent.
     expect(res.hasIncumbent).toBe(false);
   });
 
-  // ─── Resolver-boundary coverage over real hydrated rows (#1729) ───
   describe('resolver boundaries (DB-backed, #1729)', () => {
     it('single-sided ASIN: null-ASIN incumbent, ASIN-bearing candidate, equal narrator → same-recording', async () => {
-      // Incumbent has no ASIN, so the ASIN gather branch cannot find it — it is
-      // gathered via title/author, and the resolver's both-present ASIN guard is
-      // not satisfied, so the verdict comes from the title/author/narrator path.
+      // A null incumbent ASIN forces title/author gathering and the narrator path.
       const id = await seed({ title: 'Single Sided', author: 'Author X', narrators: ['Jim Dale'] });
       const res = await service.findDuplicate({
         title: 'Single Sided', authors: [{ name: 'Author X' }], narrators: ['Jim Dale'], asin: 'B0SINGLE01',
@@ -131,14 +122,8 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
     });
 
     it('padded candidate ASIN, ISOLATED to the gather path → same-recording (canonicalize, #1729 gap b)', async () => {
-      // Incumbent's title/author are deliberately DIFFERENT from the candidate's, so
-      // the title/author gather branch (and the resolver's title/author scope) cannot
-      // match — the ASIN gather branch is the ONLY way the incumbent can be found.
-      // This passes ONLY if `gatherIncumbentIds` canonicalizes the padded candidate
-      // (so the incumbent is gathered) AND the resolver's ASIN short-circuit
-      // canonicalizes (so it returns same-recording). A non-trimming gather → no
-      // incumbent → different-recording, so this fixture cannot go falsely green via
-      // a title/author fallback.
+      // Different title/author isolates gathering and resolution to canonicalized ASIN;
+      // no title/author fallback can make this fixture pass.
       const id = await seed({ title: 'Gather Only Title', author: 'Gather Author', narrators: ['Reader A'], asin: 'B0PADTEST1' });
       const res = await service.findDuplicate({
         title: 'Totally Different', authors: [{ name: 'Other Author' }], narrators: ['Reader B'], asin: ' b0padtest1 ',
@@ -149,8 +134,7 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
     });
 
     it('inside the 90s duration band over equal narrators → same-recording (#1854)', async () => {
-      // `duration` is MINUTES: library 60min (3600s) vs candidate 61min (3660s) →
-      // Δ60s, inside the absolute 90s band, through the real toLibraryRecording adapter.
+      // Stored minutes become 3600s vs 3660s, inside the 90s absolute band.
       const id = await seed({ title: 'Boundary Book', author: 'Dur Author', narrators: ['Jim Dale'], duration: 60 });
       const res = await service.findDuplicate({
         title: 'Boundary Book', authors: [{ name: 'Dur Author' }], narrators: ['Jim Dale'], duration: 61,
@@ -160,9 +144,7 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
     });
 
     it('outside the 240s duration band over equal narrators → review (#1854)', async () => {
-      // library 60min (3600s) vs candidate 66min (3960s) → Δ360s > 240s, downgrades an
-      // equal-narrator match to review over real hydrated rows. The adapter's minutes
-      // column feeds the resolver, which converts * 60 before the band.
+      // Stored minutes become 3600s vs 3960s, outside the 240s band.
       const id = await seed({ title: 'Beyond Boundary', author: 'Dur Author', narrators: ['Jim Dale'], duration: 60 });
       const res = await service.findDuplicate({
         title: 'Beyond Boundary', authors: [{ name: 'Dur Author' }], narrators: ['Jim Dale'], duration: 66,
@@ -172,12 +154,8 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
       expect(res.hasIncumbent).toBe(true);
     });
 
-    // ─── Production-type veto over real hydrated rows (#1728) ───
     it('equal narrators, no duration, known production-type mismatch → review + recordingReviewReason', async () => {
-      // Abridged incumbent vs unabridged candidate, same narrator, NO duration on
-      // either side: without the veto this collapses to same-recording (silent
-      // skip). The veto downgrades it to review and the machine reason surfaces on
-      // DuplicateResolution end-to-end.
+      // No duration signal isolates the production-type veto from narrator equality.
       const id = await seed({ title: 'Veto Book', author: 'Veto Author', narrators: ['Jim Dale'], productionType: 'abridged' });
       const res = await service.findDuplicate({
         title: 'Veto Book', authors: [{ name: 'Veto Author' }], narrators: ['Jim Dale'], productionType: 'unabridged',
@@ -199,29 +177,19 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
     });
 
     it('author-less candidate with a whitespace-only ASIN still gathers the author-less title-only incumbent (#1729 F1)', async () => {
-      // The author-less title-only gather guard (book-dedup.ts branch 3) keys off
-      // `!canonicalAsin`, not raw `!candidate.asin`. `canonicalizeAsin('   ')` → null,
-      // so a candidate with no authors and a whitespace-only ASIN enters branch (3)
-      // and gathers the author-less incumbent. Reverting the guard to `!candidate.asin`
-      // would treat '   ' as present, SKIP branch (3), gather nothing, and report
-      // `hasIncumbent: false` — so the hasIncumbent assertion is the load-bearing pin.
-      const id = await seed({ title: 'Author Less Title' }); // no author, no ASIN
+      // The authorless guard must use canonicalAsin: whitespace becomes null and enters branch 3.
+      // hasIncumbent pins gathering separately from the resolver verdict.
+      const id = await seed({ title: 'Author Less Title' });
       const res = await service.findDuplicate({ title: 'Author Less Title', asin: '   ' });
-      // Incumbent WAS gathered via the author-less title-only branch.
       expect(res.hasIncumbent).toBe(true);
-      // #1726: the exact-title author-less pair now ENTERS the resolver scope (the
-      // #1722 over-correction is reversed). With no narrator signal on either side the
-      // verdict comes from the narrator stage → review, NOT the scope-gate different-recording.
+      // The gathered exact-title pair reaches narrator-no-signal review instead of failing scope.
       expect(res.verdict).toBe('review');
       expect(res.recordingReviewReason).toBe('narrator-no-signal');
       expect(res.book?.id).toBe(id);
     });
 
     it('author-less candidate, exact title, equal narrators → same-recording (owned) (#1726)', async () => {
-      // The bug fix end-to-end: an author-less candidate is gathered via the
-      // author-less title-only branch AND now passes the resolver scope gate, so an
-      // equal-narrator pair resolves to owned rather than importing as a new book.
-      const id = await seed({ title: 'Lonely Title', narrators: ['Solo Reader'] }); // no author
+      const id = await seed({ title: 'Lonely Title', narrators: ['Solo Reader'] });
       const res = await service.findDuplicate({ title: 'Lonely Title', narrators: ['Solo Reader'] });
       expect(res.verdict).toBe('same-recording');
       expect(res.book?.id).toBe(id);
@@ -229,8 +197,6 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
     });
 
     it('author-less candidate vs an authored row of the same title → different-recording, not gathered (#1726)', async () => {
-      // The #253 notExists guard: an authored "Shogun" must not be gathered for an
-      // author-less "Shogun" candidate, and the one-sided pair is out of scope.
       await seed({ title: 'Shared Title', author: 'Some Author', narrators: ['Reader'] });
       const res = await service.findDuplicate({ title: 'Shared Title', narrators: ['Reader'] });
       expect(res.verdict).toBe('different-recording');
@@ -241,7 +207,6 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
 
   describe('multi-incumbent precedence (order-independent)', () => {
     it('any same-recording wins as owned when a different-recording row was seeded first', async () => {
-      // Seed the different-recording first, the same-recording second.
       await seed({ title: 'Elantris', author: 'Brandon Sanderson', narrators: ['Jack Garrett'], asin: 'B0DIFF' });
       const owned = await seed({ title: 'Elantris', author: 'Brandon Sanderson', narrators: ['Jled Marsh'], asin: 'B0SAME' });
       const res = await service.findDuplicate({
@@ -259,13 +224,10 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
       });
       expect(res.verdict).toBe('different-recording');
       expect(res.book).toBeNull();
-      // Two owned recordings existed, neither matched → new recording of an owned title.
       expect(res.hasIncumbent).toBe(true);
     });
 
     it('review representative is the LOWEST books.id among pairwise-matching review incumbents (#1891)', async () => {
-      // Two same-author incumbents both resolve `review` (candidate carries no narrator
-      // signal). The gather is sorted ascending, so the representative is deterministic.
       const first = await seed({ title: 'Nightblood', author: 'Brandon Sanderson', narrators: ['Reader A'] });
       const second = await seed({ title: 'Nightblood', author: 'Brandon Sanderson', narrators: ['Reader B'] });
       expect(second).toBeGreaterThan(first);
@@ -276,9 +238,6 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
     });
 
     it('a later same-recording still beats an earlier review incumbent (#1891 ladder unchanged)', async () => {
-      // Lower-id incumbent → review (no ASIN; matches title/author but the candidate
-      // carries no narrator signal). Higher-id incumbent → an ASIN-equal same-recording.
-      // same-recording wins over the earlier review regardless of gather order.
       await seed({ title: 'Skyward', author: 'Brandon Sanderson', narrators: ['Suzy Jackson'] });
       const owned = await seed({ title: 'Skyward', author: 'Brandon Sanderson', narrators: ['Suzy Jackson'], asin: 'B0SKYWARD1' });
       const res = await service.findDuplicate({
@@ -289,9 +248,6 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
     });
 
     it('WoW distinct-subtitle candidate (no ASIN) vs owned WoW novels → different-recording, book null, hasIncumbent false (#1891)', async () => {
-      // The regression this issue exists to fix: distinct franchise subtitles must NOT
-      // be gathered as incumbents, so the candidate is a genuinely NEW book — NOT flagged
-      // a possible/hard duplicate.
       await seed({ title: 'World of Warcraft: Tides of Darkness', author: 'Aaron Rosenberg', narrators: ['Reader One'] });
       await seed({ title: 'World of Warcraft: Rise of the Horde', author: 'Aaron Rosenberg', narrators: ['Reader Two'] });
       const res = await service.findDuplicate({
@@ -305,16 +261,8 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
     });
   });
 
-  // ─── Cross-home scope drift guard (#1726) ───
-  // The bibliographic-scope ladder (ASIN → normalized-title + position-0 author slug →
-  // author-less raw exact-title) lives in THREE homes: `matchesLibraryIdentity`
-  // (`src/shared/dedup.ts`), `resolveRecordingIdentity`'s scope gate
-  // (`src/core/utils/recording-identity.ts`), and the `gatherIncumbentIds` SQL predicate
-  // (`src/server/services/book-dedup.ts`, exercised here via `findDuplicate`). This table
-  // asserts all three agree on SCOPE MEMBERSHIP over one fixture set — NOT on the resolver's
-  // final narrator/duration verdict. The resolver probe uses EQUAL signal-bearing narrators
-  // and no duration/production signal, so "in scope" ⟺ `same-recording` and "out of scope"
-  // ⟺ `different-recording`. The gather probe reads `hasIncumbent` (gathered ⟺ in scope).
+  // Keep scope aligned across the shared predicate, core resolver gate, and SQL gather.
+  // Equal narrators make same-recording mean in-scope; hasIncumbent pins SQL gathering.
   describe('three homes agree on bibliographic scope (#1726 drift guard)', () => {
     const PROBE = ['Scope Probe'];
 
@@ -355,14 +303,11 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
     });
 
     it.each(fixtures)('$name → in-scope: $inScope (all three homes)', async (f) => {
-      // (1) matchesLibraryIdentity — the canonical predicate.
       expect(matchesLibraryIdentity(toDedup(f.cand), toDedup(f.inc))).toBe(f.inScope);
 
-      // (2) resolveRecordingIdentity scope gate — equal narrators, no duration.
       expect(resolveRecordingIdentity(toCandidate(f.cand), toLibrary(f.inc)).verdict)
         .toBe(f.inScope ? 'same-recording' : 'different-recording');
 
-      // (3) gatherIncumbentIds (via findDuplicate) — gathered ⟺ in scope.
       await seed({ title: f.inc.title, ...(f.inc.author && { author: f.inc.author }), narrators: PROBE, ...(f.inc.asin && { asin: f.inc.asin }) });
       const res = await service.findDuplicate({
         title: f.cand.title,
@@ -411,14 +356,12 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
     });
   });
 
-  // ─── ASIN case-insensitivity at the write boundary + durable constraint (#1733) ───
   describe('ASIN case-insensitivity (#1733)', () => {
     it('create() rejects a case-drifted duplicate ASIN and inserts no second row', async () => {
       const id = await seed({ title: 'First', author: 'A', asin: 'B003P2WO5E' });
       await expect(
         service.create({ title: 'Second', authors: [{ name: 'B' }], asin: 'b003p2wo5e' }),
       ).rejects.toMatchObject({ name: 'OwnedRecordingError', existingBookId: id, reason: 'asin-owned' });
-      // No second owned row slipped through under the case-drifted ASIN.
       const rows = await db.select({ id: books.id }).from(books);
       expect(rows).toHaveLength(1);
     });
@@ -485,11 +428,8 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
   });
 });
 
-// DB-backed coverage for the tx-scoped `createResolved` primitive (#1892): the
-// optional-outer-tx contract (rollback leaves nothing / commit persists), the
-// two-branch unique-conflict behavior, and the numeric-id return. A mock-chain
-// test cannot prove real transaction/rollback or FK semantics
-// (libsql-foreign-keys-on-by-default), so this seeds a real libsql DB.
+// Real libsql is required for createResolved's outer-transaction rollback, FK/unique
+// semantics, and persisted numeric id.
 describe('BookService.createResolved — tx-scoped insert primitive (DB-backed, #1892)', () => {
   let dir: string;
   let db: Db;
@@ -502,7 +442,6 @@ describe('BookService.createResolved — tx-scoped insert primitive (DB-backed, 
     await runMigrations(dbFile);
     db = createDb(dbFile);
     loggedInfo = [];
-    // Capturing logger so we can prove the primitive emits no post-commit log.
     const capturingLog = {
       info(_obj: unknown, msg?: string) { if (typeof msg === 'string') loggedInfo.push(msg); },
       warn() {}, error() {}, debug() {}, fatal() {}, trace() {},
@@ -516,13 +455,12 @@ describe('BookService.createResolved — tx-scoped insert primitive (DB-backed, 
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {
-      // libsql may keep handles on Windows — best effort
+      // libsql can retain Windows handles; cleanup is best-effort.
     }
   });
 
   it('rolls back every write when the caller transaction throws after createResolved (AC5/AC9/F7)', async () => {
-    // Brand-new author/narrator/series fixtures so no pre-existing row masks the
-    // rollback check across all eight write surfaces.
+    // Fresh related rows expose rollback across every write surface.
     await expect(
       db.transaction(async (tx) => {
         await service.createResolved(
@@ -548,7 +486,6 @@ describe('BookService.createResolved — tx-scoped insert primitive (DB-backed, 
     expect(await db.select().from(series)).toHaveLength(0);
     expect(await db.select().from(seriesMembers)).toHaveLength(0);
     expect(await db.select().from(unmatchedGenres)).toHaveLength(0);
-    // No post-commit side effect escaped the primitive.
     expect(loggedInfo).not.toContain('Book added to library');
   });
 
@@ -569,7 +506,6 @@ describe('BookService.createResolved — tx-scoped insert primitive (DB-backed, 
     expect(typeof bookId).toBe('number');
     const rows = await db.select({ id: books.id }).from(books);
     expect(rows).toHaveLength(1);
-    // F12 — the returned value is the persisted row id, not a placeholder.
     expect(rows[0]!.id).toBe(bookId);
 
     const hydrated = await service.getById(bookId);
@@ -586,7 +522,6 @@ describe('BookService.createResolved — tx-scoped insert primitive (DB-backed, 
       service.createResolved({ title: 'Intruder', authors: [{ name: 'B' }], asin: 'B0X' }),
     ).rejects.toMatchObject({ name: 'OwnedRecordingError', existingBookId: incumbentId, reason: 'asin-owned' });
 
-    // The rolled-back intruder left no second row.
     expect(await db.select().from(books)).toHaveLength(1);
   });
 
@@ -605,7 +540,6 @@ describe('BookService.createResolved — tx-scoped insert primitive (DB-backed, 
     expect(caught).toBeInstanceOf(Error);
     expect(caught).not.toBeInstanceOf(OwnedRecordingError);
     expect(isUniqueViolation(caught, ASIN_UNIQUE_VIOLATION)).toBe(true);
-    // Only the incumbent remains after the outer rollback.
     expect(await db.select().from(books)).toHaveLength(1);
   });
 
@@ -620,7 +554,6 @@ describe('BookService.createResolved — tx-scoped insert primitive (DB-backed, 
 
     expect(book.authors.map((a) => a.name)).toEqual(['Hydra Author']);
     expect(book.narrators.map((n) => n.name)).toEqual(['Hydra Narrator']);
-    // BookWithAuthor carries scalar series fields (no nested `series` relation).
     expect(book.seriesName).toBe('Hydra Series');
     expect(book.seriesPosition).toBe(3);
   });

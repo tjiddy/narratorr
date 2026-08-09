@@ -25,7 +25,6 @@ describe('enqueueBookRefresh', () => {
   });
 
   it('is a no-op when no connector is configured', () => {
-    // No connector → no throw, nothing to assert beyond not crashing.
     expect(() => enqueueBookRefresh(undefined, makeLog(), 'merge', { bookId: 1, title: 'T', libraryPath: '/x' })).not.toThrow();
   });
 });

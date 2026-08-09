@@ -27,7 +27,7 @@ describe('SearchSessionManager', () => {
       const session = manager.create(indexers);
 
       expect(session.indexers).toEqual(indexers);
-      expect(session.sessionId).toMatch(/^[0-9a-f-]+$/); // UUID format
+      expect(session.sessionId).toMatch(/^[0-9a-f-]+$/);
     });
   });
 
@@ -39,7 +39,6 @@ describe('SearchSessionManager', () => {
       const result = manager.cancel(session.sessionId, 2);
       expect(result).toBe(true);
       expect(session.controllers.get(2)!.signal.aborted).toBe(true);
-      // Other controllers not aborted
       expect(session.controllers.get(1)!.signal.aborted).toBe(false);
       expect(session.controllers.get(3)!.signal.aborted).toBe(false);
     });
@@ -76,7 +75,6 @@ describe('SearchSessionManager', () => {
       manager.cleanup(session.sessionId);
 
       expect(manager.get(session.sessionId)).toBeUndefined();
-      // All controllers aborted
       expect(session.controllers.get(1)!.signal.aborted).toBe(true);
       expect(session.controllers.get(2)!.signal.aborted).toBe(true);
       expect(session.controllers.get(3)!.signal.aborted).toBe(true);

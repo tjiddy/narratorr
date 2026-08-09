@@ -255,17 +255,16 @@ export class TransmissionClient implements DownloadClientAdapter {
   }
 
   private mapStatus(t: TransmissionTorrent): DownloadItemInfo['status'] {
-    // errorString takes precedence over all other fields
+    // errorString takes precedence over progress and completion.
     if (t.errorString) return 'error';
-    // No metadata yet — still resolving
+    // No metadata yet.
     if (t.totalSize === 0) return 'downloading';
-    // leftUntilDone is the authoritative completion signal
+    // leftUntilDone is authoritative for completion.
     if (t.leftUntilDone === 0) {
-      // Transmission status codes: 0 = stopped, 5 = seed-wait, 6 = seeding
+      // 0 = stopped; 5 = seed-wait; 6 = seeding.
       if (t.status === 0) return 'completed';
       if (t.status === 5 || t.status === 6) return 'seeding';
     }
-    // Active download or other states
     return 'downloading';
   }
 }

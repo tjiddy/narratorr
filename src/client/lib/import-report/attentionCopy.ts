@@ -1,15 +1,10 @@
 import type { AttentionSubmission } from '@/lib/api';
 
-/** `n → "n noun(s)"` — the deterministic singular/plural count formula (F54). */
 export function pluralCount(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? '' : 's'}`;
 }
 
-/**
- * Map the server's attention classification + counts to the deterministic banner
- * copy (#1894, F54). One home so the templates cannot drift across the three
- * banner hosts. Classification is server-authoritative — this never re-derives kind.
- */
+/** Uses the server's attention classification so copy stays consistent across banner hosts. */
 export function attentionCopy(data: AttentionSubmission): string {
   if (data.attention.kind === 'abandoned') {
     return `${data.receivedCount} of ${data.expectedCount} received — nothing was imported`;

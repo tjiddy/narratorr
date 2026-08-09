@@ -14,7 +14,6 @@ describe('Modal', () => {
 
   it('renders fixed overlay with z-50 and animate-fade-in', () => {
     render(<Modal><div>content</div></Modal>);
-    // Portal renders to body — find the overlay by its class
     const overlay = screen.getByTestId('modal-backdrop').parentElement!;
     expect(overlay).toHaveClass('fixed');
     expect(overlay).toHaveClass('inset-0');
@@ -40,10 +39,8 @@ describe('Modal', () => {
 
   it('does not throw when the backdrop is clicked and onClose is not provided', async () => {
     const user = userEvent.setup();
-    // Should not throw — backdrop click is a no-op now that dismissal is removed
     expect(() => render(<Modal><div>content</div></Modal>)).not.toThrow();
     await user.click(screen.getByTestId('modal-backdrop'));
-    // No assertion on call — just verify no error thrown
   });
 
   it('calls onClose when Escape is pressed and onClose is provided', async () => {
@@ -58,7 +55,6 @@ describe('Modal', () => {
     const user = userEvent.setup();
     render(<Modal><div data-testid="child">content</div></Modal>);
     await user.keyboard('{Escape}');
-    // No onClose to call — Escape is a no-op, modal remains rendered
     expect(screen.getByTestId('child')).toBeInTheDocument();
   });
 
@@ -93,10 +89,8 @@ describe('Modal', () => {
           <Modal><div data-testid="modal-child">hello</div></Modal>
         </div>,
       );
-      // Modal should NOT be inside the parent container
       const parent = within(container).getByTestId('parent-container');
       expect(within(parent).queryByTestId('modal-child')).not.toBeInTheDocument();
-      // But it should be in the document (rendered to body)
       expect(screen.getByTestId('modal-child')).toBeInTheDocument();
     });
   });
@@ -154,14 +148,11 @@ describe('Modal', () => {
       );
       const first = screen.getByTestId('first');
       const second = screen.getByTestId('second');
-      // Focus first button, then Tab — should wrap to second, not escape
       first.focus();
       await user.keyboard('{Tab}');
       expect(document.activeElement).toBe(second);
-      // Tab again from last — should wrap to first
       await user.keyboard('{Tab}');
       expect(document.activeElement).toBe(first);
-      // Outside button should never receive focus
       expect(document.activeElement).not.toBe(screen.getByTestId('outside'));
     });
 
@@ -197,7 +188,6 @@ describe('Modal', () => {
 
     it('focus moves into Modal panel when it opens', () => {
       render(<Modal><button>btn</button></Modal>);
-      // Panel should have tabIndex={-1} and receive initial focus
       const panel = screen.getByText('btn').parentElement!;
       expect(panel).toHaveAttribute('tabindex', '-1');
       expect(document.activeElement).toBe(panel);
@@ -221,7 +211,6 @@ describe('Modal', () => {
       innerA.focus();
       await user.keyboard('{Tab}');
       expect(document.activeElement).toBe(innerB);
-      // Tab should wrap within inner, not escape to outer
       await user.keyboard('{Tab}');
       expect(document.activeElement).toBe(innerA);
     });

@@ -80,7 +80,6 @@ describe('Button', () => {
       render(<Button variant="primary" icon={ZapIcon} loading>Click</Button>);
       const btn = screen.getByRole('button');
       expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
-      // Exactly one SVG — the spinner replaced the icon
       expect(btn.querySelectorAll('svg')).toHaveLength(1);
     });
 

@@ -88,12 +88,6 @@ describe('booksApi.listLibraryBooks — collapse serialization (#1169)', () => {
   });
 });
 
-// The '#1169 collapse isolation' suite that used to sit here proved `getBooks` (the
-// non-library list endpoint) never serialized `collapse`. #1951 removed that wrapper —
-// `listLibraryBooks` is now the client's only list endpoint — so the isolation it
-// guarded is structural rather than behavioural, and there is no second endpoint left
-// to leak the param onto. The positive direction is still pinned above.
-
 describe('booksApi.uploadBookCover', () => {
   beforeEach(() => {
     vi.mocked(fetchMultipart).mockReset();
@@ -175,7 +169,6 @@ describe('booksApi.getBookRenamePreview', () => {
   });
 
   it('propagates 409 without a CONFLICT body as a plain ApiError', async () => {
-    // Not the structured shape — should not be converted to RenameConflictError
     vi.mocked(fetchApi).mockRejectedValue(new ApiError(409, { error: 'random conflict' }));
 
     const err = await booksApi.getBookRenamePreview(1).catch((e) => e);

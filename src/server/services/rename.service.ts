@@ -24,16 +24,7 @@ export interface RenameResult {
   filesRenamed: number;
 }
 
-/**
- * Did this rename actually move the folder or rewrite a filename? The ONE home for that
- * question (#1960 AC22) — both rename callers that care import it rather than re-spelling the
- * comparison, so a future change to `RenameResult` has a single site to follow.
- *
- * `renameBook` returns `newPath === oldPath && filesRenamed === 0` UNIQUELY for the
- * "Already organized" early return; every other success path either moved the folder or
- * renamed at least one file. The decision is structural on purpose — never on the `message`
- * string, which is display text and free to change.
- */
+/** Structural change predicate shared by callers; never couple behavior to the display message. */
 export function didRenameChangeAnything(result: RenameResult): boolean {
   return result.newPath !== result.oldPath || result.filesRenamed > 0;
 }
@@ -56,7 +47,6 @@ export class RenameService {
     private connectorService?: ConnectorService,
   ) {}
 
-  /** Fire-and-forget connector refresh after a real path/file change. */
   private enqueueConnectorRefresh(bookId: number, title: string, authorName: string | null, libraryPath: string): void {
     if (!this.connectorService) return;
     fireAndForget(
@@ -66,7 +56,6 @@ export class RenameService {
     );
   }
 
-  /** Fire-and-forget event recording. */
   private emitEvent(bookId: number, book: { title: string; authors?: Array<{ name: string }> }, oldPath: string, newPath: string, filesRenamed: number): void {
     this.eventHistory?.create({
       bookId,
@@ -77,11 +66,7 @@ export class RenameService {
     }).catch((err) => this.log.warn({ error: serializeError(err) }, 'Failed to record renamed event'));
   }
 
-  /**
-   * Pure planner — returns the folder move + file renames that `renameBook` would
-   * apply, without touching disk or DB. Used by `GET /api/books/:id/rename/preview`
-   * and internally by `renameBook` to keep preview/apply in lockstep.
-   */
+  /** Pure plan shared by preview and apply; performs no disk or DB writes. */
   async planRename(bookId: number): Promise<RenamePlan> {
     const book = await this.bookService.getById(bookId);
     if (!book) {
@@ -117,9 +102,7 @@ export class RenameService {
 
     let fileRenames: { from: string; to: string }[] = [];
     if (librarySettings.fileFormat) {
-      // Preview reads the source folder (book.path); apply reads the same files
-      // after the folder move. The folder move doesn't add/remove files, so the
-      // bare-filename pairs match either way.
+      // Preview reads before the folder move, but the move cannot change bare-filename pairs.
       fileRenames = await planFileRenames(
         oldPath,
         librarySettings.fileFormat,
@@ -138,10 +121,6 @@ export class RenameService {
     };
   }
 
-  /**
-   * Rename/reorganize a book's files to match current metadata + format templates.
-   * Moves folder (if path changed) and renames files (if file format applies).
-   */
   async renameBook(bookId: number): Promise<RenameResult> {
     const book = await this.bookService.getById(bookId);
     if (!book) {
@@ -154,7 +133,6 @@ export class RenameService {
     const librarySettings = await this.settingsService.get('library');
     const namingOptions = toNamingOptions(librarySettings);
 
-    // Build the target path from current metadata
     const authorName = book.authors?.[0]?.name ?? null;
     const { targetPath, changed: pathChanged } = computeFolderTarget(
       { ...book, path: book.path },
@@ -165,46 +143,29 @@ export class RenameService {
 
     const oldPath = book.path;
 
-    // Library-root containment guard (#1550). A corrupt or hand-edited books.path
-    // (e.g. `/etc`) would otherwise be moved or — on EXDEV — recursively rm'd. Reject
-    // it BEFORE any destructive mutation consumes oldPath: recovery (restores
-    // `.import-bak` / clears the marker), the folder move, the EXDEV `rm`, the DB path
-    // update, and the in-place file-template renames. The check is realpath-aware so an
-    // in-library symlink can't escape, and runs once at the top so it covers both the
-    // pathChanged and !pathChanged branches and every caller (bulk, fix-match). An
-    // in-library oldPath that is merely missing on disk is swallowed (ENOENT) so the
-    // existing rename/recovery surfaces the real cause. Maps to 400 via the existing
-    // PathOutsideLibraryError handler.
+    // Reject corrupt/escaped paths before recovery, moves, EXDEV deletion, or in-place renames.
+    // This is realpath-aware for symlinks but leaves missing paths to the existing recovery surface.
     await assertRealPathInsideLibrary(oldPath, librarySettings.path);
 
-    // Converge any interrupted commit-pending marker at oldPath BEFORE any destructive
-    // mutation (#1418). Both destructive paths below can otherwise strand or re-arm a
-    // marker/`.import-bak` sibling: the folder move relocates the folder but orphans the
-    // marker at the old path, and the in-place file-template renames run with the marker
-    // still armed. Recovery restores `.import-bak` into the folder and clears the marker
-    // first; on failure it throws (BackupRecoveryError → 503, MarkerPathConflictError → 409,
-    // raw stat error → 500) and no rename runs, leaving on-disk state intact.
+    // Recover commit-pending state before any mutation; moving can orphan its marker and an
+    // in-place rename can re-arm it. Recovery failure aborts with disk state intact.
     await recoverInterruptedCommit(oldPath, librarySettings.path, this.log);
 
-    // Check for conflicts: another book at the target path
     if (pathChanged) {
       await this.checkConflict(targetPath, bookId);
     }
 
-    // Move folder if path changed
     if (pathChanged) {
       await this.moveBookFolder(oldPath, targetPath);
     }
 
     const currentPath = pathChanged ? targetPath : oldPath;
 
-    // Update book.path in DB immediately after folder move so it stays in sync
-    // even if file rename below fails
+    // Persist the folder move before file renames so a rename failure cannot desynchronize book.path.
     if (pathChanged) {
       await this.bookService.update(bookId, { path: targetPath });
     }
 
-    // Rename files using file format template
     let filesRenamed = 0;
     if (librarySettings.fileFormat) {
       filesRenamed = await renameFilesWithTemplate(
@@ -217,13 +178,11 @@ export class RenameService {
       );
     }
 
-    // Determine result message
     if (!pathChanged && filesRenamed === 0) {
       this.log.debug({ bookId }, 'Book already organized — skipping rename');
       return { oldPath, newPath: oldPath, message: 'Already organized', filesRenamed: 0 };
     }
 
-    // Clean up empty parent directories after successful move
     if (pathChanged) {
       await cleanEmptyParents(oldPath, librarySettings.path, this.log);
     }
@@ -232,8 +191,6 @@ export class RenameService {
 
     this.emitEvent(bookId, book, oldPath, currentPath, filesRenamed);
 
-    // Fire-and-forget: connector refresh — only reached when path changed or files
-    // were renamed (the "already organized" early-return above skips this).
     this.enqueueConnectorRefresh(bookId, book.title, authorName, currentPath);
 
     return {
@@ -244,19 +201,17 @@ export class RenameService {
     };
   }
 
-  /** Check if target path belongs to a different book. */
   private async checkConflict(targetPath: string, bookId: number): Promise<void> {
     let exists = false;
     try {
       await stat(targetPath);
       exists = true;
     } catch {
-      // Target doesn't exist — no conflict
+      // A missing target cannot conflict.
     }
 
     if (!exists) return;
 
-    // Target exists on disk — check if it belongs to a different book (targeted query)
     const normalizedTarget = normalize(resolve(targetPath));
     const conflicting = await this.db
       .select({ id: books.id, title: books.title, path: books.path })
@@ -277,7 +232,6 @@ export class RenameService {
     }
   }
 
-  /** Move book folder to new location. Handles EXDEV (cross-volume) with copy+delete fallback. */
   private async moveBookFolder(oldPath: string, newPath: string): Promise<void> {
     await mkdir(dirname(newPath), { recursive: true });
 
@@ -285,7 +239,6 @@ export class RenameService {
       await rename(oldPath, newPath);
     } catch (error: unknown) {
       if ((error as NodeJS.ErrnoException).code === 'EXDEV') {
-        // Cross-volume: copy then delete
         this.log.info({ oldPath, newPath }, 'Cross-volume move — falling back to copy+delete');
         await mkdir(newPath, { recursive: true });
         await cp(oldPath, newPath, { recursive: true });

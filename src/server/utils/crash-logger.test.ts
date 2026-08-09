@@ -49,7 +49,6 @@ describe('buildCrashLogLine', () => {
   it('serializes Error instances via serializeError (not raw {})', () => {
     const line = buildCrashLogLine('msg', new Error('boom'));
     const parsed = JSON.parse(line);
-    // Raw JSON.stringify of Error gives {} — the regression we're guarding against.
     expect(parsed.error).not.toEqual({});
     expect(parsed.error.message).toBe('boom');
   });

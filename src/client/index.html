@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap">
     <title>Narratorr</title>
     <script>
-      // Apply theme + background before first paint to prevent white flash
+      // Apply the theme before paint to prevent a white flash.
       (function() {
         var t = localStorage.getItem('theme');
         if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';

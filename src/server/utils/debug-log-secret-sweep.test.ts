@@ -1,11 +1,4 @@
-/**
- * Meta-test (#932 AC7): drive a representative search through every debug log
- * site introduced for the search → enrich pipeline trace and assert that no
- * captured first-arg JSON string contains apikey / api_key / password / session
- * / mam_id / cookie / authorization / bearer.
- *
- * Catches regressions where a future log line accidentally widens the surface.
- */
+// Drive a representative search through the search-to-enrich log sites and reject secret-shaped fields.
 
 import { describe, it, expect, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
@@ -66,11 +59,7 @@ describe('debug-log secret sweep (#932 AC7)', () => {
     expect(debugCalls.length).toBeGreaterThan(0);
     for (const call of debugCalls) {
       const json = JSON.stringify(call);
-      // The guid CAN contain mam_id since it's a content identifier we didn't generate —
-      // but no log call should leak via independent fields. The guid is recorded as-is
-      // because tests can't distinguish content from a credential. Strip the known
-      // guid value before scanning so we're checking the AC's intent: no NEW credential
-      // leak from the log scaffolding itself.
+      // GUIDs are untrusted content; remove one before testing leakage from independent log fields.
       const sanitized = json.replace(/"guid":"[^"]*"/, '"guid":"<<value-redacted-for-test>>"');
       expect(sanitized).not.toMatch(SECRET_PATTERN);
     }
@@ -82,18 +71,13 @@ describe('debug-log secret sweep (#932 AC7)', () => {
       makeUsenet({ nzbName: 'Book "28" of "30" - apikey=SHOULD-NOT-LEAK' }),
     ];
 
-    // Mirror the production log site in applyMultiPartFilterAndRank, which emits at
-    // info (not debug) so a "wanted book stopped resolving" investigation has
-    // forensics without enabling debug logging (#1801).
+    // Match applyMultiPartFilterAndRank's info-level log shape.
     const { rejectedTitles } = filterMultiPartUsenet(results);
     for (const r of rejectedTitles) {
       logger.info({ title: r.title, reason: 'multi-part-detected', matchedPattern: r.matchedPattern }, 'Multi-part Usenet result rejected');
     }
 
-    // Title contains the secret-shaped string verbatim — this is the test's
-    // adversarial input. The log surface here is title-scoped (title can echo
-    // back what came over the wire), so we assert the log object's STRUCTURE
-    // (no extra fields) rather than that the title literal is sanitized.
+    // Title is untrusted payload, so assert log structure rather than sanitizing its content.
     expect(infoCalls.length).toBe(1);
     const fields = Object.keys(infoCalls[0] as object).sort();
     expect(fields).toEqual(['matchedPattern', 'reason', 'title']);
@@ -122,8 +106,7 @@ describe('debug-log secret sweep (#932 AC7)', () => {
 
     for (const call of debugCalls) {
       const json = JSON.stringify(call);
-      // The downloadUrl from makeUsenet contains apikey; if a quality filter
-      // log accidentally spreads `r.*` it would leak. Assert no apikey leaks.
+      // Spreading the result would expose SUPERSECRET from downloadUrl.
       expect(json).not.toMatch(/SUPERSECRET/);
       expect(json).not.toMatch(/apikey=/);
     }
@@ -132,10 +115,7 @@ describe('debug-log secret sweep (#932 AC7)', () => {
   it('serializeError redacts URLs in messages so error-logging callers stay safe', () => {
     const err = new Error('upstream rejected: GET https://nzbgeek.info/api?apikey=ABC&q=fairy — 500');
     const serialized = serializeError(err);
-    // Assertion is on .message AND .stack — Error.stack starts with the message
-    // line, so leaving it unredacted leaks secrets via error.stack on every
-    // caller that logs serializeError(error). The whole serialized payload must
-    // be free of secret-shaped URL params.
+    // Error.stack repeats the message; both surfaces must be redacted.
     expect(serialized.message).toContain('https://nzbgeek.info/api');
     expect(serialized.message).not.toContain('ABC');
     expect(serialized.message).not.toContain('apikey');

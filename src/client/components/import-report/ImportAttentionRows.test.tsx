@@ -16,11 +16,11 @@ describe('ImportAttentionRows (#1894, F19)', () => {
     renderWithProviders(<ImportAttentionRows items={items} />);
     const rows = screen.getAllByRole('listitem');
     expect(rows.map((r) => within(r).getByText(/Book$/).textContent)).toEqual([
-      'Held Book', 'Failed Book', 'Skipped Book', // group order held → failed → skipped
+      'Held Book', 'Failed Book', 'Skipped Book',
     ]);
-    expect(screen.queryByText('Accepted Book')).not.toBeInTheDocument(); // accepted is count-only
-    expect(screen.queryByText('Pending Book')).not.toBeInTheDocument(); // pending never shown
-    expect(screen.getByText('kaboom')).toBeInTheDocument(); // failed message
+    expect(screen.queryByText('Accepted Book')).not.toBeInTheDocument();
+    expect(screen.queryByText('Pending Book')).not.toBeInTheDocument();
+    expect(screen.getByText('kaboom')).toBeInTheDocument();
   });
 
   it('renders nothing when there are no attention rows', () => {
@@ -40,16 +40,11 @@ describe('ImportAttentionRows (#1894, F19)', () => {
     ];
     renderWithProviders(<ImportAttentionRows items={items} />);
 
-    // both present → the collided title is a link to the book.
     expect(screen.getByRole('link', { name: 'Dune' })).toHaveAttribute('href', '/books/9');
-    // title-only (FK deleted) → plain text, no link.
     expect(screen.getByText('Foundation')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Foundation' })).not.toBeInTheDocument();
-    // id-only → link with the "existing book" fallback label.
     expect(screen.getByRole('link', { name: 'existing book' })).toHaveAttribute('href', '/books/12');
-    // neither → generic fallback, no link.
     expect(screen.getByText('already in library')).toBeInTheDocument();
-    // already-importing → fallback text, no link.
     expect(screen.getByText('already importing')).toBeInTheDocument();
   });
 });

@@ -92,10 +92,8 @@ describe('NotifierService', () => {
 
   describe('notify', () => {
     it('sends to all enabled notifiers matching the event', async () => {
-      // Mock: return both enabled notifiers (webhook matches on_grab, discord does not)
       db.select.mockReturnValue(mockDbChain([mockWebhookNotifier, mockDiscordNotifier]));
 
-      // Mock global fetch for the webhook call
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
         new Response('ok', { status: 200 }),
       );
@@ -105,7 +103,6 @@ describe('NotifierService', () => {
         book: { title: 'Test' },
       });
 
-      // Only webhook should fire (it has on_grab), discord has on_failure only
       expect(fetchSpy).toHaveBeenCalledTimes(1);
       expect(fetchSpy).toHaveBeenCalledWith(
         'https://example.com/hook',
@@ -122,7 +119,6 @@ describe('NotifierService', () => {
         new Response('error', { status: 500, statusText: 'Internal Server Error' }),
       );
 
-      // Should not throw
       await service.notify('on_grab', { event: 'on_grab' });
 
       expect(log.warn).toHaveBeenCalledWith(
@@ -139,7 +135,6 @@ describe('NotifierService', () => {
       const fetchSpy = vi.spyOn(globalThis, 'fetch');
       await service.notify('on_grab', { event: 'on_grab' });
 
-      // Discord only has on_failure, not on_grab
       expect(fetchSpy).not.toHaveBeenCalled();
       expect(log.debug).toHaveBeenCalledWith(
         expect.objectContaining({ event: 'on_grab' }),
@@ -173,7 +168,6 @@ describe('NotifierService', () => {
       const fetchSpy = vi.spyOn(globalThis, 'fetch');
       await service.notify('on_grab', { event: 'on_grab' });
 
-      // Should not fire — non-array events fall back to []
       expect(fetchSpy).not.toHaveBeenCalled();
       fetchSpy.mockRestore();
     });
@@ -205,7 +199,6 @@ describe('NotifierService', () => {
       const fetchSpy = vi.spyOn(globalThis, 'fetch');
       await service.notify('on_grab', { event: 'on_grab' });
 
-      // Empty array never includes any event — notifier is skipped
       expect(fetchSpy).not.toHaveBeenCalled();
       expect(log.debug).toHaveBeenCalledWith(
         expect.objectContaining({ event: 'on_grab' }),
@@ -215,7 +208,6 @@ describe('NotifierService', () => {
     });
 
     it('#1180 throws a Zod-flavored error naming the missing field when persisted settings are malformed', () => {
-      // Valid type, but settings omit the required `url` — a drifted/hand-edited row.
       const badNotifier = createMockDbNotifier({ settings: { headers: '{}' } });
 
       expect(() => service.getAdapter(badNotifier as never)).toThrow(/url/);
@@ -229,10 +221,8 @@ describe('NotifierService', () => {
 
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network down'));
 
-      // Should resolve — Promise.allSettled catches all failures
       await service.notify('on_grab', { event: 'on_grab' });
 
-      // All 3 notifiers attempted and logged
       expect(fetchSpy).toHaveBeenCalledTimes(3);
       expect(log.warn).toHaveBeenCalledTimes(3);
       expect(log.warn).toHaveBeenCalledWith(
@@ -307,7 +297,7 @@ describe('NotifierService', () => {
         type: 'email',
         settings: { smtpHost: 'smtp.test.com', fromAddress: 'a@b.com', toAddress: 'c@d.com' },
       });
-      // Will fail because no real SMTP, but adapter was created successfully
+      // No SMTP server; reaching the adapter test is sufficient.
       expect(result).toHaveProperty('success');
     });
 
@@ -392,7 +382,6 @@ describe('NotifierService', () => {
       fetchSpy.mockRestore();
     });
 
-    // ── #782 log parity with IndexerService.testConfig ─────────────────────
     describe('debug logging parity with indexer.testConfig (#782)', () => {
       it('emits entry + exit debug logs in order on success', async () => {
         const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
@@ -458,7 +447,7 @@ describe('NotifierService', () => {
           settings: {},
         });
 
-        // Entry log fires (inside try, before throw) but exit log must not.
+        // Entry precedes adapter creation; only the exit log is absent on this throw.
         expect(log.debug).not.toHaveBeenCalledWith(
           expect.anything(),
           'Notifier config test result',
@@ -497,7 +486,6 @@ describe('NotifierService', () => {
     });
   });
 
-  // ── #731 Encrypt and mask notifier secrets ─────────────────────────────
   describe('#731 encryption — create', () => {
     it('encrypts secret fields before insert (webhook url + headers)', async () => {
       const insertChain = mockDbChain([createMockDbNotifier()]);
@@ -582,9 +570,7 @@ describe('NotifierService', () => {
       expect(row?.settings).toMatchObject({ botToken: '123:abc', chatId: '1' });
     });
 
-    // #1404 — decryptRow threads the injected service logger into decryptFields so a
-    // corrupt/wrong-key secret surfaces a diagnostic. Asserts the warn reaches THIS
-    // caller's injected logger (would fail if `this.log` were dropped from the call).
+    // #1404: decryption diagnostics must use this service's injected logger.
     it('getById threads this.log: corrupt url warns with entity/failedFields, passthrough preserved', async () => {
       const CORRUPT = '$ENC$not-valid-base64!!'; // $ENC$-prefixed, fails decrypt → passthrough
       db.select.mockReturnValue(mockDbChain([createMockDbNotifier({ type: 'webhook', settings: { url: CORRUPT, method: 'POST' } })]));
@@ -614,7 +600,6 @@ describe('NotifierService', () => {
       });
 
       const setArg = (updateChain as { set: ReturnType<typeof vi.fn> }).set.mock.calls[0]![0] as { settings: Record<string, unknown> };
-      // Exact byte-for-byte match — same IV, auth tag, ciphertext
       expect(setArg.settings.url).toBe(encryptedUrl);
       expect(setArg.settings.method).toBe('PUT');
     });
@@ -637,13 +622,11 @@ describe('NotifierService', () => {
       expect(setArg.settings.botToken).not.toBe(oldEnc);
     });
 
-    // #844 — entity-aware allowlist on resolveSentinelFields
     it('update rejects sentinel on a non-secret field rather than silently substituting it', async () => {
       const existing = createMockDbNotifier({ type: 'webhook', settings: { url: 'https://hook', method: 'POST' } });
       db.select.mockReturnValue(mockDbChain([existing]));
       db.update.mockReturnValue(mockDbChain([existing]));
 
-      // method is NOT in the notifier secret allowlist — must throw.
       await expect(
         service.update(1, {
           type: 'webhook',
@@ -702,7 +685,7 @@ describe('NotifierService', () => {
 
       await service.notify('on_grab', { event: 'on_grab', book: { title: 'X' } });
 
-      // The Telegram adapter encodes the bot token in the URL path
+      // Telegram embeds its bot token in the request path.
       const callUrl = fetchSpy.mock.calls[0]![0] as string;
       expect(callUrl).toContain('123:secret-token');
       expect(callUrl).not.toContain('$ENC$');
@@ -783,7 +766,6 @@ describe('NotifierService', () => {
     });
   });
 
-  // ── #781 Adapter caching ────────────────────────────────────────────────
   describe('#781 adapter caching', () => {
     function makeStubAdapter(): NotifierAdapter & { send: ReturnType<typeof vi.fn>; test: ReturnType<typeof vi.fn> } {
       return {
@@ -835,7 +817,6 @@ describe('NotifierService', () => {
       db.update.mockReturnValue(mockDbChain([updated]));
       await service.update(1, { settings: { url: 'https://new.hook' } });
 
-      // Subsequent notify reads the updated row from the DB.
       db.select.mockReturnValue(mockDbChain([updated]));
       await service.notify('on_grab', { event: 'on_grab' });
 
@@ -869,9 +850,7 @@ describe('NotifierService', () => {
       db.delete.mockReturnValue(mockDbChain());
       await service.delete(1);
 
-      // Direct getAdapter call — if cache were still populated it would return
-      // the prior adapter without invoking the factory. (Factory mock loosens
-      // the enum-typed events column, so cast through never for the call.)
+      // Direct access distinguishes eviction from reuse; the cast loosens mocked events typing.
       service.getAdapter(mockWebhookNotifier as never);
       expect(factorySpy).toHaveBeenCalledTimes(2);
       factorySpy.mockRestore();
@@ -907,7 +886,6 @@ describe('NotifierService', () => {
       });
       expect(factorySpy).toHaveBeenCalledTimes(2);
 
-      // Cached adapter is still in place — next notify reuses it, no new factory call.
       await service.notify('on_grab', { event: 'on_grab' });
       expect(factorySpy).toHaveBeenCalledTimes(2);
       expect(cachedAdapter.send).toHaveBeenCalledTimes(2);
@@ -921,11 +899,9 @@ describe('NotifierService', () => {
         .mockImplementationOnce(() => { throw new Error('factory boom'); })
         .mockImplementationOnce(() => goodAdapter);
 
-      // First notify: factory throws, Promise.allSettled catches, no rejection bubbles up.
       await expect(service.notify('on_grab', { event: 'on_grab' })).resolves.toBeUndefined();
       expect(factorySpy).toHaveBeenCalledTimes(1);
 
-      // Second notify: factory is retried, succeeds, adapter is cached and used.
       await service.notify('on_grab', { event: 'on_grab' });
       expect(factorySpy).toHaveBeenCalledTimes(2);
       expect(goodAdapter.send).toHaveBeenCalledTimes(1);
@@ -967,7 +943,6 @@ describe('NotifierService', () => {
     });
   });
 
-  // ── #229 Observability — send log enrichment ────────────────────────────
   describe('logging improvements (#229)', () => {
     it('send logs include notifier name and type at debug', async () => {
       db.select.mockReturnValue(mockDbChain([mockWebhookNotifier]));

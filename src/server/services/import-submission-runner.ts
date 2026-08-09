@@ -38,11 +38,7 @@ interface TerminalWrite {
   existingTitle?: string;
 }
 
-/**
- * The winning terminal-CAS outcome (#1894). `maybeComplete` returns this ONLY when
- * its `processing`→`complete` CAS wins (`getRowsAffected===1`); the caller dispatches
- * the `import_run_finished` notification post-commit. A lost/replayed CAS returns null.
- */
+/** Returned only to the winning completion CAS so notification dispatch happens post-commit. */
 export interface CompletionNotice {
   source: SubmissionSource;
   counts: SubmissionAggregates;
@@ -58,16 +54,9 @@ export interface ImportSubmissionRunnerDeps {
   nudgeImportWorker: () => void;
 }
 
-/**
- * Server-owned processing of finalized staged submissions (#1893). Mirrors
- * `ImportQueueWorker`'s single-guarded-lane drain idiom (nudge coalescing +
- * re-entrancy guard + safety poll + F72 pre-claim stop barrier / awaited launched
- * drain). Each proceeding item resolves enrichment OUTSIDE the tx, then runs
- * placeholder insert + enqueue + a CAS-guarded disposition write in ONE tx; the
- * final item's disposition + header `complete` + terminal aggregates commit
- * together. Held/skipped/failed write only a disposition. Boot auto-resume drains
- * any 'processing' submission from its first 'pending' item.
- */
+// Single-lane, nudge-coalesced drain with a safety poll and pre-claim stop barrier.
+// Enrichment runs outside the accepted-item transaction; creation, enqueue, disposition, and final completion commit atomically.
+// Boot resumes any processing submission from its first pending item.
 export class ImportSubmissionRunner {
   private readonly db: Db;
   private readonly log: FastifyBaseLogger;
@@ -94,13 +83,7 @@ export class ImportSubmissionRunner {
     this.nudgeImportWorker = deps.nudgeImportWorker;
   }
 
-  /**
-   * Dispatch the `import_run_finished` notification for a winning completion,
-   * post-commit and best-effort (F: delivery is one attempt, not exactly-once).
-   * Routed through `fireAndForget` so a `NotifierService.notify` rejection (it can
-   * reject on its initial DB query before `Promise.allSettled`) can never abort the
-   * runner drain.
-   */
+  // Dispatch one post-commit best-effort notification without letting an initial notify query rejection abort the drain.
   private dispatchCompletion(notice: CompletionNotice): void {
     fireAndForget(
       this.notifier.notify('import_run_finished', {
@@ -112,12 +95,11 @@ export class ImportSubmissionRunner {
     );
   }
 
-  /** Nudge the runner to look for finalized submissions to process. */
   nudge(): void {
     if (!this.stopping) this.emitter.emit('nudge');
   }
 
-  /** Start: enter the drain loop (boot auto-resume drains any 'processing' submission). */
+  /** Start polling and resume submissions left processing by a prior boot. */
   start(): void {
     if (this.running) return;
     this.running = true;
@@ -127,7 +109,7 @@ export class ImportSubmissionRunner {
     this.requestDrain();
   }
 
-  /** Graceful stop: stop accepting nudges, await the launched drain (F72). */
+  /** Stop accepting work and await the launched drain. */
   async stop(): Promise<void> {
     this.stopping = true;
     this.running = false;
@@ -197,15 +179,9 @@ export class ImportSubmissionRunner {
       .limit(1);
     if (!row) return false;
 
-    // The ENTIRE per-item pipeline (payload validation, classification, enrichment
-    // resolution, accepted tx) runs under one error boundary (F3): an unexpected
-    // classifier/read/preparation throw becomes a terminal `failed` for THIS row and
-    // the drain continues — it must never bubble to the drain loop, strand the row
-    // `pending`, and re-run forever on the safety poll.
+    // One item-level boundary converts preparation failures to terminal rows so the safety poll cannot retry forever.
     try {
-      // Persisted staged JSON is untrusted at the read boundary — SQLite does not
-      // enforce Drizzle's compile-time `$type`, so parse with the canonical schema
-      // (F5). A missing or malformed payload is a terminal `failed`, not a crash.
+      // SQLite does not enforce Drizzle's payload type; validate persisted JSON before classification.
       const parsed = row.itemPayload == null ? null : stagedImportItemSchema.safeParse(row.itemPayload);
       if (parsed == null || !parsed.success) {
         await this.writeTerminal(sub, row, {
@@ -216,14 +192,8 @@ export class ImportSubmissionRunner {
       }
       const staged = parsed.data as ImportConfirmItem;
 
-      // #2158: the ONE OPF overlay point — after the staged parse, BEFORE classification. The
-      // enriched item is what gets serialized into the manual job payload below, so this single
-      // fold reaches every downstream consumer: `classifyConfirmItem`'s three-way `findDuplicate`
-      // stops running narrator-blind, `buildBookCreatePayload` lands the OPF values on the created
-      // row, the copy-time collision fence gets narrators, and Audnexus's fill-empty sees them as
-      // present. Read from `item.path` — the SOURCE folder — never from the eventual library target:
-      // the manual copy/move fast path stages AUDIO ONLY (#1602), so `metadata.opf` is never carried
-      // into the target and a read there would find nothing for every copy/move import.
+      // Overlay OPF once before classification so matching, creation, collision checks, and the job payload share it.
+      // Read the source folder: copy/move staging carries audio only, never metadata.opf, into the target.
       const { item, narratorSource } = applyOpfOverlay(staged, await readOpfMetadata(staged.path, this.log));
 
       const classification = await classifyConfirmItem(item, this.bookService, this.log);
@@ -253,23 +223,16 @@ export class ImportSubmissionRunner {
     return true;
   }
 
-  /**
-   * Accepted path: resolve enrichment OUTSIDE the tx, then insert placeholder +
-   * enqueue + CAS disposition (+ maybe-complete) in ONE tx. Post-commit best-effort
-   * side effects (info log, genre telemetry, one `book_added` event, worker nudge)
-   * re-homed here. Rolls back to `pending` on any failure — no orphan.
-   */
+  // Resolve enrichment outside the transaction; create, enqueue, claim, and maybe-complete inside it or roll back to pending.
+  // Logging, telemetry, book_added, worker nudge, and completion notification are post-commit.
   private async acceptItem(sub: SubmissionRow, row: ItemRow, item: ImportConfirmItem, narratorSource: NarratorSource): Promise<void> {
     const resolved = await this.bookService.resolveCreateInput(buildBookCreatePayload(item, item.metadata ?? null, 'importing'));
     let createdBookId: number | undefined;
-    // Every catch branch returns, so `notice` is only read on the success path where
-    // the tx assigned it — no initializer (avoids a useless-assignment).
     let notice: CompletionNotice | null;
     try {
       notice = await this.db.transaction(async (tx) => {
         const bookId = await this.bookService.createResolved(resolved, tx);
-        // `narratorSource` rides the job payload beside `mode` — both are runner-computed and both
-        // are declared on `manualImportJobPayloadSchema` only, so neither is stripped at re-parse.
+        // The manual job schema declares runner-computed narratorSource and mode so re-parsing cannot strip them.
         const payload: ManualImportJobPayload = { ...item, narratorSource };
         if (sub.mode) payload.mode = sub.mode;
         const enqueued = await this.bookImportService.enqueue({ bookId, type: 'manual', metadata: JSON.stringify(payload) }, tx);
@@ -285,13 +248,8 @@ export class ImportSubmissionRunner {
         return this.maybeComplete(tx, sub);
       });
     } catch (error: unknown) {
-      // Same-ASIN create-time race (F2). `createResolved(resolved, tx)` runs on our
-      // transaction handle and, by contract, PROPAGATES the raw ASIN unique violation
-      // (it cannot do the incumbent lookup against an uncommitted caller tx) — so the
-      // tx path never yields an `OwnedRecordingError`. After this tx has rolled back,
-      // detect the raw violation and resolve the incumbent ourselves via
-      // `findAsinCollision` (sentinel -1: no self-row to exclude), then record the
-      // specified `already-in-library` skip carrying the incumbent id/title.
+      // Caller-tx creation propagates raw ASIN conflicts because it cannot inspect an uncommitted incumbent.
+      // After rollback, resolve the incumbent with sentinel -1 and record an already-in-library skip.
       if (isUniqueViolation(error, ASIN_UNIQUE_VIOLATION)) {
         const collision = await this.bookService.findAsinCollision(-1, resolved.asin ?? '');
         await this.writeTerminal(sub, row, {
@@ -302,9 +260,7 @@ export class ImportSubmissionRunner {
         return;
       }
       if (error instanceof OwnedRecordingError) {
-        // Defensive: the non-tx `createResolved` path maps the race to this typed
-        // error. Unreachable via the tx path above but kept so a future contract
-        // change fails closed to the same skip outcome.
+        // Defensive against a future createResolved contract that maps caller-tx conflicts to the typed error.
         await this.writeTerminal(sub, row, {
           disposition: 'skipped',
           reason: 'already-in-library',
@@ -326,10 +282,7 @@ export class ImportSubmissionRunner {
     if (createdBookId === undefined) return;
     this.log.info({ submissionId: sub.id, ordinal: row.ordinal, bookId: createdBookId, title: item.title }, 'Staged import item accepted');
     this.bookService.trackUnmatchedGenres(resolved.genres).catch((err) => this.log.debug({ error: serializeError(err) }, 'Failed to track unmatched genres'));
-    // The book_added event lookup/record is BEST-EFFORT (F49): a rejected getById must
-    // NOT escape and suppress the durable-job nudge below — a committed accepted import
-    // would then wait for the queue worker's safety poll. Guard the whole event path and
-    // always fire the worker nudge.
+    // Best-effort event lookup must not suppress the worker nudge for an already committed job.
     try {
       const book = await this.bookService.getById(createdBookId);
       if (book) {
@@ -341,7 +294,7 @@ export class ImportSubmissionRunner {
       this.log.warn({ error: serializeError(err), submissionId: sub.id, ordinal: row.ordinal }, 'Failed to record book_added event — book lookup failed');
     }
     this.nudgeImportWorker();
-    // Post-commit: this item's accept completed the submission → dispatch once.
+    // Post-commit: dispatch once if this accepted item completed the submission.
     if (notice) this.dispatchCompletion(notice);
   }
 
@@ -361,20 +314,12 @@ export class ImportSubmissionRunner {
       if (getRowsAffected(claim) !== 1) return null; // already dispositioned by another pass
       return this.maybeComplete(tx, sub);
     });
-    // Post-commit: this terminal write completed the submission → dispatch once.
+    // Post-commit: dispatch once if this terminal write completed the submission.
     if (notice) this.dispatchCompletion(notice);
   }
 
-  /**
-   * When no 'pending' items remain, freeze the terminal aggregates and CAS-flip the
-   * header 'processing' → 'complete' (idempotent). Runs inside the same tx as the
-   * final item's disposition write, so the outcome record commits atomically.
-   *
-   * Returns a `CompletionNotice` ONLY when THIS call's terminal CAS wins
-   * (`getRowsAffected===1`) so the caller can dispatch `import_run_finished`
-   * post-commit exactly once (#1894); a still-pending header or a lost/replayed CAS
-   * returns null (no re-fire).
-   */
+  // Freeze aggregates and CAS processing→complete in the final disposition transaction.
+  // Only the winning CAS returns a notice, preventing post-commit notification replay.
   private async maybeComplete(tx: DbOrTx, sub: SubmissionRow): Promise<CompletionNotice | null> {
     const [stillPending] = await tx
       .select({ id: importSubmissionItems.id })

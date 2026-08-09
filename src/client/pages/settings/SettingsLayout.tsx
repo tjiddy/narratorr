@@ -8,19 +8,13 @@ export function SettingsLayout() {
 
   return (
     <div className="space-y-8">
-      {/* Guards internal-link navigation while any settings card holds unsaved
-          edits. Mounted here because every tracked form renders under /settings/*.
-          Non-link nav affordances (POP, programmatic navigate) bypass it by design. */}
+      {/* Covers internal links for all tracked forms; POP and programmatic navigation bypass it. */}
       <UnsavedChangesGuard />
 
-      {/* Header */}
       <PageHeader title="Settings" subtitle="Configure your Narratorr installation" />
 
       <div className="flex flex-col lg:flex-row gap-8">
-        {/* Navigation Sidebar — sticky on desktop so the nav stays usable while long pages
-            scroll. self-start is load-bearing: flex children stretch to row height by default,
-            and a full-height item has no room left to stick within. top-24 clears the app
-            header (sticky, sm:h-20 = 80px) with a 16px gap — top-8 would pin under it. */}
+        {/* self-start gives sticky room inside flex; top-24 clears the 80px app header by 16px. */}
         <nav className="lg:w-56 shrink-0 lg:sticky lg:top-24 lg:self-start animate-fade-in-up stagger-1">
           <div className="flex lg:flex-col gap-2 overflow-x-auto lg:overflow-visible pb-2 lg:pb-0">
             {settingsPageRegistry.map((item) => {
@@ -52,7 +46,6 @@ export function SettingsLayout() {
           </div>
         </nav>
 
-        {/* Content */}
         <div className="flex-1 min-w-0 animate-fade-in-up stagger-2">
           <Routes>
             {settingsPageRegistry.map((entry) => {

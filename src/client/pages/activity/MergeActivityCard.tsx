@@ -18,7 +18,6 @@ export function MergeActivityCard({ state, onCancel, isCancelling }: {
 
   return (
     <div className="glass-card rounded-2xl p-4 sm:p-5 animate-fade-in-up hover:border-primary/20 transition-all duration-300">
-      {/* Header */}
       <div className="flex items-center gap-3 mb-3">
         <div className="p-1.5 bg-primary/10 rounded-lg">
           <MergeStatusIcon outcome={state.outcome} phase={state.phase} />
@@ -44,7 +43,6 @@ export function MergeActivityCard({ state, onCancel, isCancelling }: {
         )}
       </div>
 
-      {/* Progress bar (processing phase only) */}
       {state.phase === 'processing' && percentage !== undefined && (
         <div className="mb-2">
           <div
@@ -62,7 +60,6 @@ export function MergeActivityCard({ state, onCancel, isCancelling }: {
         </div>
       )}
 
-      {/* Terminal outcome messages */}
       {isSuccess && state.message && (
         <p className="text-sm text-success mb-1">{state.message}</p>
       )}

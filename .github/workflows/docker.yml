@@ -1,10 +1,8 @@
 name: Build & Push Docker Image
 run-name: Docker build for ${{ github.ref_name }}
 
-# Two channels, build/publish only — no deploy:
-#   - push to `develop`         → :develop on DockerHub + GHCR (bleeding edge; pull manually)
-#   - semver tag `vX.Y.Z` on main → :latest + :X.Y.Z + :X.Y on DockerHub + GHCR, plus a GitHub Release
-# Non-semver tags (e.g. v1219_01) do not match the filter and trigger nothing.
+# Develop pushes publish :develop; semver tags publish release tags and a GitHub Release.
+# Non-semver tags trigger nothing, and this workflow never deploys.
 on:
   push:
     branches: [develop]
@@ -63,11 +61,11 @@ jobs:
   docker:
     needs: [quality-gates]
     runs-on: ubuntu-latest
-    timeout-minutes: 30   # buildx/cache/QEMU can wedge with no cap (run 28070407209 hung ~90m); fail fast instead
+    timeout-minutes: 30   # Cap Buildx/cache/QEMU hangs.
 
     permissions:
-      contents: write   # create GitHub Release on the semver-tag (release) path
-      packages: write   # push images to GHCR
+      contents: write
+      packages: write
 
     steps:
       - name: Checkout repository
@@ -87,10 +85,7 @@ jobs:
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
             echo "git_tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           else
-            # 8 must match SHORT_SHA_LENGTH in src/server/utils/version.ts — that
-            # file explains why the width is a constant rather than derived from
-            # git (this job checks out shallow, so `git rev-parse --short` here
-            # would compute 7 from a one-commit clone). Keep the two in step.
+            # Keep 8 aligned with SHORT_SHA_LENGTH; shallow checkout makes git derive 7.
             echo "git_tag=develop-${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
           fi
 
@@ -101,8 +96,7 @@ jobs:
           images: |
             ${{ env.IMAGE_NAME }}
             ghcr.io/${{ github.repository }}
-          # Release (semver tag): :X.Y.Z + :X.Y, and :latest auto-added by flavor latest=auto.
-          # Dev (any non-tag ref, incl. develop push / manual dispatch): :develop only.
+          # Semver: :X.Y.Z, :X.Y, and auto-latest. Non-tags: :develop only.
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -169,7 +163,6 @@ jobs:
             -p 3199:3000 \
             ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
 
-          # Wait for /api/health to return 200 (max 30s)
           for i in $(seq 1 30); do
             if curl -sf http://localhost:3199/api/health > /dev/null 2>&1; then
               break
@@ -179,22 +172,15 @@ jobs:
 
           HTTP_STATUS=$(curl -sf -o /dev/null -w '%{http_code}' http://localhost:3199/api/health)
 
-          # Verify runtime Node version is 24.x
           NODE_VERSION=$(docker exec smoke-test node --version)
           echo "Container Node version: $NODE_VERSION"
 
-          # Guard the ffmpeg-8 dependency (#1679): xHE-AAC / USAC decode needs ffmpeg >= 8.
-          # Parse the major NUMERICALLY (sed-captured integer, then `-lt` compare) so a bare
-          # substring '8' inside an unrelated build token can't satisfy the gate.
+          # Parse the numeric major; a substring match could pass on an unrelated build token.
           FFMPEG_LINE=$(docker exec smoke-test ffmpeg -version | head -n1)
           echo "Container ffmpeg: $FFMPEG_LINE"
           FFMPEG_MAJOR=$(printf '%s\n' "$FFMPEG_LINE" | sed -n 's/^ffmpeg version \([0-9][0-9]*\)\..*/\1/p')
 
-          # Verify ffprobe is executable at the path the APP derives, not just anywhere on
-          # PATH. Runtime resolves ffprobe via deriveFfprobePath() (src/core/utils/ffprobe-path.ts)
-          # — the sibling of the detected ffmpeg binary with a trailing 'ffmpeg' -> 'ffprobe'
-          # swap. Mirror that derivation here so an image whose ffprobe sibling is missing
-          # fails CI even if some other ffprobe exists elsewhere on PATH (#1679 F1).
+          # Mirror deriveFfprobePath() so an unrelated ffprobe on PATH cannot satisfy CI.
           FFMPEG_PATH=$(docker exec smoke-test sh -c 'command -v ffmpeg' || true)
           FFPROBE_PATH=$(printf '%s\n' "$FFMPEG_PATH" | sed 's/ffmpeg$/ffprobe/')
           echo "Container ffmpeg path: $FFMPEG_PATH — derived ffprobe path: $FFPROBE_PATH"
@@ -204,10 +190,7 @@ jobs:
             FFPROBE_EXECUTABLE=no
           fi
 
-          # Verify the ffmpeg third-party notice + project LICENSE shipped in the image and
-          # are non-empty (#1862). Content sanity lives in docker/license-notice.test.ts
-          # (pnpm verify); the docker-build gate and this check are presence-only —
-          # runtime deployment evidence that the files reached the published image.
+          # Runtime proves shipment; docker/license-notice.test.ts owns content validation.
           if docker exec smoke-test test -s /app/THIRD_PARTY_NOTICES.md \
             && docker exec smoke-test test -s /app/LICENSE; then
             NOTICES_SHIPPED=yes

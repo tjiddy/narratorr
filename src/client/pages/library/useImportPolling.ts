@@ -12,7 +12,6 @@ export function useImportPolling(books: LibraryBookListItem[]) {
   const importingCount = useMemo(() => books.filter(b => b.status === 'importing').length, [books]);
   const prevImportingRef = useRef(0);
 
-  // Toast when all imports finish
   useEffect(() => {
     if (prevImportingRef.current > 0 && importingCount === 0) {
       toast.success('Import complete');
@@ -20,7 +19,7 @@ export function useImportPolling(books: LibraryBookListItem[]) {
     prevImportingRef.current = importingCount;
   }, [importingCount]);
 
-  // Refetch more frequently when books are importing (SSE fallback only)
+  // Poll only as an SSE fallback while imports are active.
   useEffect(() => {
     if (importingCount === 0 || sseConnected) return;
     const interval = setInterval(() => {

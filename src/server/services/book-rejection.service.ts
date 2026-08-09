@@ -24,25 +24,17 @@ export class BookRejectionService {
     private settingsService: SettingsService,
     private eventHistory?: EventHistoryService,
     private retrySearchDeps?: RetrySearchDeps,
-    /** #1960 AC23 — optional so unit suites that do not exercise the seam can omit it. */
     private companionEbook?: CompanionBookReconcileTrigger,
   ) {}
 
-  /**
-   * Reject an imported book as wrong release:
-   * 1. Blacklist the release (shared helper)
-   * 2. Reset book fields immediately after blacklist (DB-1: before irreversible FS ops)
-   * 3. Delete book files from disk (best-effort)
-   * 4. Record wrong_release event
-   * 5. Fire-and-forget re-search (shared helper)
-   */
+  /** Blacklist first, reset DB before filesystem work, then clean up and record best-effort. */
   async rejectAsWrongRelease(bookId: number): Promise<void> {
     const book = await this.bookService.getById(bookId);
     if (!book) throw new BookRejectionError('Book not found', 'NOT_FOUND');
     if (book.status !== 'imported') throw new BookRejectionError('Book is not imported', 'NOT_IMPORTED');
     if (!book.lastGrabGuid && !book.lastGrabInfoHash) throw new BookRejectionError('Book has no release identifiers', 'NO_IDENTIFIERS');
 
-    // 1. Blacklist + 5. Re-search (fire-and-forget, overrideRetry since user explicitly requested)
+    // The user explicitly requested retry, so overrideRetry bypasses automatic settings.
     await blacklistAndRetrySearch({
       identifiers: {
         infoHash: book.lastGrabInfoHash ?? undefined,
@@ -59,7 +51,7 @@ export class BookRejectionService {
       overrideRetry: true,
     });
 
-    // 2. Reset book fields — immediately after blacklist, before irreversible FS deletion (DB-1)
+    // Reset book fields before irreversible filesystem deletion so crashes cannot leave stale metadata.
     await this.db.update(books).set({
       status: 'wanted',
       path: null,
@@ -79,26 +71,17 @@ export class BookRejectionService {
       updatedAt: new Date(),
     }).where(eq(books.id, bookId));
 
-    // 2b. Companion-ebook hygiene (#1960 AC23/AC24). Provably a NO-OP WRITE: the reset above
-    // set `status: 'wanted'` and `path: null`, so `isCompanionEbookEligible` fails and
-    // `reconcileLocked` returns `skipped` before it touches `companion_ebooks` — never a
-    // zeroing write. Exposure was already closed by the predicate's `status === 'imported'`
-    // term. The AC exists to pin that this stays a no-op.
+    // Wanted/pathless books must short-circuit reconciliation before any companion write.
     triggerCompanionReconcile(this.companionEbook, bookId, this.log, 'Companion ebook reconcile failed after wrong-release reset');
 
-    // 3. Preserve cover + delete book files (best-effort — after DB reset so crash won't leave stale state)
     if (book.path) {
       try {
         await preserveBookCover(book.path, bookId, config.configPath, this.log);
         const librarySettings = await this.settingsService.get('library');
         const result = await this.bookService.deleteBookFiles(book.path, librarySettings.path);
-        // The helper records per-file `rm` failures in `failedManaged` and never throws on them, so the
-        // catch below no longer fires for a locked managed file. Surface rejection-context diagnostics
-        // (bookId + count) here — the value is a typed result, not a catch binding, so raw-error-logging
-        // does not apply. Nonfatal: the book was already reset to `wanted`/`path: null`, so it re-grabs.
+        // Per-file failures are reported, not thrown; the prior DB reset makes them nonfatal.
         if (result.failedManaged.length > 0) {
-          // Carry the failed paths (#1598 Gap 3), not just the count: an operator needs to know
-          // WHICH managed audio is orphaned after the DB path is nulled, to find/remove it by hand.
+          // Log paths so operators can remove orphaned files after the book path is cleared.
           this.log.warn({ bookId, failed: result.failedManaged.length, failedPaths: result.failedManaged }, 'Wrong release: some managed files could not be deleted (continuing)');
         }
       } catch (error: unknown) {
@@ -107,7 +90,6 @@ export class BookRejectionService {
       }
     }
 
-    // 4. Record event (fire-and-forget)
     this.recordWrongReleaseEvent(book);
 
     this.log.info({ bookId, title: book.title }, 'Book rejected as wrong release');

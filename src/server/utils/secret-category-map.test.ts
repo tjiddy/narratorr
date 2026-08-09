@@ -8,21 +8,8 @@ import {
   SECRET_SETTINGS_CATEGORIES,
 } from './secret-category-map.js';
 
-/**
- * #1567 — lockstep guard over the canonical settings-secret category map.
- *
- * Before this, the encrypt/decrypt, mask, and migration lists were three
- * hand-maintained homes that had to agree and had already drifted (a category
- * absent from the migration list while present in encrypt + mask). All three are
- * now derived from `SECRET_CATEGORY_MAP`; these tests fail if a category is added
- * to one derived view without the others, or if the auth carve-out regresses.
- */
-
-// Mirror of the route's mask view as a plain category set.
 const maskKeys = new Set(SETTINGS_SECRET_MAP.map(([key]) => key));
-// Mirror of the migration view as a plain category set.
 const migrateKeys = new Set(SECRET_SETTINGS_CATEGORIES.map((c) => c.key));
-// Encrypt-on-write categories (SettingsService-managed).
 const encryptKeys = Object.keys(SECRET_CATEGORIES);
 
 describe('#1567 settings-secret canonical map', () => {
@@ -47,7 +34,6 @@ describe('#1567 settings-secret canonical map', () => {
     });
 
     it('auth is absent from the encrypt/decrypt view', () => {
-      // It is encrypted inline by AuthService, not SettingsService.set().
       expect(encryptKeys).not.toContain('auth');
     });
 

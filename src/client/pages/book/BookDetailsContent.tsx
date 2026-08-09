@@ -14,10 +14,7 @@ interface MergedData {
 }
 
 function useSidebarSignals(libraryBook: BookWithAuthor, merged: MergedData) {
-  // Fire the series query at the page level so a book with no scalar
-  // seriesName but a DB-cache link (via member ASIN) still surfaces the
-  // Series card. (F9) The query is also issued inside SeriesCard, but
-  // TanStack Query dedupes on the same key.
+  // Query here and in SeriesCard so cache-only links open the sidebar; TanStack dedupes the shared key.
   const seriesQuery = useQuery({
     queryKey: queryKeys.bookSeries(libraryBook.id),
     queryFn: () => api.getBookSeries(libraryBook.id),
@@ -74,8 +71,7 @@ export function BookDetailsContent({ libraryBook, merged }: {
             </div>
           )}
 
-          {/* Immediately before Location, with no section between them: the `none` copy reads
-              "shown under Location below", so the placement is load-bearing, not cosmetic. */}
+          {/* Keep immediately before Location: the empty-state copy says “Location below.” */}
           {hasPath && <CompanionEbookSection bookId={libraryBook.id} />}
 
           {hasPath && <BookLocationSection path={libraryBook.path!} />}

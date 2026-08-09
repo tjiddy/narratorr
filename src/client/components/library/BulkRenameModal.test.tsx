@@ -102,8 +102,7 @@ describe('BulkRenameModal', () => {
     await user.click(await screen.findByRole('button', { name: 'Book One' }));
     expect(await screen.findByRole('heading', { name: 'Files' })).toBeInTheDocument();
     expect(screen.getByText('a.m4b')).toBeInTheDocument();
-    // bookPlan has a non-null folderMove, but the collapsed header already shows
-    // the folder diff — the expanded panel must NOT repeat it as a "Folder" section.
+    // The collapsed row owns the folder diff; expansion must not duplicate it.
     expect(screen.queryByRole('heading', { name: 'Folder' })).not.toBeInTheDocument();
   });
 
@@ -191,9 +190,7 @@ describe('BulkRenameModal', () => {
     expect(api.getBulkRenamePreview).not.toHaveBeenCalled();
   });
 
-  // AC #4 (#1493): zero folder mismatches is only "nothing to rename" when no fileFormat
-  // rule exists. With a file rule, file-level renames may still apply, so the run stays
-  // available even when every folder already matches.
+  // With a file rule, zero folder mismatches may still leave file-only work.
   describe('0-mismatch empty state', () => {
     it('fileFormat empty: shows "nothing to rename" with no list rows and no Rename All button', async () => {
       vi.mocked(api.getBulkRenamePreview).mockResolvedValue({
@@ -243,9 +240,7 @@ describe('BulkRenameModal', () => {
         jobTotal: 0,
       });
       renderModal();
-      // hasFileRule === true branch of the empty-state copy (BulkRenameModal.tsx:176-178).
       expect(await screen.findByText(/^No imported books to rename\.$/i)).toBeInTheDocument();
-      // The folder-format empty-state copy must NOT render under a file rule.
       expect(screen.queryByText(/nothing to rename/i)).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /^rename all$/i })).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: /^cancel$/i })).toBeInTheDocument();

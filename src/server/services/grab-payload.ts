@@ -1,11 +1,6 @@
 import type { SearchResult } from '@core/indexers/types.js';
 import type { GrabParams } from './download-orchestrator.js';
 
-/**
- * Build a grab payload from a SearchResult and bookId.
- * Maps the 7 common base fields; caller-specific extras go in `overrides`.
- * Undefined optional fields are omitted from the output.
- */
 export function buildGrabPayload(
   result: SearchResult,
   bookId: number,

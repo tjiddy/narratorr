@@ -1,9 +1,5 @@
 import { z } from 'zod';
 
-// ============================================================================
-// Event History schemas
-// ============================================================================
-
 export const eventTypeSchema = z.enum([
   'grabbed', 'download_completed', 'download_failed',
   'imported', 'import_failed',
@@ -15,10 +11,8 @@ export const eventTypeSchema = z.enum([
   'metadata_fixed',
   'grab_failed',
   'recording_review_skipped',
-  // #2104 — a relaxed query rung found candidates but none corroborated the
-  // retained title segments, so nothing was auto-grabbed. Persisted (not an SSE
-  // toast) because a scheduled cycle runs every 360 minutes and a toast would be
-  // missed; it surfaces under Activity → Needs Review.
+  // A relaxed search found candidates but no corroborating title segments; persist
+  // the hold because scheduled searches cannot rely on a transient SSE toast.
   'search_relaxed_held',
 ]);
 
@@ -28,7 +22,7 @@ export const eventSourceSchema = z.enum(['manual', 'rss', 'scheduled', 'auto', '
 
 export type EventSource = z.infer<typeof eventSourceSchema>;
 
-/** Event types that support the "mark as failed" action (have download linkage) */
+// Only events with download linkage can be marked failed.
 export const actionableEventTypes: EventType[] = [
   'grabbed', 'download_completed', 'download_failed', 'imported', 'import_failed',
 ];

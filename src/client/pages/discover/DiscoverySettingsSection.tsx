@@ -18,7 +18,7 @@ function pickFormFields(src: typeof DEFAULT_SETTINGS.discovery): DiscoveryFormDa
   };
 }
 
-// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
+// Guard label and section title must stay identical.
 const CARD_LABEL = 'Discovery';
 
 export function DiscoverySettingsSection() {
@@ -41,9 +41,6 @@ export function DiscoverySettingsSection() {
     >
       <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
         <SettingsTable>
-          {/* "Enable discovery", not bare "Discovery" — the section title is already "Discovery"
-              and a same-text row label would break every getByText('Discovery') query (RTL throws
-              on ambiguous matches) and read redundantly under the header. */}
           <SettingsRow htmlFor="discovery-enabled" label="Enable discovery" description="Automatically generate book recommendations based on your library">
             <ToggleSwitch id="discovery-enabled" {...register('enabled')} />
           </SettingsRow>

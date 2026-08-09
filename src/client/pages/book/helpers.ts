@@ -17,13 +17,7 @@ export interface MetadataBook {
   seriesPrimary?: { name: string; position?: number | undefined } | undefined;
 }
 
-/**
- * The RAW resolved value of each clearable field, plus `seriesPosition` — "what
- * does the operator actually see" (#2069 AC18).
- *
- * `undefined` means "resolves to nothing": either nothing is stored and the
- * provider has none, or the field carries a tombstone.
- */
+/** `undefined` means the field is tombstoned or neither source provides a value. */
 export interface DisplayedFields {
   seriesName: string | undefined;
   seriesPosition: number | undefined;
@@ -35,32 +29,9 @@ export interface DisplayedFields {
 }
 
 /**
- * ONE decision, in one place: what the header shows and what the Edit Metadata
- * modal pre-fills and diffs against must not be able to disagree (#2069 AC18/AC25).
- *
- * Order of application:
- *
- *  1. **Tombstoned → resolves to nothing.** An explicit clear stays cleared
- *     everywhere until the operator sets a new value; the provider fallback must
- *     not resurrect it.
- *  2. **Otherwise → today's exact per-field operator, unchanged.** `||` for
- *     `description`, `seriesName`, `publisher`, `publishedDate`, `subtitle` (so a
- *     stored empty string still falls through to the provider value, as it does
- *     today); `??` for `genres` (so a stored `[]` deliberately OVERRIDES the
- *     provider list) and for `seriesPosition`; `pickPrimarySeries` for the series
- *     ref (#1088/#1097 — `series[0]` on Audible can be a broader universe entry).
- *
- * The `||`/`??` asymmetry is preserved by construction, not re-derived: a uniform
- * operator would change behavior on exactly the `''` and `[]` cases.
- *
- * `seriesPosition` keeps the #1927 AC10 pair rule — it resolves only when the name
- * does — and since #2152 carries its OWN tombstone on top of it: an operator who
- * clears just the Position gets "in the series, unnumbered", so the header renders
- * the series with no `#n` and the provider number does not resurrect. The two
- * gates are independent and compose; neither replaces the other.
- *
- * `coverUrl`, `duration`, and `narratorNames` are NOT part of this decision — none
- * of them is clearable — and stay inside `mergeBookData`.
+ * Shared display/edit resolution for clearable fields. Tombstones suppress both
+ * sources. String fields use `||`, while genres and position use `??`, preserving
+ * the intentional `''` fallback and `[]` override. Position also requires a name.
  */
 export function resolveDisplayedFields(
   libraryBook: BookWithAuthor,
@@ -72,7 +43,7 @@ export function resolveDisplayedFields(
 
   return {
     seriesName,
-    // Pair rule (the name must resolve) AND the position's own tombstone (#2152).
+    // Position needs a resolved name and has its own tombstone.
     seriesPosition: seriesName && !cleared.has('seriesPosition')
       ? (libraryBook.seriesPosition ?? primaryMetaSeries?.position)
       : undefined,
@@ -80,17 +51,11 @@ export function resolveDisplayedFields(
     description: orProvider(cleared, 'description', libraryBook.description, metadataBook?.description),
     publisher: orProvider(cleared, 'publisher', libraryBook.publisher, metadataBook?.publisher),
     publishedDate: orProvider(cleared, 'publishedDate', libraryBook.publishedDate, metadataBook?.publishedDate),
-    // `??`, not `||`: a stored `[]` is a deliberate override that must NOT fall
-    // through to the provider list.
+    // A stored [] deliberately overrides the provider list.
     genres: cleared.has('genres') ? undefined : (libraryBook.genres ?? metadataBook?.genres),
   };
 }
 
-/**
- * The `||` arm shared by the five string fields: tombstoned resolves to nothing,
- * otherwise a stored empty string still defers to the provider value — today's
- * exact behavior, preserved by construction.
- */
 function orProvider(
   cleared: ReadonlySet<string>,
   field: string,
@@ -130,9 +95,6 @@ export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: Metada
     statusDotClass: status.dotClass,
     statusBarClass: status.barClass,
     subtitle: displayed.subtitle,
-    // The FULL author list — co-authored books credit everyone, each name linkable
-    // by its own ASIN (the narrator line got the plural treatment long ago; this
-    // matches it).
     authors: libraryBook.authors.map((a) => ({ name: a.name, asin: a.asin })),
   };
 }

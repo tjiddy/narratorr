@@ -38,7 +38,7 @@ const sortDirectionLabels: Record<SortField, DirectionLabel> = {
 
 const sortFields: SortField[] = ['createdAt', 'title', 'author'];
 
-/** Direction order per field: Date Added shows desc (Newest) first; alphabetical fields show asc (A→Z) first. */
+/** Date Added defaults newest-first; other fields default ascending. */
 const fieldDirections: Record<string, SortDirection[]> = {
   createdAt: ['desc', 'asc'],
 };
@@ -64,7 +64,6 @@ export function SortDropdown({ sortField, onSortFieldChange, sortDirection, onSo
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Focus the option at focusIndex when open, or when focusIndex changes while open
   useEffect(() => {
     if (!open) return;
     const buttons = menuRef.current?.querySelectorAll<HTMLButtonElement>('button');

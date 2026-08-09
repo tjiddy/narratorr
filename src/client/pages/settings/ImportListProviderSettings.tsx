@@ -41,17 +41,12 @@ function HardcoverSettings({ settings, onChange }: SettingsProps) {
   const listUrl = (settings.listUrl as string) ?? '';
   const importMax = settings.importMax === 'all' ? 'all' : String((settings.importMax as number | undefined) ?? 50);
 
-  // Advisory local feedback only (the server schema + test() are authoritative,
-  // #1879 AC13): a non-empty listUrl that fails to parse renders inline; empty
-  // and parseable values clear it.
+  // Client feedback is advisory; the server schema and connection test are authoritative.
   const urlError = listUrl.trim() !== '' && parseHardcoverListUrl(listUrl) === null
     ? 'Not a Hardcover list URL'
     : null;
 
-  // Dedicated list-type change handler (AC12): preserve apiKey + only the target
-  // type's own keys, deleting every foreign key — listUrl/importMax when leaving
-  // custom, shelfId when entering custom or trending. Replaces the bare
-  // `onChange({ ...settings, listType })` so no stale foreign key survives.
+  // Preserve apiKey, but scrub keys owned by the previous list type.
   function handleListTypeChange(next: string) {
     const scoped: Record<string, unknown> = { ...settings, listType: next };
     if (next !== 'custom') { delete scoped.listUrl; delete scoped.importMax; }

@@ -4,7 +4,7 @@ import type { FastifyBaseLogger } from 'fastify';
 
 vi.mock('node:fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
-  // Default: no existing OPF on disk (ENOENT) → the writer is free to write.
+  // Default to no existing OPF.
   readFile: vi.fn().mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })),
 }));
 
@@ -14,7 +14,6 @@ import { parseOpfMetadata } from './abs-opf-parser.fixture.js';
 import { NARRATORR_OPF_MARKER } from '@core/utils/opf-regex.js';
 import type { BookService, BookWithAuthor } from '../services/book.service.js';
 
-/** Wrap raw `<metadata>` children in a minimal OPF 2.0 package — for hand-built drift/negative cases. */
 function rawOpf(metadataInner: string): string {
   return [
     '<?xml version="1.0" encoding="utf-8"?>',
@@ -74,7 +73,6 @@ describe('generateOpf', () => {
       authors: names([{ name: 'X & Y' }]) as BookWithAuthor['authors'],
     }));
 
-    // Raw output carries entity escapes, never a bare ampersand.
     expect(opf).toContain('&amp;');
     expect(opf).toContain('&lt;');
     expect(opf).toContain('&gt;');
@@ -82,7 +80,6 @@ describe('generateOpf', () => {
     expect(opf).toContain('&apos;');
     expect(opf).not.toMatch(/&(?!amp;|lt;|gt;|quot;|apos;)/);
 
-    // Parsing yields the original raw strings back (well-formed entity handling).
     const $ = cheerio.load(opf, { xmlMode: true });
     expect($('dc\\:title').text()).toBe('Tom & Jerry <"\'>');
     expect($('dc\\:description').text()).toBe('a < b & c > d "quote" \'apos\'');
@@ -91,7 +88,6 @@ describe('generateOpf', () => {
   });
 
   it('strips XML-1.0-invalid control characters from every serialized field, leaving valid XML (#1675)', () => {
-    // One representative from each banned range, embedded mid-string in each escaped field.
     const ctrl = '\x00\x08\x0B\x0C\x0E\x1F';
     const opf = generateOpf(makeBook({
       title: `Ti${ctrl}tle`,
@@ -102,11 +98,9 @@ describe('generateOpf', () => {
       narrators: names([{ name: `Na${ctrl}rrator` }]) as BookWithAuthor['narrators'],
     }));
 
-    // No raw control byte survives anywhere in the emitted document.
     // eslint-disable-next-line no-control-regex
     expect(opf).not.toMatch(/[\x00-\x08\x0B\x0C\x0E-\x1F]/);
 
-    // ...and it still parses as well-formed XML with the control chars excised.
     const $ = cheerio.load(opf, { xmlMode: true });
     expect($('dc\\:title').text()).toBe('Title');
     expect($('dc\\:description').text()).toBe('Description');
@@ -117,11 +111,9 @@ describe('generateOpf', () => {
   });
 
   it('preserves XML-1.0-valid whitespace (tab \\x09, newline \\x0A, CR \\x0D) and the entity escaping (#1675)', () => {
-    // Tab/newline/CR are legal XML 1.0 characters — NOT stripped; the ampersand is still escaped first.
     const opf = generateOpf(makeBook({ title: 'A\tB\nC\rD & E' }));
-    expect(opf).toContain('&amp;'); // entity escaping is unchanged (additive strip only)
+    expect(opf).toContain('&amp;');
     expect(opf).not.toMatch(/&(?!amp;|lt;|gt;|quot;|apos;)/);
-    // Assert the legal whitespace survives serialization (raw string — a parser would normalize CR→LF).
     expect(opf).toMatch(/A\tB\nC\rD/);
   });
 
@@ -160,12 +152,9 @@ describe('generateOpf', () => {
 
   it('embeds the narratorr provenance marker inside <metadata>, inert to the parsed fields (#1674)', () => {
     const opf = generateOpf(makeBook({ title: 'Owned', asin: 'B00ASIN123', seriesName: 'S', seriesPosition: 1 }));
-    // The raw marker element is present...
     expect(opf).toContain(NARRATORR_OPF_MARKER);
     const $ = cheerio.load(opf, { xmlMode: true });
-    // ...sits inside <metadata>...
     expect($('metadata meta[name="narratorr:managed"]').attr('content')).toBe('true');
-    // ...and is inert: it perturbs none of the fields a reader extracts.
     expect($('dc\\:title').text()).toBe('Owned');
     expect($('dc\\:identifier[opf\\:scheme="ASIN"]').text()).toBe('B00ASIN123');
     expect($('meta[name="calibre:series"]').attr('content')).toBe('S');
@@ -173,10 +162,7 @@ describe('generateOpf', () => {
   });
 });
 
-// The authoritative ABS-compatibility guarantee: assert generateOpf's output against the ACTUAL
-// Audiobookshelf field mapping (parseOpfMetadata.js, pinned in abs-opf-parser.fixture.ts), not the
-// Cheerio "a selector found the tag" check above. A tag-presence check passes while the real ABS
-// field mapping silently breaks (wrong opf:role, scheme casing, series-meta adjacency); these do not.
+// Assert against pinned Audiobookshelf selection semantics, not generic tag presence.
 describe('generateOpf — ABS parseOpfMetadata contract', () => {
   it('round-trips a representative book to ABS\'s exact extracted shape', () => {
     const opf = generateOpf(makeBook({
@@ -201,15 +187,14 @@ describe('generateOpf — ABS parseOpfMetadata contract', () => {
       subtitle: 'A Subtitle',
       description: 'A description.',
       publisher: 'A Publisher',
-      publishedYear: '2021', // year only, not the full dc:date
-      authors: ['A1', 'A2'], // ordered, role-bucketed
+      publishedYear: '2021',
+      authors: ['A1', 'A2'],
       narrators: ['N1', 'N2'],
       asin: 'B00ASIN123',
       isbn: '9781234567890',
-      series: [{ name: 'My Series', sequence: '3' }], // sequence is a string
+      series: [{ name: 'My Series', sequence: '3' }],
       genres: ['Fantasy', 'Adventure'],
     });
-    // Fields narratorr never emits stay at ABS's empty defaults.
     expect(parsed.language).toBeNull();
     expect(parsed.tags).toEqual([]);
   });
@@ -310,30 +295,27 @@ describe('generateOpf — ABS parseOpfMetadata contract', () => {
   });
 
   it('un-escapes and strips HTML in dc:description (mirrors ABS fetchDescription)', () => {
-    // The writer escapes a literal '<b>' to '&lt;b&gt;'; ABS un-escapes then strips the tag.
     const parsed = parseOpfMetadata(generateOpf(makeBook({ description: 'Bold <b>word</b> here' })));
     expect(parsed.description).toBe('Bold word here');
   });
 
   it('treats the narratorr:managed marker as inert — it produces no field (#1674)', () => {
-    // The marker is a <meta> that lives in the same array fetchSeries scans; prove it pollutes nothing.
     const parsed = parseOpfMetadata(generateOpf(makeBook({ title: 'Owned', asin: 'B00ASIN123' })));
     expect(parsed.title).toBe('Owned');
     expect(parsed.asin).toBe('B00ASIN123');
-    expect(parsed.series).toEqual([]); // the marker <meta> is not misread as a series entry
+    expect(parsed.series).toEqual([]);
     expect(JSON.stringify(parsed)).not.toContain('narratorr:managed');
   });
 
   it('drift sentinel: a corrupted opf:role / dropped opf:scheme no longer round-trips (regression the Cheerio check missed)', () => {
-    // A future shape regression that keeps the XML well-formed but breaks ABS's field mapping.
     const drifted = rawOpf([
       '    <dc:title>X</dc:title>',
-      '    <dc:creator opf:role="author">Jane</dc:creator>', // 'author' ≠ ABS's 'aut'
-      '    <dc:identifier opf:Scheme="ASIN">B00ASIN123</dc:identifier>', // wrong-case attr name
+      '    <dc:creator opf:role="author">Jane</dc:creator>',
+      '    <dc:identifier opf:Scheme="ASIN">B00ASIN123</dc:identifier>',
     ].join('\n'));
     const parsed = parseOpfMetadata(drifted);
-    expect(parsed.authors).toEqual([]); // creator unbucketed
-    expect(parsed.asin).toBeNull(); // identifier unread
+    expect(parsed.authors).toEqual([]);
+    expect(parsed.asin).toBeNull();
   });
 });
 
@@ -370,9 +352,7 @@ describe('writeOpfForImport', () => {
   });
 
   it('skips the write for a pointer single-file path (audio extension) — no write, warn logged (#1675)', async () => {
-    // Pointer single-file imports persist a *file* path. join(filePath, "metadata.opf") would target
-    // a path beneath a file (ENOTDIR), and the parent dir can't be assumed to be a one-book folder, so
-    // the writer must skip with a warning rather than write — and never call writeFile with the file path.
+    // A pointer file's parent may be shared, so no sidecar location is safe.
     const { service, getById } = makeBookService(makeBook());
     const log = makeLog();
     await writeOpfForImport({ enabled: true, bookService: service, bookId: 1, bookFolder: '/audiobooks/Doctor Sleep.m4b', log });
@@ -386,7 +366,6 @@ describe('writeOpfForImport', () => {
   });
 
   it('reflects a narrator added after the snapshot (proves fresh reload, not a stale book)', async () => {
-    // The helper reads getById's return — a record carrying an enrichment-added narrator.
     const enriched = makeBook({ id: 7, narrators: names([{ name: 'Late Narrator' }]) as BookWithAuthor['narrators'] });
     const { service } = makeBookService(enriched);
     await writeOpfForImport({ enabled: true, bookService: service, bookId: 7, bookFolder: '/lib/Book', log: makeLog() });
@@ -460,7 +439,6 @@ describe('writeOpfForImport', () => {
   });
 });
 
-// The result-returning variant the reconcile bulk job uses to count per-book failures (#1670 F2).
 describe('writeOpfSidecar — result API (#1670)', () => {
   const writeFileMock = vi.mocked(writeFile);
   const readFileMock = vi.mocked(readFile);
@@ -515,8 +493,7 @@ describe('writeOpfSidecar — result API (#1670)', () => {
     ).resolves.toBeUndefined();
   });
 
-  // #2159 — the optional failure sink that lets the reconcile job NAME the cause. The outcome union
-  // stays a string (it is stubbed at ~40 mock sites); the cause rides a side channel instead.
+  // The failure side channel preserves the caught value behind the string outcome.
   describe('onFailure side channel (#2159)', () => {
     it('receives the caught VALUE (not a message) when writeFile rejects', async () => {
       const cause = Object.assign(new Error("ENOENT: no such file or directory, open '/lib/Book/metadata.opf'"), { code: 'ENOENT' });
@@ -527,7 +504,7 @@ describe('writeOpfSidecar — result API (#1670)', () => {
 
       expect(outcome).toBe('failed');
       expect(onFailure).toHaveBeenCalledTimes(1);
-      expect(onFailure).toHaveBeenCalledWith(cause); // identity — `.code` survives for the formatter
+      expect(onFailure).toHaveBeenCalledWith(cause);
     });
 
     it('receives the caught value when the fresh book load rejects', async () => {

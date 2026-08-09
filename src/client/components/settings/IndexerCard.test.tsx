@@ -446,8 +446,6 @@ describe('IndexerCard — edit mode', () => {
     );
 
     expect(screen.getByLabelText('MAM ID')).toHaveValue('secret-mam-id');
-    // baseUrl is API-only (#1886): no input, but the persisted value still round-trips
-    // (asserted in the #908 registry-overlay round-trip test below)
     expect(screen.queryByLabelText(/Base URL/)).not.toBeInTheDocument();
   });
 
@@ -659,21 +657,16 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         />,
       );
 
-      // Switch type to myanonamouse
       await user.selectOptions(screen.getByLabelText('Type'), 'myanonamouse');
 
-      // Fill required MAM ID
       const mamIdInput = screen.getByLabelText('MAM ID');
       await user.type(mamIdInput, 'test-mam-id');
 
-      // Fill name
       await user.type(screen.getByPlaceholderText('MyAnonamouse'), 'My MAM');
 
-      // Verify language checkboxes and search type dropdown are not shown (#372)
       expect(screen.queryByLabelText('English')).not.toBeInTheDocument();
       expect(screen.queryByLabelText('Search Type')).not.toBeInTheDocument();
 
-      // Submit
       await user.click(screen.getByText('Add Indexer'));
 
       await waitFor(() => {
@@ -707,7 +700,6 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         />,
       );
 
-      // Language checkboxes and search type dropdown not shown (#372)
       expect(screen.queryByLabelText('English')).not.toBeInTheDocument();
       expect(screen.queryByLabelText('Search Type')).not.toBeInTheDocument();
     });
@@ -731,7 +723,6 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         />,
       );
 
-      // Submit without changing anything — isVip should roundtrip
       await user.click(screen.getByText('Save Changes'));
       await waitFor(() => {
         expect(onSubmit).toHaveBeenCalled();
@@ -756,7 +747,6 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         />,
       );
 
-      // Badge should render from persisted values without API call
       expect(screen.getByText('PersistedUser')).toBeInTheDocument();
       expect(screen.getByText('VIP')).toBeInTheDocument();
     });
@@ -866,7 +856,6 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         />,
       );
 
-      // Badge should show fresh metadata from Test button, not persisted data
       expect(screen.getByText('FreshUser')).toBeInTheDocument();
       expect(screen.getByText('VIP')).toBeInTheDocument();
     });
@@ -894,7 +883,6 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         />,
       );
 
-      // Persisted badge should still render despite test failure
       expect(screen.getByText('PersistedUser')).toBeInTheDocument();
       expect(screen.getByText('VIP')).toBeInTheDocument();
     });
@@ -971,7 +959,6 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         />,
       );
 
-      // Language checkboxes not shown
       expect(screen.queryByLabelText('English')).not.toBeInTheDocument();
     });
   });
@@ -999,7 +986,6 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         />,
       );
 
-      // Badge hydrated from persisted mamUsername
       await waitFor(() => {
         expect(screen.getByText('OldUser')).toBeInTheDocument();
       });
@@ -1022,10 +1008,6 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         />,
       );
 
-      // Type a MAM ID to get the badge first — need to switch to MAM type
-      // In create mode there's no indexer prop, so no indexerId
-      // We'll test via IndexerFields directly (already covered in IndexerFields.test.tsx)
-      // This test verifies that create-mode (no indexer prop) doesn't crash
       expect(screen.queryByTitle('Refresh MAM status')).not.toBeInTheDocument();
     });
   });
@@ -1089,12 +1071,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
     });
   });
 
-  // #908 family — settingsFromIndexer registry-overlay guard (siblings:
-  // NotifierCard.test.tsx, DownloadClientForm.test.tsx). Each case renders edit mode with an
-  // entity of one type and fires Test without switching the type selector. As of #1342 that
-  // no-switch shape is the permanent documented contract: the edit-mode Type selector is now
-  // rendered disabled and unregistered (IndexerCard.tsx), so in-edit type switching is
-  // intentionally unreachable. The overlay is validated at hydration, per type, instead.
+  // Edit-mode type is immutable, so registry-overlay isolation is tested at hydration.
   describe('#908 — settingsFromIndexer registry overlay (no foreign-type leak)', () => {
     it('MAM edit Test payload contains no non-MAM keys and round-trips persisted MAM-specific keys', async () => {
       const onFormTest = vi.fn();
@@ -1131,16 +1108,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
 
       const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
 
-      // Foreign keys (declared by another indexer type's defaults, not by MAM) MUST NOT leak.
-      // Registry-derived via the shared #908-family helper: covers hostname/pageLimit (abb) and
-      // apiUrl/apiKey (newznab/torznab). MAM's schema-only keys (isVip/classname/mamUsername — no
-      // default) are asserted as present below, not here.
-      //
-      // flareSolverrUrl is excluded from the absence check: it's in the other types' defaults
-      // (so the defaults-derived helper lists it) but the form schema's superRefine ALWAYS
-      // materializes settings.flareSolverrUrl — to `undefined` for MAM (schemas/indexer.ts:162-176)
-      // — so the key is present on every indexer payload. This is the indexer schema⊃defaults gap
-      // the spec calls out (#1343); the original hardcoded list omitted it for the same reason.
+      // superRefine materializes flareSolverrUrl as undefined for MAM, so it cannot be absent.
       const foreignKeys = foreignRegistryKeys('myanonamouse', INDEXER_TYPES, INDEXER_REGISTRY)
         .filter((k) => k !== 'flareSolverrUrl');
       expect(foreignKeys).toEqual(expect.arrayContaining(['hostname', 'pageLimit', 'apiUrl', 'apiKey']));
@@ -1148,8 +1116,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         expect(payloadSettings).not.toHaveProperty(key);
       }
 
-      // Persisted MAM-specific keys MUST round-trip — including baseUrl, which has
-      // no form input (#1886) and survives purely via schema-declared hydration
+      // baseUrl is schema-only; this guards hydration-only round-tripping.
       expect(payloadSettings).toHaveProperty('mamId', 'mam-secret');
       expect(payloadSettings).toHaveProperty('baseUrl', 'https://mam.example.com');
       expect(payloadSettings).toHaveProperty('isVip', true);
@@ -1173,8 +1140,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
           mamUsername: 'wedgeuser',
           classname: 'VIP',
           useFreeleechWedge: 'preferred',
-          // Simulate a stray persisted minWedgeReserve — the form schema no longer
-          // declares it, so zod must strip it from the submitted payload (#1207).
+          // Intentionally persisted legacy key; Zod must strip it.
           minWedgeReserve: 5,
         },
       });
@@ -1227,7 +1193,6 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
 
       const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
 
-      // Foreign keys for torznab MUST NOT leak
       expect(payloadSettings).not.toHaveProperty('hostname');
       expect(payloadSettings).not.toHaveProperty('pageLimit');
       expect(payloadSettings).not.toHaveProperty('mamId');
@@ -1238,7 +1203,6 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       expect(payloadSettings).not.toHaveProperty('mamUsername');
       expect(payloadSettings).not.toHaveProperty('classname');
 
-      // Stored Torznab keys MUST round-trip
       expect(payloadSettings).toHaveProperty('apiUrl', 'https://torznab.example.com/api');
       expect(payloadSettings).toHaveProperty('apiKey', 'tk');
     });
@@ -1250,7 +1214,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
         id: 102,
         name: 'MAM Legacy SearchType',
         type: 'myanonamouse',
-        // Legacy persisted value: 1 → 'active'. Form schema rejects numeric searchType.
+        // Legacy 1 maps to "active"; numeric values fail the current form schema.
         settings: { mamId: 'm', baseUrl: '', searchLanguages: [1], searchType: 1 as unknown as string },
       });
 
@@ -1273,13 +1237,7 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       expect(payloadSettings.searchType).toBe('active');
     });
 
-    // Mutation-kill: the create-mode reset effect (IndexerCard.tsx:135-139). Validation-free
-    // (DOM field state), because the Test button is RHF `handleSubmit`-gated and a freshly
-    // switched-to type has empty required fields — so we round-trip a type switch and assert the
-    // previous type's field value did not survive. The default create type is newznab (apiUrl
-    // field); switching to abb (hostname field) and back must clear apiUrl. Deleting the reset
-    // effect leaves the typed apiUrl in RHF state across the switch, so the remounted field shows
-    // the stale value and this reds.
+    // DOM state avoids RHF validation; deleting the reset leaves apiUrl stale across this round-trip.
     it('#908 create-mode type switch resets the previous type\'s field (reset-effect guard)', async () => {
       const user = userEvent.setup();
       renderWithProviders(
@@ -1294,7 +1252,6 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
       await user.selectOptions(typeSelect, 'abb');
       await user.selectOptions(typeSelect, 'newznab');
 
-      // After the round-trip the reset effect must have cleared the stale apiUrl.
       expect(screen.getByPlaceholderText('https://indexer.example.com/api')).toHaveValue('');
     });
   });

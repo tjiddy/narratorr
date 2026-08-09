@@ -82,29 +82,21 @@ describe('monitor job', () => {
     expect(log.warn).toHaveBeenCalledWith({ id: 1 }, 'Download not found in client');
   });
 
-  // #1857 — guarded monitor transitions cannot resurrect a cancelled (replaced) row.
-  // Deletion-heuristic teeth: each test asserts the EXACT guarded WHERE predicate
-  // (id + the polled (clientStatus, pipelineStage) tuple). If `expected` were removed
-  // from the production transition, the WHERE would collapse to id-only and these
-  // assertions fail — the stale-writer suppression would no longer hold.
+  // Pin id + the polled state tuple; an id-only guard would permit stale resurrection.
   describe('guarded transitions (#1857 F2/F14)', () => {
     it('main branch: guard miss suppresses completion side effects AND writes the exact guarded predicate', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 7, progress: 0.5 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed', savePath: '/dl', name: 'book', size: 1 });
-      // Guarded update misses (row already transitioned to (failed, idle) by a replace):
-      // returning() resolves [] ONLY because the guarded predicate didn't match.
       const chain = mockDbChain([]);
       db.update.mockReturnValue(chain);
 
       await runMonitor();
 
-      // The write targets id + the polled tuple — removing `expected` breaks this.
       expect((chain.where as Mock)).toHaveBeenCalledWith(
         and(eq(downloads.id, 1), eq(downloads.clientStatus, 'downloading'), eq(downloads.pipelineStage, 'idle')),
       );
-      // The stale completion write is skipped → no completion notification.
       expect(notifierService.notify).not.toHaveBeenCalled();
       expect(log.debug).toHaveBeenCalledWith({ id: 1 }, 'Monitor update skipped — row changed since poll (guarded)');
     });
@@ -114,12 +106,10 @@ describe('monitor job', () => {
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 7, progress: 0.5 },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed', savePath: '/dl', name: 'book', size: 1 });
-      db.update.mockReturnValue(mockDbChain([{ id: 1 }])); // guard matches → write lands
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await runMonitor();
 
-      // Completion side effects DO fire when the guard matches (stale-writer guard is
-      // scoped to a genuine change, not a blanket suppression).
       expect(notifierService.notify).toHaveBeenCalled();
     });
 
@@ -127,8 +117,8 @@ describe('monitor job', () => {
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 7, title: 'Replaced Book' },
       ]));
-      adapter.getDownload.mockResolvedValueOnce(null); // replacement removed the client item
-      const chain = mockDbChain([]); // guarded failed-write misses (row already (failed, idle))
+      adapter.getDownload.mockResolvedValueOnce(null);
+      const chain = mockDbChain([]);
       db.update.mockReturnValue(chain);
 
       await runMonitor();
@@ -136,7 +126,6 @@ describe('monitor job', () => {
       expect((chain.where as Mock)).toHaveBeenCalledWith(
         and(eq(downloads.id, 1), eq(downloads.clientStatus, 'downloading'), eq(downloads.pipelineStage, 'idle')),
       );
-      // No failure notification, and the replaced row is NOT deleted.
       expect(notifierService.notify).not.toHaveBeenCalled();
       expect(db.delete).not.toHaveBeenCalled();
       expect(log.debug).toHaveBeenCalledWith({ id: 1 }, 'Missing-item handling skipped — row changed since poll (guarded)');
@@ -156,7 +145,6 @@ describe('monitor job', () => {
     await runMonitor();
 
     expect(db.update).toHaveBeenCalled();
-    // Status unchanged, so debug log for progress
     expect(log.debug).toHaveBeenCalledWith({ id: 1, progress: 0.5 }, 'Download progress');
   });
 
@@ -217,7 +205,6 @@ describe('monitor job', () => {
 
     await runMonitor();
 
-    // Only 1 update call: download status (book promotion moved to processOneDownload)
     expect(db.update).toHaveBeenCalledTimes(1);
   });
 
@@ -233,7 +220,6 @@ describe('monitor job', () => {
 
     await runMonitor();
 
-    // Only 1 update call: download status
     expect(db.update).toHaveBeenCalledTimes(1);
   });
 
@@ -249,12 +235,10 @@ describe('monitor job', () => {
 
     await runMonitor();
 
-    // First download errors, second still processes
     expect(log.error).toHaveBeenCalledWith(
       expect.objectContaining({ id: 1 }),
       'Error monitoring download',
     );
-    // Second download should still update
     expect(db.update).toHaveBeenCalled();
   });
 
@@ -282,7 +266,6 @@ describe('monitor job', () => {
 
     await runMonitor();
 
-    // seeding maps to completed, which differs from 'downloading' → state change
     expect(log.info).toHaveBeenCalledWith({ id: 1, status: 'completed' }, 'Download state changed');
   });
 
@@ -370,10 +353,7 @@ describe('monitor job', () => {
 
     await runMonitor();
 
-    // completedAt already set, so the update should keep the existing value, not overwrite with new Date()
     expect(db.update).toHaveBeenCalled();
-    // Should NOT log "Download completed, queued for import" because status was already 'downloading'
-    // but it does because download.status !== 'completed'. The key check: completedAt is preserved.
     expect(log.info).toHaveBeenCalledWith({ id: 1, status: 'completed' }, 'Download state changed');
   });
 
@@ -390,7 +370,6 @@ describe('monitor job', () => {
     await runMonitor();
 
     expect(db.update).toHaveBeenCalled();
-    // Status changed from queued to downloading
     expect(log.info).toHaveBeenCalledWith({ id: 1, status: 'downloading' }, 'Download state changed');
   });
 
@@ -401,21 +380,18 @@ describe('monitor job', () => {
       { id: 3, externalId: 'ext-3', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: null },
     ]));
     adapter.getDownload
-      .mockResolvedValueOnce({ progress: 50, status: 'downloading' })   // id:1 ok
-      .mockRejectedValueOnce(new Error('Timeout'))                        // id:2 throws
-      .mockResolvedValueOnce({ progress: 75, status: 'downloading' });   // id:3 ok
+      .mockResolvedValueOnce({ progress: 50, status: 'downloading' })
+      .mockRejectedValueOnce(new Error('Timeout'))
+      .mockResolvedValueOnce({ progress: 75, status: 'downloading' });
     db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await runMonitor();
 
-    // All three should be attempted
     expect(adapter.getDownload).toHaveBeenCalledTimes(3);
-    // Error logged for id:2
     expect(log.error).toHaveBeenCalledWith(
       expect.objectContaining({ id: 2 }),
       'Error monitoring download',
     );
-    // id:1 and id:3 should still update successfully
     expect(db.update).toHaveBeenCalledTimes(2);
   });
 
@@ -468,7 +444,6 @@ describe('monitor job', () => {
 
     await runMonitor();
 
-    // Status unchanged (paused → paused), so debug log
     expect(log.debug).toHaveBeenCalledWith({ id: 1, progress: 0.6 }, 'Download progress');
   });
 
@@ -478,11 +453,9 @@ describe('monitor job', () => {
         .mockReturnValueOnce(mockDbChain([
           { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book' },
         ]))
-        // Other active downloads check: none
+        // Other active downloads, book, then the failed download's pre-grab snapshot.
         .mockReturnValueOnce(mockDbChain([]))
-        // Get book: path present, but the snapshot — not the path — drives the revert
         .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: '/audiobooks/test', status: 'downloading' })]))
-        // Failed download's pre-grab snapshot
         .mockReturnValueOnce(mockDbChain([{ bookStatusAtGrab: 'wanted' }]));
       adapter.getDownload.mockResolvedValueOnce(null);
       db.update.mockReturnValue(mockDbChain([{ id: 42 }]));
@@ -501,9 +474,7 @@ describe('monitor job', () => {
           { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book' },
         ]))
         .mockReturnValueOnce(mockDbChain([]))
-        // Book HAS a path on disk — old path-inference would force 'imported'
         .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: '/audiobooks/test', status: 'downloading' })]))
-        // …but the pre-grab snapshot was 'failed', which must win
         .mockReturnValueOnce(mockDbChain([{ bookStatusAtGrab: 'failed' }]));
       adapter.getDownload.mockResolvedValueOnce(null);
       db.update.mockReturnValue(mockDbChain([{ id: 42 }]));
@@ -523,7 +494,6 @@ describe('monitor job', () => {
         ]))
         .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]))
-        // Legacy/orphan download: null snapshot → conservative 'imported', NOT path-derived 'wanted'
         .mockReturnValueOnce(mockDbChain([{ bookStatusAtGrab: null }]));
       adapter.getDownload.mockResolvedValueOnce(null);
       db.update.mockReturnValue(mockDbChain([{ id: 42 }]));
@@ -541,11 +511,8 @@ describe('monitor job', () => {
         .mockReturnValueOnce(mockDbChain([
           { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42 },
         ]))
-        // Other active downloads check: none
         .mockReturnValueOnce(mockDbChain([]))
-        // Get book
         .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: '/audiobooks/test', status: 'downloading' })]))
-        // Pre-grab snapshot: book was 'missing' before the grab
         .mockReturnValueOnce(mockDbChain([{ bookStatusAtGrab: 'missing' }]));
       adapter.getDownload.mockResolvedValueOnce({
         progress: 30,
@@ -566,7 +533,6 @@ describe('monitor job', () => {
         .mockReturnValueOnce(mockDbChain([
           { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book' },
         ]))
-        // Other active downloads check: one other active
         .mockReturnValueOnce(mockDbChain([{ id: 2, bookId: 42, status: 'queued' }]));
       adapter.getDownload.mockResolvedValueOnce(null);
       db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
@@ -580,22 +546,19 @@ describe('monitor job', () => {
     });
 
     it('stays downloading when one of multiple active downloads fails', async () => {
-      // Two downloads for same book, both active
       db.select
         .mockReturnValueOnce(mockDbChain([
           { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book' },
           { id: 2, externalId: 'ext-2', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42 },
         ]))
-        // Recovery for download 1: check other active — download 2 still active
         .mockReturnValueOnce(mockDbChain([{ id: 2, bookId: 42, status: 'downloading' }]));
       adapter.getDownload
-        .mockResolvedValueOnce(null)  // download 1 not found
-        .mockResolvedValueOnce({ progress: 50, status: 'downloading' }); // download 2 ok
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ progress: 50, status: 'downloading' });
       db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await runMonitor();
 
-      // Should NOT have logged book status recovery
       expect(log.info).not.toHaveBeenCalledWith(
         expect.objectContaining({ status: 'wanted' }),
         'Book status recovered after download failure',
@@ -611,14 +574,12 @@ describe('monitor job', () => {
         .mockReturnValueOnce(mockDbChain([
           { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book' },
         ]))
-        // Other active downloads check: one in queued status
         .mockReturnValueOnce(mockDbChain([{ id: 3, bookId: 42, status: 'queued' }]));
       adapter.getDownload.mockResolvedValueOnce(null);
       db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await runMonitor();
 
-      // Should skip recovery because another active download exists
       expect(log.debug).toHaveBeenCalledWith(
         expect.objectContaining({ bookId: 42, otherActiveCount: 1 }),
         'Skipping book status recovery — other active downloads exist',
@@ -630,7 +591,6 @@ describe('monitor job', () => {
         .mockReturnValueOnce(mockDbChain([
           { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book' },
         ]))
-        // Other active downloads check: one in paused status
         .mockReturnValueOnce(mockDbChain([{ id: 3, bookId: 42, status: 'paused' }]));
       adapter.getDownload.mockResolvedValueOnce(null);
       db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
@@ -648,7 +608,6 @@ describe('monitor job', () => {
         .mockReturnValueOnce(mockDbChain([
           { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book' },
         ]))
-        // Other active downloads: one in checking status
         .mockReturnValueOnce(mockDbChain([{ id: 5, bookId: 42, status: 'checking' }]));
       adapter.getDownload.mockResolvedValueOnce(null);
       db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
@@ -666,7 +625,6 @@ describe('monitor job', () => {
         .mockReturnValueOnce(mockDbChain([
           { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book' },
         ]))
-        // Other active downloads: one in pending_review status
         .mockReturnValueOnce(mockDbChain([{ id: 6, bookId: 42, status: 'pending_review' }]));
       adapter.getDownload.mockResolvedValueOnce(null);
       db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
@@ -684,7 +642,6 @@ describe('monitor job', () => {
         .mockReturnValueOnce(mockDbChain([
           { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book' },
         ]))
-        // Other active downloads: one in importing status
         .mockReturnValueOnce(mockDbChain([{ id: 7, bookId: 42, status: 'importing' }]));
       adapter.getDownload.mockResolvedValueOnce(null);
       db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
@@ -702,7 +659,6 @@ describe('monitor job', () => {
         .mockReturnValueOnce(mockDbChain([
           { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book' },
         ]))
-        // Other active downloads: one in completed status (awaiting import)
         .mockReturnValueOnce(mockDbChain([{ id: 8, bookId: 42, status: 'completed' }]));
       adapter.getDownload.mockResolvedValueOnce(null);
       db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
@@ -720,11 +676,8 @@ describe('monitor job', () => {
         .mockReturnValueOnce(mockDbChain([
           { id: 3, externalId: 'ext-3', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book' },
         ]))
-        // Other active downloads: none (others already failed)
         .mockReturnValueOnce(mockDbChain([]))
-        // Get book: no path
         .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]))
-        // Failed download's pre-grab snapshot
         .mockReturnValueOnce(mockDbChain([{ bookStatusAtGrab: 'wanted' }]));
       adapter.getDownload.mockResolvedValueOnce(null);
       db.update.mockReturnValue(mockDbChain([{ id: 42 }]));
@@ -785,26 +738,19 @@ describe('monitor job', () => {
       );
     });
 
-    // #1857 F12 / #1861 — when the book is already served by a grab blocker (a live
-    // download / replacement winner, a QG-eligible completed row, or a pending auto
-    // import job), handleDownloadFailure returns 'already_active': the failed row is
-    // NOT deleted and NO competing download is added.
+    // already_active covers live, QG-completed, and pending-import blockers.
     it('already_active: does not delete the failed row or add a competing download', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
       ]));
-      adapter.getDownload.mockResolvedValueOnce(null); // missing-item → failed → handleDownloadFailure
-      db.update.mockReturnValue(mockDbChain([{ id: 1 }])); // guarded failed-write lands
-      // Book already has a grab blocker → retrySearch short-circuits to already_active.
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
       retryDeps.retrySearchDeps.downloadOrchestrator.hasGrabBlocker.mockResolvedValue(true);
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
-      // The failed row is preserved and no replacement grab is issued.
       expect(db.delete).not.toHaveBeenCalled();
       expect(retryDeps.retrySearchDeps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
-      // #1861 F1 — the scheduled-retry diagnostic is blocker-neutral (the outcome now
-      // also covers QG-completed rows and pending auto import jobs, not just live downloads).
       expect(log.info).toHaveBeenCalledWith(
         expect.objectContaining({ bookId: 42 }),
         'Retry skipped — book already has a blocking download or import',
@@ -845,7 +791,7 @@ describe('monitor job', () => {
       adapter.getDownload.mockResolvedValueOnce(null);
       const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
-      // recoverBookStatus selects
+      // recoverBookStatus: blockers, then book.
       db.select
         .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]));
@@ -857,7 +803,6 @@ describe('monitor job', () => {
     });
 
     it('sets errorMessage to "Retries exhausted" when max attempts reached', async () => {
-      // Exhaust the budget
       retryDeps.retrySearchDeps.retryBudget.consumeAttempt(42);
       retryDeps.retrySearchDeps.retryBudget.consumeAttempt(42);
       retryDeps.retrySearchDeps.retryBudget.consumeAttempt(42);
@@ -868,7 +813,7 @@ describe('monitor job', () => {
       adapter.getDownload.mockResolvedValueOnce(null);
       const chain = mockDbChain([{ id: 1 }]);
       db.update.mockReturnValue(chain);
-      // recoverBookStatus selects
+      // recoverBookStatus: blockers, then book.
       db.select
         .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]));
@@ -941,7 +886,6 @@ describe('monitor job', () => {
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
-      // Book status should NOT be recovered on retry_error (will try again next cycle)
       expect(log.info).not.toHaveBeenCalledWith(
         expect.objectContaining({ status: 'wanted' }),
         'Book status recovered after download failure',
@@ -980,7 +924,6 @@ describe('monitor job', () => {
       adapter.getDownload.mockResolvedValueOnce(null);
       db.update.mockReturnValue(mockDbChain([{ id: 42 }]));
 
-      // Call without retryDeps (undefined)
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log));
 
       expect(log.info).toHaveBeenCalledWith(
@@ -989,10 +932,7 @@ describe('monitor job', () => {
       );
     });
 
-    // #1103 F3 — caller-surface coverage for the imported-book guard inside retrySearch().
-    // Uses the real retrySearch (no spy) and seeds the bookService.getById mock to return
-    // a book with path !== null. Asserts the centralized guard prevents grab and leaves
-    // the retry budget unchanged.
+    // Use real retrySearch; path != null must short-circuit before consuming budget.
     it('failure handler inherits retrySearch imported-book guard — no grab, budget unchanged', async () => {
       retryDeps.retrySearchDeps.bookService.getById.mockResolvedValue({
         id: 42, title: 'Imported Book', duration: 3600,
@@ -1116,8 +1056,8 @@ describe('monitor job', () => {
       const sseError = new Error('progress broken');
       const broadcaster = {
         emit: vi.fn()
-          .mockImplementationOnce(() => { throw sseError; }) // download_progress fails
-          .mockImplementationOnce(() => {}), // download_status_change succeeds
+          .mockImplementationOnce(() => { throw sseError; }) // download_progress throws
+          .mockImplementationOnce(() => {}), // status emit
       };
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 1 },
@@ -1174,7 +1114,7 @@ describe('monitor job', () => {
       ]));
       adapter.getDownload.mockResolvedValueOnce(null);
       db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
-      // recoverBookStatus selects: no other active downloads, then the book
+      // recoverBookStatus: blockers, then book.
       db.select
         .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]));
@@ -1261,7 +1201,7 @@ describe('monitor job', () => {
       adapter.getDownload.mockResolvedValueOnce({ progress: 30, status: 'error', errorMessage: 'CRC mismatch', savePath: '', size: 0 });
       const chain = mockDbChain([{ id: 42 }]);
       db.update.mockReturnValue(chain);
-      // recoverBookStatus selects: no other active downloads, the book, then the snapshot
+      // recoverBookStatus: blockers, book, then snapshot.
       db.select
         .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]))
@@ -1280,7 +1220,6 @@ describe('monitor job', () => {
     });
 
     it('proceeds with retry as normal when redownloadFailed is true', async () => {
-      // redownloadFailed defaults to true — no override needed
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
       ]));
@@ -1386,12 +1325,10 @@ describe('monitor job', () => {
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
-      // Blacklist failure is caught and logged as warning
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ downloadId: 1 }),
         'Failed to blacklist release on infrastructure error',
       );
-      // Second download still processes normally
       expect(db.update).toHaveBeenCalled();
     });
 
@@ -1406,7 +1343,6 @@ describe('monitor job', () => {
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
-      // Blacklist failure is caught and logged as warning, retry still proceeds
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ downloadId: 1 }),
         'Failed to blacklist release — proceeding with retry',
@@ -1414,8 +1350,6 @@ describe('monitor job', () => {
     });
 
     it('null-download path blacklists with full payload including title and bookId', async () => {
-      // The null-download path passes download_failed/temporary to handleDownloadFailure.
-      // This test verifies the complete payload shape (not just reason/type).
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
       ]));
@@ -1425,7 +1359,6 @@ describe('monitor job', () => {
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
-      // Verify the blacklist entry includes the title and bookId along with reason/type
       expect(retryDeps.blacklistService.create).toHaveBeenCalledWith({
         infoHash: 'abc123',
         title: 'Test Book',
@@ -1436,10 +1369,8 @@ describe('monitor job', () => {
     });
   });
 
-  // ===== #248 — outputPath persistence =====
-
   describe('processDownloadUpdate — outputPath persistence', () => {
-    /** Normalize path separators for cross-platform assertions (path.join uses backslash on Windows). */
+    // path.join uses platform separators.
     const normPath = (s: string) => s.split('\\').join('/');
 
     it('sets outputPath to join(item.savePath, item.name) on first poll when outputPath is null', async () => {
@@ -1527,10 +1458,8 @@ describe('monitor job', () => {
     });
   });
 
-  // ===== #263 — resolveOutputPath trust model hardening =====
-
   describe('resolveOutputPath trust model', () => {
-    /** Normalize path separators for cross-platform assertions (path.join uses backslash on Windows). */
+    // path.join uses platform separators.
     const normPath = (s: string) => s.split('\\').join('/');
     const baseDownload = { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: null, outputPath: null, pendingCleanup: null };
     const baseItem = { progress: 50, status: 'downloading', savePath: '/remote/downloads', name: 'my-book', size: 1000 };
@@ -1564,7 +1493,6 @@ describe('monitor job', () => {
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, undefined, remotePathMappingService as never);
 
       const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
-      // outputPath should NOT be set (undefined returned from resolveOutputPath)
       const progressUpdate = setCalls.find((c) => 'progress' in c);
       expect(progressUpdate).toBeDefined();
       expect(progressUpdate).not.toHaveProperty('outputPath');
@@ -1613,8 +1541,7 @@ describe('monitor job', () => {
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster));
 
-      // Only 1 update: client status. Pipeline promotion is now in processOneDownload —
-      // the poller must never write the pipelineStage axis.
+      // Poller owns clientStatus; processOneDownload owns pipelineStage.
       const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
       expect(setCalls).not.toContainEqual(expect.objectContaining({ pipelineStage: 'importing' }));
     });
@@ -1727,7 +1654,6 @@ describe('monitor job', () => {
 
       await runMonitorWithQG();
 
-      // Both downloads processed — fireAndForget isolates the first one's error
       expect(db.update).toHaveBeenCalledTimes(2);
     });
 
@@ -1741,10 +1667,8 @@ describe('monitor job', () => {
 
       await runMonitorWithQG();
 
-      // Only 1 update: download status (not book status promotion)
       expect(db.update).toHaveBeenCalledTimes(1);
       const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
-      // No set call should contain status: 'importing' (that's book promotion)
       expect(setCalls.every((c) => c.status !== 'importing')).toBe(true);
     });
   });
@@ -1931,8 +1855,6 @@ describe('monitor job', () => {
       );
 
       const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
-      // outputPath should NOT be overwritten — mapping failure means undefined from resolveOutputPath,
-      // which means the spread does not include outputPath, preserving the existing DB value
       expect(setCalls[0]).not.toHaveProperty('outputPath');
     });
 
@@ -1952,15 +1874,10 @@ describe('monitor job', () => {
       await runMonitor();
 
       const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
-      // outputPath should not be in the set payload (undefined skipped by spread)
       expect(setCalls[0]?.outputPath).toBeUndefined();
     });
   });
 });
-
-// ============================================================================
-// #537 — download_failed event recording in monitor failure paths
-// ============================================================================
 
 describe('#537 monitor download_failed event recording', () => {
   let db: ReturnType<typeof createMockDb>;

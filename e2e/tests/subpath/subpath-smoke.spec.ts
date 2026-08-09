@@ -4,33 +4,16 @@ import { URL_BASE_SUBPATH } from '../../fixtures/subpath.js';
 import { SEED_BOOK_TITLE } from '../../fixtures/seed.js';
 
 /**
- * Subpath (reverse-proxy) smoke — runs ONLY under the `chromium-subpath` project
- * (selected by the project's `testMatch` in playwright.config.ts), against the
- * second webServer booted at URL_BASE=/narratorr on port 3101.
- *
- * This is the assembled coverage the units can't give: production build served
- * under a non-root base, driven through a real browser. It is read-mostly — it
- * never grabs/imports — so it stays deterministic against the isolated subpath
- * server's seeded DB.
- *
- * Navigation semantics: the project's baseURL is `http://localhost:3101/narratorr/`
- * (trailing slash). In-scope app routes navigate as RELATIVE paths so Playwright's
- * `new URL(path, baseURL)` resolves them under the prefix. A leading-slash path is
- * origin-rooted and strips the prefix — reserved for the deliberate 404 check.
+ * Production-build smoke under `/narratorr`. Relative navigation stays under the
+ * trailing-slash baseURL; leading-slash requests intentionally escape for scope checks.
  */
 test.describe('Subpath deployment (smoke)', () => {
   test('app loads under the subpath and renders the seeded library', async ({ page }) => {
-    // Relative path → resolves to /narratorr/library against the trailing-slash
-    // baseURL. A leading-slash '/library' would hit the non-prefixed path.
     await page.goto('library');
 
-    // Mirrors the root library smoke: the seeded book card proves /api/books
-    // returned real data end-to-end — i.e. the client built the API URL under
-    // the prefix (window.__NARRATORR_URL_BASE__) and React Router's basename is
-    // wired so the route resolved.
+    // The seeded card proves both prefixed API resolution and router-basename wiring.
     await expect(page.getByText(SEED_BOOK_TITLE).first()).toBeVisible();
 
-    // The router basename keeps the browser URL under the prefix.
     expect(page.url()).toMatch(new RegExp(`${URL_BASE_SUBPATH}/library/?$`));
   });
 
@@ -48,13 +31,10 @@ test.describe('Subpath deployment (smoke)', () => {
     await page.goto('library');
     await expect(page.getByText(SEED_BOOK_TITLE).first()).toBeVisible();
 
-    // The injected <base href="/narratorr/"> + Vite's relative `base: './'`
-    // must make every asset request resolve under the prefix.
+    // Injected `<base>` plus Vite's relative base must keep every asset under the prefix.
     expect(badAssetResponses).toEqual([]);
 
-    // The injected entry HTML carries the prefix in both the <base href> and the
-    // runtime URL-base global the client reads. Empty relative path resolves to
-    // the prefixed entry (`http://localhost:3101/narratorr/`).
+    // An empty relative request targets the prefixed entry HTML.
     const html = await (await page.request.get('')).text();
     expect(html).toContain(`<base href="${URL_BASE_SUBPATH}/">`);
     expect(html).toContain(`window.__NARRATORR_URL_BASE__=${JSON.stringify(URL_BASE_SUBPATH)}`);
@@ -74,12 +54,10 @@ test.describe('Subpath deployment (smoke)', () => {
     await page.goto('library');
     await expect(page.getByText(SEED_BOOK_TITLE).first()).toBeVisible();
 
-    // At least one prefixed API request must have succeeded — proving
-    // API_BASE = `${URL_BASE}/api` and the routes registered under the prefix.
+    // A successful prefixed request proves client API base and server route mount agree.
     const okPrefixed = apiResponses.filter((r) => r.status === 200);
     expect(okPrefixed.length).toBeGreaterThan(0);
 
-    // None double-prefixed (e.g. /narratorr/narratorr/api) and none failed.
     for (const r of apiResponses) {
       expect(r.path.startsWith(`${URL_BASE_SUBPATH}${URL_BASE_SUBPATH}/`)).toBe(false);
       expect(r.status).toBeLessThan(400);
@@ -87,9 +65,7 @@ test.describe('Subpath deployment (smoke)', () => {
   });
 
   test('non-prefixed paths are rejected with 404 (scope guard)', async ({ page }) => {
-    // LEADING slash — intentionally origin-rooted, resolving to
-    // http://localhost:3101/library (the NON-prefixed path). The SPA-fallback
-    // scope guard must return 404 here, not serve the SPA shell.
+    // A leading slash escapes the baseURL prefix; the SPA scope guard must reject it.
     const response = await page.request.get('/library');
     expect(response.status()).toBe(404);
   });

@@ -17,10 +17,7 @@ import { join } from 'node:path';
 import { createDb, runMigrations } from '@db/index.js';
 import type { ImportConfirmItem } from './library-scan.service.js';
 
-// copyToLibrary returns the target POSIX-normalized (paths are stored in the DB and consumed
-// inside Docker/Linux). The test `target` is a real tmpdir path — native-separator, so it carries
-// backslashes on Windows. Normalize the expected before comparing so the return-value assertions
-// hold on a Windows dev machine, not just on Linux CI.
+// Stored paths are POSIX-normalized; tmpdir paths are native, so Windows expectations need folding.
 const toPosix = (p: string): string => p.split('\\').join('/');
 
 vi.mock('./enrichment-orchestration.helpers.js', async () => ({
@@ -32,10 +29,7 @@ vi.mock('./library-scan.helpers.js', () => ({
   getAudioStats: vi.fn().mockResolvedValue({ fileCount: 3, totalSize: 100_000 }),
 }));
 
-// Controllable wrappers around node:fs/promises `rm`/`cp`. Both default to the
-// real implementation (passthrough); individual tests in the staged-swap cleanup
-// suite override them to simulate a vanished/permission-denied source removal or
-// an undersized copy. Restored to passthrough in that suite's beforeEach.
+// Hoisted passthrough wrappers let tests inject cleanup failures and undersized copies.
 type AnyFsFn = (...args: unknown[]) => Promise<unknown>;
 const fsMocks = vi.hoisted(() => {
   const noop: AnyFsFn = () => Promise.resolve();
@@ -58,7 +52,7 @@ function createMockLogger(): FastifyBaseLogger {
 
 
 describe('copyToLibrary — token precedence (#1028)', () => {
-  // The same-path short-circuit lets us read the rendered targetPath without performing fs ops.
+  // Same-path short-circuit exposes rendered targetPath without filesystem work.
   function buildDeps(folderFormat: string): ImportPipelineDeps {
     const log = createMockLogger();
     return {
@@ -76,8 +70,6 @@ describe('copyToLibrary — token precedence (#1028)', () => {
 
   it('item series fields win over meta.series[0] in the folder path (#1927 AC2 item-first)', async () => {
     const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
-    // The user edited Series to `The Dresden Files #10`; provider match says `Wax and Wayne #1`.
-    // Item-first (#1927): the physical folder must match the user's edit, not the metadata.
     const targetPath = '/library/Author/The Dresden Files #10/Title';
     const path = await copyToLibrary(
       { path: targetPath, title: 'Title', authorName: 'Author', seriesName: 'The Dresden Files', seriesPosition: 10 },
@@ -102,10 +94,7 @@ describe('copyToLibrary — token precedence (#1028)', () => {
 
   it('item series with NO position → folder path uses item series, metadata position NOT grafted (#1927 AC3 pair-lock)', async () => {
     const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
-    // The user edited Series to `Custom Saga` with no position; provider match says `Provider Saga #15`.
-    // Pair-lock: the folder token must carry the item series with NO position — the metadata position
-    // must NOT be borrowed at this boundary (mirrors the DB-create case). The renderer emits a bare
-    // `#` for the empty position token; the assertion is that `#15` (and `Provider Saga`) never appear.
+    // Empty item position must not borrow metadata position 15; the renderer leaves a bare #.
     const targetPath = '/library/Author/Custom Saga #/Title';
     const path = await copyToLibrary(
       { path: targetPath, title: 'Title', authorName: 'Author', seriesName: 'Custom Saga' },
@@ -120,7 +109,6 @@ describe('copyToLibrary — token precedence (#1028)', () => {
 
   it('item OMITS series → folder path defers to meta.series[0], position 0 preserved (#1927 AC3 defer path)', async () => {
     const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
-    // No user series edit; provider says position 0 (prequel). Defer → metadata pair, 0 preserved.
     const targetPath = '/library/Author/Prequels #0/Title';
     const path = await copyToLibrary(
       { path: targetPath, title: 'Title', authorName: 'Author' },
@@ -133,8 +121,6 @@ describe('copyToLibrary — token precedence (#1028)', () => {
 
   it('item seriesName "   " (whitespace) → folder path defers to metadata (#1927 AC5 non-React-caller guard)', async () => {
     const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
-    // A whitespace-only seriesName (a non-React/persisted caller can submit one) classifies as
-    // absent at the shared resolver, so the folder path defers to the matched metadata pair.
     const targetPath = '/library/Author/Wax and Wayne #1/Title';
     const path = await copyToLibrary(
       { path: targetPath, title: 'Title', authorName: 'Author', seriesName: '   ', seriesPosition: 99 },
@@ -147,10 +133,7 @@ describe('copyToLibrary — token precedence (#1028)', () => {
 
   it('padded item series " Saga " wins over a DIFFERENT metadata primary; renderer sanitizes to "Saga" (#1927 AC5/F12)', async () => {
     const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
-    // Item ` Saga ` #3 vs metadata `Other` #2 — the sanitized `Saga #3` segment can ONLY come
-    // from the item, proving item-first won. The renderer's existing sanitizePath trims the
-    // padding to `Saga` on disk (parity with the pre-change metadata-first path output);
-    // this change adds NO new canonicalization (F13, out of scope).
+    // Distinct metadata makes sanitized `Saga #3` prove item-first selection.
     const targetPath = '/library/Author/Saga #3/Title';
     const path = await copyToLibrary(
       { path: targetPath, title: 'Title', authorName: 'Author', seriesName: ' Saga ', seriesPosition: 3 },
@@ -173,10 +156,8 @@ describe('copyToLibrary — token precedence (#1028)', () => {
     expect(path.targetPath).toBe(targetPath);
   });
 
-  // #1097 F1 — copyToLibrary uses canonical seriesPrimary over series[0] for {series} / {seriesPosition} tokens
   it('uses meta.seriesPrimary for {series}/{seriesPosition} tokens when seriesPrimary differs from series[0] (#1097)', async () => {
     const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
-    // Pre-#1097 behavior would have used series[0] (Cosmere #5) and filed the book in the wrong folder.
     const targetPath = '/library/Author/The Stormlight Archive #2/Title';
     const path = await copyToLibrary(
       { path: targetPath, title: 'Title', authorName: 'Author' },
@@ -204,9 +185,7 @@ describe('copyToLibrary — populated-target staged swap (#1287)', () => {
 
   const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
 
-  // Same-recording owner (#1711): the occupied target belongs to a book that is the
-  // SAME recording as the candidate (shared ASIN), so the collision fence permits the
-  // staged swap. Without an owner the fence would disambiguate/hold instead of replace.
+  // Shared-ASIN owner makes the collision fence permit replacement instead of disambiguation (#1711).
   function buildDeps(): ImportPipelineDeps {
     return {
       db: inject<Db>({}),
@@ -247,7 +226,6 @@ describe('copyToLibrary — populated-target staged swap (#1287)', () => {
 
     expect(result.targetPath).toBe(toPosix(target));
     const files = (await readdir(target)).sort();
-    // Old edition's audio gone; new audio present; non-audio cover preserved.
     expect(files).toEqual(['a.mp3', 'b.mp3', 'cover.jpg']);
     expect(await pathExists(`${target}.import-tmp`)).toBe(false);
     expect(await pathExists(`${target}.import-bak`)).toBe(false);
@@ -275,9 +253,7 @@ describe('copyToLibrary — populated-target staged swap (#1287)', () => {
   });
 
   it('AC5: routes a reconstructed disc group through the staged swap when the target is populated (F1)', async () => {
-    // End-to-end through copyToLibrary: reconstructDiscGroup() resolves the coalesced
-    // member set from disk, and the populated target must route through the staged swap —
-    // not the direct merge-copy that would coexist the old .m4b with the new discs.
+    // Populated reconstructed groups must stage-swap; direct merge-copy would retain old audio.
     const downloads = join(baseDir, 'downloads');
     const disc1 = join(downloads, 'Author - Book Disc 1 of 2');
     const disc2 = join(downloads, 'Author - Book Disc 2 of 2');
@@ -285,19 +261,16 @@ describe('copyToLibrary — populated-target staged swap (#1287)', () => {
     await mkdir(disc2, { recursive: true });
     await writeFile(join(disc1, 'd1.mp3'), Buffer.alloc(300, 2));
     await writeFile(join(disc2, 'd2.mp3'), Buffer.alloc(300, 2));
-    // Populated target: a stale single-file edition plus user cover art.
     await mkdir(target, { recursive: true });
     await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
     await writeFile(join(target, 'cover.jpg'), Buffer.from('JPEGDATA'));
 
-    // item.path is the lowest-disc member; reconstructDiscGroup expands it to both members.
+    // Lowest-disc path must expand to the complete group.
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author', asin: 'B0SAME' };
     const result = await copyToLibrary(discItem, null, 'copy', buildDeps());
 
     expect(result.targetPath).toBe(toPosix(target));
     const files = (await readdir(target)).sort();
-    // Old edition's audio gone; both discs flattened (sequentially renamed) into the top level;
-    // non-audio cover preserved. A regression to the direct merge-copy path would leave old.m4b.
     expect(files.filter((f) => f.endsWith('.m4b'))).toEqual([]);
     expect(files.filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
     expect(files).toContain('cover.jpg');
@@ -306,11 +279,7 @@ describe('copyToLibrary — populated-target staged swap (#1287)', () => {
   });
 });
 
-// #1728 — production-type veto at the copy-time fence. An occupied target owned by
-// the SAME narrator but a DIFFERENT, known production form (abridged vs unabridged)
-// with no corroborating duration must be HELD (OwnedRecordingError, never
-// overwritten), not silently staged-swapped as same-recording. The candidate's
-// production form is threaded from the accepted metadata via buildRecordingCandidate.
+// Same-narrator, different known production forms without duration corroboration must hold at the copy fence (#1728).
 describe('copyToLibrary — production-type veto on occupied target (#1728)', () => {
   let baseDir: string;
   let libraryRoot: string;
@@ -319,8 +288,7 @@ describe('copyToLibrary — production-type veto on occupied target (#1728)', ()
 
   const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
 
-  // Owner: same narrator, no ASIN (so the ASIN short-circuit cannot fire), no
-  // duration (so the veto branch is reached), production form `abridged`.
+  // No ASIN or duration leaves production type as the deciding signal.
   function buildDeps(): ImportPipelineDeps {
     return {
       db: inject<Db>({}),
@@ -357,7 +325,6 @@ describe('copyToLibrary — production-type veto on occupied target (#1728)', ()
     await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
     await writeFile(join(source, 'a.mp3'), Buffer.alloc(300, 2));
 
-    // Candidate: same narrator, unabridged (vs owner abridged), no duration.
     const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: ['Jim Dale'] };
     const meta = { title: 'Title', authors: [{ name: 'Author' }], narrators: ['Jim Dale'], formatType: 'Unabridged' };
 
@@ -365,8 +332,6 @@ describe('copyToLibrary — production-type veto on occupied target (#1728)', ()
       code: 'OWNED_RECORDING',
       reason: 'recording-review',
     });
-    // The occupied target is untouched — the old edition's audio is still there,
-    // and no staging siblings were left behind.
     expect((await readdir(target)).filter((f) => f.endsWith('.m4b'))).toEqual(['old.m4b']);
     expect(await pathExists(`${target}.import-tmp`)).toBe(false);
     expect(await pathExists(`${target}.import-bak`)).toBe(false);
@@ -400,11 +365,9 @@ describe('copyToLibrary — interrupted-commit recovery before direct-copy (#133
 
   const item = (): ImportConfirmItem => ({ path: source, title: 'Title', authorName: 'Author', asin: 'B0SAME' });
 
-  // Reproduce the post-kill state of a commit killed after the backup-out renames
-  // but before the first move-in (#1290 window): an audio-EMPTY target, a populated
-  // `.import-bak` holding the stranded originals, and the commit-pending marker armed.
+  // Post-kill #1290 window: empty target, stranded originals in .import-bak, marker armed.
   async function armInterruptedCommit(originals: Record<string, Buffer>): Promise<void> {
-    await mkdir(target, { recursive: true }); // target exists but holds no audio
+    await mkdir(target, { recursive: true });
     await mkdir(bakPath(), { recursive: true });
     for (const [name, buf] of Object.entries(originals)) {
       await writeFile(join(bakPath(), name), buf);
@@ -413,8 +376,7 @@ describe('copyToLibrary — interrupted-commit recovery before direct-copy (#133
   }
 
   beforeEach(async () => {
-    // Defensive passthrough reset — the #1291 suite mutates these module-level
-    // fs wrappers and only restores them in its own beforeEach.
+    // Another suite mutates these module-level wrappers.
     fsMocks.rm.mockReset();
     fsMocks.cp.mockReset();
     fsMocks.rm.mockImplementation((...args: unknown[]) => fsMocks.real.rm(...args));
@@ -440,11 +402,7 @@ describe('copyToLibrary — interrupted-commit recovery before direct-copy (#133
     const result = await copyToLibrary(item(), null, 'copy', buildDeps());
 
     expect(result.targetPath).toBe(toPosix(target));
-    // Recovery restored old.m4b → target was populated → the staged swap replaced
-    // it with the manual import's audio. The stale edition is gone (no Frankenbook).
     expect((await readdir(target)).sort()).toEqual(['a.mp3', 'b.mp3']);
-    // The armed marker + backup were CONSUMED by recovery, not orphaned (the bug):
-    // an orphaned marker would fire bogus recovery on a later import.
     expect(await pathExists(markerPath())).toBe(false);
     expect(await pathExists(bakPath())).toBe(false);
     expect(await pathExists(tmpPath())).toBe(false);
@@ -465,7 +423,6 @@ describe('copyToLibrary — interrupted-commit recovery before direct-copy (#133
 
     expect(result.targetPath).toBe(toPosix(target));
     const files = (await readdir(target)).sort();
-    // Old single-file edition replaced; both discs flattened into the top level.
     expect(files.filter((f) => f.endsWith('.m4b'))).toEqual([]);
     expect(files.filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
     expect(await pathExists(markerPath())).toBe(false);
@@ -479,9 +436,6 @@ describe('copyToLibrary — interrupted-commit recovery before direct-copy (#133
     await copyToLibrary(item(), null, 'copy', buildDeps());
     expect(await pathExists(markerPath())).toBe(false);
 
-    // A second import to the now-populated, marker-less target routes through the
-    // ordinary staged swap (no recovery). Its audio replaces the first import's, and
-    // the long-gone stale original is NOT resurrected over the manually-imported files.
     const source2 = join(baseDir, 'downloads', 'release2');
     await mkdir(source2, { recursive: true });
     await writeFile(join(source2, 'c.mp3'), Buffer.alloc(400, 3));
@@ -495,7 +449,6 @@ describe('copyToLibrary — interrupted-commit recovery before direct-copy (#133
   });
 
   it('marker-absent empty target keeps the direct-copy fast path — no recovery, no staging siblings (AC4)', async () => {
-    // No marker, no `.import-bak`, empty target — the new pre-gate recovery is a no-op.
     await writeFile(join(source, 'a.mp3'), Buffer.alloc(300, 2));
 
     await copyToLibrary(item(), null, 'copy', buildDeps());
@@ -507,9 +460,6 @@ describe('copyToLibrary — interrupted-commit recovery before direct-copy (#133
   });
 
   it('marker-absent stale .import-bak is strict-cleared, never restored, and the direct copy still runs (F1)', async () => {
-    // A disposable post-success leftover backup with NO marker must not trigger
-    // recovery: prepareImportSiblings strict-clears it and the fast path proceeds,
-    // so its contents are never restored over the manual import.
     await mkdir(bakPath(), { recursive: true });
     await writeFile(join(bakPath(), 'stale.m4b'), Buffer.alloc(500, 9));
     await writeFile(join(source, 'a.mp3'), Buffer.alloc(300, 2));
@@ -529,13 +479,11 @@ describe('copyToLibrary — interrupted-commit recovery before direct-copy (#133
 
     await copyToLibrary(item(), null, 'move', buildDeps());
 
-    // Recovery restored old.m4b → staged swap replaced it with new.mp3 → source removed.
     expect((await readdir(target)).sort()).toEqual(['new.mp3']);
     expect(await pathExists(source)).toBe(false);
     expect(await pathExists(markerPath())).toBe(false);
     expect(await pathExists(bakPath())).toBe(false);
 
-    // Later import to the same target: no marker, so no stale restore.
     const source2 = join(baseDir, 'downloads', 'release2');
     await mkdir(source2, { recursive: true });
     await writeFile(join(source2, 'final.mp3'), Buffer.alloc(600, 3));
@@ -547,25 +495,19 @@ describe('copyToLibrary — interrupted-commit recovery before direct-copy (#133
   });
 
   it('#1341: a DIRECTORY at the marker path aborts before recovery strict-clears an adjacent .import-bak', async () => {
-    // A metadata-derived folder collides with the marker path: a DIRECTORY squats at
-    // `${target}.import-commit-pending`. recoverInterruptedCommit's preflight must abort
-    // (MarkerPathConflictError) BEFORE prepareImportSiblings reads the directory as
-    // marker-absent and strict-clears the adjacent real `.import-bak`.
+    // A directory at the marker path must abort recovery before adjacent .import-bak cleanup.
     const bakBytes = Buffer.from('REAL-BOOK-IN-BAK');
     const targetBytes = Buffer.from('TARGET-AUDIO');
     await mkdir(target, { recursive: true });
-    await writeFile(join(target, 'existing.mp3'), targetBytes); // populated target
-    await mkdir(markerPath(), { recursive: true });             // directory at the marker path
+    await writeFile(join(target, 'existing.mp3'), targetBytes);
+    await mkdir(markerPath(), { recursive: true });
     await mkdir(bakPath(), { recursive: true });
-    await writeFile(join(bakPath(), 'realbook.mp3'), bakBytes); // adjacent real book's audio
+    await writeFile(join(bakPath(), 'realbook.mp3'), bakBytes);
     await writeFile(join(source, 'new.mp3'), Buffer.alloc(300, 2));
 
     await expect(copyToLibrary(item(), null, 'copy', buildDeps())).rejects.toBeInstanceOf(MarkerPathConflictError);
 
-    // The adjacent pre-existing `.import-bak` audio survives intact — not strict-cleared.
     expect(await readFile(join(bakPath(), 'realbook.mp3'))).toEqual(bakBytes);
-    // Existing target audio is byte-unchanged, no `.import-tmp` was staged, and (copy mode)
-    // the source is untouched — the abort happened before any destructive work.
     expect(await readFile(join(target, 'existing.mp3'))).toEqual(targetBytes);
     expect(await pathExists(tmpPath())).toBe(false);
     expect(await pathExists(join(source, 'new.mp3'))).toBe(true);
@@ -600,7 +542,7 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
   const item = (): ImportConfirmItem => ({ path: source, title: 'Title', authorName: 'Author', asin: 'B0SAME' });
 
   beforeEach(async () => {
-    // Restore all wrappers to passthrough so each test starts from real fs behavior.
+    // Restore module-level wrappers mutated by other suites.
     fsMocks.rm.mockReset();
     fsMocks.cp.mockReset();
     fsMocks.readdir.mockReset();
@@ -627,27 +569,19 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     await writeFile(join(source, 'bundled.epub'), Buffer.from('EBOOK'));
 
     await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
-    // New audio committed.
     expect((await readdir(target)).sort()).toEqual(['new.mp3']);
-    // Source audio removed, bundled e-book preserved, source folder retained.
     expect(await pathExists(join(source, 'new.mp3'))).toBe(false);
     expect(await pathExists(join(source, 'bundled.epub'))).toBe(true);
     expect(await pathExists(source)).toBe(true);
   });
 
-  // #1960 AC32 — the EMPTY-target single-source move cleanup, the sibling of the populated-target
-  // case above. Pins the companion contract explicitly: an owner-placed `.epub` beside the
-  // audiobook is the substrate of the whole feature and must survive a move-mode import.
   it('preserves a bundled .epub in the source after an EMPTY-target move (#1960 AC32)', async () => {
     await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
     await writeFile(join(source, 'companion.epub'), Buffer.from('EBOOK'));
 
     await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
 
-    // Only audio was staged into the library — the e-book is NOT copied in (imports stay
-    // audio-only; the bundled-EPUB copy cluster is deferred).
     expect((await readdir(target)).sort()).toEqual(['new.mp3']);
-    // Source audio removed, bundled e-book preserved, source folder retained because of it.
     expect(await pathExists(join(source, 'new.mp3'))).toBe(false);
     expect(await pathExists(join(source, 'companion.epub'))).toBe(true);
     expect(await pathExists(source)).toBe(true);
@@ -658,8 +592,6 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
     await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
 
-    // The managed-file cleanup tolerates a vanished source (stat ENOENT → no-op),
-    // so an already-committed import never fails on cleanup.
     fsMocks.rm.mockImplementation(async (p: unknown, opts: unknown) => {
       if (String(p).startsWith(source)) throw enoent();
       return fsMocks.real.rm(p, opts);
@@ -678,17 +610,14 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     await writeFile(join(disc1, 'd1.mp3'), Buffer.alloc(300, 2));
     await writeFile(join(disc1, 'liner-notes.pdf'), Buffer.from('PDF'));
     await writeFile(join(disc2, 'd2.mp3'), Buffer.alloc(300, 2));
-    // Populated target routes the disc group through the staged swap.
     await mkdir(target, { recursive: true });
     await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
 
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author', asin: 'B0SAME' };
     await expect(copyToLibrary(discItem, null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
     const files = (await readdir(target)).sort();
-    // Both discs flattened into the target; old single-file edition replaced.
     expect(files.filter((f) => f.endsWith('.m4b'))).toEqual([]);
     expect(files.filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
-    // Disc-1 audio removed but its bundled PDF preserved (folder retained); disc-2 fully removed.
     expect(await pathExists(join(disc1, 'd1.mp3'))).toBe(false);
     expect(await pathExists(join(disc1, 'liner-notes.pdf'))).toBe(true);
     expect(await pathExists(disc2)).toBe(false);
@@ -699,15 +628,12 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
     await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
 
-    // A per-file EPERM during managed-file cleanup is now recorded + logged, NOT thrown —
-    // a locked source file must not fail an already-committed import.
     fsMocks.rm.mockImplementation(async (p: unknown, opts: unknown) => {
       if (String(p).endsWith('new.mp3')) throw eperm();
       return fsMocks.real.rm(p, opts);
     });
 
     await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
-    // Committed audio intact; the locked source file remains (rm rejected), source retained.
     expect((await readdir(target)).sort()).toEqual(['new.mp3']);
     expect(await pathExists(join(source, 'new.mp3'))).toBe(true);
   });
@@ -717,9 +643,7 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
     await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
 
-    // After the swap commits new audio (target now holds new.mp3), the source-cleanup readdir
-    // rejects EACCES (a non-ENOENT error the helper does NOT swallow). The call-site try/catch
-    // (#1591) must keep the already-committed import successful; pre-swap readdirs pass through.
+    // Fail only post-swap cleanup; pre-swap readdirs pass through.
     fsMocks.readdir.mockImplementation(async (p: unknown, opts: unknown) => {
       if (String(p) === source && existsSync(join(target, 'new.mp3'))) throw eacces();
       return fsMocks.real.readdir(p, opts);
@@ -740,11 +664,7 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     await mkdir(target, { recursive: true });
     await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
 
-    // Post-commit, the disc-1 source cleanup readdir rejects EACCES. Per-member try/catch (#1591)
-    // keeps the committed import successful and does not skip the remaining disc. The flatten renames
-    // members to sequential stems, so we can't key the post-swap window on a member filename in the
-    // target; instead key on the staged swap having replaced the target's `old.m4b` audio. Pre-swap
-    // reads of disc1 (size probe + copyDiscGroup staging) still see `old.m4b` and pass through.
+    // Flattened names cannot gate post-swap cleanup; old.m4b disappearance triggers EACCES after staging reads.
     fsMocks.readdir.mockImplementation(async (p: unknown, opts: unknown) => {
       if (String(p) === disc1 && !existsSync(join(target, 'old.m4b'))) throw eacces();
       return fsMocks.real.readdir(p, opts);
@@ -753,26 +673,20 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author', asin: 'B0SAME' };
     await expect(copyToLibrary(discItem, null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
     expect((await readdir(target)).filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
-    // F1: prove per-member continuation — disc-1 cleanup threw (its readdir EACCES'd, so d1.mp3
-    // survives), but the loop still reached disc 2 and swept it (d2.mp3 removed, empty folder gone).
-    // A single catch around the whole loop would skip disc 2, leaving it on disk — this assertion
-    // is what distinguishes per-member try/catch from loop-level.
+    // Disc 2 removal distinguishes per-member continuation from one catch around the loop.
     expect(await pathExists(join(disc1, 'd1.mp3'))).toBe(true);
     expect(await pathExists(join(disc2, 'd2.mp3'))).toBe(false);
     expect(await pathExists(disc2)).toBe(false);
   });
 
   it('still fails the import when copy verification falls below threshold (verification path untouched)', async () => {
-    // Empty target keeps the direct-copy fast path. A no-op copy leaves the
-    // target undersized so the inline verification throws — proving the
-    // force: true change did not leak into the pre-commit verification path.
+    // No-op copy leaves the empty-target fast path undersized, isolating pre-commit verification.
     await writeFile(join(source, 'a.mp3'), Buffer.alloc(1000, 2));
     fsMocks.cp.mockImplementation(async () => {});
 
     await expect(copyToLibrary(item(), null, 'move', buildDeps())).rejects.toThrow(/Copy verification failed/);
-    // The single-source path now throws the typed ContentFailureError (#1304).
     await expect(copyToLibrary(item(), null, 'move', buildDeps())).rejects.toBeInstanceOf(ContentFailureError);
-    // The throw precedes cleanup — the source is left intact, never removed.
+    // Verification failure precedes source cleanup.
     expect(await pathExists(source)).toBe(true);
     expect(fsMocks.rm).not.toHaveBeenCalledWith(source, expect.anything());
   });
@@ -785,8 +699,6 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     await mkdir(disc2, { recursive: true });
     await writeFile(join(disc1, 'd1.mp3'), Buffer.alloc(300, 2));
     await writeFile(join(disc2, 'd2.mp3'), Buffer.alloc(300, 2));
-    // Empty target keeps the direct copyDiscGroup path; a no-op cp undersizes the
-    // target so the shared verification helper throws ContentFailureError.
     fsMocks.cp.mockImplementation(async () => {});
 
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author', asin: 'B0SAME' };
@@ -794,8 +706,6 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
   });
 
   it('throws a typed ContentFailureError when the staged-swap copy falls below threshold (#1304)', async () => {
-    // Populated target routes through stagedAudioReplace; a no-op cp leaves the
-    // staged audio undersized so the shared verification helper throws.
     await mkdir(target, { recursive: true });
     await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
     await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
@@ -805,10 +715,6 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
   });
 
   it('throws a typed ContentFailureError on the multi-disc populated-target replace branch (#1346, helpers.ts:168-180)', async () => {
-    // Multi-disc group + already-populated target routes through the staged-swap branch
-    // (copyDiscGroupToLibrary's getTargetAudioSize > 0 guard). A no-op cp undersizes the
-    // staged audio so the shared verification throws the typed error — pin it by type, not
-    // by the 'Copy verification failed' message text.
     const downloads = join(baseDir, 'downloads');
     const disc1 = join(downloads, 'Author - Book Disc 1 of 2');
     const disc2 = join(downloads, 'Author - Book Disc 2 of 2');
@@ -850,7 +756,7 @@ describe('copyToLibrary — empty-target move cleanup (#1598)', () => {
   const item = (): ImportConfirmItem => ({ path: source, title: 'Title', authorName: 'Author', asin: 'B0SAME' });
 
   beforeEach(async () => {
-    // Restore the module-level fs wrappers to passthrough (the #1287/#1337 suites mutate them).
+    // Restore module-level wrappers mutated by other suites.
     fsMocks.rm.mockReset();
     fsMocks.cp.mockReset();
     fsMocks.readdir.mockReset();
@@ -870,21 +776,14 @@ describe('copyToLibrary — empty-target move cleanup (#1598)', () => {
     await fsMocks.real.rm(baseDir, { recursive: true, force: true });
   });
 
-  // Gap 2 — the empty-target move now routes source cleanup through the managed-file helper instead
-  // of a blanket `rm`, so a co-located foreign file survives (the original #1589 scenario, in the
-  // one move branch it never covered).
   it('preserves a co-located foreign file on an empty-target single-source move', async () => {
     await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
     await writeFile(join(source, 'bundled.epub'), Buffer.from('EBOOK'));
 
     await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
 
-    // Empty target → audio-only fast path (#1602): the target holds the audio but NOT the foreign
-    // file (the whole-tree verbatim copy is gone — both import paths now stage audio only).
     expect(await pathExists(join(target, 'new.mp3'))).toBe(true);
     expect(await pathExists(join(target, 'bundled.epub'))).toBe(false);
-    // Source CLEANUP (#1598) still preserves the foreign file — audio removed, e-book kept, folder
-    // retained — and with #1602 it is no longer DUPLICATED into the library.
     expect(await pathExists(join(source, 'new.mp3'))).toBe(false);
     expect(await pathExists(join(source, 'bundled.epub'))).toBe(true);
     expect(await pathExists(source)).toBe(true);
@@ -896,7 +795,6 @@ describe('copyToLibrary — empty-target move cleanup (#1598)', () => {
     await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
 
     expect((await readdir(target)).sort()).toEqual(['a.mp3']);
-    // Only managed files existed → the emptied source folder is removed.
     expect(await pathExists(source)).toBe(false);
   });
 
@@ -913,36 +811,27 @@ describe('copyToLibrary — empty-target move cleanup (#1598)', () => {
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author', asin: 'B0SAME' };
     await expect(copyToLibrary(discItem, null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
 
-    // Empty target → direct disc-group flatten; both discs flattened into the target.
     expect((await readdir(target)).filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
-    // Disc-1 audio removed but its bundled PDF preserved (folder retained); disc-2 fully removed.
     expect(await pathExists(join(disc1, 'd1.mp3'))).toBe(false);
     expect(await pathExists(join(disc1, 'liner-notes.pdf'))).toBe(true);
     expect(await pathExists(disc2)).toBe(false);
   });
 
-  // Gap 1 — a top-level symlinked source on a populated-target (staged-swap) move: the import reads
-  // through the link to stage the audio, but the post-commit cleanup must NOT follow the link and
-  // delete the managed audio under its target (the #1591 delete-through-symlink class, in the
-  // unguarded cleanup path #1591 didn't cover).
+  // Staging may read through a top-level source symlink; cleanup must never follow it while deleting (#1591).
   it('does not delete through a top-level symlinked source during populated-target move cleanup', async () => {
     const external = mkdtempSync(join(tmpdir(), 'narratorr-1598-ext-'));
     try {
       await writeFile(join(external, 'new.mp3'), Buffer.alloc(500, 2));
       await writeFile(join(external, 'bundled.epub'), Buffer.from('EBOOK'));
-      // item.path is a directory symlink/junction to the external source.
       const linkedSource = join(baseDir, 'downloads', 'linked-release');
       await symlink(external, linkedSource, process.platform === 'win32' ? 'junction' : 'dir');
-      // Populated target routes through the staged swap.
       await mkdir(target, { recursive: true });
       await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
 
       const linkedItem: ImportConfirmItem = { path: linkedSource, title: 'Title', authorName: 'Author', asin: 'B0SAME' };
       await expect(copyToLibrary(linkedItem, null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
 
-      // New audio committed over the old edition.
       expect((await readdir(target)).sort()).toEqual(['new.mp3']);
-      // The symlink target's files — managed AND foreign — survive: cleanup never followed the link.
       expect(await pathExists(join(external, 'new.mp3'))).toBe(true);
       expect(await pathExists(join(external, 'bundled.epub'))).toBe(true);
     } finally {
@@ -951,10 +840,7 @@ describe('copyToLibrary — empty-target move cleanup (#1598)', () => {
   });
 });
 
-// #1602: the empty-target fast path now imports AUDIO ONLY via the same `stageSourceAudio` copier the
-// populated-target staged swap uses, so a co-located foreign file (ebook/PDF/NFO) no longer lands in
-// the library — and the directory-vs-file branching keeps single-audio-file imports working while
-// rejecting a single non-audio file. Real-tmpdir filesystem behavior, mirroring the #1598 suite.
+// Empty-target imports share stageSourceAudio and must preserve file-vs-directory behavior (#1602).
 describe('copyToLibrary — empty-target audio-only copy (#1602)', () => {
   let baseDir: string;
   let libraryRoot: string;
@@ -980,7 +866,7 @@ describe('copyToLibrary — empty-target audio-only copy (#1602)', () => {
   const item = (): ImportConfirmItem => ({ path: source, title: 'Title', authorName: 'Author', asin: 'B0SAME' });
 
   beforeEach(async () => {
-    // Restore the module-level fs wrappers to passthrough (other suites mutate them).
+    // Restore module-level wrappers mutated by other suites.
     fsMocks.rm.mockReset();
     fsMocks.cp.mockReset();
     fsMocks.readdir.mockReset();
@@ -1008,7 +894,6 @@ describe('copyToLibrary — empty-target audio-only copy (#1602)', () => {
 
     expect(await pathExists(join(target, 'book.mp3'))).toBe(true);
     expect(await pathExists(join(target, 'book.epub'))).toBe(false);
-    // copy mode leaves the source intact, foreign file included.
     expect(await pathExists(join(source, 'book.epub'))).toBe(true);
   });
 
@@ -1025,7 +910,7 @@ describe('copyToLibrary — empty-target audio-only copy (#1602)', () => {
 
     expect(await pathExists(join(target, 'book.mp3'))).toBe(true);
     expect(await pathExists(join(target, 'info.nfo'))).toBe(false);
-    // Distinct (streaming) code path from the no-progress branch — assert it actually reported bytes.
+    // Progress callback selects the distinct streaming copy path.
     expect(progress.length).toBeGreaterThan(0);
     expect(progress.at(-1)).toEqual({ current: 500, total: 500 });
   });
@@ -1046,7 +931,6 @@ describe('copyToLibrary — empty-target audio-only copy (#1602)', () => {
     const targetEntries = await readdir(target);
     expect(targetEntries.filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
     expect(targetEntries.some((f) => f.endsWith('.pdf'))).toBe(false);
-    // copy mode leaves the disc member's bundled PDF in place.
     expect(await pathExists(join(disc1, 'liner-notes.pdf'))).toBe(true);
   });
 
@@ -1054,8 +938,7 @@ describe('copyToLibrary — empty-target audio-only copy (#1602)', () => {
     await writeFile(join(source, 'cover.jpg'), Buffer.from('IMG'));
     await writeFile(join(source, 'readme.txt'), Buffer.from('TXT'));
 
-    // The manual-import fast path does not run validateSource/containsAudioFiles, so a zero-audio
-    // source reaches the copier; copyAudioFiles writes nothing and assertCopyVerified(0, 0) passes.
+    // Manual import skips source validation, so zero audio reaches the copier and verifies as 0/0.
     await expect(copyToLibrary(item(), null, 'copy', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
 
     expect(await pathExists(target)).toBe(true);
@@ -1097,7 +980,6 @@ describe('copyToLibrary — empty-target audio-only copy (#1602)', () => {
     await expect(copyToLibrary(fileItem, null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
 
     expect(await pathExists(join(target, 'Doctor Sleep.m4b'))).toBe(true);
-    // Move cleanup removes the (managed) audio source file.
     expect(await pathExists(file)).toBe(false);
   });
 
@@ -1108,8 +990,7 @@ describe('copyToLibrary — empty-target audio-only copy (#1602)', () => {
 
     await expect(copyToLibrary(fileItem, null, 'copy', buildDeps())).rejects.toBeInstanceOf(ContentFailureError);
 
-    // stageSourceAudio mkdir's the target before extension-checking, so the dir may exist — the
-    // invariant is that the foreign file was NOT copied in (F4).
+    // Target may exist because stageSourceAudio creates it before extension validation.
     expect(await pathExists(join(target, 'notes.pdf'))).toBe(false);
     if (await pathExists(target)) {
       expect(await readdir(target)).toEqual([]);
@@ -1117,11 +998,7 @@ describe('copyToLibrary — empty-target audio-only copy (#1602)', () => {
   });
 });
 
-// The nonfatal source-cleanup blocks were consolidated into one shared helper
-// (`cleanupSourceManagedFilesNonfatal`, #1605). The helper's whole point is to preserve each call
-// site's distinct, observable log behavior via its `context` — single-source success at `info`,
-// disc success at `debug`, and the two site-specific warn-on-failure messages — so these pin those
-// strings/levels directly (the behavior-preservation contract the consolidation must not break).
+// Consolidated cleanup preserves call-site log levels/messages: single info, disc debug, and site-specific warns (#1605).
 describe('copyToLibrary — consolidated nonfatal source-cleanup log contract (#1605)', () => {
   let baseDir: string;
   let libraryRoot: string;
@@ -1184,9 +1061,7 @@ describe('copyToLibrary — consolidated nonfatal source-cleanup log contract (#
     await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
     await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
 
-    // Post-commit (after the staged swap puts new.mp3 in the target), the source-cleanup readdir
-    // rejects EACCES — a non-ENOENT error the deletion helper does NOT swallow, so it throws into
-    // the consolidated helper's catch. Pre-swap reads pass through.
+    // Gate EACCES on new.mp3 so only post-commit cleanup fails.
     fsMocks.readdir.mockImplementation(async (p: unknown, opts: unknown) => {
       if (String(p) === source && existsSync(join(target, 'new.mp3'))) throw eacces();
       return fsMocks.real.readdir(p, opts);
@@ -1233,7 +1108,7 @@ describe('copyToLibrary — consolidated nonfatal source-cleanup log contract (#
     await mkdir(target, { recursive: true });
     await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
 
-    // Post-commit (old.m4b replaced), disc-1 cleanup readdir EACCES'es; disc 2 still sweeps.
+    // Gate EACCES on old.m4b replacement so only post-commit disc-1 cleanup fails.
     fsMocks.readdir.mockImplementation(async (p: unknown, opts: unknown) => {
       if (String(p) === disc1 && !existsSync(join(target, 'old.m4b'))) throw eacces();
       return fsMocks.real.readdir(p, opts);
@@ -1283,7 +1158,6 @@ describe('copyToLibrary — cross-row collision fence (#1711)', () => {
     target = join(libraryRoot, 'Author', 'Title');
     await mkdir(source, { recursive: true });
     await mkdir(target, { recursive: true });
-    // Incumbent audio occupies the computed target.
     await writeFile(join(target, 'incumbent.m4b'), Buffer.alloc(500, 1));
     await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
   });
@@ -1298,16 +1172,13 @@ describe('copyToLibrary — cross-row collision fence (#1711)', () => {
 
     expect(result.editionLabel).toBe('Stephen Fry');
     expect(result.targetPath).toBe(toPosix(join(libraryRoot, 'Author', 'Title (Stephen Fry)')));
-    // Incumbent's audio is never touched.
     expect(await pathExists(join(target, 'incumbent.m4b'))).toBe(true);
-    // New recording landed in the disambiguated folder.
     expect(await readdir(result.targetPath)).toContain('new.mp3');
   });
 
   it('review verdict (1 owner, no narrator signal) → throws OwnedRecordingError, never overwrites', async () => {
     const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author' };
     await expect(copyToLibrary(item, null, 'copy', buildDeps([owner()]))).rejects.toMatchObject({ name: 'OwnedRecordingError' });
-    // Incumbent audio is intact — the fence held rather than swapping.
     expect((await readdir(target)).sort()).toEqual(['incumbent.m4b']);
   });
 
@@ -1329,24 +1200,16 @@ describe('copyToLibrary — cross-row collision fence (#1711)', () => {
   });
 
   it('different recording whose label sanitizes to null (e.g. ":::") → held for review, not base-collapsed (#1739, F5)', async () => {
-    // `deriveEditionLabel([":::"])` returns the truthy raw ":::", but it sanitizes to null — so the
-    // guard must run on the sanitized discriminator and hold for review rather than rebuild a path
-    // (the pre-fix raw `!label` check passed ":::" through to an illegal-colon disambiguated folder).
+    // Raw ":::" is truthy but sanitizes to null; the guard must evaluate the sanitized discriminator.
     const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: [':::'] };
     await expect(
       copyToLibrary(item, null, 'copy', buildDeps([owner({ narrators: [{ name: 'Jim Dale' }] })])),
     ).rejects.toMatchObject({ name: 'OwnedRecordingError', reason: 'recording-review-no-disambiguator' });
-    // The base target's incumbent audio is untouched — the candidate was never collapsed onto it.
     expect((await readdir(target)).sort()).toEqual(['incumbent.m4b']);
-    // No illegal-colon disambiguated sibling was created.
     expect((await readdir(join(libraryRoot, 'Author'))).some((n) => n.includes(':'))).toBe(false);
   });
 
-  // The disambiguateTarget re-check (#1737): the FIRST findPathOwners call (base target)
-  // sees a different recording and disambiguates; the disambiguated folder is then itself
-  // occupied, so a SECOND findPathOwners call decides whether a same-recording re-import may
-  // swap or an uncertain collision must hold. `buildDeps` returns one fixed owner set, so
-  // these cases drive findPathOwners with a per-call sequence instead.
+  // First owner lookup chooses disambiguation; the second decides whether an occupied edition swaps or holds (#1737).
   function buildDepsSeq(fpo: ReturnType<typeof vi.fn>): ImportPipelineDeps {
     return {
       db: inject<Db>({}),
@@ -1362,14 +1225,12 @@ describe('copyToLibrary — cross-row collision fence (#1711)', () => {
   }
 
   it('disambiguated folder occupied by the SAME recording → staged swap into the (edition) folder (re-check, #1737)', async () => {
-    // The disambiguated "(Stephen Fry)" folder already holds an edition of the same recording.
     const disambig = join(libraryRoot, 'Author', 'Title (Stephen Fry)');
     await mkdir(disambig, { recursive: true });
     await writeFile(join(disambig, 'old.m4b'), Buffer.alloc(500, 9));
 
     const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: ['Stephen Fry'], asin: 'B0FRY' };
-    // call 1 (base target): a different recording (Jim Dale) → disambiguate to "(Stephen Fry)".
-    // call 2 (disambiguated target): the SAME recording (shared ASIN) → swap permitted.
+    // Base owner differs; edition-folder owner shares ASIN.
     const fpo = vi.fn()
       .mockResolvedValueOnce([owner({ narrators: [{ name: 'Jim Dale' }], asin: 'B0JIM' })])
       .mockResolvedValueOnce([owner({ id: 2, narrators: [{ name: 'Stephen Fry' }], asin: 'B0FRY' })]);
@@ -1377,9 +1238,7 @@ describe('copyToLibrary — cross-row collision fence (#1711)', () => {
     const result = await copyToLibrary(item, null, 'copy', buildDepsSeq(fpo));
 
     expect(result.targetPath).toBe(toPosix(disambig));
-    // The staged swap replaced the disambiguated folder's audio with the new recording.
     expect((await readdir(disambig)).sort()).toEqual(['new.mp3']);
-    // The base incumbent is never touched.
     expect(await pathExists(join(target, 'incumbent.m4b'))).toBe(true);
     expect(fpo).toHaveBeenCalledTimes(2);
   });
@@ -1390,24 +1249,19 @@ describe('copyToLibrary — cross-row collision fence (#1711)', () => {
     await writeFile(join(disambig, 'other.m4b'), Buffer.alloc(500, 9));
 
     const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: ['Stephen Fry'], asin: 'B0FRY' };
-    // call 1 (base): different recording → disambiguate. call 2 (disambiguated): ALSO a different
-    // recording (different narrator, no shared ASIN) → no swap, never overwrite.
+    // Call 1 base and call 2 disambiguated are both different recordings.
     const fpo = vi.fn()
       .mockResolvedValueOnce([owner({ narrators: [{ name: 'Jim Dale' }], asin: 'B0JIM' })])
       .mockResolvedValueOnce([owner({ id: 3, narrators: [{ name: 'Andrew Smith' }], asin: 'B0OTHER' })]);
 
     await expect(copyToLibrary(item, null, 'copy', buildDepsSeq(fpo)))
       .rejects.toMatchObject({ name: 'OwnedRecordingError', reason: 'recording-review-disambiguated-collision' });
-    // Neither the base incumbent nor the occupied disambiguated folder was overwritten.
     expect((await readdir(target)).sort()).toEqual(['incumbent.m4b']);
     expect((await readdir(disambig)).sort()).toEqual(['other.m4b']);
     expect(fpo).toHaveBeenCalledTimes(2);
   });
 
   it('disc-group: different recording on an occupied target disambiguates into an (edition) folder, never overwriting (#1737)', async () => {
-    // Distinct from the same-recording disc-group swap (AC5, #1287 block): here the occupied
-    // base target is a DIFFERENT recording, so copyDiscGroupToLibrary must keep-both — flatten
-    // both discs into the disambiguated folder and leave the incumbent intact.
     const downloads = join(baseDir, 'downloads');
     const disc1 = join(downloads, 'Author - Book Disc 1 of 2');
     const disc2 = join(downloads, 'Author - Book Disc 2 of 2');
@@ -1416,27 +1270,18 @@ describe('copyToLibrary — cross-row collision fence (#1711)', () => {
     await writeFile(join(disc1, 'd1.mp3'), Buffer.alloc(300, 2));
     await writeFile(join(disc2, 'd2.mp3'), Buffer.alloc(300, 2));
 
-    // item.path is the lowest-disc member; reconstructDiscGroup expands it to both members.
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author', narrators: ['Stephen Fry'] };
     const result = await copyToLibrary(discItem, null, 'copy', buildDeps([owner({ narrators: [{ name: 'Jim Dale' }] })]));
 
     const disambig = join(libraryRoot, 'Author', 'Title (Stephen Fry)');
     expect(result.editionLabel).toBe('Stephen Fry');
     expect(result.targetPath).toBe(toPosix(disambig));
-    // Both discs flattened into the disambiguated folder, never into the incumbent's.
     expect((await readdir(disambig)).filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
     expect(await pathExists(join(target, 'incumbent.m4b'))).toBe(true);
   });
 });
 
-// AC: a NON-MOCKED findPathOwners must resolve a real `books` row through the fence call site.
-// All other fence suites inject findPathOwners as a mock, so the actual eq(books.path, …) query
-// is never exercised end-to-end. Here `bookService` is a REAL BookService over a real libSQL DB
-// (prior art: book.service.dedup.integration.test.ts). `findPathOwners` now POSIX-folds its key
-// (#1752), so this passes on BOTH Linux (CI) and Windows dev — where normalize(resolve(target))
-// is backslash-separated and previously missed the stored POSIX path (0 owners → wrong
-// disambiguation). The final `it` below pins that cross-platform fold with a literal-backslash
-// query, so it guards the fix on Linux CI too.
+// Real BookService exercises eq(books.path, ...) through the fence; mocks elsewhere miss POSIX folding of Windows-resolved keys (#1752).
 describe('copyToLibrary — non-mocked findPathOwners through the fence (real DB, #1737/#1752)', () => {
   let baseDir: string;
   let libraryRoot: string;
@@ -1452,7 +1297,7 @@ describe('copyToLibrary — non-mocked findPathOwners through the fence (real DB
     return {
       db: inject<Db>({}),
       log: createMockLogger(),
-      bookService, // REAL service — findPathOwners runs the actual eq(books.path, …) DB query.
+      bookService,
       bookImportService: inject<BookImportService>({}),
       settingsService: inject<SettingsService>(createMockSettingsService({
         library: { path: libraryRoot, folderFormat: '{author}/{title}' },
@@ -1490,29 +1335,20 @@ describe('copyToLibrary — non-mocked findPathOwners through the fence (real DB
   });
 
   it('resolves the real owner row stored at the POSIX target path and routes the same recording through a staged swap', async () => {
-    // Seed a real `books` row whose `path` is the POSIX string buildTargetPath stores. The fence
-    // queries findPathOwners(normalize(resolve(target))); on Linux/CI that resolves to the same
-    // forward-slash absolute path, so the un-mocked eq(books.path, …) lookup must return this row.
     const seeded = await bookService.create({ title: 'Title', authors: [{ name: 'Author' }], asin: 'B0SAME', status: 'imported' });
     await bookService.update(seeded.id, { path: toPosix(target) });
 
-    // Same recording (shared ASIN) → swap. Had the lookup MISSED the row (0 owners), the
-    // candidate's narrator would have disambiguated into a new "(…)" folder instead — so a
-    // base-path result proves the real query matched the stored POSIX path through the fence.
+    // Base-path result distinguishes a matched owner from the zero-owner disambiguation path.
     const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: ['Stephen Fry'], asin: 'B0SAME' };
     const result = await copyToLibrary(item, null, 'copy', buildDeps());
 
     expect(result.targetPath).toBe(toPosix(target));
     expect(result.editionLabel).toBeUndefined();
-    // The staged swap replaced the incumbent audio in the base folder — no disambiguated sibling.
     expect((await readdir(target)).sort()).toEqual(['new.mp3']);
     expect(await pathExists(join(libraryRoot, 'Author', 'Title (Stephen Fry)'))).toBe(false);
   });
 
-  // #1752 regression, platform-INDEPENDENT: findPathOwners must match a POSIX-stored `books.path`
-  // even when queried with a Windows backslash separator (the shape normalize(resolve(...)) yields
-  // on Windows). Uses literal strings so it exercises the POSIX fold on Linux CI too — remove the
-  // fold in findPathOwners and this goes red regardless of host OS.
+  // Literal backslashes exercise POSIX folding on every host, not only Windows (#1752).
   it('findPathOwners folds a backslash query key to POSIX so it still matches the stored path (#1752)', async () => {
     const seeded = await bookService.create({ title: 'Title', authors: [{ name: 'Author' }], asin: 'B0FOLD', status: 'imported' });
     await bookService.update(seeded.id, { path: '/library/Author/Title' });
@@ -1520,7 +1356,7 @@ describe('copyToLibrary — non-mocked findPathOwners through the fence (real DB
     const owners = await bookService.findPathOwners('\\library\\Author\\Title');
     expect(owners.map(o => o.id)).toEqual([seeded.id]);
 
-    // A genuinely different POSIX path still misses (the fold doesn't over-match).
+    // A genuinely different POSIX path still misses; the fold does not over-match.
     expect(await bookService.findPathOwners('\\library\\Author\\Other')).toEqual([]);
   });
 });

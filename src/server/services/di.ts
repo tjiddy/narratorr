@@ -1,13 +1,4 @@
-// Dependency-injection container shape for the server.
-//
-// The `Services` aggregate type and its companion `SERVICE_KEYS` list live here,
-// alongside the services they describe, rather than in routes/. Routes are a
-// higher layer than services; defining the DI container in routes/ forced lower
-// layers (jobs/) to import "upward" from routes/ just to name the container.
-// Re-homing the type here keeps the dependency direction correct
-// (routes → services, jobs → services) and lets the layering eslint guard cover
-// both services/ and jobs/. routes/index.ts re-exports `Services` so existing
-// route consumers (health-routes.ts, system.ts) keep importing it from there.
+// Keep the DI aggregate here so jobs and routes both depend downward; routes re-exports it.
 import type {
   SettingsService,
   AuthService,
@@ -102,11 +93,7 @@ export interface Services {
   companionEbook: CompanionEbookReconciler;
 }
 
-/**
- * Runtime list of all service keys, kept in sync with the Services interface.
- * The `satisfies` clause ensures TS errors if a key is added to Services but
- * not listed here — `Record<keyof Services, true>` requires every key present.
- */
+/** Exhaustive runtime keys; satisfies makes omissions a type error. */
 export const SERVICE_KEYS = Object.keys({
   settings: true,
   auth: true,

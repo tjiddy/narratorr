@@ -4,37 +4,17 @@ import { runMigrations } from '../../src/db/migrate.js';
 import { authors, bookAuthors, books, downloadClients, indexers, settings } from '../../src/db/schema.js';
 import { generatePublicId } from '../../src/server/utils/public-id.js';
 
-/**
- * Pre-boot Drizzle seed for the E2E harness. Runs migrations against the
- * per-run DB file, then inserts the rows the spec test depends on:
- *
- *   - `indexers`        — MAM pointing at the fake MAM server
- *   - `download_clients` — qBittorrent pointing at the fake qBit server
- *   - `authors` + `books` — the seeded book the test opens on /library
- *
- * Runs *before* webServer boots so the app finds the rows in place at startup.
- * Narratorr's own `migrate()` on boot is idempotent via Drizzle's journal, so
- * re-running here is safe.
- */
+/** Migrates and seeds each run before server boot with fake MAM/qBit and wanted-book rows. */
 
 export interface SeedE2ERunOptions {
   dbPath: string;
-  /** Base URL the MAM fake listens on. */
   mamUrl: string;
-  /** qBit fake host (no protocol/port — matches qbittorrentSettingsSchema). */
+  /** Host only, matching `qbittorrentSettingsSchema`; no protocol or port. */
   qbitHost: string;
-  /** qBit fake port. */
   qbitPort: number;
-  /**
-   * Absolute path Narratorr should use as the library root. Written to
-   * `settings.library.path` so `importDownload` sees a real directory when it
-   * calls `statfs(libraryPath)` during the disk-space gate. Narratorr's
-   * LIBRARY_PATH env var is decorative — nothing reads it at runtime.
-   */
+  /** Real directory stored in `settings.library.path`; the `LIBRARY_PATH` env variable is unused. */
   libraryPath: string;
-  /** mam_id cookie the fake accepts. */
   mamId?: string;
-  /** qBit fake credentials. */
   qbitUsername?: string;
   qbitPassword?: string;
 }
@@ -58,7 +38,6 @@ export async function seedE2ERun(options: SeedE2ERunOptions): Promise<SeededRowI
 
   try {
     return await db.transaction(async (tx) => {
-      // ── Indexer ──────────────────────────────────────────────────────────
       const [indexerRow] = await tx
         .insert(indexers)
         .values({
@@ -69,15 +48,13 @@ export async function seedE2ERun(options: SeedE2ERunOptions): Promise<SeededRowI
           settings: {
             baseUrl: options.mamUrl,
             mamId: options.mamId ?? 'test-mam-id',
-            searchLanguages: [1], // English
+            searchLanguages: [1], // MAM's numeric code for English
             searchType: 'all',
           },
         })
         .returning({ id: indexers.id });
 
-      // ── Download client ──────────────────────────────────────────────────
-      // NOTE: qbittorrentSettingsSchema is .strict() — do NOT add a `savePath` field.
-      // The fake qBit defaults its save_path to its constructor-configured downloadsPath.
+      // The strict qBit schema forbids `savePath`; the fake supplies its configured default.
       const [clientRow] = await tx
         .insert(downloadClients)
         .values({
@@ -95,7 +72,6 @@ export async function seedE2ERun(options: SeedE2ERunOptions): Promise<SeededRowI
         })
         .returning({ id: downloadClients.id });
 
-      // ── Author + book ────────────────────────────────────────────────────
       const authorSlug = SEED_AUTHOR_NAME
         .toLowerCase()
         .replace(/[^\w]+/g, '-')
@@ -125,18 +101,13 @@ export async function seedE2ERun(options: SeedE2ERunOptions): Promise<SeededRowI
         position: 0,
       });
 
-      // Pre-dismiss the WelcomeModal so it doesn't intercept clicks on /library.
-      // settings table is key/value JSON — `general` holds the flag.
+      // Prevent WelcomeModal from intercepting library-page clicks.
       await tx.insert(settings).values({
         key: 'general',
         value: { logLevel: 'info', housekeepingRetentionDays: 90, welcomeSeen: true },
       });
 
-      // Library settings must point at the per-run temp dir. Narratorr's
-      // LIBRARY_PATH env var is decorative — only settings.library.path is
-      // read at runtime (verified: grep `config.libraryPath` has no non-test
-      // consumers). Without this, imports hit the registry default `/audiobooks`
-      // which doesn't exist on the test host → statfs ENOENT → import fails.
+      // Only `settings.library.path` is read at runtime; `LIBRARY_PATH` is decorative.
       await tx.insert(settings).values({
         key: 'library',
         value: {
@@ -148,9 +119,7 @@ export async function seedE2ERun(options: SeedE2ERunOptions): Promise<SeededRowI
         },
       });
 
-      // Disable the disk-space gate. Temp runners may report low free space,
-      // and the E2E fixture is sub-5KB — the gate's sole purpose is protecting
-      // real-user libraries, not validating our copy path.
+      // Disable real-library free-space protection for the tiny fixture.
       await tx.insert(settings).values({
         key: 'import',
         value: { deleteAfterImport: false, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 0, redownloadFailed: true },

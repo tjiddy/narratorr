@@ -9,10 +9,7 @@ export class IndexerAuthError extends Error {
   }
 }
 
-/**
- * Thrown for indexer response shape mismatches and other non-auth indexer failures.
- * Distinct from IndexerAuthError (auth-specific) and ProxyError (proxy transport).
- */
+/** Non-auth indexer failure, including response validation. */
 export class IndexerError extends Error {
   constructor(
     public readonly indexerName: string,
@@ -24,10 +21,7 @@ export class IndexerError extends Error {
   }
 }
 
-/**
- * Thrown for proxy transport/handshake failures (connection refused, timeout, proxy HTTP errors).
- * NOT thrown for upstream indexer HTTP errors that happen to travel through a proxy.
- */
+/** Proxy transport or handshake failure, never an upstream indexer HTTP error. */
 export class ProxyError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
@@ -35,10 +29,7 @@ export class ProxyError extends Error {
   }
 }
 
-/**
- * Centralized check for proxy-related errors — covers both standard ProxyError
- * and FlareSolverr errors (which prefix messages with "FlareSolverr").
- */
+/** Match typed proxy failures and legacy FlareSolverr-prefixed errors. */
 export function isProxyRelatedError(error: unknown): boolean {
   if (error instanceof ProxyError) return true;
   if (error instanceof Error && error.message.startsWith('FlareSolverr')) return true;

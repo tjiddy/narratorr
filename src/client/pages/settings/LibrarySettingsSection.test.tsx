@@ -99,7 +99,6 @@ describe('LibrarySettingsSection', () => {
       await user.clear(pathInput);
       await user.type(pathInput, '/new-path');
 
-      // The edited-but-unsaved path is dirty (blur-save has not fired yet).
       await waitFor(() => {
         expect(state.current.dirtyLabels).toEqual(['Library']);
       });
@@ -120,7 +119,6 @@ describe('LibrarySettingsSection', () => {
       await user.type(pathInput, '/new-path');
       fireEvent.blur(pathInput);
 
-      // On save success resetField makes the form clean → label drops out.
       await waitFor(() => {
         expect(state.current.dirtyLabels).toEqual([]);
       });
@@ -142,8 +140,6 @@ describe('LibrarySettingsSection', () => {
       await user.type(pathInput, '/new-path');
       fireEvent.blur(pathInput);
 
-      // Registry reports the in-flight save (removing `pathSaveMutation.isPending`
-      // from the useTrackedForm call would leave this false forever).
       await waitFor(() => {
         expect(state.current.anyPending).toBe(true);
       });
@@ -169,8 +165,6 @@ describe('LibrarySettingsSection', () => {
       await user.clear(pathInput);
       fireEvent.blur(pathInput);
 
-      // Empty path → blur-save early-returns (no API call) but the draft stays
-      // dirty, so the guard label must remain.
       await waitFor(() => {
         expect(mockApi.updateSettings).not.toHaveBeenCalled();
       });
@@ -192,8 +186,6 @@ describe('LibrarySettingsSection', () => {
       await user.type(pathInput, '/new-path');
       fireEvent.blur(pathInput);
 
-      // Rejected save → the toast fires but the draft is not reset, so Library
-      // stays dirty (a regression that unregistered on failure would drop it).
       await waitFor(() => {
         expect(mockToast.error).toHaveBeenCalled();
       });
@@ -205,10 +197,7 @@ describe('LibrarySettingsSection', () => {
       let resolveSave: (v: unknown) => void = () => {};
       mockApi.updateSettings.mockReturnValue(new Promise((r) => { resolveSave = r; }));
 
-      // A location probe is load-bearing here (F16): the section renders outside
-      // <Routes>, so "still mounted" cannot prove the router stayed put. If the
-      // clean-success path wrongly replayed the captured /settings/indexers Link,
-      // only the pathname would reveal it.
+      // The section renders outside Routes, so only pathname can prove the captured Link was not replayed.
       function LocationProbe() {
         const location = useLocation();
         return <div data-testid="loc">{location.pathname}</div>;
@@ -226,32 +215,23 @@ describe('LibrarySettingsSection', () => {
       await waitFor(() => {
         expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks');
       });
-      // Exact equality (not toHaveTextContent, which substring-matches and would
-      // treat '/settings/indexers' as containing '/settings').
+      // Exact equality avoids toHaveTextContent's substring match.
       expect(screen.getByTestId('loc').textContent).toBe('/settings');
 
       const pathInput = screen.getByPlaceholderText('/audiobooks');
       await user.clear(pathInput);
       await user.type(pathInput, '/new-lib');
 
-      // Clicking the nav link blurs the input (fires the blur-save → pending) and
-      // is intercepted by the guard (still dirty). The guard modal names Library.
       await user.click(screen.getByRole('link', { name: 'Indexers' }));
       expect(screen.getByText(/The Library card has unsaved changes/)).toBeInTheDocument();
       expect(screen.getByTestId('loc').textContent).toBe('/settings');
 
-      // The in-flight blur-save completes successfully: resetField makes the form
-      // clean → the guard modal closes and stays on the page, while Library shows
-      // its own Refresh Library prompt (neither modal clobbers the other).
       await act(async () => {
         resolveSave(mockSettings);
       });
       await waitFor(() => {
         expect(screen.queryByText(/The Library card has unsaved changes/)).toBeNull();
       });
-      // Stayed on the exact route (a wrongful replay of the captured Link would
-      // move the pathname to /settings/indexers), with the section and Library's
-      // own Refresh Library prompt intact.
       expect(screen.getByTestId('loc').textContent).toBe('/settings');
       expect(screen.getByText('Library path')).toBeInTheDocument();
       expect(await screen.findByText('Refresh Library?')).toBeInTheDocument();
@@ -264,13 +244,10 @@ describe('LibrarySettingsSection', () => {
     await waitFor(() => {
       expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks');
     });
-    // Make the path dirty
     const pathInput = screen.getByPlaceholderText('/audiobooks');
     await user.clear(pathInput);
     await user.type(pathInput, '/dirty-path');
-    // Simulate a settings refetch (e.g., from another section saving)
     mockApi.getSettings.mockResolvedValue(mockSettings);
-    // Trigger a re-render but the dirty guard should preserve the user's edit
     expect(pathInput).toHaveValue('/dirty-path');
   });
 
@@ -294,7 +271,6 @@ describe('LibrarySettingsSection', () => {
           expect.objectContaining({ library: expect.objectContaining({ path: expect.any(String) }) }),
         );
       });
-      // Verify only library.path was sent (not naming fields)
       const callArg = mockApi.updateSettings.mock.calls[0]![0];
       expect(callArg.library).toHaveProperty('path');
       expect(callArg.library).not.toHaveProperty('folderFormat');
@@ -341,7 +317,6 @@ describe('LibrarySettingsSection', () => {
       });
       expect(screen.getByText('Would you like to refresh the library at the new path?')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /^refresh$/i })).toBeInTheDocument();
-      // Old wording must not be present
       expect(screen.queryByText('Scan Library?')).not.toBeInTheDocument();
       expect(screen.queryByText(/scan the library/i)).not.toBeInTheDocument();
     });
@@ -438,7 +413,6 @@ describe('LibrarySettingsSection', () => {
     });
   });
 
-  // Finding 1: Scan Library removed from Library path row (#227)
   describe('Scan Library removal (#227)', () => {
     it('does NOT render Scan Library link in the Library path row', async () => {
       renderWithProviders(<LibrarySettingsSection />);
@@ -458,10 +432,7 @@ describe('LibrarySettingsSection', () => {
     });
   });
 
-  // #1704 — library actions consolidated into the Library page; Settings → Library is path-only.
-  // This describe deliberately does NOT mock BulkOperationsSection — if the component were
-  // re-imported/rendered here, its buttons (and the un-mocked useBulkOperation API calls)
-  // would surface and fail these assertions.
+  // Deliberately do not mock BulkOperationsSection: re-importing it would surface and fail these assertions.
   describe('library actions removed from Settings (#1704)', () => {
     it('renders only the Library path field — no bulk/library action buttons', async () => {
       renderWithProviders(<LibrarySettingsSection />);
@@ -483,8 +454,7 @@ describe('LibrarySettingsSection', () => {
       await waitFor(() => {
         expect(screen.getByText('Library path')).toBeInTheDocument();
       });
-      // Label string must track the live NewBookDefaults label ('Search immediately' since the
-      // row-table conversion) or this NEGATIVE guard passes vacuously against a stale name.
+      // Use the live label so this negative assertion cannot pass against stale copy.
       expect(screen.queryByLabelText('Search immediately')).not.toBeInTheDocument();
       expect(screen.queryByLabelText('Monitor for Upgrades')).not.toBeInTheDocument();
     });
@@ -544,7 +514,6 @@ describe('LibrarySettingsSection', () => {
       });
       const dirEntries = screen.getAllByText('audiobooks');
       await user.click(dirEntries[dirEntries.length - 1]!);
-      // Browse selection updates path field (exact value depends on directory nav)
       await waitFor(() => {
         const pathInput = screen.getByPlaceholderText('/audiobooks') as HTMLInputElement;
         expect(pathInput.value).toBeTruthy();
@@ -552,4 +521,3 @@ describe('LibrarySettingsSection', () => {
     });
   });
 });
-

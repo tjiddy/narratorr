@@ -15,11 +15,7 @@ import type {
   SearchBooksResult,
 } from './types.js';
 
-// Retry-After interpretation lives in retry-after.ts (#1948) — both 429 arms below
-// route through it. The old inline `parseInt(header, 10) * 1000` read yielded NaN
-// for the HTTP-date form RFC 9110 permits, and a NaN window is falsy at
-// MetadataService.isRateLimited, so the backoff gate went dead (not mis-timed) and
-// a rate-limited Audible — the primary search provider — kept being hammered.
+// Shared parsing handles delta-seconds and RFC 9110 dates; NaN would disable provider backoff.
 import { parseRetryAfterMs } from './retry-after.js';
 
 export interface AudibleConfig {
@@ -45,8 +41,7 @@ const MAX_RESULTS = 10;
 const RESPONSE_GROUPS = 'contributors,product_desc,media,product_extended_attrs,series';
 const IMAGE_SIZES = '500,1024';
 
-// Raw-response schemas at the wrapper layer — fail at the boundary on HTML
-// interstitials, rate-limit pages, or shape changes instead of mid-mapping.
+// Reject HTML interstitials and upstream shape drift at the response boundary.
 const audibleProductSchema = z.object({
   asin: z.string().nullish(),
   title: z.string().nullish(),
@@ -104,7 +99,6 @@ export class AudibleProvider implements MetadataSearchProvider {
       image_sizes: IMAGE_SIZES,
     });
 
-    // Use structured title/author params when available; fall back to keywords blob
     if (options?.title) {
       params.set('title', options.title);
       if (options.author) params.set('author', options.author);
@@ -123,7 +117,7 @@ export class AudibleProvider implements MetadataSearchProvider {
       if (result.success) books.push(result.data);
     }
 
-    // Sort preferred-language results first (Audible API doesn't support language filtering)
+    // Audible cannot filter by language, so prefer the configured language client-side.
     const preferred = this.preferredLanguage;
     books.sort((a, b) => {
       const aMatch = a.language?.toLowerCase() === preferred ? 0 : 1;
@@ -135,7 +129,7 @@ export class AudibleProvider implements MetadataSearchProvider {
   }
 
   async searchSeries(query: string): Promise<SeriesMetadata[]> {
-    // Audible doesn't have a dedicated series search — extract from book results
+    // Audible has no series endpoint; derive series from book results.
     const { books } = await this.searchBooks(query);
     return deriveSeriesFromBooks(books);
   }
@@ -159,13 +153,7 @@ export class AudibleProvider implements MetadataSearchProvider {
     }
   }
 
-  /**
-   * Typed lookup that never throws — every failure becomes a discriminated kind.
-   * `invalid_record.source` distinguishes raw wrapper-schema failures (HTML
-   * interstitial, API shape change) from mapped-schema failures (required
-   * BookMetadata field missing), so the legacy `getBook` wrapper can preserve
-   * its existing throw-vs-null contract for each.
-   */
+  /** Never throws; raw and mapped validation failures remain distinct for the legacy wrapper. */
   async getBookDetailed(asin: string): Promise<ProviderLookupResult> {
     const params = new URLSearchParams({
       response_groups: RESPONSE_GROUPS,
@@ -245,11 +233,7 @@ export class AudibleProvider implements MetadataSearchProvider {
     }
   }
 
-  /**
-   * Like `request`, but returns a discriminated outcome instead of throwing.
-   * Used by `getBookDetailed` to preserve full failure-mode fidelity for the
-   * Fix Match route.
-   */
+  /** Discriminated counterpart to `request`, preserving detail-route failure modes. */
   private async requestDetailed<S extends z.ZodTypeAny>(
     url: string,
     schema: S,
@@ -287,14 +271,9 @@ export class AudibleProvider implements MetadataSearchProvider {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Mapping helpers
-// ---------------------------------------------------------------------------
-
 // eslint-disable-next-line complexity -- API response mapping with nullable field handling
 function mapProduct(product: AudibleProduct): Record<string, unknown> {
-  // Drop contributors with a null/missing name — Audible ships partial records,
-  // and a nameless author/narrator can't map to a valid BookMetadata contributor.
+  // Audible ships partial contributors; nameless entries cannot become valid metadata.
   const authors = (product.authors ?? [])
     .filter((a): a is typeof a & { name: string } => a.name != null)
     .map((a) => ({
@@ -314,15 +293,13 @@ function mapProduct(product: AudibleProduct): Record<string, unknown> {
       asin: s.asin || undefined,
     }));
 
-  // Use the largest available product image
   const coverUrl = extractCoverUrl(product.product_images);
 
-  // Clean HTML description — keep structural/formatting tags, strip junk
   const description = cleanHtml(
     product.publisher_summary ?? product.merchandising_summary,
   );
 
-  // Preserve full release_date or issue_date for sorting precision
+  // Preserve the full date for sorting precision.
   const publishedDate = product.release_date ?? product.issue_date ?? undefined;
 
   return {
@@ -352,10 +329,8 @@ function parseSeriesPosition(sequence?: string | null): number | undefined {
   return match ? parseFloat(match[1]!) : undefined;
 }
 
-/** Extract the best cover URL from product_images (prefer largest). */
 function extractCoverUrl(images?: Record<string, string> | null): string | undefined {
   if (!images) return undefined;
-  // Keys are size numbers like "500", "1024" — pick the largest
   const sizes = Object.keys(images)
     .map(Number)
     .filter((n) => !isNaN(n))

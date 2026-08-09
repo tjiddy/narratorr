@@ -7,14 +7,7 @@ import { summaryResponse, detailResponse, acceptedRow } from './__tests__/staged
 import { __resetOutboxCache, readOutbox } from './outbox.js';
 import type { SubmissionAggregates } from '@/lib/api';
 
-/**
- * Focused unit tests for the run-supersession / abort / epoch guards (#1902 F19). The
- * digest step is mocked so a run can be held mid-`computeSubmissionDigest` while a newer
- * submit supersedes it, or the component unmounts — proving that a superseded/unmounted
- * run's late continuation starts no network chain and mutates no newer-run state.
- */
-
-// Hold each digest call open until the test resolves it (vi.hoisted so the mock factory can see it).
+// Hold each digest until the test chooses which run resumes.
 const { digestResolvers } = vi.hoisted(() => ({ digestResolvers: [] as Array<(v: string) => void> }));
 vi.mock('./digest.js', () => ({
   computeSubmissionDigest: vi.fn(() => new Promise<string>((resolve) => { digestResolvers.push(resolve); })),
@@ -36,10 +29,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   },
 }));
 
-// Stub the `clientSubmissionId` entropy boundary (#1921 AC1). By default it delegates to the
-// REAL generator (client-uuid.test.ts owns the generator's own coverage); the two-instance pin
-// overrides it with `mockReturnValueOnce` to feed two FIXED valid UUIDs, so its distinct-id
-// premise is deterministic and never rides on ambient `crypto` output.
+// Default to real UUID generation; the two-instance race overrides deterministic IDs.
 const { clientIdMock } = vi.hoisted(() => ({ clientIdMock: vi.fn<() => string>() }));
 vi.mock('./client-uuid.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./client-uuid.js')>();
@@ -65,20 +55,14 @@ function renderStaged() {
 }
 
 beforeEach(() => {
-  // The active-transport supersession test queues `mockCreate.mockImplementationOnce(...)`, so
-  // these API mocks MUST be reset (not merely cleared) between tests — `vi.clearAllMocks()` clears
-  // call history but leaves an unconsumed `*Once()` implementation queued into the next test, per
-  // the `vitest-clearallmocks-once-queue` learning. `mockReset()` drains the queue AND restores a
-  // bare implementation; each test then re-establishes its own defaults. The digest mock is left
-  // intact (it has no `*Once` queue and relies on its persistent pending-promise implementation).
+  // mockReset drains any unconsumed mockImplementationOnce queue from supersession tests.
   for (const m of [mockCreate, mockPut, mockFinalize, mockGet, mockByClient]) m.mockReset();
   digestResolvers.length = 0;
   localStorage.clear();
   __resetOutboxCache();
 });
 
-/** Wire run B's transport to land through finalize and then hold the poll at `processing`
- *  (so B's `finalized` hint persists in the outbox rather than being evicted on completion). */
+// Stop B at processing so its finalized outbox hint remains observable.
 function wireBProcessing(id: number): void {
   mockCreate.mockResolvedValue(summaryResponse({ id, source: 'library', status: 'receiving', expectedCount: 1 }));
   mockPut.mockResolvedValue(summaryResponse({ id, source: 'library', status: 'receiving', expectedCount: 1 }));
@@ -91,20 +75,17 @@ describe('useStagedSubmission — run supersession (F19)', () => {
     wireBProcessing(200);
     const { result } = renderStaged();
 
-    // Run A (3 items) starts and blocks on its digest; run B (1 item) supersedes it.
     act(() => { result.current.submit([{ path: '/a1', title: 'A1' }, { path: '/a2', title: 'A2' }, { path: '/a3', title: 'A3' }], undefined); });
     act(() => { result.current.submit([{ path: '/b', title: 'B' }], undefined); });
     expect(digestResolvers).toHaveLength(2);
 
-    // Resolve B first → B runs its pipeline to `finalized`. Then resolve A's (superseded) digest.
+    // Resume B before stale A.
     await act(async () => { digestResolvers[1]!(DIGEST); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
     await act(async () => { digestResolvers[0]!(DIGEST); await Promise.resolve(); await Promise.resolve(); });
 
-    // Exactly one create — run B (expectedCount 1); run A (expectedCount 3) never touched the network.
     expect(mockCreate).toHaveBeenCalledTimes(1);
     expect(mockCreate.mock.calls[0]![0]).toMatchObject({ expectedCount: 1 });
-    // The single-slot outbox is OWNED by B — A's stale continuation did not overwrite the hint
-    // (this deletion-tests the digest-continuation guard, which the create count alone cannot).
+    // The outbox assertion catches stale writes that the create count cannot.
     const bClientId = (mockCreate.mock.calls[0]![0] as { clientSubmissionId: string }).clientSubmissionId;
     const hint = readOutbox('library');
     expect(hint).not.toBeNull();
@@ -117,48 +98,40 @@ describe('useStagedSubmission — run supersession (F19)', () => {
     act(() => { result.current.submit([{ path: '/a', title: 'A' }], undefined); });
     expect(digestResolvers).toHaveLength(1);
 
-    // Unmount BEFORE the digest resolves; cleanup aborts the (already-created) controller.
     unmount();
     await act(async () => { digestResolvers[0]!(DIGEST); await Promise.resolve(); await Promise.resolve(); });
 
-    // The digest continuation saw the aborted signal and bailed — no network chain, no hint
-    // resurrected after cleanup (the create count alone would miss a post-unmount putOutbox).
     expect(mockCreate).not.toHaveBeenCalled();
     expect(readOutbox('library')).toBeNull();
   });
 
   it('a run superseded AFTER it has entered the transport pipeline cannot advance, publish, or own the hint/poll (F19/F24)', async () => {
-    // Run A's create is held pending so A is genuinely IN create/PUT/finalize when B supersedes;
-    // B then runs to `finalized`. Resolving A's create afterwards must not let A advance a stage,
-    // rewrite the hint, or take poll ownership — the epoch/abort guards past `runPipeline` start.
+    // Hold A's create, let B finalize, then release stale A.
     let resolveCreateA: (v: { id: number }) => void = () => {};
-    mockCreate.mockImplementationOnce(() => new Promise<{ id: number }>((r) => { resolveCreateA = r; })); // run A
-    mockCreate.mockResolvedValue(summaryResponse({ id: 200, source: 'library', status: 'receiving', expectedCount: 1 })); // run B
+    mockCreate.mockImplementationOnce(() => new Promise<{ id: number }>((r) => { resolveCreateA = r; }));
+    mockCreate.mockResolvedValue(summaryResponse({ id: 200, source: 'library', status: 'receiving', expectedCount: 1 }));
     mockPut.mockResolvedValue(summaryResponse({ id: 200, source: 'library', status: 'receiving', expectedCount: 1 }));
     mockFinalize.mockResolvedValue(summaryResponse({ id: 200, source: 'library', status: 'processing', expectedCount: 1 }));
     mockGet.mockResolvedValue(summaryResponse({ id: 200, source: 'library', status: 'processing', expectedCount: 1, processedCount: 0 }));
 
     const { result, params } = renderStaged();
 
-    // Run A: submit → resolve its digest → A enters createStep and blocks on the pending create.
+    // Park A in create.
     act(() => { result.current.submit([{ path: '/a', title: 'A' }], undefined); });
     await act(async () => { digestResolvers[0]!(DIGEST); await Promise.resolve(); await Promise.resolve(); });
-    expect(mockCreate).toHaveBeenCalledTimes(1); // A is mid-create
+    expect(mockCreate).toHaveBeenCalledTimes(1);
 
-    // Run B supersedes (aborts A's controller, bumps the epoch), then runs to `finalized`.
+    // Let B finalize and claim the epoch.
     act(() => { result.current.submit([{ path: '/b', title: 'B' }], undefined); });
     await act(async () => { digestResolvers[1]!(DIGEST); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
 
-    // Now let A's already-superseded create resolve; A must not proceed to PUT/finalize.
+    // Let A's already-superseded create resolve.
     await act(async () => { resolveCreateA({ id: 100 }); await Promise.resolve(); await Promise.resolve(); });
 
-    // Both createStep calls ran (A entered create before supersession; B created).
     expect(mockCreate).toHaveBeenCalledTimes(2);
-    // A never advanced: every PUT/finalize belongs to B's submission (id 200), never A's (id 100).
     expect(mockPut).toHaveBeenCalled();
     expect(mockPut.mock.calls.every((c) => c[0] === 200)).toBe(true);
     expect(mockFinalize.mock.calls.every((c) => c[0] === 200)).toBe(true);
-    // The hint is owned by B; A did not rewrite it or start/complete a projection.
     const bClientId = (mockCreate.mock.calls[1]![0] as { clientSubmissionId: string }).clientSubmissionId;
     expect(readOutbox('library')).toMatchObject({ clientSubmissionId: bClientId, status: 'finalized', submissionId: 200 });
     expect(params.onCleanNavigate).not.toHaveBeenCalled();
@@ -166,100 +139,69 @@ describe('useStagedSubmission — run supersession (F19)', () => {
   });
 });
 
-/**
- * Two INDEPENDENT hook instances racing before create (AC1 client, #1921). Each
- * `useStagedSubmission` instance owns its own epoch/abort refs, so neither supersedes the
- * other — both keep a live create/PUT/finalize chain under a DISTINCT `clientSubmissionId`.
- * The single-slot source-scoped outbox is the only shared surface: the newer instance's
- * create replaces the hint, and the older still-active instance's LATE finalize callback must
- * NOT rewrite it — the `expectedClientId` guard in `markOutboxFinalized` protects the newer
- * hint (outbox.ts:123-133). The client mocks the submissions API and cannot observe server
- * durability; durable-header discovery is proven by the linked real-DB test in
- * import-submission-report.service.integration.test.ts.
- */
+// Independent hooks share only the source-scoped outbox; client-ID guards protect its newest hint.
 describe('useStagedSubmission — two independent instances (AC1 client, #1921)', () => {
-  // Two FIXED valid v4 UUIDs (F2): the distinct-id premise is deterministic, not entropy-dependent.
-  const CLIENT_1 = '11111111-1111-4111-8111-111111111111'; // older instance
-  const CLIENT_2 = '22222222-2222-4222-8222-222222222222'; // newer instance
+  const CLIENT_1 = '11111111-1111-4111-8111-111111111111';
+  const CLIENT_2 = '22222222-2222-4222-8222-222222222222';
 
-  // Deterministic advance (F1/AC4): drain the pending microtask chain (create→PUT→finalize→
-  // markOutboxFinalized) with a FIXED number of `Promise.resolve()` yields — NO wall-clock timers.
-  // Every mock resolves synchronously, so the chain is a fixed microtask sequence; the poll's
-  // interval timer never fires (and is irrelevant — the `finalized` hint lands before startPoll).
+  // Fixed microtask draining reaches finalized before the irrelevant poll timer can fire.
   async function drainMicrotasks(): Promise<void> {
     await act(async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); });
   }
 
   it('two instances hold distinct id/PUT/finalize chains; a late older-instance callback cannot rewrite the newer instance\'s outbox hint', async () => {
-    // Fixed, ordered client ids — instance 1 submits first (CLIENT_1), instance 2 second (CLIENT_2).
     clientIdMock.mockReturnValueOnce(CLIENT_1).mockReturnValueOnce(CLIENT_2);
-    // Per-id PUT/finalize/poll wiring — each instance drives its OWN durable id and its poll
-    // parks at `processing` (so a `finalized` hint is not evicted on completion).
+    // Park both polls at processing so finalized hints remain observable.
     mockPut.mockImplementation((id: number) => Promise.resolve(summaryResponse({ id, source: 'library', status: 'receiving', expectedCount: 1 })));
     mockFinalize.mockImplementation((id: number) => Promise.resolve(summaryResponse({ id, source: 'library', status: 'processing', expectedCount: 1 })));
     mockGet.mockImplementation((id: number) => Promise.resolve(summaryResponse({ id, source: 'library', status: 'processing', expectedCount: 1, processedCount: 0 })));
-    // Instance 1's create is HELD (an explicit deferred gate, not a timer) so its finalize (and
-    // its outbox mark) lands LATE, after instance 2 has run its whole chain and taken the hint.
+    // Hold instance 1's create until instance 2 owns the outbox.
     let resolveCreate1!: (v: ReturnType<typeof summaryResponse>) => void;
     mockCreate
       .mockImplementationOnce(() => new Promise<ReturnType<typeof summaryResponse>>((r) => { resolveCreate1 = r; }))
       .mockImplementationOnce(() => Promise.resolve(summaryResponse({ id: 200, source: 'library', status: 'receiving', expectedCount: 1 })));
 
-    const inst1 = renderStaged(); // older instance
-    const inst2 = renderStaged(); // newer instance
+    const inst1 = renderStaged();
+    const inst2 = renderStaged();
 
-    // Both instances submit (each mints its fixed clientSubmissionId); each blocks on its digest.
     act(() => { inst1.result.current.submit([{ path: '/one', title: 'One' }], undefined); });
     act(() => { inst2.result.current.submit([{ path: '/two', title: 'Two' }], undefined); });
     expect(digestResolvers).toHaveLength(2);
 
-    // Instance 1 enters its pipeline first — writes its (submitting) outbox hint and PARKS on its held create.
+    // Park instance 1 in create.
     await act(async () => { digestResolvers[0]!(DIGEST); });
     await drainMicrotasks();
     expect(mockCreate).toHaveBeenCalledTimes(1);
 
-    // Instance 2 runs its whole chain to `finalized` — it now OWNS the single-slot outbox hint.
+    // Let instance 2 finalize and claim the outbox.
     await act(async () => { digestResolvers[1]!(DIGEST); });
     await drainMicrotasks();
     const client1 = (mockCreate.mock.calls[0]![0] as { clientSubmissionId: string }).clientSubmissionId;
     const client2 = (mockCreate.mock.calls[1]![0] as { clientSubmissionId: string }).clientSubmissionId;
     expect(client1).toBe(CLIENT_1);
     expect(client2).toBe(CLIENT_2);
-    expect(client1).not.toBe(client2); // distinct durable identities → independent runs
+    expect(client1).not.toBe(client2);
     expect(readOutbox('library')).toMatchObject({ clientSubmissionId: CLIENT_2, status: 'finalized', submissionId: 200 });
 
-    // NOW instance 1's held create resolves LATE — it finishes PUT/finalize and calls
-    // markOutboxFinalized(CLIENT_1), which MUST be a no-op because the slot belongs to instance 2.
+    // Release instance 1 after its hint is stale.
     resolveCreate1(summaryResponse({ id: 100, source: 'library', status: 'receiving', expectedCount: 1 }));
     await drainMicrotasks();
 
     expect(mockCreate).toHaveBeenCalledTimes(2);
-    // Per-instance payload ownership (F3): each durable id carried ITS OWN survivor item, never the
-    // other's — the PUT for id 100 sends ordinal 0 `/one` and the PUT for id 200 sends ordinal 0 `/two`.
-    // (A regression that sent `/two` for both ids, or swapped them, would fail here even though the
-    // id-only checks below still pass.)
+    // Each durable ID must retain its own item payload.
     const put100 = mockPut.mock.calls.find((c) => c[0] === 100)!;
     const put200 = mockPut.mock.calls.find((c) => c[0] === 200)!;
     expect(put100[1]).toMatchObject({ items: [{ ordinal: 0, item: { path: '/one', title: 'One' } }] });
     expect(put200[1]).toMatchObject({ items: [{ ordinal: 0, item: { path: '/two', title: 'Two' } }] });
-    // Both instances drove an independent finalize over their own durable id.
     expect(mockFinalize.mock.calls.some((c) => c[0] === 100)).toBe(true);
     expect(mockFinalize.mock.calls.some((c) => c[0] === 200)).toBe(true);
-    // The hint STILL belongs to the newer instance — the late older-instance callback did not rewrite it.
     expect(readOutbox('library')).toMatchObject({ clientSubmissionId: CLIENT_2, status: 'finalized', submissionId: 200 });
   });
 });
 
-/**
- * Paused clean-completion policy (#1895 F6/F7/F8/F11). `shouldStayOnClean` is snapshotted
- * per-run AFTER preflight (alongside the frozen submitted paths); a clean completion whose
- * snapshot is true STAYS on the page and deselects the frozen submitted survivors in place
- * (robust to a pruned aggregates-only terminal detail), instead of calling `onCleanNavigate`.
- */
 describe('useStagedSubmission — paused clean-completion policy (#1895)', () => {
   const cleanAgg = (accepted: number): SubmissionAggregates => ({ accepted, held: 0, skipped: 0, failed: 0 });
 
-  /** Wire a full submit that polls to a CLEAN `complete`; `pruned` drops the terminal item detail. */
   function wireCleanTerminal(id: number, accepted: number, { pruned = false } = {}): void {
     const agg = cleanAgg(accepted);
     mockCreate.mockResolvedValue(summaryResponse({ id, source: 'library', status: 'receiving', expectedCount: accepted }));
@@ -271,7 +213,6 @@ describe('useStagedSubmission — paused clean-completion policy (#1895)', () =>
         const items = Array.from({ length: accepted }, (_, i) => acceptedRow(i, `/p${i}`, `P${i}`));
         return Promise.resolve(detailResponse(items, base));
       }
-      // Summary polls, and the terminal detail fetch when pruned (aggregates only, no items).
       return Promise.resolve(summaryResponse(base));
     });
   }
@@ -290,7 +231,6 @@ describe('useStagedSubmission — paused clean-completion policy (#1895)', () =>
     return { ...view, params };
   }
 
-  /** Drain the create→put→finalize→poll→terminal-detail→projectOutcome chain (real macrotask). */
   async function settle(): Promise<void> {
     await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
@@ -304,8 +244,6 @@ describe('useStagedSubmission — paused clean-completion policy (#1895)', () =>
     await act(async () => { digestResolvers[0]!(DIGEST); });
     await settle();
 
-    // Proves the clean branch uses `submittedPathsRef` (frozen at submit), not the empty
-    // item-derived set — the terminal had NO items to derive an accepted set from.
     expect(params.onCleanNavigate).not.toHaveBeenCalled();
     expect(params.onDeselectAccepted).toHaveBeenCalledTimes(1);
     expect([...params.onDeselectAccepted.mock.calls[0]![0]].sort()).toEqual(['/a', '/b']);
@@ -316,13 +254,11 @@ describe('useStagedSubmission — paused clean-completion policy (#1895)', () =>
     { initial: false, flipped: true, stays: false },
   ])('F7: clean terminal follows the SUBMIT-TIME snapshot (initial=$initial), not a later flip to $flipped', async ({ initial, flipped, stays }) => {
     wireCleanTerminal(8, 1, { pruned: false });
-    // A single stable closure reading a live `let` — mirrors `() => paused` where a mid-processing
-    // `MatchEngine.resume()` clears `paused` synchronously AFTER the run was accepted.
+    // Stable closure mirrors () => paused while the value changes mid-run.
     let stay = initial;
     const { result, params } = renderStay(() => stay);
 
     act(() => { result.current.submit([{ path: '/a', title: 'A' }], undefined); });
-    // Flip the live value BEFORE the terminal resolves (the digest is still pending).
     stay = flipped;
     await act(async () => { digestResolvers[0]!(DIGEST); });
     await settle();
@@ -342,20 +278,14 @@ describe('useStagedSubmission — paused clean-completion policy (#1895)', () =>
     let stay = true;
     const { result, params } = renderStay(() => stay);
 
-    // Run A accepted while paused (stay=true) — snapshots true AFTER its preflight; still active
-    // (digest pending, so it has NOT reached its terminal projection yet).
     act(() => { result.current.submit([{ path: '/a', title: 'A' }, { path: '/b', title: 'B' }], undefined); });
     expect(digestResolvers).toHaveLength(1);
 
-    // Run B carries the OPPOSITE policy (stay=false) but is an explicit zero-survivors submit:
-    // it fails preflight with zero classified local exclusions, so it returns BEFORE the
-    // post-preflight snapshot line and BEFORE bumping the epoch — leaving A's ownership intact.
+    // Empty B fails before claiming an epoch or terminal-policy snapshot.
     stay = false;
     act(() => { result.current.submit([], undefined); });
-    expect(digestResolvers).toHaveLength(1); // B never reached the digest — preflight rejected it
+    expect(digestResolvers).toHaveLength(1);
 
-    // A's clean terminal now resolves: it must obey ITS OWN snapshot (stay) — a top-of-submit
-    // snapshot bug would have let B's false clobber it and navigate instead.
     await act(async () => { digestResolvers[0]!(DIGEST); });
     await settle();
 

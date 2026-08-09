@@ -30,20 +30,15 @@ export function useLibraryImport() {
   const [emptyResult, setEmptyResult] = useState(false);
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [editIndex, setEditIndex] = useState<number | null>(null);
-  // Chapter-runtime second opinion for a re-pick (#2055) — shared with the manual surface.
-  // Owns this hook instance's monotonic `matchGeneration` counter.
+  // Monotonic match generations reject stale chapter-runtime re-pick results.
   const { nextGeneration, dispatchCorroboration } = useRepickCorroboration(setRows);
-  // Held re-confirm (#1711) resubmits through the same staged pipeline. Library always
-  // registers with mode `undefined`, so the snapshot is unused here. `submitRef` breaks
-  // the cycle: held-review's `confirm` needs `staged.submit`, which needs `captureHeld`.
+  // The ref breaks the held-review/staged-submit cycle; Library mode is always undefined.
   const submitRef = useRef<(items: ImportConfirmItem[], mode: undefined) => void>(() => {});
-  // Items the server held for recording review (#1711) — surfaced for re-confirm.
   const { heldReview, captureHeld, clearHeld, handleReconfirmHeld } = useHeldReview({
     rows,
     confirm: (items) => submitRef.current(items, undefined),
   });
 
-  // Staged submit + poll pipeline (#1902) — replaces the direct chunked confirm.
   const staged = useStagedSubmission({
     source: 'library',
     acceptedVerb: 'registered',
@@ -51,9 +46,7 @@ export function useLibraryImport() {
     onDeselectAccepted: (paths) => setRows((prev) => prev.map((r) => (paths.has(r.book.path) ? { ...r, selected: false } : r))),
     captureHeld,
     clearHeld,
-    // Paused-subset import (#1895): a clean completion while the match run is paused must
-    // stay on the page and deselect the accepted rows in place — navigating to /library would
-    // unmount `useMatchJob` and dispose the paused engine, losing the resumable remainder.
+    // Stay mounted while paused or the resumable match remainder is lost.
     shouldStayOnClean: () => paused,
   });
   const stagedSubmit = staged.submit;
@@ -63,26 +56,21 @@ export function useLibraryImport() {
   const chunkProgress = staged.chunkProgress;
   const registerMutation = { isPending: staged.isPending };
 
-  // Settings query to get library path
   const { data: settings, isError: settingsError } = useQuery({
     queryKey: queryKeys.settings(),
     queryFn: api.getSettings,
   });
 
-  // Derived from settings — no need for separate state. While loading we
-  // assume a path exists so the UI doesn't flicker the "no library path"
-  // message before the query resolves.
+  // Treat unresolved settings as configured to avoid flashing the empty-path state.
   const hasLibraryPath = settings === undefined && !settingsError
     ? true
     : !!settings?.library.path;
 
-  // Book identifiers for slug-duplicate recheck
   const { data: bookIdentifiers } = useQuery({
     queryKey: queryKeys.bookIdentifiers(),
     queryFn: api.getBookIdentifiers,
   });
 
-  // Merge match results into rows (same logic as useManualImport)
   const prevMatchCountRef = useRef(0);
   const mergeMatchResults = useCallback((results: MatchResult[]) => {
     const resultMap = new Map<string, MatchResult>();
@@ -90,9 +78,7 @@ export function useLibraryImport() {
       resultMap.set(r.path, r);
     }
 
-    // One fresh stamp for this merge, taken OUTSIDE the updater: StrictMode double-invokes
-    // updater functions, and a stamp computed in there would not be the value a concurrent
-    // dispatch captured (#2055 B11).
+    // Compute once outside the updater: StrictMode may invoke updater functions twice.
     const generation = nextGeneration();
     setRows(prev => prev.map(row => {
       const match = resultMap.get(row.book.path);
@@ -141,8 +127,7 @@ export function useLibraryImport() {
           path: d.path,
           title: d.parsedTitle,
           ...(d.parsedAuthor && { author: d.parsedAuthor }),
-          // Thread the parsed series position (#1849) so the ranker can break
-          // same-title series ties. `!== undefined` (never `||`) so position 0 survives.
+          // Preserve position 0; the ranker uses series position to break same-title ties.
           ...(d.parsedSeriesPosition !== undefined && { seriesPosition: d.parsedSeriesPosition }),
         }));
       if (candidates.length > 0) {
@@ -154,12 +139,10 @@ export function useLibraryImport() {
     },
   });
 
-  // Auto-scan on mount once settings are loaded and we have a library path.
   const didScanRef = useRef(false);
   useEffect(() => {
     if (didScanRef.current) return;
 
-    // Wait for settings to resolve (either success or error)
     if (settings === undefined && !settingsError) return;
 
     const libraryPath = settings?.library.path ?? '';
@@ -183,9 +166,7 @@ export function useLibraryImport() {
   }, []);
 
   const handleEdit = useCallback((index: number, state: BookEditState) => {
-    // Read the pre-edit row and take the stamp OUTSIDE the updater (#2055 B3/B11): a
-    // request fired from inside a `setRows` updater goes out twice under StrictMode, and a
-    // stamp taken in there would not be the one the dispatch captured.
+    // Read and stamp outside the updater; StrictMode may invoke updater functions twice.
     const previous = rows[index];
     const generation = nextGeneration();
     const request = previous && needsChapterCorroboration(previous.matchResult, state.metadata, previous.edited.metadata);
@@ -198,13 +179,7 @@ export function useLibraryImport() {
 
       let updatedBook: DiscoveredBook = r.book;
 
-      // Slug-duplicate recheck: if this was flagged a DB duplicate, see if the
-      // edited identity still collides. Runs the FULL shared predicate (#1662 F5)
-      // — ASIN-first, then normalized title+author — over each library identifier
-      // (which carries asin/title/authorSlug). Because every library-identity hit
-      // now reports `duplicateReason: 'slug'` (including ASIN hits), an ASIN-flagged
-      // row stays flagged after title/author edits that no longer textually collide
-      // but whose ASIN still matches.
+      // Recheck edited slug duplicates ASIN-first; title edits cannot clear an ASIN collision.
       if (r.book.isDuplicate && r.book.duplicateReason === 'slug' && bookIdentifiers) {
         const candidate = {
           title: state.title,
@@ -220,8 +195,7 @@ export function useLibraryImport() {
       return stampRow({ ...r, book: updatedBook, edited: state, selected: autoCheck, userEdited: true, ...(matchResult !== undefined && { matchResult }) }, generation);
     }));
 
-    // Optimistic first: the synchronous verdict above already rendered. The corroborated
-    // answer, if any, patches the row when it arrives and can only promote it to Matched.
+    // Corroboration may only promote the optimistic verdict.
     if (previous && request) dispatchCorroboration({ path: previous.book.path, generation, request });
   }, [bookIdentifiers, rows, nextGeneration, dispatchCorroboration]);
 
@@ -230,11 +204,7 @@ export function useLibraryImport() {
     staged.submit(items, undefined);
   }, [rows, staged]);
 
-  // Deselect-pending affordance (#1895): while paused, clear `selected` on every pending row
-  // — result-less and NOT a DB duplicate — so the remaining matched selection can import. The
-  // predicate mirrors `selectedPendingCount` exactly (the canonical `isLibraryDbDuplicate`
-  // helper): a path/slug DB duplicate isn't selectable to begin with, so it never needs
-  // clearing. Matched selections stay intact.
+  // Mirror selectedPendingCount so matched selections and DB duplicates remain untouched.
   const handleDeselectPending = useCallback(() => {
     setRows(prev => prev.map(r => (!r.matchResult && !isLibraryDbDuplicate(r.book)) ? { ...r, selected: false } : r));
   }, []);
@@ -249,9 +219,7 @@ export function useLibraryImport() {
     scanMutation.mutate(libraryPath);
   }, [settings, scanMutation, clearHeld]);
 
-  // Restart all (#1864 §5b) — rebuild candidates from CURRENT edited row values
-  // (incl. edited seriesPosition, #1849), CLEAR every non-duplicate row's match to
-  // pending (stale by construction), and reset the result-offset before the new run.
+  // Restart from current edits; clear prior matches and reset the append offset.
   const handleRestartMatch = useCallback(() => {
     const candidates = rows
       .filter(r => !isLibraryDbDuplicate(r.book))
@@ -259,7 +227,6 @@ export function useLibraryImport() {
         path: r.book.path,
         title: r.edited.title,
         ...(r.edited.author && { author: r.edited.author }),
-        // Guard preserves position 0 (#1028/#1849).
         ...(r.edited.seriesPosition !== undefined && { seriesPosition: r.edited.seriesPosition }),
       }));
     if (candidates.length === 0) return;
@@ -269,11 +236,9 @@ export function useLibraryImport() {
     restart(candidates);
   }, [rows, restart, nextGeneration]);
 
-  // Resume remaining (#1864 §5) — re-match only the result-less remainder; rows that
-  // already matched keep their result (the engine's observed map is preserved).
+  // useMatchJob preserves matched rows and resumes only the remainder.
   const handleResumeMatch = useCallback(() => resume(), [resume]);
 
-  // Computed counts
   const selectedCount = rows.filter(r => r.selected).length;
   const selectedUnmatchedCount = rows.filter(r => r.selected && r.matchResult?.confidence === 'none').length;
   const readyCount = rows.filter(r => r.selected && !isLibraryDbDuplicate(r.book) && r.matchResult?.confidence === 'high').length;
@@ -284,12 +249,8 @@ export function useLibraryImport() {
   const duplicateCount = rows.filter(r => isLibraryDbDuplicate(r.book)).length;
   const allSelected = rows.length > 0 && rows.filter(r => !isLibraryDbDuplicate(r.book)).every(r => r.selected);
 
-  // Library root path for relative-path computation
   const libraryRoot = settings?.library.path ?? '';
 
-  // Grouped return surface (state / actions / mutations / counts) mirroring the sibling
-  // `useManualImport` hook (F2) — keeps the page's consumed API navigable instead of a flat
-  // 30+-value god-hook surface.
   return {
     state: {
       step,
@@ -306,7 +267,6 @@ export function useLibraryImport() {
       heldReview,
       banner: staged.banner,
       dismissBanner: staged.dismissBanner,
-      // Match-phase recovery (#1864)
       recovering,
       paused,
       pausedReason,

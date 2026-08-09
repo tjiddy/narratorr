@@ -18,7 +18,7 @@ export interface ImmediateSearchDeps {
   eventBroadcaster?: EventBroadcasterService | undefined;
 }
 
-/** Fire-and-forget: search indexers and grab the best result for a newly added book. */
+/** Fire-and-forget search; failures are logged rather than propagated. */
 export function triggerImmediateSearch(
   book: { id: number; title: string; duration?: number | null; audioDuration?: number | null; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null },
   deps: ImmediateSearchDeps,

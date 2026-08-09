@@ -6,15 +6,10 @@ import { enrichBookFromAudio } from '../enrichment-utils.js';
 import { dotPrefixBasename } from '@core/utils/hidden-staging.js';
 import { createMockDbBook, createMockDbAuthor } from '../../__tests__/factories.js';
 
-/**
- * Shared fixtures for the merge-domain suites (`merge.service.test.ts`, `merge-state.test.ts`),
- * extracted when #2142 relocated the #2129 snapshot tests to their own file. Each test file must
- * still declare its OWN `vi.mock` blocks (they are hoisted per-file); the mocked functions this
- * module manipulates resolve through the importing file's mocks.
- */
+// Importing tests must declare their own `vi.mock` blocks; Vitest hoists mocks per file.
 
 export const BOOK_PATH = '/library/Author/Title';
-// Staging is born-hidden (#1852 AC11): `.<book>.merge-tmp` — dot-led basename, same parent.
+// Hidden staging prevents library scans from observing an incomplete merge.
 export const STAGING_DIR = dotPrefixBasename(BOOK_PATH + '.merge-tmp');
 
 export const mockAuthor = createMockDbAuthor();
@@ -72,7 +67,6 @@ export function setupHappyPath() {
   (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
 }
 
-/** Two visible source files everywhere, and a merge that never finishes unless told to. */
 export function setupBlockingMerge() {
   (readdir as Mock).mockImplementation(async (dir: string) => (dir.endsWith('.merge-tmp') ? ['out.m4b'] : ['01.mp3', '02.mp3']));
   (mkdir as Mock).mockResolvedValue(undefined);

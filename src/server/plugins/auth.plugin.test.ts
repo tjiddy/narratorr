@@ -5,7 +5,6 @@ import authPlugin from './auth.js';
 import type { AuthService } from '../services/auth.service.js';
 import { v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
 
-// Mock config to control authBypass per test
 vi.mock('../config.js', () => ({
   config: {
     authBypass: false,
@@ -37,26 +36,19 @@ async function createApp(
   await app.register(cookie);
   await app.register(authPlugin, { authService });
 
-  // Test routes behind auth
   app.get('/api/test', async (request) => ({ ok: true, ip: request.ip }));
   app.put('/api/test-mutation', async () => ({ ok: true }));
   app.post('/api/library/scan-debug', async () => ({ ok: true }));
 
-  // Versioned public-surface routes (#1453) — the only paths the API key still
-  // authenticates after de-god-moding.
   app.get('/api/v1/test', async () => ({ ok: true }));
   app.post('/api/v1/test-mutation', async () => ({ ok: true }));
-  // Off-by-one guard: starts with `/api/v` but the char after `v` is not a digit,
-  // so it must NOT be classified as in-scope.
+  // Looks versioned but lacks the required digit after v.
   app.get('/api/version-history', async () => ({ ok: true }));
 
-  // Prowlarr/Readarr compat-shim routes (#1472): they live under `/api/v1/*` but
-  // are the documented contract *exception* — auth failures here keep the legacy
-  // bare-string body, NOT the native v1 envelope.
+  // Compatibility routes intentionally retain legacy auth-error bodies.
   app.get('/api/v1/system/status', async () => ({ ok: true }));
   app.get('/api/v1/indexer', async () => ({ ok: true }));
 
-  // Non-API route (should not be intercepted)
   app.get('/healthcheck', async () => ({ ok: true }));
 
   await app.ready();
@@ -77,13 +69,11 @@ describe('auth middleware', () => {
     afterAll(async () => { await app.close(); });
 
     it('public whitelist routes pass without any auth', async () => {
-      // Register the public routes so they exist
+      // These routes don't exist on this test app, so they return 404 but not 401.
       for (const url of ['/api/auth/status', '/api/health', '/api/system/status']) {
         const res = await app.inject({ method: 'GET', url });
-        // These routes don't exist on our test app, so they'll 404 — but NOT 401
         expect(res.statusCode, `${url} should not be 401`).not.toBe(401);
       }
-      // POST /api/auth/login
       const res = await app.inject({ method: 'POST', url: '/api/auth/login' });
       expect(res.statusCode).not.toBe(401);
     });
@@ -106,9 +96,6 @@ describe('auth middleware', () => {
     });
 
     it('new authenticated admin endpoints (#742) are NOT public — return 401 without auth', async () => {
-      // /api/auth/admin-status was carved out of the public auth status payload
-      // so admin/deployment fields no longer leak on unauthenticated requests.
-      // It must be protected at the plugin layer just like any other /api/* route.
       const protectedRoutes = [
         { method: 'GET' as const, url: '/api/auth/admin-status' },
       ];
@@ -119,10 +106,6 @@ describe('auth middleware', () => {
     });
 
     it('admin endpoints are no longer API-key-reachable after de-god-moding (#1453) but pass with a session cookie', async () => {
-      // Post-#1453 the API key only authenticates `/api/v*`, so `/api/auth/admin-status`
-      // (a non-`v*` path) rejects an API-key-only request even when the key is valid.
-      // A real non-key credential (forms session cookie) still authenticates it,
-      // proving the route is protected-but-reachable, not in the public allowlist.
       const apiKeyService = createMockAuthService({
         getStatus: vi.fn().mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false }),
         validateApiKey: vi.fn().mockResolvedValue(true),
@@ -145,8 +128,6 @@ describe('auth middleware', () => {
           url: '/api/auth/admin-status',
           cookies: { narratorr_session: 'valid-cookie-value' },
         });
-        // Route is not registered on this test app — passes the auth plugin then 404s,
-        // but importantly NOT 401.
         expect(cookieRes.statusCode, 'session cookie should reach the route').not.toBe(401);
       } finally {
         await apiKeyApp.close();
@@ -202,8 +183,6 @@ describe('auth middleware', () => {
         headers: { 'x-api-key': 'valid-key' },
       });
       expect(res.statusCode).toBe(401);
-      // Contract: an API-key-only request outside /api/v* returns the canonical
-      // API-key body, NOT the generic ambient 'Authentication required'.
       expect(JSON.parse(res.payload)).toEqual({ error: 'Invalid API key' });
     });
 
@@ -221,8 +200,6 @@ describe('auth middleware', () => {
 
     it('valid key on bare /api/v1 classifies as in-scope (auth passes → 404, not 401)', async () => {
       (authService.validateApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(true);
-      // No route registered at bare /api/v1 — an in-scope key passes auth and 404s
-      // at routing. A 401 here would mean the matcher failed to treat it as in-scope.
       const res = await app.inject({ method: 'GET', url: '/api/v1', headers: { 'x-api-key': 'valid-key' } });
       expect(res.statusCode).not.toBe(401);
     });
@@ -230,14 +207,12 @@ describe('auth middleware', () => {
     it('array-valued ?apikey query param does not pass garbage to validateApiKey', async () => {
       (authService.validateApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 
-      // Fastify parses ?apikey=a&apikey=b as an array — our narrowing should handle it
+      // Fastify parses repeated query keys as an array.
       const res = await app.inject({
         method: 'GET',
         url: '/api/test?apikey=a&apikey=b',
       });
-      // Should fall through to session auth (returns 401 since no session)
       expect(res.statusCode).toBe(401);
-      // validateApiKey should NOT have been called with an array
       const calls = (authService.validateApiKey as ReturnType<typeof vi.fn>).mock.calls;
       if (calls.length > 0) {
         expect(typeof calls[0]![0]).toBe('string');
@@ -247,8 +222,6 @@ describe('auth middleware', () => {
     it('invalid API key on a native /api/v1/* route returns the 401 v1 envelope (#1472)', async () => {
       (authService.validateApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 
-      // `/api/v1/test` is a generic in-scope route → classifies as native v1 under
-      // the compat-exception discriminator, so it gets the v1 error envelope.
       const res = await app.inject({
         method: 'GET',
         url: '/api/v1/test',
@@ -285,9 +258,6 @@ describe('auth middleware', () => {
     });
 
     it('a thrown validateApiKey() on a native v1 route is NOT converted to the INVALID_API_KEY envelope (#1472)', async () => {
-      // Operational config faults (uninitialized/parse/decrypt) surface as a throw,
-      // which is a 500-class server fault — NOT "your key is invalid". The hook adds
-      // no try/catch, so it propagates to the app-level handler unchanged.
       (authService.validateApiKey as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('auth config not initialized'));
 
       const res = await app.inject({
@@ -524,7 +494,7 @@ describe('auth middleware', () => {
         headers: { authorization: basicAuthHeader() },
       });
 
-      // Fastify auto-creates HEAD routes for GET handlers — verifies the auth plugin doesn't 403 on HEAD.
+      // Fastify synthesizes HEAD from GET.
       expect(res.statusCode).toBe(200);
       expect(res.statusCode).not.toBe(403);
     });
@@ -538,9 +508,7 @@ describe('auth middleware', () => {
         headers: { authorization: basicAuthHeader() },
       });
 
-      // No OPTIONS handler is registered on the test app and no CORS plugin is wired in,
-      // so Fastify returns 404. The contract under test is that the CSRF gate does NOT
-      // turn this into a 403 — preflight requests must pass the auth plugin unblocked.
+      // No OPTIONS or CORS handler exists here, so auth success falls through to 404.
       expect(res.statusCode).not.toBe(403);
     });
 
@@ -565,9 +533,6 @@ describe('auth middleware', () => {
     });
 
     it('valid X-Api-Key + POST to a non-v* path is rejected with the API-key 401 body (de-god-moded) — basic mode, no header', async () => {
-      // The key no longer reaches `/api/library/scan-debug`; with no Basic header
-      // (the only credential is the out-of-scope key) the chain rejects with the
-      // canonical API-key body, not the old api-key 200 bypass.
       const res = await app.inject({
         method: 'POST',
         url: '/api/library/scan-debug',
@@ -583,7 +548,6 @@ describe('auth middleware', () => {
         method: 'POST',
         url: '/api/auth/login',
       });
-      // Route doesn't exist on the test app, so 404 — but NOT 403/401
       expect(res.statusCode).not.toBe(401);
       expect(res.statusCode).not.toBe(403);
     });
@@ -599,11 +563,7 @@ describe('auth middleware', () => {
   });
 
   describe('mode: basic — CORS preflight (browser OPTIONS)', () => {
-    // Production registers @fastify/cors BEFORE authPlugin (see src/server/index.ts:67-121),
-    // so a real browser preflight (OPTIONS + Origin + Access-Control-Request-Method,
-    // *no* Authorization header) is intercepted by the cors plugin and never reaches the
-    // auth dispatch hook. This test wires up that exact plugin order to prove the
-    // preflight does NOT regress to 401 + WWW-Authenticate.
+    // Match production order so CORS owns browser preflight before auth.
     let app: FastifyInstance;
     let authService: AuthService;
 
@@ -614,13 +574,10 @@ describe('auth middleware', () => {
 
       app = Fastify({ logger: false });
       const { default: cors } = await import('@fastify/cors');
-      // Production order: CORS first, cookie, then auth plugin.
       await app.register(cors, { origin: true, credentials: true });
       await app.register(cookie);
       await app.register(authPlugin, { authService });
 
-      // POST /api/books — destination of a hypothetical cross-origin mutation;
-      // the preflight is OPTIONS to this same route.
       app.post('/api/books', async () => ({ ok: true }));
       app.get('/api/books', async () => ({ ok: true }));
 
@@ -640,9 +597,6 @@ describe('auth middleware', () => {
         },
       });
 
-      // @fastify/cors short-circuits the preflight with 204 before authPlugin runs.
-      // The auth plugin must NOT 401 (no Basic challenge on a preflight) and must NOT 403
-      // (no CSRF gate on a preflight). Both would break real cross-origin mutations.
       expect(res.statusCode).toBe(204);
       expect(res.statusCode).not.toBe(401);
       expect(res.statusCode).not.toBe(403);
@@ -854,7 +808,6 @@ describe('auth middleware', () => {
     });
 
     it('dev + trusted proxy + X-Forwarded-Proto: https → renewal cookie has no Secure', async () => {
-      // isDev=true (default in mock); even if a trusted proxy reports HTTPS, dev mode short-circuits Secure to false.
       const app = await createApp(makeRenewingAuthService(), { trustProxy: true });
       try {
         const res = await app.inject({
@@ -904,7 +857,6 @@ describe('auth middleware', () => {
 
       const res = await app.inject({ method: 'GET', url: '/api/test' });
       expect(res.statusCode).toBe(200);
-      // getStatus should NOT have been called (bypass happens before mode check)
       expect(authService.getStatus).not.toHaveBeenCalled();
     });
   });
@@ -1077,13 +1029,10 @@ describe('auth middleware', () => {
       await app.register(cookie);
       await app.register(authPlugin, { authService, urlBase });
 
-      // Test route behind auth (under urlBase prefix)
       app.get(`${urlBase}/api/test`, async () => ({ ok: true }));
 
-      // Non-API route under urlBase
       app.get(`${urlBase}/books/123`, async () => ({ page: true }));
 
-      // Route outside urlBase scope
       app.get('/api/other', async () => ({ outside: true }));
 
       extraRoutes?.(app);
@@ -1138,7 +1087,6 @@ describe('auth middleware', () => {
       });
       const app = await createUrlBaseApp(authService);
 
-      // /api/other is outside the /narratorr prefix, so auth hook should not intercept it
       const res = await app.inject({ method: 'GET', url: '/api/other' });
       expect(res.statusCode).toBe(200);
       await app.close();
@@ -1166,8 +1114,6 @@ describe('auth middleware', () => {
     });
 
     it('invalid key on a native {base}/api/v1/* route returns the v1 envelope; compat shim stays bare-string (#1472)', async () => {
-      // Proves the envelope discriminator is URL_BASE-prefix-derived, not a hardcoded
-      // `/api/` literal: native vs compat must classify correctly under URL_BASE too.
       const authService = createMockAuthService({
         getStatus: vi.fn().mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false }),
         validateApiKey: vi.fn().mockResolvedValue(false),
@@ -1190,8 +1136,6 @@ describe('auth middleware', () => {
     });
   });
 
-  // #1453 — stream-token + de-god-moded API-key auth-mode matrix on the SSE
-  // endpoints (`/api/events`, `/api/search/stream`) and the cancel route.
   describe('stream token + SSE auth matrix (#1453)', () => {
     const VALID_TOKEN = 'valid-stream-token';
 
@@ -1212,7 +1156,7 @@ describe('auth middleware', () => {
       try {
         for (const path of SSE_PATHS) {
           const res = await app.inject({ method: 'GET', url: `${path}?token=${VALID_TOKEN}` });
-          // No SSE route registered on the test app → auth passes then 404. Not 401.
+          // The SSE handlers are absent; passing auth falls through to 404.
           expect(res.statusCode, `${path} accepts stream token`).not.toBe(401);
         }
       } finally {
@@ -1243,10 +1187,8 @@ describe('auth middleware', () => {
     it('a stream token does NOT authenticate the mint route or the cancel route', async () => {
       const app = await createApp(createStreamApp());
       try {
-        // Mint is not an SSE endpoint → stream-token branch never runs → forms 401.
         const mint = await app.inject({ method: 'POST', url: `/api/auth/stream-token?token=${VALID_TOKEN}` });
         expect(mint.statusCode, 'mint rejects stream token').toBe(401);
-        // Cancel route is not in STREAM_ROUTES → stream token not accepted.
         const cancel = await app.inject({ method: 'POST', url: `/api/search/stream/sess/cancel/1?token=${VALID_TOKEN}` });
         expect(cancel.statusCode, 'cancel rejects stream token').toBe(401);
       } finally {
@@ -1267,7 +1209,6 @@ describe('auth middleware', () => {
     });
 
     it('a stale ?apikey= does NOT shadow a valid session cookie on the SSE endpoints', async () => {
-      // Valid forms cookie; no stream token present; a stale apikey is also in the URL.
       const cookieApp = await createApp(createMockAuthService({
         getStatus: vi.fn().mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false }),
         validateApiKey: vi.fn().mockResolvedValue(true),

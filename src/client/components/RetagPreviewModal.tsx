@@ -33,8 +33,7 @@ interface RetagPreviewModalProps {
 type SettingsDefaults = { mode: RetagMode; embedCover: boolean };
 type ActiveOverrides = { mode?: RetagMode; embedCover?: boolean };
 
-/** Build the override object emitted to fetch + apply: only fields where the
- *  user's selection differs from the captured settings defaults. */
+/** Emits only selections that differ from the captured settings defaults. */
 function deriveActiveOverrides(
   defaults: SettingsDefaults | null,
   userMode: RetagMode | null,
@@ -56,10 +55,8 @@ function buildConfirmPayload(excludeSet: Set<RetagExcludableField>, overrides: A
 
 export function RetagPreviewModal({ bookId, isOpen, onClose, onConfirm }: RetagPreviewModalProps) {
   const [excludeSet, setExcludeSet] = useState<Set<RetagExcludableField>>(() => new Set());
-  // `null` = user has not touched the control. `userMode`/`userEmbedCover` hold
-  // the user's selection regardless of whether it matches the settings default;
-  // the AC requires the apply payload to compare against the captured defaults,
-  // not against whether the control was touched (#1098 F2).
+  // null means untouched. Emission compares the current selection with captured
+  // defaults, not with whether the control was touched.
   const [userMode, setUserMode] = useState<RetagMode | null>(null);
   const [userEmbedCover, setUserEmbedCover] = useState<boolean | null>(null);
   const [settingsDefaults, setSettingsDefaults] = useState<SettingsDefaults | null>(null);
@@ -76,9 +73,8 @@ export function RetagPreviewModal({ bookId, isOpen, onClose, onConfirm }: RetagP
     retry: false,
   });
 
-  // Capture settings defaults from the first preview response — that response
-  // was fetched with no overrides applied, so it reflects the user's settings.
-  // Render-time guarded setState mirrors React's "derive state from props" pattern.
+  // The first unoverridden response captures settings defaults. Guarded render-time
+  // state follows React's derive-from-props pattern.
   if (data && settingsDefaults === null && userMode === null && userEmbedCover === null) {
     setSettingsDefaults({ mode: data.mode, embedCover: data.embedCover });
   }
@@ -331,8 +327,7 @@ function FileRow({
 }
 
 function DiffRow({ diff, dimmed }: { diff: RetagPlanFileDiff; dimmed: boolean }) {
-  // minmax(0,1fr) lets the value cells shrink past min-content so truncation works
-  // at modal width — `1fr` alone expanded to fit content, which forced row wrap.
+  // minmax(0,1fr) lets values shrink below min-content so truncation works at modal width.
   return (
     <li className={`text-xs grid grid-cols-[5rem_minmax(0,1fr)_auto_minmax(0,1fr)] gap-2 items-center font-mono ${dimmed ? 'opacity-40' : ''}`}>
       <span className="text-muted-foreground truncate">{FIELD_LABELS[diff.field]}</span>

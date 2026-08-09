@@ -49,9 +49,7 @@ describe('AuthProvider', () => {
       <AuthProvider><div>Protected Content</div></AuthProvider>,
       { route: '/library' },
     );
-    // Children should NOT be shown — needsRedirect guard shows spinner
     expect(screen.queryByText('Protected Content')).not.toBeInTheDocument();
-    // Should navigate to /login
     expect(mockNavigate).toHaveBeenCalledWith('/login', { replace: true });
   });
 
@@ -74,7 +72,6 @@ describe('AuthProvider', () => {
   it('logout() calls /api/auth/logout and redirects to /login', () => {
     const logoutFn = vi.fn();
     mockAuth({ logout: logoutFn });
-    // The logout function is provided via context — verify it's the one from useAuth
     expect(vi.mocked(useAuth)().logout).toBe(logoutFn);
   });
 

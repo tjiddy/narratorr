@@ -147,7 +147,6 @@ describe('AudioInfo', () => {
     });
 
     it('shows correct tier label matching calculateQuality output', () => {
-      // 300 MB over 1 hour = 300 MB/hr → High tier
       render(<AudioInfo book={makeBook({
         audioCodec: 'AAC',
         audioTotalSize: 300 * 1024 * 1024,
@@ -215,9 +214,7 @@ describe('AudioInfo', () => {
         audioChannels: 2,
       })} />);
 
-      // Should not contain emoji
       expect(screen.queryByText('🎧')).not.toBeInTheDocument();
-      // Should have an SVG icon (HeadphonesIcon renders as svg)
       const techLine = screen.getByText(/AAC/).closest('p')!;
       expect(techLine.querySelector('svg')).toBeInTheDocument();
     });
@@ -230,9 +227,7 @@ describe('AudioInfo', () => {
         audioDuration: 36000,
       })} />);
 
-      // Should not contain emoji
       expect(screen.queryByText('📦')).not.toBeInTheDocument();
-      // Should have an SVG icon in the file info line
       const fileLine = screen.getByText(/5 files/).closest('p')!;
       expect(fileLine.querySelector('svg')).toBeInTheDocument();
     });

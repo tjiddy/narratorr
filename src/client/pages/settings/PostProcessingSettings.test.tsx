@@ -35,10 +35,6 @@ describe('PostProcessingSettings', () => {
     await waitFor(() => {
       expect(screen.getByText('Post Processing')).toBeInTheDocument();
     });
-    // Engine fields (incl. the ffmpeg path field) moved to Audio Tools; automations remain here.
     expect(screen.getByText(/Tag Embedding/i)).toBeInTheDocument();
   });
-
-  // Detailed progressive disclosure, form behavior, and payload tests are in
-  // ProcessingSettingsSection.test.tsx which covers the underlying component.
 });

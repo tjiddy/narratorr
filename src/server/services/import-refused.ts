@@ -12,7 +12,6 @@ import { serializeError } from '../utils/serialize-error.js';
 export interface RefusedDispositionDeps {
   db: Db;
   broadcaster: EventBroadcasterService | null;
-  /** Optional: records the durable refusal event. Omitted in unit tests that don't assert it. */
   eventHistory: EventHistoryService | null;
   log: FastifyBaseLogger;
 }
@@ -27,14 +26,8 @@ export interface RefusedDispositionArgs {
 }
 
 /**
- * Terminal disposition for a forced import the copy-time collision fence refused (#1736).
- * Reuses the existing terminal values (job `failed`/`failed`, the `import_failed` event + SSE)
- * — no new job/book status or SSE event type — but (a) DELETES the speculative placeholder book
- * created at enqueue (guarded to THIS job's book and only while still `importing`, so a
- * pre-existing owned book is never touched) and (b) enriches the event/SSE with a structured
- * `forced-import-refused` reason. After the delete, `import_jobs.book_id` / `book_events.book_id`
- * are nulled by their `onDelete: set null` FK; the SSE still carries the PRE-delete placeholder
- * `book_id` so the client can evict that book card from its cache.
+ * Fail a forced import refused by the collision fence. Delete only its importing placeholder;
+ * durable FKs become null, while SSE retains the old id so clients can evict the placeholder card.
  */
 export async function finalizeForcedImportRefusal(deps: RefusedDispositionDeps, args: RefusedDispositionArgs): Promise<void> {
   const { db, broadcaster, eventHistory, log } = deps;
@@ -55,20 +48,13 @@ export async function finalizeForcedImportRefusal(deps: RefusedDispositionDeps, 
       updatedAt: now,
     }).where(eq(importJobs.id, jobId));
 
-    // Delete the speculative placeholder (created `importing` before enqueue), replacing the
-    // generic `importing → failed` transition. Guarded to this job's book AND `importing` only,
-    // so a pre-existing owned book that happens to be linked is never deleted.
+    // Guard by id and importing status so an existing owned book cannot be removed.
     if (bookId != null) {
       await tx.delete(books).where(and(eq(books.id, bookId), eq(books.status, 'importing')));
     }
   });
 
-  // Durable refusal event on the existing `import_failed` channel — self-describing via the
-  // structured reason. Best-effort; a missing eventHistory just skips the event row.
-  // `bookId: null` — the placeholder was just deleted, so the event preserves a human-readable
-  // `bookTitle` + the structured reason in its own columns and does not link to a dead row (with
-  // FK enforcement ON, inserting the deleted id would violate the FK anyway). Matches the F7
-  // post-delete linkage contract (`book_events.book_id` resolves to null).
+  // The placeholder is gone, so the best-effort durable event stays unlinked and carries context.
   eventHistory?.create({
     bookId: null,
     bookTitle,

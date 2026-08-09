@@ -16,18 +16,7 @@ import type { SearchResult } from '@core/index.js';
 import { BYTES_PER_GB } from '@shared/constants.js';
 import { MAX_SEARCH_RUNGS } from './search-query-ladder.js';
 
-/**
- * `searchAllWithStatus` mock returning one successful indexer (#2104 D16).
- * `succeeded: 1` with a non-empty list means the query ladder stops at rung 1,
- * which is what every pre-ladder retry fixture assumes; `succeeded: 1` with an
- * empty list is a GENUINE zero, so the ladder advances and this same mock
- * answers every rung — leaving the outcome unchanged.
- *
- * The element type is the `fixture-builder-eopt-overrides` mapped shape, not
- * `SearchResult[]`: several fixtures below strip a default field by passing an
- * explicit `undefined`, which `exactOptionalPropertyTypes` rejects on the bare
- * interface.
- */
+/** Nonempty results stop rung one; empty results answer every rung. Mapped overrides permit explicit undefined. */
 function withStatus(results: Array<{ [K in keyof SearchResult]?: SearchResult[K] | undefined }>) {
   return vi.fn().mockResolvedValue({ results, succeeded: 1, failed: 0 });
 }
@@ -131,7 +120,6 @@ describe('retrySearch', () => {
     );
   });
 
-  // #1857 — already_active dedup + budget accounting
   describe('already_active (#1857 AC17/F43/F47)', () => {
     it('early precheck: returns already_active with ZERO budget consumed when the book is already active', async () => {
       const deps = createDeps({
@@ -152,8 +140,7 @@ describe('retrySearch', () => {
     it('in-lock detection: returns already_active having consumed ONE accepted attempt (no refund)', async () => {
       const deps = createDeps({
         downloadOrchestrator: inject<DownloadOrchestrator>({
-          // No blocker at the early precheck, but a grab blocker appears during the
-          // search → grabForRetry reports already_active from inside the mutex.
+          // The blocker appears only inside the grab mutex, after the early precheck.
           hasGrabBlocker: vi.fn().mockResolvedValue(false),
           grabForRetry: vi.fn().mockResolvedValue('already_active'),
         }),
@@ -163,11 +150,8 @@ describe('retrySearch', () => {
 
       expect(result.outcome).toBe('already_active');
       expect(deps.indexerSearchService.searchAllWithStatus).toHaveBeenCalled();
-      // One attempt consumed and NOT refunded (max 1 → now exhausted).
       expect(deps.retryBudget.hasRemaining(1, 1)).toBe(false);
-      // #1861 F6 — the in-lock diagnostic is blocker-neutral (the outcome now also
-      // covers a QG-eligible completed row or a pending auto import job, not only a
-      // live download that "became active").
+      // The in-lock diagnostic is blocker-neutral across downloads, quality gate, and import jobs.
       expect(deps.log.info).toHaveBeenCalledWith(
         { bookId: 1, attempt: 1 },
         'Retry search: book gained a grab blocker during search — skipping (attempt consumed, not refunded)',
@@ -212,13 +196,10 @@ describe('retrySearch', () => {
     expect(result.outcome).toBe('no_candidates');
   });
 
-  // #1797 AC1 — retry floor rejection. book.duration is MINUTES; the quality floor
-  // is a seconds-based MB/h. Red before the fix (raw minutes fed as seconds inflate
-  // MB/h 60× so the below-floor release is wrongly grabbed), green after.
+  // `book.duration` is minutes while the quality floor consumes seconds.
   it('does not grab a below-floor release on retry (duration is minutes) (#1797 AC1)', async () => {
     const HUNDRED_MB = 100 * 1024 * 1024;
     const deps = createDeps({
-      // 600 min = 10h; 100MB / 10h = 10 MB/h < 30 floor → reject.
       bookService: inject<BookService>({
         getById: vi.fn().mockResolvedValue({ ...mockBook, duration: 600 }),
       }),
@@ -234,12 +215,9 @@ describe('retrySearch', () => {
     expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
   });
 
-  // #1797 AC5 — audioDuration (seconds) wins over duration (minutes) on retry.
   it('resolves audioDuration (seconds) over duration on the retry path (#1797 AC5)', async () => {
     const HUNDRED_MB = 100 * 1024 * 1024;
     const deps = createDeps({
-      // audioDuration 36000s = 10h → 100MB / 10h = 10 MB/h < 30 → reject.
-      // duration 1 min (or its *60 = 60s) would pass; audioDuration must win.
       bookService: inject<BookService>({
         getById: vi.fn().mockResolvedValue({ ...mockBook, duration: 1, audioDuration: 36000 }),
       }),
@@ -273,7 +251,6 @@ describe('retrySearch', () => {
     const result = await retrySearch(1, deps);
 
     expect(result.outcome).toBe('retried');
-    // Should have grabbed the non-blacklisted result
     expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:def456' }),
     );
@@ -349,8 +326,6 @@ describe('retrySearch', () => {
     expect(result.outcome).toBe('retried');
   });
 
-  // ===== #386 — metadata.languages wiring in retry search =====
-
   it('reads metadata.languages and passes them to filterAndRankResults', async () => {
     const settings = createMockSettingsService({
       metadata: { audibleRegion: 'us', languages: ['english'] },
@@ -359,7 +334,6 @@ describe('retrySearch', () => {
 
     await retrySearch(1, deps);
 
-    // settingsService.get('metadata') must be called to get languages
     expect(settings.get).toHaveBeenCalledWith('metadata');
     expect(settings.get).toHaveBeenCalledWith('quality');
   });
@@ -387,7 +361,6 @@ describe('retrySearch', () => {
 
     const result = await retrySearch(1, deps);
 
-    // French result filtered out by language → no candidates
     expect(result.outcome).toBe('no_candidates');
     expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
   });
@@ -425,7 +398,6 @@ describe('retrySearch', () => {
 
     const result = await retrySearch(1, deps);
 
-    // Only the English result should be grabbed
     expect(result.outcome).toBe('retried');
     expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:english' }),
@@ -581,8 +553,6 @@ describe('createRetrySearchDeps', () => {
   });
 });
 
-// ===== #248 — GUID blacklist filtering in retrySearch =====
-
 describe('retrySearch — GUID blacklist filtering', () => {
   const usenetResult = {
     title: 'The Way of Kings [MP3 128kbps]',
@@ -681,7 +651,6 @@ describe('retrySearch — GUID blacklist filtering', () => {
 
     const result = await retrySearch(1, deps);
 
-    // Empty guid is treated as absent, so the result should pass through
     expect(result.outcome).toBe('retried');
   });
 
@@ -710,8 +679,7 @@ describe('retrySearch — GUID blacklist filtering', () => {
 
     expect(result.outcome).toBe('retried');
     expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalled();
-    // Producer-omit pattern: missing guid is dropped from the GrabParams
-    // payload, not passed as explicit undefined (eopt invariant per #939 AC4).
+    // Omit a missing GUID rather than passing explicit undefined.
     const grabArg = vi.mocked(deps.downloadOrchestrator.grabForRetry).mock.calls[0]![0];
     expect(grabArg).toMatchObject({ downloadUrl: 'magnet:?xt=urn:btih:def456' });
     expect(grabArg).not.toHaveProperty('guid');
@@ -763,7 +731,6 @@ describe('retrySearch — GUID blacklist filtering', () => {
     expect(grabCall).not.toHaveProperty('isFreeleech');
   });
 
-  // #439 — retry search honors searchPriority
   it('accuracy mode grabs narrator-matched release over higher-quality non-match on retry', async () => {
     const FAIR_SIZE = Math.round(79 * 10 * 1024 * 1024);
     const GOOD_SIZE = Math.round(200 * 10 * 1024 * 1024);
@@ -851,7 +818,6 @@ describe('#502 retrySearch — enrichment before filtering', () => {
     expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
   });
 
-  // ── #932 F3 — Caller-level logging assertions for retry-search ──────────
   describe('caller-level debug logging (#932 F3)', () => {
     it('emits the blacklist drop log when retrySearch filters a blacklisted candidate', async () => {
       const log = createMockLogger();
@@ -899,8 +865,6 @@ describe('#502 retrySearch — enrichment before filtering', () => {
   });
 });
 
-// ===== #1777 — multi-part usenet filter now applies on the retry path =====
-
 describe('retrySearch — multi-part usenet filter (#1777)', () => {
   const multiPartUsenet = {
     title: 'The Way of Kings Part 2 of 5',
@@ -926,7 +890,7 @@ describe('retrySearch — multi-part usenet filter (#1777)', () => {
   it('does not grab a multi-part usenet post ranked ahead of a valid one — the valid candidate wins', async () => {
     const deps = createDeps({
       indexerSearchService: inject<IndexerSearchService>({
-        // Multi-part listed first so it would win ranking if it survived the filter.
+        // Put multi-part first so ranking would select it if filtering regresses.
         searchAllWithStatus: withStatus([multiPartUsenet, validUsenet]),
       }),
     });
@@ -972,8 +936,7 @@ describe('retrySearch — multi-part usenet filter (#1777)', () => {
   });
 
   it('rejects a usenet post whose multi-part marker only appears in the enrichment-populated nzbName (ordering guard)', async () => {
-    // Raw title is clean; enrichment populates nzbName with a multi-part marker.
-    // The filter must run AFTER enrichment for this to be caught.
+    // Enrichment adds the marker, so filtering must run afterward.
     mockEnrichUsenet.mockImplementation(async (results) => {
       for (const r of results) {
         if (r.downloadUrl === 'http://nzb.test/multi') r.nzbName = 'The Way of Kings (02 of 30).part02.rar';
@@ -993,19 +956,13 @@ describe('retrySearch — multi-part usenet filter (#1777)', () => {
   });
 });
 
-// ============================================================================
-// #2104 — progressive query relaxation on the retry path
-// ============================================================================
-
 describe('retrySearch — query ladder (#2104)', () => {
-  /** Deep-franchise book: 8-rung ladder, `first+last` at index 3. */
   const franchiseBook: BookWithAuthor = {
     ...createMockDbBook({ duration: 3600, title: 'Star Wars: The High Republic: Haunted Starlight' }),
     authors: [{ ...createMockDbAuthor(), name: 'George Mann' }],
     narrators: [],
   };
 
-  /** Search whose answer depends on the transport query, so the winning rung is pinnable. */
   function answering(byQuery: Record<string, unknown[]>) {
     return vi.fn().mockImplementation(async (query: string) => ({
       results: byQuery[query] ?? [],
@@ -1014,7 +971,6 @@ describe('retrySearch — query ladder (#2104)', () => {
     }));
   }
 
-  /** The Churn live example — the suffix/prefix pair #2133 AC7 pins. */
   const churnBook: BookWithAuthor = {
     ...createMockDbBook({ duration: 3600, title: 'The Churn: An Expanse Novella' }),
     authors: [{ ...createMockDbAuthor(), name: 'James S. A. Corey' }],
@@ -1030,8 +986,6 @@ describe('retrySearch — query ladder (#2104)', () => {
   const franchiseDeps = depsFor(franchiseBook);
   const churnDeps = depsFor(churnBook);
 
-  // AC19 — the WHOLE ladder costs exactly ONE RetryBudget attempt, not one per
-  // rung. COUNTERFACTUAL: consume inside the rung loop and this reads 4.
   it('finds a book at a deep rung while consuming exactly ONE budget attempt (AC19)', async () => {
     const searchAllWithStatus = answering({
       'star wars haunted starlight George Mann': [{ ...mockSearchResult, title: 'Star Wars: Haunted Starlight' }],
@@ -1051,9 +1005,7 @@ describe('retrySearch — query ladder (#2104)', () => {
     ]);
   });
 
-  // Carried obligation F16 / AC14 — retry owns an INDEPENDENT filter/rank/grab
-  // chain, so its failed-floor behaviour needs its own pin. It routes through
-  // the same shared `selectRelaxedCandidate`, so the two paths cannot drift.
+  // Retry owns a separate filter/rank/grab chain despite sharing candidate selection.
   it('withholds the grab and records ONE held event when every downloadable candidate fails the floor (AC14)', async () => {
     const deps = franchiseDeps(answering({
       'star wars haunted starlight George Mann': [
@@ -1093,9 +1045,6 @@ describe('retrySearch — query ladder (#2104)', () => {
     expect(deps.eventHistory.create).not.toHaveBeenCalled();
   });
 
-  // #2133 AC10 — both auto paths agree, through the unchanged shared
-  // `selectRelaxedCandidate` seam. Retry owns an INDEPENDENT filter/rank/grab
-  // chain, so the anchored floor needs its own pin on this path: the AC5 repro…
   it('holds every High-Republic sibling found at the prefix(2) rung, recording ONE event (#2133 AC5, AC10)', async () => {
     const deps = franchiseDeps(answering({
       'star wars the high republic George Mann': [
@@ -1119,7 +1068,6 @@ describe('retrySearch — query ladder (#2104)', () => {
     }));
   });
 
-  // …and the AC7 accepted flip.
   it('holds a head-only The Churn release at the prefix(1) rung (#2133 AC7, AC10)', async () => {
     const deps = churnDeps(answering({
       'the churn James S A Corey': [{ ...mockSearchResult, title: 'The Churn (Unabridged) [M4B]' }],
@@ -1140,8 +1088,6 @@ describe('retrySearch — query ladder (#2104)', () => {
     }));
   });
 
-  // AC34 — retry is already bounded by RetryBudget's 3 attempts, so it never
-  // consults the scheduled-cycle cooldown; a live entry cannot degrade it.
   it('runs the FULL ladder — it never consults the scheduled-cycle cooldown (AC34)', async () => {
     const searchAllWithStatus = answering({});
     await retrySearch(1, franchiseDeps(searchAllWithStatus));
@@ -1149,7 +1095,6 @@ describe('retrySearch — query ladder (#2104)', () => {
     expect(searchAllWithStatus.mock.calls.map((c) => c[0])).toHaveLength(MAX_SEARCH_RUNGS);
   });
 
-  // AC17 — ranking context stays canonical when the transport author is dropped.
   it('passes the canonical author as rankingAuthor on every rung (AC17)', async () => {
     const searchAllWithStatus = answering({});
     await retrySearch(1, franchiseDeps(searchAllWithStatus));
@@ -1160,17 +1105,12 @@ describe('retrySearch — query ladder (#2104)', () => {
         rankingAuthor: 'George Mann',
       }));
     }
-    // #2138 — the author-ON arm gained the tail rung, so it now runs 0-4 and the
-    // author-OFF arm starts at 5 (it was 4). The transport/ranking split itself
-    // is unchanged; only the arm boundary moved.
+    // Rungs 0–4 include the transport author; the author-free arm starts at 5.
     const authorOff = (o: unknown) => (o as { author?: string }).author === undefined;
     expect(searchAllWithStatus.mock.calls.slice(0, 5).some(([, o]) => authorOff(o))).toBe(false);
     expect(searchAllWithStatus.mock.calls.slice(5).every(([, o]) => authorOff(o))).toBe(true);
   });
 
-  // #2138 AC10 — the tail rung on retry's INDEPENDENT filter/rank/grab chain.
-  // Both halves route through the same shared `selectRelaxedCandidate`, so this
-  // pins that the two auto paths cannot drift at the new rung either.
   it('grabs a release found at the tail rung that carries both anchors (AC10)', async () => {
     const deps = franchiseDeps(answering({
       'haunted starlight George Mann': [{ ...mockSearchResult, title: 'Star Wars: Haunted Starlight' }],
@@ -1182,7 +1122,6 @@ describe('retrySearch — query ladder (#2104)', () => {
     expect(result.outcome).toBe('retried');
     expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledTimes(1);
     expect(deps.eventHistory.create).not.toHaveBeenCalled();
-    // AC19 — the whole ladder is still ONE budget attempt, not one per rung.
     expect(consumeAttempt).toHaveBeenCalledTimes(1);
   });
 
@@ -1194,10 +1133,7 @@ describe('retrySearch — query ladder (#2104)', () => {
 
     const result = await retrySearch(1, deps);
 
-    // The recorded decision on #2138: the shared anchor floor demands BOTH ends
-    // of the canonical title, so a release that drops the franchise prefix is
-    // surfaced in Needs Review rather than grabbed. Changing that would mean a
-    // per-rung floor, explicitly out of scope.
+    // The shared floor requires both canonical title anchors; there is no per-rung exception.
     expect(result).toEqual({ outcome: 'no_candidates' });
     expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
     expect(consumeAttempt).toHaveBeenCalledTimes(1);

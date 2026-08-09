@@ -13,20 +13,13 @@ interface BookMetadataModalProps {
   isSaving: boolean;
   isOpen?: boolean;
   /**
-   * What the operator SEES for each clearable field — `resolveDisplayedFields`
-   * output, the same call the header's meta line derives from (#2069 AC18/AC25).
-   * Both the initial input value and the diff baseline come from it, so blanking a
-   * value that exists only as a provider fallback produces a real `null` diff and
-   * a tombstone, and reopening after a clear shows the field BLANK rather than
-   * resurrecting what was just removed.
-   *
-   * OPTIONAL: with the prop absent the baseline is the stored value and behavior is
-   * byte-identical to before.
+   * Operator-visible values shared with the header. They seed inputs and diff
+   * baselines so provider-only values can be cleared and tombstones reopen blank.
+   * Omit only for stored-value compatibility.
    */
   displayed?: DisplayedFields;
 }
 
-/** The stored-value baseline used when no resolved `displayed` prop is supplied. */
 function storedBaseline(book: BookWithAuthor): DisplayedFields {
   return {
     seriesName: book.seriesName ?? undefined,
@@ -39,61 +32,44 @@ function storedBaseline(book: BookWithAuthor): DisplayedFields {
   };
 }
 
-/** Parse a comma-separated input into a trimmed, non-empty list (narrators/authors/genres). */
 function parseList(value: string): string[] {
   return value.trim() ? value.trim().split(',').map((s) => s.trim()).filter(Boolean) : [];
 }
 
-// Field-diff helpers. Each returns `undefined` when the field is UNCHANGED (so the
-// caller omits it), `null` to CLEAR the stored column, or the value to SET.
+// Diff helpers return undefined to omit, null to clear, or a value to set.
 
-/** Trimmed nullable string (coverUrl, publishedDate). */
 function diffTrimmedNullable(input: string, stored: string | null | undefined): string | null | undefined {
   const trimmed = input.trim();
   if (trimmed === (stored ?? '')) return undefined;
   return trimmed === '' ? null : trimmed;
 }
 
-/** Description preserves interior whitespace; only emptiness is trimmed-checked. */
+/** Preserve description whitespace; trim only to detect emptiness. */
 function diffDescription(input: string, stored: string | null | undefined): string | null | undefined {
   if (input === (stored ?? '')) return undefined;
   return input.trim() === '' ? null : input;
 }
 
-/** Genres clear with `null` (NOT `[]`) — `mergeBookData` merges genres with `??`. */
+/** Clear genres with null, not [], because display resolution uses ?? semantics. */
 function diffGenres(input: string, stored: string[] | null | undefined): string[] | null | undefined {
   if (input.trim() === (stored ?? []).join(', ')) return undefined;
   const parsed = parseList(input);
   return parsed.length > 0 ? parsed : null;
 }
 
-/** Series position: `null` to skip (unchanged or invalid), `{ value }` to set. */
+/** Return null to skip an invalid/unchanged position, or a wrapped value to set. */
 function diffSeriesPosition(input: string, stored: number | null | undefined): { value: number | null } | null {
   const trimmed = input.trim();
   const newPos = trimmed ? Number(trimmed) : null;
-  if (newPos !== null && isNaN(newPos)) return null; // invalid — leave unchanged
-  if (newPos === (stored ?? null)) return null; // unchanged
+  if (newPos !== null && isNaN(newPos)) return null;
+  if (newPos === (stored ?? null)) return null;
   return { value: newPos };
 }
 
 /**
- * Edit Metadata is a pure MANUAL field editor (#1609). It diffs each clearable
- * field against its pre-filled value and sends only what changed:
- * `undefined`/omitted = unchanged, `null` = clear, a value = set. Re-pointing a
- * book to a different provider match is Fix Match's job — there is intentionally
- * no embedded search-and-apply here (it previously produced inconsistent
- * "Frankenbook" metadata).
- *
- * The pre-filled value and the diff baseline are what the operator SEES — the
- * `displayed` prop (#2069 AC25), not the stored column. That matters because a
- * post-import book sits at `enrichmentStatus: 'enriched'` with `series_name = NULL`
- * indefinitely: its series exists only as a provider fallback, so a stored-value
- * baseline renders the input empty and blanking it produces no diff — the clear is
- * inexpressible for the most common book in the library. It also means a field the
- * operator just cleared reopens BLANK instead of showing the value again.
- *
- * A clear sends only `null` for the field; the server derives and persists the
- * tombstone. Nothing tombstone-shaped is sent from here.
+ * Manual editor sending only diffs: undefined omits, null clears, and a value sets.
+ * Clearable fields baseline on displayed values; the server owns tombstones, and
+ * provider rematching remains Fix Match's responsibility.
  */
 export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = true, displayed }: BookMetadataModalProps) {
   const baseline = displayed ?? storedBaseline(book);
@@ -119,15 +95,11 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = tr
 
     if (title.trim() !== book.title) data.title = title.trim();
 
-    // Every clearable field diffs against `baseline` — the DISPLAYED value — so an
-    // untouched field sends nothing (a provider value is never silently promoted
-    // into the DB by an unrelated edit), a blanked one sends `null` even when the
-    // stored column was already NULL, and a replaced one sends the new value.
+    // Diff against displayed values; never promote untouched provider fallbacks.
     const sub = diffTrimmedNullable(subtitle, baseline.subtitle);
     if (sub !== undefined) data.subtitle = sub;
 
-    // authors.min(1) — when the field is blanked, omit `authors` entirely rather
-    // than sending `[]` (which would 400). A required author cannot be cleared here.
+    // authors.min(1): blank input is omitted because [] would fail validation.
     const existingAuthor = book.authors.map((a) => a.name).join(', ');
     if (author.trim() !== existingAuthor) {
       const names = parseList(author);
@@ -136,20 +108,13 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = tr
 
     if (seriesName.trim() !== (baseline.seriesName ?? '')) data.seriesName = seriesName.trim() || null;
 
-    // `seriesPosition` baselines off the resolver like every other clearable
-    // field, so it inherits both the pair rule (a position resolves only when the
-    // name does) AND its own tombstone (#2152): once cleared, the input reopens
-    // BLANK — the provider number does not reappear — and blanking it sends
-    // `seriesPosition: null` alone, with no `seriesName` key. The server derives
-    // the tombstone; nothing tombstone-shaped is sent from here. Typing a number
-    // back re-asserts.
+    // Position has its own resolver baseline; clearing sends only seriesPosition:null.
     const pos = diffSeriesPosition(seriesPosition, baseline.seriesPosition);
     if (pos) data.seriesPosition = pos.value;
 
     const existingNarrator = book.narrators.map((n) => n.name).join(', ');
     if (narrator.trim() !== existingNarrator) data.narrators = parseList(narrator);
 
-    // Nullable fields — `undefined` = unchanged (omitted), `null` = clear, value = set.
     const desc = diffDescription(description, baseline.description);
     if (desc !== undefined) data.description = desc;
 
@@ -167,9 +132,7 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = tr
 
   return (
     <Modal onClose={onClose} className="w-full max-w-2xl flex flex-col max-h-[85vh]">
-      {/* Must participate in the Modal's height-capped flex column (`flex-1 min-h-0`), or the
-          fields' overflow-y-auto never activates and the footer renders past the card on short
-          viewports. Mirrors SearchReleasesModal's proven shape. */}
+      {/* Must join Modal's height-capped flex column so the fields scroll. */}
       <div
         role="dialog"
         aria-modal="true"
@@ -177,7 +140,6 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = tr
         tabIndex={-1}
         className="flex flex-col min-h-0 flex-1"
       >
-        {/* Header */}
         <div className="px-6 pt-5 pb-4 flex items-center justify-between shrink-0">
           <h2 id="book-metadata-modal-title" className="font-display text-lg font-semibold tracking-tight">
             Edit Metadata
@@ -221,7 +183,6 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving, isOpen = tr
           hasPath={hasPath}
         />
 
-        {/* Footer */}
         <div className="px-6 py-4 border-t border-white/5 flex justify-end gap-3 shrink-0">
           <button
             type="button"

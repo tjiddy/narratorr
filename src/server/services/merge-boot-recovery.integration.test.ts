@@ -15,15 +15,7 @@ import {
   type SettleInterruptedMergesDeps,
 } from './merge-boot-recovery.js';
 
-/**
- * #2099 D1 — the detection query against real SQLite.
- *
- * A mocked-drizzle test cannot validate the `MAX(id)`-per-book grouping, and the tie this
- * guards against is invisible to any in-memory reimplementation: `book_events.created_at`
- * defaults to `(unixepoch())` — one-second resolution — so a merge that started and settled
- * inside the same second yields two rows with an IDENTICAL timestamp. Only real rows through
- * the real query prove `id` (not `created_at`) decides which one is latest.
- */
+/** Real SQLite is required: one-second timestamps tie, so MAX(id) must identify the latest event. */
 describe('#2099 merge boot recovery — detection against real SQLite', () => {
   let dir: string;
   let db: Db;
@@ -42,7 +34,7 @@ describe('#2099 merge boot recovery — detection against real SQLite', () => {
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {
-      // libsql may keep handles on Windows — best effort
+      // libSQL may retain Windows handles; cleanup is best-effort.
     }
   });
 
@@ -56,10 +48,7 @@ describe('#2099 merge boot recovery — detection against real SQLite', () => {
     return row!.id;
   }
 
-  /**
-   * Insert a merge-family event. `createdAt` is passed explicitly so a start/terminal pair can
-   * share the exact same second — the tie the id ordering exists to break.
-   */
+  /** Allow exact same-second events to exercise id tie-breaking. */
   async function seedEvent(opts: {
     bookId: number | null;
     bookTitle: string;
@@ -79,25 +68,25 @@ describe('#2099 merge boot recovery — detection against real SQLite', () => {
   it('returns exactly the books whose latest merge-family row (by id) is merge_started', async () => {
     const sameSecond = new Date('2026-08-03T19:53:05Z');
 
-    // (a) dangling merge_started — the live SIGSEGV case.
+    // Dangling live-crash case.
     const dangling = await seedBook('Stormrage');
     await seedEvent({ bookId: dangling, bookTitle: 'Stormrage', eventType: 'merge_started', source: 'auto', createdAt: sameSecond });
 
-    // (b) merge_started + merged sharing one created_at second — settled, NOT a candidate.
+    // Same-second merge_started + merged is settled, not a candidate.
     const settled = await seedBook('Babylon’s Ashes');
     await seedEvent({ bookId: settled, bookTitle: 'Babylon’s Ashes', eventType: 'merge_started', createdAt: sameSecond });
     await seedEvent({ bookId: settled, bookTitle: 'Babylon’s Ashes', eventType: 'merged', createdAt: sameSecond });
 
-    // (c) a settled first merge followed by a dangling second — one candidate, keyed on the latest row.
+    // The latest of two attempts is dangling.
     const second = await seedBook('The Way of Kings');
     await seedEvent({ bookId: second, bookTitle: 'The Way of Kings', eventType: 'merge_started', source: 'manual', createdAt: sameSecond });
     await seedEvent({ bookId: second, bookTitle: 'The Way of Kings', eventType: 'merge_failed', source: 'manual', createdAt: sameSecond });
     await seedEvent({ bookId: second, bookTitle: 'The Way of Kings', eventType: 'merge_started', source: 'manual', createdAt: sameSecond });
 
-    // (d) the book was deleted — the FK is ON DELETE SET NULL, so there is nothing to settle.
+    // A deleted book has a null FK and cannot settle.
     await seedEvent({ bookId: null, bookTitle: 'Deleted Book', eventType: 'merge_started', createdAt: sameSecond });
 
-    // (e) a book with no merge events at all.
+    // Non-merge history is irrelevant.
     const untouched = await seedBook('Dune');
     await seedEvent({ bookId: untouched, bookTitle: 'Dune', eventType: 'imported', createdAt: sameSecond });
 
@@ -105,7 +94,6 @@ describe('#2099 merge boot recovery — detection against real SQLite', () => {
 
     expect(candidates.map((c) => c.bookId).sort((a, b) => a - b)).toEqual([dangling, second].sort((a, b) => a - b));
     expect(candidates.find((c) => c.bookId === dangling)).toMatchObject({ source: 'auto', bookTitle: 'Stormrage' });
-    // The candidate carries the LATEST start row's id, not the first merge's.
     const secondCandidate = candidates.find((c) => c.bookId === second)!;
     expect(secondCandidate.source).toBe('manual');
     const secondRows = await db.select().from(bookEvents);
@@ -120,7 +108,7 @@ describe('#2099 merge boot recovery — detection against real SQLite', () => {
     await seedEvent({ bookId, bookTitle: 'Stormrage', eventType: 'merged', createdAt: sameSecond });
 
     const rows = await db.select().from(bookEvents);
-    expect(new Set(rows.map((r) => r.createdAt.getTime())).size).toBe(1); // the tie is real
+    expect(new Set(rows.map((r) => r.createdAt.getTime())).size).toBe(1); // Prove the tie is real.
     expect(await findInterruptedMergeCandidates(db)).toEqual([]);
   });
 
@@ -138,7 +126,7 @@ describe('#2099 merge boot recovery — detection against real SQLite', () => {
       const bookId = await seedBook('Stormrage', bookPath);
       await seedEvent({ bookId, bookTitle: 'Stormrage', eventType: 'merge_started', source: 'auto', createdAt: new Date('2026-08-03T19:53:05Z') });
 
-      // A settlement double that actually writes, so the second pass sees a real terminal row.
+      // Persist terminal events so the second pass exercises real idempotence.
       const create = vi.fn(async (input: { bookId: number; bookTitle: string; eventType: EventType; source: EventSource; reason?: unknown }) => {
         await db.insert(bookEvents).values({
           bookId: input.bookId,
@@ -166,7 +154,6 @@ describe('#2099 merge boot recovery — detection against real SQLite', () => {
       expect(settlement.source).toBe('auto');
       expect(settlement.reason).toEqual({ error: 'Interrupted by server restart', type: 'ProcessRestart' });
 
-      // Idempotence: the terminal row is now the latest, so the book is no longer a candidate.
       create.mockClear();
       const second = await settleInterruptedMerges(deps);
 

@@ -36,21 +36,13 @@ export interface AuthPublicConfig {
 
 interface SessionPayload {
   username: string;
-  // Token-type discriminator (#1453). Written on every new session cookie;
-  // optional on read for backward-compat with cookies issued before #1453
-  // (those carry a `username` but no `kind`, and stay valid until they expire
-  // or the session secret rotates).
+  // Optional only for legacy cookies; every new session writes the discriminator.
   kind?: 'session';
   issuedAt: number;
   expiresAt: number;
 }
 
-/**
- * Short-lived, session-scoped token (#1453) used to authenticate the SSE/stream
- * endpoints (`/api/events`, `/api/search/stream`) without putting a long-lived
- * secret in the URL. Carries no `username` and a `kind: 'stream'` discriminator
- * so it can never be mistaken for a session cookie.
- */
+// Short-lived stream credentials avoid putting API keys or session secrets in SSE URLs.
 interface StreamTokenPayload {
   kind: 'stream';
   issuedAt: number;
@@ -63,22 +55,12 @@ export interface SessionVerifyResult {
 }
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-/**
- * Stream-token TTL (#1453). Deliberately short (minutes) and independent of
- * SESSION_TTL_MS — a stream token is not sliding-renewed, so a session renewal
- * neither extends nor invalidates a live stream token. The frontend re-mints
- * transparently before/at expiry.
- */
+// Stream expiry is independent and non-sliding; the frontend remints tokens as needed.
 export const STREAM_TOKEN_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const SCRYPT_KEYLEN = 64;
 
-// Generated once at module load, stable for the process lifetime. Used to run a
-// throwaway scrypt on the `null`-returning branches of verifyCredentials that
-// would otherwise skip hashing, so login timing does not distinguish
-// "username exists" from "wrong password" (username-enumeration oracle). The
-// value is cryptographically irrelevant — it is never compared against
-// anything; it only makes the work proportional to a real verification. 16
-// bytes matches the real salt size used in createUser (randomBytes(16)).
+// A process-stable dummy salt equalizes failed-login scrypt cost and blocks username timing oracles.
+// It matches real salt length but is never compared or persisted.
 const DUMMY_SALT = randomBytes(16);
 
 function hashPassword(password: string, salt: Buffer): Promise<Buffer> {
@@ -93,7 +75,6 @@ function hashPassword(password: string, salt: Buffer): Promise<Buffer> {
 export class AuthService {
   constructor(private db: Db, private log: FastifyBaseLogger) {}
 
-  /** Auto-generate default auth settings if none exist. Idempotent. */
   async initialize(): Promise<void> {
     const existing = await this.db
       .select()
@@ -125,8 +106,6 @@ export class AuthService {
     this.log.info('Auth settings initialized with default configuration');
   }
 
-  // ─── Config ────────────────────────────────────────────────────────
-
   private async getAuthConfig(): Promise<AuthConfig> {
     const result = await this.db
       .select()
@@ -152,7 +131,7 @@ export class AuthService {
       });
   }
 
-  /** Public status — no secrets exposed. */
+  /** Public status with no secret fields. */
   async getStatus(): Promise<AuthStatus> {
     const config = await this.getAuthConfig();
     const userRows = await this.db.select().from(users).limit(1);
@@ -164,7 +143,7 @@ export class AuthService {
     };
   }
 
-  /** Protected config — includes API key but never sessionSecret. */
+  /** Protected config includes the API key but never the session secret. */
   async getConfig(): Promise<AuthPublicConfig> {
     const config = await this.getAuthConfig();
     return {
@@ -199,7 +178,6 @@ export class AuthService {
 
   async updateConfig(updates: { mode?: AuthMode | undefined; localBypass?: boolean | undefined }): Promise<AuthPublicConfig> {
     if (updates.mode !== undefined) {
-      // updateMode has its own validation
       await this.updateMode(updates.mode);
     }
     if (updates.localBypass !== undefined) {
@@ -208,9 +186,7 @@ export class AuthService {
     return this.getConfig();
   }
 
-  // ─── Users / Credentials ──────────────────────────────────────────
-
-  /** Delete all users and reset auth mode to `none`. Only call when AUTH_BYPASS is active. */
+  /** Delete all users and reset auth mode to none; only call while AUTH_BYPASS is active. */
   async deleteCredentials(): Promise<void> {
     const userRows = await this.db.select().from(users).limit(1);
     if (userRows.length === 0) {
@@ -257,9 +233,7 @@ export class AuthService {
       .limit(1);
 
     if (result.length === 0) {
-      // Defeat the username-enumeration timing oracle — run scrypt with a fixed
-      // salt and discard the result so this branch costs the same wall-clock
-      // time as a real verification (which calls hashPassword at line ~256).
+      // Match real verification cost so response timing cannot reveal whether the username exists.
       await hashPassword(password, DUMMY_SALT);
       this.log.debug({ username }, 'Auth: user not found');
       return null;
@@ -270,13 +244,7 @@ export class AuthService {
     const saltHex = parts[0];
     const hashHex = parts[1];
     if (parts.length !== 2 || saltHex === undefined || hashHex === undefined) {
-      // §6.4 — DB has a malformed passwordHash (no `:` separator). Treat as
-      // invalid credentials rather than a 500 — prevents an attacker from
-      // distinguishing "user exists with corrupt hash" from "wrong password".
-      // Logged at warn so operators see it; this should never happen with
-      // hashes produced by hashPassword().
-      // Run the dummy scrypt before returning so this branch does not
-      // reintroduce the timing distinction the user-not-found branch closes.
+      // Treat malformed hashes as invalid credentials, warn operators, and preserve dummy-scrypt timing.
       await hashPassword(password, DUMMY_SALT);
       this.log.warn({ username }, 'Auth: malformed passwordHash in DB');
       return null;
@@ -295,20 +263,8 @@ export class AuthService {
   }
 
   /**
-   * Change the user's password (and optionally username), then rotate the
-   * session secret so every previously-issued cookie fails HMAC verification.
-   *
-   * Returns the *effective* username (`newUsername ?? username`) so the route
-   * can reissue a replacement cookie with the authoritative identity — the
-   * forms middleware trusts the cookie payload username directly, so a renamed
-   * user must not receive a cookie carrying the stale name.
-   *
-   * Rotation happens **after** the credential update succeeds: a wrong current
-   * password throws before any write, so a failed change never rotates the
-   * secret. If the rotation write itself fails after the credential update has
-   * landed, the error propagates (surfacing as a 500) rather than being
-   * swallowed — the brief partial state (credentials changed, secret not yet
-   * rotated) is an accepted single-user limitation.
+   * Update credentials, then rotate the session secret to revoke every cookie; return the effective username for reissue.
+   * A rotation failure propagates after the credential write; that partial state is an accepted single-user limitation.
    */
   async changePassword(username: string, currentPassword: string, newPassword: string, newUsername?: string): Promise<string> {
     const verified = await this.verifyCredentials(username, currentPassword);
@@ -332,10 +288,6 @@ export class AuthService {
       .where(eq(users.username, username));
     this.log.info({ username, newUsername: newUsername || username }, 'Credentials updated');
 
-    // Rotate the session secret so all previously-issued cookies (including the
-    // caller's own) fail HMAC verification on their next use. Mirrors the
-    // existing getAuthConfig/setAuthConfig read-modify-write; the route reissues
-    // a fresh cookie in forms mode so the caller stays signed in on this device.
     const config = await this.getAuthConfig();
     config.sessionSecret = randomBytes(32).toString('hex');
     await this.setAuthConfig(config);
@@ -344,12 +296,9 @@ export class AuthService {
     return effectiveUsername;
   }
 
-  // ─── API Key ───────────────────────────────────────────────────────
-
   async validateApiKey(key: string): Promise<boolean> {
     const config = await this.getAuthConfig();
-    // SHA-256 both sides to a fixed length — avoids leaking key length via early
-    // length-mismatch return. Buffers are always 32 bytes so timingSafeEqual is safe.
+    // Hash both sides to fixed length before timingSafeEqual so key length cannot leak.
     const expectedHash = createHash('sha256').update(config.apiKey).digest();
     const providedHash = createHash('sha256').update(key).digest();
     return timingSafeEqual(expectedHash, providedHash);
@@ -362,8 +311,6 @@ export class AuthService {
     this.log.info('API key regenerated');
     return config.apiKey;
   }
-
-  // ─── Session Cookie ────────────────────────────────────────────────
 
   async getSessionSecret(): Promise<string> {
     const config = await this.getAuthConfig();
@@ -383,22 +330,12 @@ export class AuthService {
     return `${payloadB64}.${signature}`;
   }
 
-  /**
-   * Domain-separated signing key for stream tokens (#1453). Derived from the
-   * session secret so a stream token signed with this key cannot pass the
-   * session-cookie HMAC check (which uses the raw `secret`) and vice versa —
-   * the two token domains are non-interchangeable even under secret reuse.
-   */
+  /** Derive a stream-only signing domain so stream and session tokens remain non-interchangeable. */
   private deriveStreamSecret(secret: string): Buffer {
     return createHmac('sha256', secret).update('stream-token').digest();
   }
 
-  /**
-   * Mint a short-lived, session-scoped stream token (#1453). Carries no
-   * `username` and `kind: 'stream'`, signed with the domain-separated stream
-   * secret. Used to authenticate the SSE endpoints without exposing the API key
-   * or a long-lived session secret in the stream URL.
-   */
+  /** Mint a short-lived SSE credential without exposing an API key or session secret. */
   mintStreamToken(secret: string): string {
     const now = Date.now();
     const payload: StreamTokenPayload = {
@@ -412,12 +349,6 @@ export class AuthService {
     return `${payloadB64}.${signature}`;
   }
 
-  /**
-   * Verify a stream token (#1453). Mirrors verifySessionCookie's timing-safe,
-   * fixed-length HMAC comparison but uses the domain-separated stream secret and
-   * requires `kind === 'stream'`. A session cookie (signed with the raw secret,
-   * `kind: 'session'`) therefore fails here at the signature check.
-   */
   verifyStreamToken(token: string, secret: string): StreamTokenPayload | null {
     const parts = token.split('.');
     const payloadB64 = parts[0];
@@ -430,8 +361,7 @@ export class AuthService {
     const streamSecret = this.deriveStreamSecret(secret);
     const expectedSig = createHmac('sha256', streamSecret).update(payloadB64).digest('base64url');
 
-    // SHA-256 both sides to a fixed length — avoids leaking signature length via early
-    // length-mismatch return. Buffers are always 32 bytes so timingSafeEqual is safe.
+    // Hash to equal-length buffers before timingSafeEqual to avoid length-oracle behavior.
     const sigHash = createHash('sha256').update(signature).digest();
     const expectedHash = createHash('sha256').update(expectedSig).digest();
     if (!timingSafeEqual(sigHash, expectedHash)) {
@@ -447,9 +377,7 @@ export class AuthService {
       return null;
     }
 
-    // Domain separation (defense in depth beyond the derived signing key): reject
-    // anything that isn't an explicit stream token, so a session cookie can never
-    // authenticate a stream-token check even if the secret were reused raw.
+    // The discriminator preserves domain separation even if the raw secret is ever reused.
     if (payload.kind !== 'stream') {
       this.log.debug('Auth: stream token wrong kind');
       return null;
@@ -474,8 +402,7 @@ export class AuthService {
 
     const expectedSig = createHmac('sha256', secret).update(payloadB64).digest('base64url');
 
-    // SHA-256 both sides to a fixed length — avoids leaking signature length via early
-    // length-mismatch return. Buffers are always 32 bytes so timingSafeEqual is safe.
+    // Hash to equal-length buffers before timingSafeEqual to avoid length-oracle behavior.
     const sigHash = createHash('sha256').update(signature).digest();
     const expectedHash = createHash('sha256').update(expectedSig).digest();
     if (!timingSafeEqual(sigHash, expectedHash)) {
@@ -491,11 +418,7 @@ export class AuthService {
       return null;
     }
 
-    // Token-type domain separation (#1453): a session cookie MUST carry a
-    // username and must not bear a foreign `kind`. A stream token (no username,
-    // `kind: 'stream'`) is rejected here even if its HMAC otherwise validated —
-    // so a stream token can never authenticate a session-cookie check. Legacy
-    // cookies (pre-#1453, username present, `kind` absent) stay valid.
+    // Require a username and reject foreign kinds while accepting legacy cookies with no discriminator.
     if (typeof payload.username !== 'string' || payload.username.length === 0) {
       this.log.debug('Auth: session cookie missing username');
       return null;
@@ -511,15 +434,13 @@ export class AuthService {
       return null;
     }
 
-    // Sliding expiry: renew if >50% through TTL
+    // Renew only after half the TTL to avoid reissuing on every request.
     const elapsed = now - payload.issuedAt;
     const shouldRenew = elapsed > SESSION_TTL_MS / 2;
 
     return { payload, shouldRenew };
   }
 }
-
-// ─── Typed Error Classes ──────────────────────────────────────────────
 
 export class UserExistsError extends Error {
   readonly code = 'USER_EXISTS' as const;

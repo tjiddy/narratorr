@@ -1,17 +1,9 @@
 import { z } from 'zod';
 
-// ---------------------------------------------------------------------------
-// Schema — single source of truth for suggestion reason values
-// ---------------------------------------------------------------------------
-
 export const SUGGESTION_REASONS = ['author', 'series', 'genre', 'narrator', 'diversity'] as const;
 
 export const suggestionReasonSchema = z.enum(SUGGESTION_REASONS);
 export type SuggestionReason = z.infer<typeof suggestionReasonSchema>;
-
-// ---------------------------------------------------------------------------
-// Registry — metadata for each reason (labels, display, etc.)
-// ---------------------------------------------------------------------------
 
 export interface SuggestionReasonMetadata {
   label: string;
@@ -24,10 +16,6 @@ export const SUGGESTION_REASON_REGISTRY: Record<SuggestionReason, SuggestionReas
   narrator: { label: 'Narrator' },
   diversity: { label: 'Diversity' },
 };
-
-// ---------------------------------------------------------------------------
-// API response type — models the wire contract (not the DB row)
-// ---------------------------------------------------------------------------
 
 export interface SuggestionRowResponse {
   id: number;
@@ -50,6 +38,6 @@ export interface SuggestionRowResponse {
   refreshedAt: string;
   dismissedAt: string | null;
   createdAt: string;
-  /** Populated when the suggestion matches a book already in the library (by ASIN or title+primary-author). */
+  /** Existing library match by ASIN or title plus primary author. */
   libraryBookId: number | null;
 }

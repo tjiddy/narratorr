@@ -19,8 +19,7 @@ export function groupBooksBySeries(books: BookMetadata[]): { series: SeriesGroup
   const seriesMap = new Map<string, BookMetadata[]>();
   const standalone: BookMetadata[] = [];
 
-  // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) so books
-  // are grouped under their real series, not a broader universe entry.
+  // Audible series[0] may be a broader universe; group by canonical seriesPrimary.
   const primaryRef = (b: BookMetadata) => pickPrimarySeries(b);
 
   for (const book of books) {

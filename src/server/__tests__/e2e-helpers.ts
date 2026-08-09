@@ -20,10 +20,7 @@ export interface E2EApp {
   app: ReturnType<typeof Fastify> & { withTypeProvider: () => unknown };
   db: Db;
   services: Services;
-  /**
-   * Per-run temp directory containing the libSQL DB file and its -wal/-shm sidecars.
-   * Removed atomically by cleanup(); exposed for tests that need to inspect it.
-   */
+  /** Per-run libSQL directory, exposed for cleanup assertions. */
   dir: string;
   cleanup: () => Promise<void>;
 }
@@ -33,12 +30,8 @@ let signalHandlersRegistered = false;
 const isWindows = process.platform === 'win32';
 
 /**
- * libSQL's Windows native binding has a known bug where the OS file handle
- * is not released even after Client.close() returns — confirmed with a
- * minimal repro (create-client → close → rmSync fails EPERM). WAL checkpoint,
- * journal_mode=DELETE, and forced GC do not help. On Windows we accept the
- * leak and let the OS clean up on process exit. On Linux (CI + prod) we
- * require cleanup to succeed so #685's leak-prevention intent stands.
+ * libSQL can retain its Windows file handle after close, so tolerate EPERM until process exit.
+ * Linux cleanup remains strict to expose real leaks.
  */
 function rmDirOrLeak(dir: string) {
   try {
@@ -77,21 +70,8 @@ function registerSignalHandlersOnce() {
 }
 
 /**
- * Boots a real Fastify server with an isolated temp libSQL database.
- * Runs migrations, creates real services, registers all routes.
- * Returns the app instance + cleanup function to tear down.
- *
- * Each call creates a per-run directory under `os.tmpdir()` prefixed
- * `narratorr-e2e-` that holds the DB file and its WAL/SHM sidecars.
- * cleanup() removes the directory atomically via a single recursive
- * `rmSync`. An abnormal exit (SIGINT/SIGTERM/process exit) triggers
- * a best-effort purge of any still-active run directories registered
- * at module load.
- *
- * Leftovers from an uncaught crash can be purged in bulk:
- *   find $TMPDIR -maxdepth 1 -name 'narratorr-e2e-*' -exec rm -rf {} +
- *
- * No static files, no background jobs, no CORS — pure API testing.
+ * Boot the real app against an isolated migrated libSQL database. Cleanup removes the whole run
+ * directory; process signals attempt cleanup for every active run.
  */
 export async function createE2EApp(): Promise<E2EApp> {
   registerSignalHandlersOnce();
@@ -103,7 +83,6 @@ export async function createE2EApp(): Promise<E2EApp> {
   await runMigrations(dbFile);
   const db = createDb(dbFile);
 
-  // Initialize encryption key for e2e tests (deterministic key for test isolation)
   const testKey = Buffer.from('a'.repeat(64), 'hex');
   initializeKey(testKey);
 
@@ -121,13 +100,8 @@ export async function createE2EApp(): Promise<E2EApp> {
 
   const cleanup = async () => {
     await app.close();
-    // Release the libSQL file handle before rmSync — on Linux this frees
-    // the DB file immediately; on Windows libsql's native binding keeps the
-    // handle regardless (see rmDirOrLeak for background).
     db.$client.close();
-    // Surface rmSync failures on the happy path on Linux/CI so tests can
-    // distinguish success from masked failure. On Windows we accept the
-    // libsql leak — the OS reclaims on process exit.
+    // Strict on Linux; tolerate libSQL's retained Windows handle.
     rmDirOrLeak(dir);
     activeRunDirs.delete(dir);
   };
@@ -135,13 +109,7 @@ export async function createE2EApp(): Promise<E2EApp> {
   return { app: app as unknown as E2EApp['app'], db, services, dir, cleanup };
 }
 
-/**
- * Seed a book (status 'downloading') + completed download record.
- * Returns IDs for use in importDownload() and other E2E assertions.
- *
- * Shared helper — consolidates identical logic from import-flow, search-grab-flow,
- * and notifier-events E2E tests.
- */
+/** Seed a downloading book and completed download record. */
 export async function seedBookAndDownload(
   e2e: E2EApp,
   downloadClientId: number,
@@ -157,7 +125,6 @@ export async function seedBookAndDownload(
   expect(bookRes.statusCode).toBe(201);
   const bookId = bookRes.json().id;
 
-  // Set book to 'downloading' (realistic pre-import state after grab)
   await e2e.db.update(books).set({ status: 'downloading' }).where(eq(books.id, bookId));
 
   const [download] = await e2e.db.insert(downloads).values({ publicId: generatePublicId('dl'),
@@ -168,8 +135,7 @@ export async function seedBookAndDownload(
     externalId: opts.externalId ?? 'aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
     clientStatus: 'completed' as const,
     pipelineStage: 'idle' as const,
-    // Pre-grab lifecycle snapshot — the book was 'wanted' when grabbed, so a failed
-    // import reverts it to 'wanted' (the authoritative revert reads this, not path).
+    // Import failure restores this lifecycle snapshot rather than inferring from path.
     bookStatusAtGrab: 'wanted' as const,
     completedAt: opts.completedAt ?? new Date(Date.now() - 2 * 60 * 60 * 1000),
   }).returning();

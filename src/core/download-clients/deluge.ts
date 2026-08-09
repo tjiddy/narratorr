@@ -99,12 +99,7 @@ export class DelugeClient implements DownloadClientAdapter {
     );
   }
 
-  /**
-   * Issue a JSON-RPC call WITHOUT the auth gate that `rpc()` applies. Reuses the
-   * persisted session cookie from `login()`. The auth handshake (web.*) must use
-   * this rather than `rpc()` — `rpc()` calls `login()` when `!this.authenticated`,
-   * which would recurse back into the handshake.
-   */
+  // Handshake RPC bypasses rpc()'s auth gate or login would recurse into itself.
   private async rawRpc(method: string, params: unknown[] = []): Promise<unknown> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (this.sessionCookie) {
@@ -125,14 +120,8 @@ export class DelugeClient implements DownloadClientAdapter {
     return data.result;
   }
 
-  /**
-   * Shared, policy-free response pipeline for `rpc()` and `rawRpc()`: HTTP
-   * status check, JSON decode, and schema validation. Returns the validated
-   * envelope and performs NO `data.error` interpretation — each caller keeps
-   * its own `data.error` policy (auth-retry in `rpc()`, plain throw in
-   * `rawRpc()`). `rpc()`'s 401/403 auth pre-check also stays caller-side,
-   * ahead of this helper's generic `!response.ok` branch.
-   */
+  // Decode and validate only. rpc() owns auth retry/error policy; rawRpc() throws
+  // handshake errors directly.
   private async parseRpcResponse(response: Response): Promise<DelugeRpcEnvelope> {
     if (!response.ok) {
       throw new DownloadClientError(this.name, `Deluge request failed: HTTP ${response.status}`);
@@ -156,12 +145,7 @@ export class DelugeClient implements DownloadClientAdapter {
     return parsed.data;
   }
 
-  /**
-   * `auth.login` only authenticates to the web server — it does NOT connect the
-   * web server to a daemon. Daemon-proxied methods (`daemon.*`, `core.*`) are
-   * absent from the callable-method map until a daemon is connected, so they fail
-   * with "Unknown method". Ensure a daemon is connected before any such call.
-   */
+  // Web authentication does not connect a daemon; daemon/core methods remain unavailable.
   private async ensureDaemonConnected(): Promise<void> {
     const connected = await this.rawRpc('web.connected');
     if (connected === true) {
@@ -221,14 +205,11 @@ export class DelugeClient implements DownloadClientAdapter {
       throw new DownloadClientAuthError(this.name, 'Deluge login failed: Invalid password');
     }
 
-    // Persist session cookie for subsequent authenticated requests
     const setCookie = response.headers.get('set-cookie');
     if (setCookie) {
       this.sessionCookie = setCookie.split(';')[0]!;
     }
 
-    // auth.login only authenticates to the web server — connect it to a daemon
-    // before any daemon.*/core.* call. Reuses the cookie just persisted above.
     await this.ensureDaemonConnected();
 
     this.authenticated = true;
@@ -249,7 +230,6 @@ export class DelugeClient implements DownloadClientAdapter {
 
     const torrentId = await this.addTorrent(artifact, addOptions);
 
-    // Try to set label (category) — graceful fallback if plugin unavailable
     if (options?.category) {
       try {
         await this.rpc('label.set_torrent', [torrentId, options.category]);
@@ -278,12 +258,8 @@ export class DelugeClient implements DownloadClientAdapter {
 
       return result;
     } catch (error: unknown) {
-      // Duplicate-add: Deluge raises an AddTorrentError ("Torrent already in
-      // session") which rpc() surfaces as a thrown DownloadClientError. The
-      // torrent the daemon already holds IS the release we wanted (matched by
-      // infohash), so adopt it — confirm it is present, then return its infohash
-      // so the grab persists a normal tracked download for the monitor to drive
-      // to completion. Mirror Transmission's torrent-duplicate handling.
+      // A confirmed same-infohash duplicate is the requested release; adopt it so
+      // normal monitoring continues.
       if (this.isDuplicateAddError(error)) {
         const existing = await this.getDownload(artifact.infoHash);
         if (existing) {
@@ -294,12 +270,7 @@ export class DelugeClient implements DownloadClientAdapter {
     }
   }
 
-  /**
-   * Detect Deluge's duplicate-add signal. A duplicate `core.add_torrent_*`
-   * returns `error.code === 4` (generic "RPC call failure") with an
-   * `AddTorrentError` / "already in session" message — so the match must be
-   * scoped to the message substrings, NOT `code 4` alone.
-   */
+  // Error code 4 is generic; only the AddTorrentError message identifies duplicates.
   private isDuplicateAddError(error: unknown): boolean {
     return (
       error instanceof DownloadClientError &&
@@ -366,7 +337,7 @@ export class DelugeClient implements DownloadClientAdapter {
       const result = await this.rpc('label.get_labels') as string[] | null;
       return result ?? [];
     } catch {
-      // Label plugin not installed
+      // Labels are an optional plugin.
       return [];
     }
   }

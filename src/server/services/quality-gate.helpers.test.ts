@@ -84,7 +84,6 @@ describe('buildQualityAssessment — existing audio metadata fields', () => {
   it('uses resolveBookQualityInputs fallback: audioDuration if present, else duration * 60', () => {
     const book = { ...baseBook, audioDuration: null, duration: 120 };
     const result = buildQualityAssessment(baseScan, book);
-    // duration * 60 = 120 * 60 = 7200
     expect(result.existingDuration).toBe(7200);
   });
 
@@ -106,13 +105,9 @@ describe('buildQualityAssessment — existing audio metadata fields', () => {
     expect(result.existingChannels).toBeNull();
   });
 
-  // Accepted-trade guard (#1846): under duration omission, a partial-omission scan keeps its
-  // full totalSize but a reduced totalDuration (only plausible files summed), so newMbPerHour
-  // is INFLATED relative to the true value — the gate still evaluates, and the error bias
-  // moves toward permissive. This test pins that direction so it can't silently regress further.
+  // Missing durations keep full bytes but reduce time, inflating MB/hour; retain that permissive bias.
   it('still evaluates and inflates mbPerHour when a partial-omission scan reduces totalDuration', () => {
     const fullScan = { ...baseScan, totalSize: 600_000_000, totalDuration: 36000 };
-    // One file's duration omitted → same bytes, ~10% less duration.
     const partialScan = { ...baseScan, totalSize: 600_000_000, totalDuration: 32400 };
     const full = buildQualityAssessment(fullScan, baseBook);
     const partial = buildQualityAssessment(partialScan, baseBook);
@@ -122,9 +117,7 @@ describe('buildQualityAssessment — existing audio metadata fields', () => {
 });
 
 describe('buildQualityAssessment — narrator_mismatch (#1655 5A/5B surface checks)', () => {
-  // Quality-gate uses EXACT normalized set membership (not the fuzzy cap path),
-  // and is a DIRECT normalizeNarrator caller. 5A's string-cleaning reaches it
-  // (intended: fewer spurious holds); 5B's placeholder denylist does NOT.
+  // Quality gate uses exact normalized sets: role-prefix cleanup applies, placeholder denial does not.
 
   it('5A: same person modulo role-prefix noise no longer holds (Read by: P. J. Ochlan ↔ P. J. Ochlan)', () => {
     const book = { ...baseBook, narrators: [{ name: 'P. J. Ochlan' }] };
@@ -134,16 +127,13 @@ describe('buildQualityAssessment — narrator_mismatch (#1655 5A/5B surface chec
   });
 
   it('control: a genuinely different existing narrator still holds', () => {
-    // baseBook narrator is John Smith.
+    // baseBook uses John Smith.
     const scan = { ...baseScan, tagNarrator: 'Jane Doe' };
     const result = buildQualityAssessment(scan, baseBook);
     expect(result.holdReasons).toContain('narrator_mismatch');
   });
 
   it('5B placeholder is NOT applied here: "Author" tag vs a real existing narrator still holds (unchanged)', () => {
-    // The 5B denylist lives at the comparison layer only. At quality-gate,
-    // `Author` normalizes to the non-empty token `author` and is compared
-    // exactly — exactly as before 5B existed.
     const scan = { ...baseScan, tagNarrator: 'Author' };
     const result = buildQualityAssessment(scan, baseBook);
     expect(result.holdReasons).toContain('narrator_mismatch');

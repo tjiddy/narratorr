@@ -11,11 +11,7 @@ interface PathMappingEditorProps {
   onChange: (mappings: PathMappingEntry[]) => void;
 }
 
-/**
- * Local-state path mapping editor for create mode.
- * Unlike RemotePathMappingsSubsection (edit mode, API-backed), this component
- * manages mappings as local state until the parent form submits.
- */
+/** Create-mode editor; mappings stay local until the parent form submits. */
 export function PathMappingEditor({ mappings, onChange }: PathMappingEditorProps) {
   const [showForm, setShowForm] = useState(false);
   const [remotePath, setRemotePath] = useState('');
@@ -37,7 +33,6 @@ export function PathMappingEditor({ mappings, onChange }: PathMappingEditorProps
 
   return (
     <div className="sm:col-span-2 space-y-4 border-t border-border pt-5 mt-1">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h4 className="font-display text-base font-semibold">Remote Path Mappings</h4>
@@ -59,7 +54,6 @@ export function PathMappingEditor({ mappings, onChange }: PathMappingEditorProps
         </button>
       </div>
 
-      {/* Add Form */}
       {showForm && (
         <div className="glass-card rounded-2xl p-5 space-y-4 animate-fade-in">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -106,7 +100,6 @@ export function PathMappingEditor({ mappings, onChange }: PathMappingEditorProps
         </div>
       )}
 
-      {/* List */}
       {mappings.length === 0 && !showForm ? (
         <div className="glass-card rounded-2xl p-6 text-center">
           <FolderIcon className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />

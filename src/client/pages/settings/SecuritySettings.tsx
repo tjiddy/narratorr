@@ -67,8 +67,6 @@ export function SecuritySettings() {
   );
 }
 
-// ─── Auth Mode ─────────────────────────────────────────────────────
-
 function AuthModeSection({
   mode,
   hasUser,
@@ -90,7 +88,6 @@ function AuthModeSection({
   function handleModeChange(newMode: AuthMode) {
     if (newMode === mode) return;
 
-    // Switching to none — show warning
     if (newMode === 'none' && mode !== 'none') {
       setPendingMode(newMode);
       setShowConfirm(true);
@@ -110,9 +107,7 @@ function AuthModeSection({
         {(['none', 'basic', 'forms'] as AuthMode[]).map((m) => {
           const needsCredentials = m !== 'none' && !hasUser;
           return (
-            // Whole-row click target. The radio carries aria-label (exact mode name) +
-            // aria-describedby: with the description INSIDE this label, the label's text content
-            // would otherwise become the radio's accessible name and break exact-name queries.
+            // aria-label excludes the nested description from the radio's accessible name.
             <label
               key={m}
               className={`flex items-start gap-3.5 px-4 py-4 transition-colors duration-200 ${
@@ -155,8 +150,6 @@ function AuthModeSection({
   );
 }
 
-// ─── Local Bypass ──────────────────────────────────────────────────
-
 function LocalBypassSection({ localBypass }: { localBypass: boolean }) {
   const mutation = useMutationWithToast({
     mutationFn: (enabled: boolean) => api.updateAuthConfig({ localBypass: enabled }),
@@ -177,7 +170,6 @@ function LocalBypassSection({ localBypass }: { localBypass: boolean }) {
           label="Enable local bypass"
           description="Requests from private IPs (10.x, 172.16-31.x, 192.168.x, localhost) will skip authentication"
         >
-          {/* Saves on flip (no dirty-Save on this section) — mutation wiring unchanged. */}
           <ToggleSwitch
             id="localBypass"
             checked={localBypass}
@@ -188,8 +180,6 @@ function LocalBypassSection({ localBypass }: { localBypass: boolean }) {
     </SettingsSection>
   );
 }
-
-// ─── API Key ───────────────────────────────────────────────────────
 
 function ApiKeySection({ apiKey }: { apiKey: string }) {
   const [showConfirm, setShowConfirm] = useState(false);
