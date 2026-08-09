@@ -31,7 +31,6 @@ export async function searchStreamRoutes(
   indexerService: IndexerService,
   sessionManager: SearchSessionManager,
 ): Promise<void> {
-  // GET /api/search/stream — SSE endpoint
   app.get<{ Querystring: SearchQuery }>(
     '/api/search/stream',
     {
@@ -46,13 +45,12 @@ export async function searchStreamRoutes(
         return reply.status(400).send({ error: 'bookDuration must be a positive number' });
       }
 
-      // Reject queries that collapse to empty after punctuation cleanup before
-      // we open the SSE stream — keeps the failure as a normal HTTP response.
+      // Validate before hijacking so failure remains a normal HTTP response.
       if (!cleanIndexerQuery(q)) {
         return reply.status(400).send({ error: 'Search query is empty after punctuation cleanup' });
       }
 
-      // Query enabled indexers before starting SSE stream
+      // Resolve indexers before hijacking so lookup failures remain HTTP errors.
       const enabledIndexers = await indexerSearchService.getEnabledIndexers();
 
       reply.raw.writeHead(200, {
@@ -64,7 +62,6 @@ export async function searchStreamRoutes(
 
       reply.hijack();
 
-      // Create session with actual indexer list so controllers are populated
       const session = sessionManager.create(enabledIndexers);
 
       const startEvent: SearchStartEvent = {
@@ -73,22 +70,15 @@ export async function searchStreamRoutes(
       };
       writeSSE(reply, 'search-start', startEvent);
 
-      // Keep the stream warm while the search is in flight (#1799). A single slow
-      // FlareSolverr-routed indexer can idle the connection toward the ~60s proxy
-      // cutoff with no interim frames; the shared heartbeat frame prevents that.
-      // The frame is a named `hb` event (#1798) which this stream has no client-side
-      // listener for — EventSource ignores unmatched named events, so it stays a
-      // pure keepalive here while doubling as the broadcaster's liveness signal.
+      // Slow FlareSolverr searches can cross proxy idle cutoffs; named hb frames keep transport alive.
+      // EventSource ignores the unmatched name here while broadcaster clients use it for liveness.
       let heartbeatTimer: NodeJS.Timeout | null = null;
       const stopHeartbeatTimer = (): void => {
         stopHeartbeat(heartbeatTimer);
         heartbeatTimer = null;
       };
       heartbeatTimer = startHeartbeat(() => {
-        // Runs from a setInterval callback with no caller on the stack — a throw
-        // here (broken pipe / a tick after reply.raw.end()) would crash the
-        // process, so guard the write and self-stop on failure (mirrors the
-        // broadcaster's writeToAll pruning).
+        // Timer callbacks have no caller; self-stop on broken-pipe or post-end writes.
         try {
           reply.raw.write(SSE_HEARTBEAT_FRAME);
         } catch {
@@ -96,28 +86,14 @@ export async function searchStreamRoutes(
         }
       });
 
-      // Register cleanup on client disconnect
       request.raw.on('close', () => {
         stopHeartbeatTimer();
         sessionManager.cleanup(session.sessionId);
       });
 
-      // Run the streaming search through the query ladder (#2104).
-      //
-      // The interactive surface runs the FULL ladder with NO floor — the user is
-      // reading the results and makes the call, so corroboration is theirs to
-      // do. Rung 1 is the user's `q` VERBATIM: `deriveQuery` prefills
-      // "{title} {author}" but the query is editable, and relaxing a string the
-      // user typed would be a surprise. Relaxed rungs relax the CANONICAL
-      // `title`, sent separately — so an edited query that returns hits never
-      // fires the ladder at all, and when `title` is absent entirely there is
-      // nothing to relax and only rung 1 runs.
-      //
-      // `session.controllers` is the same map on every rung, so an indexer the
-      // user cancels stays cancelled: `searchAllStreaming`'s pre-adapter abort
-      // guard skips it without emitting a duplicate frame. Per-indexer counts
-      // need no buffering either — the client replaces its entry by `indexerId`,
-      // so the winning rung's numbers are the ones left on screen.
+      // Interactive search runs the full ladder without a floor; the user judges the results.
+      // Rung 1 preserves editable q; later rungs derive from canonical title, so no title means no relaxation.
+      // Reuse controllers across rungs so cancellation persists; the client replaces per-indexer counts.
       try {
         const ladder = buildQueryLadder({ title: title ?? '', author, query: q });
         const ran = await runQueryLadder(ladder, async (rung) => {
@@ -146,21 +122,8 @@ export async function searchStreamRoutes(
         });
 
         const processed = await postProcessSearchResults(ran.results, bookDuration, blacklistService, settingsService, indexerService, request.log);
-        // Disclose the winning rung only when a RELAXED one actually produced the
-        // releases being shown. Both halves are load-bearing:
-        //
-        //  - `ran.index > 0` — rung 1 is the query the user asked for, so there
-        //    is nothing to tell them.
-        //  - `processed.results.length > 0` — `runQueryLadder` reports the last
-        //    rung it ATTEMPTED, so a ladder that exhausted, or one that aborted on
-        //    a later-rung outage, also lands on an index > 0 with an empty set;
-        //    and a rung that did return releases can still have every one of them
-        //    removed by the blacklist/quality/language gates above. In all three
-        //    the notice would sit next to "No releases found" and claim a match
-        //    that never happened.
-        //
-        // The resulting payload invariant is what the client relies on:
-        // `relaxedQuery` present implies `results` is non-empty.
+        // ran.index is the last attempted rung even after exhaustion; post-processing may remove every hit.
+        // Disclose relaxation only with displayed results: relaxedQuery implies results is non-empty.
         const relaxed = ran.index > 0 && processed.results.length > 0;
         const payload: SearchResponsePayload = relaxed ? { ...processed, relaxedQuery: ran.rung.query } : processed;
         writeSSE(reply, 'search-complete', payload);
@@ -179,7 +142,6 @@ export async function searchStreamRoutes(
     },
   );
 
-  // POST /api/search/stream/:sessionId/cancel/:indexerId
   app.post<{ Params: { sessionId: string; indexerId: string } }>(
     '/api/search/stream/:sessionId/cancel/:indexerId',
     async (request: FastifyRequest<{ Params: { sessionId: string; indexerId: string } }>, reply: FastifyReply) => {
