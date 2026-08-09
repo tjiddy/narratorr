@@ -54,10 +54,6 @@ describe('mergeBookData', () => {
       expect(result.statusBarClass).toBe(bookStatusConfig.imported!.barClass);
     });
 
-    // #1447 (S2d) — the `?? bookStatusConfig.wanted` masking fallback was removed.
-    // bookStatusConfig is now drift-guarded to set-equal BOOK_STATUSES, so every
-    // canonical status resolves first-class; an off-enum value surfaces the drift
-    // (throws) instead of being silently masked as "Wanted".
     it('surfaces an off-enum status instead of masking it as wanted', () => {
       const book = createMockBook({ status: 'nonexistent' as unknown as BookStatus });
       expect(() => mergeBookData(book)).toThrow(/missing entry for "nonexistent"/);
@@ -155,7 +151,6 @@ describe('mergeBookData', () => {
     });
   });
 
-  // #1097 — metadata fallback prefers seriesPrimary over series[0]
   describe('canonical primary-series preference (#1097)', () => {
     it('prefers metadataBook.seriesPrimary over metadataBook.series[0] when library has no series', () => {
       const book = createMockBook({ seriesName: null, seriesPosition: null });
@@ -179,8 +174,6 @@ describe('mergeBookData', () => {
     });
   });
 
-  // #1614 — subtitle/publisher are stored columns; the library row wins and the
-  // provider value is only a fallback (so they survive a provider-lookup failure).
   describe('stored subtitle/publisher precedence (#1614)', () => {
     it('reads subtitle from the library book when set', () => {
       const book = createMockBook({ subtitle: 'Stored Subtitle' });
@@ -221,7 +214,6 @@ describe('mergeBookData', () => {
   });
 });
 
-// ─── #2069: the operator's explicit clears suppress the provider fallback ───
 describe('resolveDisplayedFields / mergeBookData — user-cleared fields (#2069)', () => {
   const providerMeta = {
     subtitle: 'Provider Subtitle',
@@ -233,7 +225,6 @@ describe('resolveDisplayedFields / mergeBookData — user-cleared fields (#2069)
     series: [{ name: 'Cosmere', position: 5 }],
   };
 
-  /** A book whose stored clearable columns are all empty — provider-only display. */
   function providerOnlyBook(userClearedFields?: ClearableBookField[]) {
     return createMockBook({
       seriesName: null, seriesPosition: null, subtitle: null, description: null,
@@ -273,7 +264,6 @@ describe('resolveDisplayedFields / mergeBookData — user-cleared fields (#2069)
 
       const merged = mergeBookData(book, providerMeta);
       expect(merged.metaDots.some((d) => /Stormlight|Cosmere/.test(d))).toBe(false);
-      // Untouched neighbours still render.
       expect(merged.metaDots).toContain('2010');
       expect(merged.metaDots).toContain('Tor Books');
     });
@@ -288,7 +278,6 @@ describe('resolveDisplayedFields / mergeBookData — user-cleared fields (#2069)
       const displayed = resolveDisplayedFields(providerOnlyBook([field]), providerMeta);
 
       expect(displayed[field]).toBeUndefined();
-      // Every sibling still resolves in the same call.
       for (const other of ['subtitle', 'description', 'publisher', 'publishedDate', 'genres'] as const) {
         if (other !== field) expect(displayed[other]).toBeDefined();
       }
@@ -350,7 +339,6 @@ describe('resolveDisplayedFields / mergeBookData — user-cleared fields (#2069)
   });
 
   describe('#2152 AC7 — the seriesPosition tombstone is its own gate', () => {
-    /** Hunters of Dune: in the series, deliberately unnumbered. */
     function unnumbered(userClearedFields?: ClearableBookField[]) {
       return createMockBook({
         seriesName: 'Dune', seriesPosition: null,
@@ -403,8 +391,6 @@ describe('resolveDisplayedFields / mergeBookData — user-cleared fields (#2069)
   });
 
   it('the header and the modal baseline derive from ONE call, so they cannot disagree', () => {
-    // Consistency guard: a future divergence between what the header hides and what
-    // the modal pre-fills fails here rather than shipping.
     const book = providerOnlyBook(['seriesName', 'publisher']);
     const displayed = resolveDisplayedFields(book, providerMeta);
     const merged = mergeBookData(book, providerMeta);
