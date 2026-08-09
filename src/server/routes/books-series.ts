@@ -65,9 +65,6 @@ export function registerSeriesRoutes(app: FastifyInstance, deps: BookRouteDeps) 
     },
   );
 
-  // GET /api/books/:id/series/search?q= — proxy HardcoverClient.searchSeries
-  // for the manual Fix Series picker. Degrades to an empty list when no key
-  // is configured (never a 500).
   app.get<{ Params: IdParam; Querystring: SeriesSearchQuery }>(
     '/api/books/:id/series/search',
     { schema: { params: idParamSchema, querystring: seriesSearchQuerySchema } },
@@ -82,8 +79,6 @@ export function registerSeriesRoutes(app: FastifyInstance, deps: BookRouteDeps) 
     },
   );
 
-  // POST /api/books/:id/series/bind — persist the chosen Hardcover series id
-  // and sync the book display fields. Returns the rebuilt (id-sourced) card.
   app.post<{ Params: IdParam; Body: BindSeriesBody }>(
     '/api/books/:id/series/bind',
     { schema: { params: idParamSchema, body: bindSeriesBodySchema } },
@@ -98,59 +93,19 @@ export function registerSeriesRoutes(app: FastifyInstance, deps: BookRouteDeps) 
         return reply.status(502).send({ error: 'Failed to bind Hardcover series' });
       }
       request.log.info({ id, hardcoverSeriesId: request.body.hardcoverSeriesId }, 'Series bound to book');
-      // AFTER the transaction resolved (#2098): a bind rewrites series_name /
-      // series_position on every matched sibling, so every one of them needs the
-      // same post-mutation treatment Fix Match gives the single book it edits.
+      // Binding updates every matched sibling; refresh their sidecars only after the transaction commits.
       await runPostBindRefresh(deps, id, bound.syncedIds, request.log);
       return { series: bound.card };
     },
   );
 
-  // POST /api/series/title-variants-debug — the member-matcher parse tester
-  // (#2096), the series-side counterpart to `POST /api/library/scan-debug`.
-  //
-  // Take a bare title, return everything the acceptance rule keys on for that
-  // side: the FULL normalized form, the Unicode-preserving `lossless` form, the
-  // `degenerateFull` verdict, and the tagged variant array (each variant now
-  // carrying its own `lossy` flag).
-  //
-  // Supply `other` as well and the response also carries the PRODUCTION verdict
-  // — `{ pairs, arm, reason }` straight from `explainTitlePairing`, the same
-  // function the matcher runs. That delegation is the point (#2110): the
-  // endpoint used to return `{ input, full, variants }` and document the rule as
-  // "FULL≡FULL, or one side's DERIVED variant equalling the other's FULL", which
-  // omitted the degeneracy, lossy and empty-form conditions entirely. On the
-  // live class (two franchise siblings whose non-Latin subtitles both fold away,
-  // so both sides report `full: 'world of warcraft'`) that stated rule predicts
-  // MATCH and production refuses — the diagnostic reached the opposite
-  // conclusion from the matcher on exactly the hardest class to eyeball. The
-  // rule now lives in ONE place; this route re-implements no part of it.
-  //
-  // The real rule, in evaluation order:
-  //   1. both FULL forms empty, both lossless non-empty and equal
-  //                                                     → lossless-equals-lossless
-  //   2. both FULL forms empty, otherwise                → none
-  //   3. exactly one FULL form empty                     → none
-  //   4. FULLs equal, neither side degenerate            → full-equals-full
-  //   5. FULLs equal, either degenerate, lossless equal  → full-equals-full
-  //   6. FULLs equal, either degenerate, lossless differ → none
-  //   7. FULLs differ, some non-lossy DERIVED variant of one side equals the
-  //      other side's FULL, and that other side is not degenerate
-  //                                                      → derived-equals-full
-  //   8. otherwise                                       → none
-  //
-  // Deliberately NOT under the `/api/books/:id/...` prefix every other route in
-  // this file uses — the input is a bare title, not a book. A title that
-  // validates but yields no variants (e.g. '[ ]') is a 200 with an empty array:
-  // the empty result IS the diagnostic answer, not an error.
+  // Delegate comparisons to the production matcher; lossy, degenerate, and empty-form rules must not drift here.
   app.post<{ Body: TitleVariantsDebugBody }>(
     '/api/series/title-variants-debug',
     { schema: { body: titleVariantsDebugBodySchema } },
     (request): TitleVariantsDebugResponse => {
       const { title, other } = request.body;
-      // `comparison` is ABSENT, not null, when `other` is omitted — the
-      // single-title response keeps exactly the five top-level keys it has
-      // always had, so this widening is a strict superset of the old shape.
+      // Preserve the single-title shape by omitting, rather than nulling, comparison.
       if (other === undefined) return debugSide(title);
       return {
         ...debugSide(title),
@@ -160,7 +115,7 @@ export function registerSeriesRoutes(app: FastifyInstance, deps: BookRouteDeps) 
   );
 }
 
-/** What the post-bind pass recorded for ONE synced book. `failed` is per BOOK, never per operation. */
+/** A per-book outcome; `failed` is never an operation count. */
 interface BoundBookOutcome {
   eligible: boolean;
   retagged: boolean;
@@ -171,25 +126,7 @@ interface BoundBookOutcome {
 const INELIGIBLE: BoundBookOutcome = { eligible: false, retagged: false, opfWritten: false, failed: false };
 const INELIGIBLE_FAILURE: BoundBookOutcome = { ...INELIGIBLE, failed: true };
 
-/**
- * Post-commit sidecar + tag refresh for a Fix Series bind (#2098).
- *
- * A bind rewrites `books.series_name`/`series_position` for the initiating book AND every
- * member-matched sibling, and those two fields are exactly what `metadata.opf`'s
- * `calibre:series`/`calibre:series_index` carry — the artifact the Audiobookshelf handoff reads
- * (#1668). Without this pass every bound book's sidecar (and its embedded `series`/`seriesPart`
- * tags) keeps the STALE series until some unrelated flow happens to rewrite it.
- *
- * Runs AFTER `bindHardcoverSeries` resolves — i.e. after its transaction committed — sequentially
- * over the ids the transaction reported, and opens no transaction of its own (a nested
- * `db.transaction` on the shared libSQL connection rejects outright, and the per-book ffmpeg/fs work
- * has no business inside one).
- *
- * Wholly best-effort: the DB write already landed, so nothing here may turn a successful bind into a
- * failure. Every per-book failure is caught, and the response stays `200 { series }` regardless of
- * how many books could not be refreshed — per-book warnings are log-only (no `warnings` key is added
- * to the response shape). Emits exactly one `info` summary once every id has settled.
- */
+/** Post-commit and best-effort: filesystem work cannot roll back a successful series bind. */
 async function runPostBindRefresh(
   deps: BookRouteDeps,
   initiatingBookId: number,
@@ -197,17 +134,11 @@ async function runPostBindRefresh(
   log: FastifyBaseLogger,
 ): Promise<void> {
   if (syncedIds.length === 0) {
-    // A non-null bind always rewrote at least the initiating book, so an empty list is a bug
-    // (most likely a stale test double resolving the pre-#2098 bare-card shape) — never silently
-    // pass it off as a zero-book pass.
+    // A successful bind must report at least the initiating book.
     log.warn({ bookId: initiatingBookId }, 'Series bind: the bind reported no synced books — sidecars were left untouched');
   }
 
-  // ONE pass-level decision, not one per book. `retagBook` has no `enabled` gate of its own (same
-  // as `merge-post-tag.ts`), so Tag Embedding is gated here; a rejecting read degrades the gate to
-  // OFF for the whole pass and is reported by `taggingGateDegraded`, never by `failed`.
-  // `refreshOpfForBook` performs its own independent `tagging` read per book and owns the
-  // `writeOpf` gate — this read predicts nothing about those.
+  // Read the retag gate once; a failed settings read disables retagging but not OPF refresh.
   let retagEnabled = false;
   let taggingGateDegraded = false;
   try {
@@ -231,17 +162,7 @@ async function runPostBindRefresh(
   log.info(summary, 'Series bind: post-bind sidecar refresh complete');
 }
 
-/**
- * Resolve one synced book's eligibility. The preload has FOUR outcomes and only the last is
- * eligible — it rejected, it resolved `null` (the row was deleted between the commit and this
- * read), it resolved a book with `path === null` (never imported), or it resolved a book with a
- * usable folder. A rejection and a vanished row are treated identically: a refresh this pass owed
- * could not be attempted, so both warn and count as a failure. A never-imported book is the
- * ordinary wanted-but-undownloaded series member — silent, and not a failure.
- *
- * Narrowing lives here so no caller can reach `book.path` on a `null` book: a throw inside the
- * per-book loop would abort every remaining id.
- */
+/** Missing or unreadable rows fail; never-imported books are silently ineligible. */
 async function preloadBoundBook(
   deps: BookRouteDeps,
   bookId: number,
@@ -258,11 +179,10 @@ async function preloadBoundBook(
     log.warn({ bookId }, 'Series bind: a synced book no longer exists — its sidecar was not refreshed');
     return INELIGIBLE_FAILURE;
   }
-  if (!book.path) return INELIGIBLE; // never imported — nothing on disk to refresh
+  if (!book.path) return INELIGIBLE;
   return { book, bookFolder: book.path };
 }
 
-/** One synced book's refresh: preload → (gated) re-tag → OPF, mirroring Fix Match's order. */
 async function refreshBoundBook(
   deps: BookRouteDeps,
   bookId: number,
@@ -274,9 +194,7 @@ async function refreshBoundBook(
   const { book, bookFolder } = preloaded;
 
   const retag = retagEnabled ? await retagBoundBook(deps, bookId, log) : null;
-  // The OPF step runs even when the re-tag threw: the two artifacts are independent, and the
-  // sidecar is the one Audiobookshelf actually reads. `refreshOpfForBook` applies the `writeOpf`
-  // gate itself and logs its own failures — this pass adds no second record for them.
+  // OPF refresh is independent of retagging and still runs when retagging fails.
   const opfOutcome = await refreshOpfForBook({
     settingsService: deps.settingsService, bookService: deps.bookService, bookId, bookFolder, log,
   });
@@ -288,12 +206,7 @@ async function refreshBoundBook(
   return { eligible: true, retagged, opfWritten: opfOutcome === 'written', failed: (retag?.failed ?? false) || opfOutcome === 'failed' };
 }
 
-/**
- * EXACTLY ONE `'metadata'` connector refresh per book, covering both writers — never one per
- * writer. Built from the {@link RetagResult}'s `refreshItem` when the re-tag produced one (that
- * item is captured BEFORE the irreversible in-place tag rewrite, so a post-write reload failure
- * can't drop it), otherwise from the book preloaded at the top of this book's pass.
- */
+/** Emit at most one connector refresh; prefer `retagBook`'s pre-write snapshot. */
 function notifyBoundBookRefresh(
   deps: BookRouteDeps,
   log: FastifyBaseLogger,
@@ -306,13 +219,7 @@ function notifyBoundBookRefresh(
   });
 }
 
-/**
- * The gated re-tag for one book. Called with NO `excludeFields` and NO overrides — the same
- * no-argument call the bulk re-tag job and `retagMergedOutput` make — so a bind introduces no third
- * tag-projection policy. `RetagError`/`NO_PATH` is skipped silently (the book has nothing on disk to
- * tag), matching the bulk job; every other throw, and a resolved `failed > 0`, marks the BOOK failed
- * exactly once however many individual files were involved.
- */
+/** `NO_PATH` is an expected skip; other throws or per-file failures fail the book once. */
 async function retagBoundBook(
   deps: BookRouteDeps,
   bookId: number,
@@ -328,7 +235,6 @@ async function retagBoundBook(
   }
 }
 
-/** One side of the diagnostic, from the same three pure functions the matcher derives from. */
 function debugSide(title: string): TitleVariantsDebugSide {
   return {
     input: title,
