@@ -8,7 +8,7 @@ import {
 } from './confirm-chunks.js';
 import type { StagedImportItem } from '@core/import-staging/schemas.js';
 
-/** A staged PUT row whose serialized `item` is padded to roughly `bytes`. */
+/** Pads the item to approximately `bytes`, before row-envelope overhead. */
 function stagedRowOfSize(ordinal: number, bytes: number): StagedPutRow {
   const base: StagedImportItem = { path: `/b/${ordinal}`, title: 'T' };
   const overhead = new TextEncoder().encode(JSON.stringify(base)).length;
@@ -55,10 +55,7 @@ describe('packStagedChunks — {ordinal,item} envelope byte accounting (#1902, F
     expect(packStagedChunks([])).toEqual([]);
   });
 
-  // Boundary: a full request body measured at exactly CHUNK_BYTE_BUDGET stays one chunk;
-  // one more row that tips the whole `{items:[...]}` envelope over the budget splits.
   it('keeps a request at/under budget in one chunk; the row that tips the envelope over splits', () => {
-    // Pad row 0 so [row0] alone sits just under the budget, then a tiny row 1 tips it over.
     const under = stagedRowOfSize(0, CHUNK_BYTE_BUDGET - 4 * 1024);
     expect(stagedRequestBytes([under])).toBeLessThanOrEqual(CHUNK_BYTE_BUDGET);
     const tiny: StagedPutRow = { ordinal: 1, item: { path: '/t', title: 'x'.repeat(8 * 1024) } };
