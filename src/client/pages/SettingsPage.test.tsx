@@ -6,19 +6,10 @@ import { MemoryRouter, Routes, Route } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SettingsLayout } from '@/pages/settings';
 
-// Flake-proofing (not masking a bug): each test here renders the FULL SettingsLayout, and every
-// naming/edition preview is a synchronous useMemo in NamingSettingsSection — the DOM is correct the
-// instant the render is scheduled (a single test passes in ~270ms). Under full-suite CPU
-// saturation, though, 26 back-to-back heavy renders can push an initial getSettings→mount→waitFor
-// chain past RTL's 1000ms default poll budget, starving a waitFor whose target has, in fact,
-// already rendered. Both ceilings must rise together: raising the poll budget alone would collide
-// with the 5000ms per-test default (the wait would outlive the test). A genuine render regression
-// still fails fast — well inside 4s per assertion — so the extra headroom only ever spends
-// wall-clock on real load, never on the happy path.
+// Full SettingsLayout renders can exhaust RTL's 1s poll budget under suite load; raise both ceilings so waitFor cannot outlive the test.
 configure({ asyncUtilTimeout: 4000 });
 vi.setConfig({ testTimeout: 20000 });
 
-// Mock api
 vi.mock('@/lib/api', () => ({
   api: {
     getSettings: vi.fn(),
@@ -38,7 +29,6 @@ vi.mock('@/lib/api', () => ({
   },
 }));
 
-// Mock sonner
 vi.mock('sonner', () => ({
   toast: {
     success: vi.fn(),
@@ -54,10 +44,7 @@ import { createMockSettings, createMockIndexer, createMockDownloadClient } from 
 const mockSettings = createMockSettings({
   search: { enabled: true, intervalMinutes: 30, blacklistTtlDays: 7 },
   import: { deleteAfterImport: false, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 5 },
-  // #2033 root cause: with fixture values identical to the code defaults, hydration's reset is
-  // invisible in the DOM, so no barrier could wait for it to FINISH. This one deliberately
-  // distinct, unasserted field makes the reset's DOM application observable — settingsHydrated
-  // waits for it, closing the reset-application window the flake lived in.
+  // Distinct from defaults so settingsHydrated can observe RHF's deferred reset in the DOM.
   library: { path: '/audiobooks-hydrated' },
 });
 
@@ -86,30 +73,11 @@ function renderSettingsPage(route = '/settings/indexers') {
   return { ...view, queryClient };
 }
 
-/**
- * #2033 — two-stage barrier: wait until the settings query has hydrated the forms AND the
- * hydration has finished applying. Stage 1 observes cache success (the
- * react-query-error-after-retry-ladder idiom, success-side). Stage 2 waits for the fixture's
- * deliberately-distinct library.path ('/audiobooks-hydrated' — see mockSettings) to render:
- * RHF's reset() applies field values a commit after the hydrate effect fires, and that value
- * is written by the same application wave, so its appearance proves every card's reset has
- * flushed. Callers need no follow-up DOM waitFor — typing is safe once this resolves.
- *
- * Historically the fixture's values equaled the code defaults, so the reset's application was
- * invisible in the DOM and un-waitable — the clobber window the #2033 flake lived in (and the
- * regression pin below exercises).
- */
+// Cache success precedes RHF's deferred reset; the distinct library path proves hydration reached the DOM.
 async function settingsHydrated(queryClient: QueryClient): Promise<void> {
   await waitFor(() => {
     expect(queryClient.getQueryState(['settings'])?.status).toBe('success');
   });
-  // Cache success is necessary but NOT sufficient: useSettingsForm's hydrate effect fires one
-  // act cycle later, and RHF's reset() applies field values in a FURTHER commit — a keystroke
-  // landing inside that window is silently overwritten by the reset's deferred application
-  // (flight-recorder tape, 2026-07-31: settings commit t+0, hydrate decision t+5ms, test
-  // keystroke t+8ms, reset application clobbers t+13ms). The fixture's distinct library path
-  // is written by that same application wave, so once it appears in the DOM, every card's
-  // reset has fully flushed and typing is safe.
   await waitFor(() => {
     expect((screen.getByPlaceholderText('/audiobooks') as HTMLInputElement).value).toBe('/audiobooks-hydrated');
   });
@@ -131,7 +99,6 @@ describe('SettingsPage - Indexer form test button', () => {
       expect(screen.getByRole('heading', { name: 'Indexers' })).toBeInTheDocument();
     });
 
-    // Open the form
     await user.click(screen.getByText('Add Indexer'));
 
     await waitFor(() => {
@@ -157,12 +124,10 @@ describe('SettingsPage - Indexer form test button', () => {
       expect(screen.getByText('Add New Indexer')).toBeInTheDocument();
     });
 
-    // Fill in form
     await user.type(screen.getByPlaceholderText('Newznab'), 'My Indexer');
     await user.type(screen.getByPlaceholderText('https://indexer.example.com/api'), 'newznab.example.com');
     await user.type(screen.getByLabelText('API Key'), 'test-key');
 
-    // Click Test
     await user.click(screen.getByText('Test'));
 
     await waitFor(() => {
@@ -176,7 +141,6 @@ describe('SettingsPage - Indexer form test button', () => {
       expect(toast.success).toHaveBeenCalledWith('Connection successful');
     });
 
-    // Check inline result
     expect(screen.getByText('Connection successful!')).toBeInTheDocument();
   });
 
@@ -230,11 +194,9 @@ describe('SettingsPage - Indexer form test button', () => {
       expect(screen.getByText('Add New Indexer')).toBeInTheDocument();
     });
 
-    // Click Test without filling in name (required)
     await user.click(screen.getByText('Test'));
 
     await waitFor(() => {
-      // Form validation should prevent API call
       expect(api.testIndexerConfig).not.toHaveBeenCalled();
     });
   });
@@ -281,7 +243,6 @@ describe('SettingsPage - Download client form test button', () => {
       expect(screen.getByText('Add Download Client')).toBeInTheDocument();
     });
 
-    // Fill in required fields
     await user.type(screen.getByPlaceholderText('qBittorrent'), 'My Client');
     await user.type(screen.getByPlaceholderText('localhost'), '192.168.1.100');
 
@@ -334,7 +295,6 @@ describe('SettingsPage - Edit indexer', () => {
       expect(screen.getByText('Edit Indexer')).toBeInTheDocument();
     });
 
-    // Check form is pre-populated (name input + type select both show 'AudioBookBay')
     expect(screen.getAllByDisplayValue('AudioBookBay').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByDisplayValue('audiobookbay.lu')).toBeInTheDocument();
   });
@@ -355,7 +315,7 @@ describe('SettingsPage - Edit indexer', () => {
       expect(screen.getByText('Edit Indexer')).toBeInTheDocument();
     });
 
-    // Change name (first match is the text input, second is the type select)
+    // The text input precedes the type select with the same value.
     const nameInput = screen.getAllByDisplayValue('AudioBookBay')[0];
     await user.clear(nameInput!);
     await user.type(nameInput!, 'Updated');
@@ -390,7 +350,6 @@ describe('SettingsPage - Edit indexer', () => {
       expect(screen.queryByText('Edit Indexer')).not.toBeInTheDocument();
     });
 
-    // Card should still be visible
     expect(screen.getByText('AudioBookBay')).toBeInTheDocument();
   });
 });
@@ -427,7 +386,6 @@ describe('SettingsPage - Edit download client', () => {
       expect(screen.getByText('Edit Download Client')).toBeInTheDocument();
     });
 
-    // Name input + type select both show 'qBittorrent'
     expect(screen.getAllByDisplayValue('qBittorrent').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByDisplayValue('localhost')).toBeInTheDocument();
     expect(screen.getByDisplayValue('8080')).toBeInTheDocument();
@@ -450,7 +408,7 @@ describe('SettingsPage - Edit download client', () => {
       expect(screen.getByText('Edit Download Client')).toBeInTheDocument();
     });
 
-    // First match is the text input, second is the type select
+    // The text input precedes the type select with the same value.
     const nameInput = screen.getAllByDisplayValue('qBittorrent')[0];
     await user.clear(nameInput!);
     await user.type(nameInput!, 'Updated');
@@ -523,11 +481,9 @@ describe('SettingsPage - Folder format token chips and preview', () => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
 
-    // Token reference buttons visible
     expect(screen.getByLabelText('Folder token reference')).toBeInTheDocument();
     expect(screen.getByLabelText('File token reference')).toBeInTheDocument();
 
-    // Open both token reference modals and check tokens
     await user.click(screen.getByLabelText('Folder token reference'));
     expect(screen.getAllByText('{author}').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('{title}').length).toBeGreaterThanOrEqual(1);
@@ -542,8 +498,6 @@ describe('SettingsPage - Folder format token chips and preview', () => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
 
-    // The folder format default is {author}/{title}; SAMPLE_TOKENS uses Brandon Sanderson + The Way of Kings.
-    // The file format default is "{author} - {title}".
     const folderPreviews = await screen.findAllByTestId('preview-with-series');
     const folderTexts = folderPreviews.map((el) => el.textContent);
     expect(folderTexts).toEqual(expect.arrayContaining([
@@ -551,7 +505,6 @@ describe('SettingsPage - Folder format token chips and preview', () => {
       expect.stringContaining('Brandon Sanderson - The Way of Kings'),
     ]));
 
-    // SAMPLE_TOKENS_NO_SERIES uses Andy Weir + Project Hail Mary
     const noSeriesPreviews = await screen.findAllByTestId('preview-without-series');
     const noSeriesTexts = noSeriesPreviews.map((el) => el.textContent);
     expect(noSeriesTexts).toEqual(expect.arrayContaining([
@@ -568,11 +521,9 @@ describe('SettingsPage - Folder format token chips and preview', () => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
 
-    // Open folder format token reference modal, then click {year}
     await user.click(screen.getByLabelText('Folder token reference'));
     await user.click(screen.getAllByText('{year}')[0]!);
 
-    // The folder format input should now contain {year}
     const input = screen.getByPlaceholderText('{author}/{title}') as HTMLInputElement;
     expect(input.value).toContain('{year}');
   });
@@ -591,8 +542,7 @@ describe('SettingsPage - {edition} auto-behavior preview (#1774, real @core/util
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
-    // Default folder template has no {edition}, so the row is the real suffix-branch composition —
-    // byte-identical to buildTargetPath's `composeEditionSuffixLeaf(leaf, sanitizeEditionDiscriminator('Full Cast'))`.
+    // Must match buildTargetPath's sanitized suffix composition byte-for-byte.
     const row = await screen.findByTestId('preview-multi-edition');
     expect(row.textContent).toBe('Brandon Sanderson/The Way of Kings (Full Cast)');
   });
@@ -602,18 +552,15 @@ describe('SettingsPage - {edition} auto-behavior preview (#1774, real @core/util
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
-    await settingsHydrated(queryClient); // #2033 — same exposure class as the edition tests
+    await settingsHydrated(queryClient);
     const folderInput = screen.getByPlaceholderText('{author}/{title}') as HTMLInputElement;
     fireEvent.change(folderInput, { target: { value: '{author}/{title}/{edition}' } });
 
     await waitFor(() => {
       expect(screen.getByTestId('preview-multi-edition').textContent).toBe('Brandon Sanderson/The Way of Kings/Full Cast');
     });
-    // Verbatim in-place render — the mandatory " (…)" suffix must NOT also be appended.
     expect(screen.getByTestId('preview-multi-edition').textContent).not.toContain('(Full Cast)');
-    // Both folder baseline rows render edition-free: With-series consumes SAMPLE_TOKENS and
-    // Without-series consumes SAMPLE_TOKENS_NO_SERIES, neither of which carries an edition. Pin
-    // both so a fixture that later regains `edition` regresses the Without-series row loudly (F1).
+    // Both baseline fixtures omit edition; pin both so fixture drift cannot mask this branch.
     expect(screen.getAllByTestId('preview-with-series')[0]!.textContent).not.toContain('Full Cast');
     expect(screen.getAllByTestId('preview-without-series')[0]!.textContent).not.toContain('Full Cast');
   });
@@ -623,14 +570,14 @@ describe('SettingsPage - {edition} auto-behavior preview (#1774, real @core/util
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
-    await settingsHydrated(queryClient); // #2033 — same exposure class as the edition tests
+    await settingsHydrated(queryClient);
     const fileInput = screen.getByPlaceholderText('{author} - {title}') as HTMLInputElement;
     fireEvent.change(fileInput, { target: { value: '{author} - {title} ({edition})' } });
 
     await waitFor(() => {
       expect((screen.getByPlaceholderText('{author} - {title}') as HTMLInputElement).value).toBe('{author} - {title} ({edition})');
     });
-    // File box previews are index 1 (With/Without series); Multi-file is file-only.
+    // With/Without-series file previews are index 1; multi-file is file-only.
     expect(screen.getAllByTestId('preview-with-series')[1]!.textContent).not.toContain('Full Cast');
     expect(screen.getAllByTestId('preview-without-series')[1]!.textContent).not.toContain('Full Cast');
     expect(screen.getByTestId('preview-multi-file').textContent).not.toContain('Full Cast');
@@ -660,10 +607,8 @@ describe('SettingsPage - {edition} file preview row (#1819, real @core/utils)', 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
-    await settingsHydrated(queryClient); // #2033 — close every pre-hydration window before typing
-    // The conditional `{ (?edition?)}` wrapper is exactly what the naive section-test mock cannot
-    // exercise — the real renderFilename must produce the parenthesized label in place. Pin the whole
-    // string so a renderer regression is loud.
+    await settingsHydrated(queryClient);
+    // Section-test mocks cannot exercise conditional wrappers; this pins the real renderFilename output.
     const fileInput = screen.getByPlaceholderText('{author} - {title}') as HTMLInputElement;
     fireEvent.change(fileInput, { target: { value: '{author} - {series? - }{seriesPosition:00? - }{title}{ (?edition?)}' } });
     await waitFor(() => {
@@ -673,11 +618,7 @@ describe('SettingsPage - {edition} file preview row (#1819, real @core/utils)', 
     });
   });
 
-  // #2033 — the permanent order-pin for the hydrate-clobber class. useSettingsForm's hydrate
-  // effect resets the form from the fetched settings ONLY while !isDirtyRef.current; this test
-  // pins that a keystroke landing BEFORE the query resolves is never clobbered by the reset.
-  // (The controlled deferred pins the ORDER — the original flake investigation's 300ms delay
-  // shifted both events together and proved nothing.)
+  // A controlled deferred pins typing before hydration; a fixed delay can shift both events together.
   it('a keystroke made before the settings query resolves survives hydration (#2033)', async () => {
     let resolveSettings!: (v: typeof mockSettings) => void;
     vi.mocked(api.getSettings).mockImplementation(
@@ -687,27 +628,19 @@ describe('SettingsPage - {edition} file preview row (#1819, real @core/utils)', 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
-    // The preview row renders from DEFAULTS before the query lands - anchor on the hint.
     await waitFor(() => {
       expect(screen.getByTestId('preview-file-edition').textContent).toMatch(/Add \{edition\}/);
     });
     const fileInput = screen.getByPlaceholderText('{author} - {title}') as HTMLInputElement;
     fireEvent.change(fileInput, { target: { value: '{title}{ (?edition?)}' } });
-    // NOW let the settings query resolve, with the form dirty.
     resolveSettings(mockSettings);
-    // THE LOAD-BEARING SEQUENCING (found by the pre-push assessment's own mutation run): the
-    // clobber, when the guard is absent, flushes to the DOM one act cycle AFTER the query
-    // reaches success. Asserting immediately after resolve() lands in that gap and passes
-    // even with the guard deleted — the vacuous-observation-point class, again. So: wait for
-    // cache success, let the hydrate effect flush, and only THEN assert survival. Verified
-    // red-under-mutation: making useSettingsForm's hydrate reset unconditional fails BOTH
-    // assertions below with the preview reverted to the hint.
+    // The broken reset lands one act cycle after cache success; wait for DOM-observable hydration before asserting.
     await settingsHydrated(queryClient);
     await waitFor(() => {
       expect(screen.getByTestId('preview-file-edition').textContent).toBe('The Way of Kings (Full Cast).m4b');
       expect(fileInput.value).toBe('{title}{ (?edition?)}');
     });
-    // One more settled pass so a one-cycle-late reset cannot slip behind the first green read.
+    // A second settled read catches a reset lagging one cycle.
     await waitFor(() => {
       expect(fileInput.value).toBe('{title}{ (?edition?)}');
       expect(screen.getByTestId('preview-file-edition').textContent).toBe('The Way of Kings (Full Cast).m4b');
@@ -719,18 +652,15 @@ describe('SettingsPage - {edition} file preview row (#1819, real @core/utils)', 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
-    await settingsHydrated(queryClient); // #2033 — close every pre-hydration window before typing
+    await settingsHydrated(queryClient);
     const fileInput = screen.getByPlaceholderText('{author} - {title}') as HTMLInputElement;
-    // Default template has no {edition} → the capability hint is shown, not a render.
     await waitFor(() => {
       expect(screen.getByTestId('preview-file-edition').textContent).toMatch(/Add \{edition\}/);
     });
-    // Adding {edition} flips the same row to a live sample render.
     fireEvent.change(fileInput, { target: { value: '{title}{ (?edition?)}' } });
     await waitFor(() => {
       expect(screen.getByTestId('preview-file-edition').textContent).toBe('The Way of Kings (Full Cast).m4b');
     });
-    // Editing again re-renders.
     fireEvent.change(fileInput, { target: { value: '{author} - {title}{ (?edition?)}' } });
     await waitFor(() => {
       expect(screen.getByTestId('preview-file-edition').textContent).toBe('Brandon Sanderson - The Way of Kings (Full Cast).m4b');
@@ -742,10 +672,10 @@ describe('SettingsPage - {edition} file preview row (#1819, real @core/utils)', 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
-    await settingsHydrated(queryClient); // #2033 — close every pre-hydration window before typing
+    await settingsHydrated(queryClient);
     const row = await screen.findByTestId('preview-file-edition');
     expect(row.textContent).toMatch(/Add \{edition\} to include the edition label in filenames/);
-    // The default file format is `{author} - {title}` → With-series file row is index 1.
+    // The with-series file preview is index 1.
     const withSeriesFile = screen.getAllByTestId('preview-with-series')[1]!;
     expect(row.textContent).not.toBe(withSeriesFile.textContent);
   });
@@ -755,21 +685,18 @@ describe('SettingsPage - {edition} file preview row (#1819, real @core/utils)', 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
-    await settingsHydrated(queryClient); // #2033 — close every pre-hydration window before typing
+    await settingsHydrated(queryClient);
     expect(screen.getAllByTestId('preview-file-edition')).toHaveLength(1);
     expect(screen.getAllByTestId('preview-multi-edition')).toHaveLength(1);
   });
 
-  // #1829 — the Detailed preset's fileFormat now carries { (?edition?)}, so choosing the
-  // preset (not just hand-typing the token) flips the row from the capability hint to a
-  // real rendered filename. SAMPLE_TOKENS has no trackNumber, so no ordinal renders.
   it('selecting the Detailed preset flips the file edition row from the hint to a rendered filename (#1829)', async () => {
     const user = userEvent.setup();
     const { queryClient } = renderSettingsPage('/settings');
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
-    await settingsHydrated(queryClient); // #2033 — close every pre-hydration window before typing
+    await settingsHydrated(queryClient);
     await waitFor(() => {
       expect(screen.getByTestId('preview-file-edition').textContent).toMatch(/Add \{edition\}/);
     });
