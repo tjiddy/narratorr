@@ -2,28 +2,21 @@ import '@testing-library/jest-dom/vitest';
 import { afterEach, vi } from 'vitest';
 import { cleanup } from '@testing-library/react';
 
-// Auto-cleanup DOM between tests
 afterEach(cleanup);
 
-// jsdom doesn't implement EventSource — provide a no-op stub
+// jsdom omits EventSource.
 if (typeof globalThis.EventSource === 'undefined') {
   globalThis.EventSource = class MockEventSource {
     url: string;
     onerror: ((event: Event) => void) | null = null;
     constructor(url: string) { this.url = url; }
-    addEventListener() { /* stub */ }
-    close() { /* stub */ }
+    addEventListener() {}
+    close() {}
   } as unknown as typeof EventSource;
 }
 
-// jsdom doesn't implement HTMLMediaElement playback (play/pause/load): calling
-// them emits "Not implemented" noise to stderr, and play() returns undefined
-// instead of a Promise, which breaks code that awaits it. Provide inert defaults
-// so any component that mounts an <audio>/<video> — AudioPreview via BookDetails
-// and ImportCard, etc. — is silent on render/unmount. setupFiles run before each
-// test file, so this resets to a clean baseline per file. Tests that need actual
-// playback behavior (event dispatch, paused toggling) override these per-test —
-// see AudioPreview.test.tsx.
+// jsdom media methods are noisy stubs, and play() must remain awaitable. Playback
+// tests override these inert defaults.
 if (typeof globalThis.HTMLMediaElement !== 'undefined') {
   Object.defineProperty(globalThis.HTMLMediaElement.prototype, 'play', {
     configurable: true,
@@ -42,8 +35,7 @@ if (typeof globalThis.HTMLMediaElement !== 'undefined') {
   });
 }
 
-// jsdom doesn't implement window.matchMedia — provide a default stub
-// Guard for node environment where window.matchMedia doesn't exist
+// jsdom omits matchMedia.
 if (typeof window !== 'undefined') {
   Object.defineProperty(window, 'matchMedia', {
     writable: true,

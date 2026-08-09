@@ -8,8 +8,7 @@ import { URL_BASE } from './lib/api/client';
 import { applyInstanceBadge } from './lib/apply-instance-badge';
 import './index.css';
 
-// Recolor the favicon + prefix the tab title when this instance is badged (#1842).
-// Fire-and-forget above all routes (incl. login) so it also applies pre-auth; non-fatal.
+// Run before routing so the instance badge also applies pre-auth; failures are non-fatal.
 void applyInstanceBadge();
 
 const queryClient = new QueryClient({

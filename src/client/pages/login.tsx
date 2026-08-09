@@ -20,7 +20,6 @@ export function LoginPage() {
 
     try {
       await api.authLogin(username, password);
-      // Invalidate auth status to refetch with new session cookie
       await queryClient.invalidateQueries({ queryKey: queryKeys.auth.status() });
       navigate('/library', { replace: true });
     } catch (error: unknown) {
@@ -37,7 +36,6 @@ export function LoginPage() {
   return (
     <div className="min-h-screen gradient-bg noise-overlay flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
-        {/* Logo */}
         <div className="flex flex-col items-center mb-8 animate-fade-in-up">
           <div className="relative mb-4">
             <div className="absolute inset-0 bg-primary/20 rounded-xl blur-xl animate-pulse-glow" />
@@ -49,7 +47,6 @@ export function LoginPage() {
           <p className="text-muted-foreground mt-1 text-sm">Sign in to continue</p>
         </div>
 
-        {/* Form */}
         <form onSubmit={handleSubmit} className="glass-card rounded-2xl p-6 sm:p-8 space-y-5 animate-fade-in-up stagger-2">
           {error && (
             <div className="flex items-center gap-2.5 bg-destructive/10 text-destructive text-sm rounded-xl px-4 py-3 animate-fade-in border border-destructive/20">
