@@ -10,15 +10,7 @@ export interface ParsedTitle {
 }
 
 /**
- * Parses an audiobook release name into structured components.
- *
- * Handles common release name formats from Torznab/Newznab indexers:
- * - `Author - Title` (most common torrent/NZB convention)
- * - `Author - Series ## - Title` (series with position)
- * - `Title By Author` (MAM-style)
- * - Dot-separated scene: `Author.Name.Title.2022.Audiobook.MP3`
- * - Dash scene: `Author-Title-AUDiOBOOK-WEB-DK-2023-GROUP`
- * - NZB wrappers with inner quoted filenames
+ * Parses common Author–Title, series, MAM `Title By Author`, scene, and NZB-wrapper forms.
  */
 export function parseAudiobookTitle(rawTitle: string): ParsedTitle {
   let working = rawTitle.trim();
@@ -41,7 +33,6 @@ export function parseAudiobookTitle(rawTitle: string): ParsedTitle {
   return matchPattern(working, result);
 }
 
-/** Resolve inner quoted filenames from NZB wrappers */
 function resolveInnerQuote(working: string): string {
   const innerQuoted = working.match(/"([^"]+)"/);
   if (!innerQuoted) return working;
@@ -52,14 +43,13 @@ function resolveInnerQuote(working: string): string {
 
   if (/\s-\s|_-_/.test(inner)) return inner;
 
-  // Try outer parenthesized text: (Author - Title) [01/21] - "..."
+  // NZB wrappers may carry usable `Author - Title` text in outer parentheses.
   const outerParenMatch = working.match(/^\(([^)]+)\)/);
   if (outerParenMatch && /\s-\s/.test(outerParenMatch[1]!)) return outerParenMatch[1]!;
 
   return working.replace(/"[^"]*"/, '').trim();
 }
 
-/** Strip file extensions, volume/part suffixes, track numbers */
 function stripFileArtifacts(s: string): string {
   s = s.replace(/\.(par2|rar|nzb|nfo|sfv|zip|r\d{2}|mp3|m4b|m4a|flac|aac|ogg)$/i, '');
   s = s.replace(/\.vol\d+[+]\d+(?:\.par2)?$/i, '');
@@ -72,7 +62,6 @@ function stripFileArtifacts(s: string): string {
   return s;
 }
 
-/** Strip NZB-specific prefixes and suffixes */
 function stripNzbPrefixes(s: string): string {
   s = s.replace(/^\(\d+\/\d+\)\s*-?\s*(Description\s*-?\s*)?/i, '');
   s = s.replace(/^Re:\s*REQ:?\s*/i, '');
@@ -87,7 +76,6 @@ function stripNzbPrefixes(s: string): string {
   return s;
 }
 
-/** Extract narrator and update result, returning cleaned string */
 function extractNarrator(working: string, result: ParsedTitle): string {
   const writtenMatch = working.match(/,?\s*written\s+(?:and\s+)?narrated\s+by\s+([A-Z][a-zA-ZÀ-ÿ.]+(?:\s+[A-Za-zÀ-ÿ.]+){0,4})/i);
   if (writtenMatch) {
@@ -105,7 +93,6 @@ function extractNarrator(working: string, result: ParsedTitle): string {
   return working.replace(/\b(?:narrated|read)\s+by\b/gi, '').trim();
 }
 
-/** Extract unabridged/abridged flag */
 function extractAbridged(working: string, result: ParsedTitle): string {
   if (/\b(?:unabridged|ungek(?:ue|ü)rzt)\b/i.test(working)) {
     result.isUnabridged = true;
@@ -118,13 +105,11 @@ function extractAbridged(working: string, result: ParsedTitle): string {
   return working;
 }
 
-/** Extract audio format (M4B, MP3, etc.) */
 function extractFormat(working: string, result: ParsedTitle): void {
   const formatMatch = working.match(/\b(M4B|MP3|FLAC|AAC|OGG)\b/i);
   if (formatMatch) result.format = formatMatch[1]!.toUpperCase();
 }
 
-/** Strip scene release suffixes and extract year from scene tags */
 function stripSceneSuffix(working: string, result: ParsedTitle): string {
   const sceneMatch = working.match(/-(?:AUDiOBOOK|AUDIOBOOK|Audiobook)-(?:WEB|CD|DVD)-[A-Z]{2}-\d{4}-\w+(?:\s+iNT)?$/i);
   if (sceneMatch) {
@@ -139,16 +124,14 @@ function stripSceneSuffix(working: string, result: ParsedTitle): string {
   return working;
 }
 
-/** Extract year from bracketed or standalone positions */
 function extractYear(working: string, result: ParsedTitle): string {
-  // Bracketed years: [2010] or (2010) — always metadata
+  // Bracketed years are unambiguously metadata.
   const bracketYear = working.match(/[[(]((?:19|20)\d{2})[)\]]/);
   if (bracketYear && !result.year) {
     result.year = parseInt(bracketYear[1]!, 10);
     working = working.replace(bracketYear[0], '').trim();
   }
 
-  // Standalone years between separators
   if (!result.year) {
     const yearMatch = working.match(/(?:^|[\s\-.])((19|20)\d{2})(?:[\s\-.]|$)/);
     if (yearMatch) {
@@ -159,16 +142,13 @@ function extractYear(working: string, result: ParsedTitle): string {
     }
   }
 
-  // Clean double dashes from year stripping
   return working.replace(/\s+-\s+-\s+/g, ' - ').trim();
 }
 
-/** Normalize whitespace: dots to spaces, underscores, dashes, parens */
 function normalizeWhitespace(working: string): string {
-  // Normalize en-dashes and em-dashes to regular hyphens
   working = working.replace(/[–—]/g, '-');
 
-  // Dot-separated scene format (3+ dots, few/no spaces)
+  // Treat dot-heavy, space-light titles as scene names.
   const dotCount = (working.match(/\./g) || []).length;
   const spaceCount = (working.match(/ /g) || []).length;
   if (dotCount >= 3 && spaceCount <= 1) {
@@ -177,21 +157,17 @@ function normalizeWhitespace(working: string): string {
 
   working = working.replace(/_/g, ' ').trim();
 
-  // Strip wrapping parens
   if (/^\([^)]+\)\s*$/.test(working)) {
     working = working.replace(/^\(([^)]+)\)\s*$/, '$1').trim();
   } else {
     working = working.replace(/^\(([^)]+)\)\s/, '$1 ').trim();
   }
 
-  // Strip trailing noise in parens
   working = working.replace(/\s*\([^)]*(?:kbps|NMR|AMZN|CD|read by|clear sound)[^)]*\)\s*$/i, '').trim();
   return working;
 }
 
-/** Strip remaining noise: bitrates, CD refs, bracketed metadata, etc. */
 function stripNoise(working: string): string {
-  // Strip bracketed metadata tags: [MP3], [ENG], [128kbps], [Unabridged], (64kbps), etc.
   working = working.replace(/[[(](?:MP3|M4B|FLAC|AAC|OGG|ENG|GER|FRE|SPA|DEU|Eng|eng|\d+\s*k(?:b(?:ps)?|hz)|VBR|CBR|NMR|Unabridged|Abridged|Audiobook|Audio\s*Book)[)\]]/gi, '').trim();
   working = working.replace(/\b(?:\d+\s*k(?:b(?:ps)?|hz)|VBR|NMR|CBR)\b/gi, '').trim();
   working = working.replace(/[-\s]*\d*(?:MP3)?CDs?\b/gi, '').trim();
@@ -199,9 +175,8 @@ function stripNoise(working: string): string {
   return working.replace(/\s+/g, ' ').replace(/^[-–—:,.\s]+|[-–—:,.\s]+$/g, '').trim();
 }
 
-/** Try structured patterns against cleaned string */
 function matchPattern(working: string, result: ParsedTitle): ParsedTitle {
-  // Pattern A: "Author's 'Series', Bk N - Title" (also handles bare "Authors Series" without apostrophe)
+  // `Author's Series, Bk N - Title`, including bare `Authors Series`.
   const possessiveMatch = working.match(/^(.+?)(?:'s?|s(?= [^-]))\s+'?([^',]+)'?,?\s*(?:Bk|Book|Vol)\s*(\d+)\s*-\s*(.+)$/i);
   if (possessiveMatch) {
     result.author = cleanField(possessiveMatch[1]!);
@@ -211,7 +186,7 @@ function matchPattern(working: string, result: ParsedTitle): ParsedTitle {
     return finalClean(result);
   }
 
-  // Pattern B: "Author - Series ## - Title"
+  // `Author - Series ## - Title`
   const twoPartDash = working.match(
     /^(.+?)\s+-\s+(.+?(?:\d+|(?:Bk|Book|Vol|Part|Day|Band|Tome)\s*\d+).*?)\s+-\s+(.+)$/i,
   );
@@ -226,7 +201,7 @@ function matchPattern(working: string, result: ParsedTitle): ParsedTitle {
     return finalClean(result);
   }
 
-  // Pattern C: "Author - Title"
+  // `Author - Title`
   const singleDash = working.match(/^(.+?)\s+-\s+(.+)$/);
   if (singleDash) {
     const left = cleanField(singleDash[1]!);
@@ -237,7 +212,7 @@ function matchPattern(working: string, result: ParsedTitle): ParsedTitle {
     }
   }
 
-  // Pattern D: "Author-Title" (no space)
+  // `Author-Title` without spaces around the dash.
   const tightDash = working.match(/^([A-Z][a-zA-ZÀ-ÿ]+(?:\s+[A-Za-zÀ-ÿ.]+)+)-([A-Z].+)$/);
   if (tightDash) {
     result.author = cleanField(tightDash[1]!);
@@ -245,7 +220,7 @@ function matchPattern(working: string, result: ParsedTitle): ParsedTitle {
     return finalClean(result);
   }
 
-  // Pattern E: "Title by Author"
+  // `Title by Author`
   const byMatch = working.match(/^(.+)\s+[Bb]y\s+([A-Z][^,[\]()]+?)$/);
   if (byMatch && cleanField(byMatch[2]!).length > 2) {
     result.title = cleanField(byMatch[1]!);
@@ -257,7 +232,6 @@ function matchPattern(working: string, result: ParsedTitle): ParsedTitle {
   return finalClean(result);
 }
 
-/** Clean a single field: collapse whitespace, strip leading/trailing punctuation */
 function cleanField(s: string): string {
   return s
     .replace(/\s+/g, ' ')
@@ -265,7 +239,6 @@ function cleanField(s: string): string {
     .trim();
 }
 
-/** Final cleanup on the parsed result */
 function finalClean(result: ParsedTitle): ParsedTitle {
   result.title = cleanField(result.title);
   if (result.author) result.author = cleanField(result.author);
@@ -284,23 +257,17 @@ export interface MultiPartResult {
   match: boolean;
   part?: number;
   total?: number;
-  /** Source of the regex that matched (when match is true). Used for diagnostic logging. */
+  /** Matched regex source for diagnostics. */
   pattern?: string;
 }
 
 const MULTI_PART_PATTERNS = [
-  // Quoted: "28" of "30"
   /"(\d{1,3})"\s*of\s*"(\d{1,3})"/i,
-  // Unquoted word-bounded: 08 of 30. Skips series-position naming (Book 1 of 14,
-  // Volume 2 of 7, Vol. 3 of 9, #1 of 14) via negative lookbehind — those are series
-  // numbering, not yEnc file-part signals. `part` is intentionally NOT skip-listed:
-  // "Part 2 of 5" is a genuine multi-part signal and must still match.
+  // Bare `08 of 30`, excluding book/volume/vol/# series positions. `Part N of M` still matches.
   /(?<!\b(?:book|volume|vol\.?)\s*)(?<!#\s*)\b(\d{1,3})\s+of\s+(\d{1,3})\b/i,
-  // Parenthesized slash: (8/30)
   /\((\d{1,3})\s*\/\s*(\d{1,3})\)/,
 ] as const;
 
-/** Detect multi-part Usenet posts (e.g., "28" of "30", 08 of 30, (8/30)) */
 export function isMultiPartUsenetPost(title: string): MultiPartResult {
   for (const pattern of MULTI_PART_PATTERNS) {
     const match = title.match(pattern);

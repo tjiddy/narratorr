@@ -47,7 +47,6 @@ describe('parseInfoHash', () => {
     const hash = 'VLFHEXOM4XUKFWW55YHT3SBNT2XKSNIN';
     const uri = `magnet:?xt=urn:btih:${hash}&dn=test`;
 
-    // base32 hashes are lowercased
     expect(parseInfoHash(uri)).toBe(hash.toLowerCase());
   });
 

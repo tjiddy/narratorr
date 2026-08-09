@@ -153,9 +153,7 @@ describe('parseAudiobookTitle', () => {
     });
 
     it('strips NMR: prefix and handles title - author - year format', () => {
-      // After stripping prefix and inner quote extraction, should find author
       const result = parseAudiobookTitle('NMR: Project Hail Mary - Andy Weir - 2021 [06/22] - "Andy Weir - 2021 - Project Hail Mary.part03.rar" yEnc');
-      // Inner quote has "Andy Weir - 2021 - Project Hail Mary"
       expect(result.title).toContain('Project Hail Mary');
       expect(result.year).toBe(2021);
     });
@@ -251,8 +249,6 @@ describe('parseAudiobookTitle', () => {
 
   describe('edge cases', () => {
     it('handles "by" in title like "Stand by Me"', () => {
-      // "Stand by Me" should not trigger "by" author extraction
-      // because "Me" doesn't look like an author name
       const result = parseAudiobookTitle('Stand by Me');
       expect(result.title).toBe('Stand by Me');
     });
@@ -384,7 +380,7 @@ describe('formatBytes', () => {
   });
 
   it('rolls into the next unit when rounding reaches 1024', () => {
-    expect(formatBytes(1073217536)).toBe('1 GB'); // 1023.5 MB rounds to 1024 MB → 1 GB
+    expect(formatBytes(1073217536)).toBe('1 GB');
   });
 
   it('returns Unknown for negative input', () => {
@@ -461,7 +457,6 @@ describe('isMultiPartUsenetPost', () => {
   });
 
   it('prefers quoted pattern over unquoted', () => {
-    // Title with both quoted and unquoted — quoted wins (first pattern)
     const result = isMultiPartUsenetPost('Part 1 of 1 and "5" of "10"');
     expect(result).toMatchObject({ match: true, part: 5, total: 10 });
   });
@@ -478,7 +473,6 @@ describe('isMultiPartUsenetPost', () => {
       'Series Vol. 3 of 9',
       'Series Vol 3 of 9',
       'Series #1 of 14',
-      // Case-insensitive variants
       'The Eye of the World book 1 of 14',
       'The Eye of the World BOOK 1 of 14',
       'Wheel of Time VOLUME 2 of 7',
