@@ -3,10 +3,9 @@ import { formatDate, formatRelativeDate, formatDurationMinutes, formatChannels, 
 
 describe('formatDate', () => {
   it('returns locale-formatted absolute date string for valid ISO input', () => {
-    // Use midday UTC to avoid timezone-shift flipping the date to the previous day
+    // Midday UTC avoids shifting into the previous local date.
     const result = formatDate('2026-01-15T12:00:00Z');
-    // toLocaleDateString with year/month/day produces locale-dependent output
-    // Verify it contains the key date parts
+    // Locale-dependent output: assert only stable date parts.
     expect(result).toContain('2026');
     expect(result).toContain('15');
   });
@@ -20,7 +19,6 @@ describe('formatDate', () => {
     expect(result).toContain('2026');
   });
 });
-
 describe('formatRelativeDate', () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -119,9 +117,6 @@ describe('formatDurationMinutes', () => {
   });
 });
 
-// formatDurationSeconds behavior tests moved to the shared home
-// `src/shared/format-duration.test.ts` (#1854), where the implementation now lives.
-
 describe('formatChannels', () => {
   it('returns "Mono" for 1 channel', () => {
     expect(formatChannels(1)).toBe('Mono');
@@ -190,6 +185,3 @@ describe('formatYear', () => {
     expect(formatYear('2010abc')).toBeNull();
   });
 });
-
-// (#514 formatDurationSeconds nullability alignment cases moved with the rest of
-// the formatter suite to `src/shared/format-duration.test.ts`, #1854.)

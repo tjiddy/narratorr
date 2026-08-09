@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
 
-// Mock the client module to control URL_BASE
 vi.mock('./api/client.js', () => ({
   URL_BASE: '/narratorr',
 }));
