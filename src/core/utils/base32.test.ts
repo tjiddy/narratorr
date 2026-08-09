@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { base32ToHex } from './base32.js';
 
-// Top-level capture — guards against the import-cycle regression that hoisting
-// previously masked: capturing `base32ToHex` at module scope must yield a function,
-// not undefined.
+// Module-scope capture guards the import cycle that hoisting once masked.
 const capturedAtTopLevel = base32ToHex;
 
 describe('base32ToHex', () => {

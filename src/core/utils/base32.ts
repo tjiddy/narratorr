@@ -1,4 +1,3 @@
-/** Convert base32-encoded string to hex. */
 export function base32ToHex(base32: string): string {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
   let bits = '';

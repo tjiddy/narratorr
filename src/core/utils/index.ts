@@ -1,10 +1,8 @@
 export * from './audio-constants.js';
-// collect-audio-files.js is NOT re-exported here — it uses node:fs/promises which
-// breaks the Vite client build. Import directly from './collect-audio-files.js'.
+// Keep Node-only collect-audio-files (`node:fs/promises`) out of this Vite-facing barrel.
 export * from './cover-regex.js';
 export * from './opf-regex.js';
-// download-url.js is NOT re-exported here — it uses node:crypto which
-// breaks the Vite client build. Import directly from './download-url.js'.
+// Keep Node-only download-url (`node:crypto`) out of this Vite-facing barrel.
 export * from './magnet.js';
 export * from './naming.js';
 export * from './naming-presets.js';
