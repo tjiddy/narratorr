@@ -54,15 +54,11 @@ export class QualityGateOrchestrator {
     private optional: QualityGateOrchestratorOptionalDeps = {},
   ) {}
 
-  /** Wire cyclic / late-bound deps after construction. Call once during composition. */
+  /** Wire late-bound dependencies once during composition. */
   wire(deps: QualityGateOrchestratorWireDeps): void {
     this.wired.set(deps);
   }
 
-  /**
-   * Process all completed downloads through the quality gate.
-   * Owns the batch loop: query → iterate → claim → scan → decide → side effects.
-   */
   async processCompletedDownloads(): Promise<void> {
     const [completedDownloads, ffprobePath] = await Promise.all([this.qualityGateService.getCompletedDownloads(), this.resolveFfprobePath()]);
     for (const row of completedDownloads) {
@@ -72,14 +68,12 @@ export class QualityGateOrchestrator {
       }
 
       try {
-        // Atomic claim: completed → checking
         const claimed = await this.qualityGateService.atomicClaim(row.download.id);
         if (!claimed) {
           this.log.debug({ id: row.download.id }, 'Quality gate: already claimed by another cycle');
           continue;
         }
 
-        // SSE: download_status_change (completed → checking)
         if (row.book) {
           safeEmit(this.optional.broadcaster, 'download_status_change', { download_id: row.download.id, book_id: row.book.id, old_status: 'completed', new_status: 'checking' }, this.log);
         }
@@ -87,7 +81,6 @@ export class QualityGateOrchestrator {
         await this.processClaimedRow(row, ffprobePath);
       } catch (error: unknown) {
         this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate error');
-        // Set pending_review with probeFailure on unhandled error (pipeline-only write)
         await this.qualityGateService.hold(row.download.id);
         const probeError = getErrorMessage(error);
         this.recordDecision(row.download, row.book, { ...NULL_REASON, probeFailure: true, probeError, holdReasons: ['unhandled_error'] });
@@ -95,45 +88,36 @@ export class QualityGateOrchestrator {
     }
   }
 
-  /** Process a single completed download through the quality gate, with inline import on approval. */
+  /** Process one completed download; approved rows enqueue import inline. */
   async processOneDownload(downloadId: number): Promise<void> {
     const [ffprobePath2, row] = await Promise.all([this.resolveFfprobePath(), this.qualityGateService.getCompletedDownloadById(downloadId)]);
     if (!row) { this.log.warn({ downloadId }, 'Quality gate: processOneDownload — download not found or not completed'); return; }
     if (!row.download.externalId || !row.download.bookId) { this.log.debug({ id: row.download.id }, 'Quality gate: skipping download without externalId or bookId'); return; }
 
-    // Required-wiring fail-fast (#739): the imported-decision branch needs
-    // nudgeImportWorker. Verify wire() was called BEFORE any mutating state
-    // transition (atomicClaim, book-status promotion, SSE) so an unwired
-    // orchestrator never leaves partial state behind.
+    // Require wiring before claim or status/SSE mutations; failure must leave state untouched.
     const { nudgeImportWorker, bookImportService } = this.wired.require();
 
     const claimed = await this.qualityGateService.atomicClaim(row.download.id);
     if (!claimed) { this.log.debug({ id: row.download.id }, 'Quality gate: already claimed by another cycle'); return; }
 
-    // Promote book status to 'importing' (taking over from removed handleBookStatusOnCompletion)
     if (row.book) {
       await transitionBookStatus(this.db, row.book.id, { status: 'importing' });
       safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: row.book.id, old_status: row.book.status, new_status: 'importing' }, this.log);
       safeEmit(this.optional.broadcaster, 'download_status_change', { download_id: row.download.id, book_id: row.book.id, old_status: 'completed', new_status: 'checking' }, this.log);
-      row.book.status = 'importing'; // Update in-memory so revert guards work
+      row.book.status = 'importing'; // Update in-memory so revert guards work.
     }
 
     try {
       const decision = await this.processClaimedRow(row, ffprobePath2);
       if (decision?.action === 'imported' && row.book) {
-        // Best-effort fire-and-forget: enqueueAutoImport returns false on conflict
-        // (already logged inside the helper). Do not throw, do not transition the
-        // gate decision back to pending_review — another path already enqueued.
+        // A false result means another path already enqueued; preserve the imported decision.
         await enqueueAutoImport(bookImportService, downloadId, row.book.id, nudgeImportWorker, this.log);
       }
     } catch (error: unknown) {
-      // Defense-in-depth for the required-wiring contract (#739): in case any
-      // future code inside the try block also reads wired deps, surface
-      // ServiceWireError instead of converting to pending_review.
+      // Never convert a late wiring failure into pending_review.
       if (error instanceof ServiceWireError) throw error;
       this.log.error({ error: serializeError(error), downloadId: row.download.id }, 'Quality gate error');
       await this.qualityGateService.hold(row.download.id);
-      // Revert book from importing → downloading if it was promoted before the error
       if (row.book && row.book.status === 'importing') {
         await transitionBookStatus(this.db, row.book.id, { status: 'downloading', expected: { status: 'importing' } });
         safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: row.book.id, old_status: 'importing', new_status: 'downloading' }, this.log);
@@ -153,14 +137,9 @@ export class QualityGateOrchestrator {
     });
   }
 
-  /**
-   * Approve a pending_review download — delegates DB transition to service,
-   * dispatches SSE + event recording side effects.
-   */
   async approve(downloadId: number): Promise<{ id: number; status: string; bookId: number | null }> {
     const result = await this.qualityGateService.approve(downloadId);
 
-    // Side effects — fire-and-forget
     if (result.book) {
       safeEmit(this.optional.broadcaster, 'download_status_change', {
         download_id: downloadId, book_id: result.book.id,
@@ -171,14 +150,10 @@ export class QualityGateOrchestrator {
     return { id: result.id, status: result.status, bookId: result.book?.id ?? null };
   }
 
-  /**
-   * Reject a pending_review download — delegates DB transition to service,
-   * dispatches event recording + rejection cleanup.
-   */
   async reject(downloadId: number, options?: { retry?: boolean }): Promise<{ id: number; status: string }> {
     const result = await this.qualityGateService.reject(downloadId);
 
-    // Side effects — retry=true includes blacklist + re-search; retry=false (default) is dismiss-only
+    // retry=false dismisses only; true also blacklists and searches.
     await this.performRejectionCleanup(result.download, result.book, 'pending_review', options?.retry ?? false);
 
     return { id: result.id, status: result.status };
@@ -186,15 +161,7 @@ export class QualityGateOrchestrator {
 
   private async resolveFfprobePath(): Promise<string | undefined> { return resolveFfprobePathFromSettings(await resolveFfmpegPath()); }
 
-  /**
-   * Run the savePath → scan → decide → dispatch chain for a row that the caller
-   * has already claimed. Returns the decision, or `null` if a hold-for-probe-failure
-   * already fired (caller should treat that as "no decision").
-   *
-   * Caller-specific pre-flight (atomicClaim, SSE timing, book-status promotion,
-   * wired-deps fail-fast) and post-flight (outer catch, enqueueAutoImport,
-   * ServiceWireError handling) live in the callers.
-   */
+  /** Run the shared claimed-row pipeline; null means probe failure already held the row. */
   private async processClaimedRow(
     row: { download: DownloadRow; book: BookRow | null },
     ffprobePath: string | undefined,
@@ -209,9 +176,7 @@ export class QualityGateOrchestrator {
       return null;
     }
 
-    // Set when the scanner collects audio files but cannot determine a codec
-    // (e.g. an unsupported/corrupt format) — distinguishes "present but unreadable"
-    // from a genuinely-empty directory so the hold reason can be honest (#1667).
+    // Distinguish present-but-unreadable audio from an empty directory (#1667).
     let filesPresentNoCodec = false;
     const scanOpts = {
       skipCover: true,
@@ -230,17 +195,12 @@ export class QualityGateOrchestrator {
       return null;
     }
 
-    // Fallback: when the freshly resolved client path scans empty, try the persisted
-    // outputPath that monitor.ts already captured for this download. Guards against
-    // download clients returning a stale/parent-ish path just after completion (#1120).
+    // Client paths can be stale just after completion; retry persisted outputPath when empty.
     const outputPath = row.download.outputPath;
     let fallbackAttempted = false;
     if (!scanResult && outputPath && outputPath !== savePath) {
       fallbackAttempted = true;
-      // Reset the latch so the persisted hold reflects only the attempt that produced
-      // the terminal null. Without this, a stale codec signal from the primary scan
-      // leaks into the fallback's outcome — a fallback that scans genuinely empty
-      // (no onFilesWithoutCodec) would still be misreported as unreadable_codec (#1677).
+      // The terminal hold must reflect only the fallback; the primary codec signal is stale here.
       filesPresentNoCodec = false;
       try {
         scanResult = await scanAudioDirectory(outputPath, scanOpts);
@@ -276,7 +236,6 @@ export class QualityGateOrchestrator {
     return decision;
   }
 
-  /** Hold for probe failure: set pending_review + SSE + event recording. */
   private async holdForProbeFailure(
     download: DownloadRow,
     book: BookRow | null,
@@ -285,11 +244,9 @@ export class QualityGateOrchestrator {
   ): Promise<void> {
     await this.qualityGateService.hold(download.id);
 
-    // SSE: download_status_change (checking → pending_review) + review_needed
     if (book) {
       safeEmit(this.optional.broadcaster, 'download_status_change', { download_id: download.id, book_id: book.id, old_status: 'checking', new_status: 'pending_review' }, this.log);
       safeEmit(this.optional.broadcaster, 'review_needed', { download_id: download.id, book_id: book.id, book_title: book.title }, this.log);
-      // Revert book from importing → downloading (monitor pre-promoted on completion)
       if (book.status === 'importing') {
         await transitionBookStatus(this.db, book.id, { status: 'downloading', expected: { status: 'importing' } });
         safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: book.id, old_status: 'importing', new_status: 'downloading' }, this.log);
@@ -302,7 +259,6 @@ export class QualityGateOrchestrator {
     this.recordDecision(download, book, { ...NULL_REASON, probeFailure: true, probeError, holdReasons: [holdReason] });
   }
 
-  /** Dispatch side effects based on quality decision. */
   private async dispatchSideEffects(
     action: 'imported' | 'rejected' | 'held',
     download: DownloadRow,
@@ -314,7 +270,6 @@ export class QualityGateOrchestrator {
       if (book) {
         safeEmit(this.optional.broadcaster, 'download_status_change', { download_id: download.id, book_id: book.id, old_status: statusTransition.from, new_status: statusTransition.to }, this.log);
         safeEmit(this.optional.broadcaster, 'review_needed', { download_id: download.id, book_id: book.id, book_title: book.title }, this.log);
-        // Revert book from importing → downloading (monitor pre-promoted on completion)
         if (book.status === 'importing') {
           await transitionBookStatus(this.db, book.id, { status: 'downloading', expected: { status: 'importing' } });
           safeEmit(this.optional.broadcaster, 'book_status_change', { book_id: book.id, old_status: 'importing', new_status: 'downloading' }, this.log);
@@ -330,7 +285,6 @@ export class QualityGateOrchestrator {
     }
   }
 
-  /** Shared cleanup for rejection: optionally blacklist + re-search, delete files, revert book status + SSE. */
   private async performRejectionCleanup(download: DownloadRow, book: BookRow | null, oldStatus: DownloadStatus = 'pending_review', retry = false): Promise<void> {
     if (retry) {
       await blacklistAndRetrySearch({
@@ -352,8 +306,7 @@ export class QualityGateOrchestrator {
 
     await this.gatedRejectionCleanup(download);
 
-    // Recover book status — errors propagate to caller (manual reject → 500, auto-reject → outer catch → pending_review).
-    // Restore the explicit pre-grab lifecycle (snapshot), never a path-inferred guess.
+    // Let restore errors reach the caller; use captured pre-grab status, never path inference.
     if (book) {
       const revertStatus = await revertBookStatus(this.db, { id: book.id }, download.bookStatusAtGrab ?? null);
       safeEmit(this.optional.broadcaster, 'download_status_change', { download_id: download.id, book_id: book.id, old_status: oldStatus, new_status: 'failed' }, this.log);
@@ -361,7 +314,6 @@ export class QualityGateOrchestrator {
     }
   }
 
-  /** Read import settings, check seed conditions, and either delete, defer, or skip. */
   private async gatedRejectionCleanup(download: DownloadRow): Promise<void> {
     let shouldDelete = true;
     let importSettings = { minSeedTime: 0, minSeedRatio: 0 };
@@ -381,8 +333,7 @@ export class QualityGateOrchestrator {
       return;
     }
 
-    // Rejection cleanup folds a missing adapter / live state into ratio 0 (deferOnUnavailableRatio:
-    // false) so non-torrent / seed-time-only downloads still proceed.
+    // Missing adapter/live ratio counts as zero so non-torrent and seed-time-only cleanup proceeds.
     const result = await removeOrDeferTorrent(download, importSettings,
       { downloadClientService: this.downloadClientService, log: this.log },
       { deferOnUnavailableRatio: false });
@@ -394,22 +345,20 @@ export class QualityGateOrchestrator {
     }
 
     this.logRejectionRemoval(download, result);
-    // Best-effort fallback delete of the persisted outputPath — the boolean is intentionally
-    // ignored here (rejection cleanup tolerates failure), and it runs even on the no-adapter path.
+    // Best-effort outputPath deletion also runs without an adapter; ignore its boolean result.
     await deleteDownloadOutputPath(download, this.log);
   }
 
-  /** Log the client-removal outcome for the rejection-cleanup proceed path (matches prior best-effort logging). */
   private logRejectionRemoval(download: DownloadRow, result: TorrentRemovalResult): void {
     if (result.outcome === 'removed') {
       this.log.info({ downloadId: download.id }, 'Quality gate: deleted rejected download files');
     } else if (result.outcome === 'remove-failed') {
       this.log.warn({ downloadId: download.id, error: serializeError(result.error) }, 'Quality gate: failed to delete download files');
     }
-    // 'no-adapter': no removal call was made — stay silent, as before.
+    // no-adapter is intentionally silent.
   }
 
-  /** Fire-and-forget event recording — swallows errors to avoid breaking the caller. */
+  /** Fire-and-forget event recording cannot break the caller. */
   private recordDecision(download: DownloadRow, book: BookRow | null, reason: QualityDecisionReason): void {
     if (!book || !this.optional.eventHistory) return;
 
