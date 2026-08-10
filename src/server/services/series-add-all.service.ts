@@ -98,7 +98,9 @@ export class SeriesAddAllService {
     const created: BookDetail[] = [];
     const members: AddAllMemberResult[] = [];
     // Sequential by contract: BookService.create opens a transaction and the libSQL connection
-    // permits one at a time.
+    // permits one at a time. Each member also resolves inline, so the request blocks for the whole
+    // batch — measured against the live library that is ~30-35 lookups plus the metadata service's
+    // 200ms throttle in the worst case, which the control's pending state already accounts for.
     for (const selected of selectAddAllMembers(card.members)) {
       members.push(await this.addMember(card, selected.title.trim(), selected.position as number, created, log));
     }

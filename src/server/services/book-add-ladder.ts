@@ -48,8 +48,10 @@ async function hydrateRaceIncumbent(
 }
 
 /**
- * The one duplicate → create → announce ladder. `POST /api/books` and the Series-card batch both run
- * it so a change to duplicate handling reaches both surfaces structurally rather than by promise.
+ * The duplicate → create → announce ladder for the add surfaces that already hold a `BookMetadata`:
+ * `POST /api/books`, whose client searched for the book first. Surfaces that start from a bare title
+ * run `addResolvedBook` instead, which is this ladder with a resolve step in front of it; reconciling
+ * the two is deliberately a follow-up to #2231 rather than a rider on it.
  */
 export async function addBookThroughLadder(
   deps: AddBookLadderDeps,
