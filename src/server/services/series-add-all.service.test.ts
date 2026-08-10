@@ -135,7 +135,7 @@ describe('SeriesAddAllService — selection', () => {
     const deps = makeDeps();
     await run(deps);
 
-    const input = vi.mocked(deps.bookService.create).mock.calls[0]?.[0] as Record<string, unknown>;
+    const input = vi.mocked(deps.bookService.create).mock.calls[0]?.[0] as unknown as Record<string, unknown>;
     expect(input).not.toHaveProperty('asin');
     expect(input).not.toHaveProperty('enrichmentStatus');
   });

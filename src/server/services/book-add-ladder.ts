@@ -4,7 +4,7 @@ import { serializeError } from '../utils/serialize-error.js';
 import { OwnedRecordingError } from './book-dedup.js';
 import type { DuplicateVerdict } from './book-dedup.js';
 import type { RecordingReviewReason } from '@core/utils/recording-identity.js';
-import type { BookService, BookDetail } from './book.service.js';
+import type { BookService, BookDetail, BookWithAuthor } from './book.service.js';
 import type { CreateBookInput } from './book-create.js';
 import type { EventHistoryService } from './event-history.service.js';
 
@@ -17,7 +17,7 @@ export type AddBookLadderResult =
   | {
       outcome: 'duplicate';
       verdict: Exclude<DuplicateVerdict, 'different-recording'>;
-      book: BookDetail;
+      book: BookWithAuthor;
       recordingReviewReason?: RecordingReviewReason;
     }
   | { outcome: 'owned-race'; existingBookId: number; book: BookDetail | null }

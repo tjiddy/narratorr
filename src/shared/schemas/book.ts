@@ -78,6 +78,13 @@ export const createBookBodySchema = z.object({
   searchImmediately: z.boolean().optional(),
 }).strict();
 
+// Required rather than optional: the batch never falls back to settings.quality, and the popover
+// always derives an explicit boolean, so an omitted flag is a caller bug rather than "no search".
+export const addAllSeriesBodySchema = z.object({
+  searchImmediately: z.boolean(),
+}).strict();
+export type AddAllSeriesBody = z.infer<typeof addAllSeriesBodySchema>;
+
 // Only these fields may be persisted in books.user_cleared_fields. Clearing
 // seriesName also tombstones seriesPosition; seriesPosition may clear independently.
 // SQLite does not enforce this domain, so the service write boundary must parse it.
