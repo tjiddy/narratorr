@@ -73,7 +73,7 @@ function adoptedRequest(overrides: Partial<ResolvedAddRequest> = {}): ResolvedAd
 }
 
 const createPayload = (deps: ResolvedAddDeps) =>
-  vi.mocked(deps.bookService.create).mock.calls[0]?.[0] as Record<string, unknown>;
+  vi.mocked(deps.bookService.create).mock.calls[0]?.[0] as unknown as Record<string, unknown>;
 
 const eventsOfType = (deps: ResolvedAddDeps, eventType: string) =>
   vi.mocked(deps.recordEvent).mock.calls.map(([e]) => e).filter((e) => e.eventType === eventType);

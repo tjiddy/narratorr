@@ -141,12 +141,13 @@ export function registerSeriesRoutes(app: FastifyInstance, deps: BookRouteDeps) 
 }
 
 function buildSeriesAddAllService(deps: BookRouteDeps): SeriesAddAllService {
-  const { bookService, eventHistory, seriesCardService, indexerSearchService, indexerService,
+  const { bookService, eventHistory, seriesCardService, metadataService, indexerSearchService, indexerService,
     downloadOrchestrator, settingsService, blacklistService, eventBroadcaster } = deps;
   return new SeriesAddAllService({
     bookService,
     eventHistory,
     seriesCardService,
+    metadataService,
     search: { indexerSearchService, indexerService, downloadOrchestrator, settingsService, blacklistService, eventHistory, eventBroadcaster },
   });
 }
