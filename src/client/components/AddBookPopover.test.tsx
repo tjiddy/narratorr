@@ -341,6 +341,56 @@ describe('AddBookPopover', () => {
     });
   });
 
+  describe('optional label props (#2200)', () => {
+    function renderWithLabels(props: { triggerLabel?: string; triggerAriaLabel?: string; confirmLabel?: string }) {
+      const queryClient = createQueryClient();
+      return render(
+        <QueryClientProvider client={queryClient}>
+          <AddBookPopover onAdd={vi.fn()} isPending={false} {...props} />
+        </QueryClientProvider>,
+      );
+    }
+
+    it('keeps Add / "Add book" / "Add to Library" when the props are omitted, for the existing callers', async () => {
+      const user = userEvent.setup();
+      renderPopover();
+
+      const trigger = screen.getByRole('button', { name: 'Add book' });
+      expect(trigger).toHaveTextContent('Add');
+
+      await user.click(trigger);
+      expect(await screen.findByRole('button', { name: 'Add to Library' })).toBeInTheDocument();
+    });
+
+    it('renders the supplied trigger text, aria-label and confirm label', async () => {
+      const user = userEvent.setup();
+      renderWithLabels({ triggerLabel: 'Add All (567)', triggerAriaLabel: 'Add all books in series', confirmLabel: 'Add 567 books' });
+
+      const trigger = screen.getByRole('button', { name: 'Add all books in series' });
+      expect(trigger).toHaveTextContent('Add All (567)');
+
+      await user.click(trigger);
+      expect(await screen.findByRole('button', { name: 'Add 567 books' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Add to Library' })).not.toBeInTheDocument();
+    });
+
+    it('confirms with the derived searchImmediately even under a custom confirm label', async () => {
+      const user = userEvent.setup();
+      const onAdd = vi.fn();
+      const queryClient = createQueryClient();
+      render(
+        <QueryClientProvider client={queryClient}>
+          <AddBookPopover onAdd={onAdd} isPending={false} triggerAriaLabel="Add all books in series" confirmLabel="Add 2 books" />
+        </QueryClientProvider>,
+      );
+
+      await user.click(screen.getByRole('button', { name: 'Add all books in series' }));
+      await user.click(await screen.findByRole('button', { name: 'Add 2 books' }));
+
+      expect(onAdd).toHaveBeenCalledWith({ searchImmediately: true });
+    });
+  });
+
   describe('z-index scale', () => {
     it('portal container has z-40 class (popover scale)', async () => {
       const user = userEvent.setup();

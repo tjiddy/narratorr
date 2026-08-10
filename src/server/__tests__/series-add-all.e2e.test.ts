@@ -134,7 +134,7 @@ describe('Series card Add All, E2E (#2200)', () => {
     mockHardcover();
     const before = (await e2e.db.select().from(books)).length;
 
-    const body = await addAll(anchor).then((r) => r.json());
+    const body = (await addAll(anchor)).json();
 
     const after = (await e2e.db.select().from(books)).length;
     expect(after - before).toBe(body.created);

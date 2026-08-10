@@ -3,11 +3,13 @@ import type { LibraryBookListItem, LibraryBookListResponse } from '@shared/schem
 import type { BookMetadata, AuthorMetadata, MetadataSearchResults } from '@core/metadata/types.js';
 import { ApiError, fetchApi, fetchMultipart } from './client.js';
 import type { BookSeriesCardData, RefreshBookSeriesResponse, HardcoverSeriesCandidate } from './book-series.js';
+import type { AddAllSeriesResponse } from '@shared/series-add-all.js';
 
 export type { BookMetadata, AuthorMetadata, MetadataSearchResults };
 export type { LibraryBookListItem, LibraryBookListResponse };
 export type { RetagExcludableField };
 export type { BookSeriesMemberCard, BookSeriesCardData, RefreshBookSeriesResponse, HardcoverSeriesCandidate } from './book-series.js';
+export type { AddAllSeriesResponse, AddAllMemberResult, AddAllDisposition } from '@shared/series-add-all.js';
 
 export interface Author {
   id: number;
@@ -411,6 +413,11 @@ export const booksApi = {
     fetchApi<RefreshBookSeriesResponse>(`/books/${id}/series/refresh`, { method: 'POST' }),
   searchBookSeries: (id: number, query: string) =>
     fetchApi<{ candidates: HardcoverSeriesCandidate[] }>(`/books/${id}/series/search?q=${encodeURIComponent(query)}`),
+  addAllInSeries: (id: number, searchImmediately: boolean) =>
+    fetchApi<AddAllSeriesResponse>(`/books/${id}/series/add-all`, {
+      method: 'POST',
+      body: JSON.stringify({ searchImmediately }),
+    }),
   bindBookSeries: (id: number, hardcoverSeriesId: number) =>
     fetchApi<RefreshBookSeriesResponse>(`/books/${id}/series/bind`, {
       method: 'POST',
