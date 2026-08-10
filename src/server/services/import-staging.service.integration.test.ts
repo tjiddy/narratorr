@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { createHash } from 'node:crypto';
 import { createDb, runMigrations, type Db } from '@db/index.js';
-import { importSubmissions, importSubmissionItems, books } from '@db/schema.js';
+import { importSubmissions, importSubmissionItems, books, bookEvents, importJobs } from '@db/schema.js';
 import { eq } from 'drizzle-orm';
 import { ImportStagingService } from './import-staging.service.js';
 import { serializeSubmissionForDigest, submissionResponseSchema, MAX_SUBMISSION_BYTES, EXPECTED_COUNT_MAX, type StagedImportItem } from '@core/import-staging/schemas.js';
@@ -540,41 +540,183 @@ describe('ImportStagingService (DB-backed, #1893)', () => {
     expect(nudge).toHaveBeenCalledTimes(1);
   });
 
-  describe('discardReceiving (#1894 DELETE)', () => {
+  describe('deleteSubmission (#1894 DELETE, broadened by #2220)', () => {
     async function putAll(id: number): Promise<void> {
       await service.putItems(id, { items: items.map((it, i) => ({ ordinal: i, item: it })) });
     }
 
-    it('deletes a receiving header and cascades its items → {success:true}', async () => {
+    async function seedTerminal(clientId: string, counts: Partial<{ heldCount: number; skippedCount: number; failedCount: number }> = {}): Promise<number> {
+      const [row] = await db.insert(importSubmissions).values({
+        clientSubmissionId: clientId, payloadDigest: 'a'.repeat(64), source: 'library',
+        expectedCount: 1, status: 'complete', receivedCount: 1, acceptedCount: 1,
+        completedAt: new Date(), ...counts,
+      }).returning();
+      await db.insert(importSubmissionItems).values({ submissionId: row!.id, ordinal: 0, itemPayload: items[0]!, path: '/a', title: 'A', disposition: 'accepted' });
+      return row!.id;
+    }
+
+    it('deletes a receiving header and cascades its items → {success:true} (pins the abandoned-upload Discard path)', async () => {
       const created = await service.createSubmission(createBody);
       await putAll(created.id);
       expect(await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, created.id))).toHaveLength(2);
-      expect(await service.discardReceiving(created.id)).toEqual({ success: true });
+      expect(await service.deleteSubmission(created.id)).toEqual({ success: true });
       expect(await db.select().from(importSubmissions).where(eq(importSubmissions.id, created.id))).toHaveLength(0);
       expect(await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, created.id))).toHaveLength(0);
     });
 
-    it('a finalized (non-receiving) header is never deleted → 409 submission-not-receiving', async () => {
+    it('deletes a complete header and cascades its items', async () => {
+      const id = await seedTerminal('del-complete', { heldCount: 2, failedCount: 1 });
+      expect(await service.deleteSubmission(id)).toEqual({ success: true });
+      expect(await db.select().from(importSubmissions).where(eq(importSubmissions.id, id))).toHaveLength(0);
+      expect(await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, id))).toHaveLength(0);
+    });
+
+    it('deletes a complete header whose details were already pruned (zero item rows)', async () => {
+      const id = await seedTerminal('del-pruned');
+      await db.delete(importSubmissionItems).where(eq(importSubmissionItems.submissionId, id));
+      expect(await service.deleteSubmission(id)).toEqual({ success: true });
+      expect(await db.select().from(importSubmissions).where(eq(importSubmissions.id, id))).toHaveLength(0);
+    });
+
+    it('a processing header is never deleted → 409 submission-in-flight', async () => {
       const created = await service.createSubmission(createBody);
       await putAll(created.id);
       await service.finalize(created.id);
-      await expect(service.discardReceiving(created.id)).rejects.toMatchObject({ httpStatus: 409, code: 'submission-not-receiving' });
-      expect(await db.select().from(importSubmissions).where(eq(importSubmissions.id, created.id))).toHaveLength(1);
+      await expect(service.deleteSubmission(created.id)).rejects.toMatchObject({ httpStatus: 409, code: 'submission-in-flight' });
+      const [hdr] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, created.id));
+      expect(hdr!.status).toBe('processing');
     });
 
     it('an unknown id → 404 submission-not-found', async () => {
-      await expect(service.discardReceiving(9999)).rejects.toMatchObject({ httpStatus: 404, code: 'submission-not-found' });
+      await expect(service.deleteSubmission(9999)).rejects.toMatchObject({ httpStatus: 404, code: 'submission-not-found' });
     });
 
-    it('discard racing finalize on the write lane: the finalized header survives, discard 409s (atomic WHERE status=receiving)', async () => {
+    it('logs the deleted submission id at info, and logs nothing when the delete is refused', async () => {
+      const info = vi.fn();
+      const logged = new ImportStagingService(db, { ...noopLog, info } as unknown as FastifyBaseLogger, nudge as unknown as () => void);
+      const id = await seedTerminal('del-logged');
+      await logged.deleteSubmission(id);
+      expect(info).toHaveBeenCalledWith({ submissionId: id }, expect.stringContaining('deleted'));
+
+      info.mockClear();
+      await expect(logged.deleteSubmission(9999)).rejects.toThrow();
+      expect(info).not.toHaveBeenCalled();
+    });
+
+    it('delete racing finalize on the write lane: the finalized header survives, delete 409s (atomic WHERE status != processing)', async () => {
       const created = await service.createSubmission(createBody);
       await putAll(created.id);
-      // The write lane preserves call order: finalize commits before discard checks status.
-      const [fin, disc] = await Promise.allSettled([service.finalize(created.id), service.discardReceiving(created.id)]);
+      // The write lane preserves call order: finalize commits before the delete checks status.
+      const [fin, del] = await Promise.allSettled([service.finalize(created.id), service.deleteSubmission(created.id)]);
       expect(fin.status).toBe('fulfilled');
-      expect(disc.status).toBe('rejected');
+      expect(del.status).toBe('rejected');
+      expect((del as PromiseRejectedResult).reason).toMatchObject({ httpStatus: 409, code: 'submission-in-flight' });
       const [hdr] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, created.id));
       expect(hdr!.status).toBe('processing');
+    });
+  });
+
+  describe('deleteCleanCompleted (#2220 bulk clear)', () => {
+    async function seedHeader(clientId: string, values: Partial<typeof importSubmissions.$inferInsert>): Promise<number> {
+      const [row] = await db.insert(importSubmissions).values({
+        clientSubmissionId: clientId, payloadDigest: 'a'.repeat(64), source: 'library',
+        expectedCount: 1, receivedCount: 1, status: 'complete', acceptedCount: 1, completedAt: new Date(),
+        ...values,
+      }).returning();
+      await db.insert(importSubmissionItems).values({ submissionId: row!.id, ordinal: 0, itemPayload: items[0]!, path: '/a', title: 'A', disposition: 'accepted' });
+      return row!.id;
+    }
+
+    async function seedMix(): Promise<{ clean: number; others: number[] }> {
+      const clean = await seedHeader('mix-clean', {});
+      const held = await seedHeader('mix-held', { heldCount: 1 });
+      const skipped = await seedHeader('mix-skipped', { skippedCount: 1 });
+      const failed = await seedHeader('mix-failed', { failedCount: 1 });
+      const receiving = await seedHeader('mix-receiving', { status: 'receiving', completedAt: null });
+      const processing = await seedHeader('mix-processing', { status: 'processing', completedAt: null });
+      return { clean, others: [held, skipped, failed, receiving, processing] };
+    }
+
+    it('deletes exactly the clean completed run and returns its id, leaving every other header', async () => {
+      const { clean, others } = await seedMix();
+
+      expect(await service.deleteCleanCompleted()).toEqual({ deleted: 1, ids: [clean] });
+
+      expect(await db.select().from(importSubmissions).where(eq(importSubmissions.id, clean))).toHaveLength(0);
+      for (const id of others) {
+        expect(await db.select().from(importSubmissions).where(eq(importSubmissions.id, id))).toHaveLength(1);
+      }
+    });
+
+    it('cascades only the deleted runs items; a surviving run keeps its own', async () => {
+      const { clean, others } = await seedMix();
+      await service.deleteCleanCompleted();
+      expect(await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, clean))).toHaveLength(0);
+      for (const id of others) {
+        expect(await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, id))).toHaveLength(1);
+      }
+    });
+
+    it('returns every deleted id, and the returned ids are exactly the headers that disappeared', async () => {
+      const a = await seedHeader('multi-a', {});
+      const b = await seedHeader('multi-b', {});
+      const c = await seedHeader('multi-c', {});
+      const kept = await seedHeader('multi-kept', { failedCount: 1 });
+
+      const result = await service.deleteCleanCompleted();
+      expect(result.deleted).toBe(result.ids.length);
+      expect([...result.ids].sort((x, y) => x - y)).toEqual([a, b, c].sort((x, y) => x - y));
+
+      const remaining = (await db.select({ id: importSubmissions.id }).from(importSubmissions)).map((r) => r.id);
+      expect(remaining).toEqual([kept]);
+    });
+
+    it('with no matching row returns {deleted:0, ids:[]} and deletes nothing', async () => {
+      await seedHeader('none-held', { heldCount: 1 });
+      await seedHeader('none-processing', { status: 'processing', completedAt: null });
+
+      expect(await service.deleteCleanCompleted()).toEqual({ deleted: 0, ids: [] });
+      expect(await db.select().from(importSubmissions)).toHaveLength(2);
+      expect(await db.select().from(importSubmissionItems)).toHaveLength(2);
+    });
+
+    it('reads the frozen header counters, so a clean run whose details were pruned is still eligible', async () => {
+      const id = await seedHeader('clean-pruned', {});
+      await db.delete(importSubmissionItems).where(eq(importSubmissionItems.submissionId, id));
+      expect(await service.deleteCleanCompleted()).toEqual({ deleted: 1, ids: [id] });
+    });
+
+    it('logs the deleted count at info', async () => {
+      const info = vi.fn();
+      const logged = new ImportStagingService(db, { ...noopLog, info } as unknown as FastifyBaseLogger, nudge as unknown as () => void);
+      await seedHeader('logged-clean', {});
+      await logged.deleteCleanCompleted();
+      expect(info).toHaveBeenCalledWith(expect.objectContaining({ count: 1 }), expect.stringContaining('cleared'));
+    });
+  });
+
+  // The confirm copy promises exactly this: the report goes, the library and its trail stay.
+  describe('deleting a run leaves the imported book, its events, and its import jobs (#2220)', () => {
+    it('removes only the submission and its items', async () => {
+      const [book] = await db.insert(books).values({ publicId: 'kept-book', title: 'Kept Book', status: 'imported' }).returning();
+      const [event] = await db.insert(bookEvents).values({ bookId: book!.id, bookTitle: 'Kept Book', eventType: 'imported' }).returning();
+      const [job] = await db.insert(importJobs).values({ bookId: book!.id, type: 'auto', status: 'completed', metadata: '{}' }).returning();
+      const [header] = await db.insert(importSubmissions).values({
+        clientSubmissionId: 'cross-table', payloadDigest: 'a'.repeat(64), source: 'library',
+        expectedCount: 1, receivedCount: 1, status: 'complete', acceptedCount: 1, completedAt: new Date(),
+      }).returning();
+      await db.insert(importSubmissionItems).values({ submissionId: header!.id, ordinal: 0, itemPayload: items[0]!, path: '/a', title: 'Kept Book', disposition: 'accepted', bookId: book!.id });
+
+      await service.deleteSubmission(header!.id);
+
+      expect(await db.select().from(books).where(eq(books.id, book!.id))).toHaveLength(1);
+      const events = await db.select().from(bookEvents).where(eq(bookEvents.id, event!.id));
+      expect(events).toHaveLength(1);
+      expect(events[0]!.bookId).toBe(book!.id);
+      const jobs = await db.select().from(importJobs).where(eq(importJobs.id, job!.id));
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]!.bookId).toBe(book!.id);
+      expect(await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, header!.id))).toHaveLength(0);
     });
   });
 
@@ -698,6 +840,92 @@ describe('ImportStagingService (DB-backed, #1893)', () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    describe('pruneCleanCompleted (#2220)', () => {
+      async function seedHeader(clientId: string, values: Partial<typeof importSubmissions.$inferInsert>): Promise<number> {
+        const [row] = await db.insert(importSubmissions).values({
+          clientSubmissionId: clientId, payloadDigest: 'a'.repeat(64), source: 'library',
+          expectedCount: 1, receivedCount: 1, status: 'complete', acceptedCount: 1,
+          ...values,
+        }).returning();
+        await db.insert(importSubmissionItems).values({ submissionId: row!.id, ordinal: 0, itemPayload: items[0]!, path: '/a', title: 'A', disposition: 'accepted' });
+        return row!.id;
+      }
+
+      // Fake only Date: libSQL needs real timers, and a frozen boundary distinguishes < from <=.
+      async function atBoundary(retentionDays: number): Promise<{ older: number; exact: number; newer: number; pruned: number }> {
+        const now = new Date('2026-07-20T12:00:00.000Z');
+        vi.setSystemTime(now);
+        const cutoff = now.getTime() - retentionDays * 24 * 60 * 60 * 1000;
+        const older = await seedHeader('cut-older', { completedAt: new Date(cutoff - 1000) });
+        const exact = await seedHeader('cut-exact', { completedAt: new Date(cutoff) });
+        const newer = await seedHeader('cut-newer', { completedAt: new Date(cutoff + 1000) });
+        const pruned = await service.pruneCleanCompleted(retentionDays);
+        return { older, exact, newer, pruned };
+      }
+
+      it('deletes strictly beyond the cutoff only (lt, not lte)', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+          const { older, exact, newer, pruned } = await atBoundary(90);
+          expect(pruned).toBe(1);
+          expect(await db.select().from(importSubmissions).where(eq(importSubmissions.id, older))).toHaveLength(0);
+          expect(await db.select().from(importSubmissions).where(eq(importSubmissions.id, exact))).toHaveLength(1);
+          expect(await db.select().from(importSubmissions).where(eq(importSubmissions.id, newer))).toHaveLength(1);
+          expect(await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, older))).toHaveLength(0);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('holds the same 24h boundary at the settings minimum of 1 day', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+          const { older, exact, newer, pruned } = await atBoundary(1);
+          expect(pruned).toBe(1);
+          expect(await db.select().from(importSubmissions).where(eq(importSubmissions.id, older))).toHaveLength(0);
+          expect(await db.select().from(importSubmissions).where(eq(importSubmissions.id, exact))).toHaveLength(1);
+          expect(await db.select().from(importSubmissions).where(eq(importSubmissions.id, newer))).toHaveLength(1);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('retains an ancient run with held, skipped, or failed activity', async () => {
+        const held = await seedHeader('anc-held', { completedAt: daysAgo(400), heldCount: 1 });
+        const skipped = await seedHeader('anc-skipped', { completedAt: daysAgo(400), skippedCount: 1 });
+        const failed = await seedHeader('anc-failed', { completedAt: daysAgo(400), failedCount: 1 });
+
+        expect(await service.pruneCleanCompleted(90)).toBe(0);
+        for (const id of [held, skipped, failed]) {
+          expect(await db.select().from(importSubmissions).where(eq(importSubmissions.id, id))).toHaveLength(1);
+          expect(await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, id))).toHaveLength(1);
+        }
+      });
+
+      it('never touches receiving or processing headers regardless of age', async () => {
+        const receiving = await seedHeader('anc-receiving', { status: 'receiving', updatedAt: daysAgo(400) });
+        const processing = await seedHeader('anc-processing', { status: 'processing', updatedAt: daysAgo(400) });
+
+        expect(await service.pruneCleanCompleted(90)).toBe(0);
+        expect(await db.select().from(importSubmissions).where(eq(importSubmissions.id, receiving))).toHaveLength(1);
+        expect(await db.select().from(importSubmissions).where(eq(importSubmissions.id, processing))).toHaveLength(1);
+      });
+
+      it('ignores a complete row with a null completedAt', async () => {
+        const orphan = await seedHeader('null-completed', { completedAt: null });
+        expect(await service.pruneCleanCompleted(90)).toBe(0);
+        expect(await db.select().from(importSubmissions).where(eq(importSubmissions.id, orphan))).toHaveLength(1);
+      });
+
+      it('logs the pruned count at info', async () => {
+        const info = vi.fn();
+        const logged = new ImportStagingService(db, { ...noopLog, info } as unknown as FastifyBaseLogger, nudge as unknown as () => void);
+        await seedHeader('prune-logged', { completedAt: daysAgo(120) });
+        await logged.pruneCleanCompleted(90);
+        expect(info).toHaveBeenCalledWith(expect.objectContaining({ count: 1, retentionDays: 90 }), expect.stringContaining('pruned'));
+      });
     });
 
     // Each raced result is classified explicitly; no vacuous branches.

@@ -11,6 +11,9 @@ import {
   payloadDigestSchema,
   serializeSubmissionForDigest,
   aggregateDispositions,
+  submissionBulkDeleteQuerySchema,
+  submissionBulkDeleteResponseSchema,
+  SUBMISSION_ERROR_CODES,
   CANONICAL_METADATA_KEYS,
   MAX_SUBMISSION_BYTES,
   EXPECTED_COUNT_MAX,
@@ -332,8 +335,33 @@ describe('serializeSubmissionForDigest', () => {
   });
 });
 
+describe('submissionBulkDeleteResponseSchema (#2220)', () => {
+  it('accepts a multi-id clear and an empty clear', () => {
+    expect(submissionBulkDeleteResponseSchema.parse({ deleted: 2, ids: [1, 2] })).toEqual({ deleted: 2, ids: [1, 2] });
+    expect(submissionBulkDeleteResponseSchema.parse({ deleted: 0, ids: [] })).toEqual({ deleted: 0, ids: [] });
+  });
+
+  it('rejects a missing ids array, a non-integer id, and an unknown key', () => {
+    expect(submissionBulkDeleteResponseSchema.safeParse({ deleted: 1 }).success).toBe(false);
+    expect(submissionBulkDeleteResponseSchema.safeParse({ deleted: 1, ids: [1.5] }).success).toBe(false);
+    expect(submissionBulkDeleteResponseSchema.safeParse({ deleted: 1, ids: [1], extra: true }).success).toBe(false);
+  });
+});
+
+describe('submissionBulkDeleteQuerySchema (#2220)', () => {
+  it('accepts only an empty querystring', () => {
+    expect(submissionBulkDeleteQuerySchema.safeParse({}).success).toBe(true);
+    expect(submissionBulkDeleteQuerySchema.safeParse({ source: 'library' }).success).toBe(false);
+  });
+});
+
 describe('constants', () => {
   it('MAX_SUBMISSION_BYTES is 64 MiB', () => {
     expect(MAX_SUBMISSION_BYTES).toBe(64 * 1024 * 1024);
+  });
+
+  it('names the in-flight delete refusal separately from the PUT not-receiving code', () => {
+    expect(SUBMISSION_ERROR_CODES.submissionInFlight).toBe('submission-in-flight');
+    expect(SUBMISSION_ERROR_CODES.submissionNotReceiving).toBe('submission-not-receiving');
   });
 });

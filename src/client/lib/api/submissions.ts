@@ -3,6 +3,7 @@ import type {
   AttentionResponse,
   CreateSubmissionBody,
   PutItemsBody,
+  SubmissionBulkDeleteResponse,
   SubmissionListResponse,
   SubmissionResponse,
   SubmissionSource,
@@ -15,6 +16,7 @@ export type {
   CreateSubmissionBody,
   PutItemsBody,
   PutItemRow,
+  SubmissionBulkDeleteResponse,
   SubmissionListResponse,
   SubmissionResponse,
   SubmissionSummary,
@@ -47,8 +49,12 @@ export const submissionsApi = {
   },
   getImportSubmissionDetail: (id: number) =>
     fetchApi<SubmissionResponse>(`/import/submissions/${id}?includeItems=true`),
+  /** Deletes one run: an abandoned upload from the attention banner, or a finished run from history. */
   discardImportSubmission: (id: number) =>
     fetchApi<{ success: true }>(`/import/submissions/${id}`, { method: 'DELETE' }),
+  /** Clears every fully-clean completed run; the server decides eligibility and reports the ids it removed. */
+  clearCompletedImportSubmissions: () =>
+    fetchApi<SubmissionBulkDeleteResponse>('/import/submissions', { method: 'DELETE' }),
 
   /** Create-or-return by clientSubmissionId. */
   createImportSubmission: (body: CreateSubmissionBody) =>

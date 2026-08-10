@@ -818,6 +818,12 @@ describe('submissionsApi', () => {
     expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions/9', { method: 'DELETE' });
   });
 
+  it('clearCompletedImportSubmissions → DELETE /import/submissions with no query string, resolving to the {deleted,ids} body', async () => {
+    mockFetchApi.mockResolvedValue({ deleted: 2, ids: [4, 5] });
+    await expect(submissionsApi.clearCompletedImportSubmissions()).resolves.toEqual({ deleted: 2, ids: [4, 5] });
+    expect(mockFetchApi).toHaveBeenCalledWith('/import/submissions', { method: 'DELETE' });
+  });
+
   it('createImportSubmission → POST /import/submissions with the create body', async () => {
     const body = { source: 'library', clientSubmissionId: 'u', payloadDigest: 'd', expectedCount: 2 } as never;
     await submissionsApi.createImportSubmission(body);

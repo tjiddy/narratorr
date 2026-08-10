@@ -66,6 +66,7 @@ describe('startJobs', () => {
     (services.import.cleanupDeferredImports as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (services.importStaging.sweepStaleReceiving as ReturnType<typeof vi.fn>).mockResolvedValue(0);
     (services.importStaging.pruneCompletedDetails as ReturnType<typeof vi.fn>).mockResolvedValue(0);
+    (services.importStaging.pruneCleanCompleted as ReturnType<typeof vi.fn>).mockResolvedValue(0);
     // startJobs attaches .catch to the boot check and invokes this setter synchronously.
     vi.mocked(checkForUpdate).mockResolvedValue(undefined);
     (services.healthCheck.setVersionUpdateCallback as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
@@ -752,6 +753,96 @@ describe('startJobs', () => {
       );
     });
 
+    describe('clean-completed submission retention (#2220)', () => {
+      async function runHousekeeping(retentionDays: number | null): Promise<void> {
+        (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+          if (category === 'general') return { housekeepingRetentionDays: retentionDays };
+          if (category === 'search') return { intervalMinutes: 30 };
+          if (category === 'rss') return { intervalMinutes: 30 };
+          if (category === 'system') return { backupIntervalMinutes: 60 };
+          if (category === 'discovery') return { intervalHours: 24 };
+          return {};
+        });
+        (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+
+        const { startJobs } = await import('./index.js');
+        const scheduler = startJobs(injectHelper<Db>(db), services, log);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        scheduler.stopAll();
+
+        vi.clearAllMocks();
+        (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+          if (category === 'general') return { housekeepingRetentionDays: retentionDays };
+          return {};
+        });
+        (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+        (services.eventHistory.pruneOlderThan as ReturnType<typeof vi.fn>).mockResolvedValue(0);
+        (services.blacklist.deleteExpired as ReturnType<typeof vi.fn>).mockResolvedValue(0);
+
+        await services.taskRegistry.executeTracked('housekeeping');
+      }
+
+      it('prunes clean completed runs with the configured retention days', async () => {
+        await runHousekeeping(45);
+        expect(services.importStaging.pruneCleanCompleted).toHaveBeenCalledWith(45);
+        expect(log.warn).not.toHaveBeenCalled();
+      });
+
+      it('defaults to 90 days when housekeepingRetentionDays is null', async () => {
+        await runHousekeeping(null);
+        expect(services.importStaging.pruneCleanCompleted).toHaveBeenCalledWith(90);
+      });
+
+      it('runs before the staged-detail prune so headers go before their orphaned details', async () => {
+        const order: string[] = [];
+        (services.importStaging.pruneCleanCompleted as ReturnType<typeof vi.fn>).mockImplementation(async () => { order.push('headers'); return 0; });
+        (services.importStaging.pruneCompletedDetails as ReturnType<typeof vi.fn>).mockImplementation(async () => { order.push('details'); return 0; });
+        await runHousekeeping(30);
+        expect(order).toEqual(['headers', 'details']);
+      });
+
+      it('a retention read failure leaves it uncalled', async () => {
+        (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+          if (category === 'general') throw new Error('settings unavailable');
+          if (category === 'search') return { intervalMinutes: 30 };
+          if (category === 'rss') return { intervalMinutes: 30 };
+          if (category === 'system') return { backupIntervalMinutes: 60 };
+          if (category === 'discovery') return { intervalHours: 24 };
+          return {};
+        });
+        (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+
+        const { startJobs } = await import('./index.js');
+        const scheduler = startJobs(injectHelper<Db>(db), services, log);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        scheduler.stopAll();
+
+        vi.clearAllMocks();
+        (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+          if (category === 'general') throw new Error('settings unavailable');
+          return {};
+        });
+        (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
+        (services.blacklist.deleteExpired as ReturnType<typeof vi.fn>).mockResolvedValue(0);
+
+        await services.taskRegistry.executeTracked('housekeeping');
+
+        expect(services.importStaging.pruneCleanCompleted).not.toHaveBeenCalled();
+        expect(services.blacklist.deleteExpired).toHaveBeenCalledTimes(1);
+      });
+
+      it('a rejection is logged and the blacklist cleanup still runs', async () => {
+        (services.importStaging.pruneCleanCompleted as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('header prune down'));
+        await runHousekeeping(30);
+
+        expect(services.importStaging.pruneCompletedDetails).toHaveBeenCalledWith(30);
+        expect(services.blacklist.deleteExpired).toHaveBeenCalledTimes(1);
+        expect(log.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ error: expect.objectContaining({ message: 'header prune down' }) }),
+          expect.stringContaining('clean-completed'),
+        );
+      });
+    });
   });
 
   describe('startup recovery (#358)', () => {
