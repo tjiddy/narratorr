@@ -6,6 +6,59 @@ import { generatePublicId } from '../utils/public-id.js';
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
+const AUTHOR = 'James S. A. Corey';
+
+/**
+ * The batch resolves every member against the metadata provider before creating it (#2231), so the
+ * outbound provider is stubbed the same way the Hardcover fetch is. Each stub deliberately names a
+ * different series than the card, which is what makes the pin observable in the durable row.
+ */
+const RESOLVED: Record<string, Record<string, unknown>> = {
+  "Caliban's War": {
+    asin: 'B_CALIBAN', title: "Caliban's War", authors: [{ name: AUTHOR }],
+    narrators: ['Jefferson Mays'], duration: 1230, coverUrl: 'https://example.test/caliban.jpg',
+    seriesPrimary: { name: 'Expanse (Provider Edition)', position: 92 }, formatType: 'unabridged',
+  },
+  "Abaddon's Gate": {
+    asin: 'B_ABADDON', title: "Abaddon's Gate", authors: [{ name: AUTHOR }],
+    narrators: ['Jefferson Mays'], duration: 1200, coverUrl: 'https://example.test/abaddon.jpg',
+    seriesPrimary: { name: 'Expanse (Provider Edition)', position: 93 }, formatType: 'unabridged',
+  },
+};
+
+const mockAudibleProvider = {
+  name: 'Audible.com',
+  type: 'audible',
+  searchBooks: vi.fn().mockImplementation((query: string) => {
+    const hit = Object.entries(RESOLVED).find(([title]) => query.startsWith(title));
+    return Promise.resolve({ books: hit ? [hit[1]] : [] });
+  }),
+  searchSeries: vi.fn().mockResolvedValue([]),
+  getBook: vi.fn().mockResolvedValue(null),
+  getBookDetailed: vi.fn().mockResolvedValue({ kind: 'not_found' }),
+  test: vi.fn().mockResolvedValue({ success: true }),
+};
+
+const mockAudnexus = {
+  name: 'Audnexus',
+  type: 'audnexus',
+  getBook: vi.fn().mockResolvedValue(null),
+  getBookDetailed: vi.fn().mockResolvedValue({ kind: 'not_found' }),
+  getAuthor: vi.fn().mockResolvedValue(null),
+  getChapterRuntime: vi.fn().mockResolvedValue({ kind: 'not_found' }),
+};
+
+vi.mock('@core/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@core/index.js')>();
+  return {
+    ...actual,
+    METADATA_SEARCH_PROVIDER_FACTORIES: {
+      audible: vi.fn().mockImplementation(function () { return mockAudibleProvider; }),
+    },
+    AudnexusProvider: vi.fn().mockImplementation(function () { return mockAudnexus; }),
+  };
+});
+
 interface HardcoverMember { id: number; position: number | null; title: string }
 
 /**
@@ -27,6 +80,7 @@ describe('Series card Add All, E2E (#2200)', () => {
   let e2e: E2EApp;
 
   beforeEach(async () => {
+    vi.clearAllMocks();
     e2e = await createE2EApp();
     await e2e.services.settings.update({ metadata: { hardcoverApiKey: 'TEST_KEY' } });
   });
@@ -46,12 +100,12 @@ describe('Series card Add All, E2E (#2200)', () => {
     const slug = 'james-s-a-corey';
     const existing = await e2e.db.select().from(authors).where(eq(authors.slug, slug)).limit(1);
     const authorId = existing[0]?.id
-      ?? (await e2e.db.insert(authors).values({ publicId: generatePublicId('au'), name: 'James S. A. Corey', slug }).returning())[0]!.id;
+      ?? (await e2e.db.insert(authors).values({ publicId: generatePublicId('au'), name: AUTHOR, slug }).returning())[0]!.id;
     await e2e.db.insert(bookAuthors).values({ bookId: book!.id, authorId, position: 0 });
     return book!.id;
   }
 
-  function mockHardcover(members: HardcoverMember[] = MEMBERS, authorName: string | null = 'James S. A. Corey'): void {
+  function mockHardcover(members: HardcoverMember[] = MEMBERS, authorName: string | null = AUTHOR): void {
     globalThis.fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
       data: {
         series: [{
@@ -91,11 +145,16 @@ describe('Series card Add All, E2E (#2200)', () => {
     expect(rows.map((r) => r.title).sort()).toEqual(["Abaddon's Gate", "Caliban's War", 'Leviathan Wakes']);
 
     const calibans = rows.find((r) => r.title === "Caliban's War")!;
+    // Identity is the card's even though the resolved match named a different series and position.
     expect(calibans.seriesName).toBe('The Expanse');
     expect(calibans.seriesPosition).toBe(2);
-    expect(calibans.asin).toBeNull();
-    expect(calibans.enrichmentStatus).toBe('pending');
     expect(calibans.status).toBe('wanted');
+    // The row lands complete rather than as a grey placeholder waiting on the enrichment cron.
+    expect(calibans.asin).toBe('B_CALIBAN');
+    expect(calibans.coverUrl).toBe('https://example.test/caliban.jpg');
+    expect(calibans.duration).toBe(1230);
+    // Still pending: a resolved row is re-run by the cron exactly as an import-list row is.
+    expect(calibans.enrichmentStatus).toBe('pending');
 
     // Every excluded bucket stayed out of the library entirely.
     for (const excluded of ['Drive', 'Gods of Risk', 'The Churn', 'Unplaced Companion', 'Negative Entry']) {
@@ -154,8 +213,33 @@ describe('Series card Add All, E2E (#2200)', () => {
 
     expect(second.statusCode).toBe(200);
     expect(second.json()).toMatchObject({ created: 0, failed: 0 });
-    expect(second.json().members.every((m: { disposition: string }) => m.disposition === 'owned' || m.disposition === 'held')).toBe(true);
+    // The first run's rows carry the resolved ASIN and narrators, so the rerun proves them owned
+    // rather than abstaining into a hold.
+    expect(second.json().members.every((m: { disposition: string }) => m.disposition === 'owned')).toBe(true);
     expect(await titlesIn()).toEqual(titlesAfterFirst);
+  });
+
+  /**
+   * The #2231 headline, end to end: the operator owns the recording under a title Hardcover did not
+   * link, so the member survives selection. Only the resolved ASIN can prove ownership — before the
+   * resolve step the batch saw title+author, abstained, and reported the member held forever.
+   */
+  it('reports an owned-but-unlinked member as owned instead of holding or duplicating it', async () => {
+    const anchor = await seedBook('Leviathan Wakes', 'The Expanse', 1);
+    await e2e.db.insert(books).values({
+      publicId: generatePublicId('bk'),
+      title: "Caliban's War: Expanse Two [Unabridged]",
+      asin: 'B_CALIBAN',
+      seriesName: 'Something Else',
+    });
+    mockHardcover();
+
+    const body = (await addAll(anchor)).json();
+
+    const caliban = body.members.find((m: { title: string }) => m.title === "Caliban's War");
+    expect(caliban).toMatchObject({ disposition: 'owned' });
+    expect(caliban.bookId).not.toBeNull();
+    expect((await e2e.db.select().from(books).where(eq(books.title, "Caliban's War"))).length).toBe(0);
   });
 
   /**

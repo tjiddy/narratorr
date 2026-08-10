@@ -44,6 +44,9 @@ describe('POST /api/books/:id/series/add-all', () => {
       Promise.resolve({ id: 99, title: input.title, status: 'wanted', authors: [], narrators: [] }));
     (services.eventHistory.create as Mock).mockResolvedValue({ id: 1 });
     (services.seriesCard.getSeriesForBook as Mock).mockResolvedValue(seriesCard());
+    // Unconfigured service methods reject, which the batch would absorb as a degraded provider —
+    // spell the genuine miss out so these cases exercise the ordinary path.
+    (services.metadata.resolveBook as Mock).mockResolvedValue(null);
     app = await createTestApp(services);
   });
 
@@ -103,6 +106,10 @@ describe('POST /api/books/:id/series/add-all', () => {
       });
     });
 
+    /**
+     * The guarded region now contains the resolve as well as the create, so hold the batch open on
+     * an awaited collaborator inside it — the E2E suite cannot schedule this deterministically.
+     */
     it('409s a second batch for the same series while one is in flight, and creates nothing for it', async () => {
       const gate = deferred<{ id: number; title: string; status: string; authors: []; narrators: [] }>();
       (services.book.create as Mock).mockReturnValueOnce(gate.promise);
@@ -117,6 +124,22 @@ describe('POST /api/books/:id/series/add-all', () => {
       expect(services.book.create).toHaveBeenCalledTimes(1);
 
       gate.resolve({ id: 99, title: 'Leviathan Wakes', status: 'wanted', authors: [], narrators: [] });
+      expect((await first).statusCode).toBe(200);
+    });
+
+    it('refuses the second batch while the first is still resolving, before any row exists', async () => {
+      const resolving = deferred<null>();
+      (services.metadata.resolveBook as Mock).mockReturnValueOnce(resolving.promise);
+
+      const first = app.inject({ method: 'POST', url: URL, payload: { searchImmediately: false } });
+      await vi.waitFor(() => expect(services.metadata.resolveBook).toHaveBeenCalledTimes(1));
+
+      const second = await app.inject({ method: 'POST', url: URL, payload: { searchImmediately: false } });
+
+      expect(second.statusCode).toBe(409);
+      expect(services.book.create).not.toHaveBeenCalled();
+
+      resolving.resolve(null);
       expect((await first).statusCode).toBe(200);
     });
 

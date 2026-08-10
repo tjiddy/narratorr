@@ -1,11 +1,13 @@
 /**
- * Closes the deferred-resolution loop that is Add All's whole premise: rows are created from
- * Hardcover data with no ASIN, and the ordinary enrichment job resolves them later (#2200).
+ * Add All resolves each member at batch time (#2231), so the resolution outcomes this suite was
+ * written for — an ambiguous hold, an exact-title disambiguation, a wrong-sibling avoidance —
+ * now happen while the row is being created rather than in the later cron. Rows here are created
+ * through the real Add All route against the real resolver, and then still handed to the real
+ * `runEnrichment`, because the seeded-series guard has to hold across both.
  *
  * #2202's own integration test proves the resolver's hold on directly-seeded rows, but those rows
- * carry no series, so it cannot show that an Add All row's seeded `seriesName`/`seriesPosition`
- * survive a hold — which is this issue's acceptance criterion. Rows here are created through the
- * real Add All route, then handed to the real `runEnrichment`.
+ * carry no series, so only here is it observable that an Add All row's `seriesName`/`seriesPosition`
+ * survive a hold — and, since #2231, that they survive a resolved match that names another series.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
@@ -58,7 +60,7 @@ const MEMBERS = [
   { id: 8004, position: 4, title: 'Heretics of Dune' },
 ];
 
-describe('Add All rows through the real enrichment job — integration (#2200)', () => {
+describe('Add All rows resolved at batch time, then through the real enrichment job — integration (#2231)', () => {
   let e2e: E2EApp;
   let anchorId: number;
   const ORIGINAL_FETCH = globalThis.fetch;
@@ -103,9 +105,9 @@ describe('Add All rows through the real enrichment job — integration (#2200)',
   }
 
   /**
-   * One window per created row:
+   * One window per created row, resolved during the batch:
    * - `Dune Chronicles Messiah` → two pass, neither an exact title → held (the wrong-sibling hazard).
-   * - `Sandworms of Dune` → one passes → ordinary enrichment.
+   * - `Sandworms of Dune` → one passes → resolves at create time.
    * - `Heretics of Dune` → several pass but one is an exact title → disambiguated to it, not a sibling.
    */
   function stubWindows(): void {
@@ -137,7 +139,8 @@ describe('Add All rows through the real enrichment job — integration (#2200)',
     });
   }
 
-  async function runAddAllThenEnrichment() {
+  async function runAddAll() {
+    stubWindows();
     const res = await e2e.app.inject({
       method: 'POST',
       url: `/api/books/${anchorId}/series/add-all`,
@@ -145,8 +148,12 @@ describe('Add All rows through the real enrichment job — integration (#2200)',
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ requested: 3, created: 3, failed: 0 });
+    return res.json();
+  }
 
-    stubWindows();
+  /** The cron still runs over the created rows; the seeded series must survive that pass too. */
+  async function runAddAllThenEnrichment() {
+    await runAddAll();
 
     // Build the enrichment collaborators the same way the scheduled job does, against this DB.
     const { BookService } = await import('../services/book.service.js');
@@ -165,42 +172,68 @@ describe('Add All rows through the real enrichment job — integration (#2200)',
   const rowFor = async (title: string) =>
     (await e2e.db.select().from(books).where(eq(books.title, title)))[0];
 
-  it('seeds ASIN-less pending rows that the enrichment job then resolves', async () => {
-    await runAddAllThenEnrichment();
+  it('creates the single-passing-candidate row already resolved, before any cron has run', async () => {
+    await runAddAll();
 
-    // The single-passing-candidate row enriched normally.
     const sandworms = await rowFor('Sandworms of Dune');
-    expect(sandworms).toMatchObject({ enrichmentStatus: 'enriched', asin: 'B_SAND', duration: 2400 });
+    // Resolved at batch time: asin and duration are on the row the request created, and the row
+    // stays pending so the cron still re-runs it, exactly as an import-list row does.
+    expect(sandworms).toMatchObject({ asin: 'B_SAND', duration: 2400, enrichmentStatus: 'pending' });
   });
 
-  it('holds an ambiguous window and leaves the seeded Hardcover data untouched', async () => {
-    await runAddAllThenEnrichment();
+  it('creates an ambiguous-window member from its own identity, marked failed for the retry window', async () => {
+    await runAddAll();
 
     const held = await rowFor('Dune Chronicles Messiah');
-    // No candidate reached the row: a hold is indistinguishable from a genuine miss.
+    // No candidate could be proven the row's book, so nothing durable was written onto it — but the
+    // member is still accounted for as a row rather than lost.
     expect(held).toMatchObject({
       enrichmentStatus: 'failed',
       asin: null,
       title: 'Dune Chronicles Messiah',
-      // The AC this test exists for — #2202's own rows carry no series, so only here is it observable.
       seriesName: SERIES,
       seriesPosition: 2,
     });
-    expect(held!.enrichmentAttempts).toBe(1);
   });
 
   it('resolves an ambiguous window that contains one exact title to that candidate, never a sibling', async () => {
-    await runAddAllThenEnrichment();
+    await runAddAll();
 
     const heretics = await rowFor('Heretics of Dune');
-    expect(heretics).toMatchObject({ enrichmentStatus: 'enriched', asin: 'B_HERETICS', duration: 1800 });
+    expect(heretics).toMatchObject({ asin: 'B_HERETICS', duration: 1800 });
     // The two other passing candidates in the same window must not have claimed the row — `B_DUNE`
     // is the one a first-match resolver would have taken.
     expect(heretics!.asin).not.toBe('B_DUNE');
     expect(heretics!.asin).not.toBe('B_DC_HERETICS');
   });
 
+  /**
+   * The accepted cost of import-list parity: a `failed` row waits out the job's one-hour retry
+   * window instead of being re-tried by the next five-minute cycle, and is then retried only while
+   * `enrichmentAttempts` stays under the cap — rather than pending forever.
+   */
+  it('leaves a just-held member untouched by the immediately following cron pass', async () => {
+    await runAddAllThenEnrichment();
+
+    const held = await rowFor('Dune Chronicles Messiah');
+    expect(held).toMatchObject({ enrichmentStatus: 'failed', asin: null });
+    expect(held!.enrichmentAttempts).toBe(0);
+  });
+
+  /**
+   * Now a create-time assertion as well as an enrichment one: every resolving candidate carries
+   * `PROVIDER_SERIES`, so the pin is the only thing keeping the row on the card the operator used.
+   */
   it('never rewrites a created row\'s seeded series name or position, whatever the outcome', async () => {
+    await runAddAll();
+
+    for (const [title, position] of [['Dune Chronicles Messiah', 2], ['Sandworms of Dune', 3], ['Heretics of Dune', 4]] as const) {
+      const row = await rowFor(title);
+      expect(row).toMatchObject({ seriesName: SERIES, seriesPosition: position });
+    }
+  });
+
+  it('keeps the seeded series name and position through the later enrichment pass too', async () => {
     await runAddAllThenEnrichment();
 
     for (const [title, position] of [['Dune Chronicles Messiah', 2], ['Sandworms of Dune', 3], ['Heretics of Dune', 4]] as const) {

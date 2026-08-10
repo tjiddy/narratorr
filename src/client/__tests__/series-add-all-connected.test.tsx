@@ -19,6 +19,60 @@ import { generatePublicId } from '../../server/utils/public-id.js';
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 import { toast } from 'sonner';
 
+/**
+ * The batch resolves each member before creating it (#2231), so the server's outbound metadata
+ * provider is stubbed alongside its outbound Hardcover call. Only the provider is replaced — the
+ * client↔server seam this suite exists for stays entirely real.
+ */
+const RESOLVED_COVERS: Record<string, string> = {
+  "Caliban's War": 'https://example.test/caliban.jpg',
+  "Abaddon's Gate": 'https://example.test/abaddon.jpg',
+};
+
+const mockAudibleProvider = {
+  name: 'Audible.com',
+  type: 'audible',
+  searchBooks: vi.fn().mockImplementation((query: string) => {
+    const hit = Object.entries(RESOLVED_COVERS).find(([title]) => query.startsWith(title));
+    return Promise.resolve({
+      books: hit
+        ? [{
+            asin: `B_${hit[0].replace(/[^A-Za-z]/g, '').toUpperCase()}`,
+            title: hit[0],
+            authors: [{ name: 'James S. A. Corey' }],
+            narrators: ['Jefferson Mays'],
+            // books.duration is MINUTES.
+            duration: 1230,
+            coverUrl: hit[1],
+          }]
+        : [],
+    });
+  }),
+  searchSeries: vi.fn().mockResolvedValue([]),
+  getBook: vi.fn().mockResolvedValue(null),
+  getBookDetailed: vi.fn().mockResolvedValue({ kind: 'not_found' }),
+  test: vi.fn().mockResolvedValue({ success: true }),
+};
+
+vi.mock('@core/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@core/index.js')>();
+  return {
+    ...actual,
+    METADATA_SEARCH_PROVIDER_FACTORIES: {
+      audible: vi.fn().mockImplementation(function () { return mockAudibleProvider; }),
+    },
+    AudnexusProvider: vi.fn().mockImplementation(function () {
+      return {
+        name: 'Audnexus', type: 'audnexus',
+        getBook: vi.fn().mockResolvedValue(null),
+        getBookDetailed: vi.fn().mockResolvedValue({ kind: 'not_found' }),
+        getAuthor: vi.fn().mockResolvedValue(null),
+        getChapterRuntime: vi.fn().mockResolvedValue({ kind: 'not_found' }),
+      };
+    }),
+  };
+});
+
 const ORIGINAL_FETCH = globalThis.fetch;
 
 const HARDCOVER_MEMBERS = [
@@ -136,19 +190,24 @@ describe('Add All — connected client → route → database → rerender (#220
     await user.click(trigger);
     await user.click(await screen.findByRole('button', { name: 'Add 2 books' }));
 
-    // The rows the user asked for exist in the database, seeded for deferred enrichment.
+    // The rows the user asked for exist in the database, resolved by the batch itself.
     await waitFor(async () => {
-      expect(Object.keys(await rowsByTitle())).toContain("Caliban's War");
+      expect(Object.keys(await rowsByTitle()).sort()).toEqual(["Abaddon's Gate", "Caliban's War", 'Leviathan Wakes']);
     }, { timeout: 5000 });
     const rows = await rowsByTitle();
     expect(Object.keys(rows).sort()).toEqual(["Abaddon's Gate", "Caliban's War", 'Leviathan Wakes']);
     for (const title of ["Caliban's War", "Abaddon's Gate"]) {
       expect(rows[title]).toMatchObject({
         seriesName: 'The Expanse',
-        asin: null,
-        enrichmentStatus: 'pending',
         status: 'wanted',
+        // No grey placeholder waiting on the cron: the user's click produced a row with its cover,
+        // duration and narrators already on it. SeriesCard renders no artwork of its own, so the
+        // durable row after the real round-trip is where this is observable at this seam.
+        coverUrl: RESOLVED_COVERS[title],
+        duration: 1230,
+        enrichmentStatus: 'pending',
       });
+      expect(rows[title]!.asin).not.toBeNull();
     }
     expect(rows["Caliban's War"]!.seriesPosition).toBe(2);
     expect(rows["Abaddon's Gate"]!.seriesPosition).toBe(3);
