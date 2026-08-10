@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildMutagenRequest,
   mutagenFormatForExtension,
+  TAGGABLE_EXTENSIONS,
   MP4_TAG_ATOMS,
   ID3_TAG_FRAMES,
   type MutagenTagOp,
@@ -238,6 +239,17 @@ describe('buildMutagenRequest — cover art (D4/AC10)', () => {
   it('leaves cover null when no cover path is supplied', () => {
     const { request } = opsFor('id3', { album: 'Book' });
     expect(request.cover).toBeNull();
+  });
+});
+
+describe('TAGGABLE_EXTENSIONS', () => {
+  // A file the directory scan collects but the per-file branch cannot type would report `skipped`
+  // on every retag, so the set and the branch must stay one source of truth.
+  it('contains exactly the extensions mutagenFormatForExtension can type', () => {
+    for (const ext of TAGGABLE_EXTENSIONS) {
+      expect(mutagenFormatForExtension(ext)).not.toBeNull();
+    }
+    expect([...TAGGABLE_EXTENSIONS].sort()).toEqual(['.m4a', '.m4b', '.mp3']);
   });
 });
 

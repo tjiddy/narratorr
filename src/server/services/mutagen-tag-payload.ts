@@ -71,11 +71,21 @@ const COVER_MIME_BY_EXTENSION: Record<string, string> = {
   '.png': 'image/png',
 };
 
+// mutagen's MP4 class handles .m4a identically to .m4b; no third branch is warranted.
+const FORMAT_BY_EXTENSION: Readonly<Record<string, MutagenFormat>> = {
+  '.mp3': 'id3',
+  '.m4a': 'mp4',
+  '.m4b': 'mp4',
+};
+
+/**
+ * Derived from the format map rather than declared beside it: a file the directory scan collects
+ * but the per-file branch cannot type would silently report `skipped` on every retag.
+ */
+export const TAGGABLE_EXTENSIONS: ReadonlySet<string> = new Set(Object.keys(FORMAT_BY_EXTENSION));
+
 export function mutagenFormatForExtension(ext: string): MutagenFormat | null {
-  if (ext === '.mp3') return 'id3';
-  // mutagen's MP4 class handles .m4a identically to .m4b; no third branch is warranted.
-  if (ext === '.m4a' || ext === '.m4b') return 'mp4';
-  return null;
+  return FORMAT_BY_EXTENSION[ext] ?? null;
 }
 
 function pushSeriesOps(ops: MutagenTagOp[], format: MutagenFormat, tags: TagMetadata): void {

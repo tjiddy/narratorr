@@ -630,6 +630,11 @@ describe('settingsApi', () => {
     }));
   });
 
+  it('getMutagenStatus → GET /settings/mutagen-status', async () => {
+    await settingsApi.getMutagenStatus();
+    expect(mockFetchApi).toHaveBeenCalledWith('/settings/mutagen-status');
+  });
+
   it('getFfmpegStatus → GET /settings/ffmpeg-status', async () => {
     await settingsApi.getFfmpegStatus();
     expect(mockFetchApi).toHaveBeenCalledWith('/settings/ffmpeg-status');

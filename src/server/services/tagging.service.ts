@@ -10,7 +10,7 @@ import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
 import { resolveMutagenPython } from '@core/utils/mutagen-resolver.js';
 import { collectSortedAudioFiles } from '@core/utils/collect-audio-files.js';
 import { COVER_FILE_REGEX } from '@core/utils/cover-regex.js';
-import { buildMutagenRequest, mutagenFormatForExtension } from './mutagen-tag-payload.js';
+import { buildMutagenRequest, mutagenFormatForExtension, TAGGABLE_EXTENSIONS } from './mutagen-tag-payload.js';
 import { writeTagsWithMutagen } from './mutagen-tag-writer.js';
 import { withTagWriteLock } from './tag-write-lock.js';
 import {
@@ -32,8 +32,6 @@ export type {
   RetagPlanFileDiff,
   RetagPlanCanonical,
 } from './retag-plan.js';
-
-const TAGGABLE_EXTENSIONS = new Set(['.mp3', '.m4a', '.m4b']);
 
 export interface TagMetadata {
   artist?: string; // author
