@@ -76,7 +76,21 @@ export const createBookBodySchema = z.object({
   genres: z.array(z.string()).optional(),
   providerId: z.string().optional(),
   searchImmediately: z.boolean().optional(),
+  // Raw provider format string, normalized to a ProductionType by the add ladder. Nullish rather
+  // than optional because providers report an absent format as null and `unknown` is a better
+  // answer there than a 400.
+  formatType: z.string().nullish(),
+  // Transient request-only flag: overrides an undecided `review` verdict, never `same-recording`.
+  // No column backs it; the created row must not record that a review was overridden.
+  overrideRecordingReview: z.boolean().optional(),
 }).strict();
+
+// The POST /api/books 409 discriminator. Deliberately NOT a widening of recordingVerdictSchema:
+// `owned-race` is a create-time ASIN collision reached after the resolver already said
+// different-recording, and `different-recording` itself never produces a 409.
+export const ADD_BOOK_CONFLICTS = ['same-recording', 'review', 'owned-race'] as const;
+export const addBookConflictSchema = z.enum(ADD_BOOK_CONFLICTS);
+export type AddBookConflict = z.infer<typeof addBookConflictSchema>;
 
 // Required rather than optional: the batch never falls back to settings.quality, and the popover
 // always derives an explicit boolean, so an omitted flag is a caller bug rather than "no search".
