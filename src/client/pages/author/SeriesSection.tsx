@@ -1,5 +1,5 @@
 import { type BookMetadata, type LibraryEntry } from '@/lib/api';
-import { isBookInLibrary } from '@/lib/helpers';
+import { findLibraryMatch } from '@/lib/helpers';
 import { PlusIcon, LoadingSpinner, LibraryIcon } from '@/components/icons';
 import { BookRow } from './BookRow.js';
 
@@ -20,8 +20,8 @@ export function SeriesSection({
   addingAsins: Set<string>;
   isAddingAll: boolean;
 }) {
-  const allInLibrary = books.every((b) => isBookInLibrary(b, libraryBooks));
-  const booksNotInLibrary = books.filter((b) => !isBookInLibrary(b, libraryBooks));
+  const allInLibrary = books.every((b) => findLibraryMatch(b, libraryBooks) !== null);
+  const booksNotInLibrary = books.filter((b) => findLibraryMatch(b, libraryBooks) === null);
 
   return (
     <div>
@@ -55,7 +55,7 @@ export function SeriesSection({
           <BookRow
             key={book.asin ?? book.title}
             book={book}
-            inLibrary={isBookInLibrary(book, libraryBooks)}
+            libraryBookId={findLibraryMatch(book, libraryBooks)?.entry.id ?? null}
             onAdd={(overrides) => onAddBook(book, overrides)}
             isAdding={addingAsins.has(book.asin ?? book.title)}
           />

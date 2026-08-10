@@ -49,6 +49,18 @@ describe('EventHistoryCard', () => {
     expect(screen.getByText('1h ago')).toBeInTheDocument();
   });
 
+  it('links the book title to its detail page when the event still has a bookId', () => {
+    renderWithProviders(<EventHistoryCard event={createMockEvent({ bookId: 42 })} />);
+    expect(screen.getByTestId('event-book-link')).toHaveAttribute('href', '/books/42');
+  });
+
+  // `book_events.book_id` is ON DELETE SET NULL, so a Deleted event outlives its book.
+  it('renders the book title as plain text once the book is gone (bookId null)', () => {
+    renderWithProviders(<EventHistoryCard event={createMockEvent({ bookId: null })} />);
+    expect(screen.queryByTestId('event-book-link')).not.toBeInTheDocument();
+    expect(screen.getByText(/The Way of Kings/)).toBeInTheDocument();
+  });
+
   it('shows book title when showBookTitle is true', () => {
     renderWithProviders(<EventHistoryCard event={createMockEvent()} showBookTitle />);
 

@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { type BookEvent, api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
@@ -176,7 +177,18 @@ export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, onRetry
 
           {showBookTitle && (
             <p className="text-sm text-muted-foreground mt-1 truncate">
-              {event.bookTitle}
+              {/* `bookId` is SET NULL on book delete, so a Deleted event keeps its title as plain text. */}
+              {event.bookId != null ? (
+                <Link
+                  to={`/books/${event.bookId}`}
+                  className="hover:text-foreground hover:underline focus-ring rounded"
+                  data-testid="event-book-link"
+                >
+                  {event.bookTitle}
+                </Link>
+              ) : (
+                event.bookTitle
+              )}
               {event.authorName && <span className="text-muted-foreground/50"> by {event.authorName}</span>}
             </p>
           )}

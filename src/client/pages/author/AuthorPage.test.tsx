@@ -223,7 +223,7 @@ describe('AuthorPage', () => {
     });
 
     await waitFor(() => {
-      const inLibraryIcons = screen.queryAllByLabelText('In library');
+      const inLibraryIcons = screen.queryAllByLabelText('View this book in your library');
       expect(inLibraryIcons.length).toBe(0);
     });
   });
@@ -264,7 +264,7 @@ describe('AuthorPage', () => {
     });
 
     await waitFor(() => {
-      const inLibrary = screen.getAllByLabelText('In library');
+      const inLibrary = screen.getAllByLabelText('View this book in your library');
       expect(inLibrary.length).toBe(1);
     });
   });

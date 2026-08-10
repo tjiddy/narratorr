@@ -118,7 +118,8 @@ describe('SeriesCard', () => {
 
     const link = await screen.findByRole('link', { name: 'Kalimdor' });
     expect(link).toHaveAttribute('href', '/books/77');
-    expect(screen.getByText('In Library')).toBeInTheDocument();
+    // The badge is a second route to the same book, so the whole row need not be a link.
+    expect(screen.getByTestId('series-card-member-badge-link')).toHaveAttribute('href', '/books/77');
     expect(screen.getAllByTestId('series-card-add')).toHaveLength(1);
     expect(screen.getAllByTestId('series-card-member')).toHaveLength(2);
   });

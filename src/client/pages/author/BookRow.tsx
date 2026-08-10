@@ -1,3 +1,4 @@
+import { Link } from 'react-router';
 import { type BookMetadata } from '@/lib/api';
 import { formatDurationMinutes } from '@/lib/format';
 import { resolveUrl } from '@/lib/url-utils';
@@ -7,12 +8,13 @@ import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 
 export function BookRow({
   book,
-  inLibrary,
+  libraryBookId,
   onAdd,
   isAdding,
 }: {
   book: BookMetadata;
-  inLibrary: boolean;
+  /** The owned book's id, or null when this edition is not in the library. Null also drives the Add affordance. */
+  libraryBookId: number | null;
   onAdd: (overrides: { searchImmediately: boolean }) => void;
   isAdding: boolean;
 }) {
@@ -45,7 +47,13 @@ export function BookRow({
           {seriesPos != null && (
             <span className="text-muted-foreground font-normal">#{seriesPos} </span>
           )}
-          {book.title}
+          {libraryBookId !== null ? (
+            <Link to={`/books/${libraryBookId}`} className="hover:underline focus-ring rounded" data-testid="author-book-title-link">
+              {book.title}
+            </Link>
+          ) : (
+            book.title
+          )}
         </span>
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5 line-clamp-1">
           {narratorNames && <span>{narratorNames}</span>}
@@ -55,10 +63,14 @@ export function BookRow({
       </div>
 
       <div className="shrink-0">
-        {inLibrary ? (
-          <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-success/10 text-success" role="img" aria-label="In library">
+        {libraryBookId !== null ? (
+          <Link
+            to={`/books/${libraryBookId}`}
+            className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-success/10 text-success hover:bg-success/20 transition-colors focus-ring"
+            aria-label="View this book in your library"
+          >
             <CheckIcon className="w-4 h-4" />
-          </span>
+          </Link>
         ) : (
           <AddBookPopover onAdd={onAdd} isPending={isAdding} />
         )}

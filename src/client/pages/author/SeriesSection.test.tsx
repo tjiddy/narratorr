@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SeriesSection } from './SeriesSection';
@@ -25,9 +26,11 @@ function renderSection(props: Partial<typeof defaultProps> & { books?: ReturnTyp
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const { books = [createMockBookMetadata()], libraryBooks, ...rest } = props;
   return render(
-    <QueryClientProvider client={queryClient}>
-      <SeriesSection {...defaultProps} {...rest} books={books} {...(libraryBooks !== undefined && { libraryBooks })} />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <SeriesSection {...defaultProps} {...rest} books={books} {...(libraryBooks !== undefined && { libraryBooks })} />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -100,7 +103,7 @@ describe('SeriesSection', () => {
     const book = createMockBookMetadata();
     const libraryBooks = [createMockBook({ asin: 'B00DIFFEDN' })];
     renderSection({ books: [book], libraryBooks });
-    expect(screen.getByLabelText('In library')).toBeInTheDocument();
+    expect(screen.getByLabelText('View this book in your library')).toBeInTheDocument();
     expect(screen.queryByText(/Add All/)).not.toBeInTheDocument();
   });
 });

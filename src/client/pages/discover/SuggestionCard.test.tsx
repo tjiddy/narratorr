@@ -189,6 +189,7 @@ describe('SuggestionCard', () => {
       );
       const link = screen.getByRole('link', { name: /view this book in your library/i });
       expect(link).toHaveAttribute('href', '/books/42');
+      expect(screen.getByTestId('suggestion-title-link')).toHaveAttribute('href', '/books/42');
       expect(screen.getByText('In Library')).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /^add book$/i })).not.toBeInTheDocument();
     });

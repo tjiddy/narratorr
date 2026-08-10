@@ -144,6 +144,18 @@ describe('SearchBookCard', () => {
     expect(link).toHaveAttribute('href', '/books/42');
   });
 
+  it('links the title to the owned book on an exact-ASIN match', () => {
+    const book = createMockBookMetadata();
+    const libraryBooks = [createMockBook({ id: 42, ...(book.asin !== undefined ? { asin: book.asin } : {}) })];
+    renderCard({}, libraryBooks);
+    expect(screen.getByTestId('search-card-title-link')).toHaveAttribute('href', '/books/42');
+  });
+
+  it('leaves the title unlinked when the result is not in the library', () => {
+    renderCard();
+    expect(screen.queryByTestId('search-card-title-link')).not.toBeInTheDocument();
+  });
+
   it('shows the related-edition badge AND a working Add on a title-identity match', async () => {
     vi.mocked(api.addBook).mockResolvedValue({ id: 1, title: 'The Way of Kings' } as never);
     // Same title and author but a different ASIN forces title identity.

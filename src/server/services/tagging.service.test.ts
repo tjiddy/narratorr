@@ -1050,7 +1050,12 @@ describe('tagFile', () => {
 
       expect(result.tagged).toBe(1);
       expect(mutagenRequest(0).ops).toEqual([]);
-      expect(mutagenRequest(0).cover).toEqual({ path: '/books/test/cover.jpg', mime: 'image/jpeg' });
+      // Unlike the sibling cases, this path is discovered via `findCoverFile`'s `path.join`, which
+      // emits backslashes on Windows and forward slashes on Linux. Production is POSIX because the
+      // app runs in Docker, so normalize the actual rather than weakening the expectation.
+      const cover = mutagenRequest(0).cover as { path: string; mime: string };
+      expect({ ...cover, path: cover.path.split('\\').join('/') })
+        .toEqual({ path: '/books/test/cover.jpg', mime: 'image/jpeg' });
     });
 
     describe('per-file title (#1090)', () => {

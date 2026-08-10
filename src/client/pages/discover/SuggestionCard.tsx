@@ -1,3 +1,4 @@
+import { Link } from 'react-router';
 import { CoverImage } from '@/components/CoverImage';
 import { AddBookPopover } from '@/components/AddBookPopover';
 import { InLibraryBadge } from '@/components/InLibraryBadge';
@@ -10,6 +11,16 @@ import {
   CheckCircleIcon,
   XIcon,
 } from '@/components/icons';
+
+/** A suggestion is only linkable once it owns a library row; before that the title is plain text. */
+function SuggestionTitle({ title, libraryBookId }: { title: string; libraryBookId: number | null | undefined }) {
+  if (libraryBookId == null) return <>{title}</>;
+  return (
+    <Link to={`/books/${libraryBookId}`} className="hover:underline focus-ring rounded" data-testid="suggestion-title-link">
+      {title}
+    </Link>
+  );
+}
 
 export function SuggestionCard({
   suggestion,
@@ -56,7 +67,7 @@ export function SuggestionCard({
 
         <div className="flex-1 min-w-0 flex flex-col">
           <h3 className="font-display text-lg sm:text-xl font-semibold line-clamp-2 group-hover:text-primary transition-colors">
-            {suggestion.title}
+            <SuggestionTitle title={suggestion.title} libraryBookId={libraryBookId} />
           </h3>
 
           <p className="text-muted-foreground mt-1">

@@ -125,7 +125,17 @@ function MemberRow({ member, card }: MemberRowProps) {
       </span>
       <span className="ml-2 shrink-0">
         {member.inLibrary ? (
-          <span className="text-xs text-emerald-500">In Library</span>
+          member.libraryBookId !== null ? (
+            <Link
+              to={`/books/${member.libraryBookId}`}
+              className="text-xs text-emerald-500 hover:underline focus-ring rounded"
+              data-testid="series-card-member-badge-link"
+            >
+              In Library
+            </Link>
+          ) : (
+            <span className="text-xs text-emerald-500">In Library</span>
+          )
         ) : (
           <Link
             to={buildAddSearchHref(member, card)}

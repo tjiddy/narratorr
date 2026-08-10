@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router';
 import { CoverImage } from '@/components/CoverImage';
 import { AddBookPopover } from '@/components/AddBookPopover';
 import { InLibraryBadge } from '@/components/InLibraryBadge';
@@ -98,7 +99,13 @@ export function SearchBookCard({
 
         <div className="flex-1 min-w-0 flex flex-col">
           <h3 className="font-display text-lg sm:text-xl font-semibold line-clamp-2 group-hover:text-primary transition-colors">
-            {book.title}
+            {inLibraryBookId !== null ? (
+              <Link to={`/books/${inLibraryBookId}`} className="hover:underline focus-ring rounded" data-testid="search-card-title-link">
+                {book.title}
+              </Link>
+            ) : (
+              book.title
+            )}
           </h3>
 
           {authorNames && (
