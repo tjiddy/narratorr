@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 // Direct import keeps Node-only code out of the core/utils barrel consumed by Vite.
 import { sanitizedEnv } from '@core/utils/sanitized-env.js';
-import { MUTAGEN_PROGRAM, MUTAGEN_COVER_VERIFY_KEY } from '@core/utils/mutagen-program.js';
+import { MUTAGEN_PROGRAM, MUTAGEN_COVER_VERIFY_KEY, MUTAGEN_COVER_FORMAT_KEY } from '@core/utils/mutagen-program.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import type { MutagenRequest } from './mutagen-tag-payload.js';
 
@@ -18,6 +18,7 @@ interface MutagenResponse {
   sizeBefore?: unknown;
   sizeAfter?: unknown;
   verified?: unknown;
+  coverDigest?: unknown;
 }
 
 /** The helper echoes every written value back; a >64 KB description travels twice. */
@@ -59,15 +60,22 @@ function runProgram(
 export function verifyRequestedKeys(
   request: MutagenRequest,
   verified: Record<string, string>,
+  coverDigest?: string | undefined,
 ): string | null {
   const missing: string[] = [];
   for (const op of request.ops) {
     if (verified[op.key] !== op.value) missing.push(op.key);
   }
-  // A cover has no requested value to compare — the helper reports the stored byte length instead.
+  // The cover's requested value is a digest only the helper can compute — it is the only side that
+  // reads the source image. Comparing the digest it wrote against the digest it read back is what
+  // proves an overwrite REPLACED existing art; a byte-length check cannot, because a retained
+  // cover is also nonzero.
   if (request.cover) {
-    const storedBytes = verified[MUTAGEN_COVER_VERIFY_KEY];
-    if (!storedBytes || storedBytes === '0') missing.push('cover art');
+    if (!coverDigest || verified[MUTAGEN_COVER_VERIFY_KEY] !== coverDigest) {
+      missing.push('cover art');
+    } else if (verified[MUTAGEN_COVER_FORMAT_KEY] !== request.cover.mime) {
+      missing.push('cover art format');
+    }
   }
   return missing.length > 0 ? `Tag verification failed for: ${missing.join(', ')}` : null;
 }
@@ -101,7 +109,8 @@ export async function writeTagsWithMutagen(
   }
 
   const verified = (response.verified ?? {}) as Record<string, string>;
-  const failure = verifyRequestedKeys(request, verified);
+  const coverDigest = typeof response.coverDigest === 'string' ? response.coverDigest : undefined;
+  const failure = verifyRequestedKeys(request, verified, coverDigest);
   if (failure) return { ok: false, reason: failure, ...sizes };
 
   return { ok: true, ...sizes };

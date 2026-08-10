@@ -172,27 +172,93 @@ describe('writeTagsWithMutagen — success predicate (D2/AC12)', () => {
   });
 });
 
-describe('verifyRequestedKeys — cover art', () => {
+describe('verifyRequestedKeys — cover art (F1)', () => {
   const withCover: MutagenRequest = { ...REQUEST, ops: [], cover: { path: '/c.jpg', mime: 'image/jpeg' } };
+  const WRITTEN = 'a'.repeat(64);
+  const STALE = 'b'.repeat(64);
 
-  it('passes when the helper reports a stored cover byte length', () => {
-    expect(verifyRequestedKeys(withCover, { __cover__: '2048' })).toBeNull();
+  it('passes when the stored digest equals the digest the helper wrote', () => {
+    expect(verifyRequestedKeys(
+      withCover,
+      { __cover__: WRITTEN, __cover_format__: 'image/jpeg' },
+      WRITTEN,
+    )).toBeNull();
+  });
+
+  // The F1 regression: an overwrite that silently retained the OLD art reports a nonzero,
+  // well-formed cover — only the digest comparison can tell it apart from a real replacement.
+  it('fails when the stored digest is the OLD image rather than the requested one', () => {
+    expect(verifyRequestedKeys(
+      withCover,
+      { __cover__: STALE, __cover_format__: 'image/jpeg' },
+      WRITTEN,
+    )).toContain('cover art');
   });
 
   it.each([
-    ['absent', {}],
-    ['zero bytes', { __cover__: '0' }],
-  ])('fails when the stored cover is %s', (_name, verified) => {
-    expect(verifyRequestedKeys(withCover, verified)).toContain('cover art');
+    ['the cover key is absent', {}],
+    ['the stored digest is empty', { __cover__: '' }],
+  ])('fails when %s', (_name, verified) => {
+    expect(verifyRequestedKeys(withCover, verified, WRITTEN)).toContain('cover art');
   });
 
-  it('ignores the cover key when no cover was requested', () => {
-    expect(verifyRequestedKeys({ ...REQUEST, ops: [] }, {})).toBeNull();
+  it('fails when the helper reported no coverDigest at all', () => {
+    expect(verifyRequestedKeys(
+      withCover,
+      { __cover__: WRITTEN, __cover_format__: 'image/jpeg' },
+      undefined,
+    )).toContain('cover art');
+  });
+
+  it('fails when the stored image format is not the requested mime', () => {
+    const failure = verifyRequestedKeys(
+      withCover,
+      { __cover__: WRITTEN, __cover_format__: 'image/png' },
+      WRITTEN,
+    );
+    expect(failure).toContain('cover art format');
+  });
+
+  it('ignores the cover keys when no cover was requested', () => {
+    expect(verifyRequestedKeys({ ...REQUEST, ops: [] }, {}, undefined)).toBeNull();
   });
 
   it('names every missing key, not just the first', () => {
     const failure = verifyRequestedKeys(REQUEST, {});
     expect(failure).toContain('©nam');
     expect(failure).toContain('----:com.apple.iTunes:ASIN');
+  });
+});
+
+describe('writeTagsWithMutagen — cover digest plumbing (F1)', () => {
+  const withCover: MutagenRequest = {
+    ...REQUEST,
+    ops: [{ key: '©alb', kind: 'text', value: 'Book' }],
+    cover: { path: '/books/cover.jpg', mime: 'image/jpeg' },
+  };
+  const DIGEST = 'c'.repeat(64);
+
+  it('threads coverDigest from the response into the predicate and succeeds on a match', async () => {
+    armHelper({ stdout: JSON.stringify({
+      ok: true,
+      verified: { '©alb': 'Book', __cover__: DIGEST, __cover_format__: 'image/jpeg' },
+      coverDigest: DIGEST,
+    }) });
+
+    expect(await writeTagsWithMutagen('/usr/bin/python3', withCover)).toEqual({ ok: true });
+  });
+
+  it('reports failed when the stored cover digest does not match what was written', async () => {
+    armHelper({ stdout: JSON.stringify({
+      ok: true,
+      sizeBefore: 1000, sizeAfter: 1000,
+      verified: { '©alb': 'Book', __cover__: 'd'.repeat(64), __cover_format__: 'image/jpeg' },
+      coverDigest: DIGEST,
+    }) });
+
+    const result = await writeTagsWithMutagen('/usr/bin/python3', withCover);
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('cover art');
   });
 });

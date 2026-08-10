@@ -13,11 +13,13 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync, statSync, copyFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, statSync, copyFileSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TaggingService, tagFile, type TagMetadata } from './tagging.service.js';
 import { readExistingTags } from './retag-plan.js';
+import { verifyRequestedKeys } from './mutagen-tag-writer.js';
 import { resetMutagenPythonCache } from '@core/utils/mutagen-resolver.js';
 
 const FFMPEG = 'ffmpeg';
@@ -53,7 +55,7 @@ const CAN_RUN = HAS_FFMPEG && PYTHON !== null;
 
 /** Raw mutagen dump — the only observable that can see `©mvn`/`©mvi`/`MVNM`/`MVIN` at all. */
 const DUMP_PROGRAM = `
-import json, sys
+import hashlib, json, sys
 path = sys.argv[1]
 out = {}
 if path.lower().endswith('.mp3'):
@@ -65,7 +67,7 @@ if path.lower().endswith('.mp3'):
     if tag is not None:
         for key, frame in tag.items():
             if key.startswith('APIC'):
-                out[key] = 'picture:' + str(len(frame.data))
+                out[key] = 'picture:' + hashlib.sha256(frame.data).hexdigest() + ':' + frame.mime
             elif getattr(frame, 'text', None):
                 out[key] = str(frame.text[0])
 else:
@@ -73,7 +75,7 @@ else:
     for key, value in MP4(path).items():
         first = value[0]
         if key == 'covr':
-            out[key] = 'picture:' + str(len(bytes(first)))
+            out[key] = 'picture:' + hashlib.sha256(bytes(first)).hexdigest()
         elif isinstance(first, bytes):
             out[key] = first.decode('utf-8')
         elif isinstance(first, tuple):
@@ -86,6 +88,19 @@ sys.stdout.write(json.dumps(out))
 function dumpTags(file: string): Record<string, string> {
   const stdout = execFileSync(PYTHON!, ['-c', DUMP_PROGRAM, file], { encoding: 'utf8' });
   return JSON.parse(stdout) as Record<string, string>;
+}
+
+/** SHA-256 of a cover file on disk — the expected value for a stored image. */
+function sha256(file: string): string {
+  return createHash('sha256').update(readFileSync(file)).digest('hex');
+}
+
+/** The single stored APIC frame, whatever description mutagen keyed it under. */
+function storedApic(file: string): string | undefined {
+  const raw = dumpTags(file);
+  const keys = Object.keys(raw).filter(key => key.startsWith('APIC'));
+  expect(keys).toHaveLength(1);
+  return raw[keys[0]!];
 }
 
 function readChapterCount(file: string): number {
@@ -381,17 +396,16 @@ describe.skipIf(!CAN_RUN)('mutagen tag-write round-trip (real ffmpeg + real muta
       const result = await write(file, { album: 'Book' }, cover);
 
       expect(result.status).toBe('tagged');
-      expect(dumpTags(file).covr).toMatch(/^picture:\d+$/);
+      expect(dumpTags(file).covr).toBe(`picture:${sha256(cover)}`);
     });
 
-    it('embeds a JPEG cover on MP3 as an APIC frame', async () => {
+    it('embeds a JPEG cover on MP3 as an APIC frame carrying the exact source bytes', async () => {
       const file = makeAudio('cover.mp3');
       const cover = makeCover('mp3-cover.jpg', 'green', '64x64');
 
       await write(file, { album: 'Book' }, cover);
 
-      const raw = dumpTags(file);
-      expect(Object.keys(raw).some(key => key.startsWith('APIC'))).toBe(true);
+      expect(storedApic(file)).toBe(`picture:${sha256(cover)}:image/jpeg`);
     });
 
     it('warns but still writes every other field for a .webp cover (D4)', async () => {
@@ -406,11 +420,60 @@ describe.skipIf(!CAN_RUN)('mutagen tag-write round-trip (real ffmpeg + real muta
       expect((await readExistingTags(file)).asin).toBe('B00ABCDEFG');
     });
 
+    // F1: a length-only check accepted a retained old cover. These assert the EXACT stored bytes,
+    // so the test reds if the replacement silently keeps image A.
+    it('replaces an existing M4B cover with the requested image, byte for byte', async () => {
+      const file = makeAudio('replace.m4b');
+      const coverA = makeCover('replace-a.jpg', 'red', '96x96');
+      const coverB = makeCover('replace-b.png', 'blue', '32x32');
+
+      await write(file, { album: 'Book' }, coverA);
+      expect(dumpTags(file).covr).toBe(`picture:${sha256(coverA)}`);
+
+      const result = await write(file, { album: 'Book' }, coverB);
+
+      expect(result.status).toBe('tagged');
+      expect(dumpTags(file).covr).toBe(`picture:${sha256(coverB)}`);
+      expect(dumpTags(file).covr).not.toBe(`picture:${sha256(coverA)}`);
+    });
+
+    it('replaces an existing MP3 cover with the requested image, byte for byte', async () => {
+      const file = makeAudio('replace.mp3');
+      const coverA = makeCover('replace-mp3-a.jpg', 'red', '96x96');
+      const coverB = makeCover('replace-mp3-b.png', 'blue', '32x32');
+
+      await write(file, { album: 'Book' }, coverA);
+      expect(storedApic(file)).toBe(`picture:${sha256(coverA)}:image/jpeg`);
+
+      const result = await write(file, { album: 'Book' }, coverB);
+
+      expect(result.status).toBe('tagged');
+      // One frame only: APIC hashes on its description, so a stale frame would survive a naive add.
+      expect(storedApic(file)).toBe(`picture:${sha256(coverB)}:image/png`);
+    });
+
+    it('reports failed rather than tagged if a replacement leaves the old image in place', async () => {
+      const file = makeAudio('replace-guard.m4b');
+      const coverA = makeCover('guard-a.jpg', 'red', '96x96');
+      await write(file, { album: 'Book' }, coverA);
+
+      // Point the writer at an image whose bytes differ while the file still holds A: the helper's
+      // written-vs-read-back digests disagree, which is exactly the F1 case the predicate must catch.
+      const failure = verifyRequestedKeys(
+        { path: file, format: 'mp4', ops: [], cover: { path: coverA, mime: 'image/jpeg' } },
+        { __cover__: sha256(coverA), __cover_format__: 'image/jpeg' },
+        sha256(makeCover('guard-b.png', 'blue', '32x32')),
+      );
+
+      expect(failure).toContain('cover art');
+    });
+
     it('leaves an existing embedded picture untouched when no cover is supplied (AC10)', async () => {
       const file = makeAudio('keeps-art.m4b');
-      await write(file, { album: 'First' }, makeCover('keep-cover.jpg', 'red', '64x64'));
+      const keepCover = makeCover('keep-cover.jpg', 'red', '64x64');
+      await write(file, { album: 'First' }, keepCover);
       const before = dumpTags(file).covr;
-      expect(before).toMatch(/^picture:\d+$/);
+      expect(before).toBe(`picture:${sha256(keepCover)}`);
 
       await write(file, { album: 'Second' });
 

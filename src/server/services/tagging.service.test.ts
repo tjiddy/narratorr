@@ -5,6 +5,9 @@ import { MP4_TAG_ATOMS, ID3_TAG_FRAMES, type MutagenRequest } from './mutagen-ta
 import { createMockSettingsService } from '../__tests__/helpers.js';
 
 // A plain closure survives vi.clearAllMocks; tests toggle auto-detection through hoisted state.
+/** Stand-in for the SHA-256 the real helper reports for a written cover. */
+const FAKE_COVER_DIGEST = 'f'.repeat(64);
+
 const { mutagenState } = vi.hoisted(() => ({
   mutagenState: {
     resolves: true,
@@ -46,8 +49,17 @@ vi.mock('node:child_process', () => ({
           if (outcome?.stdout !== undefined) return cb(null, outcome.stdout, '');
           const verified: Record<string, string> = {};
           for (const op of request.ops) verified[op.key] = op.value;
-          if (request.cover) verified.__cover__ = '2048';
-          cb(null, JSON.stringify({ ok: true, sizeBefore: 1000, sizeAfter: 1100, verified }), '');
+          // Mirror the helper's cover contract: the digest it wrote must equal the digest it read
+          // back, and the stored format must be the requested mime (#2210 F1).
+          const coverDigest = request.cover ? FAKE_COVER_DIGEST : undefined;
+          if (request.cover) {
+            verified.__cover__ = FAKE_COVER_DIGEST;
+            verified.__cover_format__ = request.cover.mime;
+          }
+          cb(null, JSON.stringify({
+            ok: true, sizeBefore: 1000, sizeAfter: 1100, verified,
+            ...(coverDigest && { coverDigest }),
+          }), '');
         },
       },
     };
@@ -620,6 +632,25 @@ describe('tagFile', () => {
 
     expect(result.status).toBe('tagged');
     expect(mutagenRequest(0).cover).toEqual({ path: '/books/cover.jpg', mime: 'image/jpeg' });
+  });
+
+  // F1: the operator-visible consequence — a retained old cover must not be reported as `tagged`.
+  it('reports failed when the helper stored a cover other than the requested image', async () => {
+    (parseFile as Mock).mockResolvedValue({ common: { picture: [] }, format: {} });
+    armMutagenOutcome({
+      stdout: JSON.stringify({
+        ok: true,
+        sizeBefore: 1000,
+        sizeAfter: 1100,
+        verified: { '©alb': 'Book', __cover__: 'a'.repeat(64), __cover_format__: 'image/jpeg' },
+        coverDigest: 'b'.repeat(64),
+      }),
+    });
+
+    const result = await tagFile('/books/file.m4b', '/usr/bin/python3', { album: 'Book' }, 'overwrite', '/books/cover.jpg');
+
+    expect(result.status).toBe('failed');
+    expect(result.reason).toContain('cover art');
   });
 
   it('warns but still writes the tags for a .webp cover (D4)', async () => {
