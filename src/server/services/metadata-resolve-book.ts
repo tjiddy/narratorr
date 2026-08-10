@@ -72,7 +72,7 @@ export async function resolveBook(deps: ResolveBookDeps, input: ResolveBookInput
 /**
  * Candidates the gate admits, keyed by canonical ASIN so the same book listed twice is one
  * candidate rather than an ambiguity. A null key is identity-less: such candidates never collapse
- * with each other or with a keyed one, so a window of untitled-ASIN duplicates still holds.
+ * with each other or with a keyed one, so a window of ASIN-less siblings still holds.
  */
 function distinctPassingCandidates(candidates: BookMetadata[], item: MatchValidationItem): BookMetadata[] {
   const seen = new Set<string>();
