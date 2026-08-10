@@ -591,6 +591,18 @@ describe('ImportStagingService (DB-backed, #1893)', () => {
       await expect(service.deleteSubmission(9999)).rejects.toMatchObject({ httpStatus: 404, code: 'submission-not-found' });
     });
 
+    it('logs the deleted submission id at info, and logs nothing when the delete is refused', async () => {
+      const info = vi.fn();
+      const logged = new ImportStagingService(db, { ...noopLog, info } as unknown as FastifyBaseLogger, nudge as unknown as () => void);
+      const id = await seedTerminal('del-logged');
+      await logged.deleteSubmission(id);
+      expect(info).toHaveBeenCalledWith({ submissionId: id }, expect.stringContaining('deleted'));
+
+      info.mockClear();
+      await expect(logged.deleteSubmission(9999)).rejects.toThrow();
+      expect(info).not.toHaveBeenCalled();
+    });
+
     it('delete racing finalize on the write lane: the finalized header survives, delete 409s (atomic WHERE status != processing)', async () => {
       const created = await service.createSubmission(createBody);
       await putAll(created.id);
