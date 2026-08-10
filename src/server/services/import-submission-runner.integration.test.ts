@@ -844,7 +844,8 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
     it('AC7 distinct editions (single narrator vs NAMED full-cast, unequal ASINs): both import; TWO books', async () => {
       const subId = await seedProcessing([
         ladderItem('/hp/a', 'Harry Potter', { narrators: ['Jim Dale'], asin: 'B0JIMDALE' }),
-        // Named cast members must be used; the "Full Cast" placeholder follows a different comparison path.
+        // Named cast members must be used; an ALL-placeholder credit ("Full Cast" alone) has no survivor
+        // set and reviews instead of separating the editions (#2206).
         ladderItem('/hp/b', 'Harry Potter', { narrators: ['Hugh Laurie', 'Cush Jumbo'], asin: 'B0FULLCAST' }),
       ]);
 

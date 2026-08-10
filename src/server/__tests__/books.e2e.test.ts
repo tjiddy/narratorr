@@ -122,6 +122,70 @@ describe('Books E2E', () => {
   });
 });
 
+// Its own app/DB: the suite above asserts absolute list state, so a second book cannot live there.
+describe('POST /api/books — a full-cast edition of an owned book is added, not refused (#2206)', () => {
+  let e2e: E2EApp;
+
+  // `duration` is MINUTES; the prod specimen is a 13h17m solo edition and a 10h33m full-cast one.
+  const SOLO = {
+    title: 'The Golden Compass',
+    authors: [{ name: 'Philip Pullman' }],
+    narrators: ['Ruth Wilson'],
+    asin: 'B0D9C9BMTW',
+    duration: 797,
+  };
+  const FULL_CAST = {
+    title: 'The Golden Compass',
+    authors: [{ name: 'Philip Pullman' }],
+    narrators: ['Philip Pullman', 'Rupert Degas', 'Sean Barrett', 'Full Cast'],
+    asin: 'B0FULLCAST',
+    duration: 633,
+  };
+
+  const post = (payload: unknown) => e2e.app.inject({ method: 'POST', url: '/api/books', payload });
+
+  beforeAll(async () => {
+    e2e = await createE2EApp();
+  });
+
+  afterAll(async () => {
+    await e2e.cleanup();
+  });
+
+  it('seeds the solo-narrator incumbent into an empty library', async () => {
+    const res = await post(SOLO);
+    expect(res.statusCode).toBe(201);
+    expect(res.json().narrators.map((n: { name: string }) => n.name)).toEqual(['Ruth Wilson']);
+  });
+
+  it('accepts the full-cast edition with 201 and keeps both rows', async () => {
+    const res = await post(FULL_CAST);
+
+    expect(res.statusCode).toBe(201);
+    const created = res.json();
+    expect(created.asin).toBe('B0FULLCAST');
+    expect(created.narrators.map((n: { name: string }) => n.name)).toContain('Rupert Degas');
+
+    const list = await e2e.app.inject({ method: 'GET', url: '/api/books' });
+    expect(list.json().total).toBe(2);
+    expect((list.json().data as { asin: string }[]).map((b) => b.asin).sort()).toEqual(['B0D9C9BMTW', 'B0FULLCAST']);
+  });
+
+  // Asserts the delta, not the absolute count: the row total here is inherited from the case above,
+  // so an absolute assertion would make this control fail for a reason that is not its own.
+  it('still refuses a re-post of the incumbent recording with 409, creating no row', async () => {
+    const totalOf = async (): Promise<number> =>
+      (await e2e.app.inject({ method: 'GET', url: '/api/books' })).json().total;
+    const before = await totalOf();
+
+    const res = await post({ ...SOLO, asin: undefined });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json().asin).toBe('B0D9C9BMTW');
+    expect(await totalOf()).toBe(before);
+  });
+});
+
 // Add-book ownership depends on this endpoint staying status-blind and unpaginated.
 describe('GET /api/books/identifiers — unpaginated and status-blind (#1916)', () => {
   let e2e: E2EApp;
