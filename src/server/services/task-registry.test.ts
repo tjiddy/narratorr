@@ -265,6 +265,8 @@ describe('TaskRegistry', () => {
       await expect(registry.runTask('job')).rejects.toSatisfy(
         (e: unknown) => e instanceof TaskRegistryError && e.code === 'ALREADY_RUNNING',
       );
+      // The guard must exclude the second run, not merely report it: one body invocation.
+      expect(fn).toHaveBeenCalledOnce();
       resolve!();
       await first;
     });
@@ -277,12 +279,17 @@ describe('TaskRegistry', () => {
 
     it('throws TaskRegistryError with code ALREADY_RUNNING when task is already running in runExclusive()', async () => {
       let resolve: () => void;
-      registry.register('job', 'cron', vi.fn().mockReturnValue(new Promise<void>((r) => { resolve = r; })), '*/5 * * * *');
+      const fn = vi.fn().mockReturnValue(new Promise<void>((r) => { resolve = r; }));
+      const exclusiveBody = vi.fn().mockResolvedValue('x');
+      registry.register('job', 'cron', fn, '*/5 * * * *');
 
       const first = registry.runTask('job');
-      await expect(registry.runExclusive('job', async () => 'x')).rejects.toSatisfy(
+      await expect(registry.runExclusive('job', exclusiveBody)).rejects.toSatisfy(
         (e: unknown) => e instanceof TaskRegistryError && e.code === 'ALREADY_RUNNING',
       );
+      // Excluded, not merely reported: the exclusive body never ran alongside the first run.
+      expect(exclusiveBody).not.toHaveBeenCalled();
+      expect(fn).toHaveBeenCalledOnce();
       resolve!();
       await first;
     });

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import type { TaskMetadata } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
@@ -24,7 +24,13 @@ function TaskRow({ task }: { task: TaskMetadata }) {
       queryClient.invalidateQueries({ queryKey: queryKeys.systemTasks() });
     },
     onError: (err) => {
-      toast.error(getErrorMessage(err));
+      // A 409 means the scheduler claimed the task inside the poll-staleness window: the row
+      // still read Idle, but the run the user asked for is happening. Not a failure to them.
+      if (err instanceof ApiError && err.status === 409) {
+        toast.info(err.message);
+      } else {
+        toast.error(getErrorMessage(err));
+      }
       queryClient.invalidateQueries({ queryKey: queryKeys.systemTasks() });
     },
     onSettled: () => setRunningName(null),
