@@ -75,7 +75,9 @@ export interface ResolvedAddDeps {
  * `same-recording` or `review` verdict always carries its incumbent.
  */
 export type ResolvedAddResult =
-  | { outcome: 'created'; book: BookDetail }
+  // authorName is the primary author the row was created under, which under `adopt` is the
+  // resolved one rather than anything the caller holds.
+  | { outcome: 'created'; book: BookDetail; authorName: string | null }
   | { outcome: 'same-recording'; existingBookId: number | null }
   | { outcome: 'review'; existingBookId: number | null; recordingReviewReason?: RecordingReviewReason }
   | { outcome: 'owned-race'; existingBookId: number };
@@ -340,5 +342,5 @@ async function createAndAnnounce(
     reason: provenance.reason,
   }).catch((error: unknown) => log.warn({ bookId: book.id, error: serializeError(error) }, 'Failed to record book_added event'));
 
-  return { outcome: 'created', book };
+  return { outcome: 'created', book, authorName: row.authorName ?? null };
 }

@@ -88,7 +88,8 @@ describe('addResolvedBook — create and announce', () => {
 
     const result = await addResolvedBook(deps, adoptedRequest(), makeLog());
 
-    expect(result).toEqual({ outcome: 'created', book: createdBook() });
+    // authorName is the resolved primary author, which the caller's own search trigger needs.
+    expect(result).toEqual({ outcome: 'created', book: createdBook(), authorName: 'Corey, James S. A.' });
     expect(createPayload(deps)).toEqual({
       title: 'Leviathan Wakes: The Expanse Book 1',
       authors: [{ name: 'Corey, James S. A.' }],
