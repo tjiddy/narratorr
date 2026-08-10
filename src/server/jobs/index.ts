@@ -92,10 +92,11 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger): J
       await runGuarded(log, 'Housekeeping: retention read failed', async () => {
         retentionDays = (await services.settings.get('general')).housekeepingRetentionDays ?? 90;
       });
-      // Prune staged details only; finalized headers and aggregates remain.
+      // Whole clean-completed runs go first; anything held, skipped, or failed keeps both header and details.
       if (retentionDays !== null) {
         const days = retentionDays;
         await runGuarded(log, 'Housekeeping: event-history prune failed', () => services.eventHistory.pruneOlderThan(days));
+        await runGuarded(log, 'Housekeeping: clean-completed submission prune failed', () => services.importStaging.pruneCleanCompleted(days));
         await runGuarded(log, 'Housekeeping: staged-detail prune failed', () => services.importStaging.pruneCompletedDetails(days));
       }
       await runGuarded(log, 'Housekeeping: blacklist cleanup failed', () => services.blacklist.deleteExpired());

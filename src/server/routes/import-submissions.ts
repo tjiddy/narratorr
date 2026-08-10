@@ -8,6 +8,7 @@ import {
   submissionQuerySchema,
   submissionListQuerySchema,
   submissionAttentionQuerySchema,
+  submissionBulkDeleteQuerySchema,
   clientSubmissionIdSchema,
   SUBMISSION_ERROR_CODES,
 } from '@core/import-staging/schemas.js';
@@ -119,11 +120,24 @@ export async function importSubmissionsRoutes(
     const idResult = submissionIdParamSchema.safeParse(request.params);
     if (!idResult.success) return reply.status(400).send({ error: 'invalid-id', message: 'Invalid submission id' });
     try {
-      const result = await staging.discardReceiving(idResult.data.id);
+      const result = await staging.deleteSubmission(idResult.data.id);
       return await reply.status(200).send(result);
     } catch (error: unknown) {
       if (error instanceof SubmissionError) return sendSubmissionError(reply, error);
-      request.log.error({ error: serializeError(error), submissionId: idResult.data.id }, 'Staged import discard failed');
+      request.log.error({ error: serializeError(error), submissionId: idResult.data.id }, 'Staged import delete failed');
+      throw error;
+    }
+  });
+
+  // The eligibility predicate is server-owned, so the clear accepts no parameters at all.
+  app.delete('/api/import/submissions', async (request, reply) => {
+    const parsed = submissionBulkDeleteQuerySchema.safeParse(request.query);
+    if (!parsed.success) return reply.status(400).send({ error: 'invalid-query', message: parsed.error.message });
+    try {
+      const result = await staging.deleteCleanCompleted();
+      return await reply.status(200).send(result);
+    } catch (error: unknown) {
+      request.log.error({ error: serializeError(error) }, 'Staged import bulk clear failed');
       throw error;
     }
   });

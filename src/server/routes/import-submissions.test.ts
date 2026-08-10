@@ -254,7 +254,8 @@ describe('import-submissions routes (#1893)', () => {
 
   const reportList = () => services.importSubmissionReport.list as unknown as ReturnType<typeof vi.fn>;
   const reportAttention = () => services.importSubmissionReport.attention as unknown as ReturnType<typeof vi.fn>;
-  const stagingDiscard = () => services.importStaging.discardReceiving as unknown as ReturnType<typeof vi.fn>;
+  const stagingDelete = () => services.importStaging.deleteSubmission as unknown as ReturnType<typeof vi.fn>;
+  const stagingClear = () => services.importStaging.deleteCleanCompleted as unknown as ReturnType<typeof vi.fn>;
 
   describe('GET /api/import/submissions (list, F56)', () => {
     it('returns the {data,total} envelope and passes coerced defaults', async () => {
@@ -309,23 +310,54 @@ describe('import-submissions routes (#1893)', () => {
   });
 
   describe('DELETE /api/import/submissions/:id', () => {
-    it('discards a receiving submission → 200 {success:true}', async () => {
-      stagingDiscard().mockResolvedValue({ success: true });
+    it('deletes a submission → 200 {success:true}', async () => {
+      stagingDelete().mockResolvedValue({ success: true });
       const res = await app.inject({ method: 'DELETE', url: '/api/import/submissions/5' });
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({ success: true });
-      expect(stagingDiscard()).toHaveBeenCalledWith(5);
+      expect(stagingDelete()).toHaveBeenCalledWith(5);
     });
 
-    it('maps non-receiving → 409 and unknown → 404 via SubmissionError', async () => {
-      stagingDiscard().mockRejectedValue(new SubmissionError('submission-not-receiving', 409, 'nope'));
-      expect((await app.inject({ method: 'DELETE', url: '/api/import/submissions/5' })).statusCode).toBe(409);
-      stagingDiscard().mockRejectedValue(new SubmissionError('submission-not-found', 404, 'gone'));
+    it('maps in-flight → 409 with the named code and unknown → 404 via SubmissionError', async () => {
+      stagingDelete().mockRejectedValue(new SubmissionError('submission-in-flight', 409, 'still importing'));
+      const conflict = await app.inject({ method: 'DELETE', url: '/api/import/submissions/5' });
+      expect(conflict.statusCode).toBe(409);
+      expect(conflict.json().error).toBe('submission-in-flight');
+      stagingDelete().mockRejectedValue(new SubmissionError('submission-not-found', 404, 'gone'));
       expect((await app.inject({ method: 'DELETE', url: '/api/import/submissions/5' })).statusCode).toBe(404);
     });
 
-    it('invalid id → 400', async () => {
-      expect((await app.inject({ method: 'DELETE', url: '/api/import/submissions/abc' })).statusCode).toBe(400);
+    it('invalid id → 400 invalid-id and the service is never called', async () => {
+      const res = await app.inject({ method: 'DELETE', url: '/api/import/submissions/abc' });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toBe('invalid-id');
+      expect(stagingDelete()).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('DELETE /api/import/submissions (bulk clear, #2220)', () => {
+    it('passes the service result through unchanged, including the deleted ids', async () => {
+      stagingClear().mockResolvedValue({ deleted: 3, ids: [7, 8, 9] });
+      const res = await app.inject({ method: 'DELETE', url: '/api/import/submissions' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ deleted: 3, ids: [7, 8, 9] });
+      expect(stagingClear()).toHaveBeenCalledWith();
+    });
+
+    it('an empty clear is a success, not an error', async () => {
+      stagingClear().mockResolvedValue({ deleted: 0, ids: [] });
+      const res = await app.inject({ method: 'DELETE', url: '/api/import/submissions' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ deleted: 0, ids: [] });
+    });
+
+    it('rejects any querystring with 400 invalid-query and never calls the service', async () => {
+      for (const q of ['source=library', 'ids=1', 'limit=10']) {
+        const res = await app.inject({ method: 'DELETE', url: `/api/import/submissions?${q}` });
+        expect(res.statusCode, q).toBe(400);
+        expect(res.json().error, q).toBe('invalid-query');
+      }
+      expect(stagingClear()).not.toHaveBeenCalled();
     });
   });
 
@@ -342,7 +374,8 @@ describe('import-submissions routes (#1893)', () => {
     const cases = [
       { name: 'list', setup: () => reportList().mockRejectedValue(new Error('list boom')), op: () => app.inject({ method: 'GET', url: '/api/import/submissions' }), msg: 'list', boom: 'list boom' },
       { name: 'attention', setup: () => reportAttention().mockRejectedValue(new Error('attention boom')), op: () => app.inject({ method: 'GET', url: '/api/import/submissions/attention' }), msg: 'attention', boom: 'attention boom' },
-      { name: 'discard', setup: () => stagingDiscard().mockRejectedValue(new Error('discard boom')), op: () => app.inject({ method: 'DELETE', url: '/api/import/submissions/5' }), msg: 'discard', boom: 'discard boom' },
+      { name: 'delete', setup: () => stagingDelete().mockRejectedValue(new Error('delete boom')), op: () => app.inject({ method: 'DELETE', url: '/api/import/submissions/5' }), msg: 'delete failed', boom: 'delete boom' },
+      { name: 'bulk clear', setup: () => stagingClear().mockRejectedValue(new Error('clear boom')), op: () => app.inject({ method: 'DELETE', url: '/api/import/submissions' }), msg: 'bulk clear', boom: 'clear boom' },
     ];
     for (const c of cases) {
       it(`${c.name}: an unexpected rejection returns 500 and logs the serialized error`, async () => {

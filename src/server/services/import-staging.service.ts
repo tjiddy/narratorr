@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { eq, and, asc, lt, inArray, sql } from 'drizzle-orm';
+import { eq, ne, and, asc, lt, inArray, sql } from 'drizzle-orm';
 import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { importSubmissions, importSubmissionItems } from '@db/schema.js';
@@ -17,6 +17,7 @@ import {
   type PutItemsBody,
   type StagedImportItem,
   type SubmissionResponse,
+  type SubmissionBulkDeleteResponse,
   type StagedItemResultDto,
   type SubmissionAggregates,
   type ItemDisposition,
@@ -56,6 +57,19 @@ function digestItems(source: SubmissionRow['source'], mode: SubmissionRow['mode'
 
 function stagedItemBytes(item: StagedImportItem): number {
   return Buffer.byteLength(JSON.stringify(item), 'utf8');
+}
+
+/**
+ * A run is noise only when it finished with nothing to revisit. Reading the frozen header
+ * counters keeps this correct for runs whose item details were already pruned.
+ */
+function cleanCompleted() {
+  return and(
+    eq(importSubmissions.status, 'complete'),
+    eq(importSubmissions.heldCount, 0),
+    eq(importSubmissions.skippedCount, 0),
+    eq(importSubmissions.failedCount, 0),
+  );
 }
 
 /** Staging stays inert until a finalize CAS wins; only that winner nudges the import runner. */
@@ -283,21 +297,44 @@ export class ImportStagingService {
     return includeItems ? this.buildDetail(header) : this.buildSummary(header);
   }
 
-  /** Serialize a receiving-only delete with PUT/finalize; re-read zero rows to distinguish 404 from 409. */
-  async discardReceiving(id: number): Promise<{ success: true }> {
+  /** Serialize the delete with PUT/finalize; re-read zero rows to distinguish 404 from 409. */
+  async deleteSubmission(id: number): Promise<{ success: true }> {
     const affected = await this.serializeWrite(async () => {
       const result = await this.db
         .delete(importSubmissions)
-        .where(and(eq(importSubmissions.id, id), eq(importSubmissions.status, 'receiving')));
+        .where(and(eq(importSubmissions.id, id), ne(importSubmissions.status, 'processing')));
       return getRowsAffected(result);
     });
     if (affected === 1) {
-      this.log.info({ submissionId: id }, 'Staged import submission discarded');
+      this.log.info({ submissionId: id }, 'Import submission deleted');
       return { success: true };
     }
     const [header] = await this.db.select().from(importSubmissions).where(eq(importSubmissions.id, id)).limit(1);
     if (!header) throw new SubmissionError('submission-not-found', 404, 'submission not found');
-    throw new SubmissionError(SUBMISSION_ERROR_CODES.submissionNotReceiving, 409, `submission is '${header.status}', not receiving`);
+    throw new SubmissionError(SUBMISSION_ERROR_CODES.submissionInFlight, 409, `submission is '${header.status}' and still importing`);
+  }
+
+  /** The manual clear and the retention pass share this predicate so eligibility cannot drift. */
+  async deleteCleanCompleted(): Promise<SubmissionBulkDeleteResponse> {
+    // Project the ids from the delete itself; a separate pre-read could name rows it never removed.
+    const rows = await this.db
+      .delete(importSubmissions)
+      .where(cleanCompleted())
+      .returning({ id: importSubmissions.id });
+    const ids = rows.map((r) => r.id);
+    this.log.info({ count: ids.length }, 'Clean completed import submissions cleared');
+    return { deleted: ids.length, ids };
+  }
+
+  /** Retention for the same clean-completed set; a null completedAt never satisfies the cutoff. */
+  async pruneCleanCompleted(retentionDays: number): Promise<number> {
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+    const rows = await this.db
+      .delete(importSubmissions)
+      .where(and(cleanCompleted(), lt(importSubmissions.completedAt, cutoff)))
+      .returning({ id: importSubmissions.id });
+    this.log.info({ count: rows.length, retentionDays }, 'Clean completed import submissions pruned');
+    return rows.length;
   }
 
   /** The strict `updatedAt` guard preserves uploads whose concurrent PUT refreshed them. */

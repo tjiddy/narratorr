@@ -42,6 +42,8 @@ export const SUBMISSION_ERROR_CODES = {
   itemInvalid: 'item-invalid',
   /** PUT submission is no longer receiving. */
   submissionNotReceiving: 'submission-not-receiving',
+  /** DELETE refused: the run is processing, so its report is still being written. */
+  submissionInFlight: 'submission-in-flight',
   /** PUT would exceed MAX_SUBMISSION_BYTES. */
   byteBudgetExceeded: 'submission-byte-budget-exceeded',
   /** Finalize has missing ordinals and a bounded gaps report. */
@@ -310,6 +312,16 @@ export const submissionListQuerySchema = z
   })
   .strict();
 export type SubmissionListQuery = z.infer<typeof submissionListQuerySchema>;
+
+/** The bulk clear takes no input: its eligibility predicate lives server-side only. */
+export const submissionBulkDeleteQuerySchema = z.object({}).strict();
+export type SubmissionBulkDeleteQuery = z.infer<typeof submissionBulkDeleteQuerySchema>;
+
+/** `ids` are the rows the delete statement actually removed; the client keys its cache cleanup on them. */
+export const submissionBulkDeleteResponseSchema = z
+  .object({ deleted: z.number().int().min(0), ids: z.array(z.number().int().positive()) })
+  .strict();
+export type SubmissionBulkDeleteResponse = z.infer<typeof submissionBulkDeleteResponseSchema>;
 
 export const submissionAttentionQuerySchema = z
   .object({ source: submissionSourceSchema.optional() })
