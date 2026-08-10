@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router';
@@ -364,6 +365,31 @@ function DeepLinkHarness() {
   );
 }
 
+/** Moves focus to another run mid-flight, the way a user clicking a second report would. */
+function RefocusHarness() {
+  const [params, setParams] = useSearchParams();
+  return (
+    <>
+      <span data-testid="search">{params.toString()}</span>
+      <button type="button" onClick={() => setParams({ tab: 'history', run: '9' }, { replace: true })}>focus 9</button>
+      <ImportHistorySection />
+    </>
+  );
+}
+
+/** Mirrors ActivityPage, which drops the section entirely when the user leaves the History tab. */
+function TabHarness() {
+  const [onHistory, setOnHistory] = useState(true);
+  const [params] = useSearchParams();
+  return (
+    <>
+      <span data-testid="search">{params.toString()}</span>
+      <button type="button" onClick={() => setOnHistory(false)}>leave history</button>
+      {onHistory && <ImportHistorySection />}
+    </>
+  );
+}
+
 describe('ImportHistorySection deep-link cleanup (#2220)', () => {
   it('a bulk clear that deletes the focused run clears only `run`, keeping tab and filter', async () => {
     const user = userEvent.setup();
@@ -420,5 +446,78 @@ describe('ImportHistorySection deep-link cleanup (#2220)', () => {
     expect(discardImportSubmission.mock.calls).toEqual([[3]]);
     expect(await screen.findByTestId('import-history-card-7')).toBeInTheDocument();
     expect(qc.getQueryData(queryKeys.importSubmissions.detail(3))).toBeUndefined();
+  });
+
+  it('a delete that settles after focus moved on leaves the NEWER run’s deep link alone (F1)', async () => {
+    const user = userEvent.setup();
+    const qc = newClient();
+    listImportSubmissions.mockResolvedValue({ data: [summary({ id: 3 }), summary({ id: 9 })], total: 2 });
+    getImportSubmissionDetail.mockImplementation((id: number) => Promise.resolve(detail(id)));
+    let release!: () => void;
+    discardImportSubmission.mockReturnValue(new Promise<{ success: true }>((res) => { release = () => res({ success: true }); }));
+    renderWithProviders(<RefocusHarness />, { route: '/activity?tab=history&run=3', queryClient: qc });
+    await screen.findByTestId('import-history-card-3');
+
+    await confirmDelete(user, 3);
+    // Move focus and settle in the same tick: the pending mutation has not been handed a
+    // re-rendered callback yet, so this is the window where a mutate-time `runId` is still live.
+    fireEvent.click(screen.getByRole('button', { name: 'focus 9' }));
+    release();
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Import run deleted'), SETTLED);
+
+    // Run 9 was never deleted, so its deep link must survive the late response for run 3.
+    expect(screen.getByTestId('search')).toHaveTextContent('run=9');
+    expect(await screen.findByTestId('import-history-card-9')).toBeInTheDocument();
+    expect(qc.getQueryData(queryKeys.importSubmissions.detail(9))).toBeDefined();
+    expect(qc.getQueryData(queryKeys.importSubmissions.detail(3))).toBeUndefined();
+  });
+});
+
+describe('ImportHistorySection deletion callbacks after the section unmounts (#2220, F2)', () => {
+  it('a per-row delete that settles after the user leaves History reconciles the cache but fires no toast and no navigation', async () => {
+    const user = userEvent.setup();
+    const qc = newClient();
+    seedDetail(qc, 3);
+    listImportSubmissions.mockResolvedValue({ data: [summary({ id: 3 })], total: 1 });
+    getImportSubmissionDetail.mockResolvedValue(detail(3));
+    let release!: () => void;
+    discardImportSubmission.mockReturnValue(new Promise<{ success: true }>((res) => { release = () => res({ success: true }); }));
+    renderWithProviders(<TabHarness />, { route: '/activity?tab=history&run=3', queryClient: qc });
+    await screen.findByTestId('import-history-card-3');
+
+    await confirmDelete(user, 3);
+    await user.click(screen.getByRole('button', { name: 'leave history' }));
+    expect(screen.queryByTestId('import-history-section')).not.toBeInTheDocument();
+
+    release();
+    await waitFor(() => expect(qc.getQueryData(queryKeys.importSubmissions.detail(3))).toBeUndefined(), SETTLED);
+
+    // Cache reconciliation is unconditional; the lifecycle-local effects are not.
+    expect(qc.getQueryState(queryKeys.importSubmissions.list({ limit: 50, offset: 0 }))?.isInvalidated).toBe(true);
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(screen.getByTestId('search')).toHaveTextContent('run=3');
+  });
+
+  it('a bulk clear that settles after the user leaves History reconciles the cache but fires no toast and no navigation', async () => {
+    const user = userEvent.setup();
+    const qc = newClient();
+    seedDetail(qc, 3);
+    listImportSubmissions.mockResolvedValue({ data: [summary({ id: 3 })], total: 1 });
+    getImportSubmissionDetail.mockResolvedValue(detail(3));
+    let release!: () => void;
+    clearCompletedImportSubmissions.mockReturnValue(new Promise((res) => { release = () => res({ deleted: 1, ids: [3] }); }));
+    renderWithProviders(<TabHarness />, { route: '/activity?tab=history&run=3', queryClient: qc });
+    await screen.findByTestId('import-history-card-3');
+
+    await confirmClear(user);
+    await user.click(screen.getByRole('button', { name: 'leave history' }));
+    expect(screen.queryByTestId('import-history-section')).not.toBeInTheDocument();
+
+    release();
+    await waitFor(() => expect(qc.getQueryData(queryKeys.importSubmissions.detail(3))).toBeUndefined(), SETTLED);
+
+    expect(qc.getQueryState(queryKeys.importSubmissions.list({ limit: 50, offset: 0 }))?.isInvalidated).toBe(true);
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(screen.getByTestId('search')).toHaveTextContent('run=3');
   });
 });

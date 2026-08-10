@@ -14,13 +14,8 @@ import { ConfirmModal } from '@/components/ConfirmModal';
 import { LoadingSpinner, TrashIcon } from '@/components/icons';
 import { DEFAULT_LIMITS } from '@shared/schemas/common.js';
 import { ImportHistoryCard } from './ImportHistoryCard';
-import { useImportHistoryDeletion } from './useImportHistoryDeletion';
-
-function parseRun(value: string | null): number | null {
-  if (value == null || !/^\d+$/.test(value)) return null;
-  const n = Number(value);
-  return Number.isInteger(n) && n > 0 ? n : null;
-}
+// The deletion hook owns the deep-link rule, so it owns the parser the rule keys on.
+import { parseRun, useImportHistoryDeletion } from './useImportHistoryDeletion';
 
 type PendingConfirm = { kind: 'run'; id: number } | { kind: 'clear' };
 
@@ -93,7 +88,7 @@ export function ImportHistorySection() {
   const pagination = usePagination(DEFAULT_LIMITS.eventHistory);
   const { clampToTotal } = pagination;
   const queryClient = useQueryClient();
-  const { deleteMutation, clearMutation, error: deleteError } = useImportHistoryDeletion(runId);
+  const { deleteMutation, clearMutation, error: deleteError } = useImportHistoryDeletion();
   const [confirming, setConfirming] = useState<PendingConfirm | null>(null);
   const requestDelete = (id: number) => setConfirming({ kind: 'run', id });
   const isDeleting = (id: number) => deleteMutation.isPending && deleteMutation.variables === id;
