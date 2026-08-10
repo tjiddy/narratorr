@@ -1182,6 +1182,29 @@ describe('copyToLibrary — cross-row collision fence (#1711)', () => {
     expect((await readdir(target)).sort()).toEqual(['incumbent.m4b']);
   });
 
+  it('full-cast candidate over a solo-narrator owner → disambiguates into an edition folder (#2206)', async () => {
+    const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: ['Stephen Fry', 'Full Cast'] };
+    const result = await copyToLibrary(item, null, 'copy', buildDeps([owner({ narrators: [{ name: 'Jim Dale' }] })]));
+
+    const disambig = join(libraryRoot, 'Author', 'Title (Stephen Fry)');
+    expect(result.editionLabel).toBe('Stephen Fry');
+    expect(result.targetPath).toBe(toPosix(disambig));
+    expect(await readdir(disambig)).toContain('new.mp3');
+    expect((await readdir(target)).sort()).toEqual(['incumbent.m4b']);
+    expect(await pathExists(`${target}.import-tmp`)).toBe(false);
+    expect(await pathExists(`${target}.import-bak`)).toBe(false);
+  });
+
+  it('all-placeholder candidate over that same owner is unchanged → recording-review, never disambiguated (#2206)', async () => {
+    // Empty survivor set on the candidate side: undecidable under both the old and the narrowed guard.
+    const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: ['Full Cast'] };
+    await expect(
+      copyToLibrary(item, null, 'copy', buildDeps([owner({ narrators: [{ name: 'Jim Dale' }] })])),
+    ).rejects.toMatchObject({ name: 'OwnedRecordingError', reason: 'recording-review' });
+    expect((await readdir(target)).sort()).toEqual(['incumbent.m4b']);
+    expect(await readdir(join(libraryRoot, 'Author'))).toEqual(['Title']);
+  });
+
   it('zero owners (orphan folder with audio) → disambiguates into a new folder, orphan untouched', async () => {
     const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: ['Stephen Fry'] };
     const result = await copyToLibrary(item, null, 'copy', buildDeps([]));

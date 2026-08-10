@@ -3,10 +3,18 @@ import {
   compareRecordingNarrators,
   resolveRecordingIdentity,
   deriveEditionLabel,
+  type NarratorEquality,
   type RecordingCandidate,
   type LibraryRecording,
   type RecordingVerdict,
 } from './recording-identity.js';
+
+/** Prod specimen (#2206): the full-cast Golden Compass listing, placeholder credited alongside the named cast. */
+const GOLDEN_COMPASS_FULL_CAST = [
+  'Philip Pullman', 'Joanna Wyatt', 'Rupert Degas', 'Alison Dowling', 'Douglas Blackwell',
+  'Jill Shilling', 'Stephen Thorne', 'Sean Barrett', 'Garrick Hagon', "John O'Connor",
+  'Susan Sheridan', 'Full Cast',
+];
 
 describe('compareRecordingNarrators (#1710)', () => {
   it('equal sets → equal', () => {
@@ -83,6 +91,43 @@ describe('compareRecordingNarrators (#1710)', () => {
 
     it('regression: symmetric placeholders on both sides compare survivors (unchanged)', () => {
       expect(compareRecordingNarrators(['Full Cast', 'Jim Dale'], ['Full Cast', 'Jim Dale'])).toBe('equal');
+    });
+  });
+
+  // Every row is asserted in BOTH argument orders, so an implementation whose verdict depends on
+  // which side is `a` fails the row it belongs to rather than escaping through a hand-picked subset.
+  describe('placeholder asymmetry only suppresses equality, never a decided mismatch (#2206)', () => {
+    interface ComparatorRow {
+      name: string;
+      a: string[];
+      b: string[];
+      expected: NarratorEquality;
+    }
+
+    const rows: ComparatorRow[] = [
+      { name: 'specimen: full cast + 11 named vs solo incumbent', a: GOLDEN_COMPASS_FULL_CAST, b: ['Ruth Wilson'], expected: 'not-equal' },
+      { name: 'disjoint survivors, one-sided placeholder', a: ['Full Cast', 'Jim Dale'], b: ['Stephen Fry'], expected: 'not-equal' },
+      // Deliberate: AC1 is "survivors differ", not "survivors are disjoint". The placeholder side could
+      // in principle be crediting Kate Reading among its uncredited voices, so this trades a possible
+      // spurious second edition (the operator deletes one row) for the refusal being fixed. It does NOT
+      // reopen #1725, whose hazard is a silent OVERWRITE and lives only on the `equal` branch.
+      { name: 'overlapping-but-unequal survivors, one-sided placeholder', a: ['Full Cast', 'Jim Dale'], b: ['Jim Dale', 'Kate Reading'], expected: 'not-equal' },
+      { name: 'placeholder vocabulary is not Full Cast-specific', a: ['Various', 'Jim Dale'], b: ['Stephen Fry'], expected: 'not-equal' },
+      { name: '#1725: equal survivors, one-sided placeholder stays undecidable', a: ['Full Cast', 'Jim Dale'], b: ['Jim Dale'], expected: 'no-signal' },
+      { name: 'all-placeholder side vs named side', a: ['Full Cast'], b: ['Jim Dale'], expected: 'no-signal' },
+      { name: 'all-placeholder on both sides, packed', a: ['Full Cast, Various'], b: ['Various Narrators'], expected: 'no-signal' },
+      { name: 'empty array', a: [], b: ['Jim Dale'], expected: 'no-signal' },
+      { name: 'punctuation-only entry normalizes empty', a: ['-'], b: ['Jim Dale'], expected: 'no-signal' },
+      { name: 'no placeholder on either side, disjoint', a: ['Stephen Fry'], b: ['Jim Dale'], expected: 'not-equal' },
+      { name: 'no placeholder on either side, superset', a: ['Kate Reading', 'Michael Kramer'], b: ['Kate Reading'], expected: 'not-equal' },
+      { name: 'identical named sets', a: ['Jim Dale'], b: ['Jim Dale'], expected: 'equal' },
+      { name: 'symmetric placeholders over equal survivors', a: ['Full Cast', 'Jim Dale'], b: ['Full Cast', 'Jim Dale'], expected: 'equal' },
+      { name: 'packed-delimiter parity', a: ['Kate Reading, Michael Kramer'], b: ['Kate Reading', 'Michael Kramer'], expected: 'equal' },
+    ];
+
+    it.each(rows)('$name → $expected', ({ a, b, expected }) => {
+      expect(compareRecordingNarrators(a, b)).toBe(expected);
+      expect(compareRecordingNarrators(b, a)).toBe(expected);
     });
   });
 });
@@ -341,6 +386,24 @@ describe('resolveRecordingIdentity (#1710)', () => {
         candidate({ narrators: ['Full Cast', 'Jim Dale'] }),
         library({ narrators: ['Jim Dale'] }),
       )).toBe('review');
+    });
+  });
+
+  describe('full-cast edition against a solo-narrator incumbent (#2206)', () => {
+    // Durations are MINUTES: 10h33m candidate vs 13h17m incumbent. The 164-minute gap must NOT
+    // surface as duration-mismatch — that pins not-equal short-circuiting before the corroborator.
+    it('prod specimen: The Golden Compass full-cast edition → different-recording, no review reason', () => {
+      expect(resolveRecordingIdentity(
+        candidate({ title: 'The Golden Compass', authors: ['Philip Pullman'], narrators: GOLDEN_COMPASS_FULL_CAST, asin: 'B0FULLCAST', duration: 633 }),
+        library({ title: 'The Golden Compass', primaryAuthorSlug: 'philip-pullman', narrators: ['Ruth Wilson'], asin: 'B0D9C9BMTW', duration: 797 }),
+      )).toEqual({ verdict: 'different-recording' });
+    });
+
+    it('negative control: equal survivors, candidate-only placeholder → review / narrator-no-signal', () => {
+      expect(resolveRecordingIdentity(
+        candidate({ title: 'The Golden Compass', authors: ['Philip Pullman'], narrators: ['Ruth Wilson', 'Full Cast'], asin: 'B0FULLCAST', duration: 633 }),
+        library({ title: 'The Golden Compass', primaryAuthorSlug: 'philip-pullman', narrators: ['Ruth Wilson'], asin: 'B0D9C9BMTW', duration: 797 }),
+      )).toEqual({ verdict: 'review', recordingReviewReason: 'narrator-no-signal' });
     });
   });
 

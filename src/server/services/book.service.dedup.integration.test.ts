@@ -247,6 +247,35 @@ describe('BookService.findDuplicate — 3-way + multi-incumbent (DB-backed, #171
       expect(res.book?.id).toBe(owned);
     });
 
+    it('full-cast candidate vs a solo-narrator incumbent → different-recording, book null, hasIncumbent true (#2206)', async () => {
+      // `duration` is MINUTES: the 164-minute gap never reaches the corroborator once narrators decide.
+      await seed({ title: 'The Golden Compass', author: 'Philip Pullman', narrators: ['Ruth Wilson'], asin: 'B0D9C9BMTW', duration: 797 });
+      const res = await service.findDuplicate({
+        title: 'The Golden Compass',
+        authors: [{ name: 'Philip Pullman' }],
+        narrators: ['Philip Pullman', 'Rupert Degas', 'Sean Barrett', 'Full Cast'],
+        asin: 'B0FULLCAST',
+        duration: 633,
+      });
+      expect(res.verdict).toBe('different-recording');
+      expect(res.book).toBeNull();
+      expect(res.hasIncumbent).toBe(true);
+      expect(res.recordingReviewReason).toBeUndefined();
+    });
+
+    it('a no-narrator review incumbent still outranks a disjoint different-recording one, lowest id (#2206 precedence undisturbed)', async () => {
+      const noNarrators = await seed({ title: 'Subtle Knife', author: 'Philip Pullman' });
+      const disjoint = await seed({ title: 'Subtle Knife', author: 'Philip Pullman', narrators: ['Ruth Wilson'] });
+      expect(disjoint).toBeGreaterThan(noNarrators);
+      const res = await service.findDuplicate({
+        title: 'Subtle Knife', authors: [{ name: 'Philip Pullman' }], narrators: ['Rupert Degas', 'Full Cast'],
+      });
+      expect(res.verdict).toBe('review');
+      expect(res.book?.id).toBe(noNarrators);
+      expect(res.recordingReviewReason).toBe('narrator-no-signal');
+      expect(res.hasIncumbent).toBe(true);
+    });
+
     it('WoW distinct-subtitle candidate (no ASIN) vs owned WoW novels → different-recording, book null, hasIncumbent false (#1891)', async () => {
       await seed({ title: 'World of Warcraft: Tides of Darkness', author: 'Aaron Rosenberg', narrators: ['Reader One'] });
       await seed({ title: 'World of Warcraft: Rise of the Horde', author: 'Aaron Rosenberg', narrators: ['Reader Two'] });

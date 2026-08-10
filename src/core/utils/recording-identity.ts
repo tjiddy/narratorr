@@ -50,17 +50,21 @@ function isSubset(a: Set<string>, b: Set<string>): boolean {
 
 /**
  * Exact narrator-set comparison: `equal` requires both-direction containment; differing signal,
- * including subsets/supersets, is `not-equal`. Empty, placeholder-only, or asymmetric placeholder
- * input is `no-signal`. This deliberately does not use the overlap comparator.
+ * including subsets/supersets, is `not-equal`. Empty or placeholder-only input is `no-signal`, as is
+ * asymmetric placeholder input whose survivor sets are equal. This deliberately does not use the
+ * overlap comparator.
  */
 export function compareRecordingNarrators(a: string[], b: string[]): NarratorEquality {
   const { signal: setA, hasPlaceholder: placeholderA } = recordingNarratorTokens(a);
   const { signal: setB, hasPlaceholder: placeholderB } = recordingNarratorTokens(b);
-  // Check asymmetric placeholders before emptiness so a full-cast credit cannot collapse to its lead.
-  if (placeholderA !== placeholderB) return 'no-signal';
   if (setA.size === 0 || setB.size === 0) return 'no-signal';
-  if (setA.size === setB.size && isSubset(setA, setB)) return 'equal';
-  return 'not-equal';
+  if (setA.size !== setB.size || !isSubset(setA, setB)) return 'not-equal';
+  // #1725: a full-cast credit must not collapse to its lead, so equal survivors under a one-sided
+  // placeholder stay undecided — the placeholder stands for voices the other side may not have.
+  // Unequal survivors are already decided, so this guard stays off that arm (#2206). An all-placeholder
+  // side has an empty survivor set by construction, so the size-0 arm above still catches it first.
+  if (placeholderA !== placeholderB) return 'no-signal';
+  return 'equal';
 }
 
 export interface RecordingCandidate {
