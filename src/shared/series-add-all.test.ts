@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { isAddAllSelectable, selectAddAllMembers, type AddAllSelectableMember } from './series-add-all.js';
 
 function member(overrides: Partial<AddAllSelectableMember> = {}): AddAllSelectableMember {
@@ -67,5 +69,25 @@ describe('selectAddAllMembers', () => {
   it('preserves the caller element type so extra fields survive the filter', () => {
     const enriched = [{ ...member({ title: 'One' }), libraryBookId: 7 }];
     expect(selectAddAllMembers(enriched)[0]?.libraryBookId).toBe(7);
+  });
+});
+
+/**
+ * The label the user reads and the set the server builds must come from one symbol. A client-side
+ * reimplementation would let `Add All (N)` promise a count the batch never creates, which no
+ * behavioural test on either side can see.
+ */
+describe('one predicate, two call sites', () => {
+  const repoSrc = path.resolve(__dirname, '..');
+
+  it.each([
+    ['the Series card', 'client/components/SeriesCard.tsx'],
+    ['the batch service', 'server/services/series-add-all.service.ts'],
+  ])('%s selects members through the shared module', (_label, relativePath) => {
+    const source = fs.readFileSync(path.join(repoSrc, relativePath), 'utf-8');
+
+    expect(source).toMatch(/import\s+{[^}]*selectAddAllMembers[^}]*}\s+from\s+'@shared\/series-add-all\.js'/);
+    // No local re-derivation of the rule beside the shared call.
+    expect(source).not.toMatch(/Number\.isInteger/);
   });
 });
