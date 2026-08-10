@@ -3,7 +3,7 @@ import { RateLimitError, TransientError, METADATA_SEARCH_PROVIDER_FACTORIES, NAR
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { MetadataService, isRejectedByWords, PSEUDO_NARRATORS } from './metadata.service.js';
-import { AMBIGUOUS_WINDOW_HELD, selectExactTitleMatch } from './metadata-resolve-book.js';
+import { AMBIGUOUS_WINDOW_COLLAPSED, AMBIGUOUS_WINDOW_HELD, exactTitleCandidates } from './metadata-resolve-book.js';
 import type { BookMetadata } from '@core/index.js';
 
 const mockFactories = vi.mocked(METADATA_SEARCH_PROVIDER_FACTORIES);
@@ -2801,20 +2801,373 @@ describe('MetadataService.resolveBook — ambiguous validation windows (#2202)',
     });
   });
 
-  describe('selectExactTitleMatch — the empty-fold domain guard (AC13)', () => {
+  describe('exactTitleCandidates — the empty-fold domain guard (AC13)', () => {
     // Asserted at the helper: no window reachable through matchPassesValidation distinguishes
     // guard-present from guard-absent, so a resolveBook-level test here would be vacuous.
     it('a row title whose lossless fold is empty never names a winner, even against a lone twin', () => {
       const twin: BookMetadata = { title: '!!!', authors: [{ name: 'A B' }] };
 
-      expect(selectExactTitleMatch([twin], '!!!')).toBeNull();
+      expect(exactTitleCandidates([twin], '!!!')).toEqual([]);
     });
 
     it('positive control: a non-empty fold still names its unique match', () => {
       const winner: BookMetadata = { title: 'Dune Messiah', authors: [{ name: HERBERT }] };
       const other: BookMetadata = { title: 'Dune', authors: [{ name: HERBERT }] };
 
-      expect(selectExactTitleMatch([other, winner], 'dune  messiah')).toBe(winner);
+      const exact = exactTitleCandidates([other, winner], 'dune  messiah');
+
+      expect(exact).toHaveLength(1);
+      expect(exact[0]).toBe(winner);
+    });
+  });
+});
+
+describe('MetadataService.resolveBook — collapsing proven-equivalent duplicate listings (#2219)', () => {
+  let service: MetadataService;
+  let mockLog: ReturnType<typeof createMockLogger>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // clearAllMocks leaves *Once queues intact; window fixtures queue several, so reset outright.
+    mockAudibleProvider.searchBooks.mockReset().mockResolvedValue({ books: [] });
+    mockAudnexus.getBook.mockReset().mockResolvedValue(null);
+    mockLog = createMockLogger();
+    service = new MetadataService(inject<FastifyBaseLogger>(mockLog));
+  });
+
+  const TCHAIKOVSKY = 'Adrian Tchaikovsky';
+  const BEAR_HEAD_NARRATORS = ['Sophie Aldred', 'Mark Elstob', 'Ben Allen'];
+  /** 12h57m expressed in MINUTES — `BookMetadata.duration` is minutes, not seconds. */
+  const BEAR_HEAD_MINUTES = 777;
+
+  function candidate(title: string, author: string, overrides: Partial<BookMetadata> = {}): BookMetadata {
+    return { title, authors: [{ name: author }], ...overrides };
+  }
+
+  /** A collapse-eligible listing: exact title, canonical ASIN, positive duration, narrator signal. */
+  function listing(asin: string, overrides: Partial<BookMetadata> = {}): BookMetadata {
+    return candidate('Bear Head', TCHAIKOVSKY, {
+      asin,
+      duration: BEAR_HEAD_MINUTES,
+      narrators: BEAR_HEAD_NARRATORS,
+      ...overrides,
+    });
+  }
+
+  function window(...books: BookMetadata[]): void {
+    mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books });
+  }
+
+  function holdLogCalls(): unknown[][] {
+    return (mockLog.info as Mock).mock.calls.filter((call) => call[1] === AMBIGUOUS_WINDOW_HELD);
+  }
+
+  function collapseLogCalls(): unknown[][] {
+    return (mockLog.debug as Mock).mock.calls.filter((call) => call[1] === AMBIGUOUS_WINDOW_COLLAPSED);
+  }
+
+  function resolveBearHead(): Promise<BookMetadata | null> {
+    return service.resolveBook({ title: 'Bear Head', author: TCHAIKOVSKY });
+  }
+
+  describe('the collapse set is the exact-title candidates, never the passing window (AC2)', () => {
+    // The sibling reaches recording scope on purpose: matchesLibraryIdentity folds through
+    // normalizeTitleCore, which strips `Book N`, so `Saga Book 2` compares same-recording against
+    // BOTH `Saga Book 1` listings (#1896 pins that collapse and it must not be "fixed" here).
+    // Exactness of the collapse set — not the recording predicate — is what excludes it.
+    it('a same-recording sibling whose ASIN sorts first is never selected', async () => {
+      const sibling = candidate('Saga Book 2', 'A B', { asin: 'B00000000', duration: 600, narrators: ['Jim Dale'] });
+      const first = candidate('Saga Book 1', 'A B', { asin: 'B00000001', duration: 600, narrators: ['Jim Dale'] });
+      const second = candidate('Saga Book 1', 'A B', { asin: 'B00000009', duration: 600, narrators: ['Jim Dale'] });
+      window(sibling, first, second);
+
+      const result = await service.resolveBook({ title: 'Saga Book 1', author: 'A B' });
+
+      expect(result).toEqual(first);
+      expect(collapseLogCalls()).toEqual([
+        [
+          expect.objectContaining({ selectedAsin: 'B00000001', equivalentAsins: ['B00000001', 'B00000009'] }),
+          AMBIGUOUS_WINDOW_COLLAPSED,
+        ],
+      ]);
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+  });
+
+  describe('the Bear Head specimen (AC1)', () => {
+    it('two regional listings of one recording — same narrators in a different order — resolve instead of holding', async () => {
+      const regionA = listing('B08REGIONA');
+      const regionB = listing('B09REGIONB', { narrators: [...BEAR_HEAD_NARRATORS].reverse() });
+      window(regionA, regionB);
+
+      const result = await resolveBearHead();
+
+      expect(result).toEqual(regionA);
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+  });
+
+  describe('gate negatives — each still holds (AC3, AC4, AC5, AC7)', () => {
+    it('a non-transitive triple holds: 600 and 608 minutes are a duration mismatch even though each adjacent pair matches', async () => {
+      window(
+        listing('B_D600', { duration: 600 }),
+        listing('B_D604', { duration: 604 }),
+        listing('B_D608', { duration: 608 }),
+      );
+
+      expect(await resolveBearHead()).toBeNull();
+      expect(collapseLogCalls()).toHaveLength(0);
+      expect(holdLogCalls()).toHaveLength(1);
+    });
+
+    it.each([
+      ['duration absent on both sides', { duration: undefined }, { duration: undefined }],
+      ['duration zero on one side', {}, { duration: 0 }],
+      ['a negative duration on one side', {}, { duration: -BEAR_HEAD_MINUTES }],
+      ['an empty-string ASIN on one side', {}, { asin: '' }],
+      ['a whitespace-only ASIN on one side', {}, { asin: '   ' }],
+      ['narrators absent on both sides', { narrators: undefined }, { narrators: undefined }],
+      ['an empty narrator array on one side', {}, { narrators: [] }],
+      ['placeholder-only narrators on one side', {}, { narrators: ['Full Cast'] }],
+      ['a different narrator set', {}, { narrators: ['Someone Else'] }],
+      ['a production-form conflict', { formatType: 'abridged' }, { formatType: 'unabridged' }],
+    ])('%s → held', async (_label, left, right) => {
+      window(listing('B_LEFT', left), listing('B_RIGHT', right));
+
+      expect(await resolveBearHead()).toBeNull();
+      expect(collapseLogCalls()).toHaveLength(0);
+      expect(holdLogCalls()).toHaveLength(1);
+    });
+
+    it('divergent primary author spellings hold — bibliographic scope refuses the pair', async () => {
+      // Title-only input: an author on the row would reject the divergent spelling at the gate,
+      // leaving one candidate, so the refusal being asserted would never be reached.
+      window(listing('B_TCH'), listing('B_CZA', { authors: [{ name: 'Adrian Czajkowski' }] }));
+
+      expect(await service.resolveBook({ title: 'Bear Head' })).toBeNull();
+      expect(collapseLogCalls()).toHaveLength(0);
+    });
+
+    it('two authorless listings that fold equal but differ raw hold — scope compares raw titles there', async () => {
+      const authorless = (title: string, asin: string): BookMetadata => ({
+        title, authors: [], asin, duration: 600, narrators: ['Nathaniel Parker'],
+      });
+      window(authorless('Artemis Fowl', 'B_AF1'), authorless('artemis  fowl', 'B_AF2'));
+
+      expect(await service.resolveBook({ title: 'Artemis Fowl' })).toBeNull();
+      expect(collapseLogCalls()).toHaveLength(0);
+    });
+
+    it.each([
+      ['an absent formatType on the other side', {}],
+      ['an unrecognized formatType on the other side', { formatType: 'audiodrama' }],
+    ])('the production veto needs two KNOWN, different forms: %s still collapses', async (_label, right) => {
+      window(listing('B_AAA', { formatType: 'unabridged' }), listing('B_ZZZ', right));
+
+      expect((await resolveBearHead())?.asin).toBe('B_AAA');
+      expect(collapseLogCalls()).toHaveLength(1);
+    });
+  });
+
+  describe('selection among the collapsed set (AC8, AC9, AC10)', () => {
+    it('the pick and the debug payload are independent of provider order', async () => {
+      const rich = listing('B_ZZZ', { coverUrl: 'https://example.com/z.jpg' });
+      const plain = listing('B_AAA');
+
+      window(rich, plain);
+      const forwards = await resolveBearHead();
+      window(plain, rich);
+      const backwards = await resolveBearHead();
+
+      expect(forwards).toEqual(rich);
+      expect(backwards).toEqual(rich);
+      expect(collapseLogCalls()).toEqual([
+        [expect.objectContaining({ selectedAsin: 'B_ZZZ', equivalentAsins: ['B_AAA', 'B_ZZZ'] }), AMBIGUOUS_WINDOW_COLLAPSED],
+        [expect.objectContaining({ selectedAsin: 'B_ZZZ', equivalentAsins: ['B_AAA', 'B_ZZZ'] }), AMBIGUOUS_WINDOW_COLLAPSED],
+      ]);
+    });
+
+    // Every row is two otherwise-identical equivalent listings arranged so the ASIN tie-break would
+    // pick the OTHER one, so a green row proves the series rule fired and not the fallback.
+    it.each([
+      ['a seriesPrimary with a usable name', { seriesPrimary: { name: 'Dogs of War' } }, 'B_ZZZ'],
+      ['series[0] with a usable name and no primary', { series: [{ name: 'Dogs of War' }] }, 'B_ZZZ'],
+      ['both shapes present and usable', { seriesPrimary: { name: 'Dogs of War' }, series: [{ name: 'Other' }] }, 'B_ZZZ'],
+      ['an empty seriesPrimary name', { seriesPrimary: { name: '' } }, 'B_AAA'],
+      ['a whitespace-only seriesPrimary name', { seriesPrimary: { name: '   ' } }, 'B_AAA'],
+      // AC9b: pickPrimarySeries resolves on the OBJECT, so a blank primary shadows a good series[0].
+      // An implementation that ORs the two shapes together passes every other row and fails this one.
+      ['a blank seriesPrimary shadowing a usable series[0]', { seriesPrimary: { name: '  ' }, series: [{ name: 'Dogs of War' }] }, 'B_AAA'],
+      ['an empty series array', { series: [] }, 'B_AAA'],
+      ['a whitespace-only series[0] name', { series: [{ name: '   ' }] }, 'B_AAA'],
+    ])('AC9.2 series usability — %s', async (_label, shape, expectedAsin) => {
+      window(listing('B_ZZZ', shape), listing('B_AAA'));
+
+      expect((await resolveBearHead())?.asin).toBe(expectedAsin);
+    });
+
+    it('AC9.2 outranks AC9.3: a series-bearing candidate beats a peer with more useful fields', async () => {
+      window(
+        listing('B_ZZZ', { seriesPrimary: { name: 'Dogs of War' } }),
+        listing('B_AAA', { coverUrl: 'https://example.com/a.jpg', description: 'Blurb', publisher: 'Tor' }),
+      );
+
+      expect((await resolveBearHead())?.asin).toBe('B_ZZZ');
+    });
+
+    it.each([
+      ['coverUrl', { coverUrl: 'https://example.com/c.jpg' }],
+      ['description', { description: 'A real blurb' }],
+      ['subtitle', { subtitle: 'A Novel' }],
+      ['publisher', { publisher: 'Tor' }],
+      ['publishedDate', { publishedDate: '2021-01-01' }],
+      ['language', { language: 'english' }],
+      ['genres', { genres: ['Science Fiction'] }],
+    ])('AC9.3 a usable %s outranks a bare peer whose ASIN sorts first', async (_label, extra) => {
+      window(listing('B_ZZZ', extra), listing('B_AAA'));
+
+      expect((await resolveBearHead())?.asin).toBe('B_ZZZ');
+    });
+
+    it('AC9.3 counts the fields: two useful fields beat one', async () => {
+      window(
+        listing('B_AAA', { publisher: 'Tor' }),
+        listing('B_ZZZ', { coverUrl: 'https://example.com/z.jpg', description: 'Blurb' }),
+      );
+
+      expect((await resolveBearHead())?.asin).toBe('B_ZZZ');
+    });
+
+    // The blank-bearing candidate holds the SMALLER ASIN, so counting a blank would flip the pick.
+    it.each([
+      ['a whitespace-only publisher', { publisher: '   ' }],
+      ['an empty description', { description: '' }],
+      ['a whitespace-only description', { description: '  ' }],
+      ['an empty subtitle', { subtitle: '' }],
+      ['a whitespace-only language', { language: '   ' }],
+      ['a whitespace-only publishedDate', { publishedDate: ' ' }],
+      ['an empty genres array', { genres: [] }],
+      ['a genres array of blanks', { genres: ['   ', ''] }],
+    ])('AC9 %s is not a useful field, so the peer carrying one real field wins', async (_label, blank) => {
+      window(listing('B_AAA', blank), listing('B_ZZZ', { publisher: 'Tor' }));
+
+      expect((await resolveBearHead())?.asin).toBe('B_ZZZ');
+    });
+
+    it('AC9.4 two equally rich, series-less listings fall to the smallest canonical ASIN, from either order', async () => {
+      window(listing('B_AAA'), listing('B_ZZZ'));
+      expect((await resolveBearHead())?.asin).toBe('B_AAA');
+
+      window(listing('B_ZZZ'), listing('B_AAA'));
+      expect((await resolveBearHead())?.asin).toBe('B_AAA');
+    });
+
+    it('AC9.1 the requested ASIN wins over a richer peer and over the smaller ASIN, comparing canonically', async () => {
+      window(
+        listing('B_AAA', { coverUrl: 'https://example.com/a.jpg', description: 'Blurb' }),
+        listing('B_REGIONAL'),
+      );
+
+      // The ASIN fast path misses (getBook → null), so resolution falls through to the window.
+      const result = await service.resolveBook({ asin: 'b_regional', title: 'Bear Head', author: TCHAIKOVSKY });
+
+      expect(result?.asin).toBe('B_REGIONAL');
+      expect(mockAudnexus.getBook).toHaveBeenCalledWith('b_regional');
+    });
+
+    it('AC9.1 an input ASIN absent from the collapsed set does not disturb the ranking', async () => {
+      window(listing('B_AAA'), listing('B_ZZZ', { publisher: 'Tor' }));
+
+      const result = await service.resolveBook({ asin: 'B_ELSEWHERE', title: 'Bear Head', author: TCHAIKOVSKY });
+
+      expect(result?.asin).toBe('B_ZZZ');
+    });
+
+    it('AC10 the selected object is returned verbatim — no peer field is merged in', async () => {
+      const rich = listing('B_ZZZ', { coverUrl: 'https://example.com/z.jpg', description: 'Blurb' });
+      const plain = listing('B_AAA', { publisher: 'Tor' });
+      window(rich, plain);
+
+      const result = await resolveBearHead();
+
+      expect(result).toEqual(rich);
+      expect(result).not.toHaveProperty('publisher');
+    });
+  });
+
+  describe('observability (AC15, AC16, AC17)', () => {
+    it('a collapse emits exactly one debug line with the full payload and no hold line', async () => {
+      window(
+        listing('B_AAA'),
+        listing('B_ZZZ'),
+        candidate('Bear Head Companion', TCHAIKOVSKY, { asin: 'B_COMP', duration: 100, narrators: ['Someone Else'] }),
+      );
+
+      await resolveBearHead();
+
+      expect(collapseLogCalls()).toEqual([
+        [
+          {
+            query: 'Bear Head Adrian Tchaikovsky',
+            passing: 3,
+            exact: 2,
+            selectedAsin: 'B_AAA',
+            equivalentAsins: ['B_AAA', 'B_ZZZ'],
+          },
+          AMBIGUOUS_WINDOW_COLLAPSED,
+        ],
+      ]);
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+
+    it('equivalentAsins is sorted, so the payload is identical from either provider order', async () => {
+      window(listing('B_ZZZ'), listing('B_AAA'));
+      await resolveBearHead();
+
+      expect(collapseLogCalls()[0]![0]).toEqual(
+        expect.objectContaining({ equivalentAsins: ['B_AAA', 'B_ZZZ'] }),
+      );
+    });
+
+    it('a true hold still emits exactly one info line with the existing payload and no collapse line', async () => {
+      window(listing('B_AAA', { duration: 600 }), listing('B_ZZZ', { duration: 900 }));
+
+      await resolveBearHead();
+
+      expect(holdLogCalls()).toEqual([
+        [
+          expect.objectContaining({ query: 'Bear Head Adrian Tchaikovsky', passing: 2, window: 5 }),
+          AMBIGUOUS_WINDOW_HELD,
+        ],
+      ]);
+      expect(collapseLogCalls()).toHaveLength(0);
+    });
+  });
+
+  describe('unchanged paths (AC11, AC12, AC13)', () => {
+    it('a single passing candidate is returned without consulting the collapse arm', async () => {
+      window(listing('B_ONLY'));
+
+      expect((await resolveBearHead())?.asin).toBe('B_ONLY');
+      expect(collapseLogCalls()).toHaveLength(0);
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+
+    it('zero passing candidates still return null with no collapse line', async () => {
+      window(candidate('Something Else Entirely', 'Nobody At All', { asin: 'B_NO' }));
+
+      expect(await resolveBearHead()).toBeNull();
+      expect(collapseLogCalls()).toHaveLength(0);
+    });
+
+    it('AC11: two listings sharing a canonical ASIN collapse at distinctness, not at the recording gate', async () => {
+      window(listing('b08regiona'), listing('B08REGIONA', { duration: 900 }));
+
+      // Distinctness drops the second, leaving one passing candidate — a duration that would have
+      // failed the collapse gate never gets consulted.
+      expect((await resolveBearHead())?.asin).toBe('b08regiona');
+      expect(collapseLogCalls()).toHaveLength(0);
+      expect(holdLogCalls()).toHaveLength(0);
     });
   });
 });
