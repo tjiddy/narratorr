@@ -364,6 +364,9 @@ describe('applyAudnexusEnrichment', () => {
     await applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book' }, { ...deps, db });
 
     expect(updateChain.set).not.toHaveBeenCalled();
+    // #2202: a held ambiguous window is a plain null here, so no ASIN writeback and no apply pass.
+    expect(deps.bookService.update).not.toHaveBeenCalled();
+    expect(mockFindCollision(deps)).not.toHaveBeenCalled();
   });
 
   it('no ASINs and no title — early return, neither enrichBook nor resolveBook called', async () => {

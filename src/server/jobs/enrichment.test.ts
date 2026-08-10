@@ -1466,6 +1466,11 @@ describe('enrichment job', () => {
       const where = updateChain.where.mock.calls[0]![0];
       expect(whereSql(where)).toContain('"asin"');
       expect(whereParams(where)).toEqual([1, 'B_CAP']);
+      // #2202: a held ambiguous window arrives here as a plain null, so the write must carry no
+      // metadata — nothing about the candidates the resolver declined may leak onto the row.
+      expect(Object.keys(setArg).sort()).toEqual(['enrichmentAttempts', 'enrichmentStatus', 'updatedAt']);
+      expect(bookService.update).not.toHaveBeenCalled();
+      expect(updateChain.set).toHaveBeenCalledTimes(1);
     });
 
     it('collision-failed increments enrichment_attempts through the shared guarded helper', async () => {

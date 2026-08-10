@@ -5,8 +5,10 @@ import {
   type BookMetadata,
   type SearchBooksResult,
 } from '@core/index.js';
+import { normalizeTitleLosslessly } from '@core/utils/title-variants.js';
+import { canonicalizeAsin } from '@shared/asin.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { matchPassesValidation } from './match-validation.js';
+import { matchPassesValidation, type MatchValidationItem } from './match-validation.js';
 
 export interface ResolveBookInput {
   asin?: string | undefined;
@@ -16,9 +18,15 @@ export interface ResolveBookInput {
 
 /**
  * Provider filtering preserves order rather than relevance-ranking, so validate a small result
- * window instead of trusting the first item.
+ * window instead of trusting the first item. Order therefore carries no relevance signal either:
+ * when several candidates pass, the first one is an arbitrary pick among siblings of the same
+ * series, so the window is disambiguated on identity-preserving exact title where that names
+ * exactly one candidate, and otherwise held for the existing retry/Fix Match path.
  */
 const VALIDATION_WINDOW = 5;
+
+/** Log message for the hold branch; the only signal an operator has for the live hold rate. */
+export const AMBIGUOUS_WINDOW_HELD = 'Ambiguous metadata window held — no unique title match';
 
 export interface ResolveBookDeps {
   provider: MetadataSearchProvider | undefined;
@@ -35,7 +43,9 @@ export interface ResolveBookDeps {
 /**
  * Try a nonblank ASIN, then validate a small title/author search window; format-specific ASIN
  * misses can therefore recover the audiobook edition. Null means a genuine miss, while transient
- * provider failures propagate for retry.
+ * provider failures propagate for retry. Several passing candidates are disambiguated on exact
+ * title, or held as a miss rather than guessed, because the window is not relevance-ranked and a
+ * guess among siblings writes durable metadata onto the wrong book.
  */
 export async function resolveBook(deps: ResolveBookDeps, input: ResolveBookInput): Promise<BookMetadata | null> {
   const asin = input.asin?.trim();
@@ -47,11 +57,56 @@ export async function resolveBook(deps: ResolveBookDeps, input: ResolveBookInput
   const author = input.author?.trim() || undefined;
   const query = author ? `${input.title} ${author}` : input.title;
   const books = await searchBooksThrowing(deps, query);
-  return (
-    books
-      .slice(0, VALIDATION_WINDOW)
-      .find((candidate) => matchPassesValidation({ title: input.title, author }, candidate)) ?? null
-  );
+
+  const passing = distinctPassingCandidates(books.slice(0, VALIDATION_WINDOW), { title: input.title, author });
+  if (passing.length === 0) return null;
+  if (passing.length === 1) return passing[0]!;
+
+  const disambiguated = selectExactTitleMatch(passing, input.title);
+  if (disambiguated) return disambiguated;
+
+  deps.log.info({ query, passing: passing.length, window: VALIDATION_WINDOW }, AMBIGUOUS_WINDOW_HELD);
+  return null;
+}
+
+/**
+ * Candidates the gate admits, keyed by canonical ASIN so the same book listed twice is one
+ * candidate rather than an ambiguity. A null key is identity-less: such candidates never collapse
+ * with each other or with a keyed one, so a window of ASIN-less siblings still holds.
+ */
+function distinctPassingCandidates(candidates: BookMetadata[], item: MatchValidationItem): BookMetadata[] {
+  const seen = new Set<string>();
+  const distinct: BookMetadata[] = [];
+  for (const candidate of candidates) {
+    if (!matchPassesValidation(item, candidate)) continue;
+    const key = canonicalizeAsin(candidate.asin);
+    if (key !== null) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
+    distinct.push(candidate);
+  }
+  return distinct;
+}
+
+/**
+ * The single candidate whose title IS the row's title, or null when zero or several qualify.
+ *
+ * The fold must be `normalizeTitleLosslessly` and NOT `normalizeTitleCore`: the latter is
+ * deliberately tolerant for library-work dedup, where it strips every trailing parenthetical and
+ * every `Book N`/`Vol N` marker — so it names `Saga Book 2` as the unique match for row
+ * `Saga Book 1`, which is the wrong-sibling write this selector exists to prevent. Do not "DRY"
+ * the two folds together. Requiring agreement under both was rejected too: only the lossless fold
+ * matches the bracketed `[Audible]` edition tail, so a conjunction would forfeit a correct match.
+ *
+ * An empty fold is outside the domain — untitled rows would otherwise claim each other, the same
+ * restriction the series matcher places on its reflexivity arm.
+ */
+export function selectExactTitleMatch(candidates: BookMetadata[], title: string): BookMetadata | null {
+  const key = normalizeTitleLosslessly(title);
+  if (key === '') return null;
+  const exact = candidates.filter((candidate) => normalizeTitleLosslessly(candidate.title) === key);
+  return exact.length === 1 ? exact[0]! : null;
 }
 
 /**

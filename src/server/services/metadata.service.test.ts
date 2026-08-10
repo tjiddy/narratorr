@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import { RateLimitError, TransientError, METADATA_SEARCH_PROVIDER_FACTORIES, NARRATOR_PLACEHOLDERS } from '@core/index.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { MetadataService, isRejectedByWords, PSEUDO_NARRATORS } from './metadata.service.js';
+import { AMBIGUOUS_WINDOW_HELD, selectExactTitleMatch } from './metadata-resolve-book.js';
 import type { BookMetadata } from '@core/index.js';
 
 const mockFactories = vi.mocked(METADATA_SEARCH_PROVIDER_FACTORIES);
@@ -2438,6 +2439,383 @@ describe('MetadataService.resolveBook', () => {
       service.resolveBook({ title: 'Words of Radiance', author: 'Brandon Sanderson' }),
     ).rejects.toBeInstanceOf(RateLimitError);
     expect(mockAudibleProvider.searchBooks).not.toHaveBeenCalled();
+  });
+});
+
+describe('MetadataService.resolveBook — ambiguous validation windows (#2202)', () => {
+  // The unchanged arms (one passing, zero passing, empty result, #1629 books[1] recovery, and every
+  // error-propagation case) are the pre-existing controls in the block above; they must stay green.
+  let service: MetadataService;
+  let mockLog: ReturnType<typeof createMockLogger>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // clearAllMocks leaves *Once queues intact; window fixtures queue several, so reset outright.
+    mockAudibleProvider.searchBooks.mockReset().mockResolvedValue({ books: [] });
+    mockAudnexus.getBook.mockReset().mockResolvedValue(null);
+    mockLog = createMockLogger();
+    service = new MetadataService(inject<FastifyBaseLogger>(mockLog));
+  });
+
+  function candidate(title: string, author: string, overrides: Partial<BookMetadata> = {}): BookMetadata {
+    return { title, authors: [{ name: author }], ...overrides };
+  }
+
+  function window(...books: BookMetadata[]): void {
+    mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books });
+  }
+
+  function holdLogCalls(): unknown[][] {
+    return (mockLog.info as Mock).mock.calls.filter((call) => call[1] === AMBIGUOUS_WINDOW_HELD);
+  }
+
+  const HERBERT = 'Frank Herbert';
+  const COLFER = 'Eoin Colfer';
+
+  describe('the hold (AC1, AC4)', () => {
+    it('two distinct passing candidates and no exact-title match → null, not an arbitrary pick', async () => {
+      window(
+        candidate('Dune', HERBERT, { asin: 'B_DUNE' }),
+        candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }),
+      );
+
+      const result = await service.resolveBook({ title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(result).toBeNull();
+    });
+
+    it('all five window entries passing with no exact-title match → null', async () => {
+      window(
+        ...['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon'].map((part, i) =>
+          candidate(`Artemis Fowl Chronicles: ${part}`, COLFER, { asin: `B_${i}` })),
+      );
+
+      const result = await service.resolveBook({ title: 'Artemis Fowl Chronicles', author: COLFER });
+
+      expect(result).toBeNull();
+    });
+
+    it('AC4: a sixth passing candidate is outside the window, so books[0] resolves instead of holding', async () => {
+      window(
+        candidate('Dune', HERBERT, { asin: 'B_DUNE' }),
+        candidate('Mistborn', HERBERT, { asin: 'B_1' }),
+        candidate('Elantris', HERBERT, { asin: 'B_2' }),
+        candidate('Warbreaker', HERBERT, { asin: 'B_3' }),
+        candidate('Skyward', HERBERT, { asin: 'B_4' }),
+        candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }),
+      );
+
+      const result = await service.resolveBook({ title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(result).toEqual(candidate('Dune', HERBERT, { asin: 'B_DUNE' }));
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+
+    it('AC4 inverse: the two passing candidates sit at the window tail → null', async () => {
+      window(
+        candidate('Mistborn', HERBERT, { asin: 'B_1' }),
+        candidate('Elantris', HERBERT, { asin: 'B_2' }),
+        candidate('Warbreaker', HERBERT, { asin: 'B_3' }),
+        candidate('Dune', HERBERT, { asin: 'B_DUNE' }),
+        candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }),
+      );
+
+      const result = await service.resolveBook({ title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(result).toBeNull();
+    });
+
+    it('title-only path: two same-titled editions both clear 0.85 → null (the tie-break names two)', async () => {
+      window(
+        candidate('Leviathan Wakes', 'James S A Corey', { asin: 'B_ED1' }),
+        candidate('Leviathan Wakes', 'James S A Corey', { asin: 'B_ED2' }),
+      );
+
+      expect(await service.resolveBook({ title: 'Leviathan Wakes' })).toBeNull();
+
+      window(candidate('Leviathan Wakes', 'James S A Corey', { asin: 'B_ED1' }));
+
+      expect(await service.resolveBook({ title: 'Leviathan Wakes' }))
+        .toEqual(candidate('Leviathan Wakes', 'James S A Corey', { asin: 'B_ED1' }));
+    });
+  });
+
+  describe('candidate identity (AC3)', () => {
+    it.each([
+      ['undefined + undefined', undefined, undefined],
+      ['undefined + empty string', undefined, ''],
+      ['empty string + whitespace', '', '   '],
+    ])('canonical-null ASINs never collapse with each other: %s → null', async (_label, left, right) => {
+      window(
+        candidate('Dune', HERBERT, { asin: left }),
+        candidate('Dune Messiah', HERBERT, { asin: right }),
+      );
+
+      const result = await service.resolveBook({ title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(result).toBeNull();
+    });
+
+    it('a canonical-null key never collapses with a non-null key → null', async () => {
+      window(
+        candidate('Dune', HERBERT, { asin: 'B_DUNE' }),
+        candidate('Dune Messiah', HERBERT, { asin: '' }),
+      );
+
+      const result = await service.resolveBook({ title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(result).toBeNull();
+    });
+
+    it('a single passing candidate with no ASIN is still returned (missing identity is not a hold)', async () => {
+      window(candidate('Dune Messiah', HERBERT, { asin: undefined }));
+
+      const result = await service.resolveBook({ title: 'Dune Messiah', author: HERBERT });
+
+      expect(result).toEqual(candidate('Dune Messiah', HERBERT, { asin: undefined }));
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+
+    it('equal non-null ASINs differing only in case collapse to one candidate → returned, not held', async () => {
+      window(
+        candidate('Dune', HERBERT, { asin: 'b0dune' }),
+        candidate('Dune Messiah', HERBERT, { asin: 'B0DUNE' }),
+      );
+
+      const result = await service.resolveBook({ title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(result).toEqual(candidate('Dune', HERBERT, { asin: 'b0dune' }));
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+
+    it('negative control: the same window with two genuinely different ASINs holds', async () => {
+      window(
+        candidate('Dune', HERBERT, { asin: 'B0DUNE' }),
+        candidate('Dune Messiah', HERBERT, { asin: 'B0MESSIAH' }),
+      );
+
+      const result = await service.resolveBook({ title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(result).toBeNull();
+    });
+
+    it('a candidate the gate rejects for empty authors does not contribute to the count', async () => {
+      window(
+        candidate('Dune', HERBERT, { asin: 'B_DUNE', authors: [] }),
+        candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }),
+      );
+
+      const result = await service.resolveBook({ title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(result).toEqual(candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }));
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+  });
+
+  describe('filter and ASIN-path interactions (AC5, AC6, AC7)', () => {
+    it('AC5: a sibling dropped by the podcast filter leaves one passing candidate → returned', async () => {
+      window(
+        candidate('Dune', HERBERT, { asin: 'B_DUNE', contentDeliveryType: 'PodcastParent' }),
+        candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }),
+      );
+
+      const result = await service.resolveBook({ title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(result).toEqual(candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }));
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+
+    it('AC6: the ASIN fast path wins over a five-way ambiguous window; search is never called', async () => {
+      const direct = candidate('Dune', HERBERT, { asin: 'B0AUDIO' });
+      mockAudnexus.getBook.mockResolvedValueOnce(direct);
+      window(
+        ...['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon'].map((part, i) =>
+          candidate(`Artemis Fowl Chronicles: ${part}`, COLFER, { asin: `B_${i}` })),
+      );
+
+      const result = await service.resolveBook({ asin: 'B0AUDIO', title: 'Artemis Fowl Chronicles', author: COLFER });
+
+      expect(result).toEqual(direct);
+      expect(mockAudibleProvider.searchBooks).not.toHaveBeenCalled();
+    });
+
+    it('AC6: a whitespace-only ASIN goes straight to search, where the ambiguous window holds', async () => {
+      window(
+        candidate('Dune', HERBERT, { asin: 'B_DUNE' }),
+        candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }),
+      );
+
+      const result = await service.resolveBook({ asin: '   ', title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(result).toBeNull();
+      expect(mockAudnexus.getBook).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['TransientError', new TransientError('Audnexus', 'HTTP 503')],
+      ['a generic Error', new Error('Network error')],
+    ])('AC7: %s on the ASIN path is swallowed by enrichBook, so the ambiguous fallback window holds', async (_label, error) => {
+      mockAudnexus.getBook.mockRejectedValueOnce(error);
+      window(
+        candidate('Dune', HERBERT, { asin: 'B_DUNE' }),
+        candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }),
+      );
+
+      const result = await service.resolveBook({ asin: 'B_DEAD', title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(result).toBeNull();
+      expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('Dune Chronicles Messiah Frank Herbert');
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ asin: 'B_DEAD' }),
+        'Audnexus enrichment lookup failed',
+      );
+    });
+  });
+
+  describe('the exact-title tie-break (AC13)', () => {
+    it('recovers the correct sibling when the wrong one is first — the #2202 wrong-sibling bug', async () => {
+      const messiah = candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' });
+      window(candidate('Dune', HERBERT, { asin: 'B_DUNE' }), messiah);
+
+      const result = await service.resolveBook({ title: 'Dune Messiah', author: HERBERT });
+
+      expect(result).toEqual(messiah);
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+
+    it('counterfactual twin: the same rule when the exact match is already first (fixture order decides the tag)', async () => {
+      const opener = candidate('Artemis Fowl', COLFER, { asin: 'B_OPENER' });
+      window(
+        opener,
+        candidate('The Artemis Fowl Files', COLFER, { asin: 'B_FILES' }),
+        candidate('Artemis Fowl: The Arctic Incident', COLFER, { asin: 'B_ARCTIC' }),
+        candidate('Artemis Fowl: The Eternity Code', COLFER, { asin: 'B_CODE' }),
+        candidate('Artemis Fowl: The Opal Deception', COLFER, { asin: 'B_OPAL' }),
+      );
+
+      const result = await service.resolveBook({ title: 'Artemis Fowl', author: COLFER });
+
+      expect(result).toEqual(opener);
+    });
+
+    it.each([
+      ['a parenthesised audio-edition tail', 'Artemis Fowl (Unabridged)'],
+      ['a bracketed audio-edition tail', 'Artemis Fowl [Audible]'],
+    ])('the fold tolerates case, doubled whitespace and %s', async (_label, exactTitle) => {
+      const exact = candidate(exactTitle, COLFER, { asin: 'B_EXACT' });
+      window(candidate('The Artemis Fowl Files', COLFER, { asin: 'B_FILES' }), exact);
+
+      const result = await service.resolveBook({ title: 'artemis  fowl', author: COLFER });
+
+      expect(result).toEqual(exact);
+    });
+
+    it('the fold tolerates a curly apostrophe against a straight one', async () => {
+      const exact = candidate('Artemis Fowl’s Tale', COLFER, { asin: 'B_EXACT' });
+      window(candidate("Artemis Fowl's Tale: The Files", COLFER, { asin: 'B_FILES' }), exact);
+
+      const result = await service.resolveBook({ title: "artemis  fowl's tale", author: COLFER });
+
+      expect(result).toEqual(exact);
+    });
+
+    it.each([
+      ['Cyrillic', 'Дозоры', 'Дозоры II'],
+      ['Japanese', '影の書', '影の書物'],
+    ])('%s: the fold preserves the script, so a byte-identical candidate behind a sibling still wins', async (_label, rowTitle, sibling) => {
+      const exact = candidate(rowTitle, 'A B', { asin: 'B_EXACT' });
+      window(candidate(sibling, 'A B', { asin: 'B_SIBLING' }), exact);
+
+      const result = await service.resolveBook({ title: rowTitle, author: 'A B' });
+
+      expect(result).toEqual(exact);
+    });
+
+    it('two different non-Latin candidates, neither an exact match → null (the fold did not empty them)', async () => {
+      window(
+        candidate('影の書物', 'A B', { asin: 'B_ONE' }),
+        candidate('影の書庫', 'A B', { asin: 'B_TWO' }),
+      );
+
+      const result = await service.resolveBook({ title: '影の書', author: 'A B' });
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('the tie-break fold must be identity-preserving, not the tolerant dedup fold', () => {
+    // Each row below is uniquely "matched" to the WRONG sibling by normalizeTitleCore, which strips
+    // trailing volume markers and generic parentheticals. These pin that collapse out of the resolver.
+    it.each([
+      ['numbered siblings', 'Saga Book 1', 'A B', 'Saga Companion', 'Saga Book 2'],
+      ['comma and Vol marker forms', 'Saga, Book 1', 'A B', 'Saga Companion', 'Saga Vol 2'],
+      ['a numbered sibling ahead of a companion', 'Dune Book 1', HERBERT, 'Dune Book 2', 'Dune Companion'],
+      ['a differing generic parenthetical', 'Dune', HERBERT, 'Dune Messiah', 'Dune (Book 2)'],
+      [
+        'a series-position parenthetical',
+        'The Farthest Shore',
+        'Ursula K Le Guin',
+        'The Farthest Shore Companion',
+        'The Farthest Shore (The Earthsea Cycle Book 3)',
+      ],
+    ])('%s hold instead of resolving', async (_label, rowTitle, author, first, second) => {
+      window(
+        candidate(first, author, { asin: 'B_ONE' }),
+        candidate(second, author, { asin: 'B_TWO' }),
+      );
+
+      const result = await service.resolveBook({ title: rowTitle, author });
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('observability (AC11)', () => {
+    it('a hold emits exactly one info line carrying the query, the distinct passing count and the window size', async () => {
+      window(
+        candidate('Dune', HERBERT, { asin: 'B_DUNE' }),
+        candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }),
+      );
+
+      await service.resolveBook({ title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(holdLogCalls()).toEqual([
+        [
+          expect.objectContaining({ query: 'Dune Chronicles Messiah Frank Herbert', passing: 2, window: 5 }),
+          AMBIGUOUS_WINDOW_HELD,
+        ],
+      ]);
+    });
+
+    it('the tie-break-resolved, one-passing and zero-passing branches emit no hold line', async () => {
+      window(candidate('Dune', HERBERT, { asin: 'B_DUNE' }), candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }));
+      await service.resolveBook({ title: 'Dune Messiah', author: HERBERT });
+
+      window(candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }));
+      await service.resolveBook({ title: 'Dune Messiah', author: HERBERT });
+
+      window(candidate('Mistborn', 'Brandon Sanderson', { asin: 'B_MIST' }));
+      await service.resolveBook({ title: 'Dune Messiah', author: HERBERT });
+
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+  });
+
+  describe('selectExactTitleMatch — the empty-fold domain guard (AC13)', () => {
+    // Asserted at the helper: no window reachable through matchPassesValidation distinguishes
+    // guard-present from guard-absent, so a resolveBook-level test here would be vacuous.
+    it('a row title whose lossless fold is empty never names a winner, even against a lone twin', () => {
+      const twin: BookMetadata = { title: '!!!', authors: [{ name: 'A B' }] };
+
+      expect(selectExactTitleMatch([twin], '!!!')).toBeNull();
+    });
+
+    it('positive control: a non-empty fold still names its unique match', () => {
+      const winner: BookMetadata = { title: 'Dune Messiah', authors: [{ name: HERBERT }] };
+      const other: BookMetadata = { title: 'Dune', authors: [{ name: HERBERT }] };
+
+      expect(selectExactTitleMatch([other, winner], 'dune  messiah')).toBe(winner);
+    });
   });
 });
 
