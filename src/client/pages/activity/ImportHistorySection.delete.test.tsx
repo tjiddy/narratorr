@@ -343,6 +343,16 @@ describe('ImportHistorySection bulk clear (#2220)', () => {
   });
 });
 
+/**
+ * The focused card's own observer is still mounted at the moment its report is evicted, so a
+ * mock that keeps resolving would let it immediately refetch the run back into cache. Deleting
+ * server-side is what actually stops that, so the double has to start 404ing too.
+ */
+async function gone(): Promise<void> {
+  const { ApiError } = await import('@/lib/api');
+  getImportSubmissionDetail.mockRejectedValue(new ApiError(404, { error: 'submission-not-found' }));
+}
+
 /** Reads back the live URL so deep-link cleanup is asserted on the router, not on a prop. */
 function DeepLinkHarness() {
   const [params] = useSearchParams();
@@ -363,7 +373,7 @@ describe('ImportHistorySection deep-link cleanup (#2220)', () => {
       .mockResolvedValueOnce({ data: [summary({ id: 3 })], total: 1 })
       .mockResolvedValue({ data: [summary({ id: 7 })], total: 1 });
     getImportSubmissionDetail.mockResolvedValue(detail(3));
-    clearCompletedImportSubmissions.mockResolvedValue({ deleted: 1, ids: [3] });
+    clearCompletedImportSubmissions.mockImplementation(async () => { await gone(); return { deleted: 1, ids: [3] }; });
     renderWithProviders(<DeepLinkHarness />, { route: '/activity?tab=history&filter=deleted&run=3', queryClient: qc });
     await screen.findByTestId('import-history-card-3');
 
@@ -400,7 +410,7 @@ describe('ImportHistorySection deep-link cleanup (#2220)', () => {
       .mockResolvedValueOnce({ data: [summary({ id: 3 })], total: 1 })
       .mockResolvedValue({ data: [summary({ id: 7 })], total: 1 });
     getImportSubmissionDetail.mockResolvedValue(detail(3));
-    discardImportSubmission.mockResolvedValue({ success: true });
+    discardImportSubmission.mockImplementation(async () => { await gone(); return { success: true }; });
     renderWithProviders(<DeepLinkHarness />, { route: '/activity?tab=history&run=3', queryClient: qc });
     await screen.findByTestId('import-history-card-3');
 
