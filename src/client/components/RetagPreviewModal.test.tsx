@@ -5,7 +5,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { RetagPreviewModal } from './RetagPreviewModal';
 import { countApplyFiles } from './RetagPreviewModal.utils';
-import { api, RetagFfmpegNotConfiguredError, type RetagPlan, type RetagExcludableField, type RetagMode } from '@/lib/api';
+import { api, RetagDependencyNotConfiguredError, type RetagPlan, type RetagExcludableField, type RetagMode } from '@/lib/api';
 
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>();
@@ -392,13 +392,18 @@ describe('RetagPreviewModal', () => {
     expect(screen.getByRole('button', { name: /Re-tag 0 files/ })).toBeDisabled();
   });
 
-  it('ffmpeg-not-configured renders inline error and hides apply button', async () => {
+  it('dependency-not-configured renders inline error naming mutagen and hides apply button', async () => {
     vi.mocked(api.getBookRetagPreview).mockRejectedValue(
-      new RetagFfmpegNotConfiguredError('ffmpeg is not configured'),
+      new RetagDependencyNotConfiguredError('mutagen is not configured'),
     );
     renderModal();
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/ffmpeg/);
+    // This string is the operator's only remediation instruction, so assert it exactly.
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/mutagen/);
+    expect(alert).toHaveTextContent(/MUTAGEN_PYTHON/);
+    expect(alert).not.toHaveTextContent(/ffmpeg/i);
+    expect(alert).not.toHaveTextContent(/FFMPEG_PATH/);
     expect(screen.queryByRole('button', { name: /Re-tag/ })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
   });

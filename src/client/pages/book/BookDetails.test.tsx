@@ -3,7 +3,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockBook, createMockSettings } from '@/__tests__/factories';
-import { api, RetagFfmpegNotConfiguredError } from '@/lib/api';
+import { api, RetagDependencyNotConfiguredError } from '@/lib/api';
 import { BookDetails } from './BookDetails';
 import type { BookWithAuthor } from '@/lib/api';
 import type { MetadataBook } from './helpers';
@@ -955,13 +955,13 @@ describe('BookDetails', () => {
       expect(api.retagBook).not.toHaveBeenCalled();
     });
 
-    it('clicking Re-tag with ffmpeg unconfigured opens the preview modal and surfaces the inline error', async () => {
+    it('clicking Re-tag with the tag writer unconfigured opens the preview modal and surfaces the inline error', async () => {
       const user = userEvent.setup();
       (api.getSettings as Mock).mockResolvedValue(createMockSettings({
         processing: { outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       }));
       (api.getBookRetagPreview as Mock).mockRejectedValue(
-        new RetagFfmpegNotConfiguredError('ffmpeg is not configured'),
+        new RetagDependencyNotConfiguredError('mutagen is not configured'),
       );
 
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
@@ -971,7 +971,7 @@ describe('BookDetails', () => {
       await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
 
       const dialog = screen.getByRole('dialog');
-      expect(await within(dialog).findByRole('alert')).toHaveTextContent(/ffmpeg/);
+      expect(await within(dialog).findByRole('alert')).toHaveTextContent(/mutagen/);
       expect(within(dialog).queryByRole('button', { name: /Re-tag \d+ file/ })).not.toBeInTheDocument();
       expect(api.retagBook).not.toHaveBeenCalled();
     });

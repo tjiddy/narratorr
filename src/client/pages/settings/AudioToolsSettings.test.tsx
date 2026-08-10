@@ -82,7 +82,14 @@ describe('AudioToolsSettings', () => {
     mockApi.getFfmpegStatus.mockResolvedValue({ detected: false });
     renderWithProviders(<AudioToolsSettings />);
     await waitFor(() => expect(screen.getByText(/ffmpeg not found/)).toBeInTheDocument());
-    expect(screen.getByText(/Merge, Convert and Tag Embedding stay off until it resolves/)).toBeInTheDocument();
+    expect(screen.getByText(/Merge and Convert stay off until it resolves/)).toBeInTheDocument();
+  });
+
+  it('no longer lists Tag Embedding in the ffmpeg-missing notice — it gates on mutagen now', async () => {
+    mockApi.getFfmpegStatus.mockResolvedValue({ detected: false });
+    renderWithProviders(<AudioToolsSettings />);
+    await waitFor(() => expect(screen.getByText(/ffmpeg not found/)).toBeInTheDocument());
+    expect(screen.queryByText(/Tag Embedding/)).not.toBeInTheDocument();
   });
 
   it('shows the detected ffmpeg status (version + path) with no setup copy on the happy path', async () => {

@@ -1,6 +1,6 @@
 import { extname } from 'node:path';
 import type { TagMetadata } from './tagging.service.js';
-import { SIMPLE_EXCLUDABLE_FIELDS } from './retag-plan.js';
+import type { SIMPLE_EXCLUDABLE_FIELDS } from './retag-plan.js';
 
 export type MutagenFormat = 'mp4' | 'id3';
 
