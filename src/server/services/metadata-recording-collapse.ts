@@ -121,6 +121,9 @@ function usefulFieldCount(candidate: BookMetadata): number {
  * loses a cover, description or series mapping an equivalent listing carried. Richness therefore
  * ranks, but only after the row's own ASIN: canonicalization is lexicographic, not semantic, so it
  * identifies no "canonical" regional edition and is only fit to be the final total tie-break.
+ *
+ * Precondition: a non-empty set. Pure over any candidate shape otherwise — the eligibility gate is
+ * the caller's, which is why fields the gate makes uniform are still excluded from the ranking.
  */
 export function selectCanonicalRecording(candidates: BookMetadata[], inputAsin: string | undefined): BookMetadata {
   const wanted = canonicalizeAsin(inputAsin);
