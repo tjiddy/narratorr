@@ -352,6 +352,117 @@ describe('SearchBookCard', () => {
     });
   });
 
+  // The route used to flatten review into the same bare 409 as an owned recording, so the card
+  // claimed ownership of a book the resolver refused to call a duplicate (#2199).
+  describe('#2199 an undecided review is not an ownership claim', () => {
+    const reviewBody = { conflict: 'review', id: 88, title: 'Piranesi' };
+
+    async function addOnce() {
+      const user = userEvent.setup();
+      const rendered = renderCard();
+      await user.click(screen.getByRole('button', { name: /add book/i }));
+      await user.click(await screen.findByRole('button', { name: /add to library/i }));
+      return { user, ...rendered };
+    }
+
+    it('keeps the Add control mounted and shows no In Library badge on a review 409', async () => {
+      vi.mocked(api.addBook).mockRejectedValue(new ApiError(409, reviewBody));
+
+      await addOnce();
+
+      await waitFor(() => {
+        expect(screen.getByText('Possible duplicate (review)')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('In Library')).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: /view this book in your library/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /add book/i })).toBeInTheDocument();
+      expect(toast.info).not.toHaveBeenCalledWith('Already in library');
+    });
+
+    it('names the incumbent the resolver could not separate this recording from', async () => {
+      vi.mocked(api.addBook).mockRejectedValue(new ApiError(409, reviewBody));
+
+      await addOnce();
+
+      expect(await screen.findByText(/Piranesi/)).toBeInTheDocument();
+    });
+
+    it('falls back to generic wording when the 409 body carries no incumbent title', async () => {
+      vi.mocked(api.addBook).mockRejectedValue(new ApiError(409, { conflict: 'review', id: 88 }));
+
+      await addOnce();
+
+      expect(await screen.findByText(/already in your library/i)).toBeInTheDocument();
+    });
+
+    it('re-issues the add with the override and flips to In Library once it succeeds', async () => {
+      vi.mocked(api.addBook).mockRejectedValueOnce(new ApiError(409, reviewBody));
+      const { user } = await addOnce();
+      await screen.findByRole('button', { name: /add anyway/i });
+
+      vi.mocked(api.addBook).mockResolvedValue({ id: 99, title: 'The Way of Kings' } as never);
+      await user.click(screen.getByRole('button', { name: /add anyway/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('In Library')).toBeInTheDocument();
+      });
+      expect(vi.mocked(api.addBook).mock.calls[1]![0]).toMatchObject({ overrideRecordingReview: true });
+      expect(screen.queryByText('Possible duplicate (review)')).not.toBeInTheDocument();
+    });
+
+    it('carries the popover search choice through to the overriding add', async () => {
+      vi.mocked(api.addBook).mockRejectedValueOnce(new ApiError(409, reviewBody));
+      const user = userEvent.setup();
+      renderCard();
+
+      await user.click(screen.getByRole('button', { name: /add book/i }));
+      await user.click(await screen.findByRole('checkbox'));
+      await user.click(await screen.findByRole('button', { name: /add to library/i }));
+      await screen.findByRole('button', { name: /add anyway/i });
+
+      vi.mocked(api.addBook).mockResolvedValue({ id: 99, title: 'The Way of Kings' } as never);
+      await user.click(screen.getByRole('button', { name: /add anyway/i }));
+
+      await waitFor(() => { expect(api.addBook).toHaveBeenCalledTimes(2); });
+      expect(vi.mocked(api.addBook).mock.calls[1]![0]).toMatchObject({
+        searchImmediately: true, overrideRecordingReview: true,
+      });
+    });
+
+    it('leaves the review affordance mounted when the overriding add is itself refused', async () => {
+      vi.mocked(api.addBook).mockRejectedValue(new ApiError(409, reviewBody));
+      const { user } = await addOnce();
+      await screen.findByRole('button', { name: /add anyway/i });
+
+      await user.click(screen.getByRole('button', { name: /add anyway/i }));
+
+      await waitFor(() => { expect(api.addBook).toHaveBeenCalledTimes(2); });
+      expect(screen.getByText('Possible duplicate (review)')).toBeInTheDocument();
+      expect(screen.queryByText('In Library')).not.toBeInTheDocument();
+    });
+
+    it('still claims ownership and offers no override on a same-recording 409', async () => {
+      vi.mocked(api.addBook).mockRejectedValue(new ApiError(409, { conflict: 'same-recording', id: 7, title: 'Owned' }));
+
+      await addOnce();
+
+      await waitFor(() => {
+        expect(toast.info).toHaveBeenCalledWith('Already in library');
+        expect(screen.getByText('In Library')).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('button', { name: /add anyway/i })).not.toBeInTheDocument();
+    });
+
+    it('still claims ownership on an owned-race 409', async () => {
+      vi.mocked(api.addBook).mockRejectedValue(new ApiError(409, { conflict: 'owned-race', id: 7, title: 'Owned' }));
+
+      await addOnce();
+
+      await waitFor(() => { expect(screen.getByText('In Library')).toBeInTheDocument(); });
+      expect(screen.getByRole('link', { name: /view this book in your library/i })).toHaveAttribute('href', '/books/7');
+    });
+  });
+
   it('shows error toast for non-409 errors', async () => {
     vi.mocked(api.addBook).mockRejectedValue(new Error('Network error'));
     const user = userEvent.setup();

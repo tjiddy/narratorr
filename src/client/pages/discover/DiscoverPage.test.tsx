@@ -9,7 +9,9 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
-vi.mock('@/lib/api', () => ({
+// The 409 reader is deliberately NOT stubbed: the discriminator rule is what these tests assert.
+vi.mock('@/lib/api', async () => ({
+  parseAddBookConflict: (await import('@/lib/api/add-book-conflict.js')).parseAddBookConflict,
   api: {
     getDiscoverSuggestions: vi.fn(),
     addBook: vi.fn(),
@@ -700,10 +702,10 @@ describe('DiscoverPage', () => {
       });
     });
 
-    it('treats addBook 409 as success and marks suggestion added', async () => {
+    it('treats a same-recording addBook 409 as success and marks suggestion added', async () => {
       const { ApiError: MockApiError } = await import('@/lib/api');
       const { toast } = await import('sonner');
-      mockApi.addBook.mockRejectedValue(new MockApiError(409, {}));
+      mockApi.addBook.mockRejectedValue(new MockApiError(409, { conflict: 'same-recording', id: 7, title: 'Owned' }));
       mockApi.markDiscoverSuggestionAdded.mockResolvedValue({ suggestion: { id: 1, status: 'added' } });
       mockApi.getDiscoverSuggestions.mockResolvedValue([makeSuggestion({ id: 1 })]);
       mockApi.getBookStats.mockResolvedValue(makeStats());
@@ -718,6 +720,50 @@ describe('DiscoverPage', () => {
         expect(toast.info).toHaveBeenCalledWith('Already in library');
       });
       expect(mockApi.markDiscoverSuggestionAdded).toHaveBeenCalledWith(1);
+    });
+
+    // A review verdict is the resolver abstaining; marking the suggestion added would write a
+    // durable ownership claim the server never made (#2199).
+    describe('#2199 a review 409 leaves the suggestion unowned', () => {
+      async function addOnce() {
+        const { ApiError: MockApiError } = await import('@/lib/api');
+        mockApi.addBook.mockRejectedValue(new MockApiError(409, { conflict: 'review', id: 88, title: 'Piranesi' }));
+        mockApi.getDiscoverSuggestions.mockResolvedValue([makeSuggestion({ id: 1 })]);
+        mockApi.getBookStats.mockResolvedValue(makeStats());
+
+        renderWithProviders(<DiscoverPage />);
+        await waitFor(() => { expect(screen.getByText('Test Book')).toBeInTheDocument(); });
+
+        await userEvent.click(screen.getByRole('button', { name: /^add book$/i }));
+        await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
+      }
+
+      it('never writes the server-side added mark', async () => {
+        const { toast } = await import('sonner');
+        await addOnce();
+
+        await waitFor(() => { expect(toast.info).toHaveBeenCalled(); });
+        expect(mockApi.markDiscoverSuggestionAdded).not.toHaveBeenCalled();
+      });
+
+      it('renders no In Library badge and keeps the Add control mounted', async () => {
+        const { toast } = await import('sonner');
+        await addOnce();
+
+        await waitFor(() => { expect(toast.info).toHaveBeenCalled(); });
+        expect(screen.queryByText('In Library')).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /^add book$/i })).toBeInTheDocument();
+      });
+
+      it('reuses the possible-duplicate wording rather than claiming ownership', async () => {
+        const { toast } = await import('sonner');
+        await addOnce();
+
+        await waitFor(() => {
+          expect(toast.info).toHaveBeenCalledWith(expect.stringContaining('Possible duplicate (review)'));
+        });
+        expect(toast.info).not.toHaveBeenCalledWith('Already in library');
+      });
     });
 
     it('does not call mark-added on addBook non-409 failure', async () => {

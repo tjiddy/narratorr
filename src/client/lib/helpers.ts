@@ -5,7 +5,7 @@ import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 
 export function mapBookMetadataToPayload(
   book: BookMetadata,
-  qualityDefaults?: { searchImmediately?: boolean },
+  overrides?: { searchImmediately?: boolean; overrideRecordingReview?: boolean },
 ): CreateBookPayload {
   // Audible `series[0]` may be a broader universe; use the canonical primary series.
   const primary = pickPrimarySeries(book);
@@ -23,7 +23,11 @@ export function mapBookMetadataToPayload(
     duration: book.duration,
     genres: book.genres,
     providerId: book.providerId,
-    searchImmediately: qualityDefaults?.searchImmediately,
+    searchImmediately: overrides?.searchImmediately,
+    // Both keys are omitted rather than sent as undefined: the server reads an absent formatType as
+    // "no signal supplied", which is not the same as `unknown`.
+    ...(book.formatType !== undefined && { formatType: book.formatType }),
+    ...(overrides?.overrideRecordingReview && { overrideRecordingReview: true }),
   };
 }
 

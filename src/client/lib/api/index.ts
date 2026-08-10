@@ -2,6 +2,8 @@ export { ApiError } from './client.js';
 
 export type { Author, BookWithAuthor, BookIdentifier, LibraryEntry, CreateBookPayload, UpdateBookPayload, RenameResult, RenamePreviewResult, RetagResult, RetagExcludableField, RetagPlan, RetagPlanFile, RetagPlanFileDiff, RetagMode, RetagOverrides, SingleBookSearchResult, BookMetadata, AuthorMetadata, MetadataSearchResults, BookFile, BookListParams, LibraryBookListParams, BookStats, BookSeriesCardData, BookSeriesMemberCard, RefreshBookSeriesResponse, HardcoverSeriesCandidate, FixMatchPayload, LibraryBookListItem, LibraryBookListResponse, AddAllSeriesResponse, AddAllMemberResult, AddAllDisposition } from './books.js';
 export { RenameConflictError, RetagFfmpegNotConfiguredError } from './books.js';
+export { parseAddBookConflict } from './add-book-conflict.js';
+export type { AddBookConflictDetails } from './add-book-conflict.js';
 export type { SearchResult, SearchResponse } from './search.js';
 export type { Download, ActivityCounts, QualityGateData, ActivityListParams } from './activity.js';
 export type { Indexer } from './indexers.js';
