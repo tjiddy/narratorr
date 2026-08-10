@@ -5,17 +5,18 @@ import {
   type AddAllSeriesResponse,
 } from '@shared/series-add-all.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { addBookThroughLadder, type AddBookLadderDeps } from './book-add-ladder.js';
+import { addResolvedBook, type ResolvedAddDeps } from './book-add-resolved.js';
 import { runImmediateSearch, type ImmediateSearchDeps } from './trigger-immediate-search.js';
-import type { RecordingReviewReason } from '@core/utils/recording-identity.js';
 import type { BookDetail, BookService } from './book.service.js';
 import type { EventHistoryService } from './event-history.service.js';
+import type { MetadataService } from './metadata.service.js';
 import type { BookSeriesCardData, SeriesCardService } from './series-card.service.js';
 
 export interface SeriesAddAllDeps {
-  bookService: Pick<BookService, 'findDuplicate' | 'create' | 'getById'>;
+  bookService: Pick<BookService, 'findDuplicate' | 'create'>;
   eventHistory: Pick<EventHistoryService, 'create'>;
   seriesCardService: Pick<SeriesCardService, 'getSeriesForBook'>;
+  metadataService: Pick<MetadataService, 'resolveBook'>;
   search: ImmediateSearchDeps;
 }
 
@@ -26,15 +27,22 @@ export type SeriesAddAllOutcome =
 const ZERO_BATCH: AddAllSeriesResponse = { requested: 0, created: 0, owned: 0, held: 0, failed: 0, members: [] };
 
 /**
- * Adds every unowned major member of a book's series in one request. Rows are seeded from the
- * Hardcover card with no ASIN, so the existing enrichment job resolves their metadata later; the
- * batch never calls the metadata provider itself.
+ * Adds every unowned major member of a book's series in one request. Each member is resolved
+ * against the metadata provider before it is created, through the same pipeline an import list
+ * runs, so its duplicate check sees the member's recording — not its title and author alone — and
+ * the row lands with a cover instead of waiting on the enrichment cron (#2231).
+ *
+ * Identity is pinned, not adopted: the card's library pool is keyed on `books.seriesName`, so a row
+ * created under the provider's series name would never appear on the card the operator was
+ * looking at.
  */
 export class SeriesAddAllService {
   /**
    * In-process and per-series only. Two requests for one series would otherwise both read the same
-   * unowned snapshot and both create a row per member — the created rows carry no ASIN, so the
-   * unique index cannot fence them. Not a distributed lock, which the single-process design permits.
+   * unowned snapshot and both create a row per member. A resolved row usually carries an ASIN the
+   * unique index can fence, but an unresolved one carries none, so the guard is still the only
+   * thing standing between an overlapping pair and duplicate rows. Not a distributed lock, which
+   * the single-process design permits.
    */
   private readonly inFlight = new Set<number>();
 
@@ -90,7 +98,9 @@ export class SeriesAddAllService {
     const created: BookDetail[] = [];
     const members: AddAllMemberResult[] = [];
     // Sequential by contract: BookService.create opens a transaction and the libSQL connection
-    // permits one at a time.
+    // permits one at a time. Each member also resolves inline, so the request blocks for the whole
+    // batch — measured against the live library that is ~30-35 lookups plus the metadata service's
+    // 200ms throttle in the worst case, which the control's pending state already accounts for.
     for (const selected of selectAddAllMembers(card.members)) {
       members.push(await this.addMember(card, selected.title.trim(), selected.position as number, created, log));
     }
@@ -118,52 +128,41 @@ export class SeriesAddAllService {
     log: FastifyBaseLogger,
   ): Promise<AddAllMemberResult> {
     try {
-      const result = await addBookThroughLadder(this.ladderDeps(), {
-        title,
-        authors: card.seriesAuthor ? [{ name: card.seriesAuthor }] : [],
-        seriesName: card.name,
-        seriesPosition: position,
+      const result = await addResolvedBook(this.addDeps(), {
+        item: {
+          title,
+          // Undefined, never null or '': an authorless member must reach the resolver's stricter
+          // title-only validation arm rather than search for an empty author.
+          author: card.seriesAuthor ?? undefined,
+          seriesName: card.name,
+          seriesPosition: position,
+        },
+        identity: 'pin',
+        provenance: { source: 'manual', reason: { seriesName: card.name } },
       }, log);
 
       if (result.outcome === 'created') {
         created.push(result.book);
         return { title, position, disposition: 'created', bookId: result.book.id };
       }
-      if (result.outcome === 'owned-race') {
+      if (result.outcome === 'owned-race' || result.outcome === 'same-recording') {
         return { title, position, disposition: 'owned', bookId: result.existingBookId };
       }
-      if (result.verdict === 'same-recording') {
-        return { title, position, disposition: 'owned', bookId: result.book.id };
-      }
-      // The event IS the durable artifact for a hold, so it must commit before the member is
-      // reported held; a rejection falls to the catch below and reports failed instead.
-      await this.recordReviewSkip(card, title, result.book.id, result.recordingReviewReason);
-      return { title, position, disposition: 'held', bookId: result.book.id };
+      // The pipeline awaits the hold's event before returning, so a rejection reaches the catch
+      // below and reports failed rather than a hold with no durable artifact.
+      return { title, position, disposition: 'held', bookId: result.existingBookId };
     } catch (error: unknown) {
       log.warn({ series: card.name, title, position, error: serializeError(error) }, 'Add All: member failed');
       return { title, position, disposition: 'failed', bookId: null };
     }
   }
 
-  private ladderDeps(): AddBookLadderDeps {
-    return { bookService: this.deps.bookService, eventHistory: this.deps.eventHistory };
-  }
-
-  /** Mirrors the import-list precedent: the hold lives on the incumbent's history, under Needs Review. */
-  private async recordReviewSkip(
-    card: BookSeriesCardData,
-    title: string,
-    existingBookId: number,
-    recordingReviewReason: RecordingReviewReason | undefined,
-  ): Promise<void> {
-    await this.deps.eventHistory.create({
-      bookId: existingBookId,
-      bookTitle: title,
-      authorName: card.seriesAuthor,
-      eventType: 'recording_review_skipped',
-      source: 'manual',
-      reason: { seriesName: card.name, existingBookId, ...(recordingReviewReason && { recordingReviewReason }) },
-    });
+  private addDeps(): ResolvedAddDeps {
+    return {
+      bookService: this.deps.bookService,
+      recordEvent: (event) => this.deps.eventHistory.create(event),
+      resolver: this.deps.metadataService,
+    };
   }
 
   /** Detached but serial: N concurrent search-and-grab pipelines would hammer the operator's indexers. */

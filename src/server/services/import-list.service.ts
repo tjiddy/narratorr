@@ -5,21 +5,16 @@ import { importLists, bookEvents } from '@db/schema.js';
 import { IMPORT_LIST_ADAPTER_FACTORIES } from '@core/import-lists/index.js';
 import type { ImportListItem } from '@core/import-lists/index.js';
 import type { MetadataService } from './metadata.service.js';
-import type { BookMetadata } from '@core/metadata/types.js';
-import { normalizeProductionType } from '@core/metadata/production-type.js';
-import type { ProductionType } from '@shared/schemas/book.js';
-import { RateLimitError, TransientError } from '@core/index.js';
 import { encryptFields, decryptFields, getKey } from '../utils/secret-codec.js';
 import { resolveAndEncryptSettings, resolveSettings } from '../utils/sentinel-resolver.js';
 import { getErrorMessage } from '../utils/error-message.js';
-import { OwnedRecordingError, type BookService, type BookWithAuthor } from './book.service.js';
+import type { BookService } from './book.service.js';
+import { addResolvedBook, type ResolvedAddDeps, type ResolvedAddEvent } from './book-add-resolved.js';
 import type { ImportListType } from '@shared/import-list-registry.js';
 import { importListSettingsSchemas, type ImportListSettings } from '@shared/schemas/import-list.js';
 import type { ImportListRow } from './types.js';
 import { triggerImmediateSearch, type ImmediateSearchDeps } from './trigger-immediate-search.js';
 import type { AppSettings } from '@shared/schemas.js';
-import type { RecordingReviewReason } from '@shared/schemas/recording-verdict.js';
-import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 
 type QualitySettings = AppSettings['quality'];
 
@@ -211,220 +206,41 @@ export class ImportListService {
     return counts;
   }
 
-  /** Resolve shared metadata, preserving failed only for a genuine no-match; transient states stay pending. */
-  private async enrichItem(item: ImportListItem): Promise<{ enriched: EnrichedItem; enrichmentStatus: 'failed' | undefined }> {
-    const { match, enrichmentStatus } = await this.resolveMatch(item);
-    return { enriched: buildEnrichedItem(item, match), enrichmentStatus };
-  }
-
-  private async resolveMatch(item: ImportListItem): Promise<{ match: BookMetadata | null; enrichmentStatus: 'failed' | undefined }> {
-    if (!this.metadata) return { match: null, enrichmentStatus: undefined };
-    try {
-      const match = await this.metadata.resolveBook({
-        asin: item.asin,
-        title: item.title,
-        author: item.author,
-      });
-      if (match) {
-        this.logIdentityMismatch(item, match);
-        return { match, enrichmentStatus: undefined };
-      }
-      // A genuine no-match becomes failed so the one-hour search retry can recover it.
-      return { match: null, enrichmentStatus: 'failed' };
-    } catch (error: unknown) {
-      if (error instanceof RateLimitError) {
-        // Provider failures stay pending; they are not evidence of no match.
-        this.log.warn({ title: item.title, provider: error.provider, retryAfterMs: error.retryAfterMs }, 'Metadata resolution rate limited; leaving book pending');
-        return { match: null, enrichmentStatus: undefined };
-      }
-      if (error instanceof TransientError) {
-        this.log.warn({ title: item.title, provider: error.provider }, 'Metadata resolution hit a transient provider error; leaving book pending');
-        return { match: null, enrichmentStatus: undefined };
-      }
-      this.log.warn({ title: item.title, error: getErrorMessage(error) }, 'Metadata enrichment failed');
-      return { match: null, enrichmentStatus: undefined };
-    }
-  }
-
-  private logIdentityMismatch(item: ImportListItem, match: BookMetadata): void {
-    const metadataAuthor = match.authors[0]?.name;
-    const titleDiffers = !!item.title && item.title.toLowerCase() !== match.title.toLowerCase();
-    const authorDiffers = !!item.author && !!metadataAuthor && item.author.toLowerCase() !== metadataAuthor.toLowerCase();
-    if (!titleDiffers && !authorDiffers) return;
-    this.log.warn(
-      {
-        asin: match.asin ?? item.asin,
-        listTitle: item.title,
-        metadataTitle: match.title,
-        listAuthor: item.author,
-        metadataAuthor,
-      },
-      'Import-list metadata disagrees with raw provider fields; adopting resolved metadata',
-    );
-  }
-
-  private async resolveImportDisposition(enriched: EnrichedItem) {
-    const authorList = enriched.authorName ? [{ name: enriched.authorName }] : undefined;
-    return this.bookService.findDuplicate({
-      title: enriched.title,
-      ...(authorList && { authors: authorList }),
-      ...(enriched.asin !== undefined && { asin: enriched.asin }),
-      ...(enriched.narrators !== undefined && { narrators: enriched.narrators }),
-      ...(enriched.duration != null && { duration: enriched.duration }),
-      // Without normalized production type, abridged/unabridged items lacking duration collapse (#1728 F1).
-      ...(enriched.productionType !== undefined && { productionType: enriched.productionType }),
-    });
-  }
-
-  /** Import lists have no review UI; persist held candidates on the incumbent's history (#1735). */
-  private async recordReviewSkip(
-    enriched: EnrichedItem,
-    list: ImportListRow,
-    existingBookId: number | null,
-    recordingReviewReason: RecordingReviewReason | undefined,
-  ): Promise<void> {
-    this.log.info(
-      { title: enriched.title, asin: enriched.asin, existingBookId, recordingReviewReason },
-      'Import-list item needs recording review — recording held-review event',
-    );
-    await this.db.insert(bookEvents).values({
-      bookId: existingBookId,
-      bookTitle: enriched.title,
-      authorName: enriched.authorName ?? null,
-      eventType: 'recording_review_skipped',
-      source: 'import_list',
-      // Unstructured reason JSON preserves the machine downgrade reason without a migration (#1728).
-      reason: { importListName: list.name, existingBookId, ...(recordingReviewReason && { recordingReviewReason }) },
-    });
-  }
-
-  /** Treat a create-time same-ASIN race as an owned skip with no enqueue (#1711). */
-  private async createImportListBook(enriched: EnrichedItem, enrichmentStatus: 'failed' | undefined, list: ImportListRow): Promise<BookWithAuthor | null> {
-    try {
-      return await this.bookService.create({
-        title: enriched.title,
-        authors: enriched.authorName ? [{ name: enriched.authorName }] : [],
-        narrators: enriched.narrators,
-        subtitle: enriched.subtitle,
-        description: enriched.description,
-        publisher: enriched.publisher,
-        coverUrl: enriched.coverUrl,
-        asin: enriched.asin,
-        isbn: enriched.isbn,
-        seriesName: enriched.seriesName,
-        seriesPosition: enriched.seriesPosition,
-        duration: enriched.duration,
-        publishedDate: enriched.publishedDate,
-        genres: enriched.genres,
-        productionType: enriched.productionType,
-        status: 'wanted',
-        enrichmentStatus,
-        importListId: list.id,
-      });
-    } catch (error: unknown) {
-      if (error instanceof OwnedRecordingError) {
-        this.log.info({ title: enriched.title, asin: enriched.asin, existingBookId: error.existingBookId }, 'Import-list item already owned (ASIN race), skipped');
-        return null;
-      }
-      throw error;
-    }
+  /**
+   * The shared pipeline's dependencies. The event port is the raw insert this service has always
+   * used, so injecting `EventHistoryService` — and rewriting every construction in its suite — is
+   * not needed to share the ladder.
+   */
+  private addDeps(): ResolvedAddDeps {
+    return {
+      bookService: this.bookService,
+      recordEvent: (event: ResolvedAddEvent) => Promise.resolve(this.db.insert(bookEvents).values(event)),
+      resolver: this.metadata,
+    };
   }
 
   private async processItem(item: ImportListItem, list: ImportListRow, qualitySettings?: QualitySettings): Promise<ItemOutcome> {
-    const { enriched, enrichmentStatus } = await this.enrichItem(item);
+    // A shelf item's title and author are user data, so the resolved match owns the row's identity.
+    const result = await addResolvedBook(this.addDeps(), {
+      item,
+      identity: 'adopt',
+      provenance: { source: 'import_list', reason: { importListName: list.name }, importListId: list.id },
+    }, this.log);
 
-    const resolution = await this.resolveImportDisposition(enriched);
-    if (resolution.verdict === 'same-recording') {
-      this.log.debug({ title: enriched.title, asin: enriched.asin }, 'Book already exists (same recording), skipped');
-      return 'skipped';
-    }
-    if (resolution.verdict === 'review') {
-      await this.recordReviewSkip(enriched, list, resolution.book?.id ?? null, resolution.recordingReviewReason);
-      return 'held_review';
-    }
+    if (result.outcome === 'same-recording' || result.outcome === 'owned-race') return 'skipped';
+    if (result.outcome === 'review') return 'held_review';
 
-    const created = await this.createImportListBook(enriched, enrichmentStatus, list);
-    if (!created) return 'skipped';
-
-    await this.db.insert(bookEvents).values({
-      bookId: created.id,
-      bookTitle: created.title,
-      authorName: enriched.authorName ?? null,
-      eventType: 'book_added',
-      source: 'import_list',
-      reason: { importListName: list.name },
-    });
-
+    const created = result.book;
     this.log.info({ bookId: created.id, title: created.title, listName: list.name }, 'Book added from import list');
 
     if (this.searchDeps && qualitySettings?.searchImmediately) {
+      // The row's resolved primary author, not the hydrated list, is what the search query keys on.
       const bookForSearch = {
         ...created,
-        authors: enriched.authorName ? [{ name: enriched.authorName }] : [],
+        authors: result.authorName ? [{ name: result.authorName }] : [],
       };
       triggerImmediateSearch(bookForSearch, this.searchDeps, this.log);
     }
     return 'created';
   }
-}
-
-/**
- * Resolved identity is canonical while raw cover/description/ISBN remain preferred hints.
- * Keep this outside the class so fallback operators do not inflate `enrichItem` complexity.
- */
-function buildEnrichedItem(item: ImportListItem, match: BookMetadata | null): EnrichedItem {
-  if (!match) return buildRawEnriched(item);
-  return buildMatchedEnriched(item, match);
-}
-
-function buildRawEnriched(item: ImportListItem): EnrichedItem {
-  return {
-    title: item.title,
-    authorName: item.author,
-    coverUrl: item.coverUrl,
-    description: item.description,
-    asin: item.asin,
-    isbn: item.isbn,
-  };
-}
-
-function buildMatchedEnriched(item: ImportListItem, match: BookMetadata): EnrichedItem {
-  const primarySeries = pickPrimarySeries(match);
-  return {
-    title: match.title,
-    authorName: match.authors[0]?.name,
-    coverUrl: item.coverUrl ?? match.coverUrl,
-    subtitle: match.subtitle,
-    description: item.description ?? match.description,
-    publisher: match.publisher,
-    seriesName: primarySeries?.name,
-    seriesPosition: primarySeries?.position,
-    narrators: match.narrators,
-    duration: match.duration,
-    publishedDate: match.publishedDate,
-    genres: match.genres,
-    // Search fallback may replace a print/Kindle ASIN with the resolved audiobook ASIN.
-    asin: match.asin ?? item.asin,
-    isbn: item.isbn ?? match.isbn,
-    // Persist only actual format signal; undefined preserves the DB default (#1731).
-    productionType: match.formatType ? normalizeProductionType(match.formatType) : undefined,
-  };
-}
-
-interface EnrichedItem {
-  title: string;
-  coverUrl?: string | undefined;
-  subtitle?: string | undefined;
-  description?: string | undefined;
-  publisher?: string | undefined;
-  seriesName?: string | undefined;
-  seriesPosition?: number | undefined;
-  narrators?: string[] | undefined;
-  duration?: number | undefined;
-  publishedDate?: string | undefined;
-  genres?: string[] | undefined;
-  asin?: string | undefined;
-  isbn?: string | undefined;
-  authorName?: string | undefined;
-  productionType?: ProductionType | undefined;
 }

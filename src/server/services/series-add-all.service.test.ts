@@ -10,6 +10,8 @@ vi.mock('./search-pipeline.js', () => ({
 import { SeriesAddAllService, type SeriesAddAllDeps } from './series-add-all.service.js';
 import { searchAndGrabForBook } from './search-pipeline.js';
 import { OwnedRecordingError } from './book-dedup.js';
+import { RateLimitError, TransientError } from '@core/index.js';
+import type { BookMetadata } from '@core/metadata/types.js';
 import type { BookSeriesCardData, BookSeriesMemberCard } from './series-card.service.js';
 import type { BookDetail } from './book.service.js';
 
@@ -46,10 +48,13 @@ function makeDeps(overrides: Partial<SeriesAddAllDeps> = {}): SeriesAddAllDeps {
     bookService: {
       findDuplicate: vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null, hasIncumbent: false }),
       create: vi.fn().mockImplementation((input: { title: string }) => Promise.resolve(createdBook(input.title))),
-      getById: vi.fn().mockResolvedValue(null),
     },
     eventHistory: { create: vi.fn().mockResolvedValue({ id: 1 }) },
     seriesCardService: { getSeriesForBook: vi.fn().mockResolvedValue(card()) },
+    // The deliberate default: the provider has nothing for this member, so selection, disposition
+    // and guard cases keep exercising the member's own identity. Resolution cases opt in with a
+    // match — see `resolvingDeps`.
+    metadataService: { resolveBook: vi.fn().mockResolvedValue(null) },
     search: {
       indexerSearchService: {} as never,
       indexerService: {} as never,
@@ -103,8 +108,8 @@ describe('SeriesAddAllService — selection', () => {
     const response = await run(deps);
 
     expect(vi.mocked(deps.bookService.create).mock.calls.map(([input]) => input)).toEqual([
-      { title: 'Leviathan Wakes', authors: [{ name: 'James S. A. Corey' }], seriesName: 'The Expanse', seriesPosition: 1 },
-      { title: "Caliban's War", authors: [{ name: 'James S. A. Corey' }], seriesName: 'The Expanse', seriesPosition: 2 },
+      { title: 'Leviathan Wakes', authors: [{ name: 'James S. A. Corey' }], seriesName: 'The Expanse', seriesPosition: 1, status: 'wanted', enrichmentStatus: 'failed' },
+      { title: "Caliban's War", authors: [{ name: 'James S. A. Corey' }], seriesName: 'The Expanse', seriesPosition: 2, status: 'wanted', enrichmentStatus: 'failed' },
     ]);
     expect(response.requested).toBe(2);
     expect(response.members.map((m) => m.title)).toEqual(['Leviathan Wakes', "Caliban's War"]);
@@ -131,13 +136,17 @@ describe('SeriesAddAllService — selection', () => {
     expect(vi.mocked(deps.bookService.create).mock.calls[0]?.[0]).toMatchObject({ authors: [] });
   });
 
-  it('sets neither an ASIN nor an enrichment status so the row defaults to pending', async () => {
+  /**
+   * Rewritten for #2231: a member the provider cannot resolve is now a genuine miss, and import-list
+   * parity makes that `failed` — retried by the cron under its attempt cap rather than forever.
+   */
+  it('marks a genuinely unresolved row failed and gives it no ASIN', async () => {
     const deps = makeDeps();
     await run(deps);
 
     const input = vi.mocked(deps.bookService.create).mock.calls[0]?.[0] as unknown as Record<string, unknown>;
-    expect(input).not.toHaveProperty('asin');
-    expect(input).not.toHaveProperty('enrichmentStatus');
+    expect(input.asin).toBeUndefined();
+    expect(input.enrichmentStatus).toBe('failed');
   });
 
   it('returns a zeroed batch and writes nothing when the book has no series card', async () => {
@@ -190,7 +199,6 @@ describe('SeriesAddAllService — dispositions', () => {
     vi.mocked(deps.bookService.create)
       .mockRejectedValueOnce(new OwnedRecordingError({ existingBookId: 31, title: 'One', reason: 'asin-owned' }))
       .mockImplementationOnce((input: { title: string }) => Promise.resolve(createdBook(input.title)));
-    vi.mocked(deps.bookService.getById).mockResolvedValue({ id: 31 } as BookDetail);
 
     const response = await run(deps);
 
@@ -336,6 +344,185 @@ describe('SeriesAddAllService — dispositions', () => {
     await run(deps);
 
     expect(peak).toBe(1);
+  });
+});
+
+describe('SeriesAddAllService — member resolution', () => {
+  /**
+   * The resolved recording for `Leviathan Wakes`, disagreeing with the card on every identity field
+   * so one fixture proves both the enrichment carry-through and the pin.
+   */
+  const MATCH: BookMetadata = {
+    asin: 'B_LEVIATHAN',
+    title: 'Leviathan Wakes: The Expanse, Book 1',
+    authors: [{ name: 'Corey, James S. A.' }],
+    narrators: ['Jefferson Mays'],
+    // books.duration is MINUTES — 1290 is 21h30m; a seconds-shaped literal here is 60x wrong.
+    duration: 1290,
+    coverUrl: 'https://example.test/leviathan.jpg',
+    description: 'The resolved description',
+    subtitle: 'The Expanse, Book 1',
+    publisher: 'Orbit',
+    genres: ['Science Fiction'],
+    publishedDate: '2011-06-15',
+    seriesPrimary: { name: 'Expanse (Provider Edition)', position: 9 },
+    formatType: 'unabridged',
+  };
+
+  function resolvingDeps(match: BookMetadata | null = MATCH, overrides: Partial<SeriesAddAllDeps> = {}): SeriesAddAllDeps {
+    return makeDeps({ metadataService: { resolveBook: vi.fn().mockResolvedValue(match) }, ...overrides });
+  }
+
+  /** The incumbent is only provable by its narrators: without them the resolver abstains. */
+  function onlyNarratorsProveIt(deps: SeriesAddAllDeps): void {
+    vi.mocked(deps.bookService.findDuplicate).mockImplementation((candidate: { narrators?: string[] | undefined }) =>
+      Promise.resolve(candidate.narrators?.includes('Jefferson Mays')
+        ? { verdict: 'same-recording', book: { id: 77 } as BookDetail, hasIncumbent: true }
+        : { verdict: 'review', book: { id: 77 } as BookDetail, hasIncumbent: true, recordingReviewReason: 'narrator-no-signal' }));
+  }
+
+  const createInput = (deps: SeriesAddAllDeps) =>
+    vi.mocked(deps.bookService.create).mock.calls[0]?.[0] as unknown as Record<string, unknown>;
+
+  /**
+   * The headline regression. Before #2231 the batch handed `findDuplicate` a title and an author
+   * only, so an owned member Hardcover failed to link had no evidence to prove itself with and was
+   * reported `held` forever. Counterfactual: with the resolve step deleted the duplicate check
+   * receives no narrators and this test reds while the rest of the suite stays green.
+   */
+  it('reports a member the provider resolves onto an owned recording as owned, not held', async () => {
+    const deps = resolvingDeps();
+    onlyNarratorsProveIt(deps);
+
+    const response = await run(deps);
+
+    expect(response).toMatchObject({ requested: 1, created: 0, owned: 1, held: 0 });
+    expect(response.members[0]).toEqual({ title: 'Leviathan Wakes', position: 1, disposition: 'owned', bookId: 77 });
+    expect(deps.bookService.findDuplicate).toHaveBeenCalledWith(expect.objectContaining({
+      asin: 'B_LEVIATHAN', narrators: ['Jefferson Mays'], duration: 1290, productionType: 'unabridged',
+    }));
+  });
+
+  /** The boundary companion: the fix is the resolved evidence, not the mere presence of a resolve. */
+  it('still holds the member when the resolved match carries no narrators', async () => {
+    const { narrators: _narrators, duration: _duration, ...noSignal } = MATCH;
+    const deps = resolvingDeps(noSignal);
+    onlyNarratorsProveIt(deps);
+
+    const response = await run(deps);
+
+    expect(response).toMatchObject({ requested: 1, created: 0, owned: 0, held: 1 });
+  });
+
+  it('creates the row with the resolved cover, duration and narrators', async () => {
+    const deps = resolvingDeps();
+
+    await run(deps);
+
+    expect(createInput(deps)).toMatchObject({
+      coverUrl: 'https://example.test/leviathan.jpg',
+      duration: 1290,
+      narrators: ['Jefferson Mays'],
+      asin: 'B_LEVIATHAN',
+      subtitle: 'The Expanse, Book 1',
+      description: 'The resolved description',
+      publisher: 'Orbit',
+      genres: ['Science Fiction'],
+      publishedDate: '2011-06-15',
+      productionType: 'unabridged',
+    });
+    // Resolved rows stay pending so the cron still runs them, exactly as an import-list row does.
+    expect(createInput(deps).enrichmentStatus).toBeUndefined();
+  });
+
+  it('pins the card\'s title, author, series name and position over the resolved match', async () => {
+    const deps = resolvingDeps();
+
+    await run(deps);
+
+    expect(createInput(deps)).toMatchObject({
+      title: 'Leviathan Wakes',
+      authors: [{ name: 'James S. A. Corey' }],
+      seriesName: 'The Expanse',
+      seriesPosition: 1,
+    });
+  });
+
+  it('resolves an authorless card member with author undefined, never null or empty', async () => {
+    const deps = resolvingDeps(null, {
+      seriesCardService: { getSeriesForBook: vi.fn().mockResolvedValue(card({ seriesAuthor: null })) },
+    });
+
+    const response = await run(deps);
+
+    expect(deps.metadataService.resolveBook).toHaveBeenCalledWith({ asin: undefined, title: 'Leviathan Wakes', author: undefined });
+    expect(response).toMatchObject({ created: 1, failed: 0 });
+    expect(createInput(deps)).toMatchObject({ authors: [] });
+  });
+
+  it('resolves each member before creating it, one at a time', async () => {
+    const deps = resolvingDeps(null, {
+      seriesCardService: {
+        getSeriesForBook: vi.fn().mockResolvedValue(card({
+          members: [1, 2].map((position) => member({ title: `Book ${position}`, position })),
+        })),
+      },
+    });
+    const order: string[] = [];
+    vi.mocked(deps.metadataService.resolveBook).mockImplementation((input: { title: string }) => {
+      order.push(`resolve:${input.title}`);
+      return Promise.resolve(null);
+    });
+    vi.mocked(deps.bookService.create).mockImplementation((input: { title: string }) => {
+      order.push(`create:${input.title}`);
+      return Promise.resolve(createdBook(input.title));
+    });
+
+    await run(deps);
+
+    expect(order).toEqual(['resolve:Book 1', 'create:Book 1', 'resolve:Book 2', 'create:Book 2']);
+  });
+
+  it.each([
+    ['a rate limit', new RateLimitError(30_000, 'Audible.com')],
+    ['a transient provider error', new TransientError('Audible.com', 'HTTP 503')],
+  ])('creates the remaining members from their own identity after %s mid-batch', async (_label, error) => {
+    const deps = resolvingDeps(null, {
+      seriesCardService: {
+        getSeriesForBook: vi.fn().mockResolvedValue(card({
+          members: [1, 2, 3].map((position) => member({ title: `Book ${position}`, position })),
+        })),
+      },
+    });
+    vi.mocked(deps.metadataService.resolveBook)
+      .mockResolvedValueOnce(MATCH)
+      .mockRejectedValue(error);
+
+    const response = await run(deps);
+
+    expect(response).toMatchObject({ requested: 3, created: 3, failed: 0 });
+    const inputs = vi.mocked(deps.bookService.create).mock.calls.map(([i]) => i as unknown as Record<string, unknown>);
+    expect(inputs.map((i) => i.title)).toEqual(['Book 1', 'Book 2', 'Book 3']);
+    // A provider failure is not evidence of a missing book: the later rows stay pending for the cron.
+    expect(inputs[1]!.enrichmentStatus).toBeUndefined();
+    expect(inputs[2]!.enrichmentStatus).toBeUndefined();
+    expect(inputs[1]!.asin).toBeUndefined();
+  });
+
+  it('creates a member from its own identity, marked failed, when the resolver holds an ambiguous window', async () => {
+    // #2202/#2219: a held window and a genuine miss both surface as null, and both mean "no
+    // evidence reached the row" — the retry window, not an indefinite pending, is the answer.
+    const deps = resolvingDeps(null);
+
+    const response = await run(deps);
+
+    expect(response).toMatchObject({ requested: 1, created: 1, failed: 0 });
+    expect(createInput(deps)).toMatchObject({
+      title: 'Leviathan Wakes',
+      seriesName: 'The Expanse',
+      seriesPosition: 1,
+      enrichmentStatus: 'failed',
+    });
   });
 });
 

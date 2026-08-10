@@ -692,6 +692,39 @@ describe('ImportListService', () => {
         );
       });
 
+      // The committed row is the point of no return, so the bookkeeping write cannot un-create it.
+      it('counts the item created when its book_added write rejects after the row committed (#2231)', async () => {
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Committed Book', author: 'Author One' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList({ id: 12, name: 'Rejecting List' })]));
+        db.insert.mockReturnValue(mockDbChain([], { error: new Error('events table locked') }));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockResolvedValue(createdBook(88, 'Committed Book'));
+        const searchDeps = makeSearchDeps({ searchImmediately: true });
+        service = new ImportListService(
+          inject<Db>(db), mockLog, makeBookService({ create }), undefined, searchDeps,
+        );
+
+        await service.syncDueLists();
+
+        expect(mockLog.info).toHaveBeenCalledWith(
+          expect.objectContaining({ id: 12, createdCount: 1, heldReviewCount: 0 }),
+          expect.stringContaining('Import list sync completed'),
+        );
+        // The row still enters the search pipeline; only the bookkeeping write is lost.
+        await vi.waitFor(() => expect(mockTriggerImmediateSearch).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(mockLog.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ bookId: 88 }),
+          expect.stringContaining('Failed to record book_added event'),
+        ));
+      });
+
       it('sync-complete log surfaces createdCount vs heldReviewCount for a mixed run (#1735)', async () => {
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([
