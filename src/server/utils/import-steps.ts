@@ -11,7 +11,7 @@ import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/index.js';
 import { getErrorMessage } from './error-message.js';
 import type { TaggingService } from '../services/tagging.service.js';
 import { serializeError } from './serialize-error.js';
-import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
+import { resolveMutagenPython } from '@core/utils/mutagen-resolver.js';
 
 // Re-export side-effect functions for backwards compatibility.
 export {
@@ -268,14 +268,14 @@ export async function embedTagsForImport(args: EmbedTagsArgs): Promise<void> {
   const { taggingService, taggingEnabled, taggingMode, embedCover, bookId, targetPath, book, log } = args;
   if (!taggingService) return;
   if (!taggingEnabled) return;
-  const ffmpegPath = await resolveFfmpegPath();
-  if (!ffmpegPath) {
-    log.debug({ bookId }, 'Tag embedding enabled but ffmpeg not available — skipping');
+  const mutagenPython = await resolveMutagenPython();
+  if (!mutagenPython) {
+    log.warn({ bookId }, 'Tag embedding enabled but Python with the mutagen module is not available — skipping');
     return;
   }
 
   try {
-    const tagResult = await taggingService.tagBook(bookId, targetPath, book, ffmpegPath, taggingMode, embedCover);
+    const tagResult = await taggingService.tagBook(bookId, targetPath, book, mutagenPython, taggingMode, embedCover);
     log.info(
       { bookId, tagged: tagResult.tagged, skipped: tagResult.skipped, failed: tagResult.failed },
       'Tag embedding during import',

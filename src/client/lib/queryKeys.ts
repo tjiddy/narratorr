@@ -38,6 +38,8 @@ export const queryKeys = {
   settings: () => ['settings'] as const,
   // All ffmpeg-gated surfaces share one cache entry.
   ffmpegStatus: () => ['ffmpeg-status'] as const,
+  // Tag embedding gates on mutagen, so its capability is a separate cache entry.
+  mutagenStatus: () => ['mutagen-status'] as const,
   indexers: () => ['indexers'] as const,
   downloadClients: () => ['downloadClients'] as const,
   notifiers: () => ['notifiers'] as const,

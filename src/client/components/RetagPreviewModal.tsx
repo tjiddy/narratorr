@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   api,
-  RetagFfmpegNotConfiguredError,
+  RetagDependencyNotConfiguredError,
   type RetagExcludableField,
   type RetagMode,
   type RetagPlan,
@@ -81,8 +81,8 @@ export function RetagPreviewModal({ bookId, isOpen, onClose, onConfirm }: RetagP
 
   if (!isOpen) return null;
 
-  const ffmpegError = error instanceof RetagFfmpegNotConfiguredError ? error : null;
-  const otherError = error && !ffmpegError ? error : null;
+  const dependencyError = error instanceof RetagDependencyNotConfiguredError ? error : null;
+  const otherError = error && !dependencyError ? error : null;
 
   const toggle = (field: RetagExcludableField) => {
     setExcludeSet(prev => {
@@ -121,12 +121,12 @@ export function RetagPreviewModal({ bookId, isOpen, onClose, onConfirm }: RetagP
             </div>
           )}
 
-          {ffmpegError && (
+          {dependencyError && (
             <p
               role="alert"
               className="text-sm text-destructive bg-destructive/10 rounded-lg px-4 py-3"
             >
-              ffmpeg isn’t available. Install ffmpeg or set FFMPEG_PATH (see <strong>Settings → Audio Tools</strong>) to enable re-tagging.
+              Tag writing isn’t available. Install Python with the <code>mutagen</code> module, or set <code>MUTAGEN_PYTHON</code> to an interpreter that has it, to enable re-tagging.
             </p>
           )}
 
@@ -152,7 +152,7 @@ export function RetagPreviewModal({ bookId, isOpen, onClose, onConfirm }: RetagP
 
         <ModalFooter
           plan={data}
-          ffmpegError={!!ffmpegError}
+          dependencyError={!!dependencyError}
           excludeSet={excludeSet}
           onClose={onClose}
           onConfirm={handleConfirm}
@@ -164,19 +164,19 @@ export function RetagPreviewModal({ bookId, isOpen, onClose, onConfirm }: RetagP
 
 function ModalFooter({
   plan,
-  ffmpegError,
+  dependencyError,
   excludeSet,
   onClose,
   onConfirm,
 }: {
   plan: RetagPlan | undefined;
-  ffmpegError: boolean;
+  dependencyError: boolean;
   excludeSet: Set<RetagExcludableField>;
   onClose: () => void;
   onConfirm: () => void;
 }) {
   const applyCount = useMemo(() => plan ? countApplyFiles(plan, excludeSet) : 0, [plan, excludeSet]);
-  const showApply = plan !== undefined && !ffmpegError;
+  const showApply = plan !== undefined && !dependencyError;
   return (
     <div className="flex flex-col-reverse sm:flex-row gap-3 mt-6 shrink-0">
       <Button variant="secondary" size="md" type="button" onClick={onClose} className="flex-1 text-sm">

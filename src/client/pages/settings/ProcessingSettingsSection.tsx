@@ -13,6 +13,7 @@ import { TAG_MODE_LABELS } from '@/lib/constants';
 import { tagModeSchema, postProcessingScriptTimeoutField, DEFAULT_SETTINGS, type AppSettings } from '@shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 import { useFfmpegStatus } from '@/hooks/useFfmpegStatus';
+import { useMutagenStatus } from '@/hooks/useMutagenStatus';
 
 const saveButtonClass = 'px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in';
 
@@ -63,6 +64,15 @@ function GateNote() {
   );
 }
 
+function MutagenGateNote() {
+  return (
+    <span className="inline-flex items-center gap-1.5 mt-2 text-xs font-medium text-destructive">
+      <AlertTriangleIcon className="w-3.5 h-3.5" />
+      mutagen not found — install Python with the mutagen module, or set MUTAGEN_PYTHON
+    </span>
+  );
+}
+
 function AutoMergeDescription({ gated }: { gated: boolean }): ReactNode {
   return (
     <>
@@ -80,9 +90,12 @@ const POST_PROCESSING_CARD_LABEL = 'Post Processing';
 
 function AutomationsForm() {
   const ffmpegStatus = useFfmpegStatus();
+  const mutagenStatus = useMutagenStatus();
   // Stay optimistic while loading to avoid a false warning, but fail closed on query errors.
-  // The backend still enforces FFMPEG_NOT_CONFIGURED.
+  // The backend still enforces the dependency. Auto-merge keeps its ffmpeg gate while tag
+  // embedding moved to mutagen, so these two rows report different binaries by design (#2210 D8).
   const ffmpegAvailable = ffmpegStatus.isError ? false : ffmpegStatus.data?.detected !== false;
+  const mutagenAvailable = mutagenStatus.isError ? false : mutagenStatus.data?.detected !== false;
 
   const { form, mutation, onSubmit } = useSettingsForm<AutomationsFormData>({
     schema: automationsFormSchema,
@@ -116,14 +129,14 @@ function AutomationsForm() {
 
           <SettingsRow
             htmlFor="taggingEnabled"
-            label={<>Tag Embedding {!ffmpegAvailable && <span className="ml-1 text-[0.65rem] uppercase tracking-wide text-muted-foreground border border-border rounded-full px-1.5 py-0.5">needs ffmpeg</span>}</>}
-            description={<>Write book metadata into the audio file’s tags on import. Series, series part, subtitle, ASIN, and publisher survive on MP3 but are dropped on M4B by the container.{!ffmpegAvailable && <GateNote />}</>}
-            muted={!ffmpegAvailable}
+            label={<>Tag Embedding {!mutagenAvailable && <span className="ml-1 text-[0.65rem] uppercase tracking-wide text-muted-foreground border border-border rounded-full px-1.5 py-0.5">needs mutagen</span>}</>}
+            description={<>Write book metadata into the audio file’s tags on import. Series, series part, subtitle, ASIN, and publisher are written into the file on both MP3 and M4B.{!mutagenAvailable && <MutagenGateNote />}</>}
+            muted={!mutagenAvailable}
           >
-            <ToggleSwitch id="taggingEnabled" disabled={!ffmpegAvailable && !taggingEnabled} {...register('taggingEnabled')} />
+            <ToggleSwitch id="taggingEnabled" disabled={!mutagenAvailable && !taggingEnabled} {...register('taggingEnabled')} />
           </SettingsRow>
 
-          {taggingEnabled && ffmpegAvailable && (
+          {taggingEnabled && mutagenAvailable && (
             <SettingsRow htmlFor="tagMode" label="Tag mode" description="“Populate missing” only writes empty fields; “Overwrite” replaces all tag fields.">
               <div className="w-48">
                 <SelectWithChevron id="tagMode" {...register('tagMode')}>
@@ -135,7 +148,7 @@ function AutomationsForm() {
             </SettingsRow>
           )}
 
-          {taggingEnabled && ffmpegAvailable && (
+          {taggingEnabled && mutagenAvailable && (
             <SettingsRow htmlFor="embedCover" label="Embed cover art" description="Embed the book’s cover image into audio file tags.">
               <ToggleSwitch id="embedCover" {...register('embedCover')} />
             </SettingsRow>

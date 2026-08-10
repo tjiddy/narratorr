@@ -1,7 +1,5 @@
-import { execFile } from 'node:child_process';
-import { readdir, rename, unlink, stat } from 'node:fs/promises';
-import { join, extname, basename, dirname } from 'node:path';
-import { promisify } from 'node:util';
+import { readdir, stat } from 'node:fs/promises';
+import { join, extname, basename } from 'node:path';
 import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { TagMode, RetagExcludableField } from '@shared/schemas.js';
@@ -9,13 +7,12 @@ import type { SettingsService } from './settings.service.js';
 import type { BookService } from './book.service.js';
 import type { BookRefreshItem } from '../utils/enqueue-book-refresh.js';
 import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
-import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
+import { resolveMutagenPython } from '@core/utils/mutagen-resolver.js';
 import { collectSortedAudioFiles } from '@core/utils/collect-audio-files.js';
-import { dotPrefixBasename } from '@core/utils/hidden-staging.js';
-// Direct import keeps Node-only code out of the core/utils barrel consumed by Vite.
-import { sanitizedEnv } from '@core/utils/sanitized-env.js';
 import { COVER_FILE_REGEX } from '@core/utils/cover-regex.js';
-import { getErrorMessage } from '../utils/error-message.js';
+import { buildMutagenRequest, mutagenFormatForExtension } from './mutagen-tag-payload.js';
+import { writeTagsWithMutagen } from './mutagen-tag-writer.js';
+import { withTagWriteLock } from './tag-write-lock.js';
 import {
   readExistingTags,
   resolveTags,
@@ -36,8 +33,6 @@ export type {
   RetagPlanCanonical,
 } from './retag-plan.js';
 
-const execFileAsync = promisify(execFile);
-
 const TAGGABLE_EXTENSIONS = new Set(['.mp3', '.m4a', '.m4b']);
 
 export interface TagMetadata {
@@ -49,7 +44,6 @@ export interface TagMetadata {
   grouping?: string; // series name; ABS fallback
   track?: number;
   trackTotal?: number;
-  // MP3 preserves these fields; M4B loses series/subtitle/ASIN/publisher, which OPF supplies to ABS.
   series?: string; seriesPart?: number; subtitle?: string; asin?: string;
   publisher?: string; description?: string; date?: string; genre?: string;
 }
@@ -58,6 +52,11 @@ export interface TagFileResult {
   file: string;
   status: 'tagged' | 'skipped' | 'failed';
   reason?: string;
+  /** Non-fatal notes from a write that still succeeded, e.g. an unembeddable cover format. */
+  warnings?: string[];
+  /** Observational only — never a success predicate in either direction (#2210 D2). */
+  sizeBefore?: number;
+  sizeAfter?: number;
 }
 
 export interface RetagResult {
@@ -70,52 +69,18 @@ export interface RetagResult {
   refreshItem: BookRefreshItem | null;
 }
 
-/** String tag field → ffmpeg `-metadata` key. Numeric `seriesPart`/`track` are handled separately. */
-export const STRING_METADATA_TAGS: ReadonlyArray<readonly [keyof TagMetadata, string]> = [
-  ['artist', 'artist'], ['albumArtist', 'album_artist'], ['album', 'album'], ['title', 'title'],
-  ['composer', 'composer'], ['grouping', 'grouping'], ['series', 'series'], ['subtitle', 'subtitle'],
-  ['asin', 'asin'], ['publisher', 'publisher'], ['description', 'description'], ['date', 'date'], ['genre', 'genre'],
-];
-
-export function buildFfmpegArgs(
-  inputPath: string,
-  outputPath: string,
-  tags: TagMetadata,
-  coverPath?: string,
-): string[] {
-  const args = ['-y', '-i', inputPath];
-
-  if (coverPath) {
-    args.push('-i', coverPath);
-  }
-
-  // Always map one picture stream: supplied cover or optional source art; omitting the fallback strips existing covers.
-  args.push('-map', '0:a');
-  args.push('-map', coverPath ? '1' : '0:v?');
-  args.push('-c:v', 'copy', '-disposition:v', 'attached_pic');
-
-  args.push('-c:a', 'copy');
-
-  // Explicit mapping prevents ffmpeg from dropping M4B chapters during re-tagging.
-  args.push('-map_chapters', '0');
-
-  // Numeric null checks preserve zero while omitting empty metadata assignments.
-  for (const [field, key] of STRING_METADATA_TAGS) {
-    const value = tags[field];
-    if (value) args.push('-metadata', `${key}=${value}`);
-  }
-  if (tags.seriesPart != null) args.push('-metadata', `series-part=${tags.seriesPart}`);
-  if (tags.track != null && tags.trackTotal != null) {
-    args.push('-metadata', `track=${tags.track}/${tags.trackTotal}`);
-  }
-
-  args.push(outputPath);
-  return args;
-}
-
+/**
+ * The ffmpeg tag writer this replaces needed `-map_chapters 0` because remuxing dropped M4B
+ * chapters. mutagen patches the metadata header and never touches the chapter track, so there is
+ * nothing to re-map — the workaround became unnecessary rather than merely unused (#2210 AC15).
+ *
+ * The same remux is why `series`, `subtitle`, `asin` and `publisher` used to vanish on M4B: the mov
+ * muxer silently discards every `-metadata` key it has no atom mapping for. The per-format atom and
+ * frame tables now live in `mutagen-tag-payload.ts`.
+ */
 export async function tagFile(
   filePath: string,
-  ffmpegPath: string,
+  mutagenPython: string,
   tags: TagMetadata,
   mode: TagMode,
   coverPath?: string,
@@ -123,7 +88,8 @@ export async function tagFile(
   const ext = extname(filePath).toLowerCase();
   const fileName = basename(filePath);
 
-  if (!TAGGABLE_EXTENSIONS.has(ext)) {
+  const format = mutagenFormatForExtension(ext);
+  if (!format) {
     return { file: fileName, status: 'skipped', reason: `Unsupported format: ${ext}` };
   }
 
@@ -136,34 +102,26 @@ export async function tagFile(
     return { file: fileName, status: 'skipped', reason: 'All tags already populated' };
   }
 
-  // Create the temp file hidden so scans cannot ingest it before the atomic rename.
-  const tmpPath = dotPrefixBasename(join(dirname(filePath), `${basename(filePath, ext)}.tmp${ext}`));
+  const { request, warnings } = buildMutagenRequest({
+    filePath,
+    format,
+    tags: resolvedTags ?? {},
+    coverPath: shouldEmbedCover ? coverPath : undefined,
+  });
 
-  try {
-    const ffmpegArgs = buildFfmpegArgs(
-      filePath,
-      tmpPath,
-      resolvedTags ?? {},
-      shouldEmbedCover ? coverPath : undefined,
-    );
+  // The write is in place — no second file is ever created, so #1852 AC9's hazard (a library scan
+  // ingesting the born-hidden temp file before the atomic rename) cannot occur and the temp+rename
+  // it guarded is gone. The lock covers the save *and* the helper's read-back verification.
+  const result = await withTagWriteLock(filePath, () => writeTagsWithMutagen(mutagenPython, request));
 
-    await execFileAsync(ffmpegPath, ffmpegArgs, { env: sanitizedEnv() });
-
-    const [originalStat, tmpStat] = await Promise.all([stat(filePath), stat(tmpPath)]);
-    if (tmpStat.size < originalStat.size * 0.5) {
-      await unlink(tmpPath).catch(() => {});
-      return { file: fileName, status: 'failed', reason: 'Output file suspiciously small — possible corruption' };
-    }
-
-    // Atomically replace the original with the verified temp.
-    await rename(tmpPath, filePath);
-
-    return { file: fileName, status: 'tagged' };
-  } catch (error: unknown) {
-    await unlink(tmpPath).catch(() => {});
-    const message = getErrorMessage(error);
-    return { file: fileName, status: 'failed', reason: message };
+  const sizes = {
+    ...(result.sizeBefore !== undefined && { sizeBefore: result.sizeBefore }),
+    ...(result.sizeAfter !== undefined && { sizeAfter: result.sizeAfter }),
+  };
+  if (!result.ok) {
+    return { file: fileName, status: 'failed', ...(result.reason && { reason: result.reason }), ...sizes };
   }
+  return { file: fileName, status: 'tagged', ...(warnings.length > 0 && { warnings }), ...sizes };
 }
 
 async function findCoverFile(dirPath: string): Promise<string | undefined> {
@@ -229,7 +187,7 @@ export class TaggingService {
       publishedDate?: string | null | undefined; genres?: string[] | null | undefined;
       coverUrl?: string | null | undefined;
     },
-    ffmpegPath: string,
+    mutagenPython: string,
     mode: TagMode,
     embedCover: boolean,
     excludeFields: ReadonlySet<RetagExcludableField> = new Set(),
@@ -280,8 +238,13 @@ export class TaggingService {
 
       const tags = applyExcludeFields(fullTags, excludeFields);
 
-      const fileResult = await tagFile(filePath, ffmpegPath, tags, mode, coverPath);
+      const fileResult = await tagFile(filePath, mutagenPython, tags, mode, coverPath);
       result[fileResult.status]++;
+
+      for (const warning of fileResult.warnings ?? []) {
+        this.log.warn({ file: fileResult.file, reason: warning }, 'Tag write warning');
+        result.warnings.push(`${fileResult.file}: ${warning}`);
+      }
 
       if (fileResult.status === 'failed') {
         this.log.warn({ file: fileResult.file, reason: fileResult.reason }, 'Tag write failed');
@@ -305,7 +268,7 @@ export class TaggingService {
     excludeFields: ReadonlySet<RetagExcludableField> = new Set(),
     overrides: { mode?: TagMode; embedCover?: boolean } = {},
   ): Promise<RetagResult> {
-    const { book, ffmpegPath, taggingSettings } = await this.resolveRetagInputs(bookId);
+    const { book, mutagenPython, taggingSettings } = await this.resolveRetagInputs(bookId);
     const mode = overrides.mode ?? taggingSettings.mode;
     const embedCover = overrides.embedCover ?? taggingSettings.embedCover;
 
@@ -321,14 +284,14 @@ export class TaggingService {
         publisher: book.publisher, publishedDate: book.publishedDate, genres: book.genres,
         coverUrl: book.coverUrl,
       },
-      ffmpegPath,
+      mutagenPython,
       mode,
       embedCover,
       excludeFields,
     );
   }
 
-  /** Plan per-file outcomes without ffmpeg or mutation for the preview route. */
+  /** Plan per-file outcomes without spawning the tag writer or mutating for the preview route. */
   async planRetag(
     bookId: number,
     overrides: { mode?: TagMode; embedCover?: boolean } = {},
@@ -433,16 +396,19 @@ export class TaggingService {
 
   private async resolveRetagInputs(bookId: number): Promise<{
     book: NonNullable<Awaited<ReturnType<NonNullable<TaggingService['bookService']>['getById']>>>;
-    ffmpegPath: string;
+    mutagenPython: string;
     taggingSettings: { mode: TagMode; embedCover: boolean };
   }> {
-    const [taggingSettings, ffmpegPath] = await Promise.all([
+    const [taggingSettings, mutagenPython] = await Promise.all([
       this.settingsService.get('tagging'),
-      resolveFfmpegPath(),
+      resolveMutagenPython(),
     ]);
 
-    if (!ffmpegPath) {
-      throw new RetagError('FFMPEG_NOT_CONFIGURED', 'ffmpeg is not available on this system.');
+    if (!mutagenPython) {
+      throw new RetagError(
+        'MUTAGEN_NOT_CONFIGURED',
+        'Python with the mutagen module is not available on this system.',
+      );
     }
 
     const book = await this.bookService!.getById(bookId);
@@ -458,13 +424,15 @@ export class TaggingService {
       throw new RetagError('PATH_MISSING', `Book path does not exist on disk: ${book.path}`);
     }
 
-    return { book, ffmpegPath, taggingSettings };
+    return { book, mutagenPython, taggingSettings };
   }
 }
 
 export class RetagError extends Error {
+  // FFMPEG_NOT_CONFIGURED is gone rather than merely unused: the retag path no longer touches
+  // ffmpeg, so nothing could raise it. `MUTAGEN_NOT_CONFIGURED` inherits its 503 mapping.
   constructor(
-    public code: 'NOT_FOUND' | 'NO_PATH' | 'PATH_MISSING' | 'FFMPEG_NOT_CONFIGURED',
+    public code: 'NOT_FOUND' | 'NO_PATH' | 'PATH_MISSING' | 'MUTAGEN_NOT_CONFIGURED',
     message: string,
   ) {
     super(message);

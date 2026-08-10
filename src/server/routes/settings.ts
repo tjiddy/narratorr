@@ -11,6 +11,7 @@ import { serializeError } from '../utils/serialize-error.js';
 import { HardcoverClient } from '@core/metadata/hardcover.js';
 import { mapHardcoverError } from '../utils/hardcover-error.js';
 import { resolveFfmpegPath, probeFfmpeg } from '@core/utils/audio-processor.js';
+import { resolveMutagenDetection, probeMutagen } from '@core/utils/mutagen-resolver.js';
 import { triggerCompanionSweep, type CompanionSweepTrigger } from '../services/companion-ebook-trigger.js';
 import {
   snapshotCompanionSettings,
@@ -136,6 +137,20 @@ export async function settingsRoutes(
       return { detected: true, version, path };
     } catch (error: unknown) {
       request.log.warn({ error: serializeError(error) }, 'ffmpeg detected but failed to probe');
+      return { detected: false };
+    }
+  });
+
+  // Tag embedding gates on mutagen, not ffmpeg — the two rows in Post Processing now report
+  // different binaries, which is the intended end state (#2210 D5/D8).
+  app.get('/api/settings/mutagen-status', async (request) => {
+    const detection = await resolveMutagenDetection();
+    if (!detection) return { detected: false };
+    try {
+      const version = await probeMutagen(detection.python);
+      return { detected: true, version, path: detection.python };
+    } catch (error: unknown) {
+      request.log.warn({ error: serializeError(error) }, 'mutagen detected but failed to probe');
       return { detected: false };
     }
   });

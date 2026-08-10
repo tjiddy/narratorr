@@ -32,6 +32,13 @@ describe('ffmpeg license-notice shipping gate (Dockerfile)', () => {
     expect(df).toContain('test -s /app/LICENSE');
     expect(df).not.toContain('test -r /app/THIRD_PARTY_NOTICES.md');
   });
+
+  it('installs the tag writer runtime alongside ffmpeg (#2210)', () => {
+    // A missing interpreter turns tag embedding into a 503, so packaging is the gate.
+    expect(df).toMatch(/apk add --no-cache [^\n]*\bpython3\b/);
+    expect(df).toMatch(/apk add --no-cache [^\n]*\bpy3-mutagen\b/);
+    expect(df).toMatch(/apk add --no-cache [^\n]*\bffmpeg\b/);
+  });
 });
 
 describe('THIRD_PARTY_NOTICES.md content', () => {
@@ -40,6 +47,25 @@ describe('THIRD_PARTY_NOTICES.md content', () => {
   it('attributes FFmpeg with upstream link', () => {
     expect(content).toContain('This image bundles FFmpeg');
     expect(content).toContain('ffmpeg.org');
+  });
+
+  it('attributes mutagen and Python with upstream links and Alpine provenance (#2210)', () => {
+    expect(content).toContain('This image bundles mutagen');
+    expect(content).toContain('mutagen.readthedocs.io');
+    expect(content).toContain('py3-mutagen');
+    expect(content).toContain('GPL-2.0-or-later');
+    expect(content).toContain('PSF License Agreement');
+    expect(content).toContain('docs.python.org');
+  });
+
+  it('states the arm’s-length posture for mutagen, not just FFmpeg', () => {
+    expect(content).toMatch(/FFmpeg and mutagen are each invoked as a \*\*separate command-line\s+process\*\*/);
+    expect(content).toMatch(/Narratorr is not linked against either/);
+  });
+
+  it('points at mutagen corresponding source alongside FFmpeg', () => {
+    expect(content).toContain('community/py3-mutagen');
+    expect(content).toContain('github.com/quodlibet/mutagen');
   });
 
   it('reproduces both FFmpeg license texts in full', () => {

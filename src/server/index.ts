@@ -77,6 +77,7 @@ import { loadEncryptionKey, initializeKey } from './utils/secret-codec.js';
 import { migrateSecretsToEncrypted } from './utils/secret-migration.js';
 import { warnIfAuthBypassWithUser, checkReverseProxyBootConfig } from './boot-warnings.js';
 import { checkFfmpegVersionAtBoot } from './boot-ffmpeg-version.js';
+import { checkMutagenVersionAtBoot } from './boot-mutagen-version.js';
 import { buildFastifyOptions } from './fastify-options.js';
 import { registerRequestTraceLogging } from './request-trace-logging.js';
 import { registerV1OpenApi } from './routes/v1/openapi.js';
@@ -139,6 +140,7 @@ async function main() {
   await checkReverseProxyBootConfig(services.auth, config.trustedProxies, app.log);
 
   await checkFfmpegVersionAtBoot(app.log, services.settings);
+  await checkMutagenVersionAtBoot(app.log);
   await app.register(cookie);
   await app.register(authPlugin, { authService: services.auth, urlBase: config.urlBase });
   await app.register(errorHandlerPlugin);

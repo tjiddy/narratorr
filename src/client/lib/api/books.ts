@@ -217,12 +217,16 @@ export interface RetagOverrides {
   embedCover?: boolean;
 }
 
-/** Thrown when GET /books/:id/retag/preview returns the ffmpeg-not-configured error. */
-export class RetagFfmpegNotConfiguredError extends Error {
-  readonly code = 'FFMPEG_NOT_CONFIGURED' as const;
+/**
+ * Thrown when GET /books/:id/retag/preview reports its tag-writer dependency missing. The coded
+ * error envelope carries no `code` field, so 503 is the only discriminator the client has — and it
+ * is unambiguous, because the retag routes stopped raising FFMPEG_NOT_CONFIGURED entirely (#2210 D8).
+ */
+export class RetagDependencyNotConfiguredError extends Error {
+  readonly code = 'MUTAGEN_NOT_CONFIGURED' as const;
   constructor(message: string) {
     super(message);
-    this.name = 'RetagFfmpegNotConfiguredError';
+    this.name = 'RetagDependencyNotConfiguredError';
   }
 }
 
@@ -387,7 +391,7 @@ export const booksApi = {
         error.status === 503 &&
         typeof (error.body as { error?: string })?.error === 'string'
       ) {
-        throw new RetagFfmpegNotConfiguredError((error.body as { error: string }).error);
+        throw new RetagDependencyNotConfiguredError((error.body as { error: string }).error);
       }
       throw error;
     }
