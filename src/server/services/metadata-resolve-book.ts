@@ -8,7 +8,7 @@ import {
 import { normalizeTitleLosslessly } from '@core/utils/title-variants.js';
 import { canonicalizeAsin } from '@shared/asin.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { matchPassesValidation } from './match-validation.js';
+import { matchPassesValidation, type MatchValidationItem } from './match-validation.js';
 
 export interface ResolveBookInput {
   asin?: string | undefined;
@@ -74,7 +74,7 @@ export async function resolveBook(deps: ResolveBookDeps, input: ResolveBookInput
  * candidate rather than an ambiguity. A null key is identity-less: such candidates never collapse
  * with each other or with a keyed one, so a window of untitled-ASIN duplicates still holds.
  */
-function distinctPassingCandidates(candidates: BookMetadata[], item: ResolveBookInput): BookMetadata[] {
+function distinctPassingCandidates(candidates: BookMetadata[], item: MatchValidationItem): BookMetadata[] {
   const seen = new Set<string>();
   const distinct: BookMetadata[] = [];
   for (const candidate of candidates) {
