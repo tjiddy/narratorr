@@ -516,6 +516,7 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(409);
       expect(JSON.parse(res.payload).title).toBe('The Way of Kings');
+      expect(JSON.parse(res.payload).conflict).toBe('same-recording');
       expect(services.book.create).not.toHaveBeenCalled();
     });
 
@@ -536,6 +537,7 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(409);
       expect(JSON.parse(res.payload).id).toBe(7);
+      expect(JSON.parse(res.payload).conflict).toBe('owned-race');
       expect(services.book.getById).toHaveBeenCalledWith(7);
 
       // Let incorrectly scheduled fire-and-forget work surface.
@@ -556,7 +558,184 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(409);
       expect(JSON.parse(res.payload).id).toBe(88);
+      expect(JSON.parse(res.payload).conflict).toBe('review');
       expect(services.book.create).not.toHaveBeenCalled();
+    });
+
+    // The route used to flatten every ladder outcome into a bare incumbent row, so the client could
+    // not tell "you own this" from "I could not tell" (#2199).
+    describe('#2199 the 409 body discriminates the conflict', () => {
+      const post = (payload: Record<string, unknown>) =>
+        app.inject({ method: 'POST', url: '/api/books', payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], ...payload } });
+
+      it('carries the machine review reason alongside the incumbent on a review verdict', async () => {
+        (services.book.findDuplicate as Mock).mockResolvedValue({
+          verdict: 'review', book: { ...mockBook, id: 88 }, recordingReviewReason: 'production-type-mismatch',
+        });
+
+        const res = await post({});
+        const body = JSON.parse(res.payload);
+
+        expect(res.statusCode).toBe(409);
+        expect(body.conflict).toBe('review');
+        expect(body.recordingReviewReason).toBe('production-type-mismatch');
+        expect(body.id).toBe(88);
+        expect(body.title).toBe('The Way of Kings');
+      });
+
+      it('omits recordingReviewReason when the resolver supplied none', async () => {
+        (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'review', book: { ...mockBook, id: 88 } });
+
+        const body = JSON.parse((await post({})).payload);
+
+        expect(body.conflict).toBe('review');
+        expect(body).not.toHaveProperty('recordingReviewReason');
+      });
+
+      it('never carries a review reason on a same-recording refusal', async () => {
+        (services.book.findDuplicate as Mock).mockResolvedValue({
+          verdict: 'same-recording', book: mockBook, recordingReviewReason: 'duration-mismatch',
+        });
+
+        const body = JSON.parse((await post({})).payload);
+
+        expect(body.conflict).toBe('same-recording');
+        expect(body).not.toHaveProperty('recordingReviewReason');
+      });
+
+      it('still refuses same-recording with 409 when the override is set', async () => {
+        (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'same-recording', book: mockBook });
+
+        const res = await post({ overrideRecordingReview: true });
+
+        expect(res.statusCode).toBe(409);
+        expect(JSON.parse(res.payload).conflict).toBe('same-recording');
+        expect(services.book.create).not.toHaveBeenCalled();
+      });
+
+      it('still refuses an ASIN race with 409 when the override is set', async () => {
+        (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
+        (services.book.create as Mock).mockRejectedValue(
+          new OwnedRecordingError({ existingBookId: 7, title: 'The Way of Kings', reason: 'asin-owned' }),
+        );
+        (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 7 });
+
+        const res = await post({ overrideRecordingReview: true });
+
+        expect(res.statusCode).toBe(409);
+        expect(JSON.parse(res.payload).conflict).toBe('owned-race');
+      });
+
+      // Hydration is best-effort; a null read must not send a literal `null` 409 body (AC4).
+      it('keeps the incumbent id and title on an ASIN race whose hydration returns null', async () => {
+        (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
+        (services.book.create as Mock).mockRejectedValue(
+          new OwnedRecordingError({ existingBookId: 7, title: 'The Way of Kings', reason: 'asin-owned' }),
+        );
+        (services.book.getById as Mock).mockResolvedValue(null);
+
+        const res = await post({});
+        const body = JSON.parse(res.payload);
+
+        expect(res.statusCode).toBe(409);
+        expect(body).not.toBeNull();
+        expect(body.conflict).toBe('owned-race');
+        expect(body.id).toBe(7);
+        expect(body.title).toBe('The Way of Kings');
+      });
+
+      it('keeps the incumbent id and title on an ASIN race whose hydration rejects', async () => {
+        (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
+        (services.book.create as Mock).mockRejectedValue(
+          new OwnedRecordingError({ existingBookId: 7, title: 'The Way of Kings', reason: 'asin-owned' }),
+        );
+        (services.book.getById as Mock).mockRejectedValue(new Error('db handle closed'));
+
+        const res = await post({});
+        const body = JSON.parse(res.payload);
+
+        expect(res.statusCode).toBe(409);
+        expect(body.conflict).toBe('owned-race');
+        expect(body.id).toBe(7);
+        expect(body.title).toBe('The Way of Kings');
+      });
+
+      it('creates on a different-recording verdict and sends no conflict field', async () => {
+        (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
+        (services.book.create as Mock).mockResolvedValue(mockBook);
+
+        const res = await post({});
+        const body = JSON.parse(res.payload);
+
+        expect(res.statusCode).toBe(201);
+        expect(body).not.toHaveProperty('conflict');
+        expect(body).not.toHaveProperty('recordingReviewReason');
+        expect(body.id).toBe(mockBook.id);
+      });
+
+      it('creates an overridden review and sends no conflict field', async () => {
+        (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'review', book: { ...mockBook, id: 88 } });
+        (services.book.create as Mock).mockResolvedValue(mockBook);
+
+        const res = await post({ overrideRecordingReview: true });
+        const body = JSON.parse(res.payload);
+
+        expect(res.statusCode).toBe(201);
+        expect(body).not.toHaveProperty('conflict');
+        expect(services.book.create).toHaveBeenCalledWith(expect.objectContaining({ title: 'The Way of Kings' }));
+      });
+
+      it('does not persist the transient override flag on the created row', async () => {
+        (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'review', book: { ...mockBook, id: 88 } });
+        (services.book.create as Mock).mockResolvedValue(mockBook);
+
+        await post({ overrideRecordingReview: true });
+
+        expect(services.book.create).toHaveBeenCalledWith(
+          expect.not.objectContaining({ overrideRecordingReview: expect.anything() }),
+        );
+      });
+    });
+
+    describe('#2199 provider formatType reaches the duplicate resolver and the row', () => {
+      const post = (payload: Record<string, unknown>) =>
+        app.inject({ method: 'POST', url: '/api/books', payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], ...payload } });
+
+      beforeEach(() => {
+        (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
+        (services.book.create as Mock).mockResolvedValue(mockBook);
+      });
+
+      it('normalizes a provider formatType into the duplicate candidate and the created row', async () => {
+        const res = await post({ formatType: 'Abridged' });
+
+        expect(res.statusCode).toBe(201);
+        expect(services.book.findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ productionType: 'abridged' }));
+        expect(services.book.create).toHaveBeenCalledWith(expect.objectContaining({ productionType: 'abridged' }));
+      });
+
+      // Zod `.optional()` would 400 here before normalization ever ran (spec review F8).
+      it('accepts a null formatType and carries it through as the no-signal unknown', async () => {
+        const res = await post({ formatType: null });
+
+        expect(res.statusCode).toBe(201);
+        expect(services.book.findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ productionType: 'unknown' }));
+        expect(services.book.create).toHaveBeenCalledWith(expect.objectContaining({ productionType: 'unknown' }));
+      });
+
+      it('sends no productionType at all when the provider supplied no format', async () => {
+        await post({});
+
+        expect(services.book.findDuplicate).toHaveBeenCalledWith(expect.not.objectContaining({ productionType: expect.anything() }));
+      });
+
+      it('rejects an unknown top-level field with 400, so .strict() is not weakened', async () => {
+        expect((await post({ formatType: 'Unabridged', bogus: true })).statusCode).toBe(400);
+      });
+
+      it('rejects a non-boolean override with 400', async () => {
+        expect((await post({ overrideRecordingReview: 'yes' })).statusCode).toBe(400);
+      });
     });
 
     it('returns 400 when title is missing', async () => {

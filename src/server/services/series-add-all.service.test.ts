@@ -220,6 +220,21 @@ describe('SeriesAddAllService — dispositions', () => {
     expect(deps.bookService.create).not.toHaveBeenCalled();
   });
 
+  // The batch shares the add ladder, so the single-add review override must not leak into it (#2199).
+  it('never sets the review override, so a held member cannot silently become created', async () => {
+    const deps = makeDeps();
+    vi.mocked(deps.bookService.findDuplicate).mockResolvedValue({
+      verdict: 'review', book: { id: 55 } as BookDetail, hasIncumbent: true, recordingReviewReason: 'narrator-no-signal',
+    });
+
+    const response = await run(deps);
+
+    // Setting the override on the batch's ladder input would turn this member into `created`.
+    expect(response).toMatchObject({ created: 0, held: 1 });
+    expect(response.members[0]).toMatchObject({ disposition: 'held' });
+    expect(deps.bookService.create).not.toHaveBeenCalled();
+  });
+
   it('reports held only after the review event settles, never on mere issuance', async () => {
     const deps = makeDeps();
     vi.mocked(deps.bookService.findDuplicate).mockResolvedValue({

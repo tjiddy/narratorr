@@ -186,6 +186,62 @@ describe('POST /api/books — a full-cast edition of an owned book is added, not
   });
 });
 
+// Its own app/DB: the abridged veto needs an incumbent whose production_type is not `unknown`.
+describe('POST /api/books — an abridged edition of an unabridged incumbent reviews, and can be overridden (#2199)', () => {
+  let e2e: E2EApp;
+
+  // No duration on either side, so the resolver falls through to the production-form veto.
+  const UNABRIDGED = {
+    title: 'Piranesi',
+    authors: [{ name: 'Susanna Clarke' }],
+    narrators: ['Chiwetel Ejiofor'],
+    asin: 'B0UNABRIDG',
+    formatType: 'Unabridged',
+  };
+  const ABRIDGED = { ...UNABRIDGED, asin: 'B0ABRIDGED', formatType: 'abridged  ' };
+
+  const post = (payload: unknown) => e2e.app.inject({ method: 'POST', url: '/api/books', payload });
+
+  beforeAll(async () => {
+    e2e = await createE2EApp();
+  });
+
+  afterAll(async () => {
+    await e2e.cleanup();
+  });
+
+  it('persists the normalized production type on the seeded incumbent', async () => {
+    const res = await post(UNABRIDGED);
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().productionType).toBe('unabridged');
+  });
+
+  it('holds the abridged edition as an undecided review naming the incumbent', async () => {
+    const res = await post(ABRIDGED);
+    const body = res.json();
+
+    expect(res.statusCode).toBe(409);
+    expect(body.conflict).toBe('review');
+    expect(body.recordingReviewReason).toBe('production-type-mismatch');
+    expect(body.title).toBe('Piranesi');
+    expect(body.asin).toBe('B0UNABRIDG');
+  });
+
+  it('creates the abridged edition when the operator overrides the review, and the row is durable', async () => {
+    const res = await post({ ...ABRIDGED, overrideRecordingReview: true });
+
+    expect(res.statusCode).toBe(201);
+    const created = res.json();
+    expect(created.productionType).toBe('abridged');
+
+    const reread = await e2e.app.inject({ method: 'GET', url: `/api/books/${created.id}` });
+    expect(reread.statusCode).toBe(200);
+    expect(reread.json().asin).toBe('B0ABRIDGED');
+    expect(reread.json().productionType).toBe('abridged');
+  });
+});
+
 // Add-book ownership depends on this endpoint staying status-blind and unpaginated.
 describe('GET /api/books/identifiers — unpaginated and status-blind (#1916)', () => {
   let e2e: E2EApp;
