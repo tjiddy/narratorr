@@ -9,6 +9,7 @@ import { normalizeTitleLosslessly } from '@core/utils/title-variants.js';
 import { canonicalizeAsin } from '@shared/asin.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { matchPassesValidation, type MatchValidationItem } from './match-validation.js';
+import { collapsesToOneRecording, selectCanonicalRecording } from './metadata-recording-collapse.js';
 
 export interface ResolveBookInput {
   asin?: string | undefined;
@@ -21,12 +22,19 @@ export interface ResolveBookInput {
  * window instead of trusting the first item. Order therefore carries no relevance signal either:
  * when several candidates pass, the first one is an arbitrary pick among siblings of the same
  * series, so the window is disambiguated on identity-preserving exact title where that names
- * exactly one candidate, and otherwise held for the existing retry/Fix Match path.
+ * exactly one candidate — or where the several it names are provably one recording — and is
+ * otherwise held for the existing retry/Fix Match path.
  */
 const VALIDATION_WINDOW = 5;
 
 /** Log message for the hold branch; the only signal an operator has for the live hold rate. */
 export const AMBIGUOUS_WINDOW_HELD = 'Ambiguous metadata window held — no unique title match';
+
+/**
+ * Log message for the collapse branch. Diagnostic rather than `info`: an operator needs the hold
+ * rate because a hold silently blocks acquisition, while a resolved window is an ordinary success.
+ */
+export const AMBIGUOUS_WINDOW_COLLAPSED = 'Ambiguous metadata window collapsed — duplicate listings of one recording';
 
 export interface ResolveBookDeps {
   provider: MetadataSearchProvider | undefined;
@@ -45,7 +53,9 @@ export interface ResolveBookDeps {
  * misses can therefore recover the audiobook edition. Null means a genuine miss, while transient
  * provider failures propagate for retry. Several passing candidates are disambiguated on exact
  * title, or held as a miss rather than guessed, because the window is not relevance-ranked and a
- * guess among siblings writes durable metadata onto the wrong book.
+ * guess among siblings writes durable metadata onto the wrong book. Exact title naming SEVERAL
+ * candidates is only a guess when they are different books: a set proven to be one recording
+ * resolves (#2219), because holding it blocks the row from ever enriching.
  */
 export async function resolveBook(deps: ResolveBookDeps, input: ResolveBookInput): Promise<BookMetadata | null> {
   const asin = input.asin?.trim();
@@ -62,8 +72,35 @@ export async function resolveBook(deps: ResolveBookDeps, input: ResolveBookInput
   if (passing.length === 0) return null;
   if (passing.length === 1) return passing[0]!;
 
-  const disambiguated = selectExactTitleMatch(passing, input.title);
-  if (disambiguated) return disambiguated;
+  return disambiguateWindow(deps, input, query, passing);
+}
+
+/**
+ * The exact-title arm. One candidate is the row's book. Several are its duplicate listings only if
+ * every pair is provably the same recording; anything less holds, because the alternative is a
+ * durable write onto a sibling.
+ */
+function disambiguateWindow(
+  deps: ResolveBookDeps,
+  input: ResolveBookInput,
+  query: string,
+  passing: BookMetadata[],
+): BookMetadata | null {
+  const exact = exactTitleCandidates(passing, input.title);
+  if (exact.length === 1) return exact[0]!;
+
+  if (collapsesToOneRecording(exact)) {
+    const selected = selectCanonicalRecording(exact, input.asin);
+    deps.log.debug({
+      query,
+      passing: passing.length,
+      exact: exact.length,
+      selectedAsin: canonicalizeAsin(selected.asin),
+      // Sorted so the payload is independent of provider order, like the pick itself.
+      equivalentAsins: exact.map((candidate) => canonicalizeAsin(candidate.asin)).sort(),
+    }, AMBIGUOUS_WINDOW_COLLAPSED);
+    return selected;
+  }
 
   deps.log.info({ query, passing: passing.length, window: VALIDATION_WINDOW }, AMBIGUOUS_WINDOW_HELD);
   return null;
@@ -90,23 +127,27 @@ function distinctPassingCandidates(candidates: BookMetadata[], item: MatchValida
 }
 
 /**
- * The single candidate whose title IS the row's title, or null when zero or several qualify.
+ * Every candidate whose title IS the row's title; empty when none qualifies.
  *
  * The fold must be `normalizeTitleLosslessly` and NOT `normalizeTitleCore`: the latter is
  * deliberately tolerant for library-work dedup, where it strips every trailing parenthetical and
- * every `Book N`/`Vol N` marker — so it names `Saga Book 2` as the unique match for row
- * `Saga Book 1`, which is the wrong-sibling write this selector exists to prevent. Do not "DRY"
- * the two folds together. Requiring agreement under both was rejected too: only the lossless fold
- * matches the bracketed `[Audible]` edition tail, so a conjunction would forfeit a correct match.
+ * every `Book N`/`Vol N` marker — so it names `Saga Book 2` as a match for row `Saga Book 1`,
+ * which is the wrong-sibling write this selector exists to prevent. Do not "DRY" the two folds
+ * together. Requiring agreement under both was rejected too: only the lossless fold matches the
+ * bracketed `[Audible]` edition tail, so a conjunction would forfeit a correct match.
+ *
+ * This set — never the wider passing window — is also the only collapse scope the recording check
+ * may run over (#2219). Recording SCOPE uses that same tolerant dedup fold, so `Saga Book 2`
+ * compares `same-recording` with both `Saga Book 1` listings; exactness here is the only thing
+ * keeping it out. Any implementation that reorders the two filters is wrong.
  *
  * An empty fold is outside the domain — untitled rows would otherwise claim each other, the same
  * restriction the series matcher places on its reflexivity arm.
  */
-export function selectExactTitleMatch(candidates: BookMetadata[], title: string): BookMetadata | null {
+export function exactTitleCandidates(candidates: BookMetadata[], title: string): BookMetadata[] {
   const key = normalizeTitleLosslessly(title);
-  if (key === '') return null;
-  const exact = candidates.filter((candidate) => normalizeTitleLosslessly(candidate.title) === key);
-  return exact.length === 1 ? exact[0]! : null;
+  if (key === '') return [];
+  return candidates.filter((candidate) => normalizeTitleLosslessly(candidate.title) === key);
 }
 
 /**

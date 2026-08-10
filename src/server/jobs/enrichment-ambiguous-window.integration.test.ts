@@ -8,7 +8,7 @@ import { createDb, runMigrations, type Db } from '@db/index.js';
 import { books } from '@db/schema.js';
 import { BookService } from '../services/book.service.js';
 import { MetadataService } from '../services/metadata.service.js';
-import { AMBIGUOUS_WINDOW_HELD } from '../services/metadata-resolve-book.js';
+import { AMBIGUOUS_WINDOW_COLLAPSED, AMBIGUOUS_WINDOW_HELD } from '../services/metadata-resolve-book.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import { runEnrichment } from './enrichment.js';
 
@@ -133,5 +133,67 @@ describe('scheduled enrichment over an ambiguous resolver window — integration
     expect(rescued!.title).toBe('Dune Messiah');
     expect(rescued!.enrichmentStatus).toBe('pending');
     expect(rescued!.enrichmentAttempts).toBe(0);
+  });
+
+  // #2219: Add All seeds ASIN-less rows and relies entirely on enrichment, so a window of duplicate
+  // regional listings must resolve durably — not hold until the row burns its five attempts.
+  it('enriches a book whose window is two listings of the same recording, while a genuinely ambiguous neighbour still holds', async () => {
+    const bearHead = await bookService.create({
+      title: 'Bear Head',
+      authors: [{ name: 'Adrian Tchaikovsky' }],
+    });
+    const held = await bookService.create({
+      title: 'Dune Chronicles Messiah',
+      authors: [{ name: 'Frank Herbert' }],
+    });
+
+    const narrators = ['Sophie Aldred', 'Mark Elstob', 'Ben Allen'];
+    mockAudibleProvider.searchBooks.mockImplementation((query: string) =>
+      Promise.resolve(query.startsWith('Bear Head')
+        ? {
+          books: [
+            {
+              asin: 'B08REGIONA', title: 'Bear Head', authors: [{ name: 'Adrian Tchaikovsky' }],
+              narrators, duration: 777, seriesPrimary: { name: 'Dogs of War', position: 2 },
+            },
+            {
+              asin: 'B09REGIONB', title: 'Bear Head', authors: [{ name: 'Adrian Tchaikovsky' }],
+              // Same three narrators in a different order — the Bear Head specimen.
+              narrators: [...narrators].reverse(), duration: 777,
+            },
+          ],
+        }
+        : {
+          books: [
+            { asin: 'B_DUNE', title: 'Dune', authors: [{ name: 'Frank Herbert' }] },
+            { asin: 'B_MESSIAH', title: 'Dune Messiah', authors: [{ name: 'Frank Herbert' }] },
+          ],
+        }));
+
+    await runEnrichment(db, metadataService, bookService, inject<FastifyBaseLogger>(log));
+
+    const [collapsedRow] = await db.select().from(books).where(eq(books.id, bearHead.id));
+    expect(collapsedRow!.enrichmentStatus).toBe('enriched');
+    expect(collapsedRow!.asin).toBe('B08REGIONA');
+    expect(collapsedRow!.duration).toBe(777);
+    expect(collapsedRow!.seriesName).toBe('Dogs of War');
+
+    const detail = await bookService.getById(bearHead.id);
+    expect(detail!.narrators.map((n) => n.name).sort()).toEqual([...narrators].sort());
+
+    // The collapse narrowed the hold rather than removing it: the ambiguous neighbour still fails.
+    const [heldRow] = await db.select().from(books).where(eq(books.id, held.id));
+    expect(heldRow!.enrichmentStatus).toBe('failed');
+    expect(heldRow!.enrichmentAttempts).toBe(1);
+    expect(heldRow!.asin).toBeNull();
+
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ selectedAsin: 'B08REGIONA', equivalentAsins: ['B08REGIONA', 'B09REGIONB'] }),
+      AMBIGUOUS_WINDOW_COLLAPSED,
+    );
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ passing: 2, window: 5 }),
+      AMBIGUOUS_WINDOW_HELD,
+    );
   });
 });
