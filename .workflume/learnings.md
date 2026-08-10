@@ -957,7 +957,7 @@ a false positive unless lint actually fires.
 
 ## vacuous-assertion-observation-points
 
-**source:** #1992, #1993, #2002, #2012, #2020, #2032, #2017, #2082
+**source:** #1992, #1993, #2002, #2012, #2020, #2032, #2017, #2082, #2210
 **added:** 2026-07-28
 **files:** src/**/*.test.ts, src/**/*.test.tsx
 **tags:** mutation-testing, test-observability
@@ -997,8 +997,10 @@ To pin requiredness, OMIT the field. The union analogue: instantiating one arm l
 unpinned — use a plain positive assignment per arm (deleting an arm then fails TS2322), plus
 `@ts-expect-error` on a cross-arm property access and a bogus-discriminant negative to pin the closed
 set. A type-only module has no runtime surface, so none of this is judgeable by reading: mutation-
-verify with `pnpm exec tsc --noEmit` and confirm a non-zero exit. **Strip ANSI codes before grepping
-tsc output** (`sed -e 's/\x1b\[[0-9;]*m//g'`) or `grep 'error TS'` silently matches nothing.
+verify with `pnpm exec tsc --noEmit` and confirm a non-zero exit. Never infer that verdict from a
+grep over the output: strip ANSI first (`sed -e 's/\x1b\[[0-9;]*m//g'`) and preserve the producer's
+status (`PIPESTATUS[0]` in bash, or redirect then inspect). A failed `tsc` can otherwise produce no
+matching `error TS` text while the pipeline reports only grep's status.
 
 **7. Under Vitest, a dynamic import's `Object.keys()` is SOURCE order (#2002).** A native ESM module
 namespace sorts its own string keys (ECMA-262 §10.4.6.1), so `Object.keys(ns)` is lexicographic.
@@ -1770,7 +1772,7 @@ Related but distinct: `import-cleanup-marker-aware-fs-mock` (defaulting a *fully
 
 ## sqlite-covering-index-forces-scan-order
 
-**source:** #2115
+**source:** #2115, #2175
 **added:** 2026-08-04
 **files:** src/server/services/series-title-match-blast-check.test.ts, src/server/services/series-card.integration.test.ts
 **tags:** sqlite, libsql
@@ -1779,7 +1781,8 @@ Related but distinct: `import-cleanup-marker-aware-fs-mock` (defaulting a *fully
 
 To prove an `ORDER BY` is load-bearing you must make the planner return rows in a DIFFERENT order without it — otherwise rowid order satisfies the assertion and the test passes against the unordered code. Which index achieves that depends on the query's shape:
 
-- **Constrained query** (`WHERE col IN (…)`): a NARROW index on the filtered column is enough — the plan flips to `SEARCH … USING COVERING INDEX (col=?)` and rows arrive in `col` order. This is what `series-card.integration.test.ts` uses for `loadLibraryBooksForSeriesNames`.
+- **Equality-constrained query** (`WHERE col IN (…)`): a NARROW index on the filtered column is enough — the plan flips to `SEARCH … USING COVERING INDEX (col=?)` and rows arrive in `col` order.
+- **Range query** (`IS NOT NULL`, `>`, `<`, `BETWEEN`): treat it like the unconstrained case. A non-covering index is still not cheaper than the table scan; only an index covering the projection reliably changes the order. `IS NOT NULL` appears as `col>?` in the plan.
 - **Unconstrained query** (`SELECT … FROM t`, no WHERE): a narrow index does NOTHING — SQLite keeps `SCAN t` because a non-covering index scan is never cheaper than the table scan. You need an index COVERING every referenced column before the plan becomes `SCAN t USING COVERING INDEX` and the order changes. This is what `series-title-match-blast-check.test.ts` needs for the blast-check replay loader.
 
 Measured (drizzle-orm@0.45.2 + @libsql/client, migrated schema, ids ascending while `series_name` collation descends), query `SELECT id, title, series_position, series_name FROM books`:
@@ -1791,6 +1794,17 @@ CREATE INDEX ON books (series_name, title, series_position) → SCAN books USING
 ```
 
 Three indexed columns cover a four-column projection because `id` is the rowid, which every SQLite index carries implicitly — so "covering" means covering the non-rowid columns.
+
+Measured after #2175 changed `loadLibraryBooksForSeriesNames` to `WHERE series_name IS NOT NULL`:
+
+```
+CREATE INDEX ON books (series_name)                                        → SCAN books                                      → [1,2,3]
+CREATE INDEX ON books (series_name, title, series_position, user_cleared_fields) → SEARCH books USING COVERING INDEX (series_name>?) → [3,2,1]
+```
+
+The narrow index that worked for the old `IN (…)` query left the ordering fixture vacuous. The
+series-card test now uses the four-column covering index and asserts the unordered probe is actually
+non-ascending before it tests production's `ORDER BY`.
 
 Related trap: a rowid-only projection (`SELECT id FROM books`) stays in rowid order even under the covering index, so the no-ORDER-BY probe must mirror the production query's full projection.
 
@@ -1999,3 +2013,155 @@ Measured: `grep -rl --include=*.ts -a "import" src` → 1085 files; the same sea
 **The rule.** Any grep whose *absence of hits* is load-bearing — an audit-completeness sweep, a refactor site inventory, a "no remaining callers" claim — must pass `-a`. A plain `grep -rn` returning nothing is not evidence that nothing matches. When authoring a binary fixture, write it with `'\^@\^A'`-style escapes: the runtime string is byte-identical and the source file stays plain text, so it remains visible to every tool.
 
 This is an environment fact about the pipeline image; re-verify it if the base image changes. Related: [[vacuous-assertion-observation-points]] — same shape, an observable that cannot see the property being claimed.
+
+## removequeries-mounted-observer-refetch
+
+**source:** #2220
+**added:** 2026-08-10
+**files:** src/client/pages/activity/useImportHistoryDeletion.ts, src/client/hooks/useImportReport.ts, src/client/pages/activity/ImportHistorySection.delete.test.tsx
+**tags:** react-query, test-observability, vitest
+
+---
+
+`queryClient.removeQueries()` is an eviction, not a tombstone. If a component still observes that
+key, it can immediately recreate the query and refetch; a read double that keeps resolving then
+re-seeds the cache. With `staleTime: 0` and `refetchOnMount: 'always'`, an assertion that
+`getQueryData(key)` stays undefined races that refetch.
+
+Model the deletion in the double: when the mutation resolves, make subsequent reads return the same
+404 as the server. Increasing `waitFor`'s timeout cannot fix a resolving refetch. Afterward, mutate
+away the eviction and confirm the test still reds; otherwise the 404 double may be proving the
+server model while the cache assertion proves nothing. Related: [[react-query-mutation-callbacks-post-unmount]], [[observation-points-react-query-error-state]].
+
+## recording-identity-production-veto-after-duration
+
+**source:** #2219
+**added:** 2026-08-10
+**files:** src/core/utils/recording-identity.ts, src/server/services/metadata-recording-collapse.ts, src/server/services/metadata.service.test.ts
+**tags:** title-matching, metadata-providers
+
+---
+
+`resolveRecordingIdentity` intentionally treats two positive durations as authoritative: its duration
+branch returns before the abridged/unabridged conflict check. Supplying `productionType` therefore
+adds no veto on a path that already requires positive runtimes.
+
+A caller that requires both runtime corroboration and a production-form veto must enforce the latter
+as a stricter admission rule, as `metadata-recording-collapse.ts` does. Do not reorder the shared
+primitive or relax the duration requirement to obtain that result; #1728 and #1854 deliberately
+settled the opposite policy for the primitive. Pin the stricter behavior at the caller—an assertion
+against `resolveRecordingIdentity` cannot detect a missing caller-side veto.
+
+## ffprobe-show-entries-nested-sections
+
+**source:** #2210
+**added:** 2026-08-10
+**files:** src/server/services/tagging.roundtrip.test.ts, src/core/utils/audio-processor.roundtrip.test.ts
+**tags:** ffprobe, round-trip, audio-tags, test-observability
+
+---
+
+`ffprobe -show_entries` silently returns empty objects when a nested block is requested as a scalar
+stream field. Measured on ffprobe 7.0.2, `stream=disposition` yields `{"streams":[{}]}` with exit 0;
+the correct selector is `stream_disposition=attached_pic`. The same section split applies to
+`stream_tags=<key>`. A negative assertion using the wrong selector will pass against every file.
+
+Use the existing `hasAttachedPic` helpers in the two scoped round-trip suites. Separately, ffprobe
+cannot observe the movement atoms `©mvn`/`©mvi` or ID3 `MVNM`/`MVIN`; assert those through
+`readExistingTags`/music-metadata or a raw mutagen dump. Keep ffprobe for properties it can observe:
+chapters, audio-stream duration, decodability, and attached-picture disposition. Related: [[round-trip-fixture-discipline]].
+
+## shared-suite-state-inflates-counterfactual
+
+**source:** #2206
+**added:** 2026-08-10
+**files:** src/server/__tests__/books.e2e.test.ts
+**tags:** e2e, mutation-testing, test-observability
+
+---
+
+In a suite whose cases share one database or fixture set, an absolute total in a later case depends on
+every earlier case. Under a production counterfactual, a supposed control can therefore red because
+an earlier case changed—not because its own guarded behavior broke—and inflate the observed red set.
+
+Assert the delta across the case's own action: read the count before, perform the action, and compare
+after. Use a separate app/DB when the case needs a fixed initial shape. This is the over-reporting twin
+of [[symmetric-mutation-cannot-observe-shared-derivation]]: run the mutation, but attribute each red to
+the assertion that actually changed.
+
+## connected-client-server-vitest-harness
+
+**source:** #2200
+**added:** 2026-08-10
+**files:** src/client/__tests__/series-add-all-connected.test.tsx, src/client/lib/api/client.ts, src/server/__tests__/e2e-helpers.ts
+**tags:** vitest, fastify, react-query, e2e
+
+---
+
+A component suite with `@/lib/api` mocked and a server suite using `app.inject()` can both stay green
+while their request path or body contract is broken. Close that seam in Vitest by rendering the real
+component in the client/jsdom project and routing relative `/api` fetches into a real
+`createE2EApp()` instance. Return a real `Response`, record the literal request, and route non-`/api`
+URLs separately for the server's outbound provider calls.
+
+This harness checks the client path/body, route, persistence, and cache/UI reconciliation in one
+process, and unlike `e2e/**/*.spec.ts` it runs under `pnpm verify`. It is not a browser/CORS test.
+Reference: `series-add-all-connected.test.tsx`. Related: [[vimock-barrel-replace-drops-named-exports]].
+
+## e2e-harness-cannot-gate-inprocess-guard
+
+**source:** #2200
+**added:** 2026-08-10
+**files:** src/server/__tests__/series-add-all.e2e.test.ts, src/server/routes/books-series-add-all.test.ts, src/server/services/series-add-all.service.test.ts
+**tags:** e2e, vitest, fastify, test-observability
+
+---
+
+An in-process concurrency guard's refusal branch exists only while another request is suspended in
+the guarded region. A real-services E2E harness has no controllable collaborator there, so two
+`Promise.all` requests may serialize and return 200/200; requiring 200/409 is a scheduling test.
+
+Split the proof. E2E should accept either admission outcome and assert the durable row set both paths
+must produce. A mocked-service route or service suite should gate an awaited collaborator, wait until
+the first request is inside the guard, then issue the second and assert the refusal. Delete the guard
+as a counterfactual: the deterministic suite must red; the E2E suite need not. Related: [[observation-points-server-writes-and-routes]].
+
+## eslint-rule-test-harness
+
+**source:** #2182
+**added:** 2026-08-10
+**files:** eslint-rules/, vitest.config.ts, eslint.config.js
+**tags:** eslint, vitest, typescript
+
+---
+
+Local ESLint rules remain CommonJS `.cjs`, but Vitest RuleTester suites use ESM `.test.js` under this
+repository's `"type": "module"` package. Import the rule as the default export, wire
+`RuleTester.describe`/`RuleTester.it` to Vitest, and use `typescript-eslint`'s exported parser; the
+standalone `@typescript-eslint/parser` package does not resolve from the repo root under this pnpm
+layout.
+
+The server project must explicitly include `eslint-rules/**/*.test.js`. Do not include the legacy
+`.test.cjs` scripts until they are converted—they register no Vitest tests. The directory is ignored
+by ESLint and outside the TypeScript project, so run its suites directly. For parent-walking rules,
+remember that the typescript-eslint AST erases parentheses; there is no `ParenthesizedExpression`
+node to step through. Reference: `no-unstamped-match-generation.test.js`.
+
+## swallowed-throw-type-via-reducer-spy
+
+**source:** #2062
+**added:** 2026-08-10
+**files:** src/core/utils/audio-processor.test.ts
+**tags:** vitest, test-observability
+
+---
+
+When production catches a typed error and reduces it to `{ success: false, error: string }`, the
+result cannot prove which error class was thrown. If the catch delegates to an imported reducer such
+as `getErrorMessage`, a passthrough `vi.mock` spy on that reducer preserves behavior while exposing
+the original caught value for `toBeInstanceOf`.
+
+Restore the real passthrough implementation in `beforeEach`; `vi.clearAllMocks()` clears history but
+does not restore implementations. Use the spy for the negative control too so unrelated failures are
+proved not to be the typed guard. This is a test-only observation seam, not permission to branch on
+error identity in production; see [[abort-verdict-not-error-shape]].
