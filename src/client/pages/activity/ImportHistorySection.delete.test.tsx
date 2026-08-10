@@ -53,17 +53,20 @@ function newClient(): QueryClient {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });
 }
 
+// Mutation settling competes with the rest of the suite for the event loop; 1s default flakes under load.
+const SETTLED = { timeout: 5000 };
+
 const deleteControl = (id: number) =>
   within(screen.getByTestId(`import-history-card-${id}`)).getByRole('button', { name: 'Delete import run' });
 
 async function confirmDelete(user: ReturnType<typeof userEvent.setup>, id: number): Promise<void> {
   await user.click(deleteControl(id));
-  await user.click(await screen.findByRole('button', { name: 'Delete run' }));
+  await user.click(await screen.findByRole('button', { name: 'Delete run' }, SETTLED));
 }
 
 async function confirmClear(user: ReturnType<typeof userEvent.setup>): Promise<void> {
   await user.click(screen.getByRole('button', { name: /clear completed/i }));
-  await user.click(await screen.findByRole('button', { name: 'Clear completed runs' }));
+  await user.click(await screen.findByRole('button', { name: 'Clear completed runs' }, SETTLED));
 }
 
 let fetchSpy: MockInstance<typeof globalThis.fetch>;
@@ -110,7 +113,7 @@ describe('ImportHistorySection per-row delete (#2220)', () => {
 
     await confirmDelete(user, 3);
 
-    await waitFor(() => expect(listImportSubmissions.mock.calls.length).toBeGreaterThan(listCalls));
+    await waitFor(() => expect(listImportSubmissions.mock.calls.length).toBeGreaterThan(listCalls), SETTLED);
     expect(discardImportSubmission.mock.calls).toEqual([[3]]);
     expect(qc.getQueryData(queryKeys.importSubmissions.detail(3))).toBeUndefined();
     expect(qc.getQueryData(queryKeys.importSubmissions.detail(4))).toBeDefined();
@@ -126,10 +129,10 @@ describe('ImportHistorySection per-row delete (#2220)', () => {
     await screen.findByTestId('import-history-card-3');
 
     await confirmDelete(user, 3);
-    await waitFor(() => expect(deleteControl(3)).toBeDisabled());
+    await waitFor(() => expect(deleteControl(3)).toBeDisabled(), SETTLED);
 
     release();
-    await waitFor(() => expect(deleteControl(3)).toBeEnabled());
+    await waitFor(() => expect(deleteControl(3)).toBeEnabled(), SETTLED);
   });
 
   it('a 409 names the still-importing state, keeps the row, and fires no success toast', async () => {
@@ -164,7 +167,7 @@ describe('ImportHistorySection per-row delete (#2220)', () => {
 
     await confirmDelete(user, 3);
 
-    await waitFor(() => expect(listImportSubmissions.mock.calls.length).toBeGreaterThan(listCalls));
+    await waitFor(() => expect(listImportSubmissions.mock.calls.length).toBeGreaterThan(listCalls), SETTLED);
     expect(qc.getQueryData(queryKeys.importSubmissions.detail(3))).toBeUndefined();
     expect(screen.queryByTestId('import-history-delete-error')).not.toBeInTheDocument();
   });
@@ -207,12 +210,12 @@ describe('ImportHistorySection per-row delete (#2220)', () => {
     renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history' });
     await screen.findByTestId('import-history-card-3');
     await user.click(screen.getByRole('button', { name: /next/i }));
-    await waitFor(() => expect(listImportSubmissions).toHaveBeenCalledWith({ limit: 50, offset: 50 }));
+    await waitFor(() => expect(listImportSubmissions).toHaveBeenCalledWith({ limit: 50, offset: 50 }), SETTLED);
 
     listImportSubmissions.mockResolvedValue({ data: [summary({ id: 4 })], total: 50 });
     await confirmDelete(user, 3);
 
-    await waitFor(() => expect(listImportSubmissions).toHaveBeenLastCalledWith({ limit: 50, offset: 0 }));
+    await waitFor(() => expect(listImportSubmissions).toHaveBeenLastCalledWith({ limit: 50, offset: 0 }), SETTLED);
   });
 
   it('issues no real network request across a delete flow', async () => {
@@ -222,7 +225,7 @@ describe('ImportHistorySection per-row delete (#2220)', () => {
     renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history' });
     await screen.findByTestId('import-history-card-3');
     await confirmDelete(user, 3);
-    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    await waitFor(() => expect(toast.success).toHaveBeenCalled(), SETTLED);
 
     expect(fetchSpy.mock.calls.map((c) => String(c[0]))).toEqual([]);
   });
@@ -242,6 +245,22 @@ describe('ImportHistorySection bulk clear (#2220)', () => {
     expect(clearCompletedImportSubmissions).not.toHaveBeenCalled();
   });
 
+  it('disables the clear control while the clear is in flight and re-enables it after', async () => {
+    const user = userEvent.setup();
+    listImportSubmissions.mockResolvedValue({ data: [summary({ id: 3 })], total: 1 });
+    let release!: () => void;
+    clearCompletedImportSubmissions.mockReturnValue(new Promise((res) => { release = () => res({ deleted: 1, ids: [3] }); }));
+    renderWithProviders(<ImportHistorySection />, { route: '/activity?tab=history' });
+    await screen.findByTestId('import-history-card-3');
+    const clearButton = () => screen.getByRole('button', { name: /clear completed/i });
+
+    await confirmClear(user);
+    await waitFor(() => expect(clearButton()).toBeDisabled(), SETTLED);
+
+    release();
+    await waitFor(() => expect(clearButton()).toBeEnabled(), SETTLED);
+  });
+
   it('evicts only the reports the server actually deleted and leaves the preserved run expandable', async () => {
     const user = userEvent.setup();
     const qc = newClient();
@@ -257,7 +276,7 @@ describe('ImportHistorySection bulk clear (#2220)', () => {
 
     await confirmClear(user);
 
-    await waitFor(() => expect(screen.queryByTestId('import-history-card-3')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByTestId('import-history-card-3')).not.toBeInTheDocument(), SETTLED);
     expect(clearCompletedImportSubmissions.mock.calls).toEqual([[]]);
     expect(qc.getQueryData(queryKeys.importSubmissions.detail(3))).toBeUndefined();
     expect(qc.getQueryData(queryKeys.importSubmissions.detail(9))).toBeDefined();
@@ -267,7 +286,7 @@ describe('ImportHistorySection bulk clear (#2220)', () => {
     expect(cached.data.map((r) => r.id)).toEqual([9]);
 
     await user.click(within(screen.getByTestId('import-history-card-9')).getByRole('button', { expanded: false }));
-    await waitFor(() => expect(getImportSubmissionDetail).toHaveBeenCalledWith(9));
+    await waitFor(() => expect(getImportSubmissionDetail).toHaveBeenCalledWith(9), SETTLED);
   });
 
   it('names the deleted count and evicts every returned id', async () => {
@@ -281,7 +300,7 @@ describe('ImportHistorySection bulk clear (#2220)', () => {
 
     await confirmClear(user);
 
-    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Cleared 3 completed import runs'));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Cleared 3 completed import runs'), SETTLED);
     for (const id of [3, 4, 5]) {
       expect(qc.getQueryData(queryKeys.importSubmissions.detail(id)), `detail(${id})`).toBeUndefined();
     }
@@ -300,8 +319,8 @@ describe('ImportHistorySection bulk clear (#2220)', () => {
 
     await confirmClear(user);
 
-    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('No completed runs to clear'));
-    await waitFor(() => expect(listImportSubmissions.mock.calls.length).toBeGreaterThan(listCalls));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('No completed runs to clear'), SETTLED);
+    await waitFor(() => expect(listImportSubmissions.mock.calls.length).toBeGreaterThan(listCalls), SETTLED);
     expect(qc.getQueryData(queryKeys.importSubmissions.detail(9))).toBeDefined();
     expect(screen.getByTestId('import-history-card-9')).toBeInTheDocument();
   });
@@ -350,7 +369,7 @@ describe('ImportHistorySection deep-link cleanup (#2220)', () => {
 
     await confirmClear(user);
 
-    await waitFor(() => expect(screen.getByTestId('search')).toHaveTextContent('tab=history&filter=deleted'));
+    await waitFor(() => expect(screen.getByTestId('search')).toHaveTextContent('tab=history&filter=deleted'), SETTLED);
     expect(screen.getByTestId('search').textContent).not.toContain('run=');
     expect(screen.queryByTestId('import-run-unavailable')).not.toBeInTheDocument();
     expect(await screen.findByTestId('import-history-card-7')).toBeInTheDocument();
@@ -369,7 +388,7 @@ describe('ImportHistorySection deep-link cleanup (#2220)', () => {
 
     await confirmClear(user);
 
-    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    await waitFor(() => expect(toast.success).toHaveBeenCalled(), SETTLED);
     expect(screen.getByTestId('search')).toHaveTextContent('run=9');
     expect(screen.getByTestId('import-history-card-9')).toBeInTheDocument();
   });
@@ -387,7 +406,7 @@ describe('ImportHistorySection deep-link cleanup (#2220)', () => {
 
     await confirmDelete(user, 3);
 
-    await waitFor(() => expect(screen.getByTestId('search').textContent).not.toContain('run='));
+    await waitFor(() => expect(screen.getByTestId('search').textContent).not.toContain('run='), SETTLED);
     expect(discardImportSubmission.mock.calls).toEqual([[3]]);
     expect(await screen.findByTestId('import-history-card-7')).toBeInTheDocument();
     expect(qc.getQueryData(queryKeys.importSubmissions.detail(3))).toBeUndefined();
