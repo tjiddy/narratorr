@@ -1,11 +1,14 @@
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { idParamSchema, titleVariantsDebugBodySchema } from '@shared/schemas.js';
+import { addAllSeriesBodySchema, idParamSchema, titleVariantsDebugBodySchema } from '@shared/schemas.js';
 import type {
+  AddAllSeriesBody,
   TitleVariantsDebugBody,
   TitleVariantsDebugResponse,
   TitleVariantsDebugSide,
 } from '@shared/schemas.js';
+import { ADD_ALL_IN_FLIGHT_MESSAGE } from '@shared/series-add-all.js';
+import { SeriesAddAllService } from '../services/series-add-all.service.js';
 import {
   titleVariants,
   normalizeTitleForVariantMatch,
@@ -36,6 +39,9 @@ type BindSeriesBody = z.infer<typeof bindSeriesBodySchema>;
 export function registerSeriesRoutes(app: FastifyInstance, deps: BookRouteDeps) {
   const bookService = deps.bookService;
   const seriesCardService = deps.seriesCardService;
+  // One instance per registered app, which is one per process: the admission guard's state must
+  // outlive a request but is deliberately not shared beyond this process.
+  const addAllService = buildSeriesAddAllService(deps);
 
   app.get<{ Params: IdParam }>(
     '/api/books/:id/series',
@@ -99,6 +105,25 @@ export function registerSeriesRoutes(app: FastifyInstance, deps: BookRouteDeps) 
     },
   );
 
+  app.post<{ Params: IdParam; Body: AddAllSeriesBody }>(
+    '/api/books/:id/series/add-all',
+    { schema: { params: idParamSchema, body: addAllSeriesBodySchema } },
+    async (request, reply) => {
+      const { id } = request.params;
+      const book = await bookService.getById(id);
+      if (!book) {
+        return reply.status(404).send({ error: 'Book not found' });
+      }
+      const result = await addAllService.addAll(id, { searchImmediately: request.body.searchImmediately }, request.log);
+      if (result.outcome === 'in-flight') {
+        return reply.status(409).send({ error: ADD_ALL_IN_FLIGHT_MESSAGE });
+      }
+      const { requested, created, owned, held, failed } = result.response;
+      request.log.info({ id, requested, created, owned, held, failed }, 'Series Add All complete');
+      return result.response;
+    },
+  );
+
   // Delegate comparisons to the production matcher; lossy, degenerate, and empty-form rules must not drift here.
   app.post<{ Body: TitleVariantsDebugBody }>(
     '/api/series/title-variants-debug',
@@ -113,6 +138,17 @@ export function registerSeriesRoutes(app: FastifyInstance, deps: BookRouteDeps) 
       };
     },
   );
+}
+
+function buildSeriesAddAllService(deps: BookRouteDeps): SeriesAddAllService {
+  const { bookService, eventHistory, seriesCardService, indexerSearchService, indexerService,
+    downloadOrchestrator, settingsService, blacklistService, eventBroadcaster } = deps;
+  return new SeriesAddAllService({
+    bookService,
+    eventHistory,
+    seriesCardService,
+    search: { indexerSearchService, indexerService, downloadOrchestrator, settingsService, blacklistService, eventHistory, eventBroadcaster },
+  });
 }
 
 /** A per-book outcome; `failed` is never an operation count. */

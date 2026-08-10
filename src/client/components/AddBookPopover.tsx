@@ -10,6 +10,10 @@ interface AddBookPopoverProps {
   onAdd: (overrides: { searchImmediately: boolean }) => void;
   isPending: boolean;
   variant?: 'primary' | 'compact';
+  /** Defaults preserve the single-book callers; the batch caller names its count instead. */
+  triggerLabel?: string;
+  triggerAriaLabel?: string;
+  confirmLabel?: string;
 }
 
 const TRIGGER_CLASSES = {
@@ -38,7 +42,14 @@ function computePosition(triggerRect: DOMRect) {
   return { top, left };
 }
 
-export function AddBookPopover({ onAdd, isPending, variant = 'primary' }: AddBookPopoverProps) {
+export function AddBookPopover({
+  onAdd,
+  isPending,
+  variant = 'primary',
+  triggerLabel = 'Add',
+  triggerAriaLabel = 'Add book',
+  confirmLabel = 'Add to Library',
+}: AddBookPopoverProps) {
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -94,7 +105,7 @@ export function AddBookPopover({ onAdd, isPending, variant = 'primary' }: AddBoo
         type="button"
         onClick={toggleOpen}
         disabled={isPending}
-        aria-label="Add book"
+        aria-label={triggerAriaLabel}
         className={TRIGGER_CLASSES[variant]}
       >
         {isPending ? (
@@ -105,7 +116,7 @@ export function AddBookPopover({ onAdd, isPending, variant = 'primary' }: AddBoo
         ) : (
           <>
             <PlusIcon className={variant === 'compact' ? 'w-3 h-3' : 'w-4 h-4'} />
-            <span className={variant === 'compact' ? '' : 'hidden sm:inline'}>Add</span>
+            <span className={variant === 'compact' ? '' : 'hidden sm:inline'}>{triggerLabel}</span>
           </>
         )}
       </button>
@@ -138,7 +149,7 @@ export function AddBookPopover({ onAdd, isPending, variant = 'primary' }: AddBoo
               className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-primary text-primary-foreground font-medium rounded-lg hover:opacity-90 disabled:opacity-50 transition-all text-sm"
             >
               <PlusIcon className="w-3.5 h-3.5" />
-              Add to Library
+              {confirmLabel}
             </button>
           </div>
         </div>,
