@@ -324,6 +324,20 @@ describe.skipIf(!CAN_RUN)('mutagen tag-write round-trip (real ffmpeg + real muta
       expect(() => execFileSync(FFMPEG, ['-v', 'error', '-i', file, '-f', 'null', '-'], { stdio: 'ignore' })).not.toThrow();
     });
 
+    it('leaves an M4A decodable with its audio duration intact', async () => {
+      // .m4a rides the same MP4 branch as .m4b but has no chapter track, so it needs its own case.
+      const file = makeAudio('preserved.m4a');
+      const durationBefore = audioStreamDuration(file);
+
+      const result = await write(file, FULL_TAGS);
+
+      expect(result.status).toBe('tagged');
+      const durationAfter = audioStreamDuration(file);
+      expect(durationAfter).toBeGreaterThan(durationBefore - 0.5);
+      expect(durationAfter).toBeLessThan(durationBefore + 0.5);
+      expect(() => execFileSync(FFMPEG, ['-v', 'error', '-i', file, '-f', 'null', '-'], { stdio: 'ignore' })).not.toThrow();
+    });
+
     it('does not rewrite the audio payload — the delta is metadata-scale (AC7)', async () => {
       // No cover on either side, so metadata is the ONLY thing that can change.
       const file = makeAudio('no-remux.m4b', 30);
