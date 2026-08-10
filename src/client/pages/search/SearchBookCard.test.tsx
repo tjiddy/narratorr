@@ -441,6 +441,56 @@ describe('SearchBookCard', () => {
       expect(screen.queryByText('In Library')).not.toBeInTheDocument();
     });
 
+    // The override is a create with no ASIN fence in front of it, so a double click would commit
+    // two rows; only the button's pending guard stands between the two clicks (F1).
+    it('disables Add anyway while its request is in flight, so a second click issues no second create', async () => {
+      vi.mocked(api.addBook).mockRejectedValueOnce(new ApiError(409, reviewBody));
+      const { user } = await addOnce();
+      await screen.findByRole('button', { name: /add anyway/i });
+
+      let release!: (created: { id: number; title: string }) => void;
+      vi.mocked(api.addBook).mockImplementation(
+        () => new Promise((resolve) => { release = resolve as typeof release; }) as never,
+      );
+      await user.click(screen.getByRole('button', { name: /add anyway/i }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /add anyway/i })).toBeDisabled();
+      });
+      expect(api.addBook).toHaveBeenCalledTimes(2);
+
+      await user.click(screen.getByRole('button', { name: /add anyway/i }));
+      expect(api.addBook).toHaveBeenCalledTimes(2);
+
+      release({ id: 99, title: 'The Way of Kings' });
+      await waitFor(() => { expect(screen.getByText('In Library')).toBeInTheDocument(); });
+    });
+
+    // The two-step flow can fail after the affordance is already mounted; clearing it there would
+    // strand the operator with no way back to the override (F2).
+    it('surfaces a non-409 override failure and leaves the review affordance retryable', async () => {
+      vi.mocked(api.addBook).mockRejectedValueOnce(new ApiError(409, reviewBody));
+      const { user } = await addOnce();
+      await screen.findByRole('button', { name: /add anyway/i });
+
+      vi.mocked(api.addBook).mockRejectedValueOnce(new Error('Network error'));
+      await user.click(screen.getByRole('button', { name: /add anyway/i }));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Failed to add book: Network error');
+      });
+      expect(screen.getByText('Possible duplicate (review)')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /add anyway/i })).toBeEnabled();
+      expect(screen.queryByText('In Library')).not.toBeInTheDocument();
+
+      // Retryable in the literal sense: the same control still completes the add.
+      vi.mocked(api.addBook).mockResolvedValue({ id: 99, title: 'The Way of Kings' } as never);
+      await user.click(screen.getByRole('button', { name: /add anyway/i }));
+
+      await waitFor(() => { expect(screen.getByText('In Library')).toBeInTheDocument(); });
+      expect(vi.mocked(api.addBook).mock.calls[2]![0]).toMatchObject({ overrideRecordingReview: true });
+    });
+
     it('still claims ownership and offers no override on a same-recording 409', async () => {
       vi.mocked(api.addBook).mockRejectedValue(new ApiError(409, { conflict: 'same-recording', id: 7, title: 'Owned' }));
 
