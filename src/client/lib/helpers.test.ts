@@ -502,3 +502,30 @@ describe('findLibraryMatch (#1150, #1907)', () => {
     });
   });
 });
+
+describe('mapBookMetadataToPayload — provider formatType and the review override (#2199)', () => {
+  const base: BookMetadata = {
+    title: 'Piranesi',
+    authors: [{ name: 'Susanna Clarke' }],
+    narrators: ['Chiwetel Ejiofor'],
+  };
+
+  it('forwards the provider formatType so the server can normalize it', () => {
+    expect(mapBookMetadataToPayload({ ...base, formatType: 'Abridged' }).formatType).toBe('Abridged');
+  });
+
+  // An `undefined` value would still serialize as an absent key, but the omission is the contract:
+  // the server distinguishes "no format supplied" from "format is unknown".
+  it('omits the key entirely when the provider supplied no formatType', () => {
+    expect(mapBookMetadataToPayload(base)).not.toHaveProperty('formatType');
+  });
+
+  it('forwards the review override when the caller sets it', () => {
+    expect(mapBookMetadataToPayload(base, { searchImmediately: false, overrideRecordingReview: true }))
+      .toMatchObject({ overrideRecordingReview: true });
+  });
+
+  it('omits the override key when the caller does not set it', () => {
+    expect(mapBookMetadataToPayload(base, { searchImmediately: true })).not.toHaveProperty('overrideRecordingReview');
+  });
+});

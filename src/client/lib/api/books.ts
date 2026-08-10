@@ -81,6 +81,10 @@ export interface CreateBookPayload {
   genres?: string[] | undefined;
   providerId?: string | undefined;
   searchImmediately?: boolean | undefined;
+  /** Raw provider format; the server normalizes it for the duplicate veto and the stored row. */
+  formatType?: string | undefined;
+  /** Overrides an undecided `review` refusal only; an owned recording stays refused. */
+  overrideRecordingReview?: boolean | undefined;
 }
 
 

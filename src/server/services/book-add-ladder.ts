@@ -1,6 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { normalizeProductionType } from '@core/metadata/production-type.js';
 import { OwnedRecordingError } from './book-dedup.js';
 import type { DuplicateVerdict } from './book-dedup.js';
 import type { RecordingReviewReason } from '@core/utils/recording-identity.js';
@@ -13,6 +14,14 @@ export interface AddBookLadderDeps {
   eventHistory: Pick<EventHistoryService, 'create'>;
 }
 
+/** The create payload plus the two transient add-surface inputs that are never columns. */
+export interface AddBookLadderInput extends CreateBookInput {
+  /** Raw provider format; normalized here for both the duplicate veto and the stored row. */
+  formatType?: string | null | undefined;
+  /** Overrides an undecided `review` verdict only; `same-recording` and races stay refused. */
+  overrideRecordingReview?: boolean | undefined;
+}
+
 export type AddBookLadderResult =
   | {
       outcome: 'duplicate';
@@ -20,8 +29,23 @@ export type AddBookLadderResult =
       book: BookWithAuthor;
       recordingReviewReason?: RecordingReviewReason;
     }
-  | { outcome: 'owned-race'; existingBookId: number; book: BookDetail | null }
+  // bookTitle is the identity floor: hydration is best-effort, so `book` may be null.
+  | { outcome: 'owned-race'; existingBookId: number; bookTitle: string; book: BookDetail | null }
   | { outcome: 'created'; book: BookDetail };
+
+/** Enrichment only — a rejected or empty read must not turn a committed collision into a 500. */
+async function hydrateRaceIncumbent(
+  deps: AddBookLadderDeps,
+  existingBookId: number,
+  log: FastifyBaseLogger,
+): Promise<BookDetail | null> {
+  try {
+    return await deps.bookService.getById(existingBookId);
+  } catch (error: unknown) {
+    log.warn({ existingId: existingBookId, error: serializeError(error) }, 'Failed to hydrate the owned-race incumbent');
+    return null;
+  }
+}
 
 /**
  * The one duplicate → create → announce ladder. `POST /api/books` and the Series-card batch both run
@@ -29,9 +53,15 @@ export type AddBookLadderResult =
  */
 export async function addBookThroughLadder(
   deps: AddBookLadderDeps,
-  input: CreateBookInput,
+  input: AddBookLadderInput,
   log: FastifyBaseLogger,
 ): Promise<AddBookLadderResult> {
+  // An absent formatType must stay absent rather than become a no-signal `unknown`, so the resolver
+  // and the row keep whatever productionType a non-wire caller already resolved.
+  const productionType = input.formatType === undefined
+    ? input.productionType
+    : normalizeProductionType(input.formatType);
+
   // Block owned or uncertain recordings; a confirmed different recording is a valid keep-both.
   const resolution = await deps.bookService.findDuplicate({
     title: input.title,
@@ -39,25 +69,39 @@ export async function addBookThroughLadder(
     ...(input.asin !== undefined && { asin: input.asin }),
     ...(input.narrators !== undefined && { narrators: input.narrators }),
     ...(input.duration !== undefined && { duration: input.duration }),
+    ...(productionType !== undefined && { productionType }),
   });
   if (resolution.verdict !== 'different-recording' && resolution.book) {
-    log.info({ title: input.title, existingId: resolution.book.id, verdict: resolution.verdict }, 'Duplicate book detected');
-    return {
-      outcome: 'duplicate',
-      verdict: resolution.verdict,
-      book: resolution.book,
-      ...(resolution.recordingReviewReason && { recordingReviewReason: resolution.recordingReviewReason }),
-    };
+    // Only the undecided arm is overridable: same-recording is a conclusion, review is an abstention.
+    if (resolution.verdict === 'review' && input.overrideRecordingReview) {
+      log.info({ title: input.title, existingId: resolution.book.id }, 'Recording review overridden by request');
+    } else {
+      log.info({ title: input.title, existingId: resolution.book.id, verdict: resolution.verdict }, 'Duplicate book detected');
+      return {
+        outcome: 'duplicate',
+        verdict: resolution.verdict,
+        book: resolution.book,
+        ...(resolution.recordingReviewReason && { recordingReviewReason: resolution.recordingReviewReason }),
+      };
+    }
   }
+
+  // The transient flags are dropped here; only columns reach the insert.
+  const { formatType: _formatType, overrideRecordingReview: _override, ...createInput } = input;
 
   let book: BookDetail;
   try {
-    book = await deps.bookService.create(input);
+    book = await deps.bookService.create({ ...createInput, ...(productionType !== undefined && { productionType }) });
   } catch (error: unknown) {
     // A same-ASIN create race means another request already owns the recording.
     if (error instanceof OwnedRecordingError) {
       log.info({ title: input.title, existingId: error.existingBookId }, 'Duplicate book detected (ASIN race)');
-      return { outcome: 'owned-race', existingBookId: error.existingBookId, book: await deps.bookService.getById(error.existingBookId) };
+      return {
+        outcome: 'owned-race',
+        existingBookId: error.existingBookId,
+        bookTitle: error.bookTitle,
+        book: await hydrateRaceIncumbent(deps, error.existingBookId, log),
+      };
     }
     throw error;
   }

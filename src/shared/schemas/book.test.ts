@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addBookConflictSchema,
   createBookBodySchema,
   updateBookBodySchema,
   enrichmentStatusSchema,
@@ -272,6 +273,66 @@ describe('createBookBodySchema — subtitle/publisher (#1614)', () => {
 
   it('still rejects an unknown key via .strict()', () => {
     const result = createBookBodySchema.safeParse({ ...validBook, subtitle: 'A Subtitle', bogus: true });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('addBookConflictSchema — the POST /api/books 409 discriminator (#2199)', () => {
+  it('carries exactly the three conflict values', () => {
+    expect([...addBookConflictSchema.options].sort()).toEqual(
+      ['owned-race', 'review', 'same-recording'],
+    );
+  });
+
+  // `different-recording` is a canonical recording verdict that never produces a 409, and
+  // `owned-race` is not a recording verdict at all; the two unions must not drift together.
+  it('rejects a canonical recording verdict that never reaches a 409', () => {
+    expect(addBookConflictSchema.safeParse('different-recording').success).toBe(false);
+  });
+
+  it('rejects an unknown conflict value', () => {
+    expect(addBookConflictSchema.safeParse('maybe-owned').success).toBe(false);
+  });
+});
+
+describe('createBookBodySchema — provider formatType and the review override (#2199)', () => {
+  it('accepts a provider formatType', () => {
+    const result = createBookBodySchema.safeParse({ ...validBook, formatType: 'Abridged' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.formatType).toBe('Abridged');
+  });
+
+  // Providers report an absent format as null; a 400 there would be a worse answer than `unknown`.
+  it('accepts a null formatType', () => {
+    const result = createBookBodySchema.safeParse({ ...validBook, formatType: null });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.formatType).toBeNull();
+  });
+
+  it('accepts an absent formatType', () => {
+    const result = createBookBodySchema.safeParse(validBook);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.formatType).toBeUndefined();
+  });
+
+  it('rejects a non-string formatType', () => {
+    expect(createBookBodySchema.safeParse({ ...validBook, formatType: 7 }).success).toBe(false);
+  });
+
+  it('accepts the review override', () => {
+    const result = createBookBodySchema.safeParse({ ...validBook, overrideRecordingReview: true });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.overrideRecordingReview).toBe(true);
+  });
+
+  it('rejects a non-boolean review override', () => {
+    expect(createBookBodySchema.safeParse({ ...validBook, overrideRecordingReview: 'yes' }).success).toBe(false);
+  });
+
+  it('still rejects an unknown top-level field alongside the new ones', () => {
+    const result = createBookBodySchema.safeParse({
+      ...validBook, formatType: 'Unabridged', overrideRecordingReview: true, bogus: true,
+    });
     expect(result.success).toBe(false);
   });
 });

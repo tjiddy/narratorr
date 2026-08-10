@@ -4,7 +4,7 @@ import { AddBookPopover } from '@/components/AddBookPopover';
 import { InLibraryBadge } from '@/components/InLibraryBadge';
 import { Badge } from '@/components/Badge';
 import { useMutation, type useQueryClient } from '@tanstack/react-query';
-import { api, ApiError, type BookMetadata, type LibraryEntry } from '@/lib/api';
+import { api, ApiError, parseAddBookConflict, type BookMetadata, type LibraryEntry } from '@/lib/api';
 import { toast } from 'sonner';
 import { mapBookMetadataToPayload, findLibraryMatch, type LibraryMatch } from '@/lib/helpers';
 import { formatDurationMinutes } from '@/lib/format';
@@ -29,6 +29,12 @@ function deriveOwnership(
   };
 }
 
+/** The overrides the popover collects, plus the operator's explicit review override. */
+type AddOverrides = { searchImmediately: boolean; overrideRecordingReview?: boolean };
+
+/** Held so the operator can accept the risk; `overrides` replays the popover's search choice. */
+type ReviewConflict = { incumbentTitle: string | null; overrides: AddOverrides | undefined };
+
 export function SearchBookCard({
   book,
   index,
@@ -41,6 +47,7 @@ export function SearchBookCard({
   queryClient: ReturnType<typeof useQueryClient>;
 }) {
   const [justAddedBookId, setJustAddedBookId] = useState<number | null>(null);
+  const [reviewConflict, setReviewConflict] = useState<ReviewConflict | null>(null);
   const authorNames = book.authors.map((a) => a.name).join(', ');
   // Audible series[0] may be a broader universe; use canonical seriesPrimary.
   const seriesInfo = pickPrimarySeries(book);
@@ -48,20 +55,24 @@ export function SearchBookCard({
   const { inLibraryBookId, showRelatedEditionBadge } = deriveOwnership(libraryMatch, justAddedBookId);
 
   const addMutation = useMutation({
-    mutationFn: (overrides?: { searchImmediately: boolean }) =>
+    mutationFn: (overrides?: AddOverrides) =>
       api.addBook(mapBookMetadataToPayload(book, overrides)),
     onSuccess: (created) => {
+      setReviewConflict(null);
       setJustAddedBookId(created.id);
       toast.success(`Added '${book.title}' to library`);
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
-    onError: (error: Error) => {
+    onError: (error: Error, overrides) => {
       if (error instanceof ApiError && error.status === 409) {
-        // A 409 body carries the existing book row.
-        const existingId = typeof error.body === 'object' && error.body !== null && 'id' in error.body && typeof (error.body as { id: unknown }).id === 'number'
-          ? (error.body as { id: number }).id
-          : null;
-        setJustAddedBookId(existingId);
+        // The 409 body is the incumbent row plus the conflict discriminator.
+        const { conflict, incumbentId, incumbentTitle } = parseAddBookConflict(error.body);
+        // `review` is an abstention, not an ownership claim, so the card must stay addable.
+        if (conflict === 'review') {
+          setReviewConflict({ incumbentTitle, overrides });
+          return;
+        }
+        setJustAddedBookId(incumbentId);
         toast.info('Already in library');
         queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       } else {
@@ -100,6 +111,28 @@ export function SearchBookCard({
           {showRelatedEditionBadge && (
             <div className="mt-1.5">
               <Badge variant="muted">Edition in library</Badge>
+            </div>
+          )}
+
+          {reviewConflict && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-2" role="status">
+              <Badge variant="warning">Possible duplicate (review)</Badge>
+              <span className="text-sm text-muted-foreground">
+                {reviewConflict.incumbentTitle
+                  ? `May be the same recording as '${reviewConflict.incumbentTitle}'.`
+                  : 'May be the same recording as a book already in your library.'}
+              </span>
+              <button
+                type="button"
+                onClick={() => addMutation.mutate({
+                  searchImmediately: reviewConflict.overrides?.searchImmediately ?? false,
+                  overrideRecordingReview: true,
+                })}
+                disabled={addMutation.isPending}
+                className="text-sm font-medium text-primary hover:underline disabled:opacity-50 focus-ring rounded"
+              >
+                Add anyway
+              </button>
             </div>
           )}
 

@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api, ApiError, type SuggestionRow, type CreateBookPayload } from '@/lib/api';
+import { api, ApiError, parseAddBookConflict, type SuggestionRow, type CreateBookPayload } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { useBookStats } from '@/hooks/useLibrary';
@@ -65,11 +65,17 @@ function useDiscoverMutations(setAddedMap: React.Dispatch<React.SetStateAction<M
     },
     onError: (error: Error, { suggestion }) => {
       if (error instanceof ApiError && error.status === 409) {
-        // A 409 body carries the existing book row.
-        const existingId = error.body !== null && typeof error.body === 'object' && 'id' in error.body && typeof (error.body as { id: unknown }).id === 'number'
-          ? (error.body as { id: number }).id
-          : null;
-        markAdded(suggestion.id, existingId);
+        // The 409 body is the incumbent row plus the conflict discriminator.
+        const { conflict, incumbentId, incumbentTitle } = parseAddBookConflict(error.body);
+        // `review` is the resolver abstaining; marking added would write an ownership claim the
+        // server never made, and the durable mark cannot be undone from this card.
+        if (conflict === 'review') {
+          toast.info(incumbentTitle
+            ? `Possible duplicate (review): may be the same recording as '${incumbentTitle}'`
+            : 'Possible duplicate (review): may be the same recording as a book already in your library');
+          return;
+        }
+        markAdded(suggestion.id, incumbentId);
         toast.info('Already in library');
       } else {
         toast.error(`Failed to add book: ${getErrorMessage(error)}`);

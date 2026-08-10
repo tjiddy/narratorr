@@ -57,6 +57,45 @@ describe('addBookThroughLadder', () => {
     });
   });
 
+  it('passes the normalized production type to findDuplicate when the provider supplied a format', async () => {
+    const deps = makeDeps();
+    await addBookThroughLadder(deps, { ...input, formatType: '  Abridged ' }, makeLog());
+
+    expect(deps.bookService.findDuplicate).toHaveBeenCalledWith(
+      expect.objectContaining({ productionType: 'abridged' }),
+    );
+  });
+
+  it.each([
+    ['an unrecognized format', 'radio play'],
+    ['an empty format', ''],
+    ['a null format', null],
+  ])('normalizes %s to the no-signal unknown production type', async (_label, formatType) => {
+    const deps = makeDeps();
+    await addBookThroughLadder(deps, { ...input, formatType }, makeLog());
+
+    expect(deps.bookService.findDuplicate).toHaveBeenCalledWith(
+      expect.objectContaining({ productionType: 'unknown' }),
+    );
+  });
+
+  it('omits productionType entirely when no formatType was supplied', async () => {
+    const deps = makeDeps();
+    await addBookThroughLadder(deps, input, makeLog());
+
+    const candidate = vi.mocked(deps.bookService.findDuplicate).mock.calls[0]![0];
+    expect(candidate).not.toHaveProperty('productionType');
+  });
+
+  it('persists the normalized production type on the created row', async () => {
+    const deps = makeDeps();
+    await addBookThroughLadder(deps, { ...input, formatType: 'UNABRIDGED' }, makeLog());
+
+    expect(deps.bookService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ productionType: 'unabridged' }),
+    );
+  });
+
   it('omits absent optional identity fields rather than sending undefined keys', async () => {
     const deps = makeDeps();
     await addBookThroughLadder(deps, { title: 'Bare', authors: [] }, makeLog());
@@ -134,9 +173,115 @@ describe('addBookThroughLadder', () => {
 
     const result = await addBookThroughLadder(deps, input, makeLog());
 
-    expect(result).toEqual({ outcome: 'owned-race', existingBookId: 9, book: owner });
+    expect(result).toEqual({ outcome: 'owned-race', existingBookId: 9, bookTitle: 'Leviathan Wakes', book: owner });
     expect(deps.bookService.getById).toHaveBeenCalledWith(9);
     expect(deps.eventHistory.create).not.toHaveBeenCalled();
+  });
+
+  describe('#2199 owned-race identity survives a failed hydration', () => {
+    function raceDeps(): AddBookLadderDeps {
+      const deps = makeDeps();
+      vi.mocked(deps.bookService.create).mockRejectedValue(
+        new OwnedRecordingError({ existingBookId: 9, title: 'Leviathan Wakes (owned)', reason: 'asin-owned' }),
+      );
+      return deps;
+    }
+
+    it('keeps the error identity when the incumbent read resolves null', async () => {
+      const deps = raceDeps();
+      vi.mocked(deps.bookService.getById).mockResolvedValue(null);
+
+      const result = await addBookThroughLadder(deps, input, makeLog());
+
+      expect(result).toEqual({
+        outcome: 'owned-race', existingBookId: 9, bookTitle: 'Leviathan Wakes (owned)', book: null,
+      });
+    });
+
+    // getById runs three awaited queries; a rejection there must not turn a committed collision
+    // into a 500 (spec review F7).
+    it('keeps the error identity and logs when the incumbent read rejects', async () => {
+      const deps = raceDeps();
+      const log = makeLog();
+      vi.mocked(deps.bookService.getById).mockRejectedValue(new Error('db handle closed'));
+
+      const result = await addBookThroughLadder(deps, input, log);
+
+      expect(result).toEqual({
+        outcome: 'owned-race', existingBookId: 9, bookTitle: 'Leviathan Wakes (owned)', book: null,
+      });
+      expect(vi.mocked(log.warn)).toHaveBeenCalledWith(
+        expect.objectContaining({ existingId: 9, error: expect.anything() }),
+        'Failed to hydrate the owned-race incumbent',
+      );
+    });
+  });
+
+  describe('#2199 overrideRecordingReview', () => {
+    function reviewDeps(): AddBookLadderDeps {
+      const deps = makeDeps();
+      vi.mocked(deps.bookService.findDuplicate).mockResolvedValue({
+        verdict: 'review', book: makeBook({ id: 5 }), hasIncumbent: true, recordingReviewReason: 'narrator-no-signal',
+      });
+      return deps;
+    }
+
+    it('turns an undecided review into a create', async () => {
+      const created = makeBook({ id: 21 });
+      const deps = reviewDeps();
+      vi.mocked(deps.bookService.create).mockResolvedValue(created);
+
+      const result = await addBookThroughLadder(deps, { ...input, overrideRecordingReview: true }, makeLog());
+
+      expect(result).toEqual({ outcome: 'created', book: created });
+      expect(deps.bookService.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('never relaxes a same-recording refusal', async () => {
+      const incumbent = makeBook({ id: 3 });
+      const deps = makeDeps();
+      vi.mocked(deps.bookService.findDuplicate).mockResolvedValue({
+        verdict: 'same-recording', book: incumbent, hasIncumbent: true,
+      });
+
+      const result = await addBookThroughLadder(deps, { ...input, overrideRecordingReview: true }, makeLog());
+
+      expect(result).toEqual({ outcome: 'duplicate', verdict: 'same-recording', book: incumbent });
+      expect(deps.bookService.create).not.toHaveBeenCalled();
+    });
+
+    it('never relaxes a create-time ASIN race', async () => {
+      const deps = makeDeps();
+      vi.mocked(deps.bookService.create).mockRejectedValue(
+        new OwnedRecordingError({ existingBookId: 9, title: 'Leviathan Wakes', reason: 'asin-owned' }),
+      );
+      vi.mocked(deps.bookService.getById).mockResolvedValue(makeBook({ id: 9 }));
+
+      const result = await addBookThroughLadder(deps, { ...input, overrideRecordingReview: true }, makeLog());
+
+      expect(result.outcome).toBe('owned-race');
+    });
+
+    it('still holds a review when the flag is absent or false', async () => {
+      for (const flag of [undefined, false]) {
+        vi.clearAllMocks();
+        const deps = reviewDeps();
+
+        const result = await addBookThroughLadder(deps, { ...input, overrideRecordingReview: flag }, makeLog());
+
+        expect(result.outcome).toBe('duplicate');
+        expect(deps.bookService.create).not.toHaveBeenCalled();
+      }
+    });
+
+    it('does not forward the transient flag to the create payload', async () => {
+      const deps = reviewDeps();
+      await addBookThroughLadder(deps, { ...input, overrideRecordingReview: true }, makeLog());
+
+      expect(deps.bookService.create).toHaveBeenCalledWith(
+        expect.not.objectContaining({ overrideRecordingReview: expect.anything() }),
+      );
+    });
   });
 
   it('reports created and logs when the book_added write rejects — the row is the point of no return', async () => {

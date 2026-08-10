@@ -32,7 +32,7 @@ export interface BookRouteDeps {
 import { searchAndGrabForBook, buildNarratorPriority, buildSearchFilterOptions } from '../services/search-pipeline.js';
 import { z } from 'zod';
 import { triggerImmediateSearch } from '../services/trigger-immediate-search.js';
-import { addBookThroughLadder } from '../services/book-add-ladder.js';
+import { addBookThroughLadder, type AddBookLadderResult } from '../services/book-add-ladder.js';
 import {
   idParamSchema,
   bookListQuerySchema,
@@ -97,6 +97,23 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
 });
 }
 
+/**
+ * Additive by design: the incumbent row stays at the top level so the existing 409 consumers keep
+ * reading `id`/`title`, and `conflict` is the only field they must opt into. `review` means the
+ * resolver abstained, which is not the ownership claim a bare row reads as.
+ */
+function buildAddConflictBody(result: Exclude<AddBookLadderResult, { outcome: 'created' }>) {
+  if (result.outcome === 'owned-race') {
+    // Hydration is best-effort, so the error's identity is the floor and the body is never null.
+    return { id: result.existingBookId, title: result.bookTitle, ...result.book, conflict: 'owned-race' as const };
+  }
+  return {
+    ...result.book,
+    conflict: result.verdict,
+    ...(result.verdict === 'review' && result.recordingReviewReason && { recordingReviewReason: result.recordingReviewReason }),
+  };
+}
+
 async function registerAddBookRoute(app: FastifyInstance, deps: BookRouteDeps) {
   app.post<{ Body: CreateBookBody }>(
     '/api/books',
@@ -105,7 +122,7 @@ async function registerAddBookRoute(app: FastifyInstance, deps: BookRouteDeps) {
       const body = request.body;
       const result = await addBookThroughLadder(deps, body, request.log);
       if (result.outcome !== 'created') {
-        return reply.status(409).send(result.book);
+        return reply.status(409).send(buildAddConflictBody(result));
       }
       const book = result.book;
 
