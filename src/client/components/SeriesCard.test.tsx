@@ -535,6 +535,49 @@ describe('SeriesCard — Add All (#2200)', () => {
       expect(vi.mocked(toast.error).mock.calls[0]?.[0] as string).toContain('2 failed');
     });
 
+    /**
+     * `owned` and `held` are durable successes, so a rerun or a stale card that creates nothing is
+     * not an error — only a run that added nothing AND failed something is.
+     */
+    it('reports an all-owned rerun as a success, not an error', async () => {
+      vi.mocked(api.addAllInSeries).mockResolvedValue(batch({ requested: 3, created: 0, owned: 3 }));
+
+      await confirmAddAll();
+
+      await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(1));
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(vi.mocked(toast.success).mock.calls[0]?.[0] as string).toContain('3 already owned');
+    });
+
+    it('reports an all-held run as a success, not an error', async () => {
+      vi.mocked(api.addAllInSeries).mockResolvedValue(batch({ requested: 2, created: 0, held: 2 }));
+
+      await confirmAddAll();
+
+      await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(1));
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(vi.mocked(toast.success).mock.calls[0]?.[0] as string).toContain('2 held for review');
+    });
+
+    it('reports a mixed owned-and-failed run with nothing created as an error', async () => {
+      vi.mocked(api.addAllInSeries).mockResolvedValue(batch({ requested: 3, created: 0, owned: 2, failed: 1 }));
+
+      await confirmAddAll();
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
+      expect(toast.success).not.toHaveBeenCalled();
+      expect(vi.mocked(toast.error).mock.calls[0]?.[0] as string).toContain('1 failed');
+    });
+
+    it('keeps a partly-failed run that still created rows on the success path', async () => {
+      vi.mocked(api.addAllInSeries).mockResolvedValue(batch({ requested: 3, created: 2, failed: 1 }));
+
+      await confirmAddAll();
+
+      await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(1));
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
     it('surfaces an error notification when the request itself fails', async () => {
       vi.mocked(api.addAllInSeries).mockRejectedValue(new Error('network down'));
 

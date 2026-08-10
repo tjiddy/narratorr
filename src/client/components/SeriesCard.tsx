@@ -72,7 +72,9 @@ function AddAllControl({ bookId, count }: AddAllControlProps) {
       queryClient.invalidateQueries({ queryKey: queryKeys.bookSeries(bookId) });
       if (context.gen !== genRef.current) return;
       const summary = summarizeBatch(result);
-      if (result.created === 0 && result.requested > 0) toast.error(summary);
+      // `owned` and `held` are durable successes — an idempotent rerun or a stale card legitimately
+      // creates nothing — so only a run that added nothing AND failed something is error-shaped.
+      if (result.created === 0 && result.failed > 0) toast.error(summary);
       else toast.success(summary);
     },
     onError: (_error, _vars, context) => {
