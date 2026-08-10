@@ -102,7 +102,11 @@ function disambiguateWindow(
     return selected;
   }
 
-  deps.log.info({ query, passing: passing.length, window: VALIDATION_WINDOW }, AMBIGUOUS_WINDOW_HELD);
+  // `exact` splits the surviving holds into the two populations that need opposite fixes: 0 means
+  // no candidate survived the lossless title fold (a title/normalization miss), >=2 means candidates
+  // were found but could not be proven one recording. Without it the two are indistinguishable in
+  // the logs, which is the only signal an operator has for a row that silently never acquires.
+  deps.log.info({ query, passing: passing.length, exact: exact.length, window: VALIDATION_WINDOW }, AMBIGUOUS_WINDOW_HELD);
   return null;
 }
 

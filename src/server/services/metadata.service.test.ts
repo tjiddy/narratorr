@@ -2781,7 +2781,27 @@ describe('MetadataService.resolveBook — ambiguous validation windows (#2202)',
 
       expect(holdLogCalls()).toEqual([
         [
-          expect.objectContaining({ query: 'Dune Chronicles Messiah Frank Herbert', passing: 2, window: 5 }),
+          // exact: 0 — neither candidate survives the lossless fold against this query.
+          expect.objectContaining({ query: 'Dune Chronicles Messiah Frank Herbert', passing: 2, exact: 0, window: 5 }),
+          AMBIGUOUS_WINDOW_HELD,
+        ],
+      ]);
+    });
+
+    // The two hold populations need opposite fixes — a title/normalization miss versus a failed
+    // equivalence proof — and `passing` alone cannot tell them apart. Both arms are pinned so the
+    // field cannot be dropped without a test failing.
+    it('distinguishes the two hold populations: exact 0 for a title miss, exact >= 2 for a failed equivalence proof', async () => {
+      window(
+        candidate('Dune Messiah', HERBERT, { asin: 'B_ONE', duration: 600, narrators: ['Scott Brick'] }),
+        candidate('Dune Messiah', HERBERT, { asin: 'B_TWO', duration: 900, narrators: ['Simon Vance'] }),
+      );
+
+      await service.resolveBook({ title: 'Dune Messiah', author: HERBERT });
+
+      expect(holdLogCalls()).toEqual([
+        [
+          expect.objectContaining({ query: 'Dune Messiah Frank Herbert', passing: 2, exact: 2, window: 5 }),
           AMBIGUOUS_WINDOW_HELD,
         ],
       ]);
