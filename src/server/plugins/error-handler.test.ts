@@ -28,7 +28,7 @@ function createTestApp() {
   app.get('/throw-rename-not-found', async () => { throw new RenameError('Book not found', 'NOT_FOUND'); });
   app.get('/throw-rename-no-path', async () => { throw new RenameError('No path set', 'NO_PATH'); });
   app.get('/throw-retag-not-found', async () => { throw new RetagError('NOT_FOUND', 'Book not found'); });
-  app.get('/throw-retag-ffmpeg', async () => { throw new RetagError('FFMPEG_NOT_CONFIGURED', 'ffmpeg not installed'); });
+  app.get('/throw-retag-mutagen', async () => { throw new RetagError('MUTAGEN_NOT_CONFIGURED', 'mutagen not installed'); });
   app.get('/throw-restore-invalid', async () => { throw new RestoreUploadError('Not a valid zip', 'INVALID_ZIP'); });
   app.get('/throw-qg-not-found', async () => { throw new QualityGateServiceError('Download not found', 'NOT_FOUND'); });
   app.get('/throw-qg-invalid-status', async () => { throw new QualityGateServiceError('Download is not pending review', 'INVALID_STATUS'); });
@@ -118,10 +118,10 @@ describe('error-handler plugin', () => {
       expect(JSON.parse(res.payload)).toEqual({ error: 'Book not found' });
     });
 
-    it('maps RetagError FFMPEG_NOT_CONFIGURED to 503', async () => {
-      const res = await app.inject({ method: 'GET', url: '/throw-retag-ffmpeg' });
+    it('maps RetagError MUTAGEN_NOT_CONFIGURED to 503', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-retag-mutagen' });
       expect(res.statusCode).toBe(503);
-      expect(JSON.parse(res.payload)).toEqual({ error: 'ffmpeg not installed' });
+      expect(JSON.parse(res.payload)).toEqual({ error: 'mutagen not installed' });
     });
 
     it('maps RestoreUploadError to 400', async () => {

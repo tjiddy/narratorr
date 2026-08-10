@@ -7,7 +7,7 @@ import { ProcessingSettingsSection } from './ProcessingSettingsSection';
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock('@/lib/api', () => ({
-  api: { getSettings: vi.fn(), updateSettings: vi.fn(), getFfmpegStatus: vi.fn() },
+  api: { getSettings: vi.fn(), updateSettings: vi.fn(), getFfmpegStatus: vi.fn(), getMutagenStatus: vi.fn() },
 }));
 
 const { api } = await import('@/lib/api');
@@ -15,6 +15,7 @@ const mockApi = api as unknown as {
   getSettings: ReturnType<typeof vi.fn>;
   updateSettings: ReturnType<typeof vi.fn>;
   getFfmpegStatus: ReturnType<typeof vi.fn>;
+  getMutagenStatus: ReturnType<typeof vi.fn>;
 };
 
 // Seed engine fields so subset assertions can prove this page does not send them.
@@ -29,6 +30,7 @@ describe('ProcessingSettingsSection', () => {
     mockApi.getSettings.mockResolvedValue(settings);
     mockApi.updateSettings.mockResolvedValue(settings);
     mockApi.getFfmpegStatus.mockResolvedValue({ detected: true, version: '8.0.1', path: '/usr/bin/ffmpeg' });
+    mockApi.getMutagenStatus.mockResolvedValue({ detected: true, version: '1.47.0', path: '/usr/bin/python3' });
   });
 
   it('renders the automation rows', async () => {
@@ -40,33 +42,75 @@ describe('ProcessingSettingsSection', () => {
     expect(screen.getByLabelText('Post-processing script')).toBeInTheDocument();
   });
 
-  it('enables the ffmpeg-dependent automations and shows the Audio Tools breadcrumb when ffmpeg is detected', async () => {
+  it('enables both automations and shows the Audio Tools breadcrumb when both binaries are detected', async () => {
     renderWithProviders(<ProcessingSettingsSection />);
     await waitFor(() => expect(screen.getByLabelText(/Auto-merge multi-file downloads/)).toBeEnabled());
     expect(screen.getByLabelText(/Tag Embedding/)).toBeEnabled();
     expect(screen.getByText(/uses your Merge & Convert settings/)).toBeInTheDocument();
     expect(screen.queryByText(/needs ffmpeg/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/needs mutagen/i)).not.toBeInTheDocument();
   });
 
-  it('gates auto-merge and Tag Embedding when ffmpeg is missing, but leaves OPF + custom script usable', async () => {
+  it('gates only auto-merge when ffmpeg is missing, leaving OPF + custom script usable', async () => {
     mockApi.getFfmpegStatus.mockResolvedValue({ detected: false });
     renderWithProviders(<ProcessingSettingsSection />);
     await waitFor(() => expect(screen.getByLabelText(/Auto-merge multi-file downloads/)).toBeDisabled());
-    expect(screen.getByLabelText(/Tag Embedding/)).toBeDisabled();
-    expect(screen.getAllByText(/see ffmpeg requirements in Audio Tools/).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText(/see ffmpeg requirements in Audio Tools/)).toBeInTheDocument();
     expect(screen.getByLabelText('OPF metadata sidecar')).toBeEnabled();
     expect(screen.getByLabelText('Post-processing script')).toBeEnabled();
   });
 
-  it('fails safe — gates auto-merge + Tag Embedding when the status query errors', async () => {
+  // AC14's headline client state: the configuration today's code makes impossible.
+  it('with mutagen present and ffmpeg ABSENT, Tag Embedding is usable while auto-merge is the gated row', async () => {
+    mockApi.getFfmpegStatus.mockResolvedValue({ detected: false });
+    renderWithProviders(<ProcessingSettingsSection />);
+
+    await waitFor(() => expect(screen.getByLabelText(/Auto-merge multi-file downloads/)).toBeDisabled());
+    expect(screen.getByLabelText(/Tag Embedding/)).toBeEnabled();
+    expect(screen.getByText(/needs ffmpeg/i)).toBeInTheDocument();
+    expect(screen.queryByText(/needs mutagen/i)).not.toBeInTheDocument();
+  });
+
+  it('gates Tag Embedding when mutagen is missing, naming mutagen and MUTAGEN_PYTHON', async () => {
+    mockApi.getMutagenStatus.mockResolvedValue({ detected: false });
+    renderWithProviders(<ProcessingSettingsSection />);
+
+    await waitFor(() => expect(screen.getByLabelText(/Tag Embedding/)).toBeDisabled());
+    expect(screen.getByText(/needs mutagen/i)).toBeInTheDocument();
+    expect(screen.getByText(/MUTAGEN_PYTHON/)).toBeInTheDocument();
+    // Auto-merge keeps its own binary: the two rows gate independently by design.
+    expect(screen.getByLabelText(/Auto-merge multi-file downloads/)).toBeEnabled();
+  });
+
+  it('no longer claims series/subtitle/ASIN/publisher are dropped on M4B', async () => {
+    renderWithProviders(<ProcessingSettingsSection />);
+    await waitFor(() => expect(screen.getByLabelText(/Tag Embedding/)).toBeInTheDocument());
+
+    expect(screen.queryByText(/dropped on M4B/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/written into the file on both MP3 and M4B/i)).toBeInTheDocument();
+  });
+
+  it('fails safe — gates each row when its own status query errors', async () => {
     mockApi.getFfmpegStatus.mockRejectedValue(new Error('network down'));
+    mockApi.getMutagenStatus.mockRejectedValue(new Error('network down'));
     renderWithProviders(<ProcessingSettingsSection />);
     await waitFor(() => expect(screen.getByLabelText(/Auto-merge multi-file downloads/)).toBeDisabled());
     expect(screen.getByLabelText(/Tag Embedding/)).toBeDisabled();
   });
 
-  it('lets an ALREADY-ENABLED automation be switched off when ffmpeg is missing (finding 4)', async () => {
+  it('stays optimistic while the status queries are still loading', async () => {
+    mockApi.getFfmpegStatus.mockReturnValue(new Promise(() => {}));
+    mockApi.getMutagenStatus.mockReturnValue(new Promise(() => {}));
+    renderWithProviders(<ProcessingSettingsSection />);
+
+    await waitFor(() => expect(screen.getByLabelText(/Tag Embedding/)).toBeInTheDocument());
+    expect(screen.getByLabelText(/Tag Embedding/)).toBeEnabled();
+    expect(screen.getByLabelText(/Auto-merge multi-file downloads/)).toBeEnabled();
+  });
+
+  it('lets an ALREADY-ENABLED automation be switched off when its binary is missing (finding 4)', async () => {
     mockApi.getFfmpegStatus.mockResolvedValue({ detected: false });
+    mockApi.getMutagenStatus.mockResolvedValue({ detected: false });
     mockApi.getSettings.mockResolvedValue(createMockSettings({
       processing: { autoMergeDownloads: true },
       tagging: { enabled: true },
@@ -77,8 +121,9 @@ describe('ProcessingSettingsSection', () => {
     expect(screen.getByLabelText(/Tag Embedding/)).toBeEnabled();
   });
 
-  it('keeps a DISABLED automation locked off when ffmpeg is missing (finding 4)', async () => {
+  it('keeps a DISABLED automation locked off when its binary is missing (finding 4)', async () => {
     mockApi.getFfmpegStatus.mockResolvedValue({ detected: false });
+    mockApi.getMutagenStatus.mockResolvedValue({ detected: false });
     mockApi.getSettings.mockResolvedValue(createMockSettings({
       processing: { autoMergeDownloads: false },
       tagging: { enabled: false },

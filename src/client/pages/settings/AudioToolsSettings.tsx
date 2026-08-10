@@ -66,7 +66,7 @@ function FfmpegStatusRow() {
       <AlertCircleIcon className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
       <span>
         <span className="font-semibold text-destructive">ffmpeg not found</span>
-        <span className="text-muted-foreground"> — install it, or set <code className="px-1 py-0.5 bg-muted rounded text-xs">FFMPEG_PATH</code>. Merge, Convert and Tag Embedding stay off until it resolves.</span>
+        <span className="text-muted-foreground"> — install it, or set <code className="px-1 py-0.5 bg-muted rounded text-xs">FFMPEG_PATH</code>. Merge and Convert stay off until it resolves.</span>
       </span>
     </div>
   );

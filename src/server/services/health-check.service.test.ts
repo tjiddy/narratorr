@@ -18,11 +18,21 @@ vi.mock('../jobs/version-check.js', () => ({
 }));
 
 // A hoisted toggle survives vi.clearAllMocks while driving auto-detection's found/not-found paths.
-const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
+const { ffmpegState, mutagenState } = vi.hoisted(() => ({
+  ffmpegState: { resolves: true },
+  mutagenState: { resolves: true },
+}));
 vi.mock('@core/utils/audio-processor.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@core/utils/audio-processor.js')>();
   return { ...actual, resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null) };
 });
+vi.mock('@core/utils/mutagen-resolver.js', () => ({
+  resolveMutagenDetection: () => Promise.resolve(
+    mutagenState.resolves
+      ? { python: '/usr/bin/python3', version: '1.47.0', override: undefined, overrideSuperseded: false }
+      : null,
+  ),
+}));
 
 function createService(overrides?: {
   indexer?: Partial<IndexerService>;
@@ -33,6 +43,7 @@ function createService(overrides?: {
   fsAccess?: (path: string, mode?: number) => Promise<void>;
   fsStatfs?: (path: string) => Promise<{ bavail: number; bsize: number }>;
   probeFfmpeg?: (path: string) => Promise<string>;
+  probeMutagen?: (pythonPath: string) => Promise<string>;
   resolveProxyIp?: (proxyUrl: string) => Promise<string>;
 }) {
   const log = createMockLogger();
@@ -72,6 +83,7 @@ function createService(overrides?: {
       fsAccess: overrides?.fsAccess ?? vi.fn().mockResolvedValue(undefined),
       fsStatfs: overrides?.fsStatfs ?? vi.fn().mockResolvedValue({ bavail: 100_000_000, bsize: 4096 }),
       probeFfmpeg: overrides?.probeFfmpeg ?? vi.fn().mockResolvedValue('6.1.1'),
+      probeMutagen: overrides?.probeMutagen ?? vi.fn().mockResolvedValue('1.47.0'),
       resolveProxyIp: overrides?.resolveProxyIp ?? vi.fn().mockResolvedValue('203.0.113.1'),
     },
   );
@@ -424,18 +436,21 @@ describe('HealthCheckService', () => {
       ffmpegState.resolves = true;
     });
 
-    it('reports an error when ffmpeg is absent and tag embedding is enabled', async () => {
+    // #2210: tag embedding gates on mutagen now, so an absent ffmpeg is silent for it.
+    it('stays silent when ffmpeg is absent and only tag embedding is enabled', async () => {
       ffmpegState.resolves = false;
-      const { service } = createService({
-        settings: createMockSettingsService({ tagging: { enabled: true } }),
-      });
-      const results = await service.runAllChecks();
-      const check = results.find((r) => r.checkName === 'ffmpeg');
-      expect(check).toMatchObject({ state: 'error' });
-      ffmpegState.resolves = true;
+      try {
+        const { service } = createService({
+          settings: createMockSettingsService({ tagging: { enabled: true } }),
+        });
+        const results = await service.runAllChecks();
+        expect(results.find((r) => r.checkName === 'ffmpeg')).toBeUndefined();
+      } finally {
+        ffmpegState.resolves = true;
+      }
     });
 
-    it('populates target settings:post-processing on healthy and error paths', async () => {
+    it('populates target settings:audio-tools on healthy and error paths', async () => {
       const { service: healthy } = createService();
       const healthyCheck = (await healthy.runAllChecks()).find((r) => r.checkName === 'ffmpeg');
       expect(healthyCheck?.target).toEqual({ kind: 'settings', path: 'audio-tools' });
@@ -445,6 +460,56 @@ describe('HealthCheckService', () => {
       });
       const errorCheck = (await error.runAllChecks()).find((r) => r.checkName === 'ffmpeg');
       expect(errorCheck?.target).toEqual({ kind: 'settings', path: 'audio-tools' });
+    });
+  });
+
+  describe('checkMutagen (#2210 AC13)', () => {
+    const taggingOn = () => createMockSettingsService({ tagging: { enabled: true } });
+
+    it('stays silent when tag embedding is disabled, even with no interpreter', async () => {
+      mutagenState.resolves = false;
+      try {
+        const { service } = createService();
+        const results = await service.runAllChecks();
+        expect(results.find((r) => r.checkName === 'mutagen')).toBeUndefined();
+      } finally {
+        mutagenState.resolves = true;
+      }
+    });
+
+    it('reports healthy when tag embedding is enabled and the probe succeeds', async () => {
+      const probeMutagen = vi.fn().mockResolvedValue('1.47.0');
+      const { service } = createService({ settings: taggingOn(), probeMutagen });
+
+      const check = (await service.runAllChecks()).find((r) => r.checkName === 'mutagen');
+
+      expect(check).toMatchObject({ state: 'healthy', target: { kind: 'settings', path: 'processing' } });
+      expect(probeMutagen).toHaveBeenCalledWith('/usr/bin/python3');
+    });
+
+    it('reports an error naming MUTAGEN_PYTHON when no interpreter resolves', async () => {
+      mutagenState.resolves = false;
+      try {
+        const { service } = createService({ settings: taggingOn() });
+        const check = (await service.runAllChecks()).find((r) => r.checkName === 'mutagen');
+
+        expect(check).toMatchObject({ state: 'error' });
+        expect(check!.message).toContain('MUTAGEN_PYTHON');
+      } finally {
+        mutagenState.resolves = true;
+      }
+    });
+
+    it('reports an error naming the interpreter when the probe throws', async () => {
+      const { service } = createService({
+        settings: taggingOn(),
+        probeMutagen: vi.fn().mockRejectedValue(new Error('spawn ENOENT')),
+      });
+
+      const check = (await service.runAllChecks()).find((r) => r.checkName === 'mutagen');
+
+      expect(check).toMatchObject({ state: 'error' });
+      expect(check!.message).toContain('/usr/bin/python3');
     });
   });
 

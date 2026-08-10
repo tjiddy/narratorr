@@ -37,7 +37,8 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-RUN apk add --no-cache ffmpeg
+# ffmpeg still merges, converts and probes; py3-mutagen writes the tags (#2210).
+RUN apk add --no-cache ffmpeg python3 py3-mutagen
 
 # Copy Node.js binary from builder (Alpine 3.23 does not ship Node 24 packages)
 COPY --from=builder /usr/local/bin/node /usr/local/bin/node

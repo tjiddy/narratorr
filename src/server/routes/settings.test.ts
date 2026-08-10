@@ -19,15 +19,22 @@ const { mockHardcoverSearchSeries, mockHardcoverClientCtor, mockFetchWithTimeout
   };
 });
 
-const { mockResolveFfmpegPath, mockProbeFfmpeg } = vi.hoisted(() => ({
+const { mockResolveFfmpegPath, mockProbeFfmpeg, mockResolveMutagenDetection, mockProbeMutagen } = vi.hoisted(() => ({
   mockResolveFfmpegPath: vi.fn(),
   mockProbeFfmpeg: vi.fn(),
+  mockResolveMutagenDetection: vi.fn(),
+  mockProbeMutagen: vi.fn(),
 }));
 
 vi.mock('@core/utils/audio-processor.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@core/utils/audio-processor.js')>();
   return { ...actual, resolveFfmpegPath: mockResolveFfmpegPath, probeFfmpeg: mockProbeFfmpeg };
 });
+
+vi.mock('@core/utils/mutagen-resolver.js', () => ({
+  resolveMutagenDetection: mockResolveMutagenDetection,
+  probeMutagen: mockProbeMutagen,
+}));
 
 vi.mock('@core/utils/network-service.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@core/utils/network-service.js')>();
@@ -85,6 +92,8 @@ describe('settings routes', () => {
     mockFetchWithTimeout.mockReset();
     mockResolveFfmpegPath.mockReset();
     mockProbeFfmpeg.mockReset();
+    mockResolveMutagenDetection.mockReset();
+    mockProbeMutagen.mockReset();
   });
 
   describe('GET /api/settings/ffmpeg-status', () => {
@@ -109,6 +118,38 @@ describe('settings routes', () => {
       mockResolveFfmpegPath.mockResolvedValue('/usr/bin/ffmpeg');
       mockProbeFfmpeg.mockRejectedValue(new Error('broken binary'));
       const res = await app.inject({ method: 'GET', url: '/api/settings/ffmpeg-status' });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ detected: false });
+    });
+  });
+
+  // Mirrors the ffmpeg-status contract; this is what D8's client gate reads (#2210 D5).
+  describe('GET /api/settings/mutagen-status', () => {
+    it('returns {detected:false} when no mutagen-capable interpreter resolves', async () => {
+      mockResolveMutagenDetection.mockResolvedValue(null);
+      const res = await app.inject({ method: 'GET', url: '/api/settings/mutagen-status' });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ detected: false });
+      expect(mockProbeMutagen).not.toHaveBeenCalled();
+    });
+
+    it('returns {detected, version, path} with the resolved interpreter as path', async () => {
+      mockResolveMutagenDetection.mockResolvedValue({
+        python: '/usr/bin/python3', version: '1.47.0', override: undefined, overrideSuperseded: false,
+      });
+      mockProbeMutagen.mockResolvedValue('1.47.0');
+      const res = await app.inject({ method: 'GET', url: '/api/settings/mutagen-status' });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ detected: true, version: '1.47.0', path: '/usr/bin/python3' });
+      expect(mockProbeMutagen).toHaveBeenCalledWith('/usr/bin/python3');
+    });
+
+    it('returns {detected:false} (not a 500) when detection succeeded but the probe throws', async () => {
+      mockResolveMutagenDetection.mockResolvedValue({
+        python: '/usr/bin/python3', version: '1.47.0', override: undefined, overrideSuperseded: false,
+      });
+      mockProbeMutagen.mockRejectedValue(new Error('interpreter vanished'));
+      const res = await app.inject({ method: 'GET', url: '/api/settings/mutagen-status' });
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload)).toEqual({ detected: false });
     });

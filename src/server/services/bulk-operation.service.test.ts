@@ -1247,6 +1247,24 @@ describe('BulkOperationService — named failure details (#2159)', () => {
       ]);
     });
 
+    it('records the failure and continues the batch when the tag writer dependency is missing', async () => {
+      const taggingService = makeTaggingService();
+      const { service, db } = createService({ taggingService });
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 7, title: 'Summer Knight' }, { id: 8, title: 'Death Masks' }]));
+      (taggingService.retagBook as Mock)
+        .mockRejectedValueOnce(new RetagError('MUTAGEN_NOT_CONFIGURED', 'mutagen is not available'))
+        .mockResolvedValueOnce({ bookId: 8, tagged: 1, skipped: 0, failed: 0, warnings: [], refreshItem: null });
+
+      const id = service.startRetagJob();
+      await waitForJob(service, id);
+
+      expect(service.getJob(id)?.failureDetails).toEqual([
+        { bookId: 7, title: 'Summer Knight', error: 'MUTAGEN_NOT_CONFIGURED: mutagen is not available' },
+      ]);
+      // The batch continues: the second book is still attempted.
+      expect(taggingService.retagBook).toHaveBeenCalledTimes(2);
+    });
+
     it('records NOTHING for a NO_PATH skip', async () => {
       const taggingService = makeTaggingService();
       const { service, db } = createService({ taggingService });

@@ -2,11 +2,11 @@
 
 Narratorr is licensed under **GPL-3.0-only** (see the `LICENSE` file, shipped alongside this
 notice at `/app/LICENSE` in the runtime image). Narratorr's own source code is **not** placed
-under the licenses below: FFmpeg is invoked as a **separate command-line process** (arm's-length
-aggregation / mere aggregation), so it does not combine with Narratorr into a single work. This
-notice reproduces the license texts of the **bundled FFmpeg binary** itself and acknowledges,
-with pointers, the libraries it links and the base image it sits on — the standard posture for
-projects that redistribute FFmpeg.
+under the licenses below: FFmpeg and mutagen are each invoked as a **separate command-line
+process** (arm's-length aggregation / mere aggregation), so neither combines with Narratorr into a
+single work. This notice reproduces the license texts of the **bundled FFmpeg binary** itself —
+which also cover the bundled mutagen — and acknowledges, with pointers, the libraries FFmpeg links
+and the base image it sits on, the standard posture for projects that redistribute FFmpeg.
 
 ## FFmpeg
 
@@ -14,6 +14,19 @@ This image bundles FFmpeg (<https://ffmpeg.org>) © the FFmpeg developers, insta
 image-build time from the Alpine Linux `community` repository (`apk add ffmpeg`). As packaged by
 Alpine, FFmpeg is licensed **GPL-2.0-or-later AND LGPL-2.1-or-later**; both full texts are
 reproduced below.
+
+## mutagen and Python
+
+This image bundles mutagen (<https://mutagen.readthedocs.io>) © the mutagen contributors,
+installed at image-build time from the Alpine Linux `community` repository (`apk add py3-mutagen`).
+mutagen is licensed **GPL-2.0-or-later**; the GPL-2 text reproduced below applies to it as well.
+Narratorr runs it through the CPython interpreter (`apk add python3`, <https://www.python.org>),
+which Alpine packages under the **PSF License Agreement** — a permissive license whose text ships
+with the interpreter and is published at <https://docs.python.org/3/license.html>.
+
+Narratorr writes audio tags by executing a fixed program with that interpreter as a child process
+and exchanging JSON over its standard streams. No mutagen or Python source is copied into
+Narratorr, and Narratorr is not linked against either.
 
 ## Linked libraries
 
@@ -25,9 +38,10 @@ inside the container, and each package's license metadata is queryable with
 
 ## Corresponding source
 
-FFmpeg is built and packaged by Alpine Linux: the package build recipes and patches live in the
-Alpine aports tree (<https://gitlab.alpinelinux.org/alpine/aports>, `community/ffmpeg`), and
-upstream source is published at <https://ffmpeg.org>. In addition, we will provide a
+FFmpeg and mutagen are built and packaged by Alpine Linux: the package build recipes and patches
+live in the Alpine aports tree (<https://gitlab.alpinelinux.org/alpine/aports>, `community/ffmpeg`
+and `community/py3-mutagen`), and upstream source is published at <https://ffmpeg.org> and
+<https://github.com/quodlibet/mutagen>. In addition, we will provide a
 machine-readable copy of the corresponding source for the bundled GPL/LGPL components to any
 third party, for no more than the cost of distribution, on request — a written offer valid for
 at least three years from distribution of the image.

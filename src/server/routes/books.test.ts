@@ -1432,9 +1432,9 @@ describe('books routes', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('returns 503 for FFMPEG_NOT_CONFIGURED (aligns with MergeError)', async () => {
+    it('returns 503 for MUTAGEN_NOT_CONFIGURED (aligns with MergeError)', async () => {
       (services.tagging.planRetag as Mock).mockRejectedValue(
-        new RetagError('FFMPEG_NOT_CONFIGURED', 'ffmpeg is not configured'),
+        new RetagError('MUTAGEN_NOT_CONFIGURED', 'mutagen is not configured'),
       );
 
       const res = await app.inject({ method: 'GET', url: '/api/books/1/retag/preview' });
@@ -1561,9 +1561,9 @@ describe('books routes', () => {
       expect(body.warnings).toHaveLength(1);
     });
 
-    it('returns 503 when ffmpeg not configured (aligns with MergeError)', async () => {
+    it('returns 503 when the tag writer dependency is not configured (aligns with MergeError)', async () => {
       (services.tagging.retagBook as Mock).mockRejectedValue(
-        new RetagError('FFMPEG_NOT_CONFIGURED', 'ffmpeg is not configured'),
+        new RetagError('MUTAGEN_NOT_CONFIGURED', 'mutagen is not configured'),
       );
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/retag' });

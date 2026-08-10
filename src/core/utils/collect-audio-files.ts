@@ -5,8 +5,8 @@ import { AUDIO_EXTENSIONS, isHiddenName } from './audio-constants.js';
 export interface CollectAudioFileOptions {
   /** Recurse into subdirectories (default: false). */
   recursive?: boolean;
-  /** Extension set to filter by (default: AUDIO_EXTENSIONS). */
-  extensions?: Set<string>;
+  /** Extension set to filter by (default: AUDIO_EXTENSIONS). Read-only: only `.has` is called. */
+  extensions?: ReadonlySet<string>;
   /** Skip directories starting with '.' (default: false). */
   skipHidden?: boolean;
 }

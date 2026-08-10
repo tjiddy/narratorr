@@ -61,6 +61,7 @@ export async function readExistingTags(filePath: string): Promise<Partial<TagMet
       ...readCommonCoreTags(metadata.common),
       ...readCommonAbsTags(metadata.common),
       ...readNativeSeriesTags(metadata.native as NativeTags),
+      ...readNativePublisher(metadata.native as NativeTags),
     };
   } catch {
     return {};
@@ -79,13 +80,17 @@ function readCommonCoreTags(common: CommonTags): Partial<TagMetadata> {
   if (common.composer?.[0]) result.composer = common.composer[0];
   if (common.grouping) result.grouping = common.grouping;
   if (common.track?.no != null) result.track = common.track.no;
+  if (common.track?.of != null) result.trackTotal = common.track.of;
   return result;
 }
 
 function readCommonAbsTags(common: CommonTags): Partial<TagMetadata> {
   const result: Partial<TagMetadata> = {};
   if (common.subtitle?.[0]) result.subtitle = common.subtitle[0];
-  if (common.publisher?.[0]) result.publisher = common.publisher[0];
+  // publisher is deliberately absent here: music-metadata maps neither MP4's
+  // `----:com.apple.iTunes:PUBLISHER` nor ID3's `TPUB` to common.publisher (TPUB becomes
+  // common.label), so reading it from `common` was a silent no-op that made populate_missing
+  // rewrite publisher on every pass. readNativePublisher reads the real frames instead.
   if (common.description?.[0]) result.description = common.description[0];
   if (common.genre?.[0]) result.genre = common.genre[0];
   if (common.asin) result.asin = common.asin;
@@ -94,12 +99,23 @@ function readCommonAbsTags(common: CommonTags): Partial<TagMetadata> {
   return result;
 }
 
+// The movement atoms are the portability channel and carry a position music-metadata truncates to
+// an integer, so the lossless freeform is tried first and these only answer for foreign files.
+const SERIES_NATIVE_IDS = ['mvnm', '©mvn'] as const;
+const SERIES_PART_NATIVE_IDS = ['mvin', '©mvi'] as const;
+const PUBLISHER_NATIVE_IDS = ['tpub'] as const;
+
+function readNativePublisher(native: NativeTags): Partial<TagMetadata> {
+  const publisher = readNativeFreeform(native, 'publisher', PUBLISHER_NATIVE_IDS);
+  return publisher ? { publisher } : {};
+}
+
 // series fields have no common mapping, so inspect ID3, MP4, and bare native frames.
 function readNativeSeriesTags(native: NativeTags): Partial<TagMetadata> {
   const result: Partial<TagMetadata> = {};
-  const series = readNativeFreeform(native, 'series');
+  const series = readNativeFreeform(native, 'series', SERIES_NATIVE_IDS);
   if (series) result.series = series;
-  const seriesPart = readNativeFreeform(native, 'series-part');
+  const seriesPart = readNativeFreeform(native, 'series-part', SERIES_PART_NATIVE_IDS);
   if (seriesPart) {
     // Number('   ') is zero; reject blank and non-numeric frames so canonical data can populate.
     const trimmed = seriesPart.trim();
@@ -109,17 +125,35 @@ function readNativeSeriesTags(native: NativeTags): Partial<TagMetadata> {
   return result;
 }
 
-// Match bare, ID3 TXXX, and MP4 freeform ids; TXXX values may wrap text in an object.
+/**
+ * Match bare, ID3 TXXX, and MP4 freeform ids; TXXX values may wrap text in an object. The
+ * derived-name match is what keeps a 747-book library written by the pre-mutagen ffmpeg path
+ * (`series`, `TXXX:series`, `----:com.apple.iTunes:series`) readable, so it is tried before the
+ * explicit `fallbackIds` — those must already be lowercase.
+ */
 function readNativeFreeform(
   native: Record<string, { id: string; value: unknown }[]> | undefined,
   key: string,
+  fallbackIds: readonly string[] = [],
 ): string | undefined {
   if (!native) return undefined;
   const keyLower = key.toLowerCase();
+  const derived = findNativeTag(native, id => id === keyLower || id.endsWith(`:${keyLower}`));
+  if (derived) return derived;
+  for (const fallback of fallbackIds) {
+    const found = findNativeTag(native, id => id === fallback);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function findNativeTag(
+  native: Record<string, { id: string; value: unknown }[]>,
+  matches: (idLower: string) => boolean,
+): string | undefined {
   for (const tags of Object.values(native)) {
     for (const tag of tags) {
-      const idLower = tag.id.toLowerCase();
-      if (idLower !== keyLower && !idLower.endsWith(`:${keyLower}`)) continue;
+      if (!matches(tag.id.toLowerCase())) continue;
       const value = nativeTagText(tag.value);
       if (value) return value;
     }

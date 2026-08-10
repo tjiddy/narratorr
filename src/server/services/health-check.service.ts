@@ -13,6 +13,7 @@ import { fireAndForget } from '../utils/fire-and-forget.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { getUpdateStatus, checkForUpdate } from '../jobs/version-check.js';
 import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
+import { resolveMutagenDetection } from '@core/utils/mutagen-resolver.js';
 
 
 export type HealthState = 'healthy' | 'warning' | 'error';
@@ -35,6 +36,7 @@ export interface SystemDeps {
   fsAccess: (path: string, mode?: number) => Promise<void>;
   fsStatfs: (path: string) => Promise<{ bavail: number; bsize: number }>;
   probeFfmpeg: (path: string) => Promise<string>;
+  probeMutagen: (pythonPath: string) => Promise<string>;
   resolveProxyIp: (proxyUrl: string) => Promise<string>;
 }
 
@@ -136,6 +138,7 @@ export class HealthCheckService {
       () => this.checkLibraryRoot(),
       () => this.checkDiskSpace(),
       () => this.checkFfmpeg(),
+      () => this.checkMutagen(),
       () => this.checkHardcover(),
       () => this.checkStuckDownloads(),
       () => this.checkVersionUpdate(),
@@ -326,20 +329,16 @@ export class HealthCheckService {
     const ffmpegPath = await resolveFfmpegPath();
 
     if (!ffmpegPath) {
-      // Missing ffmpeg is silent unless unattended auto-merge or tag embedding needs it.
-      // Manual tools surface the absence inline and must not create persistent health alarms.
-      const [processing, tagging] = await Promise.all([
-        this.settingsService.get('processing'),
-        this.settingsService.get('tagging'),
-      ]);
-      const automationNeedsFfmpeg = processing?.autoMergeDownloads === true || tagging?.enabled === true;
-      if (!automationNeedsFfmpeg) {
+      // Missing ffmpeg is silent unless unattended auto-merge needs it. Tag embedding moved to the
+      // mutagen check; manual tools surface the absence inline and must not raise persistent alarms.
+      const processing = await this.settingsService.get('processing');
+      if (processing?.autoMergeDownloads !== true) {
         return [];
       }
       return [{
         checkName: 'ffmpeg',
         state: 'error',
-        message: 'ffmpeg not found but an audio automation (auto-merge or tag embedding) needs it — install it or set FFMPEG_PATH',
+        message: 'ffmpeg not found but auto-merge needs it — install it or set FFMPEG_PATH',
         target,
       }];
     }
@@ -349,6 +348,30 @@ export class HealthCheckService {
       return [{ checkName: 'ffmpeg', state: 'healthy', target }];
     } catch {
       return [{ checkName: 'ffmpeg', state: 'error', message: `ffmpeg not usable at: ${ffmpegPath}`, target }];
+    }
+  }
+
+  private async checkMutagen(): Promise<HealthCheckResult[]> {
+    const target: HealthCheckTarget = { kind: 'settings', path: 'processing' };
+    const tagging = await this.settingsService.get('tagging');
+    // Retag is also a manual action, but only the enabled toggle makes it unattended.
+    if (tagging?.enabled !== true) return [];
+
+    const detection = await resolveMutagenDetection();
+    if (!detection) {
+      return [{
+        checkName: 'mutagen',
+        state: 'error',
+        message: 'Tag embedding is enabled but Python with the mutagen module was not found — install it or set MUTAGEN_PYTHON',
+        target,
+      }];
+    }
+
+    try {
+      await this.deps.probeMutagen(detection.python);
+      return [{ checkName: 'mutagen', state: 'healthy', target }];
+    } catch {
+      return [{ checkName: 'mutagen', state: 'error', message: `mutagen not usable at: ${detection.python}`, target }];
     }
   }
 

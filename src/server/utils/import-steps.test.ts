@@ -4,11 +4,17 @@ import type { FastifyBaseLogger } from 'fastify';
 import { deriveImportSiblings } from '../utils/import-sibling-paths.js';
 
 // Mutable arrow mock survives clearAllMocks; flip false for the unavailable test.
-const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
+const { ffmpegState, mutagenState } = vi.hoisted(() => ({
+  ffmpegState: { resolves: true },
+  mutagenState: { resolves: true },
+}));
 vi.mock('@core/utils/audio-processor.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@core/utils/audio-processor.js')>();
   return { ...actual, resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null) };
 });
+vi.mock('@core/utils/mutagen-resolver.js', () => ({
+  resolveMutagenPython: () => Promise.resolve(mutagenState.resolves ? '/usr/bin/python3' : null),
+}));
 
 vi.mock('node:fs/promises', () => ({
   stat: vi.fn(),
@@ -260,7 +266,7 @@ describe('embedTagsForImport', () => {
   // Extra bibliographic fields exercise end-to-end propagation into tagBook.
   const bookMeta = { title: 'Book', authorName: 'Author', narrator: 'Narrator', seriesName: 'Series', seriesPosition: 1, publisher: 'Tor Books', coverUrl: 'http://cover.jpg' };
 
-  it('calls tagBook when tagging enabled and ffmpegPath configured', async () => {
+  it('calls tagBook with the resolved interpreter when tagging is enabled', async () => {
     const log = createMockLog();
     const tagBook = vi.fn().mockResolvedValue({ tagged: 1, skipped: 0, failed: 0 });
     const taggingService = { tagBook } as never;
@@ -270,7 +276,7 @@ describe('embedTagsForImport', () => {
       bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
     });
 
-    expect(tagBook).toHaveBeenCalledWith(1, '/lib/book', bookMeta, '/usr/bin/ffmpeg', 'overwrite', true);
+    expect(tagBook).toHaveBeenCalledWith(1, '/lib/book', bookMeta, '/usr/bin/python3', 'overwrite', true);
   });
 
   it('skips when taggingService is null', async () => {
@@ -292,17 +298,36 @@ describe('embedTagsForImport', () => {
     expect(tagBook).not.toHaveBeenCalled();
   });
 
-  it('skips with debug log when ffmpeg is not detected', async () => {
+  // AC13: an already-committed import must never fail because the tag writer is missing.
+  it('logs and skips without failing the import when no mutagen interpreter is detected', async () => {
+    mutagenState.resolves = false;
+    try {
+      const log = createMockLog();
+      const tagBook = vi.fn();
+      await expect(embedTagsForImport({
+        taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
+        bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
+      })).resolves.toBeUndefined();
+      expect(tagBook).not.toHaveBeenCalled();
+      expect(log.warn).toHaveBeenCalledWith({ bookId: 1 }, expect.stringContaining('mutagen'));
+    } finally {
+      mutagenState.resolves = true;
+    }
+  });
+
+  it('still embeds tags when ffmpeg is absent but mutagen is present (AC14)', async () => {
     ffmpegState.resolves = false;
-    const log = createMockLog();
-    const tagBook = vi.fn();
-    await embedTagsForImport({
-      taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
-      bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
-    });
-    expect(tagBook).not.toHaveBeenCalled();
-    expect(log.debug).toHaveBeenCalled();
-    ffmpegState.resolves = true;
+    try {
+      const log = createMockLog();
+      const tagBook = vi.fn().mockResolvedValue({ tagged: 1, skipped: 0, failed: 0 });
+      await embedTagsForImport({
+        taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
+        bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
+      });
+      expect(tagBook).toHaveBeenCalledWith(1, '/lib/book', bookMeta, '/usr/bin/python3', 'overwrite', true);
+    } finally {
+      ffmpegState.resolves = true;
+    }
   });
 
   it('logs warning and continues when tagBook throws', async () => {
@@ -325,7 +350,7 @@ describe('embedTagsForImport', () => {
     expect(tagBook).toHaveBeenCalledWith(
       42, '/lib/book',
       { title: 'Book', authorName: 'Author', narrator: 'Narrator', seriesName: 'Series', seriesPosition: 1, publisher: 'Tor Books', coverUrl: 'http://cover.jpg' },
-      '/usr/bin/ffmpeg', 'populate_missing', false,
+      '/usr/bin/python3', 'populate_missing', false,
     );
   });
 });

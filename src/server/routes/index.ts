@@ -165,9 +165,10 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
 
   const { resolveProxyIp } = await import('@core/indexers/proxy.js');
   const { probeFfmpeg } = await import('@core/utils/audio-processor.js');
+  const { probeMutagen } = await import('@core/utils/mutagen-resolver.js');
   const healthCheck = new HealthCheckService(
     indexer, downloadClient, settings, notifier, db, log,
-    { fsAccess: fsp.access, fsStatfs: fsp.statfs, probeFfmpeg, resolveProxyIp },
+    { fsAccess: fsp.access, fsStatfs: fsp.statfs, probeFfmpeg, probeMutagen, resolveProxyIp },
   );
 
   const retrySearchDeps = createRetrySearchDeps(
