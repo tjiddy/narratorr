@@ -688,7 +688,7 @@ describe('ImportStagingService (DB-backed, #1893)', () => {
     it('removes only the submission and its items', async () => {
       const [book] = await db.insert(books).values({ publicId: 'kept-book', title: 'Kept Book', status: 'imported' }).returning();
       const [event] = await db.insert(bookEvents).values({ bookId: book!.id, bookTitle: 'Kept Book', eventType: 'imported' }).returning();
-      const [job] = await db.insert(importJobs).values({ bookId: book!.id, type: 'import', status: 'completed', metadata: '{}' }).returning();
+      const [job] = await db.insert(importJobs).values({ bookId: book!.id, type: 'auto', status: 'completed', metadata: '{}' }).returning();
       const [header] = await db.insert(importSubmissions).values({
         clientSubmissionId: 'cross-table', payloadDigest: 'a'.repeat(64), source: 'library',
         expectedCount: 1, receivedCount: 1, status: 'complete', acceptedCount: 1, completedAt: new Date(),
