@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createE2EApp, type E2EApp } from './e2e-helpers.js';
+import { inArray } from 'drizzle-orm';
 import { authors, books } from '@db/schema.js';
 import { generatePublicId } from '../utils/public-id.js';
 import { BOOK_STATUSES } from '@shared/schemas/book.js';
@@ -277,6 +278,17 @@ describe('POST /api/books — every wire persistence field survives to the row (
     await e2e.cleanup();
   });
 
+  // Distinct identity from FULL on every axis the resolver keys on, so this case's POST is admitted
+  // whatever else the suite has written, and its authors can never be another case's rows.
+  const CO_AUTHORED = {
+    title: 'Nemesis Games',
+    authors: [
+      { name: 'Daniel Abraham', asin: 'B00AUTHOR3' },
+      { name: 'Walter Jon Williams', asin: 'B00AUTHOR4' },
+    ],
+    asin: 'B0NEMESIS1',
+  };
+
   it('persists every column and both relations, then reads them back', async () => {
     const res = await e2e.app.inject({ method: 'POST', url: '/api/books', payload: { ...FULL, searchImmediately: false } });
     expect(res.statusCode).toBe(201);
@@ -304,27 +316,31 @@ describe('POST /api/books — every wire persistence field survives to the row (
     });
     expect(row.authors.map((a: { name: string }) => a.name)).toEqual(['James S. A. Corey', 'Ty Franck']);
     expect(row.narrators.map((n: { name: string }) => n.name)).toEqual(['Jefferson Mays', 'Kevin R. Free']);
+    // Shape guard only, and deliberately here rather than in a case of its own: `buildNewBookValues`
+    // never wrote this field, so no persisted observable could red against the pre-#2243 code. AC11's
+    // real counterfactual is the create payload (books.test.ts 'sends neither transient flag').
+    expect(row).not.toHaveProperty('searchImmediately');
   });
 
   // Each author's own ASIN reaches `findOrCreateAuthor` through `syncAuthors`, and is invisible in
-  // the book payload — the authors table is the only place it can be observed.
+  // the book payload — the authors table is the only place it can be observed. Arranges and measures
+  // its own POST: reading a row another case created makes a focused run fail with no regression.
   it('writes each author row with its own ASIN', async () => {
-    const rows = await e2e.db.select({ name: authors.name, asin: authors.asin }).from(authors);
+    const names = CO_AUTHORED.authors.map((a) => a.name);
+    expect(await e2e.db.select({ name: authors.name }).from(authors).where(inArray(authors.name, names))).toEqual([]);
 
-    expect(rows).toEqual(
-      expect.arrayContaining([
-        { name: 'James S. A. Corey', asin: 'B00AUTHOR1' },
-        { name: 'Ty Franck', asin: 'B00AUTHOR2' },
-      ]),
-    );
-  });
+    const res = await e2e.app.inject({ method: 'POST', url: '/api/books', payload: CO_AUTHORED });
+    expect(res.statusCode).toBe(201);
 
-  // The transient flag has no column, and before #2243 it reached `BookService.create` as an
-  // ignored extra property. Nothing on the row may echo it back.
-  it('stores nothing for the transient searchImmediately flag', async () => {
-    const list = await e2e.app.inject({ method: 'GET', url: '/api/books' });
+    const rows = await e2e.db
+      .select({ name: authors.name, asin: authors.asin })
+      .from(authors)
+      .where(inArray(authors.name, names));
 
-    expect(list.json().data[0]).not.toHaveProperty('searchImmediately');
+    expect(rows.sort((a, b) => a.name.localeCompare(b.name))).toEqual([
+      { name: 'Daniel Abraham', asin: 'B00AUTHOR3' },
+      { name: 'Walter Jon Williams', asin: 'B00AUTHOR4' },
+    ]);
   });
 });
 
