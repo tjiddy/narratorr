@@ -209,7 +209,7 @@ export class ImportListService {
   /**
    * The shared pipeline's dependencies. The event port is the raw insert this service has always
    * used, so injecting `EventHistoryService` — and rewriting every construction in its suite — is
-   * not needed to share the ladder.
+   * not needed to share the pipeline.
    */
   private addDeps(): AddBookDeps {
     return {

@@ -3247,8 +3247,9 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
       }
     });
 
-    // AC7: the snapshot payload shape. The other book_added producer (`ResolvedAddEvent`) carries
-    // the PRIMARY author plus a `reason` and no narratorName, so every field here discriminates.
+    // AC7: the snapshot payload shape. The other book_added shape (`eventShape: 'resolved'`, which
+    // the bulk callers take) carries the PRIMARY author plus a `reason` and no narratorName, so
+    // every field here discriminates.
     it('writes the snapshot payload — joined authors, joined narrators, no reason', async () => {
       (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue({
