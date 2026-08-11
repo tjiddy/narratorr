@@ -626,6 +626,52 @@ describe('POST /api/library/scan-debug', () => {
       expect(res.statusCode).toBe(200);
       expect(services.book.findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'JustATitle' }));
     });
+
+    it('probes with title, authors and asin ONLY — no narrators/duration/productionType keys', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
+
+      await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'Sanderson/Tress of the Emerald Sea [B0D18DYG5C]' },
+      });
+
+      const candidate = (services.book.findDuplicate as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      // Key presence, not undefined-ness: a defaulted `undefined` would pass a toBeUndefined check.
+      expect(Object.keys(candidate).sort()).toEqual(['asin', 'authors', 'title']);
+    });
+
+    it('carries no authors key when no author was parsed', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
+
+      await app.inject({ method: 'POST', url: '/api/library/scan-debug', payload: { folderName: 'JustATitle' } });
+
+      expect((services.book.findDuplicate as ReturnType<typeof vi.fn>).mock.calls[0]![0]).not.toHaveProperty('authors');
+    });
+
+    it('carries no asin key when no ASIN was parsed', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
+
+      await app.inject({ method: 'POST', url: '/api/library/scan-debug', payload: { folderName: 'Author/Title' } });
+
+      expect((services.book.findDuplicate as ReturnType<typeof vi.fn>).mock.calls[0]![0]).not.toHaveProperty('asin');
+    });
+
+    it('reports a different-recording with an incumbent as not-a-duplicate with a null reason', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ verdict: 'different-recording', book: null, hasIncumbent: true });
+
+      const res = await app.inject({ method: 'POST', url: '/api/library/scan-debug', payload: { folderName: 'Author/Title' } });
+
+      const body = JSON.parse(res.payload);
+      expect(body.duplicate.isDuplicate).toBe(false);
+      expect(body.duplicate.existingBookId).toBeNull();
+      expect(body.duplicate.reason).toBeNull();
+    });
   });
 
   describe('error contract', () => {

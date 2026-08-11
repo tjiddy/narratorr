@@ -141,19 +141,21 @@ describe('decideIntake — candidate construction', () => {
 
   // Shape guards, not verdict guards: today each falsy value and its absence converge on the same
   // verdict. They exist so the module cannot start rewriting the caller's shape.
-  it.each([
+  const FALSY_CASES: [keyof IntakeItem, Partial<IntakeItem>][] = [
     ['duration', { duration: 0 }],
     ['asin', { asin: '' }],
     ['authors', { authors: [] }],
     ['narrators', { narrators: [] }],
-  ] as const)('reaches the candidate with a falsy %s exactly as given', async (key, patch) => {
+  ];
+
+  it.each(FALSY_CASES)('reaches the candidate with a falsy %s exactly as given', async (key, patch) => {
     const { deps, findDuplicate } = makeDeps({ verdict: 'different-recording', book: null, hasIncumbent: false });
 
     await decideIntake(deps, { item: { title: 'Tehanu', ...patch } });
 
     const candidate = candidateFrom(findDuplicate);
     expect(candidate).toHaveProperty(key);
-    expect(candidate[key]).toEqual(patch[key as keyof typeof patch]);
+    expect(candidate[key]).toEqual(patch[key]);
   });
 
   it('passes an empty title through — the v1 ASIN-only probe shape', async () => {
