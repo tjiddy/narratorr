@@ -2,7 +2,7 @@ import { describe, it, expect, expectTypeOf, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { ProductionType } from '@shared/schemas/book.js';
 import { addBook } from './index.js';
-import type { AddBookDeps, AddBookItem, AddBookRequest, IntakeItem } from './index.js';
+import type { AddBookDeps, AddBookItem, AddBookRequest, AddBookSeed, IntakeItem } from './index.js';
 import type { CreateBookInput } from '../book-create.js';
 import { OwnedRecordingError } from '../book-dedup.js';
 import type { BookDetail } from '../book.service.js';
@@ -94,6 +94,81 @@ describe('addBook — AC2 type invariants', () => {
     expectTypeOf<AddBookItem['status']>().toEqualTypeOf<CreateBookInput['status']>();
     expectTypeOf<AddBookItem['enrichmentStatus']>().toEqualTypeOf<CreateBookInput['enrichmentStatus']>();
     expectTypeOf<AddBookItem['importListId']>().toEqualTypeOf<CreateBookInput['importListId']>();
+  });
+});
+
+/**
+ * AC9's input contract is a COMPILE-TIME one: a caller either holds a whole write item or holds a
+ * seed the resolver must widen, and no request may straddle the two. Nothing at runtime can observe
+ * the difference — flatten `AddBookRequest` into one interface with optional `seed`/`identity`/`item`
+ * and every other test in this repository stays green — so `pnpm typecheck` is the assertion here
+ * and each `@ts-expect-error` goes unused (TS2578) the moment the union opens up.
+ *
+ * Two rules the cases obey (#1993). Every negative carries exactly ONE defect against the valid
+ * baseline above it, and each requiredness case OMITS its field rather than mis-typing it — a wrong
+ * VALUE satisfies the directive while leaving requiredness unpinned. The positive assignments are
+ * plain (not `expectTypeOf`) so that deleting an arm fails TS2322 rather than silently passing.
+ */
+describe('addBook — AC9 the AddBookRequest arms (typecheck-backed)', () => {
+  const seed: AddBookSeed = { title: 'Leviathan Wakes', author: 'James S. A. Corey' };
+  const SNAPSHOT = { source: 'manual', eventShape: 'snapshot' } as const;
+  const RESOLVED = { source: 'manual', reason: { seriesName: 'The Expanse' }, eventShape: 'resolved' } as const;
+
+  it('accepts each arm in the exact shape its caller passes', () => {
+    const skip: AddBookRequest = { resolve: 'skip', item, onReview: 'refuse', provenance: SNAPSHOT };
+    const required: AddBookRequest = {
+      resolve: 'required', seed, identity: 'pin', onReview: 'record-and-hold', provenance: RESOLVED,
+    };
+
+    expect(skip.resolve).toBe('skip');
+    expect(required.resolve).toBe('required');
+  });
+
+  it('requires the whole write item on the skip arm and the whole seed pair on the required arm', () => {
+    // @ts-expect-error — `item` is required; omission (not a bad value) is what pins that
+    const noItem: AddBookRequest = { resolve: 'skip', onReview: 'refuse', provenance: SNAPSHOT };
+    // @ts-expect-error — `seed` is required on the required arm
+    const noSeed: AddBookRequest = { resolve: 'required', identity: 'pin', onReview: 'refuse', provenance: RESOLVED };
+    // @ts-expect-error — `identity` is required: a resolved row's identity owner cannot be defaulted
+    const noIdentity: AddBookRequest = { resolve: 'required', seed, onReview: 'refuse', provenance: RESOLVED };
+
+    expect(noItem.resolve).toBe('skip');
+    expect(noSeed.resolve).toBe('required');
+    expect(noIdentity.resolve).toBe('required');
+  });
+
+  it('refuses a request that straddles the two arms', () => {
+    // @ts-expect-error — a caller holding a write item has nothing to resolve, so it has no seed
+    const skipWithSeed: AddBookRequest = { resolve: 'skip', item, seed, onReview: 'refuse', provenance: SNAPSHOT };
+    // @ts-expect-error — an identity policy is meaningless with no resolved match to weigh it against
+    const skipWithIdentity: AddBookRequest = { resolve: 'skip', item, identity: 'pin', onReview: 'refuse', provenance: SNAPSHOT };
+    // @ts-expect-error — the required arm's write item is the resolve step's OUTPUT, never an input
+    const requiredWithItem: AddBookRequest = { resolve: 'required', seed, identity: 'pin', item, onReview: 'refuse', provenance: RESOLVED };
+
+    expect(skipWithSeed.resolve).toBe('skip');
+    expect(skipWithIdentity.resolve).toBe('skip');
+    expect(requiredWithItem.resolve).toBe('required');
+  });
+
+  it('closes the resolve discriminant to the two built arms', () => {
+    // @ts-expect-error — 'deferred' is not an AddBookResolve; the union admits no third arm
+    const bogus: AddBookRequest = { resolve: 'deferred', item, onReview: 'refuse', provenance: SNAPSHOT };
+
+    expect(bogus.resolve).toBe('deferred');
+  });
+
+  // The discrimination itself, not merely the arms' contents: on a flattened interface with optional
+  // cross-arm fields these reads are legal, so both directives go unused and TS2578 reds.
+  it('keeps each arm\'s fields unreachable from the other', () => {
+    const skip: AddBookRequest = { resolve: 'skip', item, onReview: 'refuse', provenance: SNAPSHOT };
+    const required: AddBookRequest = {
+      resolve: 'required', seed, identity: 'pin', onReview: 'record-and-hold', provenance: RESOLVED,
+    };
+
+    // @ts-expect-error — `seed` exists only on the required arm
+    expect(skip.seed).toBeUndefined();
+    // @ts-expect-error — `item` exists only on the skip arm
+    expect(required.item).toBeUndefined();
   });
 });
 
