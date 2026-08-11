@@ -5,7 +5,7 @@ import type { Db, DbOrTx } from '@db/index.js';
 import { importSubmissions, importSubmissionItems } from '@db/schema.js';
 import { getRowsAffected } from '../utils/db-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { snapshotBookForEvent } from '../utils/event-helpers.js';
+import { announceBookAdded, bookAddedSnapshotEvent } from '../utils/event-helpers.js';
 import { OwnedRecordingError, type BookService } from './book.service.js';
 import { ASIN_UNIQUE_VIOLATION } from './book-dedup.js';
 import { isUniqueViolation } from '@shared/error-message.js';
@@ -286,9 +286,7 @@ export class ImportSubmissionRunner {
     try {
       const book = await this.bookService.getById(createdBookId);
       if (book) {
-        this.eventHistory
-          .create({ bookId: book.id, ...snapshotBookForEvent(book), eventType: 'book_added', source: 'manual' })
-          .catch((err) => this.log.warn({ error: serializeError(err) }, 'Failed to record book_added event'));
+        announceBookAdded(() => this.eventHistory.create(bookAddedSnapshotEvent(book, 'manual')), book.id, this.log);
       }
     } catch (err: unknown) {
       this.log.warn({ error: serializeError(err), submissionId: sub.id, ordinal: row.ordinal }, 'Failed to record book_added event — book lookup failed');

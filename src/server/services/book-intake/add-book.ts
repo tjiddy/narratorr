@@ -3,7 +3,7 @@ import { normalizeProductionType } from '@core/metadata/production-type.js';
 import type { RecordingReviewReason } from '@core/utils/recording-identity.js';
 import type { ProductionType } from '@shared/schemas/book.js';
 import type { EventSource } from '@shared/schemas/event-history.js';
-import { snapshotBookForEvent } from '../../utils/event-helpers.js';
+import { announceBookAdded, bookAddedSnapshotEvent } from '../../utils/event-helpers.js';
 import { serializeError } from '../../utils/serialize-error.js';
 import { OwnedRecordingError } from '../book-dedup.js';
 import type { DuplicateVerdict } from '../book-dedup.js';
@@ -238,7 +238,7 @@ async function hydrateRaceIncumbent(
 
 function buildAddedEvent(item: AddBookItem, book: BookDetail, provenance: AddBookProvenance): AddBookEvent {
   if (provenance.eventShape === 'snapshot') {
-    return { bookId: book.id, ...snapshotBookForEvent(book), eventType: 'book_added', source: provenance.source };
+    return bookAddedSnapshotEvent(book, provenance.source);
   }
   // No narratorName key at all, and the caller's reason verbatim: the shape the bulk event
   // consumers have always read.
@@ -292,10 +292,8 @@ async function createAndAnnounce(
     throw error;
   }
 
-  // The committed row is the point of no return, so this rejection is absorbed here and can never
-  // reach a caller's failure path — the exact opposite of the awaited hold above.
-  deps.eventHistory.create(buildAddedEvent(item, book, provenance))
-    .catch((err: unknown) => log.warn({ bookId: book.id, error: serializeError(err) }, 'Failed to record book_added event'));
+  // Absorbed, unlike the awaited hold above — see `announceBookAdded`.
+  announceBookAdded(() => deps.eventHistory.create(buildAddedEvent(item, book, provenance)), book.id, log);
 
   log.info({ title: item.title }, 'Book added');
   return { outcome: 'created', book, authorName: primaryAuthorOf(item) };

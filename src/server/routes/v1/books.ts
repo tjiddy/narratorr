@@ -18,7 +18,7 @@ import type { DownloadOrchestrator } from '../../services/download-orchestrator.
 import type { EventBroadcasterService } from '../../services/event-broadcaster.service.js';
 import type { FixMatchLookupResult } from '../../services/metadata-fix-match.js';
 import { triggerImmediateSearch } from '../../services/trigger-immediate-search.js';
-import { snapshotBookForEvent } from '../../utils/event-helpers.js';
+import { announceBookAdded, bookAddedSnapshotEvent } from '../../utils/event-helpers.js';
 import { serializeError } from '../../utils/serialize-error.js';
 import type { BookMetadata } from '@core/index.js';
 import { normalizeProductionType } from '@core/metadata/production-type.js';
@@ -142,14 +142,7 @@ function recordCreateAndMaybeSearch(
   deps: V1BooksRouteDeps,
   log: FastifyBaseLogger,
 ): void {
-  deps.eventHistory
-    .create({
-      bookId: book.id,
-      ...snapshotBookForEvent(book),
-      eventType: 'book_added',
-      source: 'manual',
-    })
-    .catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record book_added event'));
+  announceBookAdded(() => deps.eventHistory.create(bookAddedSnapshotEvent(book, 'manual')), book.id, log);
 
   log.info({ asin, publicId: book.publicId }, 'v1 add-by-ASIN: book created');
 
