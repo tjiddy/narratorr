@@ -32,7 +32,7 @@ export interface BookRouteDeps {
 import { searchAndGrabForBook, buildNarratorPriority, buildSearchFilterOptions } from '../services/search-pipeline.js';
 import { z } from 'zod';
 import { triggerImmediateSearch } from '../services/trigger-immediate-search.js';
-import { addBookThroughLadder, type AddBookLadderResult } from '../services/book-add-ladder.js';
+import { addBook, type AddBookItem, type AddBookResult } from '../services/book-intake/index.js';
 import {
   idParamSchema,
   bookListQuerySchema,
@@ -102,7 +102,7 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
  * reading `id`/`title`, and `conflict` is the only field they must opt into. `review` means the
  * resolver abstained, which is not the ownership claim a bare row reads as.
  */
-function buildAddConflictBody(result: Exclude<AddBookLadderResult, { outcome: 'created' }>) {
+function buildAddConflictBody(result: Exclude<AddBookResult, { outcome: 'created' }>) {
   if (result.outcome === 'owned-race') {
     // Hydration is best-effort, so the error's identity is the floor and the body is never null.
     return { id: result.existingBookId, title: result.bookTitle, ...result.book, conflict: 'owned-race' as const };
@@ -114,13 +114,50 @@ function buildAddConflictBody(result: Exclude<AddBookLadderResult, { outcome: 'c
   };
 }
 
+/**
+ * The wire→write partition of `createBookBodySchema`'s eighteen fields, in one place: the fourteen
+ * persistence fields and `providerId` become the item verbatim, `formatType` rides along raw for
+ * `addBook` to normalize once, and the two transient flags never reach it — `overrideRecordingReview`
+ * becomes the `onReview` policy below and `searchImmediately` is consumed after the create returns.
+ * `status`, `enrichmentStatus` and `importListId` are left unset so the row keeps BookService's own
+ * defaults; only the bulk callers supply them.
+ */
+function toAddBookItem(body: CreateBookBody): AddBookItem {
+  return {
+    title: body.title,
+    authors: body.authors,
+    narrators: body.narrators,
+    subtitle: body.subtitle,
+    description: body.description,
+    publisher: body.publisher,
+    coverUrl: body.coverUrl,
+    asin: body.asin,
+    isbn: body.isbn,
+    seriesName: body.seriesName,
+    seriesPosition: body.seriesPosition,
+    duration: body.duration,
+    publishedDate: body.publishedDate,
+    genres: body.genres,
+    providerId: body.providerId,
+    formatType: body.formatType,
+  };
+}
+
 async function registerAddBookRoute(app: FastifyInstance, deps: BookRouteDeps) {
   app.post<{ Body: CreateBookBody }>(
     '/api/books',
     { schema: { body: createBookBodySchema } },
     async (request, reply) => {
       const body = request.body;
-      const result = await addBookThroughLadder(deps, body, request.log);
+      const result = await addBook(deps, {
+        item: toAddBookItem(body),
+        // A held review is refused with a 409 and recorded nowhere: this surface has a client that
+        // can act on the conflict, so the hold needs no durable artifact on the incumbent.
+        onReview: body.overrideRecordingReview ? 'override' : 'refuse',
+        // The client searched before posting and already holds a BookMetadata.
+        resolve: 'skip',
+        provenance: { source: 'manual', eventShape: 'snapshot' },
+      }, request.log);
       if (result.outcome !== 'created') {
         return reply.status(409).send(buildAddConflictBody(result));
       }

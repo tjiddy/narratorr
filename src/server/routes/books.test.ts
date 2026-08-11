@@ -738,6 +738,88 @@ describe('books routes', () => {
       });
     });
 
+    // #2243 moved this surface onto `addBook`, and with it made the wire→create partition of
+    // createBookBodySchema's eighteen fields explicit at the route. Each case below pins one arm of
+    // that partition; individually none of them is the contract.
+    describe('#2243 the wire→create partition', () => {
+      const post = (payload: Record<string, unknown>) =>
+        app.inject({ method: 'POST', url: '/api/books', payload });
+
+      const createInput = () => (services.book.create as Mock).mock.calls[0]![0] as Record<string, unknown>;
+
+      beforeEach(() => {
+        (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
+        (services.book.create as Mock).mockResolvedValue(mockBook);
+      });
+
+      it('forwards the fourteen persistence fields verbatim, per-author ASINs included', async () => {
+        const payload = {
+          title: 'The Way of Kings',
+          authors: [
+            { name: 'Brandon Sanderson', asin: 'B001IGFHW6' },
+            { name: 'A Co Author', asin: 'B00COAUTHR' },
+          ],
+          narrators: ['Michael Kramer', 'Kate Reading'],
+          subtitle: 'Book One of the Stormlight Archive',
+          description: 'An epic fantasy',
+          publisher: 'Tor',
+          coverUrl: 'https://example.com/cover.jpg',
+          asin: 'B003P2WO5E',
+          isbn: '978-0-7653-2635-5',
+          seriesName: 'The Stormlight Archive',
+          seriesPosition: 1,
+          duration: 2700,
+          publishedDate: '2010-08-31',
+          genres: ['Fantasy'],
+        };
+
+        expect((await post(payload)).statusCode).toBe(201);
+        // Exact, not objectContaining: the partition is only a partition if nothing else arrives.
+        expect(services.book.create).toHaveBeenCalledWith(payload);
+      });
+
+      // AC11: before the port the route handed the whole parsed body down, and `searchImmediately`
+      // reached `create` as an ignored extra property. It is gone now — pin it rather than discover
+      // it, and use the `false` flag so the assertion is about the key, not the search.
+      it('sends neither transient flag to create', async () => {
+        await post({ title: 'The Way of Kings', searchImmediately: false, overrideRecordingReview: true });
+
+        expect(createInput()).not.toHaveProperty('searchImmediately');
+        expect(createInput()).not.toHaveProperty('overrideRecordingReview');
+      });
+
+      // Key absence, not `productionType: undefined`: `buildDuplicateCandidate` keeps omitted, null
+      // and supplied distinguishable. The persisted row still gets BookService's own 'unknown'.
+      it('sets no productionType key on the create input when no format was supplied', async () => {
+        await post({ title: 'The Way of Kings' });
+
+        expect(createInput()).not.toHaveProperty('productionType');
+      });
+
+      it('translates formatType rather than forwarding it', async () => {
+        await post({ title: 'The Way of Kings', formatType: 'Abridged' });
+
+        expect(createInput()).not.toHaveProperty('formatType');
+        expect(createInput().productionType).toBe('abridged');
+      });
+
+      // AC9: `findDuplicate` types its `book` as nullable and the 409 body spreads it at top level,
+      // so refusing on a null one would answer `{ conflict }` with no id and no title. Unreachable
+      // through `resolveDuplicate` today; fully reachable through this suite's double.
+      it.each(['same-recording', 'review'] as const)(
+        'creates rather than refusing when a %s verdict carries no incumbent',
+        async (verdict) => {
+          (services.book.findDuplicate as Mock).mockResolvedValue({ verdict, book: null });
+
+          const res = await post({ title: 'The Way of Kings' });
+
+          expect(res.statusCode).toBe(201);
+          expect(JSON.parse(res.payload).id).toBe(mockBook.id);
+          expect(services.book.create).toHaveBeenCalledTimes(1);
+        },
+      );
+    });
+
     it('returns 400 when title is missing', async () => {
       const res = await app.inject({
         method: 'POST',
@@ -3142,14 +3224,56 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
       (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue({ ...mockBook, id: 44 });
       (services.eventHistory.create as Mock).mockRejectedValue(new Error('DB write failed'));
+      const { spies, restore } = installMockAppLog(app);
 
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/books',
-        payload: { title: 'Test Book' },
+      try {
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/books',
+          payload: { title: 'Test Book' },
+        });
+
+        expect(res.statusCode).toBe(201);
+        // The absorbed rejection, not merely the absence of a 500: a rejection observed only as an
+        // unhandled-rejection warning would prove nothing about who caught it.
+        await vi.waitFor(() => {
+          expect(spies.warn).toHaveBeenCalledWith(
+            expect.objectContaining({ error: expect.anything() }),
+            'Failed to record book_added event',
+          );
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // AC7: the snapshot payload shape. The other book_added producer (`ResolvedAddEvent`) carries
+    // the PRIMARY author plus a `reason` and no narratorName, so every field here discriminates.
+    it('writes the snapshot payload — joined authors, joined narrators, no reason', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
+      (services.book.create as Mock).mockResolvedValue({
+        ...mockBook,
+        id: 45,
+        title: 'Leviathan Wakes',
+        authors: [{ id: 1, name: 'James S. A. Corey' }, { id: 2, name: 'Ty Franck' }],
+        narrators: [{ id: 3, name: 'Jefferson Mays' }, { id: 4, name: 'Kevin R. Free' }],
       });
 
-      expect(res.statusCode).toBe(201);
+      await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'Leviathan Wakes', authors: [{ name: 'James S. A. Corey' }, { name: 'Ty Franck' }] },
+      });
+
+      expect(services.eventHistory.create).toHaveBeenCalledWith({
+        bookId: 45,
+        bookTitle: 'Leviathan Wakes',
+        authorName: 'James S. A. Corey, Ty Franck',
+        narratorName: 'Jefferson Mays, Kevin R. Free',
+        eventType: 'book_added',
+        source: 'manual',
+      });
+      expect((services.eventHistory.create as Mock).mock.calls[0]![0]).not.toHaveProperty('reason');
     });
   });
 
