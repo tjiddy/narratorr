@@ -418,6 +418,85 @@ describe('v1 books routes', () => {
       expect(triggerImmediateSearch as Mock).not.toHaveBeenCalled();
     });
 
+    // The probe is the only part of the intake pipeline v1 adopts: its lookup, quality gate and
+    // create stay put because the published contract depends on their order and their taxonomy.
+    describe('the duplicate probe runs through decideIntake (#2251)', () => {
+      const ownedRow = () => hydratedRow({ publicId: 'bk_existing0000000000' });
+      const candidate = () => (bookService.findDuplicate as Mock).mock.calls[0]![0];
+
+      it('probes with title and asin ONLY — no authors/narrators/duration/productionType keys', async () => {
+        await post({ asin: ASIN });
+
+        // Key presence, not undefined-ness: a defaulted `undefined` would pass a toBeUndefined check.
+        expect(Object.keys(candidate()).sort()).toEqual(['asin', 'title']);
+        for (const key of ['authors', 'narrators', 'duration', 'productionType']) {
+          expect(candidate()).not.toHaveProperty(key);
+        }
+        expect(candidate().title).toBe('');
+      });
+
+      it("probes exactly once per request, through the route's own bookService", async () => {
+        await post({ asin: ASIN });
+
+        expect(bookService.findDuplicate as Mock).toHaveBeenCalledTimes(1);
+      });
+
+      it('409s an owned ASIN WITHOUT calling the provider', async () => {
+        (bookService.findDuplicate as Mock).mockResolvedValue({ verdict: 'same-recording', book: ownedRow() });
+
+        const res = await post({ asin: ASIN });
+
+        expect(res.statusCode).toBe(409);
+        expect(metadataService.lookupForFixMatch as Mock).not.toHaveBeenCalled();
+      });
+
+      // Resolve-then-decide would surface the provider's 429 here instead of the 409 v1 promises.
+      it('409s an owned ASIN even while the provider is rate-limited — not 429, and no Retry-After', async () => {
+        (bookService.findDuplicate as Mock).mockResolvedValue({ verdict: 'same-recording', book: ownedRow() });
+        (metadataService.lookupForFixMatch as Mock).mockResolvedValue({ kind: 'rate_limited', retryAfterMs: 5000 });
+
+        const res = await post({ asin: ASIN });
+
+        expect(res.statusCode).toBe(409);
+        expect(res.json().existingId).toBe('bk_existing0000000000');
+        expect(res.headers['retry-after']).toBeUndefined();
+        expect(metadataService.lookupForFixMatch as Mock).not.toHaveBeenCalled();
+      });
+
+      // A `kind !== 'admit'` port without the incumbent guard would 409 with no id to send.
+      it.each([['same-recording'], ['review']])(
+        'falls through to the lookup on a %s verdict carrying a NULL incumbent',
+        async (verdict) => {
+          (bookService.findDuplicate as Mock).mockResolvedValue({ verdict, book: null });
+
+          const res = await post({ asin: ASIN });
+
+          expect(res.statusCode).toBe(201);
+          expect(metadataService.lookupForFixMatch as Mock).toHaveBeenCalledWith(ASIN);
+          expect(bookService.create as Mock).toHaveBeenCalledTimes(1);
+        },
+      );
+
+      it('creates on a different-recording resolution that carries no hasIncumbent key at all', async () => {
+        (bookService.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
+
+        const res = await post({ asin: ASIN });
+
+        expect(res.statusCode).toBe(201);
+        expect(bookService.create as Mock).toHaveBeenCalledTimes(1);
+      });
+
+      it('sends the RAW request ASIN — canonicalization stays the resolver’s job', async () => {
+        const drifted = 'b0asin12345';
+        (bookService.findDuplicate as Mock).mockResolvedValue({ verdict: 'same-recording', book: ownedRow() });
+
+        const res = await post({ asin: drifted });
+
+        expect(res.statusCode).toBe(409);
+        expect(candidate().asin).toBe(drifted);
+      });
+    });
+
     it('retry-safe: first POST creates, a second POST of the same ASIN returns 409 + the created existingId (F1)', async () => {
       // The created book carries the requested ASIN, so the retry resolves to it.
       const created = hydratedRow({ publicId: 'bk_created00000000000', status: 'wanted', asin: ASIN });
@@ -453,6 +532,23 @@ describe('v1 books routes', () => {
       expect(body.existingId).toBe('bk_owner00000000000000');
       expect(bookService.getById as Mock).toHaveBeenCalledWith(5);
       expect(triggerImmediateSearch as Mock).not.toHaveBeenCalled();
+    });
+
+    // v1 diverges from the route ladder deliberately: with no owner to name there is no `existingId`
+    // for the 409 body, so the race error propagates rather than becoming an invented response.
+    it('500 on a create-time ASIN race whose owner cannot be hydrated — no invented book_exists', async () => {
+      (bookService.create as Mock).mockRejectedValue(
+        new OwnedRecordingError({ existingBookId: 5, title: 'The Way of Kings', reason: 'asin-owned' }),
+      );
+      (bookService.getById as Mock).mockResolvedValue(null);
+
+      const res = await post({ asin: ASIN });
+
+      expect(res.statusCode).toBe(500);
+      const body = res.json();
+      expectV1Envelope(body);
+      expect(body.error.code).not.toBe('book_exists');
+      expect(body).not.toHaveProperty('existingId');
     });
 
     it('422 edition_rejected: a reject-word-matching edition is refused before create (#1545)', async () => {

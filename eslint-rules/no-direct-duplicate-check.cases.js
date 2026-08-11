@@ -119,10 +119,12 @@ const valid = [
       export async function f(bookService: BookService) { return bookService.createResolved({ title: 'x' }); }`,
   },
   {
-    name: 'routes/v1/books.ts — deferred write path',
+    // v1 keeps only the create half of its exemption (#2251): its lookup taxonomy and reject-word
+    // gate have no seam in `addBook`, so the write stays here while the probe moved to decideIntake.
+    name: 'routes/v1/books.ts — the retained create exemption',
     filename: fixture('routes/v1/books.ts'),
     code: `${V1_IMPORT}
-      export async function f(bookService: BookService) { return bookService.findDuplicate({ title: '' }); }`,
+      export async function f(bookService: BookService) { return bookService.create({ title: '' }); }`,
   },
   {
     name: 'a .test.ts file mocking findDuplicate — the seventh pattern',
@@ -194,6 +196,15 @@ const invalid = [
       export async function f(deps: { bookService: Pick<BookService, 'findDuplicate' | 'create'> }) {
         return deps.bookService.findDuplicate({ title: 'x' });
       }`,
+    errors: error('findDuplicate'),
+  },
+  {
+    // #2251 narrowed v1's exemption to `create` alone. Same fixture filename as the valid case
+    // above, which is the pair that separates a narrowing from a blanket removal.
+    name: 'routes/v1/books.ts findDuplicate — the half of the exemption #2251 removed',
+    filename: fixture('routes/v1/books.ts'),
+    code: `${V1_IMPORT}
+      export async function f(bookService: BookService) { return bookService.findDuplicate({ title: '' }); }`,
     errors: error('findDuplicate'),
   },
 

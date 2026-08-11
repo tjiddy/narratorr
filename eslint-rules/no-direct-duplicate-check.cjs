@@ -2,7 +2,11 @@
  * Keeps the duplicate/recording decision in `src/server/services/book-intake`.
  *
  * Flags calls to `findDuplicate`, `create` and `createResolved` that resolve to a method DECLARED
- * ON `BookService`, outside the allowlist. The test is on the called method's declaration, not on
+ * ON `BookService`, outside the allowlist. The allowlist is keyed by path and may narrow an entry
+ * to specific methods, so a file can own its write while its probe is still enforced — which is
+ * why exemption is decided per CALL and not once per file.
+ *
+ * The test is on the called method's declaration, not on
  * the receiver's declared type: the repository injects these through mapped `Pick<BookService, …>`
  * deps as often as through a direct `BookService`, and a rule comparing the receiver type to the
  * class would report nothing on the mapped shape. TypeScript copies the original member's
@@ -24,27 +28,35 @@ const GUARDED_METHODS = new Set(['findDuplicate', 'create', 'createResolved']);
 const OWNER_CLASS = 'BookService';
 
 /**
- * Five exemption patterns: the four sanctioned production paths plus every test file. The sites
- * ported by #2235, #2243 and #2246 are deliberately absent, and neither `series-add-all.service.ts`
- * nor `import-list.service.ts` needs an entry — both hold a `BookService`/`Pick<BookService, …>`
- * and forward the object to `addBook` without calling a guarded method on it.
+ * Five exemption patterns: the three sanctioned production paths, `routes/v1/books.ts`'s remaining
+ * half-exemption, and every test file. An entry with no `methods` exempts all of GUARDED_METHODS;
+ * `methods` narrows it to the listed ones and leaves the rest reportable. v1 keeps only `create`
+ * (#2251): its probe now goes through `decideIntake`, but its five-way provider-failure taxonomy
+ * and its reject-word gate have no seam in `addBook`, so the write itself stays on the route.
+ *
+ * The sites ported by #2235, #2243 and #2246 are deliberately absent, and neither
+ * `series-add-all.service.ts` nor `import-list.service.ts` needs an entry — both hold a
+ * `BookService`/`Pick<BookService, …>` and forward the object to `addBook` without calling a
+ * guarded method on it.
  */
 const EXEMPT_PATTERNS = [
   { kind: 'dir', path: 'src/server/services/book-intake' },
   { kind: 'file', path: 'src/server/services/book.service.ts' },
   { kind: 'file', path: 'src/server/services/import-submission-runner.ts' },
-  { kind: 'file', path: 'src/server/routes/v1/books.ts' },
+  { kind: 'file', path: 'src/server/routes/v1/books.ts', methods: ['create'] },
   { kind: 'suffix', path: '.test.ts' },
 ];
 
-/** Windows hands ESLint backslash-separated paths; fold them before matching. */
-function isExempt(filename) {
+/**
+ * The matching entry for a filename, or null. Returning the entry rather than a boolean is what
+ * lets `create` consult its method scope per call. Windows hands ESLint backslash-separated paths;
+ * fold them before matching.
+ */
+function resolveExemption(filename) {
   const normalized = String(filename || '').split('\\').join('/');
-  return EXEMPT_PATTERNS.some(({ kind, path }) => {
-    if (kind === 'dir') return normalized.includes(`${path}/`);
-    if (kind === 'suffix') return normalized.endsWith(path);
-    return normalized.endsWith(path);
-  });
+  return EXEMPT_PATTERNS.find(({ kind, path }) => (
+    kind === 'dir' ? normalized.includes(`${path}/`) : normalized.endsWith(path)
+  )) ?? null;
 }
 
 /**
@@ -88,7 +100,9 @@ const rule = {
   },
 
   create(context) {
-    if (isExempt(context.filename)) return {};
+    const exemption = resolveExemption(context.filename);
+    // A whole-file exemption still short-circuits, so the common path stays visitor-free.
+    if (exemption && !exemption.methods) return {};
 
     return {
       CallExpression(node) {
@@ -96,6 +110,7 @@ const rule = {
         if (callee.type !== 'MemberExpression' || callee.computed) return;
         const property = callee.property;
         if (property.type !== 'Identifier' || !GUARDED_METHODS.has(property.name)) return;
+        if (exemption && exemption.methods.includes(property.name)) return;
 
         const services = context.sourceCode.parserServices;
         if (!services || !services.program || !services.esTreeNodeToTSNodeMap) return;
@@ -108,3 +123,7 @@ const rule = {
 };
 
 module.exports = rule;
+// A test-only seam: the separator suite cannot observe folding through visitor keys for a
+// method-scoped path, because an unmatched path returns the same keys. ESLint reads only
+// `meta`/`create` off a rule object, so the extra key is inert.
+module.exports.resolveExemption = resolveExemption;
