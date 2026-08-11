@@ -290,8 +290,10 @@ describe('addBook — AC3 the wire→create partition', () => {
   });
 
   // Consumed inside BookService.resolveCreateInput and invisible in the created row, so dropping it
-  // silently disables ASIN enrichment.
-  it('forwards providerId even though it is not a column', async () => {
+  // silently disables ASIN enrichment for every caller this pipeline does not enrich itself. These
+  // deps wire no metadata port, so no pre-decision lookup is attempted and the late one is the only
+  // one there is; the stripped half of the rule lives in `add-book-asin-enrichment.test.ts` (#2249).
+  it('forwards providerId when no pre-decision lookup was attempted', async () => {
     const deps = makeDeps();
     await addBook(deps, request({ item: { ...item, providerId: '386446' } }), makeLog());
 

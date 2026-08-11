@@ -1080,7 +1080,11 @@ describe('books routes', () => {
       );
     });
 
-    it('passes providerId to service for ASIN enrichment', async () => {
+    // The pre-decision lookup consumed the one fetch this add is allowed, so `providerId` must NOT
+    // reach BookService — forwarding it would make `resolveCreateInput` ask the provider a second
+    // time for an answer the route already holds (#2249).
+    it('resolves providerId to an ASIN before the decision and does not forward the key', async () => {
+      (services.metadata.getBook as Mock).mockResolvedValue({ title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], asin: 'B003ZWFO7E' });
       (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue({ ...mockBook, asin: 'B003ZWFO7E' });
 
@@ -1091,7 +1095,55 @@ describe('books routes', () => {
       });
 
       expect(res.statusCode).toBe(201);
+      expect(services.metadata.getBook).toHaveBeenCalledExactlyOnceWith('386446');
+      expect(services.book.findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ asin: 'B003ZWFO7E' }));
+      expect(services.book.create).toHaveBeenCalledWith(expect.objectContaining({ asin: 'B003ZWFO7E' }));
+      expect(services.book.create).not.toHaveBeenCalledWith(expect.objectContaining({ providerId: expect.anything() }));
+    });
+
+    // Still forwarded whenever no lookup was attempted, so BookService's own late enrichment
+    // remains the answer for the callers the precondition excludes.
+    it('forwards providerId when the item carries no author to enrich on', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
+      (services.book.create as Mock).mockResolvedValue(mockBook);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Way of Kings', providerId: '386446' },
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(services.metadata.getBook).not.toHaveBeenCalled();
       expect(services.book.create).toHaveBeenCalledWith(expect.objectContaining({ providerId: '386446' }));
+    });
+
+    /**
+     * AC8. `AddBookDeps` is satisfied structurally and its unit doubles are built with
+     * `as AddBookDeps`, so a metadata port that never reaches `addBook` is invisible to typecheck
+     * and to every unit test in this repository. This case runs the real `registerRoutes` graph,
+     * and the duplicate double answers off the CANDIDATE — so it can only go green if the enriched
+     * ASIN travelled the whole way from `POST /api/books` into `findDuplicate`.
+     */
+    it('refuses an add whose enriched ASIN is already owned, through the real dependency graph', async () => {
+      const incumbent = { ...mockBook, id: 77, title: 'The Way of Kings (Unabridged)', asin: 'B003ZWFO7E' };
+      (services.metadata.getBook as Mock).mockResolvedValue({ title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], asin: 'B003ZWFO7E' });
+      (services.book.findDuplicate as Mock).mockImplementation((candidate: { asin?: string }) =>
+        Promise.resolve(candidate.asin === 'B003ZWFO7E'
+          ? { verdict: 'same-recording', book: incumbent, hasIncumbent: true }
+          : { verdict: 'different-recording', book: null, hasIncumbent: false }));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], providerId: '386446' },
+      });
+
+      expect(res.statusCode).toBe(409);
+      // `owned-race` is the shape this add used to produce, and both are 409s: the conflict kind is
+      // the only thing on the wire that separates the fixed path from the broken one.
+      expect(JSON.parse(res.payload)).toMatchObject({ conflict: 'same-recording', id: 77 });
+      expect(services.book.create).not.toHaveBeenCalled();
     });
   });
 
