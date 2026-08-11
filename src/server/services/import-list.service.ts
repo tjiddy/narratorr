@@ -9,7 +9,7 @@ import { encryptFields, decryptFields, getKey } from '../utils/secret-codec.js';
 import { resolveAndEncryptSettings, resolveSettings } from '../utils/sentinel-resolver.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import type { BookService } from './book.service.js';
-import { addResolvedBook, type ResolvedAddDeps, type ResolvedAddEvent } from './book-add-resolved.js';
+import { addBook, type AddBookDeps, type AddBookEvent } from './book-intake/index.js';
 import type { ImportListType } from '@shared/import-list-registry.js';
 import { importListSettingsSchemas, type ImportListSettings } from '@shared/schemas/import-list.js';
 import type { ImportListRow } from './types.js';
@@ -211,24 +211,28 @@ export class ImportListService {
    * used, so injecting `EventHistoryService` — and rewriting every construction in its suite — is
    * not needed to share the ladder.
    */
-  private addDeps(): ResolvedAddDeps {
+  private addDeps(): AddBookDeps {
     return {
       bookService: this.bookService,
-      recordEvent: (event: ResolvedAddEvent) => Promise.resolve(this.db.insert(bookEvents).values(event)),
+      eventHistory: { create: (event: AddBookEvent) => Promise.resolve(this.db.insert(bookEvents).values(event)) },
       resolver: this.metadata,
     };
   }
 
   private async processItem(item: ImportListItem, list: ImportListRow, qualitySettings?: QualitySettings): Promise<ItemOutcome> {
     // A shelf item's title and author are user data, so the resolved match owns the row's identity.
-    const result = await addResolvedBook(this.addDeps(), {
-      item,
+    const result = await addBook(this.addDeps(), {
+      resolve: 'required',
+      seed: item,
       identity: 'adopt',
-      provenance: { source: 'import_list', reason: { importListName: list.name }, importListId: list.id },
+      onReview: 'record-and-hold',
+      provenance: {
+        source: 'import_list', reason: { importListName: list.name }, eventShape: 'resolved', importListId: list.id,
+      },
     }, this.log);
 
-    if (result.outcome === 'same-recording' || result.outcome === 'owned-race') return 'skipped';
-    if (result.outcome === 'review') return 'held_review';
+    if (result.outcome === 'owned-race') return 'skipped';
+    if (result.outcome === 'duplicate') return result.verdict === 'review' ? 'held_review' : 'skipped';
 
     const created = result.book;
     this.log.info({ bookId: created.id, title: created.title, listName: list.name }, 'Book added from import list');

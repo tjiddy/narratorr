@@ -48,6 +48,10 @@ function makeDeps(overrides: Partial<SeriesAddAllDeps> = {}): SeriesAddAllDeps {
     bookService: {
       findDuplicate: vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null, hasIncumbent: false }),
       create: vi.fn().mockImplementation((input: { title: string }) => Promise.resolve(createdBook(input.title))),
+      // Widened with the pipeline (#2246): the owned-race arm hydrates the incumbent through it. The
+      // double is a cast, so typecheck cannot see its absence — an unstubbed method would only
+      // surface as `hydrateRaceIncumbent` swallowing a TypeError.
+      getById: vi.fn().mockResolvedValue(null),
     },
     eventHistory: { create: vi.fn().mockResolvedValue({ id: 1 }) },
     seriesCardService: { getSeriesForBook: vi.fn().mockResolvedValue(card()) },
@@ -205,6 +209,24 @@ describe('SeriesAddAllService — dispositions', () => {
     expect(response).toMatchObject({ requested: 2, created: 1, owned: 1, failed: 0 });
     expect(response.members[0]).toMatchObject({ title: 'One', disposition: 'owned', bookId: 31 });
     expect(response.members[1]).toMatchObject({ title: 'Two', disposition: 'created' });
+  });
+
+  // AC12: the pipeline hydrates the race incumbent for the 409 surfaces' benefit; the batch reads
+  // only the id, so neither an empty nor a rejecting read may cost the member its `owned` verdict.
+  it.each([
+    ['a null incumbent read', vi.fn().mockResolvedValue(null)],
+    ['a rejecting incumbent read', vi.fn().mockRejectedValue(new Error('db handle closed'))],
+  ])('still reports the ASIN race as owned under %s', async (_label, getById) => {
+    const deps = makeDeps();
+    deps.bookService.getById = getById as unknown as typeof deps.bookService.getById;
+    vi.mocked(deps.bookService.create).mockRejectedValue(
+      new OwnedRecordingError({ existingBookId: 31, title: 'Leviathan Wakes', reason: 'asin-owned' }),
+    );
+
+    const response = await run(deps);
+
+    expect(response).toMatchObject({ requested: 1, created: 0, owned: 1, held: 0, failed: 0 });
+    expect(response.members[0]).toEqual({ title: 'Leviathan Wakes', position: 1, disposition: 'owned', bookId: 31 });
   });
 
   it('writes a recording_review_skipped event against the incumbent for a review verdict', async () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect, expectTypeOf, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { ProductionType } from '@shared/schemas/book.js';
-import { addBook, UnimplementedAddPolicyError } from './index.js';
+import { addBook } from './index.js';
 import type { AddBookDeps, AddBookItem, AddBookRequest, IntakeItem } from './index.js';
 import type { CreateBookInput } from '../book-create.js';
 import { OwnedRecordingError } from '../book-dedup.js';
@@ -43,7 +43,7 @@ const item: AddBookItem = {
 };
 
 /** The POST /api/books policy: refuse an undecided review, no resolve step, snapshot announcement. */
-function request(overrides: Partial<AddBookRequest> = {}): AddBookRequest {
+function request(overrides: Partial<Extract<AddBookRequest, { resolve: 'skip' }>> = {}): AddBookRequest {
   return {
     item,
     onReview: 'refuse',
@@ -97,31 +97,6 @@ describe('addBook — AC2 type invariants', () => {
   });
 });
 
-// AC10: the two arms no caller passes yet are rejected BEFORE any read or write, so a future caller
-// that wires one up fails loudly instead of silently getting `refuse`/`skip` (#2243 F4).
-describe('addBook — AC10 the unimplemented policy arms', () => {
-  it.each([
-    ['resolve: required', { resolve: 'required' as const }],
-    ['onReview: record-and-hold', { onReview: 'record-and-hold' as const }],
-    ['provenance.eventShape: resolved', { provenance: { source: 'manual' as const, eventShape: 'resolved' as const } }],
-  ])('rejects %s before touching the duplicate check, the create or the event port', async (_label, patch) => {
-    const deps = makeDeps();
-
-    await expect(addBook(deps, request(patch), makeLog())).rejects.toBeInstanceOf(UnimplementedAddPolicyError);
-
-    expect(deps.bookService.findDuplicate).not.toHaveBeenCalled();
-    expect(deps.bookService.create).not.toHaveBeenCalled();
-    expect(deps.eventHistory.create).not.toHaveBeenCalled();
-  });
-
-  it('runs the implemented arms', async () => {
-    const deps = makeDeps();
-
-    await expect(addBook(deps, request(), makeLog())).resolves.toEqual({ outcome: 'created', book: makeBook() });
-    expect(deps.bookService.create).toHaveBeenCalledTimes(1);
-  });
-});
-
 describe('addBook — the duplicate decision', () => {
   it('passes exactly the identity fields to the decision', async () => {
     const deps = makeDeps();
@@ -152,7 +127,9 @@ describe('addBook — the duplicate decision', () => {
 
     const result = await addBook(deps, request(), makeLog());
 
-    expect(result).toEqual({ outcome: 'duplicate', verdict: 'same-recording', book: incumbent });
+    expect(result).toEqual({
+      outcome: 'duplicate', verdict: 'same-recording', book: incumbent, existingBookId: 3,
+    });
     expect(deps.bookService.create).not.toHaveBeenCalled();
     expect(deps.eventHistory.create).not.toHaveBeenCalled();
   });
@@ -167,7 +144,7 @@ describe('addBook — the duplicate decision', () => {
     const result = await addBook(deps, request(), makeLog());
 
     expect(result).toEqual({
-      outcome: 'duplicate', verdict: 'review', book: incumbent, recordingReviewReason: 'narrator-no-signal',
+      outcome: 'duplicate', verdict: 'review', book: incumbent, existingBookId: 5, recordingReviewReason: 'narrator-no-signal',
     });
     expect(deps.bookService.create).not.toHaveBeenCalled();
   });
@@ -290,7 +267,7 @@ describe('addBook — AC7 the snapshot book_added payload', () => {
 
     const result = await addBook(deps, request(), makeLog());
 
-    expect(result).toEqual({ outcome: 'created', book: created });
+    expect(result).toEqual({ outcome: 'created', book: created, authorName: 'James S. A. Corey' });
     expect(deps.eventHistory.create).toHaveBeenCalledWith({
       bookId: 7,
       bookTitle: 'Leviathan Wakes',
@@ -326,7 +303,7 @@ describe('addBook — AC6 override', () => {
 
     const result = await addBook(deps, request({ onReview: 'override' }), makeLog());
 
-    expect(result).toEqual({ outcome: 'created', book: created });
+    expect(result).toEqual({ outcome: 'created', book: created, authorName: 'James S. A. Corey' });
     expect(deps.bookService.create).toHaveBeenCalledTimes(1);
   });
 
@@ -339,7 +316,9 @@ describe('addBook — AC6 override', () => {
 
     const result = await addBook(deps, request({ onReview: 'override' }), makeLog());
 
-    expect(result).toEqual({ outcome: 'duplicate', verdict: 'same-recording', book: incumbent });
+    expect(result).toEqual({
+      outcome: 'duplicate', verdict: 'same-recording', book: incumbent, existingBookId: 3,
+    });
     expect(deps.bookService.create).not.toHaveBeenCalled();
   });
 
@@ -426,7 +405,7 @@ describe('addBook — error isolation', () => {
 
     const result = await addBook(deps, request(), log);
 
-    expect(result).toEqual({ outcome: 'created', book: created });
+    expect(result).toEqual({ outcome: 'created', book: created, authorName: 'James S. A. Corey' });
     await vi.waitFor(() => {
       expect(vi.mocked(log.warn)).toHaveBeenCalledWith(
         expect.objectContaining({ error: expect.anything() }),

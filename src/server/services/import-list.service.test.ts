@@ -33,7 +33,12 @@ const mockLog = createMockLogger() as unknown as FastifyBaseLogger;
 function makeBookService(overrides: {
   findDuplicate?: ReturnType<typeof vi.fn>;
   create?: ReturnType<typeof vi.fn>;
+  getById?: ReturnType<typeof vi.fn>;
 } = {}): BookService {
+  // Widened with the pipeline (#2246): the owned-race arm hydrates the incumbent through `getById`.
+  // `inject<BookService>` erases property checking, so typecheck cannot see the gap — an unstubbed
+  // method reaches production as a swallowed TypeError, not a failure.
+  const getById = overrides.getById ?? vi.fn().mockResolvedValue(null);
   const findDuplicate = overrides.findDuplicate ?? vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null });
   const create = overrides.create ?? vi.fn().mockImplementation(async (data: { title: string }): Promise<BookWithAuthor> => ({
     id: 100,
@@ -76,7 +81,7 @@ function makeBookService(overrides: {
     narrators: [],
     importListName: null,
   }));
-  return inject<BookService>({ findDuplicate, create });
+  return inject<BookService>({ findDuplicate, create, getById });
 }
 
 describe('ImportListService', () => {
@@ -593,7 +598,11 @@ describe('ImportListService', () => {
         );
       });
 
-      it('authorless dedup: passes authorList: undefined to findDuplicate (NOT [{ name: undefined }])', async () => {
+      // The candidate carried no `authors` key before #2246 and carries `[]` after it, because the
+      // shared write item requires an author list. `gatherIncumbentIds` gates on `length > 0` and
+      // `toRecordingCandidate` coalesces to `[]`, so both reach the resolver as "no author
+      // evidence"; the property under test is still that no `{ name: undefined }` entry is built.
+      it('authorless dedup: passes an empty author list to findDuplicate (NOT [{ name: undefined }])', async () => {
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Anonymous Book' }]),
           test: vi.fn(),
@@ -612,7 +621,7 @@ describe('ImportListService', () => {
         await service.syncDueLists();
 
         expect(findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'Anonymous Book' }));
-        expect(findDuplicate.mock.calls[0]![0]).not.toHaveProperty('authors');
+        expect(findDuplicate.mock.calls[0]![0].authors).toEqual([]);
         expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Anonymous Book', authors: [] }));
       });
 

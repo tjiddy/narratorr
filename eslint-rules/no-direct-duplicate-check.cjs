@@ -24,15 +24,15 @@ const GUARDED_METHODS = new Set(['findDuplicate', 'create', 'createResolved']);
 const OWNER_CLASS = 'BookService';
 
 /**
- * Six exemption patterns: the five sanctioned production paths plus every test file. The sites
- * ported by #2235 and #2243 are deliberately absent, and `series-add-all.service.ts` needs no entry
- * — it holds a `Pick<BookService, …>` type position and forwards the object without calling it.
+ * Five exemption patterns: the four sanctioned production paths plus every test file. The sites
+ * ported by #2235, #2243 and #2246 are deliberately absent, and neither `series-add-all.service.ts`
+ * nor `import-list.service.ts` needs an entry — both hold a `BookService`/`Pick<BookService, …>`
+ * and forward the object to `addBook` without calling a guarded method on it.
  */
 const EXEMPT_PATTERNS = [
   { kind: 'dir', path: 'src/server/services/book-intake' },
   { kind: 'file', path: 'src/server/services/book.service.ts' },
   { kind: 'file', path: 'src/server/services/import-submission-runner.ts' },
-  { kind: 'file', path: 'src/server/services/book-add-resolved.ts' },
   { kind: 'file', path: 'src/server/routes/v1/books.ts' },
   { kind: 'suffix', path: '.test.ts' },
 ];

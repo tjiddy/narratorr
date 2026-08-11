@@ -9,8 +9,9 @@ import { OwnedRecordingError } from '../book-dedup.js';
 import type { DuplicateVerdict } from '../book-dedup.js';
 import type { CreateBookInput } from '../book-create.js';
 import type { BookDetail, BookService, BookWithAuthor } from '../book.service.js';
-import type { EventHistoryService } from '../event-history.service.js';
+import type { MetadataService } from '../metadata.service.js';
 import { decideIntake } from './decide-intake.js';
+import { buildResolvedItem, type AddBookSeed, type IdentityPolicy } from './resolve.js';
 import type { IntakeDecision, IntakeItem } from './types.js';
 
 /**
@@ -30,8 +31,7 @@ export interface AddBookItem extends CreateBookInput {
 /**
  * Which `book_added` payload to write. Two shapes exist and one type cannot silently pick a winner:
  * `snapshot` is `snapshotBookForEvent`'s — every author joined with `', '`, a `narratorName`, no
- * `reason`. `resolved` is `ResolvedAddEvent`'s — the primary author and a `reason`, no
- * `narratorName`. Only `snapshot` is implemented here.
+ * `reason`. `resolved` is the bulk callers' — the primary author and a `reason`, no `narratorName`.
  */
 export type AddBookEventShape = 'snapshot' | 'resolved';
 
@@ -41,6 +41,23 @@ export interface AddBookProvenance {
   /** Belongs to the `resolved` shape; the snapshot payload has no reason field. */
   reason?: Record<string, unknown> | undefined;
   eventShape: AddBookEventShape;
+  /** Stamped onto a resolved row so the library can name the list that introduced it. */
+  importListId?: number | undefined;
+}
+
+/**
+ * The narrow event port. `ImportListService` writes events with a raw insert and the other two add
+ * surfaces through `EventHistoryService`; injecting the latter into the former would rewrite ~40
+ * test constructions for no behavioural gain, so all three back this one function instead.
+ */
+export interface AddBookEvent {
+  bookId: number | null;
+  bookTitle: string;
+  authorName: string | null;
+  narratorName?: string | null | undefined;
+  eventType: 'book_added' | 'recording_review_skipped';
+  source: EventSource;
+  reason?: Record<string, unknown> | undefined;
 }
 
 /**
@@ -50,7 +67,6 @@ export interface AddBookProvenance {
  *   claim, so it leaves no trace on the incumbent's history.
  * - `override` — the same caller when the request explicitly asked: admit the row anyway.
  * - `record-and-hold` — the bulk callers' rule: a `recording_review_skipped` event, then skip.
- *   Named for the port that lands it; not implemented here.
  */
 export type AddBookOnReview = 'refuse' | 'record-and-hold' | 'override';
 
@@ -58,65 +74,48 @@ export type AddBookOnReview = 'refuse' | 'record-and-hold' | 'override';
  * Whether the item must be resolved against the metadata provider before the decision.
  * - `skip` — the caller already holds a `BookMetadata` (its client searched first), so resolving
  *   again would be a wasted provider call.
- * - `required` — the bulk callers start from a bare title. Not implemented here.
+ * - `required` — the bulk callers start from a bare title and author.
  */
 export type AddBookResolve = 'required' | 'skip';
 
-export interface AddBookRequest {
-  item: AddBookItem;
+interface AddBookRequestBase {
   onReview: AddBookOnReview;
-  resolve: AddBookResolve;
   provenance: AddBookProvenance;
 }
 
+/**
+ * A union rather than one shape with optional halves: a caller either already holds the whole write
+ * item or holds only a seed the resolver must widen, and there is no third state. Modelling it this
+ * way makes "a seed with no resolve step" and "an identity policy with nothing to resolve"
+ * unrepresentable instead of runtime-checked.
+ */
+export type AddBookRequest =
+  | (AddBookRequestBase & { resolve: 'skip'; item: AddBookItem })
+  | (AddBookRequestBase & { resolve: 'required'; seed: AddBookSeed; identity: IdentityPolicy });
+
 export interface AddBookDeps {
   bookService: Pick<BookService, 'findDuplicate' | 'create' | 'getById'>;
-  eventHistory: Pick<EventHistoryService, 'create'>;
+  eventHistory: { create: (event: AddBookEvent) => Promise<unknown> };
+  /** Only the `resolve: 'required'` arm reads it, and only when the operator configured one. */
+  resolver?: Pick<MetadataService, 'resolveBook'> | undefined;
 }
 
 export type AddBookResult =
   | {
       outcome: 'duplicate';
       verdict: Exclude<DuplicateVerdict, 'different-recording'>;
-      book: BookWithAuthor;
+      // Nullable for the `record-and-hold` callers only; see `refuseDuplicate`.
+      book: BookWithAuthor | null;
+      existingBookId: number | null;
       recordingReviewReason?: RecordingReviewReason;
     }
   // bookTitle is the identity floor: hydration is best-effort, so `book` may be null.
   | { outcome: 'owned-race'; existingBookId: number; bookTitle: string; book: BookDetail | null }
-  | { outcome: 'created'; book: BookDetail };
+  // authorName is the primary author the row was created under, which under `adopt` is the resolved
+  // one rather than anything the caller holds — and what its own search trigger must key on.
+  | { outcome: 'created'; book: BookDetail; authorName: string | null };
 
-/** Raised for a policy arm that is named in the union but has no implementation behind it yet. */
-export class UnimplementedAddPolicyError extends Error {
-  constructor(policy: string) {
-    super(`addBook does not implement ${policy} yet`);
-    this.name = 'UnimplementedAddPolicyError';
-  }
-}
-
-/**
- * The named-but-unbuilt arms are rejected AT RUNTIME, before any read or write, rather than being
- * hidden behind a narrowed parameter type. Type-level-only was the alternative and was rejected: a
- * single `as` erases it, and these arms are exactly what a future bulk-caller port reaches for. Each
- * axis is switched exhaustively, so a fourth value fails `satisfies never` at compile time.
- */
-function assertImplementedPolicy({ onReview, resolve, provenance }: AddBookRequest): void {
-  switch (resolve) {
-    case 'skip': break;
-    case 'required': throw new UnimplementedAddPolicyError("resolve: 'required'");
-    default: return resolve satisfies never;
-  }
-  switch (provenance.eventShape) {
-    case 'snapshot': break;
-    case 'resolved': throw new UnimplementedAddPolicyError("provenance.eventShape: 'resolved'");
-    default: return provenance.eventShape satisfies never;
-  }
-  switch (onReview) {
-    case 'refuse':
-    case 'override': break;
-    case 'record-and-hold': throw new UnimplementedAddPolicyError("onReview: 'record-and-hold'");
-    default: return onReview satisfies never;
-  }
-}
+type DuplicateResult = Extract<AddBookResult, { outcome: 'duplicate' }>;
 
 /** The single place the decision half is derived from the write item. Undefined values survive as
  * undefined: `buildDuplicateCandidate` is what turns them back into omitted keys. */
@@ -131,37 +130,91 @@ function toIntakeItem(item: AddBookItem, productionType: ProductionType | undefi
   };
 }
 
+function primaryAuthorOf(item: AddBookItem): string | null {
+  return item.authors[0]?.name ?? null;
+}
+
 /**
  * The decision the caller's policy makes of the verdict, or `null` to admit the row.
  *
- * A verdict carrying NO incumbent admits: `decideIntake` types `incumbent` as nullable, and the 409
- * body spreads the incumbent row at top level, so refusing there would answer `{ conflict }` with no
- * `id` and no `title`.
+ * A verdict carrying NO incumbent admits for the 409 surfaces: `decideIntake` types `incumbent` as
+ * nullable, the 409 body spreads the incumbent row at top level, and refusing there would answer
+ * `{ conflict }` with no `id` and no `title`. The bulk callers report a bare incumbent id into a
+ * per-item disposition instead, so `record-and-hold` reports the duplicate either way.
  */
 function refuseDuplicate(
   decision: IntakeDecision,
   onReview: AddBookOnReview,
-  title: string,
+  item: AddBookItem,
   log: FastifyBaseLogger,
-): AddBookResult | null {
-  if (decision.kind === 'admit' || !decision.incumbent) return null;
+): DuplicateResult | null {
+  if (decision.kind === 'admit') return null;
+  if (!decision.incumbent && onReview !== 'record-and-hold') return null;
 
   // Only the undecided arm is overridable: same-recording is a conclusion, review is an abstention.
   if (decision.kind === 'review' && onReview === 'override') {
-    log.info({ title, existingId: decision.incumbent.id }, 'Recording review overridden by request');
+    log.info({ title: item.title, existingId: decision.existingBookId }, 'Recording review overridden by request');
     return null;
   }
 
-  log.info({ title, existingId: decision.incumbent.id, verdict: decision.kind }, 'Duplicate book detected');
   if (decision.kind === 'same-recording') {
-    return { outcome: 'duplicate', verdict: 'same-recording', book: decision.incumbent };
+    logSameRecording(onReview, item, decision.existingBookId, log);
+    return {
+      outcome: 'duplicate', verdict: 'same-recording', book: decision.incumbent, existingBookId: decision.existingBookId,
+    };
+  }
+  // The record-and-hold arm's own log is the one that names the durable artifact it is about to write.
+  if (onReview !== 'record-and-hold') {
+    log.info({ title: item.title, existingId: decision.existingBookId, verdict: decision.kind }, 'Duplicate book detected');
   }
   return {
     outcome: 'duplicate',
     verdict: 'review',
     book: decision.incumbent,
+    existingBookId: decision.existingBookId,
     ...(decision.recordingReviewReason && { recordingReviewReason: decision.recordingReviewReason }),
   };
+}
+
+/**
+ * A bulk skip is routine bookkeeping over a list the operator never enumerated, so it stays at
+ * debug; a 409 surface answers a request the operator made by hand and records every refusal.
+ */
+function logSameRecording(
+  onReview: AddBookOnReview,
+  item: AddBookItem,
+  existingId: number | null,
+  log: FastifyBaseLogger,
+): void {
+  if (onReview === 'record-and-hold') {
+    log.debug({ title: item.title, asin: item.asin, existingId }, 'Book already exists (same recording), skipped');
+    return;
+  }
+  log.info({ title: item.title, existingId, verdict: 'same-recording' }, 'Duplicate book detected');
+}
+
+/** Neither bulk add surface has a review UI, so the hold lives on the incumbent's history (#1735). */
+async function recordReviewHold(
+  deps: AddBookDeps,
+  item: AddBookItem,
+  provenance: AddBookProvenance,
+  refusal: DuplicateResult,
+  log: FastifyBaseLogger,
+): Promise<void> {
+  const { existingBookId, recordingReviewReason } = refusal;
+  log.info(
+    { title: item.title, asin: item.asin, existingBookId, recordingReviewReason },
+    'Add needs recording review — recording held-review event',
+  );
+  await deps.eventHistory.create({
+    bookId: existingBookId,
+    bookTitle: item.title,
+    authorName: primaryAuthorOf(item),
+    eventType: 'recording_review_skipped',
+    source: provenance.source,
+    // Unstructured reason JSON preserves the machine downgrade reason without a migration (#1728).
+    reason: { ...provenance.reason, existingBookId, ...(recordingReviewReason && { recordingReviewReason }) },
+  });
 }
 
 /** Enrichment only — a rejected or empty read must not turn a committed collision into a 500. */
@@ -176,6 +229,22 @@ async function hydrateRaceIncumbent(
     log.warn({ existingId: existingBookId, error: serializeError(error) }, 'Failed to hydrate the owned-race incumbent');
     return null;
   }
+}
+
+function buildAddedEvent(item: AddBookItem, book: BookDetail, provenance: AddBookProvenance): AddBookEvent {
+  if (provenance.eventShape === 'snapshot') {
+    return { bookId: book.id, ...snapshotBookForEvent(book), eventType: 'book_added', source: provenance.source };
+  }
+  // No narratorName key at all, and the caller's reason verbatim: the shape the bulk event
+  // consumers have always read.
+  return {
+    bookId: book.id,
+    bookTitle: book.title,
+    authorName: primaryAuthorOf(item),
+    eventType: 'book_added',
+    source: provenance.source,
+    reason: provenance.reason ?? {},
+  };
 }
 
 async function createAndAnnounce(
@@ -205,43 +274,54 @@ async function createAndAnnounce(
     throw error;
   }
 
-  // Only the snapshot shape is reachable; `assertImplementedPolicy` refused the other before any I/O.
   // The committed row is the point of no return, so this rejection is absorbed here and can never
-  // reach a caller's failure path.
-  deps.eventHistory.create({
-    bookId: book.id,
-    ...snapshotBookForEvent(book),
-    eventType: 'book_added',
-    source: provenance.source,
-  }).catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record book_added event'));
+  // reach a caller's failure path — the exact opposite of the awaited hold above.
+  deps.eventHistory.create(buildAddedEvent(item, book, provenance))
+    .catch((err: unknown) => log.warn({ bookId: book.id, error: serializeError(err) }, 'Failed to record book_added event'));
 
   log.info({ title: item.title }, 'Book added');
-  return { outcome: 'created', book };
+  return { outcome: 'created', book, authorName: primaryAuthorOf(item) };
+}
+
+/** The write item, resolved against the provider first when the caller holds only a seed. */
+async function toWriteItem(deps: AddBookDeps, request: AddBookRequest, log: FastifyBaseLogger): Promise<AddBookItem> {
+  if (request.resolve === 'skip') return request.item;
+  return buildResolvedItem(deps, request.seed, request.identity, request.provenance.importListId, log);
 }
 
 /**
- * The decide → create → announce write path, for the add surfaces that already hold a
- * `BookMetadata`: `POST /api/books`, whose client searched for the book first. `decideIntake` owns
- * the duplicate/recording verdict; everything here is what the caller's policy does with it.
+ * The one resolve → decide → create → announce write path for every add surface. `decideIntake`
+ * owns the duplicate/recording verdict; everything here is what the caller's policy does with it.
+ *
+ * The immediate-search trigger deliberately stays with the callers: Add All defers its searches
+ * until after the batch and outside its admission guard, and that ordering is load-bearing.
  */
 export async function addBook(
   deps: AddBookDeps,
   request: AddBookRequest,
   log: FastifyBaseLogger,
 ): Promise<AddBookResult> {
-  assertImplementedPolicy(request);
-  const { item, provenance } = request;
+  const { provenance } = request;
+  const item = await toWriteItem(deps, request, log);
 
   // Normalized before the decision item is derived, not inside `decideIntake` and not twice:
   // `IntakeItem.productionType` is documented as already canonical. An absent formatType leaves
-  // whatever productionType a non-wire caller resolved, which for the wire callers is nothing.
+  // whatever productionType the resolve step (or a non-wire caller) settled, which for the wire
+  // callers is nothing.
   const productionType = item.formatType === undefined
     ? item.productionType
     : normalizeProductionType(item.formatType);
 
   const decision = await decideIntake(deps, { item: toIntakeItem(item, productionType) });
-  const refusal = refuseDuplicate(decision, request.onReview, item.title, log);
-  if (refusal) return refusal;
+  const refusal = refuseDuplicate(decision, request.onReview, item, log);
+  if (refusal) {
+    // The event IS the durable artifact of a hold, so it is awaited: a caller may not report a hold
+    // on mere issuance, and a rejection must reach it as a failure.
+    if (refusal.verdict === 'review' && request.onReview === 'record-and-hold') {
+      await recordReviewHold(deps, item, provenance, refusal, log);
+    }
+    return refusal;
+  }
 
   return createAndAnnounce(deps, item, productionType, provenance, log);
 }
