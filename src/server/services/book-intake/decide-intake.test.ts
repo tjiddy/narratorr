@@ -1,6 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, expectTypeOf, vi } from 'vitest';
 import type { DuplicateCandidate, DuplicateResolution } from '../book-dedup.js';
-import type { BookWithAuthor } from '../book.service.js';
+import type { BookService, BookWithAuthor } from '../book.service.js';
 import { decideIntake } from './index.js';
 import type { IntakeDeps, IntakeItem } from './index.js';
 
@@ -189,5 +189,29 @@ describe('decideIntake — failure policy', () => {
     await decideIntake(deps, { item: MINIMAL });
 
     expect(findDuplicate).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * #2235 AC6, re-pinned by #2249: staged import routes through here and turns any throw into a
+   * terminal `failed` row, so a provider call inside the decision would make a rate limit a
+   * permanent verdict. #2249 moved the ASIN lookup into `addBook`, ABOVE this call — the port is
+   * reachable from the same deps object a caller passes, and nothing here may reach for it.
+   */
+  it('performs no provider I/O, even when the caller\'s deps object carries a metadata port', async () => {
+    const metadataService = { getBook: vi.fn(), resolveBook: vi.fn() };
+    const { deps, findDuplicate } = makeDeps({ verdict: 'different-recording', book: null, hasIncumbent: false });
+    const withPort = { ...deps, metadataService, resolver: metadataService };
+
+    await decideIntake(withPort, { item: { ...MINIMAL, asin: 'B01G9EPERE' } });
+
+    expect(findDuplicate).toHaveBeenCalledTimes(1);
+    expect(metadataService.getBook).not.toHaveBeenCalled();
+    expect(metadataService.resolveBook).not.toHaveBeenCalled();
+  });
+
+  // The runtime assertion above cannot see a port that was never passed; this is what pins the
+  // decision's dependency surface to the one collaborator it is allowed to have.
+  it('declares no provider dependency at all', () => {
+    expectTypeOf<IntakeDeps>().toEqualTypeOf<{ bookService: Pick<BookService, 'findDuplicate'> }>();
   });
 });

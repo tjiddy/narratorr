@@ -11,6 +11,7 @@ import type { CreateBookInput } from '../book-create.js';
 import type { BookDetail, BookService, BookWithAuthor } from '../book.service.js';
 import type { MetadataService } from '../metadata.service.js';
 import { decideIntake } from './decide-intake.js';
+import { enrichAsinBeforeDecision, type AsinEnrichmentDeps } from './enrich-asin.js';
 import { buildResolvedItem, type AddBookSeed, type IdentityPolicy } from './resolve.js';
 import type { IntakeDecision, IntakeItem } from './types.js';
 
@@ -97,7 +98,7 @@ export type AddBookRequest =
  */
 export type AddBookResolve = AddBookRequest['resolve'];
 
-export interface AddBookDeps {
+export interface AddBookDeps extends AsinEnrichmentDeps {
   bookService: Pick<BookService, 'findDuplicate' | 'create' | 'getById'>;
   eventHistory: { create: (event: AddBookEvent) => Promise<unknown> };
   /** Only the `resolve: 'required'` arm reads it, and only when the operator configured one. */
@@ -251,15 +252,28 @@ function buildAddedEvent(item: AddBookItem, book: BookDetail, provenance: AddBoo
   };
 }
 
+/**
+ * The write item minus the two fields no column stands behind. `formatType` always goes;
+ * `providerId` goes only once the provider has been asked, because it is the key
+ * `BookService.resolveCreateInput` re-fetches from, and a second fetch would be a wasted provider
+ * call against an answer this add already has. When no lookup was attempted the key is forwarded
+ * verbatim — key-absent stays key-absent — so that late enrichment still runs for the callers the
+ * precondition excludes.
+ */
+function toCreateInput(item: AddBookItem, lookupAttempted: boolean): CreateBookInput {
+  const { formatType: _formatType, providerId, ...rest } = item;
+  return lookupAttempted ? rest : { ...rest, ...(providerId !== undefined && { providerId }) };
+}
+
 async function createAndAnnounce(
   deps: AddBookDeps,
   item: AddBookItem,
   productionType: ProductionType | undefined,
   provenance: AddBookProvenance,
+  lookupAttempted: boolean,
   log: FastifyBaseLogger,
 ): Promise<AddBookResult> {
-  // `formatType` is the item's only non-column, so naming it here is the whole strip.
-  const { formatType: _formatType, ...createInput } = item;
+  const createInput = toCreateInput(item, lookupAttempted);
 
   let book: BookDetail;
   try {
@@ -306,7 +320,13 @@ export async function addBook(
   log: FastifyBaseLogger,
 ): Promise<AddBookResult> {
   const { provenance } = request;
-  const item = await toWriteItem(deps, request, log);
+  const written = await toWriteItem(deps, request, log);
+
+  // Before the decision, not after the create: the duplicate check must key on the same ASIN the
+  // row will carry, or it decides on evidence the row then contradicts (#2249). The
+  // `resolve: 'required'` arm never reaches the provider here — `buildResolvedItem` emits no
+  // `providerId`, so its items fail the precondition outright.
+  const { item, attempted: lookupAttempted } = await enrichAsinBeforeDecision(deps, written, log);
 
   // Normalized before the decision item is derived, not inside `decideIntake` and not twice:
   // `IntakeItem.productionType` is documented as already canonical. An absent formatType leaves
@@ -327,5 +347,5 @@ export async function addBook(
     return refusal;
   }
 
-  return createAndAnnounce(deps, item, productionType, provenance, log);
+  return createAndAnnounce(deps, item, productionType, provenance, lookupAttempted, log);
 }
