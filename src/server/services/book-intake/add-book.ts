@@ -240,6 +240,8 @@ export async function addBook(
     : normalizeProductionType(item.formatType);
 
   const decision = await decideIntake(deps, { item: toIntakeItem(item, productionType) });
-  return refuseDuplicate(decision, request.onReview, item.title, log)
-    ?? await createAndAnnounce(deps, item, productionType, provenance, log);
+  const refusal = refuseDuplicate(decision, request.onReview, item.title, log);
+  if (refusal) return refusal;
+
+  return createAndAnnounce(deps, item, productionType, provenance, log);
 }
