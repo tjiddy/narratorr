@@ -12,6 +12,7 @@ import type {
   IndexerService,
 } from '../../services/index.js';
 import { isRejectedByWords } from '../../services/index.js';
+import { decideIntake } from '../../services/book-intake/index.js';
 import type { BlacklistService } from '../../services/blacklist.service.js';
 import type { DownloadOrchestrator } from '../../services/download-orchestrator.js';
 import type { EventBroadcasterService } from '../../services/event-broadcaster.service.js';
@@ -305,13 +306,16 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
         async (request, reply) => {
           const { asin } = request.body;
 
-          // ASIN-only resolution returns 409 for an incumbent and different-recording when free.
-          const resolution = await deps.bookService.findDuplicate({ title: '', asin });
-          if (resolution.verdict !== 'different-recording' && resolution.book) {
-            request.log.info({ asin, existingId: resolution.book.publicId }, 'v1 add-by-ASIN: book already in library');
+          // v1 adopts the shared decision but not the shared pipeline: the probe stays AHEAD of the
+          // lookup so an owned ASIN 409s while the provider is down, and the arms below keep v1's
+          // own five-way failure taxonomy and its reject-word gate, which `addBook` has no seam for.
+          // An incumbent-less non-admit arm falls through: the 409 body has no `existingId` to send.
+          const decision = await decideIntake({ bookService: deps.bookService }, { item: { title: '', asin } });
+          if (decision.kind !== 'admit' && decision.incumbent) {
+            request.log.info({ asin, existingId: decision.incumbent.publicId }, 'v1 add-by-ASIN: book already in library');
             return reply.status(409).send({
               error: { code: 'book_exists', message: 'A book with this ASIN already exists' },
-              existingId: resolution.book.publicId,
+              existingId: decision.incumbent.publicId,
             });
           }
 
