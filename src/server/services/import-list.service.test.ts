@@ -1729,6 +1729,41 @@ describe('ImportListService', () => {
         expect(bookArg).toEqual(expect.objectContaining({ id: 11, title: 'Anonymous Book', authors: [] }));
       });
 
+      // AC4: the query must key on the identity the row was ADOPTED under, not the shelf's. The
+      // created row's own `authors` cannot stand in — `BookService.create` is what hydrates those,
+      // and the pipeline returns the primary author it wrote with precisely so this survives.
+      it('searches under the resolved primary author, never the shelf item\'s', async () => {
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Shelf Title', author: 'Shelf Author' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const mockMetadata = {
+          resolveBook: vi.fn().mockResolvedValue({
+            asin: 'B_RESOLVED', title: 'Resolved Title', authors: [{ name: 'Resolved Author' }], narrators: [],
+          }),
+        } as unknown as MetadataService;
+        const create = vi.fn().mockResolvedValue(createdBook(51, 'Resolved Title'));
+        const searchDeps = makeSearchDeps({ searchImmediately: true });
+        service = new ImportListService(
+          inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata, searchDeps,
+        );
+        await service.syncDueLists();
+
+        await vi.waitFor(() => expect(mockTriggerImmediateSearch).toHaveBeenCalledTimes(1));
+        const [bookArg] = mockTriggerImmediateSearch.mock.calls[0]!;
+        expect(bookArg).toEqual(expect.objectContaining({
+          id: 51, title: 'Resolved Title', authors: [{ name: 'Resolved Author' }],
+        }));
+        expect(JSON.stringify(bookArg)).not.toContain('Shelf Author');
+      });
+
       it('does NOT trigger when searchImmediately=false', async () => {
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Quiet Book', author: 'Author' }]),
