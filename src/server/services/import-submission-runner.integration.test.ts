@@ -258,6 +258,22 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       expect(h!.heldCount).toBe(1);
     });
 
+    // AC10: classifyConfirmItem grows no try/catch, so a throwing decision must reach the item
+    // boundary and land a terminal failed row — the same disposition a throw produces today.
+    it('a throwing duplicate decision → failed with the log-pointing reason; no book/job (#2235)', async () => {
+      const bs = new BookService(db, inject(log));
+      vi.spyOn(bs, 'findDuplicate').mockRejectedValue(new Error('DB connection lost'));
+      const subId = await seedProcessing([{ path: '/a', title: 'A', metadata: { title: 'A', authors: [{ name: 'X' }] } }]);
+
+      await drainRunner(makeRunner(bs));
+
+      const [item] = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId));
+      expect(item!.disposition).toBe('failed');
+      expect(item!.reason).toBe('Import failed — see server logs for details.');
+      expect(await db.select().from(books)).toHaveLength(0);
+      expect(await db.select().from(importJobs)).toHaveLength(0);
+    });
+
     it('proceed + active-job conflict → skipped(already-importing); placeholder rolled back (F9)', async () => {
       const bs = new BookService(db, inject(log));
       const bis = new BookImportService(db, inject(log));

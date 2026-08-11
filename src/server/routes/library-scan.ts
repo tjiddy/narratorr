@@ -7,6 +7,7 @@ import type { MatchJobService } from '../services/match-job.service.js';
 import type { BookService } from '../services/book.service.js';
 import type { MetadataService } from '../services/metadata.service.js';
 import type { ChapterRuntimeSeconds } from '../services/match-job.helpers.js';
+import { decideIntake } from '../services/book-intake/index.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { parseFolderStructure, parseFolderStructureRaw, cleanNameWithTrace } from '../utils/folder-parsing.js';
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
@@ -217,16 +218,19 @@ async function handleScanDebug(
   try {
     const authorList = cleanedAuthor ? [{ name: cleanedAuthor }] : undefined;
     // Include parsed ASIN so diagnostics use confirm-time identity; only same-recording is a hard duplicate.
-    const resolution = await bookService.findDuplicate({
-      title: cleanedTitle,
-      ...(authorList && { authors: authorList }),
-      ...(asin !== undefined && { asin }),
+    const decision = await decideIntake({ bookService }, {
+      item: {
+        title: cleanedTitle,
+        ...(authorList && { authors: authorList }),
+        ...(asin !== undefined && { asin }),
+      },
     });
-    const existing = resolution.book;
+    // Admit carries no incumbent row, so the diagnostic reports no reason for it.
+    const existing = decision.kind === 'admit' ? null : decision.incumbent;
     duplicate = {
-      isDuplicate: resolution.verdict === 'same-recording',
+      isDuplicate: decision.kind === 'same-recording',
       existingBookId: existing?.id ?? null,
-      reason: existing ? resolution.verdict : null,
+      reason: existing ? decision.kind : null,
     };
   } catch (error: unknown) {
     request.log.error({ error: serializeError(error) }, 'Scan debug duplicate check failed');

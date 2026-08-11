@@ -9,6 +9,7 @@ import type { Confidence, MatchCandidate, MatchResult } from './match-job.types.
 import type { MatchReasonKind } from '@shared/match-reason-kind.js';
 import type { MatchSource, TagSearchOutcome } from './tag-search-planner.js';
 import type { BookService } from './book.service.js';
+import { decideIntake } from './book-intake/index.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 import { withinDurationTolerance } from '@shared/duration-tolerance.js';
@@ -27,25 +28,27 @@ export async function applyLibraryDuplicate(
 ): Promise<MatchResult> {
   if (!result.bestMatch) return result;
   try {
-    const resolution = await bookService.findDuplicate({
-      title: result.bestMatch.title,
-      authors: result.bestMatch.authors,
-      ...(result.bestMatch.asin !== undefined && { asin: result.bestMatch.asin }),
-      ...(result.bestMatch.narrators !== undefined && { narrators: result.bestMatch.narrators }),
-      ...(result.bestMatch.duration !== undefined && { duration: result.bestMatch.duration }),
-      // Normalize production form so an unmeasured abridged mismatch cannot look like the same recording.
-      ...(result.bestMatch.formatType ? { productionType: normalizeProductionType(result.bestMatch.formatType) } : {}),
+    const decision = await decideIntake({ bookService }, {
+      item: {
+        title: result.bestMatch.title,
+        authors: result.bestMatch.authors,
+        ...(result.bestMatch.asin !== undefined && { asin: result.bestMatch.asin }),
+        ...(result.bestMatch.narrators !== undefined && { narrators: result.bestMatch.narrators }),
+        ...(result.bestMatch.duration !== undefined && { duration: result.bestMatch.duration }),
+        // Normalize production form so an unmeasured abridged mismatch cannot look like the same recording.
+        ...(result.bestMatch.formatType ? { productionType: normalizeProductionType(result.bestMatch.formatType) } : {}),
+      },
     });
-    if (resolution.verdict === 'same-recording' && resolution.book) {
+    if (decision.kind === 'same-recording' && decision.incumbent) {
       log.debug(
-        { path: result.path, existingBookId: resolution.book.id, title: result.bestMatch.title },
+        { path: result.path, existingBookId: decision.incumbent.id, title: result.bestMatch.title },
         'Post-match library duplicate detected (same recording)',
       );
-      return { ...result, isDuplicate: true, existingBookId: resolution.book.id, duplicateReason: 'slug', recordingVerdict: 'same-recording' };
+      return { ...result, isDuplicate: true, existingBookId: decision.incumbent.id, duplicateReason: 'slug', recordingVerdict: 'same-recording' };
     }
-    if (resolution.verdict === 'review') {
+    if (decision.kind === 'review') {
       log.debug(
-        { path: result.path, existingBookId: resolution.book?.id, title: result.bestMatch.title, recordingReviewReason: resolution.recordingReviewReason },
+        { path: result.path, existingBookId: decision.incumbent?.id, title: result.bestMatch.title, recordingReviewReason: decision.recordingReviewReason },
         'Post-match recording review required',
       );
       // Keep the machine reason in logs; the UI receives a stable generic warning.
@@ -53,11 +56,11 @@ export async function applyLibraryDuplicate(
         ...result,
         reviewReason: RECORDING_REVIEW_REASON,
         recordingVerdict: 'review',
-        ...(resolution.book ? { existingBookId: resolution.book.id } : {}),
+        ...(decision.incumbent ? { existingBookId: decision.incumbent.id } : {}),
       };
     }
     // Without an incumbent, a different recording is simply a new book and stays unflagged.
-    if (resolution.verdict === 'different-recording' && resolution.hasIncumbent) {
+    if (decision.kind === 'admit' && decision.hasIncumbent) {
       log.debug(
         { path: result.path, title: result.bestMatch.title },
         'Post-match: new recording of an owned title (different recording)',

@@ -3,6 +3,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { AudioScanResult } from '@core/utils/audio-scanner.js';
 import type { BookMetadata } from '@core/metadata/index.js';
 import type { MatchCandidate, MatchResult } from './match-job.service.js';
+import type { DuplicateCandidate } from './book-dedup.js';
 import type * as FolderParsing from '../utils/folder-parsing.js';
 import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 
@@ -14,6 +15,7 @@ vi.mock('../utils/folder-parsing.js', async (importActual) => {
 
 import { cleanTagTitle } from '../utils/folder-parsing.js';
 import {
+  applyLibraryDuplicate,
   applyNarratorCap,
   cleanTagAuthor,
   deriveTagQuery,
@@ -27,6 +29,7 @@ import {
   resolveSingleResultConfidence,
   parsePublishedYear,
   tagTitleScore,
+  RECORDING_REVIEW_REASON,
   type NarratorCapContext,
 } from './match-job.helpers.js';
 import { DURATION_TOLERANCE_SECONDS } from '@shared/duration-tolerance.js';
@@ -1241,5 +1244,130 @@ describe('applyNarratorCap', () => {
     const out = applyNarratorCap(result, makeAudioScan(), ctx);
     expect(out).toBe(result);
     expect(log.info).not.toHaveBeenCalled();
+  });
+});
+
+describe('applyLibraryDuplicate', () => {
+  function makeResult(overrides: Partial<MatchResult> = {}): MatchResult {
+    return {
+      path: '/downloads/Tehanu',
+      confidence: 'high',
+      bestMatch: makeBook({ title: 'Tehanu', authors: [{ name: 'Ursula K. Le Guin' }] }),
+      alternatives: [],
+      ...overrides,
+    };
+  }
+
+  function makeIncumbent(id: number) {
+    return { id, title: 'Tehanu', authors: [], narrators: [] };
+  }
+
+  /** Drives the port through the real decision module; only the duplicate primitive is doubled. */
+  function setup(resolution: unknown, opts: { reject?: boolean } = {}) {
+    const findDuplicate = vi.fn((_candidate: DuplicateCandidate) =>
+      opts.reject ? Promise.reject(resolution) : Promise.resolve(resolution),
+    );
+    const log = { debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() } as unknown as FastifyBaseLogger;
+    return { bookService: { findDuplicate } as never, findDuplicate, log };
+  }
+
+  it('flags a same-recording verdict with the incumbent id and the slug reason', async () => {
+    const { bookService, log } = setup({ verdict: 'same-recording', book: makeIncumbent(421), hasIncumbent: true });
+
+    const out = await applyLibraryDuplicate(makeResult(), bookService, log);
+
+    expect(out.isDuplicate).toBe(true);
+    expect(out.existingBookId).toBe(421);
+    expect(out.duplicateReason).toBe('slug');
+    expect(out.recordingVerdict).toBe('same-recording');
+  });
+
+  it('sets the GENERIC review text and keeps the machine reason in the log only', async () => {
+    const { bookService, log } = setup({
+      verdict: 'review', book: makeIncumbent(77), hasIncumbent: true, recordingReviewReason: 'production-type-mismatch',
+    });
+
+    const out = await applyLibraryDuplicate(makeResult(), bookService, log);
+
+    expect(out.reviewReason).toBe(RECORDING_REVIEW_REASON);
+    expect(out.reviewReason).not.toBe('production-type-mismatch');
+    expect(out.recordingVerdict).toBe('review');
+    expect(out.existingBookId).toBe(77);
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ recordingReviewReason: 'production-type-mismatch', existingBookId: 77 }),
+      'Post-match recording review required',
+    );
+  });
+
+  it('omits existingBookId as a KEY on a review with no incumbent', async () => {
+    const { bookService, log } = setup({ verdict: 'review', book: null, hasIncumbent: true });
+
+    const out = await applyLibraryDuplicate(makeResult(), bookService, log);
+
+    expect(out.reviewReason).toBe(RECORDING_REVIEW_REASON);
+    expect(out.recordingVerdict).toBe('review');
+    expect(out).not.toHaveProperty('existingBookId');
+  });
+
+  // The #2199 regression this issue exists to prevent: hasIncumbent is the ONLY thing separating
+  // these two, and `book` is null in both. A lossy decision type fails one direction or the other.
+  it('flags a different-recording WITH an incumbent as different-recording', async () => {
+    const { bookService, log } = setup({ verdict: 'different-recording', book: null, hasIncumbent: true });
+
+    const out = await applyLibraryDuplicate(makeResult(), bookService, log);
+
+    expect(out.recordingVerdict).toBe('different-recording');
+    expect(out.isDuplicate).toBeUndefined();
+    expect(out.reviewReason).toBeUndefined();
+  });
+
+  it('leaves a different-recording WITHOUT an incumbent completely unflagged', async () => {
+    const { bookService, log } = setup({ verdict: 'different-recording', book: null, hasIncumbent: false });
+    const input = makeResult();
+
+    const out = await applyLibraryDuplicate(input, bookService, log);
+
+    expect(out).toEqual(input);
+    expect(out.recordingVerdict).toBeUndefined();
+  });
+
+  it('returns the result unflagged and warns when the decision rejects', async () => {
+    const { bookService, log } = setup(new Error('DB connection lost'), { reject: true });
+    const input = makeResult();
+
+    const out = await applyLibraryDuplicate(input, bookService, log);
+
+    expect(out).toEqual(input);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ path: '/downloads/Tehanu' }),
+      'Post-match duplicate check failed — proceeding without flag',
+    );
+  });
+
+  it('never queries when there is no bestMatch', async () => {
+    const { bookService, findDuplicate, log } = setup({ verdict: 'different-recording', book: null, hasIncumbent: false });
+    const input = makeResult({ bestMatch: null });
+
+    const out = await applyLibraryDuplicate(input, bookService, log);
+
+    expect(out).toBe(input);
+    expect(findDuplicate).not.toHaveBeenCalled();
+  });
+
+  it('normalizes a present formatType into productionType on the candidate', async () => {
+    const { bookService, findDuplicate, log } = setup({ verdict: 'different-recording', book: null, hasIncumbent: false });
+    const result = makeResult({ bestMatch: makeBook({ title: 'Tehanu', formatType: 'Abridged' }) });
+
+    await applyLibraryDuplicate(result, bookService, log);
+
+    expect(findDuplicate.mock.calls[0]![0]).toMatchObject({ productionType: 'abridged' });
+  });
+
+  it('leaves productionType OFF the candidate entirely when formatType is absent', async () => {
+    const { bookService, findDuplicate, log } = setup({ verdict: 'different-recording', book: null, hasIncumbent: false });
+
+    await applyLibraryDuplicate(makeResult(), bookService, log);
+
+    expect(findDuplicate.mock.calls[0]![0]).not.toHaveProperty('productionType');
   });
 });
