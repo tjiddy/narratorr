@@ -70,14 +70,6 @@ export interface AddBookEvent {
  */
 export type AddBookOnReview = 'refuse' | 'record-and-hold' | 'override';
 
-/**
- * Whether the item must be resolved against the metadata provider before the decision.
- * - `skip` — the caller already holds a `BookMetadata` (its client searched first), so resolving
- *   again would be a wasted provider call.
- * - `required` — the bulk callers start from a bare title and author.
- */
-export type AddBookResolve = 'required' | 'skip';
-
 interface AddBookRequestBase {
   onReview: AddBookOnReview;
   provenance: AddBookProvenance;
@@ -92,6 +84,18 @@ interface AddBookRequestBase {
 export type AddBookRequest =
   | (AddBookRequestBase & { resolve: 'skip'; item: AddBookItem })
   | (AddBookRequestBase & { resolve: 'required'; seed: AddBookSeed; identity: IdentityPolicy });
+
+/**
+ * Whether the item must be resolved against the metadata provider before the decision.
+ * - `skip` — the caller already holds a `BookMetadata` (its client searched first), so resolving
+ *   again would be a wasted provider call.
+ * - `required` — the bulk callers start from a bare title and author.
+ *
+ * DERIVED from the arms, not spelled again, so the arm set has exactly one home. As an independent
+ * literal union it drifted silently in both directions: a name could sit here with no request arm
+ * behind it, and nothing — not even the negative type suite — would see the orphan.
+ */
+export type AddBookResolve = AddBookRequest['resolve'];
 
 export interface AddBookDeps {
   bookService: Pick<BookService, 'findDuplicate' | 'create' | 'getById'>;
