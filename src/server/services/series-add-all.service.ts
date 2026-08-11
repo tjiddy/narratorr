@@ -5,7 +5,7 @@ import {
   type AddAllSeriesResponse,
 } from '@shared/series-add-all.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { addResolvedBook, type ResolvedAddDeps } from './book-add-resolved.js';
+import { addBook, type AddBookDeps } from './book-intake/index.js';
 import { runImmediateSearch, type ImmediateSearchDeps } from './trigger-immediate-search.js';
 import type { BookDetail, BookService } from './book.service.js';
 import type { EventHistoryService } from './event-history.service.js';
@@ -13,7 +13,7 @@ import type { MetadataService } from './metadata.service.js';
 import type { BookSeriesCardData, SeriesCardService } from './series-card.service.js';
 
 export interface SeriesAddAllDeps {
-  bookService: Pick<BookService, 'findDuplicate' | 'create'>;
+  bookService: Pick<BookService, 'findDuplicate' | 'create' | 'getById'>;
   eventHistory: Pick<EventHistoryService, 'create'>;
   seriesCardService: Pick<SeriesCardService, 'getSeriesForBook'>;
   metadataService: Pick<MetadataService, 'resolveBook'>;
@@ -128,8 +128,9 @@ export class SeriesAddAllService {
     log: FastifyBaseLogger,
   ): Promise<AddAllMemberResult> {
     try {
-      const result = await addResolvedBook(this.addDeps(), {
-        item: {
+      const result = await addBook(this.addDeps(), {
+        resolve: 'required',
+        seed: {
           title,
           // Undefined, never null or '': an authorless member must reach the resolver's stricter
           // title-only validation arm rather than search for an empty author.
@@ -138,14 +139,15 @@ export class SeriesAddAllService {
           seriesPosition: position,
         },
         identity: 'pin',
-        provenance: { source: 'manual', reason: { seriesName: card.name } },
+        onReview: 'record-and-hold',
+        provenance: { source: 'manual', reason: { seriesName: card.name }, eventShape: 'resolved' },
       }, log);
 
       if (result.outcome === 'created') {
         created.push(result.book);
         return { title, position, disposition: 'created', bookId: result.book.id };
       }
-      if (result.outcome === 'owned-race' || result.outcome === 'same-recording') {
+      if (result.outcome === 'owned-race' || result.verdict === 'same-recording') {
         return { title, position, disposition: 'owned', bookId: result.existingBookId };
       }
       // The pipeline awaits the hold's event before returning, so a rejection reaches the catch
@@ -157,10 +159,10 @@ export class SeriesAddAllService {
     }
   }
 
-  private addDeps(): ResolvedAddDeps {
+  private addDeps(): AddBookDeps {
     return {
       bookService: this.deps.bookService,
-      recordEvent: (event) => this.deps.eventHistory.create(event),
+      eventHistory: this.deps.eventHistory,
       resolver: this.deps.metadataService,
     };
   }

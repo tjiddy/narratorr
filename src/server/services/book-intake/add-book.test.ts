@@ -1,8 +1,8 @@
 import { describe, it, expect, expectTypeOf, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { ProductionType } from '@shared/schemas/book.js';
-import { addBook, UnimplementedAddPolicyError } from './index.js';
-import type { AddBookDeps, AddBookItem, AddBookRequest, IntakeItem } from './index.js';
+import { addBook } from './index.js';
+import type { AddBookDeps, AddBookItem, AddBookRequest, AddBookSeed, IntakeItem } from './index.js';
 import type { CreateBookInput } from '../book-create.js';
 import { OwnedRecordingError } from '../book-dedup.js';
 import type { BookDetail } from '../book.service.js';
@@ -43,7 +43,7 @@ const item: AddBookItem = {
 };
 
 /** The POST /api/books policy: refuse an undecided review, no resolve step, snapshot announcement. */
-function request(overrides: Partial<AddBookRequest> = {}): AddBookRequest {
+function request(overrides: Partial<Extract<AddBookRequest, { resolve: 'skip' }>> = {}): AddBookRequest {
   return {
     item,
     onReview: 'refuse',
@@ -97,28 +97,78 @@ describe('addBook — AC2 type invariants', () => {
   });
 });
 
-// AC10: the two arms no caller passes yet are rejected BEFORE any read or write, so a future caller
-// that wires one up fails loudly instead of silently getting `refuse`/`skip` (#2243 F4).
-describe('addBook — AC10 the unimplemented policy arms', () => {
-  it.each([
-    ['resolve: required', { resolve: 'required' as const }],
-    ['onReview: record-and-hold', { onReview: 'record-and-hold' as const }],
-    ['provenance.eventShape: resolved', { provenance: { source: 'manual' as const, eventShape: 'resolved' as const } }],
-  ])('rejects %s before touching the duplicate check, the create or the event port', async (_label, patch) => {
-    const deps = makeDeps();
+/**
+ * AC9's input contract is a COMPILE-TIME one: a caller either holds a whole write item or holds a
+ * seed the resolver must widen, and no request may straddle the two. Nothing at runtime can observe
+ * the difference — flatten `AddBookRequest` into one interface with optional `seed`/`identity`/`item`
+ * and every other test in this repository stays green — so `pnpm typecheck` is the assertion here
+ * and each `@ts-expect-error` goes unused (TS2578) the moment the union opens up.
+ *
+ * Two rules the cases obey (#1993). Every negative carries exactly ONE defect against the valid
+ * baseline above it, and each requiredness case OMITS its field rather than mis-typing it — a wrong
+ * VALUE satisfies the directive while leaving requiredness unpinned. The positive assignments are
+ * plain (not `expectTypeOf`) so that deleting an arm fails TS2322 rather than silently passing.
+ */
+describe('addBook — AC9 the AddBookRequest arms (typecheck-backed)', () => {
+  const seed: AddBookSeed = { title: 'Leviathan Wakes', author: 'James S. A. Corey' };
+  const SNAPSHOT = { source: 'manual', eventShape: 'snapshot' } as const;
+  const RESOLVED = { source: 'manual', reason: { seriesName: 'The Expanse' }, eventShape: 'resolved' } as const;
 
-    await expect(addBook(deps, request(patch), makeLog())).rejects.toBeInstanceOf(UnimplementedAddPolicyError);
+  it('accepts each arm in the exact shape its caller passes', () => {
+    const skip: AddBookRequest = { resolve: 'skip', item, onReview: 'refuse', provenance: SNAPSHOT };
+    const required: AddBookRequest = {
+      resolve: 'required', seed, identity: 'pin', onReview: 'record-and-hold', provenance: RESOLVED,
+    };
 
-    expect(deps.bookService.findDuplicate).not.toHaveBeenCalled();
-    expect(deps.bookService.create).not.toHaveBeenCalled();
-    expect(deps.eventHistory.create).not.toHaveBeenCalled();
+    expect(skip.resolve).toBe('skip');
+    expect(required.resolve).toBe('required');
   });
 
-  it('runs the implemented arms', async () => {
-    const deps = makeDeps();
+  it('requires the whole write item on the skip arm and the whole seed pair on the required arm', () => {
+    // @ts-expect-error — `item` is required; omission (not a bad value) is what pins that
+    const noItem: AddBookRequest = { resolve: 'skip', onReview: 'refuse', provenance: SNAPSHOT };
+    // @ts-expect-error — `seed` is required on the required arm
+    const noSeed: AddBookRequest = { resolve: 'required', identity: 'pin', onReview: 'refuse', provenance: RESOLVED };
+    // @ts-expect-error — `identity` is required: a resolved row's identity owner cannot be defaulted
+    const noIdentity: AddBookRequest = { resolve: 'required', seed, onReview: 'refuse', provenance: RESOLVED };
 
-    await expect(addBook(deps, request(), makeLog())).resolves.toEqual({ outcome: 'created', book: makeBook() });
-    expect(deps.bookService.create).toHaveBeenCalledTimes(1);
+    expect(noItem.resolve).toBe('skip');
+    expect(noSeed.resolve).toBe('required');
+    expect(noIdentity.resolve).toBe('required');
+  });
+
+  it('refuses a request that straddles the two arms', () => {
+    // @ts-expect-error — a caller holding a write item has nothing to resolve, so it has no seed
+    const skipWithSeed: AddBookRequest = { resolve: 'skip', item, seed, onReview: 'refuse', provenance: SNAPSHOT };
+    // @ts-expect-error — an identity policy is meaningless with no resolved match to weigh it against
+    const skipWithIdentity: AddBookRequest = { resolve: 'skip', item, identity: 'pin', onReview: 'refuse', provenance: SNAPSHOT };
+    // @ts-expect-error — the required arm's write item is the resolve step's OUTPUT, never an input
+    const requiredWithItem: AddBookRequest = { resolve: 'required', seed, identity: 'pin', item, onReview: 'refuse', provenance: RESOLVED };
+
+    expect(skipWithSeed.resolve).toBe('skip');
+    expect(skipWithIdentity.resolve).toBe('skip');
+    expect(requiredWithItem.resolve).toBe('required');
+  });
+
+  it('closes the resolve discriminant to the two built arms', () => {
+    // @ts-expect-error — 'deferred' is not an AddBookResolve; the union admits no third arm
+    const bogus: AddBookRequest = { resolve: 'deferred', item, onReview: 'refuse', provenance: SNAPSHOT };
+
+    expect(bogus.resolve).toBe('deferred');
+  });
+
+  // The discrimination itself, not merely the arms' contents: on a flattened interface with optional
+  // cross-arm fields these reads are legal, so both directives go unused and TS2578 reds.
+  it('keeps each arm\'s fields unreachable from the other', () => {
+    const skip: AddBookRequest = { resolve: 'skip', item, onReview: 'refuse', provenance: SNAPSHOT };
+    const required: AddBookRequest = {
+      resolve: 'required', seed, identity: 'pin', onReview: 'record-and-hold', provenance: RESOLVED,
+    };
+
+    // @ts-expect-error — `seed` exists only on the required arm
+    expect(skip.seed).toBeUndefined();
+    // @ts-expect-error — `item` exists only on the skip arm
+    expect(required.item).toBeUndefined();
   });
 });
 
@@ -152,7 +202,9 @@ describe('addBook — the duplicate decision', () => {
 
     const result = await addBook(deps, request(), makeLog());
 
-    expect(result).toEqual({ outcome: 'duplicate', verdict: 'same-recording', book: incumbent });
+    expect(result).toEqual({
+      outcome: 'duplicate', verdict: 'same-recording', book: incumbent, existingBookId: 3,
+    });
     expect(deps.bookService.create).not.toHaveBeenCalled();
     expect(deps.eventHistory.create).not.toHaveBeenCalled();
   });
@@ -167,7 +219,7 @@ describe('addBook — the duplicate decision', () => {
     const result = await addBook(deps, request(), makeLog());
 
     expect(result).toEqual({
-      outcome: 'duplicate', verdict: 'review', book: incumbent, recordingReviewReason: 'narrator-no-signal',
+      outcome: 'duplicate', verdict: 'review', book: incumbent, existingBookId: 5, recordingReviewReason: 'narrator-no-signal',
     });
     expect(deps.bookService.create).not.toHaveBeenCalled();
   });
@@ -290,7 +342,7 @@ describe('addBook — AC7 the snapshot book_added payload', () => {
 
     const result = await addBook(deps, request(), makeLog());
 
-    expect(result).toEqual({ outcome: 'created', book: created });
+    expect(result).toEqual({ outcome: 'created', book: created, authorName: 'James S. A. Corey' });
     expect(deps.eventHistory.create).toHaveBeenCalledWith({
       bookId: 7,
       bookTitle: 'Leviathan Wakes',
@@ -326,7 +378,7 @@ describe('addBook — AC6 override', () => {
 
     const result = await addBook(deps, request({ onReview: 'override' }), makeLog());
 
-    expect(result).toEqual({ outcome: 'created', book: created });
+    expect(result).toEqual({ outcome: 'created', book: created, authorName: 'James S. A. Corey' });
     expect(deps.bookService.create).toHaveBeenCalledTimes(1);
   });
 
@@ -339,7 +391,9 @@ describe('addBook — AC6 override', () => {
 
     const result = await addBook(deps, request({ onReview: 'override' }), makeLog());
 
-    expect(result).toEqual({ outcome: 'duplicate', verdict: 'same-recording', book: incumbent });
+    expect(result).toEqual({
+      outcome: 'duplicate', verdict: 'same-recording', book: incumbent, existingBookId: 3,
+    });
     expect(deps.bookService.create).not.toHaveBeenCalled();
   });
 
@@ -426,7 +480,7 @@ describe('addBook — error isolation', () => {
 
     const result = await addBook(deps, request(), log);
 
-    expect(result).toEqual({ outcome: 'created', book: created });
+    expect(result).toEqual({ outcome: 'created', book: created, authorName: 'James S. A. Corey' });
     await vi.waitFor(() => {
       expect(vi.mocked(log.warn)).toHaveBeenCalledWith(
         expect.objectContaining({ error: expect.anything() }),

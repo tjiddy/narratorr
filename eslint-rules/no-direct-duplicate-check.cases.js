@@ -86,7 +86,15 @@ const valid = [
       export function forward(deps: AddAllDeps): AddAllDeps { return deps; }`,
   },
 
-  // Allowlist: the new home, the four other sanctioned production paths, and test files.
+  {
+    // The import-list.service.ts:216 shape — a whole BookService forwarded into `addBook`'s deps.
+    name: 'a whole BookService forwarded into a deps object is not a call',
+    filename: CALLER,
+    code: `${SERVICE_IMPORT}
+      export function forward(bookService: BookService) { return { bookService }; }`,
+  },
+
+  // Allowlist: the new home, the three other sanctioned production paths, and test files.
   {
     name: 'the call inside book-intake — the sanctioned home',
     filename: fixture('services/book-intake/decide-intake.ts'),
@@ -109,14 +117,6 @@ const valid = [
     filename: fixture('services/import-submission-runner.ts'),
     code: `${SERVICE_IMPORT}
       export async function f(bookService: BookService) { return bookService.createResolved({ title: 'x' }); }`,
-  },
-  {
-    name: 'book-add-resolved — deferred write path',
-    filename: fixture('services/book-add-resolved.ts'),
-    code: `${SERVICE_IMPORT}
-      export async function f(deps: { bookService: Pick<BookService, 'findDuplicate' | 'create'> }) {
-        return deps.bookService.findDuplicate({ title: 'x' });
-      }`,
   },
   {
     name: 'routes/v1/books.ts — deferred write path',
@@ -181,6 +181,15 @@ const invalid = [
   {
     name: 'book-add-ladder — the exemption #2243 removed',
     filename: fixture('services/book-add-ladder.ts'),
+    code: `${SERVICE_IMPORT}
+      export async function f(deps: { bookService: Pick<BookService, 'findDuplicate' | 'create'> }) {
+        return deps.bookService.findDuplicate({ title: 'x' });
+      }`,
+    errors: error('findDuplicate'),
+  },
+  {
+    name: 'book-add-resolved — the exemption #2246 removed',
+    filename: fixture('services/book-add-resolved.ts'),
     code: `${SERVICE_IMPORT}
       export async function f(deps: { bookService: Pick<BookService, 'findDuplicate' | 'create'> }) {
         return deps.bookService.findDuplicate({ title: 'x' });

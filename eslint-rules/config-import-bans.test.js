@@ -108,7 +108,7 @@ describe('the ban actually reports', () => {
   });
 
   it('does NOT report OwnedRecordingError from the same module — importNames scoping', async () => {
-    // book-intake/add-book.ts and book-add-resolved.ts both import exactly this, and must stay clean.
+    // book-intake/add-book.ts imports exactly this, and must stay clean.
     const code = "import { OwnedRecordingError } from './book-dedup.js';\nexport const x = OwnedRecordingError;\n";
 
     expect(await banMessages(NON_ALLOWLISTED, code)).toHaveLength(0);

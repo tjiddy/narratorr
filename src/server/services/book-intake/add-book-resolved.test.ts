@@ -2,10 +2,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import { RateLimitError, TransientError } from '@core/index.js';
 import type { BookMetadata } from '@core/metadata/types.js';
-import { addResolvedBook, type ResolvedAddDeps, type ResolvedAddRequest } from './book-add-resolved.js';
-import { OwnedRecordingError } from './book-dedup.js';
-import type { BookDetail } from './book.service.js';
-import { createMockLogger, inject } from '../__tests__/helpers.js';
+import { addBook } from './index.js';
+import type { AddBookDeps, AddBookEvent, AddBookRequest, AddBookSeed } from './index.js';
+import { OwnedRecordingError } from '../book-dedup.js';
+import type { BookDetail } from '../book.service.js';
+import { createMockLogger, inject } from '../../__tests__/helpers.js';
+
+/**
+ * The `resolve: 'required'` arm — the pipeline the two bulk add surfaces run. Migrated from
+ * `book-add-resolved.test.ts` when #2246 folded `addResolvedBook` into `addBook`; every behaviour
+ * assertion survives, and the call shapes moved onto the `seed`/`identity` request arm.
+ */
 
 /**
  * The resolved match every fixture starts from: it disagrees with the caller's identity on all four
@@ -29,8 +36,12 @@ const MATCH: BookMetadata = {
   isbn: '9780316129084',
 };
 
-const IMPORT_LIST_PROVENANCE = { source: 'import_list' as const, reason: { importListName: 'My List' }, importListId: 7 };
-const ADD_ALL_PROVENANCE = { source: 'manual' as const, reason: { seriesName: 'The Expanse' } };
+const IMPORT_LIST_PROVENANCE = {
+  source: 'import_list' as const, reason: { importListName: 'My List' }, eventShape: 'resolved' as const, importListId: 7,
+};
+const ADD_ALL_PROVENANCE = {
+  source: 'manual' as const, reason: { seriesName: 'The Expanse' }, eventShape: 'resolved' as const,
+};
 
 function makeLog(): FastifyBaseLogger {
   return inject<FastifyBaseLogger>(createMockLogger());
@@ -40,53 +51,59 @@ function createdBook(overrides: Partial<BookDetail> = {}): BookDetail {
   return { id: 42, title: 'Leviathan Wakes', status: 'wanted', authors: [], narrators: [], ...overrides } as BookDetail;
 }
 
-function makeDeps(overrides: Partial<ResolvedAddDeps> = {}): ResolvedAddDeps {
+function makeDeps(overrides: Partial<AddBookDeps> = {}): AddBookDeps {
   return {
     bookService: {
       findDuplicate: vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null, hasIncumbent: false }),
       create: vi.fn().mockResolvedValue(createdBook()),
+      getById: vi.fn().mockResolvedValue(null),
     },
-    recordEvent: vi.fn().mockResolvedValue({ id: 1 }),
+    eventHistory: { create: vi.fn().mockResolvedValue({ id: 1 }) },
     resolver: { resolveBook: vi.fn().mockResolvedValue(MATCH) },
     ...overrides,
-  } as ResolvedAddDeps;
+  } as AddBookDeps;
 }
 
-/** The Series-card shape: a bare title/author/series, pinned. */
-function pinnedRequest(overrides: Partial<ResolvedAddRequest> = {}): ResolvedAddRequest {
+/** The Series-card shape: a bare title/author/series, pinned, holding its review on the incumbent. */
+function pinnedRequest(seedOverride?: AddBookSeed): AddBookRequest {
   return {
-    item: { title: 'Leviathan Wakes', author: 'James S. A. Corey', seriesName: 'The Expanse', seriesPosition: 1 },
+    resolve: 'required',
+    seed: seedOverride ?? { title: 'Leviathan Wakes', author: 'James S. A. Corey', seriesName: 'The Expanse', seriesPosition: 1 },
     identity: 'pin',
+    onReview: 'record-and-hold',
     provenance: ADD_ALL_PROVENANCE,
-    ...overrides,
   };
 }
 
 /** The import-list shape: a shelf item with raw side hints, adopting resolved identity. */
-function adoptedRequest(overrides: Partial<ResolvedAddRequest> = {}): ResolvedAddRequest {
+function adoptedRequest(seedOverride?: AddBookSeed): AddBookRequest {
   return {
-    item: { title: 'Leviathan Wakes', author: 'James S. A. Corey' },
+    resolve: 'required',
+    seed: seedOverride ?? { title: 'Leviathan Wakes', author: 'James S. A. Corey' },
     identity: 'adopt',
+    onReview: 'record-and-hold',
     provenance: IMPORT_LIST_PROVENANCE,
-    ...overrides,
   };
 }
 
-const createPayload = (deps: ResolvedAddDeps) =>
+const createPayload = (deps: AddBookDeps) =>
   vi.mocked(deps.bookService.create).mock.calls[0]?.[0] as unknown as Record<string, unknown>;
 
-const eventsOfType = (deps: ResolvedAddDeps, eventType: string) =>
-  vi.mocked(deps.recordEvent).mock.calls.map(([e]) => e).filter((e) => e.eventType === eventType);
+const events = (deps: AddBookDeps): AddBookEvent[] =>
+  vi.mocked(deps.eventHistory.create).mock.calls.map(([e]) => e);
+
+const eventsOfType = (deps: AddBookDeps, eventType: string) =>
+  events(deps).filter((e) => e.eventType === eventType);
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('addResolvedBook — create and announce', () => {
+describe('addBook (resolve: required) — create and announce', () => {
   it('creates the resolved row and announces it with the caller\'s provenance', async () => {
     const deps = makeDeps();
 
-    const result = await addResolvedBook(deps, adoptedRequest(), makeLog());
+    const result = await addBook(deps, adoptedRequest(), makeLog());
 
     // authorName is the resolved primary author, which the caller's own search trigger needs.
     expect(result).toEqual({ outcome: 'created', book: createdBook(), authorName: 'Corey, James S. A.' });
@@ -110,7 +127,7 @@ describe('addResolvedBook — create and announce', () => {
       importListId: 7,
     });
     expect(createPayload(deps).enrichmentStatus).toBeUndefined();
-    expect(vi.mocked(deps.recordEvent).mock.calls.map(([e]) => e)).toEqual([{
+    expect(events(deps)).toEqual([{
       bookId: 42,
       bookTitle: 'Leviathan Wakes',
       authorName: 'Corey, James S. A.',
@@ -120,10 +137,20 @@ describe('addResolvedBook — create and announce', () => {
     }]);
   });
 
+  // AC6: `toEqual` and `expect.not.objectContaining` both pass for a present-but-undefined key, so
+  // the absence of the snapshot shape's narrator field is asserted on the captured argument (#2245).
+  it('writes no narratorName key at all on the resolved book_added payload', async () => {
+    const deps = makeDeps();
+
+    await addBook(deps, adoptedRequest(), makeLog());
+
+    expect(events(deps)[0]).not.toHaveProperty('narratorName');
+  });
+
   it('passes the resolved recording evidence to the duplicate check, not title and author alone', async () => {
     const deps = makeDeps();
 
-    await addResolvedBook(deps, pinnedRequest(), makeLog());
+    await addBook(deps, pinnedRequest(), makeLog());
 
     expect(deps.bookService.findDuplicate).toHaveBeenCalledWith({
       title: 'Leviathan Wakes',
@@ -135,20 +162,22 @@ describe('addResolvedBook — create and announce', () => {
     });
   });
 
-  it('omits authors from the duplicate check when nothing resolved an author', async () => {
+  // The pre-port ladder omitted the key; the shared derivation forwards the empty list the create
+  // payload carries. `gatherIncumbentIds` and `toRecordingCandidate` read the two identically.
+  it('carries no author name into the duplicate check when nothing resolved an author', async () => {
     const deps = makeDeps({ resolver: { resolveBook: vi.fn().mockResolvedValue(null) } });
 
-    await addResolvedBook(deps, adoptedRequest({ item: { title: 'Anonymous Book' } }), makeLog());
+    await addBook(deps, adoptedRequest({ title: 'Anonymous Book' }), makeLog());
 
-    expect(vi.mocked(deps.bookService.findDuplicate).mock.calls[0]?.[0]).not.toHaveProperty('authors');
+    expect(vi.mocked(deps.bookService.findDuplicate).mock.calls[0]?.[0].authors).toEqual([]);
     expect(createPayload(deps)).toMatchObject({ title: 'Anonymous Book', authors: [] });
   });
 
   it('keeps the member created when the book_added write rejects after the row committed', async () => {
     const log = makeLog();
-    const deps = makeDeps({ recordEvent: vi.fn().mockRejectedValue(new Error('events table locked')) });
+    const deps = makeDeps({ eventHistory: { create: vi.fn().mockRejectedValue(new Error('events table locked')) } });
 
-    const result = await addResolvedBook(deps, pinnedRequest(), log);
+    const result = await addBook(deps, pinnedRequest(), log);
 
     expect(result).toMatchObject({ outcome: 'created' });
     await vi.waitFor(() => expect(log.warn).toHaveBeenCalledWith(
@@ -158,18 +187,20 @@ describe('addResolvedBook — create and announce', () => {
   });
 });
 
-describe('addResolvedBook — dispositions', () => {
+describe('addBook (resolve: required) — dispositions', () => {
   it('returns the incumbent for same-recording, writing no row and no event', async () => {
     const deps = makeDeps();
     vi.mocked(deps.bookService.findDuplicate).mockResolvedValue({
       verdict: 'same-recording', book: { id: 77 } as never, hasIncumbent: true,
     });
 
-    const result = await addResolvedBook(deps, pinnedRequest(), makeLog());
+    const result = await addBook(deps, pinnedRequest(), makeLog());
 
-    expect(result).toEqual({ outcome: 'same-recording', existingBookId: 77 });
+    expect(result).toEqual({
+      outcome: 'duplicate', verdict: 'same-recording', book: { id: 77 }, existingBookId: 77,
+    });
     expect(deps.bookService.create).not.toHaveBeenCalled();
-    expect(deps.recordEvent).not.toHaveBeenCalled();
+    expect(deps.eventHistory.create).not.toHaveBeenCalled();
   });
 
   it('records recording_review_skipped against the incumbent and carries the reason through', async () => {
@@ -178,10 +209,16 @@ describe('addResolvedBook — dispositions', () => {
       verdict: 'review', book: { id: 55 } as never, hasIncumbent: true, recordingReviewReason: 'narrator-no-signal',
     });
 
-    const result = await addResolvedBook(deps, pinnedRequest(), makeLog());
+    const result = await addBook(deps, pinnedRequest(), makeLog());
 
-    expect(result).toEqual({ outcome: 'review', existingBookId: 55, recordingReviewReason: 'narrator-no-signal' });
-    expect(deps.recordEvent).toHaveBeenCalledWith({
+    expect(result).toEqual({
+      outcome: 'duplicate',
+      verdict: 'review',
+      book: { id: 55 },
+      existingBookId: 55,
+      recordingReviewReason: 'narrator-no-signal',
+    });
+    expect(deps.eventHistory.create).toHaveBeenCalledWith({
       bookId: 55,
       bookTitle: 'Leviathan Wakes',
       authorName: 'James S. A. Corey',
@@ -192,6 +229,21 @@ describe('addResolvedBook — dispositions', () => {
     expect(deps.bookService.create).not.toHaveBeenCalled();
   });
 
+  // Production's resolver always hands a review/same-recording verdict its representative row, but
+  // the union admits null and the bulk callers report a bare id — so it must degrade, not admit.
+  it.each(['same-recording', 'review'] as const)(
+    'reports a %s verdict carrying no representative book with a null incumbent id',
+    async (verdict) => {
+      const deps = makeDeps();
+      vi.mocked(deps.bookService.findDuplicate).mockResolvedValue({ verdict, book: null, hasIncumbent: true });
+
+      const result = await addBook(deps, pinnedRequest(), makeLog());
+
+      expect(result).toMatchObject({ outcome: 'duplicate', verdict, book: null, existingBookId: null });
+      expect(deps.bookService.create).not.toHaveBeenCalled();
+    },
+  );
+
   it('does not resolve the hold before its event settles, and propagates a rejected one', async () => {
     const deps = makeDeps();
     vi.mocked(deps.bookService.findDuplicate).mockResolvedValue({
@@ -199,12 +251,12 @@ describe('addResolvedBook — dispositions', () => {
     });
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
-    vi.mocked(deps.recordEvent).mockReturnValue(gate.then(() => { throw new Error('events table locked'); }));
+    vi.mocked(deps.eventHistory.create).mockReturnValue(gate.then(() => { throw new Error('events table locked'); }));
 
     let settled = false;
-    const pending = addResolvedBook(deps, pinnedRequest(), makeLog()).catch((e: unknown) => { settled = true; throw e; });
+    const pending = addBook(deps, pinnedRequest(), makeLog()).catch((e: unknown) => { settled = true; throw e; });
 
-    await vi.waitFor(() => expect(deps.recordEvent).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(deps.eventHistory.create).toHaveBeenCalledTimes(1));
     await Promise.resolve();
     expect(settled).toBe(false);
 
@@ -218,28 +270,42 @@ describe('addResolvedBook — dispositions', () => {
       new OwnedRecordingError({ existingBookId: 31, title: 'Leviathan Wakes', reason: 'asin-owned' }),
     );
 
-    const result = await addResolvedBook(deps, pinnedRequest(), makeLog());
+    const result = await addBook(deps, pinnedRequest(), makeLog());
 
-    expect(result).toEqual({ outcome: 'owned-race', existingBookId: 31 });
+    expect(result).toMatchObject({ outcome: 'owned-race', existingBookId: 31 });
     expect(eventsOfType(deps, 'book_added')).toEqual([]);
+  });
+
+  // AC12: the widened `getById` dep runs on the bulk path too, and a rejection there must not turn
+  // a committed collision into a batch-aborting throw.
+  it('still reports owned-race when the incumbent hydration rejects', async () => {
+    const deps = makeDeps();
+    vi.mocked(deps.bookService.create).mockRejectedValue(
+      new OwnedRecordingError({ existingBookId: 31, title: 'Leviathan Wakes', reason: 'asin-owned' }),
+    );
+    vi.mocked(deps.bookService.getById).mockRejectedValue(new Error('db handle closed'));
+
+    const result = await addBook(deps, pinnedRequest(), makeLog());
+
+    expect(result).toMatchObject({ outcome: 'owned-race', existingBookId: 31, book: null });
   });
 
   it('propagates any other create failure so the caller can account for it', async () => {
     const deps = makeDeps();
     vi.mocked(deps.bookService.create).mockRejectedValue(new Error('Failed to find or create author'));
 
-    await expect(addResolvedBook(deps, pinnedRequest(), makeLog())).rejects.toThrow('Failed to find or create author');
+    await expect(addBook(deps, pinnedRequest(), makeLog())).rejects.toThrow('Failed to find or create author');
   });
 });
 
-describe('addResolvedBook — identity policy', () => {
+describe('addBook (resolve: required) — identity policy', () => {
   /** One fixture, two policies: the match disagrees on title, author, series name and position. */
-  const item = { title: 'Leviathan Wakes', author: 'James S. A. Corey', seriesName: 'The Expanse', seriesPosition: 1 };
+  const seed = { title: 'Leviathan Wakes', author: 'James S. A. Corey', seriesName: 'The Expanse', seriesPosition: 1 };
 
   it('pins the caller\'s four identity fields and adopts only the enrichment fields', async () => {
     const deps = makeDeps();
 
-    await addResolvedBook(deps, { item, identity: 'pin', provenance: ADD_ALL_PROVENANCE }, makeLog());
+    await addBook(deps, pinnedRequest(seed), makeLog());
 
     expect(createPayload(deps)).toMatchObject({
       title: 'Leviathan Wakes',
@@ -263,7 +329,7 @@ describe('addResolvedBook — identity policy', () => {
   it('adopts the resolved identity under the adopt policy, from the same input', async () => {
     const deps = makeDeps();
 
-    await addResolvedBook(deps, { item, identity: 'adopt', provenance: IMPORT_LIST_PROVENANCE }, makeLog());
+    await addBook(deps, adoptedRequest(seed), makeLog());
 
     expect(createPayload(deps)).toMatchObject({
       title: 'Leviathan Wakes: The Expanse Book 1',
@@ -275,9 +341,9 @@ describe('addResolvedBook — identity policy', () => {
 
   it('prefers the caller\'s raw cover, description and ISBN hints over the match\'s', async () => {
     const deps = makeDeps();
-    const hinted = { ...item, coverUrl: 'https://example.test/raw.jpg', description: 'Raw description', isbn: 'RAW_ISBN' };
+    const hinted = { ...seed, coverUrl: 'https://example.test/raw.jpg', description: 'Raw description', isbn: 'RAW_ISBN' };
 
-    await addResolvedBook(deps, { item: hinted, identity: 'adopt', provenance: IMPORT_LIST_PROVENANCE }, makeLog());
+    await addBook(deps, adoptedRequest(hinted), makeLog());
 
     expect(createPayload(deps)).toMatchObject({
       coverUrl: 'https://example.test/raw.jpg',
@@ -290,8 +356,8 @@ describe('addResolvedBook — identity policy', () => {
     const adoptLog = makeLog();
     const pinLog = makeLog();
 
-    await addResolvedBook(makeDeps(), { item, identity: 'adopt', provenance: IMPORT_LIST_PROVENANCE }, adoptLog);
-    await addResolvedBook(makeDeps(), { item, identity: 'pin', provenance: ADD_ALL_PROVENANCE }, pinLog);
+    await addBook(makeDeps(), adoptedRequest(seed), adoptLog);
+    await addBook(makeDeps(), pinnedRequest(seed), pinLog);
 
     expect(adoptLog.warn).toHaveBeenCalledWith(
       expect.objectContaining({ listTitle: 'Leviathan Wakes', metadataTitle: MATCH.title, metadataAuthor: 'Corey, James S. A.' }),
@@ -305,14 +371,14 @@ describe('addResolvedBook — identity policy', () => {
   });
 });
 
-describe('addResolvedBook — provenance', () => {
+describe('addBook (resolve: required) — provenance', () => {
   it('differs between the two callers only in importListId, source and reason', async () => {
     const importList = makeDeps();
     const addAll = makeDeps();
-    const item = { title: 'Leviathan Wakes', author: 'James S. A. Corey' };
+    const seed = { title: 'Leviathan Wakes', author: 'James S. A. Corey' };
 
-    await addResolvedBook(importList, { item, identity: 'adopt', provenance: IMPORT_LIST_PROVENANCE }, makeLog());
-    await addResolvedBook(addAll, { item, identity: 'adopt', provenance: ADD_ALL_PROVENANCE }, makeLog());
+    await addBook(importList, adoptedRequest(seed), makeLog());
+    await addBook(addAll, { ...adoptedRequest(seed), provenance: ADD_ALL_PROVENANCE }, makeLog());
 
     const { importListId: listId, ...listRow } = createPayload(importList);
     const { importListId: batchId, ...batchRow } = createPayload(addAll);
@@ -320,7 +386,7 @@ describe('addResolvedBook — provenance', () => {
     expect(batchId).toBeUndefined();
     expect(listRow).toEqual(batchRow);
 
-    expect(vi.mocked(importList.recordEvent).mock.calls[0]?.[0]).toEqual({
+    expect(events(importList)[0]).toEqual({
       bookId: 42,
       bookTitle: 'Leviathan Wakes',
       authorName: 'Corey, James S. A.',
@@ -328,7 +394,7 @@ describe('addResolvedBook — provenance', () => {
       source: 'import_list',
       reason: { importListName: 'My List' },
     });
-    expect(vi.mocked(addAll.recordEvent).mock.calls[0]?.[0]).toEqual({
+    expect(events(addAll)[0]).toEqual({
       bookId: 42,
       bookTitle: 'Leviathan Wakes',
       authorName: 'Corey, James S. A.',
@@ -339,12 +405,12 @@ describe('addResolvedBook — provenance', () => {
   });
 });
 
-describe('addResolvedBook — resolution failures', () => {
+describe('addBook (resolve: required) — resolution failures', () => {
   it('creates the raw row and never calls a resolver when none is configured', async () => {
     const deps = makeDeps({ resolver: undefined });
-    const item = { title: 'Raw Title', author: 'Raw Author', asin: 'B_RAW', isbn: 'RAW_ISBN', coverUrl: 'https://example.test/raw.jpg', description: 'Raw', seriesName: 'Raw Series', seriesPosition: 3 };
+    const seed = { title: 'Raw Title', author: 'Raw Author', asin: 'B_RAW', isbn: 'RAW_ISBN', coverUrl: 'https://example.test/raw.jpg', description: 'Raw', seriesName: 'Raw Series', seriesPosition: 3 };
 
-    await addResolvedBook(deps, { item, identity: 'adopt', provenance: IMPORT_LIST_PROVENANCE }, makeLog());
+    await addBook(deps, adoptedRequest(seed), makeLog());
 
     expect(createPayload(deps)).toEqual({
       title: 'Raw Title',
@@ -364,7 +430,7 @@ describe('addResolvedBook — resolution failures', () => {
   it('marks a genuine no-match failed so the retry window applies', async () => {
     const deps = makeDeps({ resolver: { resolveBook: vi.fn().mockResolvedValue(null) } });
 
-    await addResolvedBook(deps, pinnedRequest(), makeLog());
+    await addBook(deps, pinnedRequest(), makeLog());
 
     expect(createPayload(deps)).toMatchObject({ title: 'Leviathan Wakes', seriesName: 'The Expanse', enrichmentStatus: 'failed' });
   });
@@ -377,19 +443,22 @@ describe('addResolvedBook — resolution failures', () => {
     const log = makeLog();
     const deps = makeDeps({ resolver: { resolveBook: vi.fn().mockRejectedValue(error) } });
 
-    const result = await addResolvedBook(deps, pinnedRequest(), log);
+    const result = await addBook(deps, pinnedRequest(), log);
 
     expect(result).toMatchObject({ outcome: 'created' });
     expect(createPayload(deps)).toMatchObject({ title: 'Leviathan Wakes' });
-    expect(createPayload(deps).enrichmentStatus).toBeUndefined();
+    // AC7's discriminator: not merely `undefined` — the key is absent, so the create primitive's
+    // own default stands and the row is pending rather than failed.
+    expect(createPayload(deps)).not.toHaveProperty('enrichmentStatus');
     expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ title: 'Leviathan Wakes' }), expect.stringContaining(message));
   });
 
   it('resolves an authorless item with author undefined, never null or empty', async () => {
     const deps = makeDeps();
 
-    await addResolvedBook(deps, pinnedRequest({ item: { title: 'Solo Title', seriesName: 'The Expanse', seriesPosition: 4 } }), makeLog());
+    await addBook(deps, pinnedRequest({ title: 'Solo Title', seriesName: 'The Expanse', seriesPosition: 4 }), makeLog());
 
     expect(deps.resolver?.resolveBook).toHaveBeenCalledWith({ asin: undefined, title: 'Solo Title', author: undefined });
+    expect(createPayload(deps)).toMatchObject({ authors: [] });
   });
 });

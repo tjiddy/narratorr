@@ -33,7 +33,12 @@ const mockLog = createMockLogger() as unknown as FastifyBaseLogger;
 function makeBookService(overrides: {
   findDuplicate?: ReturnType<typeof vi.fn>;
   create?: ReturnType<typeof vi.fn>;
+  getById?: ReturnType<typeof vi.fn>;
 } = {}): BookService {
+  // Widened with the pipeline (#2246): the owned-race arm hydrates the incumbent through `getById`.
+  // `inject<BookService>` erases property checking, so typecheck cannot see the gap — an unstubbed
+  // method reaches production as a swallowed TypeError, not a failure.
+  const getById = overrides.getById ?? vi.fn().mockResolvedValue(null);
   const findDuplicate = overrides.findDuplicate ?? vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null });
   const create = overrides.create ?? vi.fn().mockImplementation(async (data: { title: string }): Promise<BookWithAuthor> => ({
     id: 100,
@@ -76,7 +81,7 @@ function makeBookService(overrides: {
     narrators: [],
     importListName: null,
   }));
-  return inject<BookService>({ findDuplicate, create });
+  return inject<BookService>({ findDuplicate, create, getById });
 }
 
 describe('ImportListService', () => {
@@ -593,7 +598,11 @@ describe('ImportListService', () => {
         );
       });
 
-      it('authorless dedup: passes authorList: undefined to findDuplicate (NOT [{ name: undefined }])', async () => {
+      // The candidate carried no `authors` key before #2246 and carries `[]` after it, because the
+      // shared write item requires an author list. `gatherIncumbentIds` gates on `length > 0` and
+      // `toRecordingCandidate` coalesces to `[]`, so both reach the resolver as "no author
+      // evidence"; the property under test is still that no `{ name: undefined }` entry is built.
+      it('authorless dedup: passes an empty author list to findDuplicate (NOT [{ name: undefined }])', async () => {
         const mockProvider = {
           fetchItems: vi.fn().mockResolvedValue([{ title: 'Anonymous Book' }]),
           test: vi.fn(),
@@ -612,7 +621,7 @@ describe('ImportListService', () => {
         await service.syncDueLists();
 
         expect(findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'Anonymous Book' }));
-        expect(findDuplicate.mock.calls[0]![0]).not.toHaveProperty('authors');
+        expect(findDuplicate.mock.calls[0]![0].authors).toEqual([]);
         expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Anonymous Book', authors: [] }));
       });
 
@@ -1718,6 +1727,41 @@ describe('ImportListService', () => {
         await vi.waitFor(() => expect(mockTriggerImmediateSearch).toHaveBeenCalledTimes(1));
         const [bookArg] = mockTriggerImmediateSearch.mock.calls[0]!;
         expect(bookArg).toEqual(expect.objectContaining({ id: 11, title: 'Anonymous Book', authors: [] }));
+      });
+
+      // AC4: the query must key on the identity the row was ADOPTED under, not the shelf's. The
+      // created row's own `authors` cannot stand in — `BookService.create` is what hydrates those,
+      // and the pipeline returns the primary author it wrote with precisely so this survives.
+      it('searches under the resolved primary author, never the shelf item\'s', async () => {
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Shelf Title', author: 'Shelf Author' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const mockMetadata = {
+          resolveBook: vi.fn().mockResolvedValue({
+            asin: 'B_RESOLVED', title: 'Resolved Title', authors: [{ name: 'Resolved Author' }], narrators: [],
+          }),
+        } as unknown as MetadataService;
+        const create = vi.fn().mockResolvedValue(createdBook(51, 'Resolved Title'));
+        const searchDeps = makeSearchDeps({ searchImmediately: true });
+        service = new ImportListService(
+          inject<Db>(db), mockLog, makeBookService({ create }), mockMetadata, searchDeps,
+        );
+        await service.syncDueLists();
+
+        await vi.waitFor(() => expect(mockTriggerImmediateSearch).toHaveBeenCalledTimes(1));
+        const [bookArg] = mockTriggerImmediateSearch.mock.calls[0]!;
+        expect(bookArg).toEqual(expect.objectContaining({
+          id: 51, title: 'Resolved Title', authors: [{ name: 'Resolved Author' }],
+        }));
+        expect(JSON.stringify(bookArg)).not.toContain('Shelf Author');
       });
 
       it('does NOT trigger when searchImmediately=false', async () => {
