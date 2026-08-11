@@ -9,6 +9,27 @@ const noRawErrorLogging = require('./eslint-rules/no-raw-error-logging.cjs');
 const noTautologicalExpect = require('./eslint-rules/no-tautological-expect.cjs');
 const noUnstampedMatchGeneration = require('./eslint-rules/no-unstamped-match-generation.cjs');
 
+// The duplicate/recording decision lives in book-intake; book.service.ts owns the raw delegates.
+// Trailing-segment globs (not exact `paths` strings) so `../services/book-dedup.js` cannot slip
+// through, and `importNames` so the co-located OwnedRecordingError import stays legal.
+const DEDUP_IMPORT_RESTRICTIONS = [
+  {
+    group: ['**/book-dedup.js'],
+    importNames: ['resolveDuplicate'],
+    message: 'Route the duplicate/recording decision through src/server/services/book-intake instead of calling resolveDuplicate directly.',
+  },
+  {
+    group: ['**/book-create.js'],
+    importNames: ['buildNewBookValues'],
+    message: 'buildNewBookValues belongs to book.service.ts; go through it rather than building book values directly.',
+  },
+];
+
+// Flat config REPLACES rule options rather than merging them, so every block that restricts
+// imports for server code must restate the bans it wants to keep. Object form is required:
+// a `patterns` array cannot mix bare strings with objects.
+const ROUTES_IMPORT_RESTRICTION = { group: ['**/routes/**', '**/routes/*'] };
+
 export default tseslint.config(
   {
     ignores: [
@@ -127,12 +148,26 @@ export default tseslint.config(
     },
   },
   {
+    // Routes, plugins, types and the top-level server files own no block of their own; the dedup
+    // ban must still reach them, because a route reaching into services/ is the realistic bypass.
+    files: ['**/src/server/**/*.ts'],
+    ignores: [
+      '**/src/server/services/**',
+      '**/src/server/jobs/**',
+      '**/src/server/utils/**',
+      '**/*.test.ts',
+    ],
+    rules: {
+      'no-restricted-imports': ['error', { patterns: [...DEDUP_IMPORT_RESTRICTIONS] }],
+    },
+  },
+  {
     // Services must not import routes; compatibility tests may.
     files: ['**/src/server/services/**/*.ts'],
     ignores: ['**/*.test.ts'],
     rules: {
       'no-restricted-imports': ['error', {
-        patterns: ['**/routes/**', '**/routes/*'],
+        patterns: [ROUTES_IMPORT_RESTRICTION, ...DEDUP_IMPORT_RESTRICTIONS],
       }],
     },
   },
@@ -142,7 +177,7 @@ export default tseslint.config(
     ignores: ['**/*.test.ts'],
     rules: {
       'no-restricted-imports': ['error', {
-        patterns: ['**/routes/**', '**/routes/*'],
+        patterns: [ROUTES_IMPORT_RESTRICTION, ...DEDUP_IMPORT_RESTRICTIONS],
       }],
     },
   },
@@ -156,8 +191,22 @@ export default tseslint.config(
           group: ['**/services/**', '**/services/*'],
           allowTypeImports: true,
           message: 'utils/ must not import service values — move service-coupled logic into services/ (import type is allowed).',
-        }],
+        }, ...DEDUP_IMPORT_RESTRICTIONS],
       }],
+    },
+  },
+  {
+    // The sanctioned homes of the two delegates. Expressed by exploiting replacement semantics
+    // (this block wins, and simply omits the dedup bans) rather than by an `ignores` on the
+    // services block, which would drop the routes ban for these files too. The `ignores` keeps
+    // book-intake test files as exempt from the routes ban as every other test file.
+    files: [
+      '**/src/server/services/book.service.ts',
+      '**/src/server/services/book-intake/**/*.ts',
+    ],
+    ignores: ['**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': ['error', { patterns: [ROUTES_IMPORT_RESTRICTION] }],
     },
   },
 
