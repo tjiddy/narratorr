@@ -86,7 +86,7 @@ const valid = [
       export function forward(deps: AddAllDeps): AddAllDeps { return deps; }`,
   },
 
-  // Allowlist: the new home, the five other sanctioned production paths, and test files.
+  // Allowlist: the new home, the four other sanctioned production paths, and test files.
   {
     name: 'the call inside book-intake — the sanctioned home',
     filename: fixture('services/book-intake/decide-intake.ts'),
@@ -109,14 +109,6 @@ const valid = [
     filename: fixture('services/import-submission-runner.ts'),
     code: `${SERVICE_IMPORT}
       export async function f(bookService: BookService) { return bookService.createResolved({ title: 'x' }); }`,
-  },
-  {
-    name: 'book-add-ladder — deferred write path',
-    filename: fixture('services/book-add-ladder.ts'),
-    code: `${SERVICE_IMPORT}
-      export async function f(deps: { bookService: Pick<BookService, 'findDuplicate' | 'create'> }) {
-        return deps.bookService.findDuplicate({ title: 'x' });
-      }`,
   },
   {
     name: 'book-add-resolved — deferred write path',
@@ -154,7 +146,7 @@ const invalid = [
     errors: error('findDuplicate'),
   },
   {
-    name: 'nested deps.bookService receiver — the book-add-ladder.ts:68 shape',
+    name: 'nested deps.bookService receiver — the shape every deps-injected caller has',
     filename: CALLER,
     code: `${SERVICE_IMPORT}
       export async function f(deps: { bookService: Pick<BookService, 'findDuplicate'> }) {
@@ -181,6 +173,19 @@ const invalid = [
         async run() { return this.bookService.createResolved({ title: 'x' }); }
       }`,
     errors: error('createResolved'),
+  },
+
+  // #2243 removed book-add-ladder.ts's exemption when `POST /api/books` moved onto `addBook`. The
+  // fixture stays on disk and its case moves here rather than being deleted: an absent case leaves
+  // the removal unpinned, and the suite would stay green if the exemption were ever restored.
+  {
+    name: 'book-add-ladder — the exemption #2243 removed',
+    filename: fixture('services/book-add-ladder.ts'),
+    code: `${SERVICE_IMPORT}
+      export async function f(deps: { bookService: Pick<BookService, 'findDuplicate' | 'create'> }) {
+        return deps.bookService.findDuplicate({ title: 'x' });
+      }`,
+    errors: error('findDuplicate'),
   },
 
   // Direct receivers, so both shapes stay pinned.
