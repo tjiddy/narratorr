@@ -1,6 +1,10 @@
 import { describe, it, expect, expectTypeOf, vi } from 'vitest';
+import type { Db } from '@db/index.js';
+import { resolveDuplicate, toLibraryRecording, toRecordingCandidate } from '../book-dedup.js';
 import type { DuplicateCandidate, DuplicateResolution } from '../book-dedup.js';
+import { resolveRecordingIdentity } from '@core/utils/recording-identity.js';
 import type { BookService, BookWithAuthor } from '../book.service.js';
+import { mockDbChain } from '../../__tests__/helpers.js';
 import { decideIntake } from './index.js';
 import type { IntakeDeps, IntakeItem } from './index.js';
 
@@ -172,6 +176,65 @@ describe('decideIntake — candidate construction', () => {
     await decideIntake(deps, { item: { title: 'Tehanu', duration: null } });
 
     expect(candidateFrom(findDuplicate)).toEqual({ title: 'Tehanu', duration: null });
+  });
+});
+
+/**
+ * #2251 routed v1's add-by-ASIN probe through here, and v1's published 409 has no arm for `review`
+ * — `bookExistsV1Schema` requires an `existingId`, so a review verdict there would be a serializer
+ * failure, not a graceful degrade. These drive the REAL resolver rather than a stubbed resolution,
+ * and observe the DECISION: the route flattens `same-recording` and `review` onto one 409, so a
+ * route-status assertion could not attribute a red to the arm under test.
+ */
+describe('decideIntake — the v1 ASIN-only probe cannot reach the review arm (#2251)', () => {
+  const V1_ITEM: IntakeItem = { title: '', asin: 'B01G9EPERE' };
+
+  /** `findDuplicate` backed by the production resolver over a one-row library. */
+  function realDeps(incumbent: BookWithAuthor) {
+    const db = { select: vi.fn().mockReturnValue(mockDbChain([{ id: incumbent.id }])) } as unknown as Db;
+    const findDuplicate = vi.fn((candidate: DuplicateCandidate) =>
+      resolveDuplicate(db, async () => incumbent, candidate));
+    return { deps: { bookService: { findDuplicate } } as unknown as IntakeDeps, db };
+  }
+
+  // A one-sided narrator set is the reviewing signal; the candidate carries none by construction.
+  it.each([['exact', 'B01G9EPERE'], ['case-drifted', 'b01g9epere'], ['padded', '  B01G9EPERE ']])(
+    'a %s incumbent ASIN resolves to same-recording, never review',
+    async (_label, incumbentAsin) => {
+      const { deps } = realDeps(makeIncumbent({ asin: incumbentAsin }));
+
+      const decision = await decideIntake(deps, { item: V1_ITEM });
+
+      expect(decision.kind).toBe('same-recording');
+      expect(decision).not.toHaveProperty('recordingReviewReason');
+      // The 409 needs a hydrated row, not just the verdict.
+      expect(decision.kind === 'same-recording' && decision.incumbent?.publicId).toBe('bk_421');
+    },
+  );
+
+  // The control: the reviewing pair genuinely exists in the primitive, so the assertions above are
+  // pinning the ASIN short-circuit rather than an arm that could never fire for any input.
+  it('the SAME candidate DOES review against an author-less empty-title incumbent', () => {
+    const orphan = makeIncumbent({ title: '', asin: null, authors: [] });
+
+    const { verdict, recordingReviewReason } = resolveRecordingIdentity(
+      toRecordingCandidate({ ...V1_ITEM }),
+      toLibraryRecording(orphan),
+    );
+
+    expect(verdict).toBe('review');
+    expect(recordingReviewReason).toBe('narrator-no-signal');
+  });
+
+  // ...and that pair is unreachable because gathering it needs the author-less exact-title query,
+  // which `book-dedup` gates on `!canonicalAsin`. A v1 ASIN always canonicalizes: the request
+  // schema trims and requires min(1), so only the canonical-ASIN query can run.
+  it('issues the canonical-ASIN query ONLY — the author-less title branch never runs', async () => {
+    const { deps, db } = realDeps(makeIncumbent());
+
+    await decideIntake(deps, { item: V1_ITEM });
+
+    expect(db.select).toHaveBeenCalledTimes(1);
   });
 });
 
