@@ -8,6 +8,19 @@ const require = createRequire(import.meta.url);
 const noRawErrorLogging = require('./eslint-rules/no-raw-error-logging.cjs');
 const noTautologicalExpect = require('./eslint-rules/no-tautological-expect.cjs');
 const noUnstampedMatchGeneration = require('./eslint-rules/no-unstamped-match-generation.cjs');
+const noDirectDuplicateCheck = require('./eslint-rules/no-direct-duplicate-check.cjs');
+
+// ONE object, referenced by every block below. Flat config rejects two blocks that define the same
+// plugin name for an overlapping file scope unless they hand it the identical reference; each block
+// still opts in to only the rules it wants.
+const narratorr = {
+  rules: {
+    'no-raw-error-logging': noRawErrorLogging,
+    'no-tautological-expect': noTautologicalExpect,
+    'no-unstamped-match-generation': noUnstampedMatchGeneration,
+    'no-direct-duplicate-check': noDirectDuplicateCheck,
+  },
+};
 
 // The duplicate/recording decision lives in book-intake; book.service.ts owns the raw delegates.
 // Trailing-segment globs (not exact `paths` strings) so `../services/book-dedup.js` cannot slip
@@ -95,11 +108,20 @@ export default tseslint.config(
   {
     files: ['**/src/server/**/*.ts'],
     ignores: ['**/*.test.ts'],
-    plugins: {
-      'narratorr': { rules: { 'no-raw-error-logging': noRawErrorLogging } },
-    },
+    plugins: { narratorr },
     rules: {
       'narratorr/no-raw-error-logging': 'error',
+    },
+  },
+
+  // The duplicate/recording decision has one home. This is the call-site half; the import half is
+  // the no-restricted-imports blocks below. The rule owns its own allowlist and is type-aware, so
+  // it needs the `projectService: true` set above.
+  {
+    files: ['**/src/server/**/*.ts'],
+    plugins: { narratorr },
+    rules: {
+      'narratorr/no-direct-duplicate-check': 'error',
     },
   },
 
@@ -109,9 +131,7 @@ export default tseslint.config(
       '**/src/client/pages/library-import/useLibraryImport.ts',
       '**/src/client/pages/manual-import/useManualImport.ts',
     ],
-    plugins: {
-      'narratorr': { rules: { 'no-unstamped-match-generation': noUnstampedMatchGeneration } },
-    },
+    plugins: { narratorr },
     rules: {
       'narratorr/no-unstamped-match-generation': 'error',
     },
@@ -242,9 +262,7 @@ export default tseslint.config(
   // Relax test complexity limits while rejecting literal tautologies.
   {
     files: ['**/*.test.ts', '**/*.test.tsx'],
-    plugins: {
-      'narratorr': { rules: { 'no-tautological-expect': noTautologicalExpect } },
-    },
+    plugins: { narratorr },
     rules: {
       'max-lines': 'off',
       'max-lines-per-function': 'off',
