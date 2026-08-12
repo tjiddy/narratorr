@@ -1891,11 +1891,13 @@ describe('SeriesCardService — integration', () => {
       return new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
     }
 
-    function localRows(rows: { source: string }[]): { source: string }[] {
+    type MemberRow = typeof seriesMembers.$inferSelect;
+
+    function localRows(rows: MemberRow[]): MemberRow[] {
       return rows.filter((row) => row.source === 'local');
     }
 
-    function allMembers(): Promise<(typeof seriesMembers.$inferSelect)[]> {
+    function allMembers(): Promise<MemberRow[]> {
       return db.select().from(seriesMembers).orderBy(asc(seriesMembers.id));
     }
 
@@ -1932,7 +1934,7 @@ describe('SeriesCardService — integration', () => {
         await boundService().bindHardcoverSeries(initiating, 4243);
         spy.restore();
 
-        expect(localRows(await allMembers()).map((r) => (r as { bookId: number }).bookId)).toEqual([drifted]);
+        expect(localRows(await allMembers()).map((r) => r.bookId)).toEqual([drifted]);
         // The post-commit reconcile would seed `drifted` too, so the row alone cannot distinguish a
         // byte-equality filter from the folded one — only the absence of a second transaction can.
         expect(spy.transactions).toHaveLength(1);
@@ -1949,7 +1951,7 @@ describe('SeriesCardService — integration', () => {
 
         expect(poolStatements(spy.executed).map((s) => s.scope)).toEqual(['tx1', 'client']);
         expect(spy.transactions).toHaveLength(1);
-        expect(localRows(await allMembers()).map((r) => (r as { bookId: number }).bookId)).toEqual([sibling]);
+        expect(localRows(await allMembers()).map((r) => r.bookId)).toEqual([sibling]);
       });
 
       it('a whitespace-only prior name widens matching but not seeding', async () => {
@@ -1991,7 +1993,7 @@ describe('SeriesCardService — integration', () => {
         await boundService().bindHardcoverSeries(santi, 9002);
         spy.restore();
 
-        expect(localRows(await allMembers()).map((r) => (r as { bookId: number }).bookId)).toEqual([sequel]);
+        expect(localRows(await allMembers()).map((r) => r.bookId)).toEqual([sequel]);
         expect(spy.transactions).toHaveLength(1);
       });
 
@@ -2021,7 +2023,7 @@ describe('SeriesCardService — integration', () => {
 
         await boundService().bindHardcoverSeries(initiating, 7704);
 
-        expect(localRows(await allMembers()).map((r) => (r as { bookId: number }).bookId)).toEqual([lowerId, higherId]);
+        expect(localRows(await allMembers()).map((r) => r.bookId)).toEqual([lowerId, higherId]);
       });
 
       it('the lower-id book wins the claim when two spellings match the same member', async () => {
@@ -2037,7 +2039,7 @@ describe('SeriesCardService — integration', () => {
 
         const members = await allMembers();
         expect(members.find((r) => r.hardcoverBookId === 4002)!.bookId).toBe(lowerId);
-        expect(localRows(members).map((r) => (r as { bookId: number }).bookId)).toEqual([higherId]);
+        expect(localRows(members).map((r) => r.bookId)).toEqual([higherId]);
       });
     });
 

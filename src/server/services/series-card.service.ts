@@ -22,9 +22,18 @@ import { buildSeriesNameTargets, seriesNameMatchesTargets } from '../utils/serie
 import { parseClearedFields } from '../utils/cleared-fields.js';
 import { serializeError } from '../utils/serialize-error.js';
 
+/**
+ * Carrying the raw `series_name` lets a caller re-derive a narrower name view from rows it already
+ * holds instead of issuing a second scan. Structurally still a LibraryBookSummary, so matcher,
+ * card-projection, and seeding consumers need no signature change.
+ */
+interface PoolBook extends LibraryBookSummary {
+  seriesName: string;
+}
+
 // Keep tombstones separate so the matcher's LibraryBookSummary contract stays narrow.
 interface LibraryPool {
-  books: LibraryBookSummary[];
+  books: PoolBook[];
   positionClearedIds: Set<number>;
 }
 
@@ -55,6 +64,15 @@ export interface BookForSeriesCard {
 }
 
 interface MatchedLibraryBook { bookId: number; position: number | null }
+
+/**
+ * The loader's own membership rule re-applied with targets built from one name, so a folded-equal
+ * spelling stays in. Byte equality here would resurrect the #2175 defect on the seeding path.
+ */
+function narrowPoolToSeriesName(pool: readonly PoolBook[], seriesName: string): PoolBook[] {
+  const targets = buildSeriesNameTargets([seriesName]);
+  return pool.filter((book) => seriesNameMatchesTargets(targets, book.seriesName));
+}
 
 export class SeriesCardService {
   constructor(
@@ -350,9 +368,15 @@ export class SeriesCardService {
         source: 'hardcover',
       });
     }
+    // Derived, not re-queried: buildSeriesNameTargets unions its inputs, so the combined pool
+    // already contains every canonical-only match, and re-applying the loader's own rule with
+    // canonical-only targets reproduces that narrower pool in the loader's id order.
+    // Equivalent only because nothing between the load above and here writes books — the member
+    // delete/insert loop touches series/series_members alone. A books write added in between
+    // would move the seeding snapshot and must revisit this.
     const primaryPool = extraSeriesNames.length === 0
       ? libraryBooks
-      : (await this.loadLibraryBooksForSeries(seriesName, tx)).books;
+      : narrowPoolToSeriesName(libraryBooks, seriesName);
     await seedLocalMembersForUnclaimedBooks(
       tx,
       upserted.id,
@@ -469,10 +493,10 @@ export class SeriesCardService {
       .where(isNotNull(books.seriesName))
       .orderBy(asc(books.id));
     const positionClearedIds = new Set<number>();
-    const pool: LibraryBookSummary[] = [];
+    const pool: PoolBook[] = [];
     for (const row of rows) {
       if (!seriesNameMatchesTargets(targets, row.seriesName!)) continue;
-      pool.push({ id: row.id, title: row.title, seriesPosition: row.seriesPosition });
+      pool.push({ id: row.id, title: row.title, seriesPosition: row.seriesPosition, seriesName: row.seriesName! });
       if (parseClearedFields(row.userClearedFields, this.log, row.id).includes('seriesPosition')) {
         positionClearedIds.add(row.id);
       }
