@@ -1,8 +1,20 @@
-const { RuleTester } = require('eslint');
-const rule = require('./no-tautological-expect.cjs');
+import { describe, it } from 'vitest';
+import { RuleTester } from 'eslint';
+import tseslint from 'typescript-eslint';
+import rule from './no-tautological-expect.cjs';
 
+// Wire RuleTester into Vitest so each case reports independently.
+RuleTester.describe = describe;
+RuleTester.it = it;
+
+// Under this pnpm layout only the root `typescript-eslint` parser resolves here.
+// Untyped on purpose: the rule is purely syntactic, and a TS program would import
+// the #2239 single-run crash class for no benefit.
 const ruleTester = new RuleTester({
-  languageOptions: { ecmaVersion: 2022, sourceType: 'module' },
+  languageOptions: {
+    parser: tseslint.parser,
+    parserOptions: { ecmaVersion: 'latest', sourceType: 'module' },
+  },
 });
 
 ruleTester.run('no-tautological-expect', rule, {
@@ -58,5 +70,3 @@ ruleTester.run('no-tautological-expect', rule, {
     },
   ],
 });
-
-console.log('no-tautological-expect: all tests passed');
