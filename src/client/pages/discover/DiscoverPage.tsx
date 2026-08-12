@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api, ApiError, parseAddBookConflict, type SuggestionRow, type CreateBookPayload } from '@/lib/api';
+import { api, ApiError, parseAddBookConflict, formatReviewConflictMessage, type SuggestionRow, type CreateBookPayload } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { useBookStats } from '@/hooks/useLibrary';
@@ -70,9 +70,7 @@ function useDiscoverMutations(setAddedMap: React.Dispatch<React.SetStateAction<M
         // `review` is the resolver abstaining; marking added would write an ownership claim the
         // server never made, and the durable mark cannot be undone from this card.
         if (conflict === 'review') {
-          toast.info(incumbentTitle
-            ? `Possible duplicate (review): may be the same recording as '${incumbentTitle}'`
-            : 'Possible duplicate (review): may be the same recording as a book already in your library');
+          toast.info(formatReviewConflictMessage(incumbentTitle));
           return;
         }
         markAdded(suggestion.id, incumbentId);

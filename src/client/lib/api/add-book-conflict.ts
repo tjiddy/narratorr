@@ -21,3 +21,14 @@ export function parseAddBookConflict(body: unknown): AddBookConflictDetails {
     incumbentTitle: typeof b.title === 'string' ? b.title : null,
   };
 }
+
+/**
+ * The toast-shaped surfaces' shared review copy. A review is the resolver abstaining, so the wording
+ * must never read as an ownership claim; a blank incumbent title drops the name rather than quoting
+ * nothing.
+ */
+export function formatReviewConflictMessage(incumbentTitle: string | null): string {
+  return incumbentTitle?.trim()
+    ? `Possible duplicate (review): may be the same recording as '${incumbentTitle}'`
+    : 'Possible duplicate (review): may be the same recording as a book already in your library';
+}

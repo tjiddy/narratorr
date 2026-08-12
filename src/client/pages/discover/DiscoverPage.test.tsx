@@ -12,6 +12,7 @@ vi.mock('sonner', () => ({
 // The 409 reader is deliberately NOT stubbed: the discriminator rule is what these tests assert.
 vi.mock('@/lib/api', async () => ({
   parseAddBookConflict: (await import('@/lib/api/add-book-conflict.js')).parseAddBookConflict,
+  formatReviewConflictMessage: (await import('@/lib/api/add-book-conflict.js')).formatReviewConflictMessage,
   api: {
     getDiscoverSuggestions: vi.fn(),
     addBook: vi.fn(),
@@ -760,7 +761,9 @@ describe('DiscoverPage', () => {
         await addOnce();
 
         await waitFor(() => {
-          expect(toast.info).toHaveBeenCalledWith(expect.stringContaining('Possible duplicate (review)'));
+          expect(toast.info).toHaveBeenCalledWith(
+            "Possible duplicate (review): may be the same recording as 'Piranesi'",
+          );
         });
         expect(toast.info).not.toHaveBeenCalledWith('Already in library');
       });

@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ManualAddForm } from './ManualAddForm';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { toast } from 'sonner';
 import { queryKeys } from '@/lib/queryKeys';
 
@@ -25,6 +25,7 @@ vi.mock('sonner', () => ({
   toast: {
     success: vi.fn(),
     error: vi.fn(),
+    info: vi.fn(),
   },
 }));
 
@@ -247,6 +248,132 @@ describe('ManualAddForm', () => {
       await waitFor(() => {
         expect(onSuccess).toHaveBeenCalled();
       });
+    });
+  });
+
+  // A 409 means nothing was created, and the form has no "Add anyway" control to offer — so it must
+  // keep the operator's typed values instead of resetting and closing (#2212).
+  describe('#2212 409 conflict branches', () => {
+    async function submitAgainst(
+      body: unknown,
+      props: { onSuccess?: () => void; onPendingChange?: (pending: boolean) => void } = {},
+    ) {
+      const user = userEvent.setup();
+      (api.addBook as ReturnType<typeof vi.fn>).mockRejectedValue(new ApiError(409, body));
+      const rendered = renderForm(props);
+      const invalidateSpy = vi.spyOn(rendered.queryClient, 'invalidateQueries');
+
+      await user.type(screen.getByLabelText(/title/i), 'Shogun');
+      await user.click(screen.getByRole('button', { name: /add book/i }));
+
+      return { ...rendered, invalidateSpy };
+    }
+
+    /** The two branches are mutually exclusive: a review must not also make the ownership claim. */
+    function expectNoOwnershipClaim(invalidateSpy: ReturnType<typeof vi.spyOn>) {
+      expect(toast.info).not.toHaveBeenCalledWith('Already in library');
+      expect(toast.info).toHaveBeenCalledTimes(1);
+      expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: queryKeys.books() });
+    }
+
+    it('shows the review copy and keeps the typed values on a review 409', async () => {
+      const onSuccess = vi.fn();
+      const { invalidateSpy } = await submitAgainst({ conflict: 'review', id: 88, title: 'Piranesi' }, { onSuccess });
+
+      await waitFor(() => {
+        expect(toast.info).toHaveBeenCalledWith(
+          "Possible duplicate (review): may be the same recording as 'Piranesi'",
+        );
+      });
+
+      expect(onSuccess).not.toHaveBeenCalled();
+      expect(screen.getByLabelText(/title/i)).toHaveValue('Shogun');
+      expect(toast.error).not.toHaveBeenCalled();
+      expectNoOwnershipClaim(invalidateSpy);
+    });
+
+    it('falls back to the generic review copy when the 409 body carries no title', async () => {
+      const { invalidateSpy } = await submitAgainst({ conflict: 'review', id: 3 });
+
+      await waitFor(() => {
+        expect(toast.info).toHaveBeenCalledWith(
+          'Possible duplicate (review): may be the same recording as a book already in your library',
+        );
+      });
+      expect(toast.error).not.toHaveBeenCalled();
+      expectNoOwnershipClaim(invalidateSpy);
+    });
+
+    it.each([
+      ['same-recording', { conflict: 'same-recording', id: 7, title: 'Owned' }],
+      ['an absent discriminator', { id: 7, title: 'Owned' }],
+      ['an unrecognized discriminator', { conflict: 'bogus' }],
+      ['a null body', null],
+      ['an array body', []],
+    ])('claims ownership and refreshes the library for %s', async (_label, body) => {
+      const onSuccess = vi.fn();
+      const { queryClient } = renderForm({ onSuccess });
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+      const user = userEvent.setup();
+      (api.addBook as ReturnType<typeof vi.fn>).mockRejectedValue(new ApiError(409, body));
+
+      await user.type(screen.getByLabelText(/title/i), 'Shogun');
+      await user.click(screen.getByRole('button', { name: /add book/i }));
+
+      await waitFor(() => {
+        expect(toast.info).toHaveBeenCalledWith('Already in library');
+      });
+
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
+      expect(onSuccess).not.toHaveBeenCalled();
+      expect(screen.getByLabelText(/title/i)).toHaveValue('Shogun');
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it('keeps the failure copy for a non-409 ApiError', async () => {
+      const user = userEvent.setup();
+      (api.addBook as ReturnType<typeof vi.fn>).mockRejectedValue(new ApiError(500, null));
+      renderForm();
+
+      await user.type(screen.getByLabelText(/title/i), 'Shogun');
+      await user.click(screen.getByRole('button', { name: /add book/i }));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Failed to add book: HTTP 500');
+      });
+      expect(toast.info).not.toHaveBeenCalled();
+    });
+
+    // The modal's close guard tracks isPending, so a held add must still leave the form closable.
+    it('re-enables the submit button and reports not-pending after a 409 settles', async () => {
+      const onPendingChange = vi.fn();
+      const user = userEvent.setup();
+      let rejectAdd!: (reason: unknown) => void;
+      (api.addBook as ReturnType<typeof vi.fn>).mockImplementation(
+        () => new Promise((_resolve, reject) => { rejectAdd = reject; }),
+      );
+      renderForm({ onPendingChange });
+
+      await user.type(screen.getByLabelText(/title/i), 'Shogun');
+      await user.click(screen.getByRole('button', { name: /add book/i }));
+
+      await waitFor(() => {
+        expect(onPendingChange).toHaveBeenCalledWith(true);
+      });
+
+      rejectAdd(new ApiError(409, { conflict: 'review', id: 88, title: 'Piranesi' }));
+
+      await waitFor(() => {
+        expect(toast.info).toHaveBeenCalled();
+      });
+
+      await waitFor(() => {
+        expect(onPendingChange.mock.calls.at(-1)).toEqual([false]);
+      });
+
+      const submit = screen.getByRole('button', { name: /add book/i });
+      expect(submit).toBeEnabled();
+      expect(submit).toHaveTextContent('Add Book');
     });
   });
 
