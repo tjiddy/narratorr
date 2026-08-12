@@ -234,6 +234,8 @@ describe('ManualAddForm', () => {
       await waitFor(() => {
         expect(toast.error).toHaveBeenCalledWith('Failed to add book: Network error');
       });
+      // A plain Error is not an ApiError, so no conflict verdict exists to act on.
+      expect(toast.info).not.toHaveBeenCalled();
     });
 
     it('calls onSuccess callback after successful add', async () => {
@@ -306,6 +308,7 @@ describe('ManualAddForm', () => {
 
     it.each([
       ['same-recording', { conflict: 'same-recording', id: 7, title: 'Owned' }],
+      ['owned-race', { conflict: 'owned-race', id: 7, title: 'Owned' }],
       ['an absent discriminator', { id: 7, title: 'Owned' }],
       ['an unrecognized discriminator', { conflict: 'bogus' }],
       ['a null body', null],

@@ -7,18 +7,16 @@ import { createMockBook } from '@/__tests__/factories';
 import type { BookMetadata, BookWithAuthor } from '@/lib/api';
 
 // The 409 reader and its copy are deliberately NOT stubbed: the discriminator and wording rules are
-// what these tests assert.
+// what these tests assert. `ApiError` must be the REAL class, not a stand-in — readAddBookConflict
+// gates on `instanceof ApiError` inside a module this factory does not replace, so a look-alike
+// would return null and drop every 409 test into the error-toast path (#2258).
 vi.mock('@/lib/api', async () => ({
-  parseAddBookConflict: (await import('@/lib/api/add-book-conflict.js')).parseAddBookConflict,
+  readAddBookConflict: (await import('@/lib/api/add-book-conflict.js')).readAddBookConflict,
   formatReviewConflictMessage: (await import('@/lib/api/add-book-conflict.js')).formatReviewConflictMessage,
   api: {
     addBook: vi.fn(),
   },
-  ApiError: class extends Error {
-    status: number;
-    body: unknown;
-    constructor(s: number, b: unknown) { super(`HTTP ${s}`); this.status = s; this.body = b; }
-  },
+  ApiError: (await import('@/lib/api/client.js')).ApiError,
 }));
 
 vi.mock('sonner', () => ({
@@ -261,6 +259,9 @@ describe('useAddBooksToLibrary', () => {
       });
 
       expect(result.current.addingAsins.has('B005')).toBe(false);
+      // A plain Error is not an ApiError, so no conflict verdict exists to act on.
+      expect(toast.info).not.toHaveBeenCalled();
+      expect(result.current.isBookAdded(book)).toBe(false);
     });
   });
 
