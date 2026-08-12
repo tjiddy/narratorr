@@ -16,6 +16,11 @@ function wrapperFor(client: QueryClient) {
   );
 }
 
+/** One timer turn — query-core's notifyManager schedules observer notifications with setTimeout(0). */
+async function settleTimers() {
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+}
+
 describe('useGenerationGuard — capture/liveness contract', () => {
   it('T1: a context captured while mounted is live, and generation 0 is not special-cased', () => {
     const { result, rerender } = renderHook(() => useGenerationGuard());
@@ -63,19 +68,15 @@ describe('useGenerationGuard — capture/liveness contract', () => {
     expect(result.current.capture).toBe(first.capture);
     expect(result.current.isLive).toBe(first.isLive);
     expect(result.current.retire).toBe(first.retire);
+    // The guard object is memoized too, so a caller may put the whole surface in a dep array.
+    expect(result.current).toBe(first);
   });
 
-  it('T5: ordinary commits do not advance the generation', () => {
-    const client = makeClient();
+  it('T5a: prop-driven re-renders do not advance the generation', () => {
     let renders = 0;
     const { result, rerender } = renderHook(
-      (_props: { n: number }) => {
-        renders += 1;
-        const guard = useGenerationGuard();
-        useQuery({ queryKey: PROBE_KEY, queryFn: () => Promise.resolve('v0'), staleTime: Infinity });
-        return guard;
-      },
-      { wrapper: wrapperFor(client), initialProps: { n: 0 } },
+      (_props: { n: number }) => { renders += 1; return useGenerationGuard(); },
+      { initialProps: { n: 0 } },
     );
 
     const captured = result.current.capture();
@@ -84,10 +85,35 @@ describe('useGenerationGuard — capture/liveness contract', () => {
     rerender({ n: 1 });
     rerender({ n: 2 });
     rerender({ n: 3 });
-    // A cache write the mounted hook observes is a commit this hook did not ask for.
-    act(() => { client.setQueryData(PROBE_KEY, 'v1'); });
 
     expect(renders).toBeGreaterThan(rendersAtCapture);
+    expect(result.current.isLive(captured)).toBe(true);
+  });
+
+  it('T5b: a commit driven by an observed cache write does not advance the generation', async () => {
+    const client = makeClient();
+    let renders = 0;
+    const { result } = renderHook(
+      () => {
+        renders += 1;
+        const guard = useGenerationGuard();
+        useQuery({ queryKey: PROBE_KEY, queryFn: () => Promise.resolve('v0'), staleTime: Infinity });
+        return guard;
+      },
+      { wrapper: wrapperFor(client) },
+    );
+    await settleTimers();
+
+    const captured = result.current.capture();
+    // Baseline immediately before the write: nothing else may account for the commit that follows.
+    const rendersBeforeWrite = renders;
+
+    // query-core notifies observers on a macrotask, so a bare synchronous act() commits nothing —
+    // without the flush this hook never re-renders and the observation below is vacuous.
+    act(() => { client.setQueryData(PROBE_KEY, 'v1'); });
+    await settleTimers();
+
+    expect(renders).toBeGreaterThan(rendersBeforeWrite);
     expect(result.current.isLive(captured)).toBe(true);
   });
 
