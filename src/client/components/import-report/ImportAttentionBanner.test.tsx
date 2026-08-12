@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { StrictMode } from 'react';
 import { screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useLocation } from 'react-router';
+import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { queryKeys } from '@/lib/queryKeys';
 import { FAST_POLL_MS, BASELINE_POLL_MS } from '@/lib/import-report/polling';
 import { ImportAttentionBanner } from './ImportAttentionBanner';
 import { __resetDismissalMemory, loadDismissedKeys } from '@/lib/import-report/dismissalStore';
@@ -283,5 +286,99 @@ describe('ImportAttentionBanner (#1894)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'View details' }));
     await waitFor(() => expect(screen.getByTestId('loc').textContent).toBe('/activity?tab=history&run=42'));
     expect(loadDismissedKeys()).toContain('42:completed-attention');
+  });
+});
+
+/**
+ * The banner's discard callbacks are hook-level, so they fire after the host route drops it.
+ * "No setState after unmount" has no observation point under React 19 (the update is a silent
+ * no-op), so these cases pin the two properties that ARE observable: the cache half stays
+ * unconditional and correctly ordered, and the mounted lifecycle is unchanged.
+ */
+describe('ImportAttentionBanner discard callbacks after unmount (#2227)', () => {
+  const attentionKey = queryKeys.importSubmissions.attention('library');
+  const newClient = () => new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  it('a discard settling after unmount still nulls every cached attention copy BEFORE invalidating the feed', async () => {
+    const qc = newClient();
+    getImportSubmissionAttention.mockResolvedValue(resp(abandoned(3), true));
+    let release!: () => void;
+    discardImportSubmission.mockReturnValue(new Promise<{ success: true }>((res) => { release = () => res({ success: true }); }));
+    const { unmount } = renderWithProviders(
+      <ImportAttentionBanner source="library" onImportAgain={vi.fn()} />, { queryClient: qc },
+    );
+    await screen.findByTestId('import-attention-banner');
+
+    // Order probe: the rewrite has to have landed by the time invalidation fires, or a failed
+    // refetch resurrects the delete action. Only reading the end state can't tell the two apart.
+    const attentionAtInvalidate: Array<AttentionSubmission | null | undefined> = [];
+    const invalidate = qc.invalidateQueries.bind(qc);
+    vi.spyOn(qc, 'invalidateQueries').mockImplementation((...args: Parameters<typeof invalidate>) => {
+      attentionAtInvalidate.push(qc.getQueryData<AttentionResponse>(attentionKey)?.data);
+      return invalidate(...args);
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    unmount();
+    release();
+
+    await waitFor(() => expect(qc.getQueryData<AttentionResponse>(attentionKey)?.data).toBeNull());
+    expect(qc.getQueryState(attentionKey)?.isInvalidated).toBe(true);
+    expect(attentionAtInvalidate).toEqual([null]);
+  });
+
+  it('a discard REJECTING after unmount settles as an error and leaves the cached envelope intact', async () => {
+    const qc = newClient();
+    getImportSubmissionAttention.mockResolvedValue(resp(abandoned(3), true));
+    let reject!: () => void;
+    discardImportSubmission.mockReturnValue(new Promise((_res, rej) => { reject = () => rej(new Error('409 conflict')); }));
+    const { unmount } = renderWithProviders(
+      <ImportAttentionBanner source="library" onImportAgain={vi.fn()} />, { queryClient: qc },
+    );
+    await screen.findByTestId('import-attention-banner');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    unmount();
+    reject();
+
+    // The component is gone, so the mutation cache is the only place the callback's execution is visible.
+    await waitFor(() => expect(qc.getMutationCache().getAll().map((m) => m.state.status)).toContain('error'));
+    expect(qc.getQueryData<AttentionResponse>(attentionKey)?.data).toEqual(expect.objectContaining({ id: 3 }));
+    expect(qc.getQueryState(attentionKey)?.isInvalidated).toBe(false);
+  });
+
+  it('a discard error still surfaces after StrictMode’s dev-mode mount → unmount → remount', async () => {
+    getImportSubmissionAttention.mockResolvedValue(resp(abandoned(3), true));
+    discardImportSubmission.mockRejectedValue(new Error('409 conflict'));
+    renderWithProviders(
+      <StrictMode><ImportAttentionBanner source="library" onImportAgain={vi.fn()} /></StrictMode>,
+    );
+    await screen.findByTestId('import-attention-banner');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(await screen.findByTestId('attention-discard-error')).toHaveTextContent('409 conflict');
+  });
+
+  it('a successful Retry clears the discard error on a banner that is still mounted', async () => {
+    const qc = newClient();
+    getImportSubmissionAttention.mockResolvedValueOnce(resp(abandoned(3), true));
+    // The post-discard refetch reports a DIFFERENT run so the banner stays on screen; otherwise the
+    // error would vanish with the banner and prove nothing about the success path clearing it.
+    getImportSubmissionAttention.mockResolvedValue(resp(abandoned(9), true));
+    discardImportSubmission.mockRejectedValueOnce(new Error('409 conflict'));
+    discardImportSubmission.mockResolvedValue({ success: true });
+    renderWithProviders(
+      <ImportAttentionBanner source="library" onImportAgain={vi.fn()} />, { queryClient: qc },
+    );
+    await screen.findByTestId('import-attention-banner');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    await screen.findByTestId('attention-discard-error');
+    await userEvent.click(within(screen.getByTestId('attention-discard-error')).getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => expect(qc.getQueryData<AttentionResponse>(attentionKey)?.data?.id).toBe(9));
+    expect(screen.getByTestId('import-attention-banner')).toBeInTheDocument();
+    expect(screen.queryByTestId('attention-discard-error')).not.toBeInTheDocument();
+    expect(discardImportSubmission).toHaveBeenNthCalledWith(2, 3);
   });
 });
