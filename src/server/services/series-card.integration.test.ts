@@ -3,7 +3,7 @@ import { generatePublicId } from '../utils/public-id.js';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { eq, sql } from 'drizzle-orm';
+import { asc, eq, sql } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from '@db/index.js';
 import { books, bookAuthors, authors, series, seriesMembers } from '@db/schema.js';
@@ -55,20 +55,61 @@ async function forcePoolReorderingIndex(db: Db): Promise<void> {
   await db.run(sql`CREATE INDEX idx_books_pool_covering_2175 ON books (series_name, title, series_position, user_cleared_fields)`);
 }
 
-/** Captures SQL and args: AC14 requires one pool statement with zero pool-derived parameters; count alone misses a dynamic IN query returning identical rows. */
-function spyStatements(db: Db): { executed: { sql: string; args: unknown }[]; restore: () => void } {
-  const client = db.$client as unknown as { execute: (...a: unknown[]) => unknown };
-  const original = client.execute.bind(client);
-  const executed: { sql: string; args: unknown }[] = [];
-  client.execute = ((stmt: unknown, ...rest: unknown[]) => {
-    const text = typeof stmt === 'string' ? stmt : (stmt as { sql?: string })?.sql ?? '';
-    executed.push({ sql: text, args: typeof stmt === 'string' ? [] : (stmt as { args?: unknown })?.args ?? [] });
-    return original(stmt as never, ...(rest as never[]));
-  }) as typeof client.execute;
-  return { executed, restore: () => { client.execute = original as typeof client.execute; } };
+/** `scope` is 'client' for statements on the connection, or `tx<n>` for the nth transaction opened while spying. */
+interface CapturedStatement { scope: string; sql: string; args: unknown }
+
+interface StatementSpy {
+  executed: CapturedStatement[];
+  /** One entry per transaction opened while spying, in open order; length is the transaction count. */
+  transactions: string[];
+  restore: () => void;
 }
 
-function poolStatements(executed: { sql: string; args: unknown }[]): { sql: string; args: unknown }[] {
+/**
+ * Captures SQL and args: AC14 requires one pool statement with zero pool-derived parameters; count alone misses a dynamic IN query returning identical rows.
+ * Drizzle routes a query on a `tx` handle through the libsql transaction object rather than the
+ * client (`libsql/session.js`: `this.tx ? this.tx.execute(stmt) : this.client.execute(stmt)`), so
+ * patching `client.execute` alone captures statements inside a transaction ZERO times. Wrapping the
+ * handle `client.transaction()` returns is the only observation point that sees them (#2194 T0).
+ */
+function spyStatements(db: Db): StatementSpy {
+  type Executor = { execute: (...a: unknown[]) => unknown };
+  const client = db.$client as unknown as Executor & { transaction: (...a: unknown[]) => Promise<Executor> };
+  const originalExecute = client.execute.bind(client);
+  const originalTransaction = client.transaction.bind(client);
+  const executed: CapturedStatement[] = [];
+  const transactions: string[] = [];
+
+  function instrument(target: Executor, scope: string): void {
+    const inner = target.execute.bind(target);
+    // Instance assignment shadows Sqlite3Transaction.prototype.execute; the prototype is untouched.
+    target.execute = ((stmt: unknown, ...rest: unknown[]) => {
+      const text = typeof stmt === 'string' ? stmt : (stmt as { sql?: string })?.sql ?? '';
+      executed.push({ scope, sql: text, args: typeof stmt === 'string' ? [] : (stmt as { args?: unknown })?.args ?? [] });
+      return inner(stmt as never, ...(rest as never[]));
+    }) as typeof target.execute;
+  }
+
+  instrument(client, 'client');
+  client.transaction = (async (...args: unknown[]) => {
+    const tx = await originalTransaction(...(args as never[]));
+    const scope = `tx${transactions.length + 1}`;
+    transactions.push(scope);
+    instrument(tx, scope);
+    return tx;
+  }) as typeof client.transaction;
+
+  return {
+    executed,
+    transactions,
+    restore: () => {
+      client.execute = originalExecute as typeof client.execute;
+      client.transaction = originalTransaction as typeof client.transaction;
+    },
+  };
+}
+
+function poolStatements(executed: CapturedStatement[]): CapturedStatement[] {
   return executed.filter((s) => /from "books"/i.test(s.sql) && /"series_position"/.test(s.sql) && /"user_cleared_fields"/.test(s.sql));
 }
 
@@ -1818,6 +1859,281 @@ describe('SeriesCardService — integration', () => {
         expect(rows.find((r) => r.hardcoverBookId === 7711)!.bookId).toBe(kings);
         expect(rows.find((r) => r.hardcoverBookId === 7712)!.bookId).toBe(drifted);
         expect((await db.select().from(books).where(eq(books.id, kings)))[0]!.seriesName).toBe('The Band');
+      });
+    });
+  });
+
+  describe('#2194 — the bind path loads the library pool once', () => {
+    function mockHardcover(payload: unknown): ReturnType<typeof vi.fn> {
+      const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
+        new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+      ));
+      globalThis.fetch = fetchMock as typeof globalThis.fetch;
+      return fetchMock;
+    }
+
+    /** Members are `[position, hardcoverBookId, title]`. */
+    function seriesPayload(id: number, name: string, author: string, members: readonly [number | null, number, string][]): unknown {
+      return {
+        data: {
+          series: [{
+            id, name, slug: `series-${id}`, author: { name: author },
+            book_series: members.map(([position, bookId, title]) => ({
+              position,
+              book: { id: bookId, slug: `book-${bookId}`, title, image: null, users_count: 100 },
+            })),
+          }],
+        },
+      };
+    }
+
+    function boundService(): SeriesCardService {
+      return new SeriesCardService(db, log, settingsServiceWith('TEST_KEY'));
+    }
+
+    function localRows(rows: { source: string }[]): { source: string }[] {
+      return rows.filter((row) => row.source === 'local');
+    }
+
+    function allMembers(): Promise<(typeof seriesMembers.$inferSelect)[]> {
+      return db.select().from(seriesMembers).orderBy(asc(seriesMembers.id));
+    }
+
+    describe('AC1 — the statement count', () => {
+      it('a bind with a prior series name issues one pool statement inside the transaction and one post-commit', async () => {
+        const initiating = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
+        const sibling = await seedBookWithSeries(db, { title: 'An Unrelated Sibling', seriesName: 'The Earthsea Cycle', seriesPosition: 9, authorName: 'Ursula K. Le Guin' });
+        mockHardcover(seriesPayload(4242, 'The Earthsea Quartet', 'Ursula K. Le Guin', [[1, 5001, 'A Wizard of Earthsea']]));
+
+        const spy = spyStatements(db);
+        const bound = await boundService().bindHardcoverSeries(initiating, 4242);
+        spy.restore();
+
+        const pool = poolStatements(spy.executed);
+        expect(pool.map((s) => s.scope)).toEqual(['tx1', 'client']);
+        expect(pool.map((s) => s.args)).toEqual([[], []]);
+        expect(pool.every((s) => /"series_name" is not null/i.test(s.sql))).toBe(true);
+        // The unmatched sibling keeps its pre-bind name, so the post-commit canonical pool has
+        // nothing unclaimed and reconcileUnclaimedMembers never opens a second transaction.
+        // Pinning this makes fixture drift fail loudly instead of inflating the pool totals.
+        expect(spy.transactions).toHaveLength(1);
+        expect(bound!.card.members.map((m) => m.title)).toEqual(['A Wizard of Earthsea']);
+        expect((await db.select().from(books).where(eq(books.id, sibling)))[0]!.seriesName).toBe('The Earthsea Cycle');
+      });
+    });
+
+    describe('AC2 / AC3 — the derived pool is the same set as the query it replaces', () => {
+      it('a canonical-name-drifted sibling is still seeded inside the bind transaction', async () => {
+        const initiating = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'Old Name', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
+        const drifted = await seedBookWithSeries(db, { title: 'The Tombs of Atuan', seriesName: 'new series', seriesPosition: 2, authorName: 'Ursula K. Le Guin' });
+        mockHardcover(seriesPayload(4243, 'New Series', 'Ursula K. Le Guin', [[1, 5001, 'A Wizard of Earthsea']]));
+
+        const spy = spyStatements(db);
+        await boundService().bindHardcoverSeries(initiating, 4243);
+        spy.restore();
+
+        expect(localRows(await allMembers()).map((r) => (r as { bookId: number }).bookId)).toEqual([drifted]);
+        // The post-commit reconcile would seed `drifted` too, so the row alone cannot distinguish a
+        // byte-equality filter from the folded one — only the absence of a second transaction can.
+        expect(spy.transactions).toHaveLength(1);
+      });
+
+      it('a re-bind whose prior name equals the canonical name behaves like the no-extras path', async () => {
+        const initiating = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Quartet', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
+        const sibling = await seedBookWithSeries(db, { title: 'The Tombs of Atuan', seriesName: 'The Earthsea Quartet', seriesPosition: 2, authorName: 'Ursula K. Le Guin' });
+        mockHardcover(seriesPayload(4244, 'The Earthsea Quartet', 'Ursula K. Le Guin', [[1, 5001, 'A Wizard of Earthsea']]));
+
+        const spy = spyStatements(db);
+        await boundService().bindHardcoverSeries(initiating, 4244);
+        spy.restore();
+
+        expect(poolStatements(spy.executed).map((s) => s.scope)).toEqual(['tx1', 'client']);
+        expect(spy.transactions).toHaveLength(1);
+        expect(localRows(await allMembers()).map((r) => (r as { bookId: number }).bookId)).toEqual([sibling]);
+      });
+
+      it('a whitespace-only prior name widens matching but not seeding', async () => {
+        const initiating = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: '  ', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
+        const legacy = await seedBookWithSeries(db, { title: 'Some Other Book', seriesName: '  ', seriesPosition: 7, authorName: 'Ursula K. Le Guin' });
+        mockHardcover(seriesPayload(4245, 'The Earthsea Quartet', 'Ursula K. Le Guin', [[1, 5001, 'A Wizard of Earthsea']]));
+
+        const bound = await boundService().bindHardcoverSeries(initiating, 4245);
+
+        expect(bound!.syncedIds).toEqual([initiating]);
+        expect((await allMembers()).filter((r) => r.bookId === legacy)).toHaveLength(0);
+        expect((await db.select().from(books).where(eq(books.id, legacy)))[0]!.seriesName).toBe('  ');
+      });
+
+      it('an empty-normalized canonical name seeds no other empty-normalized series', async () => {
+        const santi = await seedBookWithSeries(db, { title: '三体', seriesName: '三体', seriesPosition: 1, authorName: 'Liu Cixin' });
+        const dozory = await seedBookWithSeries(db, { title: 'Ночной Дозор', seriesName: 'Дозоры', seriesPosition: 1, authorName: 'Sergei Lukyanenko' });
+        const bangs = await seedBookWithSeries(db, { title: 'Loud', seriesName: '!!!', seriesPosition: 1, authorName: 'Someone Else' });
+        const blank = await seedBookWithSeries(db, { title: 'Blank', seriesName: '', seriesPosition: 1, authorName: 'Nobody' });
+        mockHardcover(seriesPayload(9001, '三体', 'Liu Cixin', [[1, 3001, '三体']]));
+
+        const bound = await boundService().bindHardcoverSeries(santi, 9001);
+
+        expect(bound!.syncedIds).toEqual([santi]);
+        const members = await allMembers();
+        expect(localRows(members)).toHaveLength(0);
+        for (const [id, name] of [[dozory, 'Дозоры'], [bangs, '!!!'], [blank, '']] as const) {
+          expect(members.filter((r) => r.bookId === id)).toHaveLength(0);
+          expect((await db.select().from(books).where(eq(books.id, id)))[0]!.seriesName).toBe(name);
+        }
+      });
+
+      it('a byte-identical second spelling of an empty-normalized canonical name is seeded', async () => {
+        const santi = await seedBookWithSeries(db, { title: '三体', seriesName: '三体', seriesPosition: 1, authorName: 'Liu Cixin' });
+        const sequel = await seedBookWithSeries(db, { title: '黑暗森林', seriesName: '三体', seriesPosition: 2, authorName: 'Liu Cixin' });
+        mockHardcover(seriesPayload(9002, '三体', 'Liu Cixin', [[1, 3001, '三体']]));
+
+        const spy = spyStatements(db);
+        await boundService().bindHardcoverSeries(santi, 9002);
+        spy.restore();
+
+        expect(localRows(await allMembers()).map((r) => (r as { bookId: number }).bookId)).toEqual([sequel]);
+        expect(spy.transactions).toHaveLength(1);
+      });
+
+      it('a case-drifted spelling of an empty-normalized canonical name is not seeded', async () => {
+        const night = await seedBookWithSeries(db, { title: 'Ночной Дозор', seriesName: 'Дозоры', seriesPosition: 1, authorName: 'Sergei Lukyanenko' });
+        const drifted = await seedBookWithSeries(db, { title: 'Дневной Дозор', seriesName: 'дозоры', seriesPosition: 2, authorName: 'Sergei Lukyanenko' });
+        mockHardcover(seriesPayload(9003, 'Дозоры', 'Sergei Lukyanenko', [[1, 3002, 'Ночной Дозор']]));
+
+        await boundService().bindHardcoverSeries(night, 9003);
+
+        expect((await allMembers()).filter((r) => r.bookId === drifted)).toHaveLength(0);
+        expect((await db.select().from(books).where(eq(books.id, drifted)))[0]!.seriesName).toBe('дозоры');
+      });
+    });
+
+    describe('AC4 — the pinned claim order survives the derivation', () => {
+      it('local rows are seeded lower-id-first even when the planner returns the pool reversed', async () => {
+        const initiating = await seedBookWithSeries(db, { title: 'Anchor Book', seriesName: 'Old Name', seriesPosition: 1, authorName: 'Frank Herbert' });
+        const lowerId = await seedBookWithSeries(db, { title: 'Chapterhouse Dune', seriesName: 'zeta series', seriesPosition: null, authorName: 'Frank Herbert' });
+        const higherId = await seedBookWithSeries(db, { title: 'Heretics of Dune', seriesName: 'Zeta Series', seriesPosition: null, authorName: 'Frank Herbert' });
+        expect(higherId).toBeGreaterThan(lowerId);
+
+        await forcePoolReorderingIndex(db);
+        // Explicit precondition: without a genuinely non-ascending plan this case is vacuous (#2175 AC7a).
+        expect(await poolProbeIds(db)).toEqual([initiating, higherId, lowerId]);
+        mockHardcover(seriesPayload(7704, 'Zeta Series', 'Frank Herbert', [[1, 4001, 'Anchor Book']]));
+
+        await boundService().bindHardcoverSeries(initiating, 7704);
+
+        expect(localRows(await allMembers()).map((r) => (r as { bookId: number }).bookId)).toEqual([lowerId, higherId]);
+      });
+
+      it('the lower-id book wins the claim when two spellings match the same member', async () => {
+        const initiating = await seedBookWithSeries(db, { title: 'Anchor Book', seriesName: 'Old Name', seriesPosition: 1, authorName: 'Frank Herbert' });
+        const lowerId = await seedBookWithSeries(db, { title: 'Chapterhouse Dune', seriesName: 'zeta series', seriesPosition: null, authorName: 'Frank Herbert' });
+        const higherId = await seedBookWithSeries(db, { title: 'Chapterhouse: Dune', seriesName: 'Zeta Series', seriesPosition: null, authorName: 'Frank Herbert' });
+
+        await forcePoolReorderingIndex(db);
+        expect(await poolProbeIds(db)).toEqual([initiating, higherId, lowerId]);
+        mockHardcover(seriesPayload(7705, 'Zeta Series', 'Frank Herbert', [[1, 4001, 'Anchor Book'], [null, 4002, 'Chapterhouse: Dune']]));
+
+        await boundService().bindHardcoverSeries(initiating, 7705);
+
+        const members = await allMembers();
+        expect(members.find((r) => r.hardcoverBookId === 4002)!.bookId).toBe(lowerId);
+        expect(localRows(members).map((r) => (r as { bookId: number }).bookId)).toEqual([higherId]);
+      });
+    });
+
+    describe('AC5 — the seeding scope does not widen', () => {
+      it('a pre-bind-named sibling that DOES match a member is still matched and synced', async () => {
+        const initiating = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
+        const sibling = await seedBookWithSeries(db, { title: 'The Tombs of Atuan', seriesName: 'The Earthsea Cycle', seriesPosition: 2, authorName: 'Ursula K. Le Guin' });
+        mockHardcover(seriesPayload(4246, 'The Earthsea Quartet', 'Ursula K. Le Guin', [
+          [1, 5001, 'A Wizard of Earthsea'],
+          [2, 5002, 'The Tombs of Atuan'],
+        ]));
+
+        const bound = await boundService().bindHardcoverSeries(initiating, 4246);
+
+        expect([...bound!.syncedIds].sort((a, b) => a - b)).toEqual([initiating, sibling]);
+        expect((await db.select().from(books).where(eq(books.id, sibling)))[0]!.seriesName).toBe('The Earthsea Quartet');
+        const members = await allMembers();
+        expect(members.find((r) => r.hardcoverBookId === 5002)!.bookId).toBe(sibling);
+        expect(localRows(members)).toHaveLength(0);
+      });
+    });
+
+    describe('AC7 — the untouched paths', () => {
+      it('a cache-miss GET still issues one pool statement in its transaction and one post-commit', async () => {
+        const anchor = await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
+        const drifted = await seedBookWithSeries(db, { title: 'Bloody Rose', seriesName: 'the band', seriesPosition: 2, authorName: 'Nicholas Eames' });
+        mockHardcover(seriesPayload(5523, 'The Band', 'Nicholas Eames', [
+          [1, 7711, 'Kings of the Wyld'],
+          [2, 7712, 'Bloody Rose'],
+        ]));
+
+        const spy = spyStatements(db);
+        const card = await boundService().getSeriesForBook(anchor);
+        spy.restore();
+
+        expect(poolStatements(spy.executed).map((s) => s.scope)).toEqual(['tx1', 'client']);
+        expect(spy.transactions).toHaveLength(1);
+        expect(card!.members.map((m) => m.libraryBookId)).toEqual([anchor, drifted]);
+      });
+    });
+
+    describe('boundary and null cases', () => {
+      it('a bind in a library with no series-carrying rows seeds nothing and scans the pool once', async () => {
+        const initiating = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: null, authorName: 'Ursula K. Le Guin' });
+        mockHardcover(seriesPayload(4247, 'The Earthsea Quartet', 'Ursula K. Le Guin', [[1, 5001, 'A Wizard of Earthsea']]));
+
+        const spy = spyStatements(db);
+        const bound = await boundService().bindHardcoverSeries(initiating, 4247);
+        spy.restore();
+
+        expect(poolStatements(spy.executed).filter((s) => s.scope === 'tx1')).toHaveLength(1);
+        expect(bound!.syncedIds).toEqual([initiating]);
+        expect(localRows(await allMembers())).toHaveLength(0);
+      });
+
+      it('a Hardcover series exposing no members seeds every canonical-name book in id order', async () => {
+        const initiating = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'Old Name', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
+        const first = await seedBookWithSeries(db, { title: 'The Tombs of Atuan', seriesName: 'New Series', seriesPosition: 2, authorName: 'Ursula K. Le Guin' });
+        const second = await seedBookWithSeries(db, { title: 'The Farthest Shore', seriesName: 'new series', seriesPosition: 3, authorName: 'Ursula K. Le Guin' });
+        mockHardcover(seriesPayload(4248, 'New Series', 'Ursula K. Le Guin', []));
+
+        await boundService().bindHardcoverSeries(initiating, 4248);
+
+        const members = await allMembers();
+        // The bind transaction seeds the two canonical-name books in id order; the initiator adopts
+        // the canonical name only afterwards, so the post-commit reconcile appends it last.
+        expect(members.map((r) => r.bookId)).toEqual([first, second, initiating]);
+        expect(localRows(members)).toHaveLength(3);
+      });
+
+      it('a bind whose members claim every canonical-name book writes no local row', async () => {
+        const initiating = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'Old Name', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
+        await seedBookWithSeries(db, { title: 'The Tombs of Atuan', seriesName: 'New Series', seriesPosition: 2, authorName: 'Ursula K. Le Guin' });
+        mockHardcover(seriesPayload(4249, 'New Series', 'Ursula K. Le Guin', [
+          [1, 5001, 'A Wizard of Earthsea'],
+          [2, 5002, 'The Tombs of Atuan'],
+        ]));
+
+        const spy = spyStatements(db);
+        await boundService().bindHardcoverSeries(initiating, 4249);
+        spy.restore();
+
+        expect(localRows(await allMembers())).toHaveLength(0);
+        expect(spy.transactions).toHaveLength(1);
+      });
+
+      it('a seriesName-tombstoned book never enters the derived seeding pool', async () => {
+        const initiating = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'Old Name', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
+        const tombstoned = await seedBookWithSeries(db, { title: 'The Tombs of Atuan', seriesName: null, seriesPosition: null, authorName: 'Ursula K. Le Guin' });
+        await db.update(books).set({ userClearedFields: '["seriesName"]' }).where(eq(books.id, tombstoned));
+        mockHardcover(seriesPayload(4250, 'New Series', 'Ursula K. Le Guin', [[1, 5001, 'A Wizard of Earthsea']]));
+
+        await boundService().bindHardcoverSeries(initiating, 4250);
+
+        expect((await allMembers()).filter((r) => r.bookId === tombstoned)).toHaveLength(0);
+        expect((await db.select().from(books).where(eq(books.id, tombstoned)))[0]!.seriesName).toBeNull();
       });
     });
   });
