@@ -16,6 +16,7 @@ import {
 } from './series-card-members.js';
 import { readPositionClearedBookIds, relinkBookToBoundSeries, removeSeriesNameTombstone, seedLocalMembersForUnclaimedBooks } from './book-series-link.js';
 import { upsertHardcoverSeries } from './hardcover-series-upsert.js';
+import { usefulString } from './metadata-recording-collapse.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
 import { buildSeriesNameTargets, seriesNameMatchesTargets } from '../utils/series-name-targets.js';
 import { parseClearedFields } from '../utils/cleared-fields.js';
@@ -376,6 +377,9 @@ export class SeriesCardService {
 
     const resolved = await this.fetchById(apiKey, hardcoverSeriesId);
     if (!resolved) return null;
+    // Before the transaction: inside it, persistMembers would still seed a normalized_name = '' row
+    // and removeSeriesNameTombstone would still fire. Reuses the unresolvable-bind null → 502 (#2224).
+    if (!usefulString(resolved.name)) return null;
 
     const priorSeriesName = book.seriesName;
 

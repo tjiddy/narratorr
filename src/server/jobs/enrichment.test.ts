@@ -835,6 +835,62 @@ describe('enrichment job', () => {
       expect(setCall).toHaveProperty('seriesName', 'Discworld');
       expect(setCall).toHaveProperty('seriesPosition', 3);
     });
+
+    // A whitespace-only provider name passed the bare truthiness guard and blank-named the book (#2224).
+    describe('an unusable provider series name is skipped, not written (#2224)', () => {
+      const UNUSABLE = [
+        ['empty string', ''],
+        ['spaces', '   '],
+        ['tab + newline', '\t\n'],
+        ['non-breaking space', '\u00A0'],
+      ] as const;
+
+      it.each(UNUSABLE)('%s: writes neither seriesName nor seriesPosition', async (_label, name) => {
+        setupEnrichment({ seriesName: null, seriesPosition: null }, { series: [{ name, position: 2 }] });
+        await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+        const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
+        expect(setCall).not.toHaveProperty('seriesName');
+        expect(setCall).not.toHaveProperty('seriesPosition');
+      });
+
+      // Skip, not clear: the usable-name path above deliberately overwrites an orphan position.
+      it('leaves a pre-existing orphan seriesPosition untouched rather than pairing or clearing it', async () => {
+        setupEnrichment({ seriesName: null, seriesPosition: 5 }, { series: [{ name: '   ', position: 2 }] });
+        await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+        const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
+        expect(setCall).not.toHaveProperty('seriesName');
+        expect(setCall).not.toHaveProperty('seriesPosition');
+      });
+
+      it('a blank canonical primary means "no series", never a fallback to series[0]', async () => {
+        setupEnrichment({ seriesName: null, seriesPosition: null }, {
+          seriesPrimary: { name: '   ', position: 2 },
+          series: [{ name: 'The Cosmere', position: 5 }],
+        });
+        await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+        const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
+        expect(setCall).not.toHaveProperty('seriesName');
+        expect(setCall).not.toHaveProperty('seriesPosition');
+      });
+
+      it('the rest of the enrichment still applies — a blank series is a skipped field, not a failed run', async () => {
+        setupEnrichment(
+          { seriesName: null, seriesPosition: null, duration: null, description: null, coverUrl: null },
+          {
+            series: [{ name: '   ', position: 2 }],
+            duration: 2700,
+            description: 'An epic doorstopper.',
+            coverUrl: 'https://example.com/cover.jpg',
+          },
+        );
+        await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+        const setCall = db.update.mock.results[0]!.value.set.mock.calls[0][0];
+        expect(setCall).toHaveProperty('duration', 2700);
+        expect(setCall).toHaveProperty('description', 'An epic doorstopper.');
+        expect(setCall).toHaveProperty('coverUrl', 'https://example.com/cover.jpg');
+        expect(setCall).toHaveProperty('enrichmentStatus', 'enriched');
+      });
+    });
   });
 
   describe('counter tracking (#398)', () => {

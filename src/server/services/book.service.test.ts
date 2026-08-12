@@ -8,7 +8,7 @@ import { buildBookCreatePayload } from './enrichment-orchestration.helpers.js';
 import type { ProductionType } from '@shared/schemas/book.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
 import { eq } from 'drizzle-orm';
-import { authors, books } from '@db/schema.js';
+import { authors, books, series, seriesMembers } from '@db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db, DbOrTx } from '@db/index.js';
 import type { MetadataService } from './metadata.service.js';
@@ -771,6 +771,70 @@ describe('BookService', () => {
       const valuesArg = insertChain.values.mock.calls[0][0] as Record<string, unknown>;
       expect(valuesArg.subtitle).toBeUndefined();
       expect(valuesArg.publisher).toBeUndefined();
+    });
+  });
+
+  // A provider blank ('   ') passed every bare truthiness guard and reached books.series_name (#2224).
+  describe('create — an unusable provider series name never reaches the insert', () => {
+    /** The shared blank ladder: `undefined` plus every schema-reachable whitespace-only string. */
+    const UNUSABLE: Array<[label: string, value: string | undefined]> = [
+      ['undefined', undefined],
+      ['empty string', ''],
+      ['spaces', '   '],
+      ['tab + newline', '\t\n'],
+      ['non-breaking space', '\u00A0'],
+    ];
+
+    function runCreate(seriesName: string | undefined, seriesPosition?: number) {
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+      return {
+        insertChain,
+        done: service.create({ title: 'Leviathan Wakes', authors: [], seriesName, seriesPosition }),
+      };
+    }
+
+    const insertedTables = () => db.insert.mock.calls.map(([table]) => table);
+
+    it.each(UNUSABLE)('%s: neither seriesName nor seriesPosition reaches the insert payload', async (_label, value) => {
+      const { insertChain, done } = runCreate(value, 3);
+      await done;
+
+      const values = insertChain.values.mock.calls[0]![0] as Record<string, unknown>;
+      // Key absence, not falsiness: a present-undefined key would satisfy objectContaining (#2243).
+      expect(values).not.toHaveProperty('seriesName');
+      expect(values).not.toHaveProperty('seriesPosition');
+    });
+
+    it.each(UNUSABLE)('%s: no series row and no member row are seeded', async (_label, value) => {
+      const { done } = runCreate(value, 3);
+      await done;
+
+      expect(insertedTables()).toEqual([books]);
+    });
+
+    it('a usable name still seeds the series link (the negative cases are not vacuous)', async () => {
+      const { done } = runCreate('The Expanse', 3);
+      await done;
+
+      expect(insertedTables()).toEqual([books, series, seriesMembers]);
+    });
+
+    it('a padded-but-usable name is persisted verbatim, alongside its position', async () => {
+      const { insertChain, done } = runCreate('  The Expanse  ', 3);
+      await done;
+
+      const values = insertChain.values.mock.calls[0]![0] as Record<string, unknown>;
+      expect(values).toHaveProperty('seriesName', '  The Expanse  ');
+      expect(values).toHaveProperty('seriesPosition', 3);
+    });
+
+    it('a position with no name at all stays an orphan that is never written', async () => {
+      const { insertChain, done } = runCreate(undefined, 3);
+      await done;
+
+      const values = insertChain.values.mock.calls[0]![0] as Record<string, unknown>;
+      expect(values).not.toHaveProperty('seriesPosition');
     });
   });
 

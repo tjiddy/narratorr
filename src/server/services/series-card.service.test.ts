@@ -807,6 +807,83 @@ describe('SeriesCardService — unit', () => {
       const book = (await db.select().from(books).where(eq(books.id, bookId)))[0]!;
       expect(book.seriesName).toBe('The Earthsea Cycle');
     });
+
+    /**
+     * A blank canonical name would blank-name the whole matched cohort and seed a
+     * `normalized_name = ''` row that every other blank-named book collapses into (#2224).
+     * The ladder is string-only: `name` is a required string on the Hardcover schema, so an
+     * absent name fails `seriesMembersResponseSchema` and returns at the pre-existing
+     * `!resolved` arm — a row that would stay green with this guard deleted (F4).
+     */
+    describe('refuses a blank canonical name (#2224)', () => {
+      const UNUSABLE = [
+        ['empty string', ''],
+        ['spaces', '   '],
+        ['tab + newline', '\t\n'],
+        ['non-breaking space', '\u00A0'],
+      ] as const;
+
+      async function seedCohort(): Promise<{ initiator: number; sibling: number }> {
+        const initiator = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
+        const sibling = await seedBookWithSeries(db, { title: 'The Tombs of Atuan', seriesName: 'The Earthsea Cycle', seriesPosition: 2, authorName: 'Ursula K. Le Guin' });
+        await db.update(books).set({ userClearedFields: '["seriesName"]' }).where(eq(books.id, initiator));
+        return { initiator, sibling };
+      }
+
+      function mockBlankNamedSeries(name: string): void {
+        mockFetchOnce(hardcoverSeriesPayload({
+          id: 4242, name, author: 'Ursula K. Le Guin',
+          members: [
+            { position: 1, id: 1, slug: 'wizard', title: 'A Wizard of Earthsea' },
+            { position: 5, id: 2, slug: 'tombs', title: 'The Tombs of Atuan' },
+          ],
+        }));
+      }
+
+      it.each(UNUSABLE)('%s: returns null and leaves the initiator untouched', async (_label, name) => {
+        const { initiator } = await seedCohort();
+        mockBlankNamedSeries(name);
+
+        const svc = new SeriesCardService(db, log, settingsServiceWith('K'));
+        expect(await svc.bindHardcoverSeries(initiator, 4242)).toBeNull();
+
+        const book = (await db.select().from(books).where(eq(books.id, initiator)))[0]!;
+        expect(book.seriesName).toBe('The Earthsea Cycle');
+        expect(book.seriesPosition).toBe(1);
+        // The tombstone removal lives inside the transaction the guard returns before.
+        expect(book.userClearedFields).toBe('["seriesName"]');
+        expect(await db.select().from(series).where(eq(series.hardcoverSeriesId, 4242))).toHaveLength(0);
+        expect((await db.select().from(series)).filter((r) => r.normalizedName === '')).toHaveLength(0);
+      });
+
+      it('leaves the matched cohort untouched — no partial rewrite before the bail', async () => {
+        const { initiator, sibling } = await seedCohort();
+        mockBlankNamedSeries('   ');
+
+        const svc = new SeriesCardService(db, log, settingsServiceWith('K'));
+        expect(await svc.bindHardcoverSeries(initiator, 4242)).toBeNull();
+
+        const other = (await db.select().from(books).where(eq(books.id, sibling)))[0]!;
+        expect(other.seriesName).toBe('The Earthsea Cycle');
+        expect(other.seriesPosition).toBe(2);
+        expect(await db.select().from(seriesMembers)).toHaveLength(0);
+      });
+
+      it('the identical bind with a usable name still binds the cohort (the refusals are not vacuous)', async () => {
+        const { initiator, sibling } = await seedCohort();
+        mockBlankNamedSeries('The Earthsea Quartet');
+
+        const svc = new SeriesCardService(db, log, settingsServiceWith('K'));
+        const bound = await svc.bindHardcoverSeries(initiator, 4242);
+
+        expect(bound!.card.name).toBe('The Earthsea Quartet');
+        const rows = await db.select().from(series).where(eq(series.hardcoverSeriesId, 4242));
+        expect(rows).toHaveLength(1);
+        const other = (await db.select().from(books).where(eq(books.id, sibling)))[0]!;
+        expect(other.seriesName).toBe('The Earthsea Quartet');
+        expect(other.seriesPosition).toBe(5);
+      });
+    });
   });
 
   // Post-commit sidecar/tag refresh must receive rewritten ids from the transaction result, never an outer accumulator (#2098).

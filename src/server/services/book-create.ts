@@ -1,6 +1,7 @@
 import { type books } from '@db/schema.js';
 import { generatePublicId } from '../utils/public-id.js';
 import { productionTypeSchema, type ProductionType } from '@shared/schemas/book.js';
+import { usefulString } from './metadata-recording-collapse.js';
 import type { BookRow } from './types.js';
 
 /** Public create payload; providerId is consumed before the insert primitive. */
@@ -33,6 +34,11 @@ export function buildNewBookValues(
   data: ResolvedBookCreateInput,
   canonicalAsin: string | null,
 ): typeof books.$inferInsert {
+  // Computed as a pair so a blank provider name can never leave an orphan position behind (#2224).
+  const seriesPair = usefulString(data.seriesName)
+    ? { seriesName: data.seriesName, seriesPosition: data.seriesPosition }
+    : {};
+
   return {
     publicId: generatePublicId('bk'),
     title: data.title,
@@ -42,8 +48,7 @@ export function buildNewBookValues(
     coverUrl: data.coverUrl,
     asin: canonicalAsin,
     isbn: data.isbn,
-    seriesName: data.seriesName,
-    seriesPosition: data.seriesPosition,
+    ...seriesPair,
     duration: data.duration,
     publishedDate: data.publishedDate,
     genres: data.genres,

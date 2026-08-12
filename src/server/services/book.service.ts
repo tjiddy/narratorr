@@ -24,6 +24,7 @@ import type { CompanionEbookV1 } from '@shared/schemas/v1/companion-ebook.js';
 import { findLibraryStatusByAsins } from './book-library-status.js';
 import { trackUnmatchedGenres } from './unmatched-genres.js';
 import { buildNewBookValues, type CreateBookInput, type ResolvedBookCreateInput } from './book-create.js';
+import { usefulString } from './metadata-recording-collapse.js';
 import { canonicalizeAsin } from '@shared/asin.js';
 import { isUniqueViolation } from '@shared/error-message.js';
 import {
@@ -71,6 +72,11 @@ export interface FixMatchReplacement {
 }
 
 function buildFixMatchScalarUpdates(r: FixMatchReplacement): Partial<typeof books.$inferInsert> {
+  // Fix Match replaces identity wholesale, so an unusable name clears the pair rather than omitting it.
+  const seriesPair = usefulString(r.seriesName)
+    ? { seriesName: r.seriesName ?? null, seriesPosition: r.seriesPosition ?? null }
+    : { seriesName: null, seriesPosition: null };
+
   return {
     title: r.title,
     subtitle: r.subtitle ?? null,
@@ -79,8 +85,7 @@ function buildFixMatchScalarUpdates(r: FixMatchReplacement): Partial<typeof book
     coverUrl: r.coverUrl ?? null,
     asin: canonicalizeAsin(r.asin),
     isbn: r.isbn ?? null,
-    seriesName: r.seriesName ?? null,
-    seriesPosition: r.seriesPosition ?? null,
+    ...seriesPair,
     duration: r.duration ?? null,
     publishedDate: r.publishedDate ?? null,
     genres: r.genres ?? null,
@@ -93,7 +98,8 @@ function buildFixMatchScalarUpdates(r: FixMatchReplacement): Partial<typeof book
 }
 
 function buildReplaceSeriesLinkArgs(r: FixMatchReplacement): ReplaceSeriesLinkArgs | null {
-  if (!r.seriesName) return null;
+  // Null detaches any prior link, so an unusable name clears the series instead of seeding a blank one (#2224).
+  if (r.seriesName === undefined || !usefulString(r.seriesName)) return null;
   return {
     name: r.seriesName,
     position: r.seriesPosition ?? null,
@@ -289,7 +295,9 @@ export class BookService {
     }
 
     // Seed a local member immediately; Hardcover hydration may replace it with canonical members.
-    if (data.seriesName) {
+    // A blank name would normalize to '' and collapse every blank-named book into one junk row (#2224).
+    // usefulString is a plain boolean, so the presence check carries the narrowing.
+    if (data.seriesName !== undefined && usefulString(data.seriesName)) {
       await upsertSeriesLink(tx, this.log, id, {
         name: data.seriesName,
         position: data.seriesPosition ?? null,
