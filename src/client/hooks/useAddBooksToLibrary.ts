@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api, type BookMetadata, type LibraryEntry } from '@/lib/api';
+import { api, ApiError, parseAddBookConflict, formatReviewConflictMessage, type BookMetadata, type LibraryEntry } from '@/lib/api';
 import { mapBookMetadataToPayload, isBookInLibrary } from '@/lib/helpers';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
@@ -39,6 +39,20 @@ export function useAddBooksToLibrary(libraryBooks?: LibraryEntry[], qualityDefau
         next.delete(key);
         return next;
       });
+      if (error instanceof ApiError && error.status === 409) {
+        // The 409 body is the incumbent row plus the conflict discriminator.
+        const { conflict, incumbentTitle } = parseAddBookConflict(error.body);
+        // `review` is the server abstaining; claiming the key would strand the book behind an Add
+        // control it can never re-enable.
+        if (conflict === 'review') {
+          toast.info(formatReviewConflictMessage(incumbentTitle));
+          return;
+        }
+        setAddedAsins((prev) => new Set(prev).add(key));
+        toast.info('Already in library');
+        queryClient.invalidateQueries({ queryKey: queryKeys.books() });
+        return;
+      }
       toast.error(`Failed to add '${book.title}': ${getErrorMessage(error)}`);
     },
   });
