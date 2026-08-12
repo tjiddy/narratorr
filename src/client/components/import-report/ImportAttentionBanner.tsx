@@ -9,8 +9,8 @@ import { useAttentionDismissal, dismissalKey } from '@/lib/import-report/dismiss
 
 /**
  * Server-authoritative banner. `source` scopes import pages; omission is
- * cross-source. Dismissals use id + kind so later states reappear. Read and
- * discard failures remain visible and retryable.
+ * cross-source. Dismissals use id + kind so later states reappear. Read failures
+ * remain visible and retryable; a discard failure is retryable against its own run.
  */
 export function ImportAttentionBanner({
   source,
@@ -23,7 +23,9 @@ export function ImportAttentionBanner({
   const { isDismissed, dismiss } = useAttentionDismissal();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [discardError, setDiscardError] = useState<string | null>(null);
+  // Attention resolves to the newest qualifying run, so a failure outlives the run it came from;
+  // the id is what keeps the error — and its Retry — attached to the run the operator acted on.
+  const [discardError, setDiscardError] = useState<{ id: number; message: string } | null>(null);
 
   // Hook-level mutation callbacks still fire after the host route drops this banner; advance on a
   // synchronous seam so lifecycle-local effects are suppressed while shared caches still reconcile.
@@ -43,9 +45,9 @@ export function ImportAttentionBanner({
       if (context.gen !== genRef.current) return;
       setDiscardError(null);
     },
-    onError: (error: unknown, _vars, context: { gen: number } | undefined) => {
+    onError: (error: unknown, failedId: number, context: { gen: number } | undefined) => {
       if (context && context.gen !== genRef.current) return;
-      setDiscardError(getErrorMessage(error));
+      setDiscardError({ id: failedId, message: getErrorMessage(error) });
     },
   });
 
@@ -119,10 +121,12 @@ export function ImportAttentionBanner({
           </button>
         </span>
       </div>
-      {discardError && (
+      {discardError && discardError.id === data.id && (
+        // Hidden, not cleared, while another run is displayed: the failure is still unresolved, so
+        // it must reappear if this run does. Retry re-targets its own run, never the displayed one.
         <div className="mt-2 flex items-center gap-2 text-xs text-destructive" data-testid="attention-discard-error">
-          <span>Couldn’t discard: {discardError}</span>
-          <button type="button" className="underline" onClick={() => discardMutation.mutate(data.id)}>Retry</button>
+          <span>Couldn’t discard: {discardError.message}</span>
+          <button type="button" className="underline" onClick={() => discardMutation.mutate(discardError.id)}>Retry</button>
         </div>
       )}
     </div>
