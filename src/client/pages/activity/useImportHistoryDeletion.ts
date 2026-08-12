@@ -1,10 +1,11 @@
-import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { SUBMISSION_ERROR_CODES } from '@core/import-staging/schemas.js';
 import { api, ApiError } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { useGenerationGuard, type GenerationContext } from '@/hooks/useGenerationGuard';
 import { getErrorMessage } from '@/lib/error-message.js';
 
 const IN_FLIGHT_COPY = 'This run is still importing — you can delete it once it finishes.';
@@ -36,10 +37,9 @@ export function useImportHistoryDeletion() {
   const [error, setError] = useState<string | null>(null);
 
   // ActivityPage drops this section when the user leaves the History tab, but hook-level mutation
-  // callbacks still fire. Advancing on the layout seam means a callback landing after teardown sees
+  // callbacks still fire. One guard serves both mutations: a callback landing after teardown sees
   // a stale generation and skips the lifecycle-local half.
-  const genRef = useRef(0);
-  useLayoutEffect(() => () => { genRef.current += 1; }, []);
+  const { capture, isLive } = useGenerationGuard();
 
   /**
    * One rule for both paths, keyed on the ids the SERVER reports as deleted — never on a
@@ -73,30 +73,30 @@ export function useImportHistoryDeletion() {
       }
       return id;
     },
-    onMutate: () => { setError(null); return { gen: genRef.current }; },
-    onSuccess: (id, _vars, context: { gen: number }) => {
-      const live = context.gen === genRef.current;
+    onMutate: () => { setError(null); return capture(); },
+    onSuccess: (id, _vars, context: GenerationContext) => {
+      const live = isLive(context);
       applyDeletion([id], live);
       if (!live) return;
       toast.success('Import run deleted');
     },
-    onError: (err: unknown, _vars, context: { gen: number } | undefined) => {
-      if (context && context.gen !== genRef.current) return;
+    onError: (err: unknown, _vars, context: GenerationContext | undefined) => {
+      if (!isLive(context)) return;
       setError(isInFlight(err) ? IN_FLIGHT_COPY : `Couldn’t delete this import run: ${getErrorMessage(err)}`);
     },
   });
 
   const clearMutation = useMutation({
     mutationFn: () => api.clearCompletedImportSubmissions(),
-    onMutate: () => { setError(null); return { gen: genRef.current }; },
-    onSuccess: (result, _vars, context: { gen: number }) => {
-      const live = context.gen === genRef.current;
+    onMutate: () => { setError(null); return capture(); },
+    onSuccess: (result, _vars, context: GenerationContext) => {
+      const live = isLive(context);
       applyDeletion(result.ids, live);
       if (!live) return;
       toast.success(clearedCopy(result.deleted));
     },
-    onError: (err: unknown, _vars, context: { gen: number } | undefined) => {
-      if (context && context.gen !== genRef.current) return;
+    onError: (err: unknown, _vars, context: GenerationContext | undefined) => {
+      if (!isLive(context)) return;
       setError(`Couldn’t clear completed runs: ${getErrorMessage(err)}`);
     },
   });

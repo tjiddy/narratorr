@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { toast } from 'sonner';
@@ -11,6 +11,7 @@ import {
 } from '@/lib/api';
 import { selectAddAllMembers } from '@shared/series-add-all.js';
 import { queryKeys } from '@/lib/queryKeys';
+import { useGenerationGuard, type GenerationContext } from '@/hooks/useGenerationGuard';
 import { RefreshIcon, LoadingSpinner, PencilIcon } from '@/components/icons';
 import { AddBookPopover } from '@/components/AddBookPopover';
 import { FixSeriesModal } from '@/components/book/FixSeriesModal';
@@ -57,20 +58,19 @@ interface AddAllControlProps {
 function AddAllControl({ bookId, count }: AddAllControlProps) {
   const queryClient = useQueryClient();
 
-  // Hook-level mutation callbacks still fire after unmount; advance on a synchronous seam so
-  // lifecycle-local effects are suppressed while shared caches are still reconciled.
-  const genRef = useRef(0);
-  useLayoutEffect(() => () => { genRef.current += 1; }, []);
+  // Hook-level mutation callbacks still fire after unmount; the guard suppresses lifecycle-local
+  // effects while shared caches are still reconciled.
+  const { capture, isLive } = useGenerationGuard();
 
   const addAll = useMutation({
     mutationFn: (searchImmediately: boolean) => api.addAllInSeries(bookId, searchImmediately),
-    onMutate: () => ({ gen: genRef.current }),
-    onSuccess: (result: AddAllSeriesResponse, _vars, context: { gen: number }) => {
+    onMutate: capture,
+    onSuccess: (result: AddAllSeriesResponse, _vars, context: GenerationContext) => {
       // bookSeries is not a child of books, so the card would keep showing '+ Add' without it.
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       queryClient.invalidateQueries({ queryKey: queryKeys.bookIdentifiers() });
       queryClient.invalidateQueries({ queryKey: queryKeys.bookSeries(bookId) });
-      if (context.gen !== genRef.current) return;
+      if (!isLive(context)) return;
       const summary = summarizeBatch(result);
       // `owned` and `held` are durable successes — an idempotent rerun or a stale card legitimately
       // creates nothing — so only a run that added nothing AND failed something is error-shaped.
@@ -78,7 +78,7 @@ function AddAllControl({ bookId, count }: AddAllControlProps) {
       else toast.success(summary);
     },
     onError: (_error, _vars, context) => {
-      if (context && context.gen !== genRef.current) return;
+      if (!isLive(context)) return;
       toast.error('Failed to add the series to your library');
     },
   });

@@ -1,9 +1,10 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, type AttentionResponse, type AttentionSubmission } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { useImportAttention } from '@/hooks/useImportReport';
+import { useGenerationGuard, type GenerationContext } from '@/hooks/useGenerationGuard';
 import { attentionCopy } from '@/lib/import-report/attentionCopy';
 import { useAttentionDismissal, dismissalKey } from '@/lib/import-report/dismissalStore';
 
@@ -27,26 +28,25 @@ export function ImportAttentionBanner({
   // the id is what keeps the error — and its Retry — attached to the run the operator acted on.
   const [discardError, setDiscardError] = useState<{ id: number; message: string } | null>(null);
 
-  // Hook-level mutation callbacks still fire after the host route drops this banner; advance on a
-  // synchronous seam so lifecycle-local effects are suppressed while shared caches still reconcile.
-  const genRef = useRef(0);
-  useLayoutEffect(() => () => { genRef.current += 1; }, []);
+  // Hook-level mutation callbacks still fire after the host route drops this banner; the guard
+  // suppresses lifecycle-local effects while shared caches still reconcile.
+  const { capture, isLive } = useGenerationGuard();
 
   const discardMutation = useMutation({
     mutationFn: (id: number) => api.discardImportSubmission(id),
-    onMutate: () => ({ gen: genRef.current }),
-    onSuccess: (_result, discardedId, context: { gen: number }) => {
+    onMutate: capture,
+    onSuccess: (_result, discardedId, context: GenerationContext) => {
       // Clear every cached copy before refetch; a failed refetch must not resurrect the delete action.
       queryClient.setQueriesData<AttentionResponse>(
         { queryKey: ['importSubmissions', 'attention'] },
         (old) => (old && old.data?.id === discardedId ? { ...old, data: null } : old),
       );
       queryClient.invalidateQueries({ queryKey: ['importSubmissions'] });
-      if (context.gen !== genRef.current) return;
+      if (!isLive(context)) return;
       setDiscardError(null);
     },
-    onError: (error: unknown, failedId: number, context: { gen: number } | undefined) => {
-      if (context && context.gen !== genRef.current) return;
+    onError: (error: unknown, failedId: number, context: GenerationContext | undefined) => {
+      if (!isLive(context)) return;
       setDiscardError({ id: failedId, message: getErrorMessage(error) });
     },
   });

@@ -1,12 +1,13 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useMutation, useQueryClient, type UseMutationResult } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, type CompanionEbookCandidate, type CompanionEbookState } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { SELECTION_SUCCESS_TOAST, selectionErrorMessage } from './companion-ebook-copy.js';
+import { useGenerationGuard, type GenerationContext } from '@/hooks/useGenerationGuard';
 
-interface SelectionContext {
-  gen: number;
+/** `gen` comes from the guard so the stamp and the check cannot drift apart. */
+interface SelectionContext extends GenerationContext {
   bookId: number;
 }
 
@@ -32,27 +33,27 @@ export function useCompanionEbookSelection(
 ): CompanionEbookSelection {
   const queryClient = useQueryClient();
   const [pickedFilename, setPickedFilename] = useState<string | null>(null);
-  const genRef = useRef(0);
+  const { capture, isLive, retire } = useGenerationGuard();
 
   const reset = useCallback(() => {
-    genRef.current += 1;
+    retire();
     setPickedFilename(null);
-  }, []);
+  }, [retire]);
 
   const mutation = useMutation<CompanionEbookState, Error, number, SelectionContext>({
     mutationFn: (index: number) => api.putCompanionEbookSelection(bookId, index),
-    onMutate: () => ({ gen: genRef.current, bookId }),
+    onMutate: () => ({ ...capture(), bookId }),
     onSuccess: async (result, _index, context) => {
       // Cancel pre-write state reads before they can overwrite the committed result.
       await queryClient.cancelQueries({ queryKey: queryKeys.companionEbook(context.bookId) });
       // The mutation and GET share a response shape, so assignment remains correct if refetch fails.
       queryClient.setQueryData(queryKeys.companionEbook(context.bookId), result);
-      if (context.gen !== genRef.current) return;
+      if (!isLive(context)) return;
       toast.success(SELECTION_SUCCESS_TOAST);
       setPickedFilename(null);
     },
     onError: (error, _index, context) => {
-      if (context && context.gen !== genRef.current) return;
+      if (!isLive(context)) return;
       toast.error(selectionErrorMessage(error));
     },
     onSettled: (_result, _error, _index, context) => {
