@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, type AttentionResponse, type AttentionSubmission } from '@/lib/api';
@@ -25,18 +25,28 @@ export function ImportAttentionBanner({
   const queryClient = useQueryClient();
   const [discardError, setDiscardError] = useState<string | null>(null);
 
+  // Hook-level mutation callbacks still fire after the host route drops this banner; advance on a
+  // synchronous seam so lifecycle-local effects are suppressed while shared caches still reconcile.
+  const genRef = useRef(0);
+  useLayoutEffect(() => () => { genRef.current += 1; }, []);
+
   const discardMutation = useMutation({
     mutationFn: (id: number) => api.discardImportSubmission(id),
-    onSuccess: (_result, discardedId) => {
-      setDiscardError(null);
+    onMutate: () => ({ gen: genRef.current }),
+    onSuccess: (_result, discardedId, context: { gen: number }) => {
       // Clear every cached copy before refetch; a failed refetch must not resurrect the delete action.
       queryClient.setQueriesData<AttentionResponse>(
         { queryKey: ['importSubmissions', 'attention'] },
         (old) => (old && old.data?.id === discardedId ? { ...old, data: null } : old),
       );
       queryClient.invalidateQueries({ queryKey: ['importSubmissions'] });
+      if (context.gen !== genRef.current) return;
+      setDiscardError(null);
     },
-    onError: (error: unknown) => setDiscardError(getErrorMessage(error)),
+    onError: (error: unknown, _vars, context: { gen: number } | undefined) => {
+      if (context && context.gen !== genRef.current) return;
+      setDiscardError(getErrorMessage(error));
+    },
   });
 
   const attentionError = (
