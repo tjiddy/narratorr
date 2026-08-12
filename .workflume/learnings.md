@@ -2342,3 +2342,100 @@ Same trigger, second mechanism: `RequestThrottle`'s `DEFAULT_THROTTLE_MS` is 200
 be instant. A `waitFor` polling for only the first created row then reads the database mid-batch —
 poll for the complete expected row set. Related: [[vimock-barrel-replace-drops-named-exports]],
 [[connected-client-server-vitest-harness]].
+
+## ruletester-single-fix-pass
+
+**source:** #2191
+**added:** 2026-08-12
+**files:** eslint-rules/no-raw-error-logging.test.js
+**tags:** eslint, ruletester, autofix, vitest
+
+---
+
+`RuleTester` applies exactly ONE fix pass: `Linter.verify` once, then `SourceCodeFixer.applyFixes`
+once, with overlapping fix ranges from later reports discarded and never retried. `eslint --fix` and
+editors use `Linter.verifyAndFix`, which loops up to 10 passes until output stabilizes. A green
+`output` assertion therefore pins single-pass semantics, NOT that the rule's autofix is safe.
+
+This bites any rule where several reports on one file emit fixes that overlap — the norm when each fix
+also inserts a shared import. `eslint-rules/no-raw-error-logging.cjs`'s `checkObjectArg` reports per
+matching property, and each fix rewrites the property plus calls `buildImportFixes`. For
+`log.error({error: e, err: e},'x')` RuleTester yields `{error: serializeError(e), err: e}` (second fix
+dropped), while `verifyAndFix` converges to `{error: serializeError(e), error: serializeError(e)}` — a
+duplicate key, a TS compile error. Pinned as case `C19`; case `C18` pins the same mechanic across two
+separate log calls.
+
+When authoring cases: capture `output` from a real run rather than hand-writing it (a wrong `output`
+surfaces as an assertion diff carrying the actual string, the cheapest way to read the true value), and
+when a rule's fixes can overlap, check the converged result with `new Linter().verifyAndFix(...)` before
+treating the autofix as safe. Extends [[eslint-rule-test-harness]] and
+[[typed-ruletester-program-hazards]].
+
+## onmutate-reads-generation-after-pending-commit
+
+**source:** #2227
+**added:** 2026-08-12
+**files:** src/client/components/import-report/ImportAttentionBanner.tsx, src/client/components/SeriesCard.tsx, src/client/hooks/useReplaceGrab.ts, src/client/pages/activity/useImportHistoryDeletion.ts, src/client/pages/book/useCompanionEbookSelection.ts
+**tags:** react-query, test-observability, useLayoutEffect
+
+---
+
+query-core v5 dispatches `{ type: 'pending' }` BEFORE awaiting `options.onMutate` (`Mutation#execute`
+in `build/modern/mutation.js`). A generation ref read inside `onMutate` therefore reflects the state
+AFTER the pending re-render has committed.
+
+Consequence for verifying the post-unmount guard from
+[[react-query-mutation-callbacks-post-unmount]]: the natural counterfactual — move the advance from the
+`useLayoutEffect` CLEANUP into its SETUP with no dep array — does NOT red a suite. The per-commit
+counter has already ticked by the time `onMutate` reads it, so both forms agree at settlement. Verified
+on #2227: that mutation left all 22 cases green. **A verification step that only tries this
+counterfactual reports a false all-clear.**
+
+The two forms diverge only when a commit lands between `onMutate` and settlement — a real production
+window wherever the component re-renders on a timer (the import attention banner polls every 3s, so a
+discard failure would be silently swallowed under the per-commit form). The discriminating probe: hold
+the mutation's promise, force a commit with `act(() => { qc.setQueryData(key, ...) })` on a test-owned
+QueryClient, then settle and assert the live-lifecycle effect still fires. With that case present the
+setup-form counterfactual reds. Example: `ImportAttentionBanner.test.tsx` ('a discard failing after a
+poll re-renders the mounted banner still surfaces the error').
+
+Applies to all five genRef sites listed in `files`. A different axis from
+[[rtl-layout-vs-passive-seam-testing]], which is layout vs passive cleanup; this is cleanup vs setup,
+and is observable where the seam axis is not.
+
+## drizzle-tx-statements-bypass-client-spy
+
+**source:** #2194
+**added:** 2026-08-12
+**files:** src/server/services/series-card.integration.test.ts
+**tags:** drizzle, libsql, test-observability, statement-counting
+
+---
+
+Drizzle's libsql session dispatches every prepared query as
+`this.tx ? this.tx.execute(stmt) : this.client.execute(stmt)` (drizzle-orm 0.45.2,
+`libsql/session.js:123/:134/:162`), and `LibSQLSession.transaction` (`:61`) gets that handle from
+`await this.client.transaction()`. A spy on `db.$client.execute` therefore captures statements issued
+on a `tx` handle **zero** times.
+
+Consequence: any query-count, argument, or ordering assertion about work inside a transaction is
+vacuous against a client-only spy — it reads the same number before and after the change it claims to
+pin. Measured on #2194's bind path: with the transaction handle instrumented, pool statements are
+`['tx1','tx1','client']` before the fix and `['tx1','client']` after; with only `client.execute`
+patched, both report `['client']`.
+
+The working observation point (`spyStatements`, `series-card.integration.test.ts`): patch
+`client.execute` AND `client.transaction`, wrapping each returned handle's `execute` by instance
+assignment — that shadows `Sqlite3Transaction.prototype.execute` and needs no prototype surgery. Tag
+each capture with a scope (`'client'` vs `tx<n>`) and expose the transaction open count. Both extras
+earn their place: the scope tag separates an in-transaction read from a post-commit render read that
+would otherwise inflate the total, and the transaction count catches work that migrates OUT of the
+transaction into a post-commit reconcile, which no per-statement count would notice.
+
+Do not open a nested `db.transaction` to observe the outer one — `runSerializedTransaction` rejects
+re-entry with `NestedTransactionError`.
+
+Close the loop the way [[vacuous-assertion-observation-points]] demands: switch the new instrumentation
+OFF and confirm the assertion then cannot distinguish fixed from unfixed code. On #2194 that check is
+what established the pre-existing helper had been blind all along — so treat any older statement-count
+assertion over a transactional path as unproven until re-checked.
