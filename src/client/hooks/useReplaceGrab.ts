@@ -1,9 +1,10 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, ApiError } from '@/lib/api';
 import type { GrabPayload } from '@shared/schemas/search.js';
 import { queryKeys } from '@/lib/queryKeys';
+import { useGenerationGuard, type GenerationContext } from '@/hooks/useGenerationGuard';
 import { getErrorMessage } from '@/lib/error-message.js';
 
 type PipelineActiveReason = 'processing' | 'awaiting_review';
@@ -61,28 +62,28 @@ export function useReplaceGrab(onGrabSuccess: () => void, bookTitle: string): Us
   const queryClient = useQueryClient();
   const [pending, setPending] = useState<PendingReplace | null>(null);
 
-  // reset() advances the lifecycle so callbacks from a closed modal or previous book cannot mutate this view.
-  const genRef = useRef(0);
+  // reset() retires the lifecycle so callbacks from a closed modal or previous book cannot mutate this view.
+  const { capture, isLive, retire } = useGenerationGuard();
   const reset = useCallback(() => {
-    genRef.current += 1;
+    retire();
     setPending(null);
-  }, []);
+  }, [retire]);
 
   const grabMutation = useMutation({
     mutationFn: (payload: GrabPayload) => api.searchGrab(payload),
-    onMutate: () => ({ gen: genRef.current }),
-    onSuccess: (_data, _vars, context: { gen: number }) => {
+    onMutate: capture,
+    onSuccess: (_data, _vars, context: GenerationContext) => {
       // The server changed even if this lifecycle is stale; always reconcile shared caches.
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       queryClient.invalidateQueries({ queryKey: queryKeys.activity() });
       // Suppress lifecycle-local effects after close or book change.
-      if (context.gen !== genRef.current) return;
+      if (!isLive(context)) return;
       toast.success('Download started! Check the Activity page.');
       setPending(null);
       onGrabSuccess();
     },
-    onError: (err: Error, variables: GrabPayload, context: { gen: number } | undefined) => {
-      if (context && context.gen !== genRef.current) return;
+    onError: (err: Error, variables: GrabPayload, context: GenerationContext | undefined) => {
+      if (!isLive(context)) return;
       const wasConfirmedRetry = variables.replace === true;
       if (err instanceof ApiError && err.status === 409) {
         const body = (err.body ?? {}) as ConflictBody;
