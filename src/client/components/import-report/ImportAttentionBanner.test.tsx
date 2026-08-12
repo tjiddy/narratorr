@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { StrictMode } from 'react';
-import { screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { screen, waitFor, fireEvent, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useLocation } from 'react-router';
 import { QueryClient } from '@tanstack/react-query';
@@ -345,6 +345,25 @@ describe('ImportAttentionBanner discard callbacks after unmount (#2227)', () => 
     await waitFor(() => expect(qc.getMutationCache().getAll().map((m) => m.state.status)).toContain('error'));
     expect(qc.getQueryData<AttentionResponse>(attentionKey)?.data).toEqual(expect.objectContaining({ id: 3 }));
     expect(qc.getQueryState(attentionKey)?.isInvalidated).toBe(false);
+  });
+
+  it('a discard failing after a poll re-renders the mounted banner still surfaces the error', async () => {
+    const qc = newClient();
+    getImportSubmissionAttention.mockResolvedValue(resp(abandoned(3), true));
+    let reject!: () => void;
+    discardImportSubmission.mockReturnValue(new Promise((_res, rej) => { reject = () => rej(new Error('409 conflict')); }));
+    renderWithProviders(
+      <ImportAttentionBanner source="library" onImportAgain={vi.fn()} />, { queryClient: qc },
+    );
+    await screen.findByTestId('import-attention-banner');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    // An attention poll landing mid-flight commits a new render. Only a real teardown may retire a
+    // generation — a generation advanced per commit would swallow this live failure.
+    act(() => { qc.setQueryData(attentionKey, resp(abandoned(3), true)); });
+    reject();
+
+    expect(await screen.findByTestId('attention-discard-error')).toHaveTextContent('409 conflict');
   });
 
   it('a discard error still surfaces after StrictMode’s dev-mode mount → unmount → remount', async () => {
