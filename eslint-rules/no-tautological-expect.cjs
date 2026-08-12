@@ -21,14 +21,38 @@ function literalValue(node) {
   return { kind: 'unknown' };
 }
 
+// Deliberately narrow. A blanket `expect.<member>(...)` would pull in the asymmetric-matcher
+// factories (`expect.any`, `expect.objectContaining`, …), whose argument is a matcher
+// specification, not an assertion subject.
+const EXPECT_MEMBERS = new Set(['soft']);
+
 function isExpectCall(node) {
+  if (!node || node.type !== 'CallExpression' || node.arguments.length < 1) return false;
+  const { callee } = node;
+  if (callee.type === 'Identifier') return callee.name === 'expect';
   return (
-    node &&
-    node.type === 'CallExpression' &&
-    node.callee.type === 'Identifier' &&
-    node.callee.name === 'expect' &&
-    node.arguments.length >= 1
+    callee.type === 'MemberExpression' &&
+    !callee.computed &&
+    callee.object.type === 'Identifier' &&
+    callee.object.name === 'expect' &&
+    callee.property.type === 'Identifier' &&
+    EXPECT_MEMBERS.has(callee.property.name)
   );
+}
+
+// Strips at most one `.not`. Traversing further would accept `expect(x).not.not.toBe(x)`,
+// which is not a tautology — the second negation restores the original assertion.
+function unwrapNegation(node) {
+  if (
+    node &&
+    node.type === 'MemberExpression' &&
+    !node.computed &&
+    node.property.type === 'Identifier' &&
+    node.property.name === 'not'
+  ) {
+    return { subject: node.object, negated: true };
+  }
+  return { subject: node, negated: false };
 }
 
 /** @type {import('eslint').Rule.RuleModule} */
@@ -43,6 +67,8 @@ const rule = {
     messages: {
       tautology:
         'Tautological assertion: `expect({{lhs}}).{{matcher}}({{rhs}})` always passes regardless of production behavior. Replace with an assertion that exercises the code under test, or remove if the test should rely on absence of exceptions.',
+      negatedTautology:
+        'Tautological assertion: `expect({{lhs}}).not.{{matcher}}({{rhs}})` always fails regardless of production behavior. Replace with an assertion that exercises the code under test, or remove it.',
     },
   },
 
@@ -55,7 +81,7 @@ const rule = {
         if (!matcherName || !TAUTOLOGY_MATCHERS.has(matcherName)) return;
         if (node.arguments.length !== 1) return;
 
-        const expectCall = node.callee.object;
+        const { subject: expectCall, negated } = unwrapNegation(node.callee.object);
         if (!isExpectCall(expectCall)) return;
 
         const lhs = literalValue(expectCall.arguments[0]);
@@ -66,7 +92,7 @@ const rule = {
         const sourceCode = context.sourceCode;
         context.report({
           node,
-          messageId: 'tautology',
+          messageId: negated ? 'negatedTautology' : 'tautology',
           data: {
             lhs: sourceCode.getText(expectCall.arguments[0]),
             matcher: matcherName,

@@ -44,8 +44,6 @@ ruleTester.run('no-tautological-expect', rule, {
 
     // Shape guards on `expect(...)` and the matcher.
 
-    { name: 'B8 negated matcher', code: `expect(true).not.toBe(true);` },
-    { name: 'B9 expect.soft is not a bare expect identifier', code: `expect.soft(true).toBe(true);` },
     { name: 'B10 computed matcher name', code: `expect(true)['toBe'](true);` },
     { name: 'B11 matcher with a second argument', code: `expect(true).toEqual(true, 'msg');` },
     { name: 'B12 toContain is outside the matcher allowlist', code: `expect(true).toContain(true);` },
@@ -59,6 +57,36 @@ ruleTester.run('no-tautological-expect', rule, {
 
     { name: 'B16 TS assertion on the expect argument', code: `expect(x as boolean).toBe(true);` },
     { name: 'B16 TS assertion on the matcher argument', code: `expect(true).toBe(true as boolean);` },
+
+    // The `expect.<member>` allowlist is narrow: asymmetric-matcher factories build a
+    // matcher argument, not an assertion subject, so their call shape is not an expect call.
+
+    { name: 'B19 expect.any is not an assertion subject', code: `expect.any(1).toBe(1);` },
+    {
+      name: 'B19 expect.stringContaining is not an assertion subject',
+      code: `expect.stringContaining('a').toBe('a');`,
+    },
+
+    // Exactly one non-computed `.not` is traversed before the expect call.
+
+    { name: 'B20 computed not property', code: `expect(true)['not'].toBe(true);` },
+    { name: 'B20 resolves is not unwrapped', code: `expect(true).resolves.toBe(true);` },
+    // The observable proof that the unwrap is one level and not a loop: unwrapping once
+    // leaves `expect(true).not`, a MemberExpression, which is not an expect call.
+    { name: 'B21 double negation', code: `expect(true).not.not.toBe(true);` },
+
+    // The pre-`.not` shape guards still hold once the unwrap reaches them.
+
+    {
+      name: 'B22 negated matcher outside the matcher allowlist',
+      code: `expect(true).not.toContain(true);`,
+    },
+    {
+      name: 'B22 negated matcher with a second argument',
+      code: `expect(true).not.toEqual(true, 'msg');`,
+    },
+    { name: 'B22 negated unequal literals', code: `expect(true).not.toBe(false);` },
+    { name: 'B22 negated negative zero against positive zero', code: `expect(-0).not.toBe(0);` },
   ],
   invalid: [
     {
@@ -138,6 +166,41 @@ ruleTester.run('no-tautological-expect', rule, {
       errors: [
         {
           messageId: 'tautology',
+          data: { lhs: '1', matcher: 'toBe', rhs: '1.0' },
+        },
+      ],
+    },
+
+    // Shape widenings: the `expect.soft` subject and the single `.not` unwrap.
+
+    {
+      name: 'B9 expect.soft is an allowlisted expect member',
+      code: `expect.soft(true).toBe(true);`,
+      errors: [{ messageId: 'tautology' }],
+    },
+    {
+      // The negated form always fails rather than always passing, so it carries its own message.
+      name: 'B8 negated matcher',
+      code: `expect(true).not.toBe(true);`,
+      errors: [{ messageId: 'negatedTautology' }],
+    },
+    {
+      name: 'B23 the soft subject and the negation compose',
+      code: `expect.soft(true).not.toBe(true);`,
+      errors: [{ messageId: 'negatedTautology' }],
+    },
+    {
+      name: 'B23 negated negative zero against itself',
+      code: `expect(-0).not.toBe(-0);`,
+      errors: [{ messageId: 'negatedTautology' }],
+    },
+    {
+      // The `.not` analogue of B18: a swapped or dropped operand changes only this message.
+      name: 'B23 negated report data carries both operands verbatim',
+      code: `expect(1).not.toBe(1.0);`,
+      errors: [
+        {
+          messageId: 'negatedTautology',
           data: { lhs: '1', matcher: 'toBe', rhs: '1.0' },
         },
       ],

@@ -1,5 +1,5 @@
-import { describe, it } from 'vitest';
-import { RuleTester } from 'eslint';
+import { describe, expect, it } from 'vitest';
+import { Linter, RuleTester } from 'eslint';
 import tseslint from 'typescript-eslint';
 import rule from './no-raw-error-logging.cjs';
 
@@ -16,6 +16,38 @@ const ruleTester = new RuleTester({
     parserOptions: { ecmaVersion: 'latest', sourceType: 'module' },
   },
 });
+
+// Shared with the convergence checks below, so those assert against the same pins the
+// RuleTester cases carry rather than a hand-copied restatement of them.
+const FATAL_BARE_IDENTIFIER = {
+  code: `
+        try { foo(); } catch (err) {
+          log.fatal(err, 'x');
+        }
+      `,
+  output: `
+        import { serializeError } from '../utils/serialize-error.js';
+
+try { foo(); } catch (err) {
+          log.fatal({ error: serializeError(err) }, 'x');
+        }
+      `,
+};
+
+const TRACE_BARE_IDENTIFIER = {
+  code: `
+        try { foo(); } catch (err) {
+          log.trace(err, 'x');
+        }
+      `,
+  output: `
+        import { serializeError } from '../utils/serialize-error.js';
+
+try { foo(); } catch (err) {
+          log.trace({ error: serializeError(err) }, 'x');
+        }
+      `,
+};
 
 ruleTester.run('no-raw-error-logging', rule, {
   valid: [
@@ -178,19 +210,55 @@ ruleTester.run('no-raw-error-logging', rule, {
 
     // Receiver and method scope.
 
+    // The `fatal`/`trace` levels are in scope, but only under the same gates as every
+    // other level: a catch-traced value, an allowlisted receiver, the first argument.
+
     {
-      name: 'C1 log.fatal is outside LOG_METHODS',
+      name: 'C1 log.fatal on a value that is not catch-traced',
+      code: `
+        const result = doSomething();
+        log.fatal(result, 'x');
+      `,
+    },
+    {
+      name: 'C1 fatal on a receiver outside LOG_RECEIVERS',
       code: `
         try { foo(); } catch (err) {
-          log.fatal(err, 'x');
+          notALog.fatal(err, 'x');
         }
       `,
     },
     {
-      name: 'C1 log.trace is outside LOG_METHODS',
+      name: 'C1 log.fatal with a plain object argument',
       code: `
         try { foo(); } catch (err) {
-          log.trace(err, 'x');
+          log.fatal({ msg: 'plain' }, 'x');
+        }
+      `,
+    },
+    {
+      name: 'C5 a fatal call with no arguments',
+      code: `
+        try { foo(); } catch (err) {
+          log.fatal();
+        }
+      `,
+    },
+    {
+      name: 'C6 the error is not the first argument of a fatal call',
+      code: `
+        try { foo(); } catch (err) {
+          log.fatal('msg', err);
+        }
+      `,
+    },
+    {
+      // The shape all five live `log.trace` sites use — this is what makes the AC1 audit's
+      // zero a real zero rather than the rule failing to visit those calls.
+      name: 'C1 log.trace with a string-literal first argument',
+      code: `
+        try { foo(); } catch (err) {
+          log.trace('No completed downloads to import');
         }
       `,
     },
@@ -951,5 +1019,82 @@ log.error(serializeError(x), 'x');`,
 log.error({ error: serializeError(x) }, 'x');`,
       errors: [{ messageId: 'rawError' }],
     },
+
+    // Pino's `fatal` and `trace` levels. Both the reporter and the fixer reach them.
+
+    {
+      name: 'C1 log.fatal is inside LOG_METHODS',
+      ...FATAL_BARE_IDENTIFIER,
+      errors: [{ messageId: 'rawError' }],
+    },
+    {
+      name: 'C1 log.trace is inside LOG_METHODS',
+      ...TRACE_BARE_IDENTIFIER,
+      errors: [{ messageId: 'rawError' }],
+    },
+    {
+      name: 'C1 the object-key arm is reached at the fatal level',
+      code: `
+        try { foo(); } catch (err) {
+          log.fatal({ error: err }, 'x');
+        }
+      `,
+      output: `
+        import { serializeError } from '../utils/serialize-error.js';
+
+try { foo(); } catch (err) {
+          log.fatal({ error: serializeError(err) }, 'x');
+        }
+      `,
+      errors: [{ messageId: 'rawError' }],
+    },
   ],
+});
+
+// RuleTester applies exactly ONE fix pass, so a green `output` pin says nothing about what
+// `eslint --fix` (Linter.verifyAndFix, up to 10 passes) actually leaves on disk. Widening
+// LOG_METHODS widens the fixer too, so the new levels get their convergence checked directly.
+describe('multi-pass convergence at the fatal and trace levels', () => {
+  const converge = (code, filename = 'file.ts') =>
+    new Linter().verifyAndFix(
+      code,
+      {
+        // ESLint 10 defaults a `files`-less flat config to JS extensions only, so a `.ts`
+        // filename matches nothing and the rule silently never runs.
+        files: ['**/*.ts'],
+        plugins: { narratorr: { rules: { 'no-raw-error-logging': rule } } },
+        languageOptions: {
+          parser: tseslint.parser,
+          parserOptions: { ecmaVersion: 'latest', sourceType: 'module' },
+        },
+        rules: { 'narratorr/no-raw-error-logging': 'error' },
+      },
+      filename,
+    ).output;
+
+  it('converges a bare fatal binding to the single-pass output', () => {
+    expect(converge(FATAL_BARE_IDENTIFIER.code)).toBe(FATAL_BARE_IDENTIFIER.output);
+  });
+
+  it('converges a bare trace binding to the single-pass output', () => {
+    expect(converge(TRACE_BARE_IDENTIFIER.code)).toBe(TRACE_BARE_IDENTIFIER.output);
+  });
+
+  it('leaves the fatal level no worse off than the pinned error level under #2260', () => {
+    // Relative to cwd on purpose: a flat config's `files` globs do not match an absolute
+    // path outside the base path, and an unmatched file lints clean rather than erroring.
+    const atError = converge(
+      `try{f()}catch(e){log.error({error: e, err: e},'x')}`,
+      'src/server/services/a.ts',
+    );
+    const atFatal = converge(
+      `try{f()}catch(e){log.fatal({error: e, err: e},'x')}`,
+      'src/server/services/a.ts',
+    );
+
+    // Both converge to #2260's duplicate `error` key. The widening extends the existing
+    // defect to a new level; it does not introduce a second, differently-shaped one.
+    expect(atFatal).toContain('serializeError(e)');
+    expect(atFatal).toBe(atError.replaceAll('log.error', 'log.fatal'));
+  });
 });
