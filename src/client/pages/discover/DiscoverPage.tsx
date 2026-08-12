@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api, ApiError, parseAddBookConflict, formatReviewConflictMessage, type SuggestionRow, type CreateBookPayload } from '@/lib/api';
+import { api, readAddBookConflict, formatReviewConflictMessage, type SuggestionRow, type CreateBookPayload } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { useBookStats } from '@/hooks/useLibrary';
@@ -64,16 +64,17 @@ function useDiscoverMutations(setAddedMap: React.Dispatch<React.SetStateAction<M
       toast.success('Added to library');
     },
     onError: (error: Error, { suggestion }) => {
-      if (error instanceof ApiError && error.status === 409) {
-        // The 409 body is the incumbent row plus the conflict discriminator.
-        const { conflict, incumbentId, incumbentTitle } = parseAddBookConflict(error.body);
-        // `review` is the resolver abstaining; marking added would write an ownership claim the
-        // server never made, and the durable mark cannot be undone from this card.
-        if (conflict === 'review') {
-          toast.info(formatReviewConflictMessage(incumbentTitle));
+      const details = readAddBookConflict(error);
+      if (details) {
+        // Review is tested FIRST and ownership is the fallthrough: a null discriminator degrading
+        // into the review arm would silently drop a real ownership claim. `review` is the resolver
+        // abstaining; marking added would write an ownership claim the server never made, and the
+        // durable mark cannot be undone from this card.
+        if (details.conflict === 'review') {
+          toast.info(formatReviewConflictMessage(details.incumbentTitle));
           return;
         }
-        markAdded(suggestion.id, incumbentId);
+        markAdded(suggestion.id, details.incumbentId);
         toast.info('Already in library');
       } else {
         toast.error(`Failed to add book: ${getErrorMessage(error)}`);

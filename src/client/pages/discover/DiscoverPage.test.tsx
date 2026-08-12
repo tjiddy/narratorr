@@ -10,8 +10,10 @@ vi.mock('sonner', () => ({
 }));
 
 // The 409 reader is deliberately NOT stubbed: the discriminator rule is what these tests assert.
+// `ApiError` must be the REAL class — readAddBookConflict gates on `instanceof ApiError` inside a
+// module this factory does not replace, so a look-alike reads every 409 as a plain failure (#2258).
 vi.mock('@/lib/api', async () => ({
-  parseAddBookConflict: (await import('@/lib/api/add-book-conflict.js')).parseAddBookConflict,
+  readAddBookConflict: (await import('@/lib/api/add-book-conflict.js')).readAddBookConflict,
   formatReviewConflictMessage: (await import('@/lib/api/add-book-conflict.js')).formatReviewConflictMessage,
   api: {
     getDiscoverSuggestions: vi.fn(),
@@ -22,11 +24,7 @@ vi.mock('@/lib/api', async () => ({
     getBookStats: vi.fn(),
     getSettings: vi.fn(),
   },
-  ApiError: class extends Error {
-    status: number;
-    body: unknown;
-    constructor(s: number, b: unknown) { super(`HTTP ${s}`); this.status = s; this.body = b; }
-  },
+  ApiError: (await import('@/lib/api/client.js')).ApiError,
 }));
 
 import { api } from '@/lib/api';
@@ -721,6 +719,35 @@ describe('DiscoverPage', () => {
         expect(toast.info).toHaveBeenCalledWith('Already in library');
       });
       expect(mockApi.markDiscoverSuggestionAdded).toHaveBeenCalledWith(1);
+    });
+
+    // The ordering pin (#2258): the review arm is tested first, so a 409 whose discriminator does
+    // not parse must fall through to the ownership claim. Inverting the branches lands these two
+    // bodies in the review arm and drops a real ownership claim on the floor.
+    it.each([
+      ['owned-race', { conflict: 'owned-race', id: 7, title: 'Owned' }],
+      ['an absent discriminator', { id: 7, title: 'Owned' }],
+      ['an unrecognized discriminator', { conflict: 'bogus', id: 7, title: 'Owned' }],
+    ])('claims ownership of the incumbent for %s', async (_label, body) => {
+      const { ApiError: MockApiError } = await import('@/lib/api');
+      const { toast } = await import('sonner');
+      mockApi.addBook.mockRejectedValue(new MockApiError(409, body));
+      mockApi.markDiscoverSuggestionAdded.mockResolvedValue({ suggestion: { id: 1, status: 'added' } });
+      mockApi.getDiscoverSuggestions.mockResolvedValue([makeSuggestion({ id: 1 })]);
+      mockApi.getBookStats.mockResolvedValue(makeStats());
+
+      renderWithProviders(<DiscoverPage />);
+      await waitFor(() => { expect(screen.getByText('Test Book')).toBeInTheDocument(); });
+
+      await userEvent.click(screen.getByRole('button', { name: /^add book$/i }));
+      await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
+
+      await waitFor(() => {
+        expect(toast.info).toHaveBeenCalledWith('Already in library');
+      });
+      expect(mockApi.markDiscoverSuggestionAdded).toHaveBeenCalledWith(1);
+      // The parsed incumbent id is what the card links to, so it is observable rather than internal.
+      expect(screen.getByTestId('suggestion-title-link')).toHaveAttribute('href', '/books/7');
     });
 
     // A review verdict is the resolver abstaining; marking the suggestion added would write a

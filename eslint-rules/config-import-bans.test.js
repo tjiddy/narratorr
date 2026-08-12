@@ -27,6 +27,10 @@ const JOB = 'src/server/jobs/discovery.ts';
 const UTIL = 'src/server/utils/serialize-error.ts';
 const BOOK_SERVICE = 'src/server/services/book.service.ts';
 const BOOK_INTAKE = 'src/server/services/book-intake/decide-intake.ts';
+// #2258's client half: a production add surface, and the barrel that must not re-offer the parser.
+const CLIENT_SURFACE = 'src/client/pages/search/SearchBookCard.tsx';
+const CLIENT_BARREL = 'src/client/lib/api/index.ts';
+const CLIENT_TEST = 'src/client/pages/search/SearchBookCard.test.tsx';
 
 let eslint;
 let banLinter;
@@ -64,6 +68,7 @@ const hasBan = (patterns, glob, importName) =>
   patterns.some((p) => (p.group ?? []).includes(glob) && (p.importNames ?? []).includes(importName));
 
 const hasRoutesBan = (patterns) => hasGroup(patterns, '**/routes/**') && hasGroup(patterns, '**/routes/*');
+const hasServerBan = (patterns) => hasGroup(patterns, '**/server/**') && hasGroup(patterns, '**/server/*');
 const hasDedupBans = (patterns) =>
   hasBan(patterns, '**/book-dedup.js', 'resolveDuplicate') && hasBan(patterns, '**/book-create.js', 'buildNewBookValues');
 
@@ -170,6 +175,50 @@ describe('the ban actually reports', () => {
     const code = "import { resolveDuplicate } from '../book-dedup.js';\nexport const x = resolveDuplicate;\n";
 
     expect(await banMessages(BOOK_INTAKE, code)).toHaveLength(0);
+  });
+});
+
+// #2258 — the add-path 409 gate has one home; the barrel no longer offers the raw parser, and this
+// ban is what stops a fifth surface (or a re-added barrel line) from respelling the gate.
+describe('resolved config — the client add-conflict ban rides alongside the server bans', () => {
+  it.each([
+    ['a production add surface', CLIENT_SURFACE],
+    ['the api barrel', CLIENT_BARREL],
+  ])('keeps BOTH the server patterns and the parseAddBookConflict ban for %s', async (_label, relPath) => {
+    const patterns = await patternsFor(relPath);
+
+    // Adding a second client-scoped block instead of extending the existing one erases these two
+    // silently — flat config replaces a rule's options rather than merging them.
+    expect(hasServerBan(patterns)).toBe(true);
+    expect(hasBan(patterns, '**/add-book-conflict.js', 'parseAddBookConflict')).toBe(true);
+  });
+
+  it('leaves client test files exempt', async () => {
+    expect(hasBan(await patternsFor(CLIENT_TEST), '**/add-book-conflict.js', 'parseAddBookConflict')).toBe(false);
+  });
+});
+
+describe('the client add-conflict ban actually reports', () => {
+  it.each([
+    ['a direct import', "import { parseAddBookConflict } from '@/lib/api/add-book-conflict.js';\nexport const x = parseAddBookConflict;\n"],
+    ['a relative import', "import { parseAddBookConflict } from '../../lib/api/add-book-conflict.js';\nexport const x = parseAddBookConflict;\n"],
+    // Re-adding the barrel line is the realistic bypass of the removed re-export, so the ban has to
+    // reach export-from specifiers and not just imports.
+    ['a re-export', "export { parseAddBookConflict } from './add-book-conflict.js';\n"],
+  ])('reports %s of parseAddBookConflict from client production code', async (_label, code) => {
+    expect(await banMessages(CLIENT_SURFACE, code)).toHaveLength(1);
+  });
+
+  it('does NOT report the reader or the copy from the same module — importNames scoping', async () => {
+    const code = "import { readAddBookConflict, formatReviewConflictMessage } from '@/lib/api/add-book-conflict.js';\nexport const x = [readAddBookConflict, formatReviewConflictMessage];\n";
+
+    expect(await banMessages(CLIENT_SURFACE, code)).toHaveLength(0);
+  });
+
+  it('does NOT report parseAddBookConflict from a client test file', async () => {
+    const code = "import { parseAddBookConflict } from '@/lib/api/add-book-conflict.js';\nexport const x = parseAddBookConflict;\n";
+
+    expect(await banMessages(CLIENT_TEST, code)).toHaveLength(0);
   });
 });
 

@@ -9,9 +9,10 @@ import { createMockBook, createMockAuthor } from '@/__tests__/factories';
 import { AuthorPage } from './AuthorPage';
 
 // The 409 reader and its copy are deliberately NOT stubbed: the add hook's discriminator rule is
-// what the conflict tests below assert.
+// what the conflict tests below assert. `ApiError` must be the REAL class — readAddBookConflict
+// gates on `instanceof ApiError` inside a module this factory does not replace (#2258).
 vi.mock('@/lib/api', async () => ({
-  parseAddBookConflict: (await import('@/lib/api/add-book-conflict.js')).parseAddBookConflict,
+  readAddBookConflict: (await import('@/lib/api/add-book-conflict.js')).readAddBookConflict,
   formatReviewConflictMessage: (await import('@/lib/api/add-book-conflict.js')).formatReviewConflictMessage,
   api: {
     getAuthor: vi.fn(),
@@ -20,11 +21,7 @@ vi.mock('@/lib/api', async () => ({
     addBook: vi.fn(),
     getSettings: vi.fn(),
   },
-  ApiError: class extends Error {
-    status: number;
-    body: unknown;
-    constructor(s: number, b: unknown) { super(`HTTP ${s}`); this.status = s; this.body = b; }
-  },
+  ApiError: (await import('@/lib/api/client.js')).ApiError,
 }));
 
 vi.mock('sonner', () => ({

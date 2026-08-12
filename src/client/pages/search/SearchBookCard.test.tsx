@@ -407,6 +407,27 @@ describe('SearchBookCard', () => {
       expect(await screen.findByText(/already in your library/i)).toBeInTheDocument();
     });
 
+    // The sentence moved into add-book-conflict.ts (#2258), so the card is pinned on the exact
+    // rendered string rather than on a substring that any wording would satisfy.
+    //
+    // The whitespace-only row is #2258's ONE authorized behaviour change: the card used to branch on
+    // raw truthiness and rendered `May be the same recording as '   '.`. Its counterfactual is the
+    // pre-change card, not a broken one — restore that branch and only this row reds. Do not
+    // "restore" the old rendering.
+    it.each([
+      ['a named incumbent', { conflict: 'review', id: 88, title: 'Piranesi' }, "May be the same recording as 'Piranesi'."],
+      ['an absent title', { conflict: 'review', id: 88 }, 'May be the same recording as a book already in your library.'],
+      ['an empty title', { conflict: 'review', id: 88, title: '' }, 'May be the same recording as a book already in your library.'],
+      ['a whitespace-only title', { conflict: 'review', id: 88, title: '   ' }, 'May be the same recording as a book already in your library.'],
+    ])('renders the shared review sentence for %s', async (_label, body, sentence) => {
+      vi.mocked(api.addBook).mockRejectedValue(new ApiError(409, body));
+
+      await addOnce();
+
+      expect(await screen.findByText(sentence)).toBeInTheDocument();
+      expect(screen.getByText('Possible duplicate (review)')).toBeInTheDocument();
+    });
+
     it('re-issues the add with the override and flips to In Library once it succeeds', async () => {
       vi.mocked(api.addBook).mockRejectedValueOnce(new ApiError(409, reviewBody));
       const { user } = await addOnce();
@@ -522,6 +543,38 @@ describe('SearchBookCard', () => {
 
       await waitFor(() => { expect(screen.getByText('In Library')).toBeInTheDocument(); });
       expect(screen.getByRole('link', { name: /view this book in your library/i })).toHaveAttribute('href', '/books/7');
+    });
+
+    // The ordering pin (#2258): a 409 whose discriminator does not parse must fall through to the
+    // ownership claim. Inverting the card's branches lands both bodies in the review arm instead.
+    it.each([
+      ['an absent discriminator', { id: 7, title: 'Owned' }],
+      ['an unrecognized discriminator', { conflict: 'bogus', id: 7, title: 'Owned' }],
+    ])('claims ownership rather than review for %s', async (_label, body) => {
+      vi.mocked(api.addBook).mockRejectedValue(new ApiError(409, body));
+
+      await addOnce();
+
+      await waitFor(() => { expect(screen.getByText('In Library')).toBeInTheDocument(); });
+      expect(toast.info).toHaveBeenCalledWith('Already in library');
+      expect(screen.queryByText('Possible duplicate (review)')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /add anyway/i })).not.toBeInTheDocument();
+    });
+
+    // A neighbouring status is not a conflict: widening the gate past 409 would read this body as a
+    // review verdict and mount the badge instead of reporting the failure. 410 is the 4xx neighbour
+    // that observes an any-4xx generalisation, which a 500 alone cannot see.
+    it.each([410, 500])('reports a %i as a failure even when its body carries a review verdict', async (status) => {
+      vi.mocked(api.addBook).mockRejectedValue(new ApiError(status, reviewBody));
+
+      await addOnce();
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(`Failed to add book: HTTP ${status}`);
+      });
+      expect(screen.queryByText('Possible duplicate (review)')).not.toBeInTheDocument();
+      expect(screen.queryByText('In Library')).not.toBeInTheDocument();
+      expect(toast.info).not.toHaveBeenCalled();
     });
   });
 
