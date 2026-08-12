@@ -8,13 +8,22 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMockBook, createMockAuthor } from '@/__tests__/factories';
 import { AuthorPage } from './AuthorPage';
 
-vi.mock('@/lib/api', () => ({
+// The 409 reader and its copy are deliberately NOT stubbed: the add hook's discriminator rule is
+// what the conflict tests below assert.
+vi.mock('@/lib/api', async () => ({
+  parseAddBookConflict: (await import('@/lib/api/add-book-conflict.js')).parseAddBookConflict,
+  formatReviewConflictMessage: (await import('@/lib/api/add-book-conflict.js')).formatReviewConflictMessage,
   api: {
     getAuthor: vi.fn(),
     getAuthorBooks: vi.fn(),
     getBookIdentifiers: vi.fn(),
     addBook: vi.fn(),
     getSettings: vi.fn(),
+  },
+  ApiError: class extends Error {
+    status: number;
+    body: unknown;
+    constructor(s: number, b: unknown) { super(`HTTP ${s}`); this.status = s; this.body = b; }
   },
 }));
 
@@ -355,6 +364,50 @@ describe('AuthorPage', () => {
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalled();
+    });
+  });
+
+  // A held edition is the server abstaining, so the row must stay addable rather than reporting a
+  // hard failure the operator cannot act on (#2212).
+  it('reports a review 409 as a possible duplicate and leaves the Add control mounted', async () => {
+    const user = userEvent.setup();
+    const { ApiError: MockApiError } = await import('@/lib/api');
+    vi.mocked(api.addBook).mockRejectedValue(
+      new MockApiError(409, { conflict: 'review', id: 88, title: 'Piranesi' }),
+    );
+
+    renderAuthorPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    });
+
+    const addButtons = screen.getAllByRole('button').filter(
+      (btn) => btn.textContent?.includes('Add') && !btn.textContent?.includes('Add All'),
+    );
+    await user.click(addButtons[0]!);
+
+    const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
+    await user.click(addToLibrary);
+
+    await waitFor(() => {
+      expect(toast.info).toHaveBeenCalledWith(
+        "Possible duplicate (review): may be the same recording as 'Piranesi'",
+      );
+    });
+
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(screen.queryByRole('link', { name: /view this book in your library/i })).not.toBeInTheDocument();
+
+    // The hook never claimed the key, so `addBook`'s already-added short-circuit must not swallow a
+    // retry — this is the observation an ownership degrade would fail.
+    await user.click(screen.getAllByRole('button').filter(
+      (btn) => btn.textContent?.includes('Add') && !btn.textContent?.includes('Add All'),
+    )[0]!);
+    await user.click(await screen.findByRole('button', { name: /add to library/i }));
+
+    await waitFor(() => {
+      expect(api.addBook).toHaveBeenCalledTimes(2);
     });
   });
 
