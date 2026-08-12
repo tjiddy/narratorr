@@ -261,16 +261,24 @@ describe('ManualAddForm', () => {
       const user = userEvent.setup();
       (api.addBook as ReturnType<typeof vi.fn>).mockRejectedValue(new ApiError(409, body));
       const rendered = renderForm(props);
+      const invalidateSpy = vi.spyOn(rendered.queryClient, 'invalidateQueries');
 
       await user.type(screen.getByLabelText(/title/i), 'Shogun');
       await user.click(screen.getByRole('button', { name: /add book/i }));
 
-      return rendered;
+      return { ...rendered, invalidateSpy };
+    }
+
+    /** The two branches are mutually exclusive: a review must not also make the ownership claim. */
+    function expectNoOwnershipClaim(invalidateSpy: ReturnType<typeof vi.spyOn>) {
+      expect(toast.info).not.toHaveBeenCalledWith('Already in library');
+      expect(toast.info).toHaveBeenCalledTimes(1);
+      expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: queryKeys.books() });
     }
 
     it('shows the review copy and keeps the typed values on a review 409', async () => {
       const onSuccess = vi.fn();
-      await submitAgainst({ conflict: 'review', id: 88, title: 'Piranesi' }, { onSuccess });
+      const { invalidateSpy } = await submitAgainst({ conflict: 'review', id: 88, title: 'Piranesi' }, { onSuccess });
 
       await waitFor(() => {
         expect(toast.info).toHaveBeenCalledWith(
@@ -281,10 +289,11 @@ describe('ManualAddForm', () => {
       expect(onSuccess).not.toHaveBeenCalled();
       expect(screen.getByLabelText(/title/i)).toHaveValue('Shogun');
       expect(toast.error).not.toHaveBeenCalled();
+      expectNoOwnershipClaim(invalidateSpy);
     });
 
     it('falls back to the generic review copy when the 409 body carries no title', async () => {
-      await submitAgainst({ conflict: 'review', id: 3 });
+      const { invalidateSpy } = await submitAgainst({ conflict: 'review', id: 3 });
 
       await waitFor(() => {
         expect(toast.info).toHaveBeenCalledWith(
@@ -292,6 +301,7 @@ describe('ManualAddForm', () => {
         );
       });
       expect(toast.error).not.toHaveBeenCalled();
+      expectNoOwnershipClaim(invalidateSpy);
     });
 
     it.each([
