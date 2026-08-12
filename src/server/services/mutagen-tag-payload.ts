@@ -65,11 +65,20 @@ export const ID3_TAG_FRAMES: ReadonlyArray<FieldMapping> = [
   ['series', 'TXXX:series', 'freeform'],
 ];
 
-const COVER_MIME_BY_EXTENSION: Record<string, string> = {
+export const COVER_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.png': 'image/png',
 };
+
+/**
+ * The single TypeScript-side answer to "can this cover be embedded?". `tagging.service.ts` ranks
+ * candidate cover files by this predicate rather than by its own extension list, so the preference
+ * order there cannot drift from what `buildMutagenRequest` will actually accept (#2214 AC4).
+ */
+export function coverMimeForPath(filePath: string): string | undefined {
+  return COVER_MIME_BY_EXTENSION[extname(filePath).toLowerCase()];
+}
 
 // mutagen's MP4 class handles .m4a identically to .m4b; no third branch is warranted.
 const FORMAT_BY_EXTENSION: Readonly<Record<string, MutagenFormat>> = {
@@ -137,7 +146,7 @@ export function buildMutagenRequest(args: {
   const warnings: string[] = [];
   let cover: MutagenRequest['cover'] = null;
   if (coverPath) {
-    const mime = COVER_MIME_BY_EXTENSION[extname(coverPath).toLowerCase()];
+    const mime = coverMimeForPath(coverPath);
     // COVER_FILE_REGEX admits .webp but neither MP4Cover nor APIC has a format for it. Warn and
     // write the rest — the ffmpeg path used to fail the whole invocation, so this is strictly better.
     if (mime) cover = { path: coverPath, mime };

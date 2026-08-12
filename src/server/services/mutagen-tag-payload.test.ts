@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   buildMutagenRequest,
   mutagenFormatForExtension,
+  coverMimeForPath,
+  COVER_MIME_BY_EXTENSION,
   TAGGABLE_EXTENSIONS,
   MP4_TAG_ATOMS,
   ID3_TAG_FRAMES,
@@ -239,6 +241,36 @@ describe('buildMutagenRequest — cover art (D4/AC10)', () => {
   it('leaves cover null when no cover path is supplied', () => {
     const { request } = opsFor('id3', { album: 'Book' });
     expect(request.cover).toBeNull();
+  });
+});
+
+describe('coverMimeForPath (#2214)', () => {
+  it.each([
+    ['/books/cover.jpg', 'image/jpeg'],
+    ['/books/cover.jpeg', 'image/jpeg'],
+    ['/books/cover.png', 'image/png'],
+    ['/books/Cover.JPG', 'image/jpeg'],
+    ['/books/COVER.PNG', 'image/png'],
+  ])('%s → %s', (filePath, mime) => {
+    expect(coverMimeForPath(filePath)).toBe(mime);
+  });
+
+  it.each([
+    ['/books/cover.webp'],
+    ['/books/cover.gif'],
+    ['/books/cover'],
+  ])('%s has no embeddable mime', (filePath) => {
+    expect(coverMimeForPath(filePath)).toBeUndefined();
+  });
+
+  // The tagging picker tiers candidates on this helper, so the table it reads is the one
+  // buildMutagenRequest consults — not a second list that can drift from it.
+  it('answers for every extension in the exported table', () => {
+    for (const [ext, mime] of Object.entries(COVER_MIME_BY_EXTENSION)) {
+      expect(coverMimeForPath(`/books/cover${ext}`)).toBe(mime);
+      expect(opsFor('mp4', { album: 'Book' }, `/books/cover${ext}`).request.cover)
+        .toEqual({ path: `/books/cover${ext}`, mime });
+    }
   });
 });
 
