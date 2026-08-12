@@ -401,3 +401,215 @@ describe('ImportAttentionBanner discard callbacks after unmount (#2227)', () => 
     expect(discardImportSubmission).toHaveBeenNthCalledWith(2, 3);
   });
 });
+
+
+/**
+ * A discard error outlives the run it came from — attention resolves to the newest qualifying run
+ * and the banner is never remounted per run — so the error carries its run's id: the block renders
+ * only while that run is displayed, and Retry re-targets it rather than whatever polled in.
+ */
+describe('ImportAttentionBanner discard errors are keyed to their run (#2275)', () => {
+  const attentionKey = queryKeys.importSubmissions.attention('library');
+  const newClient = () => new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  /**
+   * Models one attention poll landing. TanStack notifies observers on a macrotask, so a bare
+   * `act(() => setQueryData(...))` leaves the previous run on screen — every absence assertion
+   * below would pass vacuously against the old render without this turn of the timer queue.
+   */
+  async function pollAttention(qc: QueryClient, next: AttentionResponse) {
+    act(() => { qc.setQueryData(attentionKey, next); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  }
+
+  /** Mounts the banner on run 3 and drives one failing Discard; leaves the error on screen. */
+  async function failDiscardOfRun3(qc: QueryClient) {
+    renderWithProviders(
+      <ImportAttentionBanner source="library" onImportAgain={vi.fn()} />, { queryClient: qc },
+    );
+    await screen.findByTestId('import-attention-banner');
+    await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    await screen.findByTestId('attention-discard-error');
+  }
+
+  it('a stale error does not render against a different run on the completed-attention arm', async () => {
+    const qc = newClient();
+    getImportSubmissionAttention.mockResolvedValue(resp(abandoned(3), true));
+    discardImportSubmission.mockRejectedValue(new Error('409 conflict'));
+    await failDiscardOfRun3(qc);
+
+    await pollAttention(qc, resp(completed(9, 1, 0), false));
+
+    // Pin that the banner is up and showing run 9 first: "the error testid is absent" also passes
+    // if the banner unmounted, which is a different outcome and would prove nothing.
+    const banner = screen.getByTestId('import-attention-banner');
+    expect(within(banner).getByRole('button', { name: 'View details' })).toBeInTheDocument();
+    expect(screen.getByText('Import finished with 1 hold')).toBeInTheDocument();
+    expect(screen.queryByTestId('attention-discard-error')).not.toBeInTheDocument();
+    expect(within(banner).queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  });
+
+  it('the gate is keyed on the run id, not the kind — a different abandoned run hides it too', async () => {
+    const qc = newClient();
+    getImportSubmissionAttention.mockResolvedValue(resp(abandoned(3), true));
+    discardImportSubmission.mockRejectedValue(new Error('409 conflict'));
+    await failDiscardOfRun3(qc);
+
+    await pollAttention(qc, resp(abandoned(9, 1, 3), true));
+
+    const banner = screen.getByTestId('import-attention-banner');
+    expect(within(banner).getByRole('button', { name: 'Discard' })).toBeInTheDocument();
+    expect(screen.getByText('1 of 3 received — nothing was imported')).toBeInTheDocument();
+    expect(screen.queryByTestId('attention-discard-error')).not.toBeInTheDocument();
+    expect(within(banner).queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  });
+
+  it('Retry re-issues the discard for the run whose discard failed', async () => {
+    const qc = newClient();
+    getImportSubmissionAttention.mockResolvedValue(resp(abandoned(3), true));
+    discardImportSubmission.mockRejectedValue(new Error('409 conflict'));
+    await failDiscardOfRun3(qc);
+
+    await userEvent.click(
+      within(screen.getByTestId('attention-discard-error')).getByRole('button', { name: 'Retry' }),
+    );
+
+    // nth-indexed: the first call was also 3, so a bare toHaveBeenCalledWith(3) cannot tell a
+    // correct Retry from no Retry at all.
+    await waitFor(() => expect(discardImportSubmission).toHaveBeenNthCalledWith(2, 3));
+  });
+
+  it('View details on the newer run never issues a discard for it', async () => {
+    const qc = newClient();
+    getImportSubmissionAttention.mockResolvedValue(resp(abandoned(3), true));
+    discardImportSubmission.mockRejectedValue(new Error('409 conflict'));
+    await failDiscardOfRun3(qc);
+
+    await pollAttention(qc, resp(completed(9, 1, 0), false));
+    await userEvent.click(screen.getByRole('button', { name: 'View details' }));
+
+    expect(discardImportSubmission).not.toHaveBeenCalledWith(9);
+    expect(discardImportSubmission).toHaveBeenCalledTimes(1);
+  });
+
+  // Split from the View details case: either control dismisses the banner, so the second is
+  // unreachable in the same mounted scenario.
+  it('Dismiss on the newer run never issues a discard for it', async () => {
+    const qc = newClient();
+    getImportSubmissionAttention.mockResolvedValue(resp(abandoned(3), true));
+    discardImportSubmission.mockRejectedValue(new Error('409 conflict'));
+    await failDiscardOfRun3(qc);
+
+    await pollAttention(qc, resp(completed(9, 1, 0), false));
+    expect(screen.getByRole('button', { name: 'View details' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+
+    expect(discardImportSubmission).not.toHaveBeenCalledWith(9);
+    expect(discardImportSubmission).toHaveBeenCalledTimes(1);
+  });
+
+  it('the id gate HIDES the error — returning to the failed run restores it and its Retry', async () => {
+    const qc = newClient();
+    getImportSubmissionAttention.mockResolvedValue(resp(abandoned(3), true));
+    discardImportSubmission.mockRejectedValue(new Error('409 conflict'));
+    await failDiscardOfRun3(qc);
+
+    await pollAttention(qc, resp(completed(9, 1, 0), false));
+    expect(screen.getByRole('button', { name: 'View details' })).toBeInTheDocument();
+    expect(screen.queryByTestId('attention-discard-error')).not.toBeInTheDocument();
+
+    await pollAttention(qc, resp(abandoned(3), true));
+    const error = screen.getByTestId('attention-discard-error');
+    expect(error).toHaveTextContent('409 conflict');
+
+    await userEvent.click(within(error).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(discardImportSubmission).toHaveBeenNthCalledWith(2, 3));
+  });
+
+  it('a same-id kind flip keeps the error and its Retry — that case was never the bug', async () => {
+    const qc = newClient();
+    getImportSubmissionAttention.mockResolvedValue(resp(abandoned(3), true));
+    discardImportSubmission.mockRejectedValue(new Error('409 conflict'));
+    await failDiscardOfRun3(qc);
+
+    await pollAttention(qc, resp(completed(3, 1, 0), false));
+    expect(screen.getByRole('button', { name: 'View details' })).toBeInTheDocument();
+    const error = screen.getByTestId('attention-discard-error');
+    expect(error).toHaveTextContent('409 conflict');
+
+    await userEvent.click(within(error).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(discardImportSubmission).toHaveBeenNthCalledWith(2, 3));
+  });
+
+  it('a later failure REPLACES the stored error — one slot, not a per-run registry', async () => {
+    const qc = newClient();
+    getImportSubmissionAttention.mockResolvedValue(resp(abandoned(3), true));
+    discardImportSubmission
+      .mockRejectedValueOnce(new Error('first failure'))
+      .mockRejectedValue(new Error('second failure'));
+    await failDiscardOfRun3(qc);
+
+    await pollAttention(qc, resp(abandoned(9, 1, 3), true));
+    await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
+
+    const error = await screen.findByTestId('attention-discard-error');
+    expect(error).toHaveTextContent('second failure');
+    expect(error).not.toHaveTextContent('first failure');
+
+    await userEvent.click(within(error).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(discardImportSubmission).toHaveBeenNthCalledWith(3, 9));
+  });
+
+  it('a discard rejecting after the displayed run changed keys the error to the run that FAILED', async () => {
+    const qc = newClient();
+    getImportSubmissionAttention.mockResolvedValue(resp(abandoned(3), true));
+    let reject!: () => void;
+    discardImportSubmission.mockReturnValueOnce(
+      new Promise((_res, rej) => { reject = () => rej(new Error('409 conflict')); }),
+    );
+    discardImportSubmission.mockRejectedValue(new Error('409 conflict'));
+    renderWithProviders(
+      <ImportAttentionBanner source="library" onImportAgain={vi.fn()} />, { queryClient: qc },
+    );
+    await screen.findByTestId('import-attention-banner');
+    await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
+
+    // A poll swaps in run 9 while the discard is still in flight. TanStack pushes the newest render's
+    // options onto the running mutation, so an onError reading the render's data would key it to 9.
+    await pollAttention(qc, resp(abandoned(9, 1, 3), true));
+    expect(screen.getByText('1 of 3 received — nothing was imported')).toBeInTheDocument();
+
+    reject();
+    await waitFor(() => expect(qc.getMutationCache().getAll().map((m) => m.state.status)).toContain('error'));
+    expect(screen.queryByTestId('attention-discard-error')).not.toBeInTheDocument();
+
+    await pollAttention(qc, resp(abandoned(3), true));
+    const error = screen.getByTestId('attention-discard-error');
+    expect(error).toHaveTextContent('409 conflict');
+    await userEvent.click(within(error).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(discardImportSubmission).toHaveBeenNthCalledWith(2, 3));
+  });
+
+  it('the keyed error survives a null attention envelope and reappears with the run', async () => {
+    const qc = newClient();
+    getImportSubmissionAttention.mockResolvedValue(resp(abandoned(3), true));
+    discardImportSubmission.mockRejectedValue(new Error('409 conflict'));
+    await failDiscardOfRun3(qc);
+
+    await pollAttention(qc, resp(null, false));
+    expect(screen.queryByTestId('import-attention-banner')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('attention-discard-error')).not.toBeInTheDocument();
+
+    await pollAttention(qc, resp(abandoned(3), true));
+    expect(screen.getByTestId('attention-discard-error')).toHaveTextContent('409 conflict');
+  });
+
+  it('a non-Error rejection is stored alongside the id and rendered as text', async () => {
+    const qc = newClient();
+    getImportSubmissionAttention.mockResolvedValue(resp(abandoned(3), true));
+    discardImportSubmission.mockRejectedValue('socket hang up');
+    await failDiscardOfRun3(qc);
+
+    expect(screen.getByTestId('attention-discard-error')).toHaveTextContent('Couldn’t discard: socket hang up');
+  });
+});
