@@ -10,7 +10,12 @@ import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
 import { resolveMutagenPython } from '@core/utils/mutagen-resolver.js';
 import { collectSortedAudioFiles } from '@core/utils/collect-audio-files.js';
 import { COVER_FILE_REGEX } from '@core/utils/cover-regex.js';
-import { buildMutagenRequest, mutagenFormatForExtension, TAGGABLE_EXTENSIONS } from './mutagen-tag-payload.js';
+import {
+  buildMutagenRequest,
+  coverMimeForPath,
+  mutagenFormatForExtension,
+  TAGGABLE_EXTENSIONS,
+} from './mutagen-tag-payload.js';
 import { writeTagsWithMutagen } from './mutagen-tag-writer.js';
 import { withTagWriteLock } from './tag-write-lock.js';
 import {
@@ -122,10 +127,48 @@ export async function tagFile(
   return { file: fileName, status: 'tagged', ...(warnings.length > 0 && { warnings }), ...sizes };
 }
 
+/**
+ * Ordering only — never a capability test. Embeddability comes from `coverMimeForPath`, so an
+ * extension the MIME table knows but this list omits still outranks an unembeddable one.
+ */
+const PREFERRED_COVER_EXTENSIONS: readonly string[] = ['.jpg', '.jpeg', '.png'];
+
+/** Ranks a candidate on capability first, then declared preference, ascending: lower wins. */
+function coverRank(name: string): [number, number] {
+  const preference = PREFERRED_COVER_EXTENSIONS.indexOf(extname(name).toLowerCase());
+  return [
+    coverMimeForPath(name) === undefined ? 1 : 0,
+    preference === -1 ? PREFERRED_COVER_EXTENSIONS.length : preference,
+  ];
+}
+
+function compareCoverCandidates(a: string, b: string): number {
+  const [tierA, preferenceA] = coverRank(a);
+  const [tierB, preferenceB] = coverRank(b);
+  // Code-unit comparison last, never localeCompare: ICU collation varies by runtime and locale,
+  // which would put environment-dependent selection back where readdir order used to be.
+  return tierA - tierB || preferenceA - preferenceB || (a < b ? -1 : a > b ? 1 : 0);
+}
+
+/**
+ * Picks the cover a book folder should embed. readdir order is undefined and a folder imported from
+ * outside Narratorr can hold several covers, so first-match let a `cover.webp` shadow an embeddable
+ * `cover.jpg` and the operator saw only an unsupported-format warning (#2214). The three keys —
+ * capability, preference, raw filename — make the pick a total function of the entry set.
+ *
+ * A webp with no embeddable sibling is still returned: warn-and-write-the-rest is the intended
+ * outcome there (#2210 D4), and filtering it out would report the cover as missing instead.
+ */
+export function pickCoverFile(entries: string[]): string | undefined {
+  // Filenames are unique within a directory, so the third key never ties and the sorted order —
+  // hence the pick — is a function of the entry set alone, not of the order readdir returned it in.
+  return entries.filter(entry => COVER_FILE_REGEX.test(entry)).sort(compareCoverCandidates)[0];
+}
+
 async function findCoverFile(dirPath: string): Promise<string | undefined> {
   try {
     const entries = await readdir(dirPath);
-    const coverFile = entries.find(f => COVER_FILE_REGEX.test(f));
+    const coverFile = pickCoverFile(entries);
     return coverFile ? join(dirPath, coverFile) : undefined;
   } catch {
     return undefined;

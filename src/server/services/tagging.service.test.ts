@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
-import { tagFile, TaggingService, RetagError, type TagMetadata } from './tagging.service.js';
+import { tagFile, TaggingService, RetagError, pickCoverFile, type TagMetadata } from './tagging.service.js';
 import { buildCanonicalTags, readExistingTags, resolveTags } from './retag-plan.js';
-import { MP4_TAG_ATOMS, ID3_TAG_FRAMES, type MutagenRequest } from './mutagen-tag-payload.js';
+import {
+  MP4_TAG_ATOMS,
+  ID3_TAG_FRAMES,
+  COVER_MIME_BY_EXTENSION,
+  type MutagenRequest,
+} from './mutagen-tag-payload.js';
 import { createMockSettingsService } from '../__tests__/helpers.js';
 
 // A plain closure survives vi.clearAllMocks; tests toggle auto-detection through hoisted state.
@@ -115,6 +120,14 @@ function resetMutagenCapture(): void {
 
 // withFileTypes callers need Dirent-like entries; bare readdir callers need filenames.
 let _readdirFiles: string[] = [];
+/**
+ * 1-based ordinal of the bare `readdir` call to reject, or null for none. tagBook issues them in a
+ * fixed order — `warnUnsupportedFormats` first, then `findCoverFile`'s cover probe — so only an
+ * ordinal can target the probe: rejecting on the argument shape also hits the unguarded scan, which
+ * throws out of tagBook before the probe ever runs.
+ */
+let _bareReaddirRejectOrdinal: number | null = null;
+let _bareReaddirCalls = 0;
 vi.mock('node:fs/promises', () => ({
   readdir: vi.fn((_dir: string, opts?: { withFileTypes?: boolean }) => {
     if (opts?.withFileTypes) {
@@ -123,6 +136,10 @@ vi.mock('node:fs/promises', () => ({
         isFile: () => true,
         isDirectory: () => false,
       })));
+    }
+    _bareReaddirCalls += 1;
+    if (_bareReaddirCalls === _bareReaddirRejectOrdinal) {
+      return Promise.reject(new Error('EACCES: permission denied, scandir'));
     }
     return Promise.resolve([..._readdirFiles]);
   }),
@@ -159,6 +176,11 @@ import { rename, unlink, stat } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { basename } from 'node:path';
 import { parseFile } from 'music-metadata';
+
+beforeEach(() => {
+  _bareReaddirCalls = 0;
+  _bareReaddirRejectOrdinal = null;
+});
 
 
 describe('buildCanonicalTags field mapping (#1671)', () => {
@@ -355,6 +377,75 @@ describe('resolveTags series-part populate_missing with malformed existing (#169
   it('overwrite ignores a non-numeric existing series-part and returns desired (NaN cannot manifest)', () => {
     const resolved = resolveTags({ seriesPart: 2 }, { seriesPart: Number.NaN }, 'overwrite');
     expect(resolved).toEqual({ seriesPart: 2 });
+  });
+});
+
+describe('pickCoverFile (#2214)', () => {
+  /**
+   * readdir order is undefined, so every ranking claim is asserted in both permutations: one order
+   * alone passes against a first-match picker roughly half the time and proves nothing.
+   */
+  function pickBothOrders(entries: string[]): (string | undefined)[] {
+    return [pickCoverFile(entries), pickCoverFile([...entries].reverse())];
+  }
+
+  it.each([
+    [['cover.webp', 'cover.jpg'], 'cover.jpg'],
+    [['cover.webp', 'cover.jpeg'], 'cover.jpeg'],
+    [['cover.webp', 'cover.png'], 'cover.png'],
+  ])('prefers the embeddable %j over the webp in both readdir orders', (entries, expected) => {
+    expect(pickBothOrders(entries)).toEqual([expected, expected]);
+  });
+
+  it('prefers .jpg over .png — both are embeddable, so preference order decides', () => {
+    expect(pickBothOrders(['cover.png', 'cover.jpg'])).toEqual(['cover.jpg', 'cover.jpg']);
+  });
+
+  it.each([
+    [['cover.webp', 'cover.png', 'cover.jpg']],
+    [['cover.png', 'cover.jpg', 'cover.webp']],
+    [['cover.jpg', 'cover.webp', 'cover.png']],
+  ])('picks cover.jpg out of %j regardless of permutation', (entries) => {
+    expect(pickBothOrders(entries)).toEqual(['cover.jpg', 'cover.jpg']);
+  });
+
+  // Linux is case-sensitive, so these pairs genuinely coexist. They tie on capability and on
+  // preference, leaving the raw-filename key as the only thing that makes the pick deterministic.
+  it.each([
+    [['cover.jpg', 'Cover.JPG'], 'Cover.JPG'],
+    [['cover.png', 'Cover.PNG'], 'Cover.PNG'],
+  ])('breaks the %j tie on code-unit filename order, both ways', (entries, expected) => {
+    expect(pickBothOrders(entries)).toEqual([expected, expected]);
+  });
+
+  it.each([
+    [['cover.webp', 'Cover.JPG'], 'Cover.JPG'],
+    [['COVER.WEBP', 'cover.Png'], 'cover.Png'],
+  ])('compares extensions case-insensitively for %j', (entries, expected) => {
+    expect(pickBothOrders(entries)).toEqual([expected, expected]);
+  });
+
+  it('still returns the webp when it is the only cover (#2210 D4 fallback)', () => {
+    expect(pickCoverFile(['ch01.mp3', 'cover.webp'])).toBe('cover.webp');
+  });
+
+  it('ignores non-cover images and unrelated files', () => {
+    expect(pickBothOrders(['ch01.mp3', 'metadata.opf', 'artwork.jpg', 'cover.webp', 'cover.jpg']))
+      .toEqual(['cover.jpg', 'cover.jpg']);
+  });
+
+  it.each([
+    [[]],
+    [['ch01.mp3', 'notes.txt']],
+    [['cover.gif', 'cover.bmp']],
+  ])('returns undefined when nothing in %j is an admitted cover', (entries) => {
+    expect(pickCoverFile(entries)).toBeUndefined();
+  });
+
+  // Driven off the MIME table rather than three hand-written cases: if the table ever gains or
+  // loses an extension, this coverage follows it instead of going quietly stale.
+  it.each(Object.keys(COVER_MIME_BY_EXTENSION))('beats a webp with a table-supported %s', (ext) => {
+    expect(pickBothOrders(['cover.webp', `cover${ext}`])).toEqual([`cover${ext}`, `cover${ext}`]);
   });
 });
 
@@ -992,6 +1083,70 @@ describe('tagFile', () => {
       expect(result.warnings.some(w => w.includes('cover image found'))).toBe(true);
     });
 
+    describe('cover selection (#2214)', () => {
+      function makeService() {
+        const settings = createMockSettingsService(taggingDefaults);
+        return new TaggingService(
+          createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never,
+        );
+      }
+
+      /** findCoverFile joins with the OS separator; production is POSIX because the app runs in Docker. */
+      function embeddedCover(index: number): { path: string; mime: string } | null {
+        const cover = mutagenRequest(index).cover;
+        return cover ? { ...cover, path: cover.path.split('\\').join('/') } : null;
+      }
+
+      it.each([
+        [['ch01.mp3', 'cover.webp', 'cover.jpg']],
+        [['ch01.mp3', 'cover.jpg', 'cover.webp']],
+      ])('embeds the jpg, not the webp, for %j', async (entries) => {
+        _readdirFiles = [...entries];
+
+        const result = await makeService().tagBook(1, '/books/test', {
+          title: 'Test', authorName: 'Author',
+        }, '/usr/bin/python3', 'overwrite', true);
+
+        expect(embeddedCover(0)).toEqual({ path: '/books/test/cover.jpg', mime: 'image/jpeg' });
+        expect(result.warnings.some(w => w.includes('not supported for embedding'))).toBe(false);
+        expect(result.warnings.some(w => w.includes('cover image found'))).toBe(false);
+      });
+
+      // The fix narrows *when* the D4 warning fires; a webp-only folder is still the case where it
+      // is unavoidable. An implementation that filtered to embeddable-only would report a missing
+      // cover here instead, which is a regression rather than a fix.
+      it('keeps the webp-only folder on warn-and-write (#2210 D4)', async () => {
+        _readdirFiles = ['ch01.mp3', 'cover.webp'];
+
+        const result = await makeService().tagBook(1, '/books/test', {
+          title: 'Test', authorName: 'Author',
+        }, '/usr/bin/python3', 'overwrite', true);
+
+        expect(embeddedCover(0)).toBeNull();
+        expect(result.tagged).toBe(1);
+        expect(result.failed).toBe(0);
+        expect(result.skipped).toBe(0);
+        expect(result.warnings).toContainEqual(
+          expect.stringContaining('Cover art format not supported for embedding: .webp'),
+        );
+        expect(result.warnings.some(w => w.includes('cover image found'))).toBe(false);
+      });
+
+      it('treats an unreadable cover probe as no cover and still tags the audio', async () => {
+        _readdirFiles = ['ch01.mp3', 'cover.jpg'];
+        // Second bare readdir = findCoverFile; the first is warnUnsupportedFormats, which has no catch.
+        _bareReaddirRejectOrdinal = 2;
+
+        const result = await makeService().tagBook(1, '/books/test', {
+          title: 'Test', authorName: 'Author',
+        }, '/usr/bin/python3', 'overwrite', true);
+
+        expect(result.tagged).toBe(1);
+        expect(embeddedCover(0)).toBeNull();
+        expect(result.warnings.some(w => w.includes('cover image found'))).toBe(true);
+      });
+    });
+
     it('excludeFields strips fields from the tag payload', async () => {
       _readdirFiles = ['book.mp3'];
       const db = createMockDb();
@@ -1446,6 +1601,37 @@ describe('tagFile', () => {
       const mp3 = plan.files.find(f => f.file === 'book.mp3')!;
       expect(mp3.outcome).toBe('will-tag');
       expect(mp3.coverPending).toBe(true);
+    });
+
+    /**
+     * RetagPlan carries no selected-cover filename — `hasCoverFile` is `!!coverPath` and
+     * `coverPending` keys on path presence alone, so both read identically for a webp and a jpg.
+     * These cases therefore assert only what the plan can actually observe; the filename decision
+     * is proved on the pure picker, and preview/apply share it because `findCoverFile` is the one
+     * caller of `pickCoverFile` and both paths route through it.
+     */
+    describe('cover probe with a shadowing webp (#2214)', () => {
+      const embedCoverSettings = {
+        processing: {},
+        tagging: { enabled: true, mode: 'populate_missing' as const, embedCover: true },
+      };
+
+      it.each([
+        [['book.mp3', 'cover.webp', 'cover.jpg']],
+        [['book.mp3', 'cover.webp']],
+      ])('reports hasCoverFile for %j so the embed toggle stays enabled', async (entries) => {
+        _readdirFiles = [...entries];
+        (parseFile as Mock).mockResolvedValue({ common: { picture: [] }, format: {} });
+        setupBook({ title: 'X', authors: [{ name: 'A' }] });
+        const settings = createMockSettingsService(embedCoverSettings);
+        const service = new TaggingService(createMockDb() as never, settings as never, createMockLog() as never, mockBookService as never);
+
+        const plan = await service.planRetag(1);
+
+        expect(plan.hasCoverFile).toBe(true);
+        expect(plan.files.find(f => f.file === 'book.mp3')!.coverPending).toBe(true);
+        expect(plan.warnings.some(w => w.includes('no cover image'))).toBe(false);
+      });
     });
 
     it('embedCover=false: no cover-missing warning, hasCoverFile=false', async () => {
