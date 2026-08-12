@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api, ApiError, parseAddBookConflict, formatReviewConflictMessage } from '@/lib/api';
+import { api, readAddBookConflict, formatReviewConflictMessage } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { FormField } from '@/components/settings/FormField';
 import { PlusIcon } from '@/components/icons';
@@ -60,13 +60,14 @@ export function ManualAddForm({ defaultTitle, onSuccess, onPendingChange }: {
       onSuccess?.();
     },
     onError: (err: Error) => {
-      if (err instanceof ApiError && err.status === 409) {
-        // The 409 body is the incumbent row plus the conflict discriminator. Nothing was created, so
-        // neither branch resets the form or calls onSuccess — that is what closes the modal, and the
-        // operator's typed values are all they have to retry with.
-        const { conflict, incumbentTitle } = parseAddBookConflict(err.body);
-        if (conflict === 'review') {
-          toast.info(formatReviewConflictMessage(incumbentTitle));
+      const details = readAddBookConflict(err);
+      if (details) {
+        // Nothing was created, so neither branch resets the form or calls onSuccess — that is what
+        // closes the modal, and the operator's typed values are all they have to retry with. Review
+        // is tested FIRST and ownership is the fallthrough: a null discriminator degrading into the
+        // review arm would silently drop a real ownership claim.
+        if (details.conflict === 'review') {
+          toast.info(formatReviewConflictMessage(details.incumbentTitle));
           return;
         }
         toast.info('Already in library');

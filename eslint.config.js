@@ -43,6 +43,15 @@ const DEDUP_IMPORT_RESTRICTIONS = [
 // a `patterns` array cannot mix bare strings with objects.
 const ROUTES_IMPORT_RESTRICTION = { group: ['**/routes/**', '**/routes/*'] };
 
+// The add-path 409 gate has one home. Client surfaces read the verdict through readAddBookConflict;
+// the raw parser stays exported for that reader and its own unit test only.
+const SERVER_IMPORT_RESTRICTION = { group: ['**/server/**', '**/server/*'] };
+const ADD_BOOK_CONFLICT_RESTRICTION = {
+  group: ['**/add-book-conflict.js'],
+  importNames: ['parseAddBookConflict'],
+  message: 'Read the add-path 409 through readAddBookConflict — it single-homes the `instanceof ApiError && status === 409` gate.',
+};
+
 export default tseslint.config(
   {
     ignores: [
@@ -143,7 +152,7 @@ export default tseslint.config(
     ignores: ['**/*.test.ts', '**/*.test.tsx'],
     rules: {
       'no-restricted-imports': ['error', {
-        patterns: ['**/server/**', '**/server/*'],
+        patterns: [SERVER_IMPORT_RESTRICTION, ADD_BOOK_CONFLICT_RESTRICTION],
         paths: [{ name: 'fastify', message: 'fastify must not be imported from client code.' }],
       }],
     },

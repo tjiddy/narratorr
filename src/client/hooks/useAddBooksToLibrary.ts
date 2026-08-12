@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api, ApiError, parseAddBookConflict, formatReviewConflictMessage, type BookMetadata, type LibraryEntry } from '@/lib/api';
+import { api, readAddBookConflict, formatReviewConflictMessage, type BookMetadata, type LibraryEntry } from '@/lib/api';
 import { mapBookMetadataToPayload, isBookInLibrary } from '@/lib/helpers';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
@@ -39,13 +39,14 @@ export function useAddBooksToLibrary(libraryBooks?: LibraryEntry[], qualityDefau
         next.delete(key);
         return next;
       });
-      if (error instanceof ApiError && error.status === 409) {
-        // The 409 body is the incumbent row plus the conflict discriminator.
-        const { conflict, incumbentTitle } = parseAddBookConflict(error.body);
-        // `review` is the server abstaining; claiming the key would strand the book behind an Add
-        // control it can never re-enable.
-        if (conflict === 'review') {
-          toast.info(formatReviewConflictMessage(incumbentTitle));
+      const details = readAddBookConflict(error);
+      if (details) {
+        // Review is tested FIRST and ownership is the fallthrough: a null discriminator degrading
+        // into the review arm would silently drop a real ownership claim. `review` is the server
+        // abstaining; claiming the key would strand the book behind an Add control it can never
+        // re-enable.
+        if (details.conflict === 'review') {
+          toast.info(formatReviewConflictMessage(details.incumbentTitle));
           return;
         }
         setAddedAsins((prev) => new Set(prev).add(key));

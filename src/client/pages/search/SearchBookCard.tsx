@@ -5,7 +5,7 @@ import { AddBookPopover } from '@/components/AddBookPopover';
 import { InLibraryBadge } from '@/components/InLibraryBadge';
 import { Badge } from '@/components/Badge';
 import { useMutation, type useQueryClient } from '@tanstack/react-query';
-import { api, ApiError, parseAddBookConflict, type BookMetadata, type LibraryEntry } from '@/lib/api';
+import { api, readAddBookConflict, formatReviewConflictSentence, REVIEW_CONFLICT_LABEL, type BookMetadata, type LibraryEntry } from '@/lib/api';
 import { toast } from 'sonner';
 import { mapBookMetadataToPayload, findLibraryMatch, type LibraryMatch } from '@/lib/helpers';
 import { formatDurationMinutes } from '@/lib/format';
@@ -65,15 +65,16 @@ export function SearchBookCard({
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
     onError: (error: Error, overrides) => {
-      if (error instanceof ApiError && error.status === 409) {
-        // The 409 body is the incumbent row plus the conflict discriminator.
-        const { conflict, incumbentId, incumbentTitle } = parseAddBookConflict(error.body);
-        // `review` is an abstention, not an ownership claim, so the card must stay addable.
-        if (conflict === 'review') {
-          setReviewConflict({ incumbentTitle, overrides });
+      const details = readAddBookConflict(error);
+      if (details) {
+        // Review is tested FIRST and ownership is the fallthrough: a null discriminator degrading
+        // into the review arm would silently drop a real ownership claim. `review` is an abstention,
+        // not an ownership claim, so the card must stay addable.
+        if (details.conflict === 'review') {
+          setReviewConflict({ incumbentTitle: details.incumbentTitle, overrides });
           return;
         }
-        setJustAddedBookId(incumbentId);
+        setJustAddedBookId(details.incumbentId);
         toast.info('Already in library');
         queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       } else {
@@ -123,11 +124,9 @@ export function SearchBookCard({
 
           {reviewConflict && (
             <div className="mt-1.5 flex flex-wrap items-center gap-2" role="status">
-              <Badge variant="warning">Possible duplicate (review)</Badge>
+              <Badge variant="warning">{REVIEW_CONFLICT_LABEL}</Badge>
               <span className="text-sm text-muted-foreground">
-                {reviewConflict.incumbentTitle
-                  ? `May be the same recording as '${reviewConflict.incumbentTitle}'.`
-                  : 'May be the same recording as a book already in your library.'}
+                {formatReviewConflictSentence(reviewConflict.incumbentTitle)}
               </span>
               <button
                 type="button"
