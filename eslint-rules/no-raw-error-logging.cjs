@@ -6,7 +6,8 @@
 
 const path = require('node:path');
 
-const LOG_METHODS = new Set(['error', 'warn', 'info', 'debug']);
+// Every level Pino ships. `fatal` is where losing the error detail costs the most.
+const LOG_METHODS = new Set(['error', 'warn', 'info', 'debug', 'fatal', 'trace']);
 
 // Both logger naming conventions are part of the rule's contract.
 const LOG_RECEIVERS = new Set(['log', 'logger']);
