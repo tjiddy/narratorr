@@ -221,6 +221,89 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
     });
     expect(result).toBeNull();
   });
+
+  // A blank provider name must clear the series exactly as an absent one does, never seed a blank row (#2224).
+  describe('an unusable replacement series name clears rather than blank-names', () => {
+    const UNUSABLE = [
+      ['empty string', ''],
+      ['spaces', '   '],
+      ['tab + newline', '\t\n'],
+      ['non-breaking space', '\u00A0'],
+    ] as const;
+
+    it.each(UNUSABLE)('%s: nullifies both series columns', async (_label, seriesName) => {
+      const svc = new BookService(db, log);
+      const bookId = await seedBookA(svc);
+      await db.update(books).set({ seriesName: 'The Expanse', seriesPosition: 4 }).where(eq(books.id, bookId));
+
+      await svc.fixMatch(bookId, {
+        asin: 'B_BLANK',
+        title: 'Rematched Title',
+        authors: [{ name: 'New Author' }],
+        seriesName,
+        seriesPosition: 9,
+      });
+
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      expect(row!.seriesName).toBeNull();
+      expect(row!.seriesPosition).toBeNull();
+    });
+
+    it('detaches the prior link and seeds no blank-named series row', async () => {
+      const svc = new BookService(db, log);
+      const bookId = await seedBookA(svc);
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId))).toHaveLength(1);
+
+      await svc.fixMatch(bookId, {
+        asin: 'B_BLANK',
+        title: 'Rematched Title',
+        authors: [{ name: 'New Author' }],
+        seriesName: '   ',
+        seriesPosition: 9,
+      });
+
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId))).toHaveLength(0);
+      expect((await db.select().from(series)).filter((r) => r.normalizedName === '')).toHaveLength(0);
+    });
+
+    it('a usable name still replaces the pair and seeds the link (the blank cases are not vacuous)', async () => {
+      const svc = new BookService(db, log);
+      const bookId = await seedBookA(svc);
+
+      await svc.fixMatch(bookId, {
+        asin: 'B_PROVIDER',
+        title: 'Rematched Title',
+        authors: [{ name: 'New Author' }],
+        seriesName: 'Expanse (Provider Edition)',
+        seriesPosition: 9,
+      });
+
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      expect(row!.seriesName).toBe('Expanse (Provider Edition)');
+      expect(row!.seriesPosition).toBe(9);
+      const members = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));
+      expect(members).toHaveLength(1);
+      const seriesRow = (await db.select().from(series).where(eq(series.id, members[0]!.seriesId)))[0]!;
+      expect(seriesRow.normalizedName).toBe('expanse provider edition');
+    });
+
+    it('still resets user_cleared_fields — the series guard leaves the identity-replacement contract alone', async () => {
+      const svc = new BookService(db, log);
+      const bookId = await seedBookA(svc);
+      await db.update(books).set({ userClearedFields: '["genres","seriesName"]' }).where(eq(books.id, bookId));
+
+      await svc.fixMatch(bookId, {
+        asin: 'B_BLANK',
+        title: 'Rematched Title',
+        authors: [{ name: 'New Author' }],
+        seriesName: '   ',
+      });
+
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      expect(row!.userClearedFields).toBeNull();
+      expect(row!.enrichmentStatus).toBe('pending');
+    });
+  });
 });
 
 describe('replaceSeriesLink — integration (#1129 F2)', () => {

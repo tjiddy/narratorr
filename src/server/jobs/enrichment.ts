@@ -10,6 +10,7 @@ import { canonicalizeAsin } from '@shared/asin.js';
 import type { MetadataService } from '../services/metadata.service.js';
 import type { BookService } from '../services/book.service.js';
 import { pickPrimarySeries } from '@shared/pick-primary-series.js';
+import { usefulString } from '../services/metadata-recording-collapse.js';
 import { parseClearedFields } from '../utils/cleared-fields.js';
 import type { ClearableBookField } from '@shared/schemas/book.js';
 
@@ -190,7 +191,8 @@ function fillSeriesFields(
 ): Record<string, unknown> {
   const updates: Record<string, unknown> = {};
   const primary = pickPrimarySeries(result);
-  if (!primary?.name || book.seriesName) return updates;
+  // usefulString is a plain boolean, so the presence arm carries the narrowing for the dereference.
+  if (!primary || !usefulString(primary.name) || book.seriesName) return updates;
   updates.seriesName = primary.name;
   updates.seriesPosition = primary.position ?? null;
   return updates;

@@ -3963,6 +3963,8 @@ describe('#1071 series routes', () => {
     expect(services.seriesCard.bindHardcoverSeries).toHaveBeenCalledWith(1, 4242);
   });
 
+  // Every unresolvable bind — missing key, fetch miss, and the #2224 blank-canonical-name refusal —
+  // reaches this route as the same `null`; the route adds no status code or error shape for it.
   it('POST /api/books/:id/series/bind returns 502 when binding fails', async () => {
     (services.book.getById as Mock).mockResolvedValue({ ...mockBook, id: 1, seriesName: 'The Band' });
     (services.seriesCard.bindHardcoverSeries as Mock).mockResolvedValue(null);
@@ -3972,6 +3974,7 @@ describe('#1071 series routes', () => {
       const res = await app.inject({ method: 'POST', url: '/api/books/1/series/bind', payload: { hardcoverSeriesId: 4242 } });
 
       expect(res.statusCode).toBe(502);
+      expect(res.json()).toEqual({ error: 'Failed to bind Hardcover series' });
       // The 502 exit occurs before the post-bind pass (#2098 AC12).
       expect(summaryRecords(spies)).toHaveLength(0);
     } finally {
