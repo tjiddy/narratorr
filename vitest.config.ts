@@ -50,7 +50,7 @@ export default defineConfig({
             'e2e/fixtures/**/*.test.ts',
             'e2e/fakes/**/*.test.ts',
             'e2e/*.test.ts',
-            // Legacy `.test.cjs` scripts register no Vitest tests, so include only `.test.js`.
+            // RuleTester suites are ESM `.test.js`; a CommonJS script registers no Vitest tests.
             'eslint-rules/**/*.test.js',
           ],
         },

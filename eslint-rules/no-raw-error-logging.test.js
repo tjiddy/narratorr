@@ -1,8 +1,20 @@
-const { RuleTester } = require('eslint');
-const rule = require('./no-raw-error-logging.cjs');
+import { describe, it } from 'vitest';
+import { RuleTester } from 'eslint';
+import tseslint from 'typescript-eslint';
+import rule from './no-raw-error-logging.cjs';
 
+// Wire RuleTester into Vitest so each case reports independently.
+RuleTester.describe = describe;
+RuleTester.it = it;
+
+// Under this pnpm layout only the root `typescript-eslint` parser resolves here.
+// Untyped on purpose: the rule is purely syntactic, and a TS program would import
+// the #2239 single-run crash class for no benefit.
 const ruleTester = new RuleTester({
-  languageOptions: { ecmaVersion: 2022, sourceType: 'module' },
+  languageOptions: {
+    parser: tseslint.parser,
+    parserOptions: { ecmaVersion: 'latest', sourceType: 'module' },
+  },
 });
 
 ruleTester.run('no-raw-error-logging', rule, {
@@ -161,6 +173,106 @@ ruleTester.run('no-raw-error-logging', rule, {
         const logger = { warn(x){} };
         const result = doSomething();
         logger.warn(result, 'x');
+      `,
+    },
+
+    // Receiver and method scope.
+
+    {
+      name: 'C1 log.fatal is outside LOG_METHODS',
+      code: `
+        try { foo(); } catch (err) {
+          log.fatal(err, 'x');
+        }
+      `,
+    },
+    {
+      name: 'C1 log.trace is outside LOG_METHODS',
+      code: `
+        try { foo(); } catch (err) {
+          log.trace(err, 'x');
+        }
+      `,
+    },
+    {
+      name: 'C2 receiver identifier is outside LOG_RECEIVERS',
+      code: `
+        try { foo(); } catch (err) {
+          notALog.error(err, 'x');
+        }
+      `,
+    },
+    {
+      name: 'C3 one-level member receiver whose property is not log/logger',
+      code: `
+        try { foo(); } catch (err) {
+          a.b.error(err, 'x');
+        }
+      `,
+    },
+    {
+      name: 'C5 a log call with no arguments',
+      code: `
+        try { foo(); } catch (err) {
+          log.error();
+        }
+      `,
+    },
+    {
+      name: 'C6 the error is not the first argument',
+      code: `
+        try { foo(); } catch (err) {
+          log.error('msg', err);
+        }
+      `,
+    },
+
+    // Object-argument value shapes.
+
+    {
+      name: 'C7 a spread-only object has no error property to report',
+      code: `
+        try { foo(); } catch (e) {
+          log.error({ ...e }, 'x');
+        }
+      `,
+    },
+    {
+      name: 'C8 TSAsExpression value',
+      code: `
+        try { foo(); } catch (e) {
+          log.error({ error: e as Error }, 'x');
+        }
+      `,
+    },
+    {
+      name: 'C8 TSNonNullExpression value',
+      code: `
+        try { foo(); } catch (e) {
+          log.error({ error: e! }, 'x');
+        }
+      `,
+    },
+    {
+      name: 'C8 TSSatisfiesExpression value',
+      code: `
+        try { foo(); } catch (e) {
+          log.error({ error: e satisfies unknown }, 'x');
+        }
+      `,
+    },
+
+    // Scope resolution.
+
+    {
+      name: 'C9 the innermost scope declaring the name wins over an outer catch',
+      code: `
+        try { foo(); } catch (e) {
+          function inner(e) {
+            log.error({ error: e }, 'x');
+          }
+          inner(1);
+        }
       `,
     },
   ],
@@ -673,7 +785,171 @@ try { foo(); } catch (error) {
       `,
       errors: [{ messageId: 'rawError' }],
     },
+
+    // Optional-chained receiver. The `?.` sits on the callee MemberExpression,
+    // not on the CallExpression the rule visits.
+
+    {
+      name: 'C4 optional-chained log receiver',
+      code: `try{f()}catch(e){log?.error(e,'x')}`,
+      filename: '/project/src/server/services/a.ts',
+      output: `import { serializeError } from '../utils/serialize-error.js';
+
+try{f()}catch(e){log?.error({ error: serializeError(e) },'x')}`,
+      errors: [{ messageId: 'rawError' }],
+    },
+
+    // Import-path computation.
+
+    {
+      name: 'C10 the src/server root resolves through utils/',
+      code: `try{f()}catch(e){log.error(e,'x')}`,
+      filename: '/project/src/server/foo.ts',
+      output: `import { serializeError } from './utils/serialize-error.js';
+
+try{f()}catch(e){log.error({ error: serializeError(e) },'x')}`,
+      errors: [{ messageId: 'rawError' }],
+    },
+    {
+      // Same expected value as the forward-slash `utils/` case above: both
+      // separator spellings of one path must resolve identically. The `utils/`
+      // depth is load-bearing — at any one-level-below depth the correct answer
+      // coincides with the marker-not-found fallback and observes nothing.
+      name: 'C11 a backslash-separated filename normalizes before the marker lookup',
+      code: `try{f()}catch(e){log.error(e,'x')}`,
+      filename: 'C:\\project\\src\\server\\utils\\foo.ts',
+      output: `import { serializeError } from './serialize-error.js';
+
+try{f()}catch(e){log.error({ error: serializeError(e) },'x')}`,
+      errors: [{ messageId: 'rawError' }],
+    },
+    {
+      name: 'C12 a repeated /src/server/ marker resolves against the last one',
+      code: `try{f()}catch(e){log.error(e,'x')}`,
+      filename: '/project/src/server/x/src/server/services/foo.ts',
+      output: `import { serializeError } from '../utils/serialize-error.js';
+
+try{f()}catch(e){log.error({ error: serializeError(e) },'x')}`,
+      errors: [{ messageId: 'rawError' }],
+    },
+    {
+      name: 'C13 a path outside src/server falls back rather than computing',
+      code: `try{f()}catch(e){log.error(e,'x')}`,
+      filename: '/project/src/core/foo.ts',
+      output: `import { serializeError } from '../utils/serialize-error.js';
+
+try{f()}catch(e){log.error({ error: serializeError(e) },'x')}`,
+      errors: [{ messageId: 'rawError' }],
+    },
+
+    // Import insertion against a file that already has imports.
+
+    {
+      name: 'C14 the import lands after the last leading import',
+      code: `
+        import { db } from '../../db/client.js';
+        import { z } from 'zod';
+
+        try { foo(); } catch (err) {
+          log.error({ error: err }, 'failed');
+        }
+      `,
+      filename: '/project/src/server/services/foo.ts',
+      output: `
+        import { db } from '../../db/client.js';
+        import { z } from 'zod';
+import { serializeError } from '../utils/serialize-error.js';
+
+
+        try { foo(); } catch (err) {
+          log.error({ error: serializeError(err) }, 'failed');
+        }
+      `,
+      errors: [{ messageId: 'rawError' }],
+    },
+    {
+      name: 'C15 the scan stops at the first non-import, so a later import is not the anchor',
+      code: `
+        import { db } from '../../db/client.js';
+
+        const x = 1;
+        import { z } from 'zod';
+
+        try { foo(); } catch (err) {
+          log.error({ error: err }, 'failed');
+        }
+      `,
+      filename: '/project/src/server/services/foo.ts',
+      output: `
+        import { db } from '../../db/client.js';
+import { serializeError } from '../utils/serialize-error.js';
+
+
+        const x = 1;
+        import { z } from 'zod';
+
+        try { foo(); } catch (err) {
+          log.error({ error: serializeError(err) }, 'failed');
+        }
+      `,
+      errors: [{ messageId: 'rawError' }],
+    },
+    {
+      name: 'C16 an unrelated serializeError binding suppresses the import',
+      code: `const serializeError = 1;
+try{f()}catch(e){log.error(e,'x')}`,
+      filename: '/project/src/server/services/foo.ts',
+      output: `const serializeError = 1;
+try{f()}catch(e){log.error({ error: serializeError(e) },'x')}`,
+      errors: [{ messageId: 'rawError' }],
+    },
+    {
+      // Documented false negative: the short-circuit is textual, so the fix
+      // leaves serializeError unresolved. Pinned here, filed separately.
+      name: 'C17 a serializeError mention in a comment suppresses the import',
+      code: `// serializeError lives in ../utils
+try{f()}catch(e){log.error(e,'x')}`,
+      filename: '/project/src/server/services/foo.ts',
+      output: `// serializeError lives in ../utils
+try{f()}catch(e){log.error({ error: serializeError(e) },'x')}`,
+      errors: [{ messageId: 'rawError' }],
+    },
+
+    // Multiple reports under RuleTester's single fix pass. Both fixes carry the
+    // same import insertion, so the second report's fix is discarded as
+    // overlapping and its call is left untouched.
+
+    {
+      name: 'C18 two violating calls report twice and only the first is rewritten',
+      code: `try{f()}catch(e){log.error(e,'a');log.warn(e,'b')}`,
+      filename: '/project/src/server/services/a.ts',
+      output: `import { serializeError } from '../utils/serialize-error.js';
+
+try{f()}catch(e){log.error({ error: serializeError(e) },'a');log.warn(e,'b')}`,
+      errors: [{ messageId: 'rawError' }, { messageId: 'rawError' }],
+    },
+    {
+      // Under ESLint's real multi-pass loop this converges to a duplicate
+      // `error` key. Pinned as-is; the defect is filed separately.
+      name: 'C19 error and err in one object report twice and only the first is rewritten',
+      code: `try{f()}catch(e){log.error({error: e, err: e},'x')}`,
+      filename: '/project/src/server/services/a.ts',
+      output: `import { serializeError } from '../utils/serialize-error.js';
+
+try{f()}catch(e){log.error({error: serializeError(e), err: e},'x')}`,
+      errors: [{ messageId: 'rawError' }, { messageId: 'rawError' }],
+    },
+
+    // Bare `serializeError` first argument.
+
+    {
+      name: 'C20 a bare serializeError call reports without consulting the catch trace',
+      code: `const x = 1;
+log.error(serializeError(x), 'x');`,
+      filename: '/project/src/server/services/a.ts',
+      output: `const x = 1;
+log.error({ error: serializeError(x) }, 'x');`,
+      errors: [{ messageId: 'rawError' }],
+    },
   ],
 });
-
-console.log('All RuleTester cases passed');
