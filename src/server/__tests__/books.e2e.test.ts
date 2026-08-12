@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createE2EApp, type E2EApp } from './e2e-helpers.js';
-import { inArray } from 'drizzle-orm';
-import { authors, books } from '@db/schema.js';
+import { eq, inArray } from 'drizzle-orm';
+import { authors, books, series } from '@db/schema.js';
 import { generatePublicId } from '../utils/public-id.js';
 import { BOOK_STATUSES } from '@shared/schemas/book.js';
 import { DEFAULT_LIMITS } from '@shared/schemas/common.js';
@@ -388,5 +388,59 @@ describe('GET /api/books/identifiers — unpaginated and status-blind (#1916)', 
     const cappedRows = capped.json().data as unknown[];
     expect(cappedRows).toHaveLength(DEFAULT_LIMITS.books);
     expect((identifiers.json() as unknown[]).length).toBeGreaterThan(cappedRows.length);
+  });
+});
+
+// The manual-add surface, through the real route and a real DB (#2224).
+describe('POST /api/books — a whitespace-only series name is not persisted (#2224)', () => {
+  let e2e: E2EApp;
+
+  beforeAll(async () => {
+    e2e = await createE2EApp();
+  });
+
+  afterAll(async () => {
+    await e2e.cleanup();
+  });
+
+  it('creates the book, drops both series fields, and seeds no series row', async () => {
+    const res = await e2e.app.inject({
+      method: 'POST',
+      url: '/api/books',
+      payload: {
+        title: 'Leviathan Wakes',
+        authors: [{ name: 'James S. A. Corey' }],
+        seriesName: '   ',
+        seriesPosition: 1,
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const created = res.json();
+    expect(created.seriesName).toBeNull();
+    expect(created.seriesPosition).toBeNull();
+
+    const [row] = await e2e.db.select().from(books).where(eq(books.id, created.id));
+    expect(row!.seriesName).toBeNull();
+    expect(row!.seriesPosition).toBeNull();
+    expect(await e2e.db.select().from(series)).toHaveLength(0);
+  });
+
+  it('a usable series name on the same route still persists and seeds its row', async () => {
+    const res = await e2e.app.inject({
+      method: 'POST',
+      url: '/api/books',
+      payload: {
+        title: 'Caliban’s War',
+        authors: [{ name: 'James S. A. Corey' }],
+        seriesName: 'The Expanse',
+        seriesPosition: 2,
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().seriesName).toBe('The Expanse');
+    expect(res.json().seriesPosition).toBe(2);
+    expect(await e2e.db.select().from(series)).toHaveLength(1);
   });
 });

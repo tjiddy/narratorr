@@ -65,6 +65,17 @@ describe('SeriesRefSchema', () => {
     const result = SeriesRefSchema.safeParse({ name: 'Series', position: 'first' });
     expect(result.success).toBe(false);
   });
+
+  /**
+   * #2224 deliberately leaves this bare. Tightening it to `.trim().min(1)` would reject the whole
+   * BookMetadata over a data-quality blank, discarding an otherwise good match; the durable writers
+   * drop the series fields instead. The asymmetry with the trimmed `title`/`authors[].name` below
+   * is the point, not an oversight.
+   */
+  it('accepts a whitespace-only name — blanks are dropped by the writers, not the schema (#2224)', () => {
+    expect(SeriesRefSchema.safeParse({ name: '   ' }).success).toBe(true);
+    expect(SeriesRefSchema.safeParse({ name: '' }).success).toBe(true);
+  });
 });
 
 describe('BookMetadataSchema', () => {
@@ -131,6 +142,16 @@ describe('BookMetadataSchema', () => {
   it('rejects authors array containing only a whitespace-name author', () => {
     const result = BookMetadataSchema.safeParse({ title: 'Book', authors: [{ name: '   ' }] });
     expect(result.success).toBe(false);
+  });
+
+  it('accepts a whitespace-only series name and still yields a book (#2224)', () => {
+    const result = BookMetadataSchema.safeParse({
+      ...validBook,
+      series: [{ name: '   ' }],
+      seriesPrimary: { name: '   ', position: 2 },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.series?.[0]?.name).toBe('   ');
   });
 
   it('trims surrounding whitespace from title on successful parse', () => {

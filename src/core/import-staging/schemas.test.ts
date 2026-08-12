@@ -48,6 +48,16 @@ describe('stagedImportItemSchema', () => {
 });
 
 describe('stagedBookMetadataSchema bounds (F34)', () => {
+  // Already-persisted staged rows carrying a provider blank must keep round-tripping (#2224).
+  it('accepts a whitespace-only series name', () => {
+    expect(stagedBookMetadataSchema.safeParse({
+      ...validMetadata,
+      series: [{ name: '   ' }],
+      seriesPrimary: { name: '   ', position: 2 },
+    }).success).toBe(true);
+  });
+
+
   it('accepts array elements at the boundary and rejects just over', () => {
     const at = {
       ...validMetadata,

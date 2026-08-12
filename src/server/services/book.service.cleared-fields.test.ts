@@ -126,6 +126,19 @@ describe('BookService — user-cleared fields (#2069)', () => {
       expect(set.userClearedFields).toBe('["seriesName"]');
     });
 
+    /**
+     * The most likely over-fix for #2224 is adding usefulString to BookService.update too, which
+     * would silently convert an operator's "clear this series" into a no-op. PATCH blanks are a
+     * user-asserted tombstone, not provider noise.
+     */
+    it('a whitespace-only seriesName is still a user tombstone, not a rejected blank (#2224)', async () => {
+      const set = await issuedFor(null, { seriesName: '   ' });
+
+      expect(set.userClearedFields).toBe('["seriesName"]');
+      expect(set.seriesName).toBeNull();
+      expect(set.seriesPosition).toBeNull();
+    });
+
     it('row 1 exemption: an unrelated update issues no series keys at all', async () => {
       const set = await issuedFor('["seriesName"]', { subtitle: 'x' });
 

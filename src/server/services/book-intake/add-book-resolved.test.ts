@@ -173,6 +173,30 @@ describe('addBook (resolve: required) — create and announce', () => {
     expect(createPayload(deps)).toMatchObject({ title: 'Anonymous Book', authors: [] });
   });
 
+  /**
+   * A boundary pin, NOT a persistence proof: this suite mocks BookService wholesale, so it sits
+   * ABOVE the #2224 create guard and structurally cannot observe filtering. What it can prove is
+   * that `resolve.ts` deliberately does not guard — the blank travels verbatim to the chokepoint,
+   * which is what leaving the intermediate helpers untouched requires. Omission is proved by
+   * book-create-series.integration.test.ts and the POST /api/books e2e case.
+   */
+  it('forwards a blank resolved series name verbatim into the create input, adopting identity as usual', async () => {
+    const deps = makeDeps({
+      resolver: { resolveBook: vi.fn().mockResolvedValue({ ...MATCH, seriesPrimary: { name: '   ', position: 1 } }) },
+    });
+
+    const result = await addBook(deps, adoptedRequest(), makeLog());
+
+    expect(result).toMatchObject({ outcome: 'created' });
+    expect(createPayload(deps)).toMatchObject({
+      title: 'Leviathan Wakes: The Expanse Book 1',
+      authors: [{ name: 'Corey, James S. A.' }],
+      asin: 'B_RESOLVED',
+      seriesName: '   ',
+      seriesPosition: 1,
+    });
+  });
+
   it('keeps the member created when the book_added write rejects after the row committed', async () => {
     const log = makeLog();
     const deps = makeDeps({ eventHistory: { create: vi.fn().mockRejectedValue(new Error('events table locked')) } });
