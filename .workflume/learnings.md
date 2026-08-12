@@ -2147,6 +2147,9 @@ by ESLint and outside the TypeScript project, so run its suites directly. For pa
 remember that the typescript-eslint AST erases parentheses; there is no `ParenthesizedExpression`
 node to step through. Reference: `no-unstamped-match-generation.test.js`.
 
+Covers UNTYPED rules only. A rule that reads the type checker adds two failure modes that this
+wiring does not — see [[typed-ruletester-program-hazards]] before writing one.
+
 ## swallowed-throw-type-via-reducer-spy
 
 **source:** #2062
@@ -2165,3 +2168,177 @@ Restore the real passthrough implementation in `beforeEach`; `vi.clearAllMocks()
 does not restore implementations. Use the spy for the negative control too so unrelated failures are
 proved not to be the typed guard. This is a test-only observation seam, not permission to branch on
 error identity in production; see [[abort-verdict-not-error-shape]].
+
+## typed-ruletester-program-hazards
+
+**source:** #2235, #2239
+**added:** 2026-08-11
+**files:** eslint-rules/no-direct-duplicate-check.cases.js, eslint-rules/no-direct-duplicate-check.test.js, eslint-rules/no-direct-duplicate-check.single-run.test.js
+**tags:** eslint, typescript-eslint, ruletester, vitest, type-aware-lint
+
+---
+
+A RuleTester suite for a type-aware rule is backed by a TypeScript program that every case shares.
+Two distinct defects fall out of that, one a crash and one silent. Both are live; neither fix
+dissolves the other. Extends [[eslint-rule-test-harness]], which covers untyped-rule wiring only.
+
+**1 — Crash under CI-inferred single-run parsing. Use `parserOptions.projectService: true`, never
+`parserOptions.project`.** typescript-eslint's `inferSingleRun()` returns true when
+`process.env.CI === 'true'`. In single-run mode `parser.ts` counts `parseAndGenerateServices` calls
+per `filePath` and, from the second call for a path onwards, discards the project program for a
+one-file `createIsolatedProgram` built from that case's `code` alone. Correct for ESLint's autofix
+cycle; wrong for RuleTester, where cases deliberately share one `filename`. In the isolated program
+the case's relative imports resolve to nothing, the module symbol has no backing source file, and
+TypeScript throws `TypeError: Cannot read properties of undefined (reading 'includes')` from
+`getSpecifierForModuleSymbol` to `normalizeSlashes`. Only cases that reach the checker crash, so the
+failing set is a confusing subset. Symptom shape: green on every dev machine, red only on CI —
+reproduce in seconds with `TSESTREE_SINGLE_RUN=true pnpm exec vitest run <file>`.
+`disallowAutomaticSingleRunInference: true` is NOT the fix: `inferSingleRun()` reads the explicit
+`TSESTREE_SINGLE_RUN` env var *before* that flag, so it greens CI while leaving the crash one
+environment variable away. `projectService: true` is, because the isolated-program fallback is gated
+on `!parseSettings.projectService`.
+
+To keep that defect reachable without a CI runner, split the suite three ways: a non-collected
+`*.cases.js` exporting the case set as a callable, an ambient `*.test.js` that sets NO env var (so
+it still exercises the long-running path), and a `*.single-run.test.js` that assigns
+`process.env.TSESTREE_SINGLE_RUN = 'true'` at module top. An explicit value wins ahead of every
+other signal, so one file cannot both force single-run and observe the ambient mode — the split is
+what makes both modes real. Vitest's default `forks` pool with `isolate: true` gives each file its
+own process; restore the prior value in a top-level `afterAll` anyway, and use `delete` when it was
+undefined (assigning `undefined` to `process.env.X` stores the STRING `'undefined'`).
+
+**2 — Silent disarm by fixture redeclaration. `projectService` does not fix this** — the language
+service keeps the program FRESH, not IMMUTABLE, so it still adopts each case's `code` for its
+filename. Mutations persist across cases in declaration order (all of `valid[]` before all of
+`invalid[]`), so a case that redeclares a SHARED fixture module with fewer members erases them for
+every later case. The symptom is a subset of invalid cases reporting 0 errors, which reads as the
+rule's type resolution being wrong for some call shapes rather than as fixture corruption. In #2235
+an exemption case inlined a shortened `class BookService`; every later case resolving `findDuplicate`
+through it got an undefined symbol, while `create`/`createResolved` kept working because the inlined
+class happened to declare them. Fix: feed the fixture's own source back verbatim
+(`readFileSync(fixturePath, 'utf8')` as that case's `code`) instead of inlining a redeclaration, and
+put the call the exemption exists for INTO the committed fixture file.
+
+Two companion constraints for typed suites. Each case's `filename` must exist on disk and be included
+by the fixture tsconfig — a virtual filename fails to parse, and if the rule bails when
+`parserServices` are absent the case silently passes as valid, so always assert that at least one
+invalid case actually reports. And a backslash-separated filename cannot be a RuleTester case at all
+on Linux: test separator-agnostic exemption matching by calling `rule.create({ filename,
+sourceCode: {} })` directly and asserting the returned visitor is `{}` for an exempt path and
+`['CallExpression']` otherwise — which requires the rule to do its exemption check BEFORE its
+parserServices check.
+
+Reference: `eslint-rules/no-direct-duplicate-check.*` and `eslint-rules/fixtures/no-direct-duplicate-check/`.
+
+## eslint-linttext-project-service-cost
+
+**source:** #2253
+**added:** 2026-08-11
+**files:** eslint-rules/config-import-bans.test.js
+**tags:** eslint, typescript-eslint, vitest
+
+---
+
+`ESLint#lintText` runs the full parser pipeline, so a repo-wide `parserOptions.projectService: true`
+makes the FIRST lint of any path inside the TS project build the whole program — 5,939ms measured
+here, against 15ms for a repeat lint of the same path. The cost is parser-level, not rule-level:
+`ruleFilter` alone still cost 6,510ms. A syntactic rule such as `no-restricted-imports` needs none of
+it. This is what made a 15s default timeout fail on a Windows dev machine while passing on CI.
+
+For a test that lints synthetic source against the real config, use a dedicated instance and change
+nothing in `eslint.config.js`:
+
+```js
+new ESLint({
+  cwd: REPO_ROOT,
+  ruleFilter: ({ ruleId }) => ruleId === 'no-restricted-imports',
+  overrideConfig: { languageOptions: { parserOptions: { projectService: false, project: false } } },
+})
+```
+
+The two options are co-required in that direction: `projectService: false` WITHOUT the rule filter
+throws `Error while loading rule '@typescript-eslint/return-await': You have used a rule which
+requires type information`, because that rule is type-aware and configured for `src/server/**`. Keep
+`calculateConfigForFile` on a second, override-free instance so resolved-options assertions still
+read exactly what `pnpm lint` reads.
+
+Narrowing a lint this way is also how a fixture goes vacuous, so the message helper must fail loudly
+rather than return `[]`. Filtering by `ruleId` drops fatal parse errors (`ruleId: null, fatal: true`)
+on the floor, and an ignored path yields either a null-ruleId warning (default `warnIgnored`) or zero
+results (`warnIgnored: false`). Guard on `results.length !== 1` AND on any `ruleId === null` message
+before filtering; every negative case asserting `toHaveLength(0)` depends on it. Keep the `ruleId`
+filter even under `ruleFilter` — redundant there, load-bearing without it, since `no-unused-vars` is
+globally enabled.
+
+The repo's only consumer of the `ESLint` Node API; the other suites use `RuleTester`, see
+[[eslint-rule-test-harness]] and [[typed-ruletester-program-hazards]]. Distinct from
+[[vacuous-assertion-observation-points]]: there the observable was too weak, here the lint never ran.
+
+## key-absence-needs-tohaveproperty
+
+**source:** #2243
+**added:** 2026-08-11
+**files:** src/server/routes/books.test.ts, src/server/services/book-intake/add-book.test.ts
+**tags:** vitest, test-observability, test-doubles
+
+---
+
+**`expect.not.objectContaining({ k: expect.anything() })` does not prove key absence.**
+`expect.anything()` refuses null/undefined, so for an actual value of `{ k: undefined }` the inner
+`objectContaining` fails and `.not` inverts it to a PASS — indistinguishable from the omitted-key
+case. `toHaveBeenCalledWith(exactObject)` is no better: it uses the `toEqual`-family recursive
+equality, which treats `{a:1}` and `{a:1,b:undefined}` as equal (only `toStrictEqual` separates them).
+
+When the contract is "this key must not be on the payload", capture the argument and assert on the
+property directly:
+
+```ts
+const createInput = () => (services.book.create as Mock).mock.calls[0]![0] as Record<string, unknown>;
+expect(createInput()).not.toHaveProperty('productionType');   // sees present-but-undefined
+```
+
+Verified under Vitest 4.1.10: given `fn({ a: 1, productionType: undefined })`,
+`not.objectContaining({ productionType: anything() })` passes, `toHaveBeenCalledWith({ a: 1 })`
+passes, and only `toHaveProperty('productionType')` sees the key. Mechanism:
+`ObjectContaining.asymmetricMatch` is `hasProperty(other, k) && equals(other[k], sample[k])`, and
+`hasProperty` is true for a present-undefined key.
+
+This matters wherever omission and an explicit value mean different things —
+`buildDuplicateCandidate` (`src/server/services/book-intake/candidate.ts`) keeps omission
+distinguishable from null because `DuplicateCandidate` types the three states apart
+(`src/server/services/book-dedup.ts`). The containment matcher is still fine when the contract is
+about the VALUE ("never a real productionType here") rather than the key. An instance of
+[[vacuous-assertion-observation-points]].
+
+## e2e-fetch-stub-serves-new-provider
+
+**source:** #2231
+**added:** 2026-08-11
+**files:** src/server/__tests__/e2e-helpers.ts
+**tags:** e2e, vitest, test-observability, metadata-providers
+
+---
+
+`createE2EApp` builds a real `MetadataService` with every provider in
+`METADATA_SEARCH_PROVIDER_FACTORIES`, whether or not the suite wanted one. So a suite whose only
+network stub is a URL-agnostic `globalThis.fetch` handler is one code change away from serving a
+provider it was never written for. The moment the route under test starts calling `resolveBook`,
+`AudibleProvider.searchBooks` gets the Hardcover GraphQL body, `BookMetadataSchema` drops every entry
+via `logParseDrop`, and `resolveBook` returns null. Null means genuine miss, not provider failure, so
+the row is created with `enrichmentStatus: 'failed'` rather than `'pending'`
+(`src/server/services/book-add-resolved.ts`). There is no throw and no warn naming the cause — the
+symptom is a durable-field assertion in a distant test, which reads as a bug in the new feature.
+
+When a change gives a service a new outbound provider call, stub that provider in the same commit as
+the app-level suites: `vi.mock('@core/index.js', ...)` replacing `METADATA_SEARCH_PROVIDER_FACTORIES`
+and `AudnexusProvider` (the shape `series-add-all-enrichment.integration.test.ts` uses), or branch the
+fetch stub on the host (`url.includes('api.audible')`) where the point of the suite is that nothing
+else is mocked. Prefer a stub that returns a real match over one returning `{ books: [] }`: an empty
+window and a wrong-payload window are the same observable, so an empty default cannot tell you the
+stub is wired at all.
+
+Same trigger, second mechanism: `RequestThrottle`'s `DEFAULT_THROTTLE_MS` is 200ms
+(`metadata.service.ts`), so an inline per-item resolve adds 200ms per item to a request that used to
+be instant. A `waitFor` polling for only the first created row then reads the database mid-batch —
+poll for the complete expected row set. Related: [[vimock-barrel-replace-drops-named-exports]],
+[[connected-client-server-vitest-harness]].
