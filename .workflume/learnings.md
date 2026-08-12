@@ -2371,6 +2371,11 @@ when a rule's fixes can overlap, check the converged result with `new Linter().v
 treating the autofix as safe. Extends [[eslint-rule-test-harness]] and
 [[typed-ruletester-program-hazards]].
 
+That convergence check has its own false-green — a flat config with no matching `files` glob lints
+nothing and returns the input verbatim. Read [[flat-config-files-gate-verifyandfix]] before writing one.
+And if the fix must coordinate edits across several reports, [[eslint-coordinated-fix-single-report]]
+covers why declining the later reports does not converge either.
+
 ## onmutate-reads-generation-after-pending-commit
 
 **source:** #2227
@@ -2439,3 +2444,230 @@ Close the loop the way [[vacuous-assertion-observation-points]] demands: switch 
 OFF and confirm the assertion then cannot distinguish fixed from unfixed code. On #2194 that check is
 what established the pre-existing helper had been blind all along — so treat any older statement-count
 assertion over a transactional path as unproven until re-checked.
+
+## setquerydata-notify-is-a-macrotask
+
+**source:** #2275
+**added:** 2026-08-12
+**files:** src/client/components/import-report/ImportAttentionBanner.test.tsx
+**tags:** react-query, test-observability, vitest
+
+---
+
+Driving a poll in a test by writing to the query cache does not re-render on the same turn. TanStack
+Query v5's `notifyManager` schedules observer notifications with `setTimeout(cb, 0)`, so immediately
+after `act(() => qc.setQueryData(key, next))` the query state and `observer.getCurrentResult()` already
+hold the new value while the DOM still shows the previous one. An extra microtask
+(`await act(async () => {})`) does not close the gap; `await act(async () => { await new Promise((r) =>
+setTimeout(r, 0)); })` does.
+
+Why it bites: `waitFor`/`findBy*` on a positive observable poll across timer turns and therefore mask
+the delay, but a bare negative assertion (`expect(screen.queryByTestId(x)).not.toBeInTheDocument()`)
+does not retry — it reads the pre-commit render and passes vacuously, **including against the broken
+production code it was written to catch.** This is the react-query-cache instance of
+[[vacuous-assertion-observation-points]]: the observation point is a render that has not happened yet.
+
+Pattern: wrap the commit in a helper that settles it, and still pin a positive observable of the NEW
+state before asserting any absence.
+
+```ts
+async function pollAttention(qc: QueryClient, next: AttentionResponse) {
+  act(() => { qc.setQueryData(attentionKey, next); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+}
+```
+
+Known exception that hides the trap: a commit of the SAME data identity followed by an awaited
+`findBy*` never observes the gap. Related: [[removequeries-mounted-observer-refetch]],
+[[vitest-faketimers-react-query]] (if you fake timers instead, fake only `setInterval`/`clearInterval`
+— faking `setTimeout` deadlocks this same notify path).
+
+## flat-config-files-gate-verifyandfix
+
+**source:** #2261
+**added:** 2026-08-12
+**files:** eslint-rules/no-raw-error-logging.test.js
+**tags:** eslint, autofix, ruletester, vitest
+
+---
+
+`Linter.verifyAndFix` is the right way to check a widened ESLint fixer's real convergence (see
+[[ruletester-single-fix-pass]]), but under ESLint 10's flat config it silently lints NOTHING unless the
+config's `files` globs match the filename you pass. **The check that exists to catch a false-green is
+itself capable of false-greening.**
+
+A config object with no `files` key defaults to JS extensions only (`**/*.js`/`**/*.mjs`/`**/*.cjs`).
+Pass `'file.ts'` and `verify()` returns one severity-1
+`{ ruleId: null, message: 'No matching configuration found for file.ts.' }` while
+`verifyAndFix().output` returns the input verbatim — no throw, no error-severity message. A convergence
+assertion comparing two such outputs passes against a rule that never executed.
+
+Two distinct instances, both hit in #2261:
+
+1. Add an explicit `files: ['**/*.ts']` to the inline config.
+2. Even then, an ABSOLUTE filename outside the base path matches no glob. The RuleTester cases in these
+   suites use `/project/src/server/services/a.ts`; copying that filename into a `verifyAndFix` check
+   makes it inert. Use a cwd-relative path (`src/server/services/a.ts`). `computeImportPath` resolves
+   to the same `'../utils/serialize-error.js'` either way, so the pinned output is unaffected.
+
+RuleTester applies no such filtering, which is why a case is green there and dead here — the two
+harnesses are not interchangeable. Always assert the converged text contains the fix's marker (e.g.
+`toContain('serializeError(e)')`) BEFORE asserting any equality between converged outputs; that one
+line is what separates 'converged correctly' from 'never ran'. Extends [[ruletester-single-fix-pass]]
+and [[eslint-rule-test-harness]].
+
+## eslint-fixer-canonical-import-lookup
+
+**source:** #2260
+**added:** 2026-08-12
+**files:** eslint-rules/no-raw-error-logging.cjs
+**tags:** eslint, typescript-eslint, scope-manager, autofix
+
+---
+
+A fixer that inserts an import must answer 'is it already there?' — and both obvious answers are wrong.
+A substring scan over `sourceCode.getText()` matches comments and string literals, so the rewrite lands
+with no import and the file stops compiling. A name-equality scope lookup is just as leaky: it admits
+`const x = 1`, `import type { x }`, `import { type x }`, `import * as x`, `import x from`,
+`type x = …`, and a same-name import from a different module.
+
+The rule cannot tell a usable helper from an unusable one without a type checker. It does not need to:
+the only binding it ever has a reason to reuse is the exact import it would otherwise write. Recognise
+that one shape; treat everything else as unfixable and report without a fix (an `'error'`-level report
+still exits `eslint --fix` non-zero and names the line).
+
+Resolve from `context.sourceCode.getScope(reportNode)` walking `.upper`, first scope declaring the name
+wins. Canonical requires `variable.defs.length === 1` plus all six of:
+
+```js
+def.type === 'ImportBinding' &&
+def.node.type === 'ImportSpecifier' &&
+def.node.imported.type === 'Identifier' &&
+def.node.imported.name === HELPER &&
+def.node.importKind === 'value' &&      // `import { type x }` marks the SPECIFIER
+def.parent.importKind === 'value' &&    // `import type { x }` marks the DECLARATION
+def.parent.source.value === computeImportPath(context.filename)  // the exact string we'd insert
+```
+
+The two `importKind` flags are load-bearing in OPPOSITE directions — checking one side lets the other
+through — and were verified against typescript-eslint 8.65's scope manager. Comparing `source.value` to
+the computed path means an equivalent-but-differently-spelled path (extension omitted, path alias)
+lands on the safe side. `import { x as alias }` binds `alias`, so no variable named `x` is in scope at
+all: that is the insert case, and the resulting two specifiers for one symbol under different local
+names are legal. Non-import defs carry `def.parent === null`, so check `def.type` before dereferencing
+it.
+
+Reference: `classifySerializer` in `eslint-rules/no-raw-error-logging.cjs`; the fifteen-shape table and
+its drop-one-discriminator counterfactuals in the suite. Extends [[eslint-rule-test-harness]].
+
+## eslint-coordinated-fix-single-report
+
+**source:** #2260
+**added:** 2026-08-12
+**files:** eslint-rules/no-raw-error-logging.cjs
+**tags:** eslint, autofix, ruletester
+
+---
+
+When one rule reports several times over the same node set and the edits must be coordinated (fold two
+properties into one, rewrite A and delete B), the coordinated edit must be emitted as ONE report's fix
+array. Two tempting shapes both fail:
+
+1. **Each report fixes itself.** `RuleTester` hides it — one `verify` + one `applyFixes`, overlapping
+   fixes from later reports silently discarded — while `verifyAndFix` loops up to 10 passes and lands
+   them all. This is how `log.error({error: e, err: e},'x')` converged to a duplicate `error` key (see
+   [[ruletester-single-fix-pass]]).
+2. **First report fixes, later reports report with `fix: null`.** This does NOT converge, verified by
+   mutation in #2260: on pass 2 the already-rewritten property no longer matches (its value is now a
+   `CallExpression`), the previously-skipped property becomes the *first* match, it gets the fix, and
+   the duplicate returns. Both source orders and the non-adjacent case reproduce it.
+
+The shape that works: keep one report per offending node (the developer still sees every one), and
+attach to the FIRST report a fix array performing the whole coordinated edit — rewrite the survivor,
+`removeRange` the extras, plus any shared insertion. `mergeFixes` sorts a report's fixes by range and
+asserts non-overlap, so order is free but overlap throws.
+
+Removing a property must take exactly one separator with it. Prefer the PRECEDING comma
+(`sourceCode.getTokenBefore(prop)`): a bare `fixer.remove(prop)` on a middle property leaves
+`{a, , b}`, which does not parse, and the trailing comma leaves the removed property's leading
+whitespace behind as a double space. When the removed node is always a later match, an entry always
+precedes it, so the preceding comma is always available.
+
+And cap the coordination: if the rule can prove at most two nodes are ever fixable together, destructure
+`const [first, extra] = matches` rather than looping — three independent removal ranges can select the
+same separator twice. Reference: `checkObjectArg`/`removeProperty`. Extends
+[[ruletester-single-fix-pass]].
+
+## sibling-hook-cleanup-seam-probe
+
+**source:** #2267
+**added:** 2026-08-12
+**files:** src/client/hooks/useGenerationGuard.test.tsx, src/client/hooks/useGenerationGuard.ts
+**tags:** useLayoutEffect, test-observability, react-query
+
+---
+
+React unmounts layout effects in hook-declaration order (`commitDeletionEffects` walks the effect list
+forward), so a custom hook's internal `useLayoutEffect` cleanup runs BEFORE the consuming component's
+own. That makes the consumer's layout cleanup a pre-passive observation point for state the hook guards
+— a third seam-proving technique alongside the two in [[rtl-layout-vs-passive-seam-testing]], and the
+one to reach for when the teardown lives inside the hook rather than in the component.
+
+Shape: render a keyed pair swapping the guard host for a sibling probe. The host calls the hook and,
+from its own `useLayoutEffect` cleanup with a constant dep array, pushes a marker derived from the
+hook's liveness predicate; the incoming sibling pushes a marker from its `useLayoutEffect` SETUP.
+Assert `[teardown, interactive]`. No `vi.mock(m, importOriginal)` wrapper and no memoized-identity dance
+are needed, because the probe observes the teardown's effect rather than intercepting the teardown.
+
+Non-negotiable detail: capture the guarded context from OUTSIDE the host, after mount settles (a
+module-level box the test writes). A capture taken during render makes the probe blind to the
+setup-form defect, since a per-commit advance has already ticked past a render-time capture.
+
+Unlike the two axes described in [[onmutate-reads-generation-after-pending-commit]] and
+[[rtl-layout-vs-passive-seam-testing]], this single probe discriminates BOTH. Measured on #2267 against
+the full client project (292 files / 6073 tests), `useGenerationGuard.test.tsx` T8 reds under the
+passive form (`useEffect(() => retire, [retire])`) AND under the setup form
+(`useLayoutEffect(() => { retire(); })`).
+
+**The coverage consequence, also measured: once a teardown mechanism is single-homed in a hook, the
+passive-form mutation reds ONLY that hook's seam probe — nothing else in 6073 client tests.** The three
+sites relying solely on the hook's internal unmount retire (`SeriesCard`, `ImportAttentionBanner`,
+`ImportHistorySection`) all stay green, because RTL's `act` flushes passive effects before the awaited
+settlement. `SearchReleasesModal.book-change.test.tsx` F4 and `CompanionEbookSection.test.tsx`'s seam
+case stay green too — they probe the CALLER-owned reset, which remains wired into a caller
+`useLayoutEffect`. So the hook's own probe is the sole protection for the seam across every consumer:
+treat deleting or loosening it as removing the guarantee, not as trimming a redundant test.
+
+## no-restricted-imports-covers-export-from
+
+**source:** #2258
+**added:** 2026-08-12
+**files:** eslint.config.js
+**tags:** eslint, no-restricted-imports
+
+---
+
+`no-restricted-imports` with `importNames` enforces on `export { x } from '...'` re-export specifiers,
+not just imports — so a ban that removes a symbol from a barrel also blocks re-adding the barrel line,
+with no source-text greppability fallback needed (#2258 pre-authorized one and did not use it).
+
+The matched identifier is the SOURCE-side name. Measured against the real config with ESLint's Node
+API, for a ban on `parseAddBookConflict` from `**/add-book-conflict.js`:
+
+| specifier | reports |
+|---|---|
+| `export { parseAddBookConflict } from` | yes |
+| `export { parseAddBookConflict as parseIt } from` | yes |
+| `export { somethingElse as parseAddBookConflict } from` | no |
+| `export * from` | yes |
+| `import { parseAddBookConflict as p } from` | yes |
+
+Renaming on re-export therefore does NOT bypass the ban, and `export *` is caught bluntly (it cannot be
+resolved to names, so it is reported whenever importNames are restricted) — relevant if a barrel ever
+wants a star re-export of a module carrying a banned symbol. Aliasing an UNRELATED export to the banned
+name is not reported, which is correct: nothing banned is being re-exported.
+
+Verify a claim like this with a fixture rather than reasoning about it; see
+`eslint-rules/config-import-bans.test.js` for the harness, and
+[[eslint-linttext-project-service-cost]] for the ESLint instance that makes such fixtures cheap and
+non-vacuous.
