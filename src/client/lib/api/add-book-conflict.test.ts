@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseAddBookConflict } from './add-book-conflict.js';
+import { parseAddBookConflict, formatReviewConflictMessage } from './add-book-conflict.js';
 
 describe('parseAddBookConflict — the POST /api/books 409 body (#2199)', () => {
   it('reads the review discriminator with the incumbent identity', () => {
@@ -32,5 +32,40 @@ describe('parseAddBookConflict — the POST /api/books 409 body (#2199)', () => 
     expect(parseAddBookConflict(body)).toEqual({
       conflict: body && typeof body === 'object' ? 'review' : null, incumbentId: null, incumbentTitle: null,
     });
+  });
+
+  // An array clears the `typeof body === 'object'` guard, so it reaches safeParse with an undefined
+  // discriminator — the ownership degrade, never the review arm.
+  it('degrades an array body to the ownership claim, not review', () => {
+    expect(parseAddBookConflict([])).toEqual({
+      conflict: null, incumbentId: null, incumbentTitle: null,
+    });
+  });
+});
+
+describe('formatReviewConflictMessage — the shared review-409 toast copy (#2212)', () => {
+  it('names the incumbent when the 409 body carried its title', () => {
+    expect(formatReviewConflictMessage('Piranesi')).toBe(
+      "Possible duplicate (review): may be the same recording as 'Piranesi'",
+    );
+  });
+
+  // A blank title must not render empty quotes, so every non-naming input takes the generic copy.
+  it.each([
+    ['a null title', null],
+    ['an empty title', ''],
+    ['a whitespace-only title', '   '],
+  ])('falls back to the generic wording for %s', (_label, title) => {
+    expect(formatReviewConflictMessage(title)).toBe(
+      'Possible duplicate (review): may be the same recording as a book already in your library',
+    );
+  });
+
+  it('agrees with the parser on the incumbent title it renders', () => {
+    const { incumbentTitle } = parseAddBookConflict({ conflict: 'review', id: 88, title: 'Piranesi' });
+
+    expect(formatReviewConflictMessage(incumbentTitle)).toBe(
+      "Possible duplicate (review): may be the same recording as 'Piranesi'",
+    );
   });
 });
