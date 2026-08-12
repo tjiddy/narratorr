@@ -57,14 +57,8 @@ export function useEventHistory(params?: EventHistoryParams) {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['activity'] });
       queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.root() });
-      // Fail closed: recognize the Download success shape FIRST, by numeric `id`.
-      // A sentinel response has no `id`; a real Download always does. Key presence
-      // alone is not enough — a malformed/evolved `{ id: 'x', status: '…' }` must not
-      // be misclassified as success (matches the repo's `typeof …id === 'number'`
-      // runtime guards, e.g. src/client/lib/api/books.ts). Only after ruling out the
-      // Download shape do we switch on the known sentinel statuses; anything else
-      // (unknown sentinel, non-numeric id, or a non-object like JSON `null`) reaches
-      // the guarded default fallback rather than the lying "Retry initiated" toast.
+      // Only a numeric id proves Download success. Known sentinels follow; malformed,
+      // unknown, and null responses fail closed instead of showing a success toast.
       if (
         typeof data === 'object' &&
         data !== null &&

@@ -57,11 +57,6 @@ export class TaskRegistry {
     }
   }
 
-  /**
-   * Run a custom function under a registered task's concurrency guard.
-   * Uses the task's running flag for mutual exclusion but executes the provided
-   * function instead of the registered one — useful when callers need the return value.
-   */
   async runExclusive<T>(name: string, fn: () => Promise<T>): Promise<T> {
     const task = this.tasks.get(name);
     if (!task) throw new TaskRegistryError(`Task "${name}" not found`, 'NOT_FOUND');
@@ -77,10 +72,7 @@ export class TaskRegistry {
     }
   }
 
-  /**
-   * Execute a task with tracking (for live schedulers).
-   * Unlike runTask(), silently skips if already running (no queueing, no error).
-   */
+  /** Scheduler entry point: silently skip an already-running task. */
   async executeTracked(name: string): Promise<void> {
     const task = this.tasks.get(name);
     if (!task || task.running) return;
@@ -93,10 +85,6 @@ export class TaskRegistry {
     }
   }
 
-  /**
-   * Set the next scheduled run time. Cron jobs feed this from croner's own
-   * `Cron.nextRun()`; timeout-loop jobs feed it from their computed interval.
-   */
   setNextRun(name: string, date: Date): void {
     const task = this.tasks.get(name);
     if (task) task.nextRun = date;

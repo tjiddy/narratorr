@@ -5,50 +5,17 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 
 /**
- * Binary archive fixtures for the companion-EPUB read path (#1988, design §4).
+ * Synthesizes binary EPUB fixtures with archiver instead of committing a copyrighted
+ * book. It lives outside src/core/epub because that folder's layer guard treats
+ * non-test files as production.
  *
- * **Synthesised, never copied.** The plan suggested using the real library EPUB
- * as a fixture; that file is a commercial, copyrighted book and does not belong
- * in the repo. This builder reproduces its *shape* with `archiver@8`, already a
- * production dependency (`package.json`, `backup.service.ts:5`), so no new
- * dependency is needed and nothing binary is committed.
- *
- * **Lives outside `src/core/epub/` deliberately.** `layer-guard.test.ts` treats
- * every non-`.test.ts` file in that folder as a production module and would scan
- * this one.
- *
- * **Two modes for entry names.** `archiver@8.0.0`'s own `sanitizePath`
- * (`lib/utils.js:58`, called from `lib/core.js:276` for every named append)
- * rewrites leading traversal, absolute, drive-letter, and backslash names on
- * the way in — `../../etc/passwd` is written as `etc/passwd`, `/abs/x.txt` as
- * `abs/x.txt`, `C:/x.txt` as `x.txt`, and `dir\win.txt` as `dir/win.txt` —
- * while **mid-path** traversal such as `a/../../b.txt` survives verbatim. So
- * names archiver preserves are appended directly, and the rest are built then
- * patched with {@link patchEntryName}, which rewrites the filename bytes in
- * **both** the local file header and the central directory. Every hostile-name
- * fixture asserts its precondition on the raw central-directory bytes before
- * invoking anything.
- *
- * Through archiver 7 this function lived in the separate `archiver-utils`
- * package (`index.js:92`); v8 dropped that dependency and **internalised the
- * function unchanged**, so all four rewrite modes and the mid-path carve-out
- * behave identically. That equivalence is not assumed — the `src/core/epub/`
- * suites' `archiver 8 fixture-construction contract` block asserts each mode on
- * the raw central-directory bytes (#2057), because a bump that silently started
- * sanitising `a/../../b.txt` would leave every adversarial suite green while
- * attacking the reader with a harmless name.
- *
- * **The EPUB-document builders at the bottom** (#1990) started life inside
- * `validate.test.ts` and were lifted here when `extract.test.ts` needed the same
- * shapes. The `vi.mock`-based `fs`/`unzipper` spy harness deliberately did
- * **not** come with them: `vi.mock` calls are hoisted per test file, so a
- * factory living here would be registered after the module under test had
- * already resolved its imports.
+ * Archiver sanitizes leading traversal, absolute, drive-letter, and backslash names,
+ * but preserves mid-path traversal. Hostile sanitized names are therefore patched in
+ * both headers; contract tests pin the raw writer behavior this fixture relies on.
  */
 
-/** One member to write into the archive. */
 export interface ArchiveEntrySpec {
-  /** The name handed to `archiver` — see the sanitisation note above. */
+  /** Name before archiver sanitization. */
   name: string;
   content: string | Buffer;
 }
@@ -56,33 +23,24 @@ export interface ArchiveEntrySpec {
 export interface BuildArchiveOptions {
   entries: readonly ArchiveEntrySpec[];
   /**
-   * The ZIP archive comment. `archiver` writes it verbatim after the EOCD, so an
-   * ASCII string of length N produces a `commentLength` of N.
+   * Archiver writes this verbatim after EOCD, so ASCII length equals commentLength.
    */
   comment?: string;
   /**
-   * Emit ZIP64 structures. `forceZip64` is the only ZIP64 knob that exists:
-   * `@types/archiver@8`'s `ZipOptions` declares it and no `zip64`, and the
-   * pinned writer reads only `forceZip64`
-   * (`compress-commons@7.0.1/lib/archivers/zip/zip-archive-output-stream.js:361`;
-   * the `!!` coercion is at `:38`).
+   * Emits ZIP64 structures; forceZip64 is the pinned writer's only supported knob.
    */
   forceZip64?: boolean;
   /** STORE instead of DEFLATE, so fixture sizes are exactly predictable. */
   store?: boolean;
 }
 
-/** The four-byte end-of-central-directory signature. */
 export const EOCD_SIGNATURE = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
-/** The ZIP64 end-of-central-directory *locator* signature. */
 export const ZIP64_LOCATOR_SIGNATURE = 0x07064b50;
-/** The ZIP64 end-of-central-directory *record* signature. */
 export const ZIP64_RECORD_SIGNATURE = 0x06064b50;
 
 const CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
 const LOCAL_HEADER_SIGNATURE = 0x04034b50;
 
-/** Build an archive in memory. */
 export async function buildArchive(options: BuildArchiveOptions): Promise<Buffer> {
   const archive = new ZipArchive({
     comment: options.comment ?? '',
@@ -118,24 +76,10 @@ export interface CentralDirectorySpanOptions {
 }
 
 /**
- * Build an archive whose central directory spans **exactly** `span` bytes
- * (#2025). Every record costs `46 + nameLength` — the fixed header plus the
- * name, with no extra field and no comment from the pinned writer — so the span
- * is fully determined by the names, and the builder asserts the result rather
- * than trusting that arithmetic.
- *
- * **Long names, few entries.** `patchEntryName` is same-length only and cannot
- * lengthen a name, so the span is built by passing long names straight to
- * {@link buildArchive}. Few-and-long is also what keeps such a fixture clear of
- * `MAX_ARCHIVE_ENTRIES`, so it trips the span ceiling *in isolation* — 150
- * entries reach 8 MiB, where 10,000 conformant 100-char names reach only
- * 1.57 MiB. `fileNameLength` is a 2-byte field, so 65,535 is the per-name
- * ceiling.
- *
- * The file on disk is roughly twice the span: every name is written again in its
- * local file header. An 8 MiB span is a ~17 MB temp file, and there is no way
- * around that — `span ≤ eocdOffset ≤ fileSize` means an over-cap span cannot be
- * forged into a small file the way a declared *count* can.
+ * Builds an exact central-directory span from 46 + nameLength records and verifies
+ * the result. Few long names isolate the span ceiling from the entry ceiling;
+ * same-length patching cannot create them. Names are duplicated in local headers,
+ * so an 8 MiB span necessarily produces roughly 17 MB of archive data.
  */
 export async function buildArchiveWithCentralDirectorySpan(
   options: CentralDirectorySpanOptions,
@@ -147,8 +91,7 @@ export async function buildArchiveWithCentralDirectorySpan(
   const last = nameBytes - each * (filler - 1);
   if (each < 7 || last > 65535) throw new Error(`${nameBytes} name bytes do not fit ${filler} entries`);
   const fillerEntries = Array.from({ length: filler }, (_, index) => ({
-    // A unique numeric prefix, then padding — no leading traversal, absolute, or
-    // drive-letter shape, so `archiver`'s own `sanitizePath` leaves it verbatim.
+    // A safe unique prefix keeps archiver from sanitizing the calculated length.
     name: `${String(index).padStart(6, '0')}${'a'.repeat((index === filler - 1 ? last : each) - 6)}`,
     content: 'x',
   }));
@@ -158,19 +101,16 @@ export async function buildArchiveWithCentralDirectorySpan(
   return archive;
 }
 
-/** A per-suite temp directory. Callers `rm` it in `afterAll`. */
 export async function createArchiveDir(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), 'narratorr-epub-'));
 }
 
-/** Write `bytes` into `dir` and return the absolute path. */
 export async function writeArchive(dir: string, name: string, bytes: Buffer): Promise<string> {
   const filePath = path.join(dir, name);
   await writeFile(filePath, bytes);
   return filePath;
 }
 
-/** Build an archive and write it out in one step. */
 export async function writeBuiltArchive(
   dir: string,
   name: string,
@@ -180,9 +120,8 @@ export async function writeBuiltArchive(
 }
 
 /**
- * The offset of the EOCD record, located the same way the adapter locates it —
- * a backward scan accepting the first candidate whose `commentLength` accounts
- * for exactly the bytes that follow it.
+ * Locates EOCD like production: scan backward for the first candidate whose
+ * commentLength accounts for every following byte.
  */
 export function eocdOffset(archive: Buffer): number {
   let index = archive.lastIndexOf(EOCD_SIGNATURE);
@@ -210,14 +149,8 @@ export function zip64RecordOffset(archive: Buffer): number {
 }
 
 /**
- * `eocdOffset - centralDirectoryOffset`, the quantity the preflight caps
- * (#2025), read from whichever field is authoritative — the ZIP64 record's when
- * the legacy field carries its `0xffffffff` sentinel.
- *
- * On the ZIP64 branch this is the *pre-EOCD envelope*: it includes the 56-byte
- * record and the 20-byte locator that sit between the end of the central
- * directory and the EOCD, so it exceeds the true directory extent by exactly 76
- * bytes. That is the same one formula production applies on both branches.
+ * Returns production's capped pre-EOCD span using the authoritative ZIP32 or ZIP64
+ * offset. ZIP64 includes its 76-byte record-and-locator envelope.
  */
 export function centralDirectorySpan(archive: Buffer): number {
   const eocd = eocdOffset(archive);
@@ -229,9 +162,7 @@ export function centralDirectorySpan(archive: Buffer): number {
   return eocd - start;
 }
 
-/** One rewritten integer field. */
 export interface ArchivePatch {
-  /** Absolute byte offset in the archive. */
   offset: number;
   /** Field width. 8-byte fields take a `bigint` value. */
   size: 2 | 4 | 8;
@@ -254,33 +185,24 @@ export function patchArchive(archive: Buffer, patches: readonly ArchivePatch[]):
   return patched;
 }
 
-/** A central-directory member, located by walking the directory from its start. */
 export interface CentralDirectoryEntry {
-  /** Offset of the 46-byte fixed header. */
   headerOffset: number;
-  /** Offset of the raw filename bytes. */
   nameOffset: number;
   nameLength: number;
-  /** Offset of the matching local file header. */
   localHeaderOffset: number;
-  /** The raw filename bytes, as written. */
+  /** Raw filename bytes as written. */
   rawName: Buffer;
   /**
-   * The record's extra-field width. The pinned writer emits none, which is the
-   * arithmetic {@link buildArchiveWithCentralDirectorySpan} depends on — the
-   * `archiver 8 fixture-construction contract` suite pins it at zero so a
-   * writer that starts emitting one fails there rather than inside that
-   * builder's opaque span `throw`.
+   * Pinned writer emits no extra field; exact-span arithmetic depends on zero and
+   * contract tests guard it.
    */
   extraLength: number;
-  /** The record's per-entry comment width. Zero from the pinned writer. */
+  /** Per-entry comment width; zero from the pinned writer. */
   commentLength: number;
 }
 
 /**
- * Walk the central directory. Reads its start offset from the ZIP64 record when
- * the ZIP32 field carries the `0xffffffff` sentinel, so `forceZip64` fixtures
- * work too.
+ * Walks the directory using the ZIP64 record offset when the legacy field is a sentinel.
  */
 export function listCentralDirectory(archive: Buffer): CentralDirectoryEntry[] {
   const eocd = eocdOffset(archive);
@@ -334,9 +256,8 @@ export function localFileHeader(archive: Buffer, index: number): LocalFileHeader
 }
 
 /**
- * Rewrite one member's filename bytes in **both** the local file header and the
- * central directory. Same length only — anything else would move every offset
- * downstream and require rebuilding the whole archive.
+ * Rewrites a same-length filename in both headers; changing length would require
+ * rebuilding every downstream offset.
  */
 export function patchEntryName(archive: Buffer, index: number, rawName: Buffer): Buffer {
   const entry = listCentralDirectory(archive)[index];
@@ -351,10 +272,7 @@ export function patchEntryName(archive: Buffer, index: number, rawName: Buffer):
   if (patched.readUInt32LE(local) !== LOCAL_HEADER_SIGNATURE) {
     throw new Error(`fixture entry ${index} has no local file header at ${local}`);
   }
-  // Both copies of the name are rewritten: the central directory is what the
-  // reader hands us as `pathBuffer`, and the local file header is what it
-  // re-reads when the entry is streamed. Leaving them disagreeing would make the
-  // fixture test a shape no real archive has.
+  // Keep pathBuffer and the streamed local header consistent with a real archive.
   rawName.copy(patched, entry.nameOffset);
   rawName.copy(patched, local + 30);
   return patched;
@@ -385,14 +303,8 @@ export interface Zip64ForgeryOptions {
 }
 
 /**
- * Turn a conformant ZIP32 archive into a forged ZIP64 one: keep everything up to
- * the EOCD, splice in a 56-byte ZIP64 record and a 20-byte locator, then re-emit
- * the EOCD with its sentinels set.
- *
- * This is how the motivating 213-byte fixture is built — a tiny, entirely valid
- * ZIP32 file that declares half a billion members. The rewritten offsets are the
- * EOCD's `numberOfRecords` (+10) and `offsetToStartOfCentralDirectory` (+16),
- * both set to their sentinels so the reader takes its ZIP64 branch.
+ * Splices a ZIP64 record and locator before a ZIP32 EOCD, then sets its count and
+ * offset sentinels. This creates the tiny 213-byte, half-billion-record forgery.
  */
 export function forgeZip64Tail(base: Buffer, options: Zip64ForgeryOptions): Buffer {
   const eocd = eocdOffset(base);
@@ -401,14 +313,14 @@ export function forgeZip64Tail(base: Buffer, options: Zip64ForgeryOptions): Buff
 
   const record = Buffer.alloc(56);
   record.writeUInt32LE(options.recordSignature ?? ZIP64_RECORD_SIGNATURE, 0);
-  record.writeBigUInt64LE(44n, 4); // size of the record after this field
-  record.writeUInt16LE(45, 12); // version made by
-  record.writeUInt16LE(45, 14); // version needed to extract
+  record.writeBigUInt64LE(44n, 4); // Record size after this field.
+  record.writeUInt16LE(45, 12); // Version made by.
+  record.writeUInt16LE(45, 14); // Version needed to extract.
   record.writeUInt32LE(options.recordDiskNumber ?? 0, 16);
   record.writeUInt32LE(options.recordDiskStart ?? 0, 20);
   record.writeBigUInt64LE(options.recordRecordsOnDisk ?? options.declaredRecords, 24);
   record.writeBigUInt64LE(options.declaredRecords, 32);
-  record.writeBigUInt64LE(BigInt(base.readUInt32LE(eocd + 12)), 40); // size of the central directory
+  record.writeBigUInt64LE(BigInt(base.readUInt32LE(eocd + 12)), 40); // Central-directory size.
   record.writeBigUInt64LE(
     options.recordCentralDirectoryOffset ?? BigInt(centralDirectoryOffset),
     48,
@@ -421,8 +333,8 @@ export function forgeZip64Tail(base: Buffer, options: Zip64ForgeryOptions): Buff
   locator.writeUInt32LE(options.locatorNumberOfDisks ?? 1, 16);
 
   const tail = Buffer.from(base.subarray(eocd));
-  tail.writeUInt16LE(0xffff, 10); // numberOfRecords sentinel — takes the reader's ZIP64 branch
-  tail.writeUInt32LE(0xffffffff, 16); // offsetToStartOfCentralDirectory sentinel
+  tail.writeUInt16LE(0xffff, 10); // numberOfRecords ZIP64 sentinel.
+  tail.writeUInt32LE(0xffffffff, 16); // central-directory-offset ZIP64 sentinel.
 
   return Buffer.concat([head, record, locator, tail]);
 }

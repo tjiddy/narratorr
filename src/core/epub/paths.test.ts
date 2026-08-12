@@ -14,8 +14,7 @@ describe('normalizeArchivePath', () => {
     ['UNC', '\\\\host\\share\\x'],
     ['leading traversal', '../x'],
     ['escaping traversal', 'a/../../b'],
-    // The collapsible case: `path.posix.normalize('a/../b')` is `'b'`, so a
-    // normalise-then-scan implementation would silently accept this.
+    // Collapsible traversal: a normalise-then-scan implementation would accept this.
     ['collapsible traversal', 'a/../b'],
     ['interior backslash', 'a\\b'],
     ['NUL byte', 'a\x00b'],
@@ -41,9 +40,6 @@ describe('normalizeArchivePath', () => {
   });
 
   it('accepts a member literally named `unsafe_entry_path`', () => {
-    // The rejection literal is itself a legal relative archive member name. A
-    // `string`-returning implementation cannot pass this alongside the
-    // rejection rows above.
     expect(normalizeArchivePath('unsafe_entry_path')).toEqual({
       kind: 'entry',
       name: 'unsafe_entry_path',
@@ -51,10 +47,7 @@ describe('normalizeArchivePath', () => {
   });
 
   it('returns a POSIX archive key with no backslash, asserted on the raw value', () => {
-    // Deliberately NOT `.split('\\').join('/')` — this function's contract is a
-    // platform-independent POSIX archive key, so a backslash in its output is
-    // the defect under test, not a platform artefact. Laundering the actual
-    // value would make a buggy implementation pass on Windows.
+    // Assert the raw value so Windows normalization cannot launder a bad backslash.
     const result = normalizeArchivePath('OEBPS/ch1.xhtml');
     expect(result.kind).toBe('entry');
     if (result.kind !== 'entry') return;
@@ -74,8 +67,6 @@ describe('decodeEntryName', () => {
   });
 
   it('is why the fatal decoder exists — the non-fatal path silently substitutes U+FFFD', () => {
-    // unzipper's own `File.path` is produced by exactly this non-fatal call, so
-    // it would index and duplicate-check a name the OCF spec means to reject.
     expect(MALFORMED.toString('utf8')).toContain('\uFFFD');
   });
 
@@ -87,8 +78,6 @@ describe('decodeEntryName', () => {
   });
 
   it('decodes bytes spelling `unsafe_entry_path` successfully', () => {
-    // The companion to the normaliser's collision case: the discriminant, not
-    // the string value, carries the outcome.
     expect(decodeEntryName(Buffer.from('unsafe_entry_path', 'utf8'))).toEqual({
       kind: 'entry',
       name: 'unsafe_entry_path',
@@ -114,8 +103,6 @@ describe('findDuplicateEntry', () => {
   });
 
   it('does not case-fold', () => {
-    // Nothing in Phase 1 writes an archive member to disk, so a case collision
-    // is harmless and folding would reject legitimate archives.
     expect(findDuplicateEntry(['A.xhtml', 'a.xhtml'])).toEqual({ kind: 'unique' });
   });
 });
@@ -143,9 +130,6 @@ describe('resolveHref — base joining and decoding', () => {
   });
 
   it('accepts a traversal that lands inside the container root — containment is against the root, not the base', () => {
-    // `path.posix.join('OEBPS', '../secret')` is `'secret'`, which is inside the
-    // archive. Reading `..` as automatically unsafe is reading baseDir
-    // containment where the contract says root containment.
     expect(resolveHref('OEBPS', '../secret')).toEqual({ kind: 'entry', name: 'secret' });
   });
 
@@ -176,10 +160,7 @@ describe('resolveHref — remote values', () => {
 });
 
 describe('resolveHref — the step-4 absolute matrix', () => {
-  // Each absolute form must reject under BOTH bases. The non-empty-base rows are
-  // the ones that fail a step-4-less implementation: `path.posix.join('OEBPS',
-  // 'C:/a')` is `'OEBPS/C:/a'` and `path.posix.join('OEBPS', '/a')` is
-  // `'OEBPS/a'`, both of which normalizeArchivePath accepts.
+  // Non-empty bases prove absolutes are rejected before join hides their prefix.
   const absolute = ['C:/a', 'C:%2Fa', 'C:\\a', 'C:', '/a', 'x:chapter.xhtml'];
   const bases = ['', 'OEBPS'];
   const matrix = bases.flatMap((base) => absolute.map((raw): [string, string] => [base, raw]));
@@ -189,9 +170,6 @@ describe('resolveHref — the step-4 absolute matrix', () => {
   });
 
   it('never lets the [A-Za-z]: family become an archive key', () => {
-    // The governing invariant. Both non-entry arms are safe — `remote` means
-    // "not in this archive", `rejected` means "not usable" — so the security
-    // property does not depend on which arm a given spelling lands in.
     const family = ['C:/a', 'C:%2Fa', 'C:\\a', 'C:', 'x:chapter.xhtml', 'X:/a'];
     const kinds = bases.flatMap((base) => family.map((raw) => resolveHref(base, raw).kind));
     expect(kinds).not.toContain('entry');
@@ -200,8 +178,7 @@ describe('resolveHref — the step-4 absolute matrix', () => {
 
 describe('resolveHref — containment rejections', () => {
   it('rejects a decoded traversal from the container root', () => {
-    // Proves decode-before-normalise: a normalise-first implementation sees no
-    // `..` and admits the literal encoded name.
+    // Normalizing before decoding would admit the literal encoded traversal.
     expect(resolveHref('', '%2e%2e/secret')).toEqual({
       kind: 'rejected',
       reason: 'unsafe_entry_path',

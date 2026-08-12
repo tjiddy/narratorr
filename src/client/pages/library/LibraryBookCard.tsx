@@ -11,7 +11,6 @@ import { BookActivityBadge } from './BookActivityBadge.js';
 import { BookContextMenu } from './BookContextMenu.js';
 import { requireDefined } from '@shared/utils/assert.js';
 
-/** Status accent line, or a determinate progress sliver while work runs (approved mock v4). */
 function CardStatusBar({ activity, barClass }: { activity: BookActivity | null; barClass: string }) {
   if (activity?.state === 'working' && activity.percentage !== undefined) {
     return (
@@ -55,9 +54,6 @@ export const LibraryBookCard = memo(function LibraryBookCard({
   useClickOutside(menuAreaRef, onMenuClose, isMenuOpen);
   const canRetryImport = useRetryImportAvailable(book.id, book.status);
   const activity = useBookActivity(book.id);
-  // #1663: stop conflating `failed` with `missing`. `missing` keeps the broken-link
-  // "files missing from disk" chip; `failed` renders a distinct import-failed chip whose
-  // copy reflects retry availability (driven by the existing per-book retry signal).
   const isMissing = book.status === 'missing';
   const isFailed = book.status === 'failed';
   const failedTooltip = canRetryImport ? 'Import failed — retry available' : 'Import failed';
@@ -76,7 +72,6 @@ export const LibraryBookCard = memo(function LibraryBookCard({
       className="group relative rounded-2xl overflow-hidden cursor-pointer shadow-card hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-300 ease-out animate-fade-in-up"
       style={{ animationDelay: `${Math.min(index, 9) * 50}ms` }}
     >
-      {/* Cover — square */}
       <div className="relative aspect-square bg-muted overflow-hidden">
         {book.coverUrl && !imageError ? (
           <img
@@ -92,7 +87,6 @@ export const LibraryBookCard = memo(function LibraryBookCard({
           </div>
         )}
 
-        {/* Top-left chip stack — activity indicator + missing / import-failed indicator + collapsed badge */}
         {(activity != null || isMissing || isFailed || (collapsedCount != null && collapsedCount > 0)) && (
           <div className="absolute top-2 left-2 z-10 flex flex-col gap-1.5">
             <BookActivityBadge activity={activity} variant="chip" />
@@ -123,11 +117,9 @@ export const LibraryBookCard = memo(function LibraryBookCard({
           </div>
         )}
 
-        {/* Vignette + gradient fade toward overlay */}
         <div className="absolute inset-0 ring-1 ring-inset ring-white/5" />
         <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/60 via-black/20 to-transparent pointer-events-none" />
 
-        {/* Context menu — hover-reveal only */}
         <div ref={menuAreaRef} className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 no-hover:opacity-100 transition-opacity duration-200">
           <button
             onClick={(e) => { e.stopPropagation(); onMenuToggle(book.id, e); }}
@@ -149,23 +141,17 @@ export const LibraryBookCard = memo(function LibraryBookCard({
           )}
         </div>
 
-        {/* Frosted info strip — always visible at bottom */}
         <div className="absolute inset-x-0 bottom-0 backdrop-blur-md bg-black/30 border-t border-white/5 transition-all duration-300 ease-out">
           <CardStatusBar activity={activity} barClass={statusBar.barClass} />
-          {/* Default: title + author */}
           <div className="px-3 py-2">
             <h3 className="text-sm font-semibold text-white leading-tight truncate drop-shadow-sm">{isCollapsed ? (book.seriesName || book.title) : book.title}</h3>
             <p className="text-xs text-white/70 truncate mt-0.5">{book.authors[0]?.name}</p>
-            {/* Edition label (#1712) — individual-book tiles only, so two same-title
-                recordings render as visually distinct tiles. Hidden on a collapsed series
-                tile (#1742): the label is per-recording and would mislabel the group.
-                Renders nothing when null/absent. */}
+            {/* Edition labels are per recording; a collapsed series card cannot represent one accurately. */}
             {!isCollapsed && book.editionLabel && (
               <p className="text-[11px] text-amber-300/80 truncate mt-0.5" data-testid="edition-label">{book.editionLabel}</p>
             )}
           </div>
 
-          {/* Hover expand: narrator + series */}
           {!isCollapsed && (book.narrators.length > 0 || book.seriesName) && (
             <div className="max-h-0 opacity-0 group-hover:max-h-16 group-hover:opacity-100 no-hover:max-h-16 no-hover:opacity-100 overflow-hidden transition-all duration-300 ease-out">
               <div className="px-3 pb-2 flex flex-wrap gap-x-3 gap-y-0.5">

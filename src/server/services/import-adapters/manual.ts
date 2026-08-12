@@ -20,18 +20,7 @@ import { serializeError } from '../../utils/serialize-error.js';
 import { fireAndForget } from '../../utils/fire-and-forget.js';
 import { writeOpfForImport } from '../../utils/opf-writer.js';
 
-/**
- * Build the {@link RenameableBook} for the file-rename step, preferring the hydrated
- * full book (which carries ordered narrators + the stored `edition_label`, #1712) and
- * falling back to the job's `bookRow` for the fields it has. Extracted to keep
- * `renameIfConfigured` under the complexity cap.
- *
- * `pendingEditionLabel` (#1740) is the label freshly derived by `copyToLibrary` on
- * THIS import — it has not been persisted yet, so the hydrated `fullBook` still
- * carries the stale/null value. Prefer it (nullish, never `||`, so a deliberate
- * empty-string label is not dropped) so `{edition}` renders on the creating import;
- * when undefined (no disambiguation occurred), fall through to the stored value.
- */
+// Prefer this import's unpersisted edition label with ?? so an empty label survives.
 function buildRenameableBook(
   fullBook: BookWithAuthor | null,
   bookRow: { title: string; seriesName: string | null; seriesPosition: number | null; publishedDate: string | null },
@@ -43,8 +32,6 @@ function buildRenameableBook(
     seriesPosition: fullBook?.seriesPosition ?? bookRow.seriesPosition,
     narrators: fullBook?.narrators?.map(n => ({ name: n.name })) ?? null,
     publishedDate: fullBook?.publishedDate ?? bookRow.publishedDate,
-    // Freshly-derived label (#1740) wins over the not-yet-persisted hydrated value;
-    // else the stored edition_label (#1712) so {edition} renders end-to-end.
     editionLabel: pendingEditionLabel ?? fullBook?.editionLabel ?? null,
   };
 }
@@ -63,12 +50,7 @@ function parseManualPayload(jobId: number, raw: string): ManualImportJobPayload 
   return result.data;
 }
 
-/**
- * Construct a strict ImportConfirmItem from a Zod-derived ManualImportJobPayload.
- * Producer-omit at the boundary: each optional field is conditional-spread when
- * defined so the resulting object satisfies ImportConfirmItem's `?: T` strict
- * optionals (eopt invariant per #939 AC4) without widening the canonical DTO.
- */
+// Omit undefined optionals to satisfy exactOptionalPropertyTypes without widening the DTO.
 function toImportConfirmItem(payload: ManualImportJobPayload): ImportConfirmItem {
   return {
     path: payload.path,
@@ -107,7 +89,6 @@ export class ManualImportAdapter implements ImportAdapter {
 
     log.info({ bookId, title: payload.title, mode: mode ?? 'pointer' }, 'Processing manual import');
 
-    // Verify the book still exists
     const [bookRow] = await db.select().from(books).where(eq(books.id, bookId)).limit(1);
     if (!bookRow) {
       throw new Error(`Book ${bookId} not found — may have been deleted after import was queued`);
@@ -119,16 +100,13 @@ export class ManualImportAdapter implements ImportAdapter {
       const item = toImportConfirmItem(payload);
       const extracted = extractImportMetadata(item);
 
-      // Pointer (in-place) mode cannot represent a multi-disc set as one book directory — the
-      // discs live as separate sibling folders. Reject rather than silently registering Disc 1.
+      // Pointer mode cannot represent sibling disc folders as one book.
       if (!mode && (await reconstructDiscGroup(item.path)).length >= 2) {
         throw new Error('Cannot import a multi-disc set in pointer (in-place) mode — re-import with copy or move so the discs flatten into one book folder');
       }
 
       let finalPath = payload.path;
-      // Edition discriminator (#1711): set when the collision fence disambiguated
-      // a different recording into a new folder. Persisted so a rescan reuses the
-      // same label rather than re-deriving from later-enriched metadata.
+      // Persist the edition discriminator so rescans reuse it instead of re-deriving it.
       let editionLabel: string | undefined;
       if (mode) {
         const librarySettings = await this.deps.settingsService.get('library');
@@ -158,7 +136,12 @@ export class ManualImportAdapter implements ImportAdapter {
 
       await orchestrateBookEnrichment(
         bookId, finalPath,
-        buildEnrichmentBookInput({ ...extracted.bookInput, genres: currentBook?.genres ?? null }),
+        // Runner-computed narrator provenance lives on the job payload, not the confirm item.
+        buildEnrichmentBookInput({
+          ...extracted.bookInput,
+          genres: currentBook?.genres ?? null,
+          ...(payload.narratorSource !== undefined && { narratorSource: payload.narratorSource }),
+        }),
         enrichmentDeps,
         buildBackgroundAudnexusConfig(payload, extracted, currentBook?.genres ?? null, currentBook),
       );
@@ -169,13 +152,9 @@ export class ManualImportAdapter implements ImportAdapter {
       eventHistory.create(buildImportedEventPayload(bookId, payload, extracted.narratorName, resolve(finalPath), mode))
         .catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record manual import event'));
 
-      // Best-effort: OPF metadata sidecar (media-server handoff). Awaited inline (canonical on-disk
-      // file, NOT the droppable connector queue); gated on tagging.writeOpf and independent of tag
-      // embedding. The shared helper reloads BookWithAuthor fresh by id, so post-enrichment data lands.
+      // Await the canonical OPF write; unlike connector notifications it is not droppable.
       await this.writeOpfSidecar(bookId, finalPath, log);
 
-      // Fire-and-forget: connector refresh. Pointer-mode (in-place adopt, !mode)
-      // notifies too, with reason 'adopt'; copy/move mode uses 'import'.
       this.enqueueConnectorRefresh(bookId, payload, finalPath, mode, log);
     } catch (error: unknown) {
       this.dispatchFailureSideEffects(error, bookId, payload, log);
@@ -213,18 +192,8 @@ export class ManualImportAdapter implements ImportAdapter {
     error: unknown, bookId: number, payload: ManualImportJobPayload, log: ImportAdapterContext['log'],
   ): void {
     const { eventHistory, broadcaster } = this.deps;
-    // Forced-import refusal (#1736): a copy-time `OwnedRecordingError` from a FORCED import is NOT a
-    // generic failure — stop translating it here (no generic `book_status_change → failed`, no opaque
-    // `import_failed` event) so the worker's refused terminal disposition (placeholder deletion +
-    // enriched `import_failed` event/SSE) owns it after this rethrows.
-    //
-    // Gate on `forceImport` (F1): the copy-time on-disk collision fence is force-INDEPENDENT, so a
-    // NON-forced import can also throw `OwnedRecordingError` (e.g. a `different-recording` item that
-    // cleared confirm-time dedup but lands on an occupied target folder). That was never user-forced,
-    // so surfacing it as a "force refused" event would be factually wrong — keep it on the ordinary
-    // generic failure path below, exactly as it behaved before #1736.
+    // Forced collisions belong to the worker's refusal path; non-forced collisions remain failures.
     if (error instanceof OwnedRecordingError && payload.forceImport === true) return;
-    // Failure side effects — emit SSE and record event before re-throwing (worker marks job/book as failed)
     safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing', new_status: 'failed' }, log);
     recordImportFailedEvent({
       eventHistory,
@@ -243,7 +212,6 @@ export class ManualImportAdapter implements ImportAdapter {
     finalPath: string, bookId: number, bookRow: { title: string; seriesName: string | null; seriesPosition: number | null; publishedDate: string | null },
     payload: ManualImportJobPayload, ctx: ImportAdapterContext,
     librarySettings: AppSettings['library'],
-    // #1740: label freshly derived by copyToLibrary on this import, not yet persisted.
     editionLabel?: string,
   ): Promise<void> {
     if (!librarySettings.fileFormat?.trim()) return;

@@ -27,9 +27,7 @@ function durationRow(data: QualityGateData): Row | null {
     label: 'Duration',
     current: formatDurationSeconds(curDuration, { fallback: '—' }),
     downloaded: formatDurationSeconds(dlDuration, { fallback: '—' }),
-    // Flag off the server's persisted hold decision (#1854) instead of an
-    // independent 15% ratio test, so the visible warning tracks the actual 90s
-    // server hold. `durationDelta` stays as the persisted telemetry ratio.
+    // Use the persisted server hold; durationDelta is telemetry, not the decision threshold.
     flagged: data.holdReasons.includes('duration_delta'),
   };
 }
@@ -98,7 +96,6 @@ export function QualityComparisonPanel({ data }: { data: QualityGateData }) {
         <ProbeFailureMessage probeError={data.probeError} holdReasons={data.holdReasons} />
       ) : (
         <>
-          {/* Comparison grid */}
           <div className="grid grid-cols-3 gap-2 text-sm">
             <div className="text-muted-foreground font-medium" />
             <div className="text-muted-foreground font-medium text-center">Current</div>
@@ -116,7 +113,6 @@ export function QualityComparisonPanel({ data }: { data: QualityGateData }) {
             ))}
           </div>
 
-          {/* Hold reasons */}
           {data.holdReasons.length > 0 && (
             <div className="flex flex-wrap gap-1.5 pt-1">
               {data.holdReasons.map((reason) => (

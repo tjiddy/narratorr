@@ -38,7 +38,6 @@ export const NAMING_PRESETS: readonly NamingPreset[] = [
   },
 ] as const;
 
-/** Detect which preset matches the given folder/file formats, or return 'custom'. */
 export function detectPreset(folderFormat: string, fileFormat: string): string {
   const match = NAMING_PRESETS.find(
     (p) => p.folderFormat === folderFormat && p.fileFormat === fileFormat,

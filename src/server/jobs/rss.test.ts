@@ -74,10 +74,7 @@ function createMockBlacklistService(blacklisted: Set<string> = new Set()): Black
   });
 }
 
-/**
- * Create a mock search result with parsed author (as pollRss returns after parseReleaseNames).
- * Results from pollRss have title and author parsed separately.
- */
+// pollRss supplies title and author as separately parsed fields.
 const makeResult = (title: string, author?: string, overrides: Partial<SearchResult> = {}): SearchResult => ({
   title,
   ...(author !== undefined && { author }),
@@ -94,7 +91,7 @@ const makeWantedBook = (id: number, title: string, author?: string) => ({
   title,
   author: author ? { name: author } : undefined,
   status: 'wanted' as const,
-  duration: 600, // 10 hours in minutes
+  duration: 600, // minutes
 });
 
 describe('runRssJob', () => {
@@ -103,8 +100,6 @@ describe('runRssJob', () => {
   beforeEach(() => {
     log = createMockLogger();
   });
-
-  // --- Polling ---
 
   it('returns zeros when RSS is disabled', async () => {
     const settings = createMockSettingsService({ rss: { enabled: false, intervalMinutes: 30 } });
@@ -152,8 +147,6 @@ describe('runRssJob', () => {
     expect(indexer.pollRss).toHaveBeenCalledTimes(2);
   });
 
-  // --- Matching ---
-
   it('matches release to wanted book above 0.7 threshold and grabs', async () => {
     const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
     const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson')];
@@ -171,12 +164,10 @@ describe('runRssJob', () => {
     );
   });
 
-  // #1797 AC1 — RSS floor rejection (regression guard). RSS already converted
-  // minutes→seconds locally, so this stays green across the fix; it pins that the
-  // shared `resolveBookQualityInputs` path keeps the same decision.
+  // Pins the existing floor decision through resolveBookQualityInputs.
   it('filters out a below-floor RSS candidate (10h book, 100MB release, 30 MB/h floor) (#1797 AC1)', async () => {
     const HUNDRED_MB = 100 * 1024 * 1024;
-    const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')]; // duration: 600 min = 10h
+    const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
     const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson', { size: HUNDRED_MB })];
     const settings = createMockSettingsService({ rss: { enabled: true }, quality: { grabFloor: 30, minSeeders: 0 } });
     const { bookList } = createMockBookServices(wantedBooks);
@@ -190,13 +181,9 @@ describe('runRssJob', () => {
     expect(download.grab).not.toHaveBeenCalled();
   });
 
-  // #1797 AC5 — audioDuration (seconds) wins over duration (minutes) on RSS. Red
-  // before the fix: RSS used a path-local `duration * 60 ?? audioDuration`
-  // (duration-first) precedence, so a tiny duration passed the floor and grabbed.
+  // Conflicting values isolate audioDuration ?? duration*60 precedence.
   it('resolves audioDuration (seconds) over duration on the RSS path (#1797 AC5)', async () => {
     const HUNDRED_MB = 100 * 1024 * 1024;
-    // audioDuration 36000s = 10h → 100MB / 10h = 10 MB/h < 30 → reject.
-    // duration 1 min (*60 = 60s) would (wrongly) pass; audioDuration must win.
     const wantedBooks = [{
       id: 1,
       title: 'The Way of Kings',
@@ -298,8 +285,6 @@ describe('runRssJob', () => {
     );
   });
 
-  // --- Deduplication / mutex ---
-
   it('skips release already in download queue (grab mutex)', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
     const rssResults = [makeResult('Test Book', 'Author')];
@@ -321,10 +306,7 @@ describe('runRssJob', () => {
     );
   });
 
-  // --- Imported-book exclusion (RSS is wanted-only) ---
-
   it('does not consider imported books in RSS candidate set', async () => {
-    // Only wanted books are loaded by RSS — imported books are no longer candidates.
     const wantedBooks = [makeWantedBook(1, 'Wanted Book', 'Author')];
     const rssResults = [makeResult('Some Imported Book', 'Other Author')];
     const settings = createMockSettingsService({ rss: { enabled: true } });
@@ -338,8 +320,6 @@ describe('runRssJob', () => {
     expect(result.grabbed).toBe(0);
     expect(download.grab).not.toHaveBeenCalled();
   });
-
-  // --- Error handling ---
 
   it('continues polling remaining indexers when one throws', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
@@ -401,8 +381,6 @@ describe('runRssJob', () => {
       'RSS grab failed (possible concurrent race)',
     );
   });
-
-  // --- Filter pipeline ---
 
   it('results pass through multipart Usenet filter', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
@@ -554,13 +532,10 @@ describe('runRssJob', () => {
 
     expect(result.grabbed).toBe(1);
     expect(download.grab).toHaveBeenCalledTimes(1);
-    // Best-ranked by quality (higher size = higher quality) should be grabbed
     expect(download.grab).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'magnet:high' }),
     );
   });
-
-  // --- Event recording ---
 
   it('grabs emit event-history entries with source rss', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
@@ -577,8 +552,6 @@ describe('runRssJob', () => {
       expect.objectContaining({ source: 'rss' }),
     );
   });
-
-  // --- Edge cases ---
 
   it('completes with 0 grabbed when enabled but no wanted books', async () => {
     const settings = createMockSettingsService({ rss: { enabled: true } });
@@ -624,7 +597,6 @@ describe('runRssJob', () => {
 
     const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
-    // Grab floor is skipped when no duration — result passes through
     expect(result.grabbed).toBe(1);
   });
 
@@ -649,8 +621,6 @@ describe('rss tests — GUID blacklist filtering', () => {
   beforeEach(() => {
     log = createMockLogger();
   });
-
-  // ===== #248 — GUID blacklist filtering in RSS =====
 
   describe('RSS job — GUID blacklist filtering', () => {
     it('filters out results with blacklisted guid', async () => {
@@ -696,14 +666,10 @@ describe('rss tests — GUID blacklist filtering', () => {
 
       const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
-      // Result has no infoHash and no guid, so blacklist check should not be called
       expect(blacklist.getBlacklistedIdentifiers).not.toHaveBeenCalled();
-      // Usenet with no seeders still passes through if minSeeders is 0
       expect(result.grabbed).toBe(1);
     });
   });
-
-  // ===== #386 — metadata.languages wiring in RSS job =====
 
   it('reads metadata.languages and uses it for quality filtering', async () => {
     const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
@@ -719,7 +685,6 @@ describe('rss tests — GUID blacklist filtering', () => {
 
     await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
-    // settingsService.get('metadata') must be called to get languages for filterAndRankResults
     expect(settings.get).toHaveBeenCalledWith('metadata');
     expect(settings.get).toHaveBeenCalledWith('quality');
   });
@@ -745,7 +710,6 @@ describe('rss tests — GUID blacklist filtering', () => {
 
     await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
-    // Only the English result should be grabbed; the French one is filtered out
     expect(download.grab).toHaveBeenCalledTimes(1);
     expect(download.grab).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:english' }),
@@ -769,7 +733,6 @@ describe('rss tests — GUID blacklist filtering', () => {
 
     const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
-    // French-only result filtered out → no grab
     expect(download.grab).not.toHaveBeenCalled();
     expect(result.grabbed).toBe(0);
   });
@@ -805,7 +768,6 @@ describe('rss tests — GUID blacklist filtering', () => {
     expect(grabCall).not.toHaveProperty('indexerId');
   });
 
-  // #439 — RSS ranking honors searchPriority
   it('accuracy mode grabs narrator-matched release over higher-quality non-match via RSS', async () => {
     const FAIR_SIZE = Math.round(79 * 10 * 1024 * 1024);
     const GOOD_SIZE = Math.round(200 * 10 * 1024 * 1024);
@@ -830,19 +792,9 @@ describe('rss tests — GUID blacklist filtering', () => {
     );
   });
 
-  // #1330 — `item.matchScore = bestScore` changes RSS grab SELECTION, not just
-  // the enrichment fetch ranking. canonicalCompare's matchScore gate (a >0.1
-  // spread) overrides the narrator/MB-hr tiers, so the score must reach ranking.
   it('grabs the higher-matchScore release over the narrator/size winner via canonicalCompare (#1330)', async () => {
     mockEnrichUsenet.mockReset();
-    // Two candidates for the same wanted book:
-    //  - A is narrator-matched and larger → wins the narrator + MB/hr tiers.
-    //  - B is an exact title/author match (matchScore 1.0 vs A's ~0.77 — a >0.1
-    //    spread) but has no narrator match and is smaller.
-    // `item.matchScore = bestScore` feeds canonicalCompare's matchScore gate,
-    // which overrides the lower tiers and selects B. Removing that assignment
-    // leaves matchScore undefined → 0 on both, the gate ties, and the narrator
-    // tier flips the grab back to A.
+    // Without item.matchScore = bestScore, both scores tie at zero and narrator/size wins.
     const wanted = [{ ...makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson'), narrators: [{ name: 'Kevin R. Free' }] }];
     const { bookList } = createMockBookServices(wanted);
     const settings = createMockSettingsService({
@@ -883,7 +835,6 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    // Simulate enrichment populating nzbName with reject word
     mockEnrichUsenet.mockImplementation(async (results) => {
       for (const r of results) {
         if (r.protocol === 'usenet') r.nzbName = 'Way of Kings-Hörbuch-Pack.rar';
@@ -905,7 +856,6 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    // Enrichment populates nzbName with multi-part marker (title/rawTitle are clean)
     mockEnrichUsenet.mockImplementation(async (results) => {
       for (const r of results) {
         if (r.protocol === 'usenet') r.nzbName = 'The Way of Kings (01 of 30).rar';
@@ -935,7 +885,6 @@ describe('#502 runRssJob — enrichment before filtering', () => {
 
   it('torrent RSS item skips multi-part filter regardless of title content', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
-    // Torrent with multi-part pattern in title — should NOT be filtered
     const rssResults = [makeResult('Test Book (1/5)', 'Author', { protocol: 'torrent' as const })];
     const settings = createMockSettingsService({ rss: { enabled: true } });
     const { bookList } = createMockBookServices(wantedBooks);
@@ -951,7 +900,6 @@ describe('#502 runRssJob — enrichment before filtering', () => {
 
   it('multi-part check prefers nzbName over rawTitle when both present', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
-    // rawTitle is clean, but nzbName has multi-part marker
     const rssResults = [makeResult('Test Book', 'Author', {
       protocol: 'usenet' as const,
       rawTitle: 'Test Book [Audiobook]',
@@ -977,7 +925,6 @@ describe('#502 runRssJob — enrichment before filtering', () => {
 
   it('empty nzbName falls through to rawTitle (|| operator, not ??)', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
-    // rawTitle has multi-part marker; nzbName will be empty string (should fall through)
     const rssResults = [makeResult('Test Book', 'Author', {
       protocol: 'usenet' as const,
       rawTitle: 'Test Book (1/8)',
@@ -989,7 +936,6 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    // Enrichment sets empty string nzbName (failed NZB parse)
     mockEnrichUsenet.mockImplementation(async (results) => {
       for (const r of results) {
         if (r.protocol === 'usenet') r.nzbName = '';
@@ -1011,7 +957,6 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    // Enrichment sets nzbName with single-part marker (1 of 1)
     mockEnrichUsenet.mockImplementation(async (results) => {
       for (const r of results) {
         if (r.protocol === 'usenet') r.nzbName = 'Test Book (01 of 01).rar';
@@ -1026,7 +971,6 @@ describe('#502 runRssJob — enrichment before filtering', () => {
 
   it('usenet result with pre-populated language — enrichment skips, multi-part uses rawTitle fallback', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
-    // Pre-populated language means enrichment won't set nzbName; rawTitle has multi-part marker
     const rssResults = [makeResult('Test Book', 'Author', {
       protocol: 'usenet' as const,
       rawTitle: 'Test Book (2/10)',
@@ -1039,7 +983,6 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    // Enrichment does nothing (language already set)
     mockEnrichUsenet.mockImplementation(async () => {});
 
     const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
@@ -1066,9 +1009,7 @@ describe('#502 runRssJob — enrichment before filtering', () => {
   it('enrichment only receives matched candidates, not unmatched below-threshold items', async () => {
     const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
     const rssResults = [
-      // Matched: title matches wanted book above threshold
       makeResult('The Way of Kings', 'Brandon Sanderson', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/matched' }),
-      // Unmatched: completely different title, will score below 0.7
       makeResult('Totally Unrelated Book XYZ', 'Someone Else', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/unmatched' }),
     ];
     const settings = createMockSettingsService({ rss: { enabled: true } });
@@ -1079,9 +1020,7 @@ describe('#502 runRssJob — enrichment before filtering', () => {
 
     const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
-    // enrichUsenetLanguages called exactly once (for the matched book's candidates)
     expect(mockEnrichUsenet).toHaveBeenCalledTimes(1);
-    // The call should contain only the matched result, not the unmatched one
     const enrichedResults = mockEnrichUsenet.mock.calls[0]![0];
     expect(enrichedResults).toHaveLength(1);
     expect(enrichedResults[0]!.title).toBe('The Way of Kings');
@@ -1102,11 +1041,8 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(mockEnrichUsenet).toHaveBeenCalledTimes(1);
-    // The matched result carries the computed match score so the Phase-2 cap
-    // ranks by it rather than falling back to feed order.
     const enrichedResults = mockEnrichUsenet.mock.calls[0]![0];
     expect(enrichedResults[0]!.matchScore).toBeGreaterThan(0.7);
-    // Auto-grab path passes the Phase-2 fetch cap as the options argument.
     expect(mockEnrichUsenet.mock.calls[0]![3]).toEqual({ maxPhase2Fetches: 10 });
   });
 
@@ -1119,7 +1055,6 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    // Enrichment populates nzbName with multi-part marker
     mockEnrichUsenet.mockImplementation(async (results) => {
       for (const r of results) {
         if (r.protocol === 'usenet') r.nzbName = 'Test Book (05 of 20).rar';
@@ -1128,7 +1063,6 @@ describe('#502 runRssJob — enrichment before filtering', () => {
 
     const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
-    // Book was matched but all candidates rejected by multi-part filter
     expect(result.matched).toBe(1);
     expect(result.grabbed).toBe(0);
   });
@@ -1136,9 +1070,7 @@ describe('#502 runRssJob — enrichment before filtering', () => {
   it('grabbed count excludes multi-part-rejected items', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book A', 'Author'), makeWantedBook(2, 'Test Book B', 'Author')];
     const rssResults = [
-      // Book A: clean result, should be grabbed
       makeResult('Test Book A', 'Author', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/9' }),
-      // Book B: will get multi-part nzbName, should NOT be grabbed
       makeResult('Test Book B', 'Author', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/10' }),
     ];
     const settings = createMockSettingsService({ rss: { enabled: true } });
@@ -1147,7 +1079,6 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
-    // Only Book B gets multi-part nzbName
     mockEnrichUsenet.mockImplementation(async (results) => {
       for (const r of results) {
         if (r.protocol === 'usenet' && r.title === 'Test Book B') {
@@ -1163,7 +1094,6 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     expect(download.grab).toHaveBeenCalledTimes(1);
   });
 
-  // ── #932 F2 — Caller-level logging assertions for the RSS path ──────────
   describe('caller-level debug logging (#932 F2)', () => {
     it('emits the blacklist drop log when an RSS item is filtered by the blacklist', async () => {
       const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];

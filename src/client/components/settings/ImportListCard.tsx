@@ -162,12 +162,11 @@ function ImportListForm({
   const [syncInterval, setSyncInterval] = useState(defaults.syncInterval);
   const [settings, setSettings] = useState<Record<string, unknown>>(defaults.settings);
 
-  // Preview state — local only (not part of generic CRUD hook)
+  // Preview state is local; the generic CRUD hook does not own it.
   const [previewItems, setPreviewItems] = useState<ImportListItem[] | null>(null);
   const [previewTotal, setPreviewTotal] = useState(0);
   const [previewing, setPreviewing] = useState(false);
 
-  // Track whether test result is stale (provider changed since last test)
   const [testResultStale, setTestResultStale] = useState(false);
 
   function handleTypeChange(newType: ImportListFormData['type']) {
@@ -190,8 +189,7 @@ function ImportListForm({
   async function handlePreview() {
     setPreviewing(true);
     setPreviewItems(null);
-    // Forward initial.id when editing an existing list so the route can
-    // resolve a masked apiKey against the persisted record.
+    // Edit previews need the saved id to resolve a masked apiKey.
     const payload = initial ? { ...formData, id: initial.id } : formData;
     const result = await api.previewImportList(payload).catch(() => null);
     if (result) { setPreviewItems(result.items); setPreviewTotal(result.total); }
@@ -316,7 +314,7 @@ export function ImportListCard(props: ImportListCardProps) {
 
   const queryClient = useQueryClient();
 
-  // Toggle mutation — self-contained for view mode
+  // View-mode toggles bypass the form's CRUD handlers.
   const toggleMutation = useMutation({
     mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) =>
       api.updateImportList(id, { enabled }),

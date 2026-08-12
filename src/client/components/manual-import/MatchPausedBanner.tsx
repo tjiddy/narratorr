@@ -3,22 +3,14 @@ import { pausedReasonDetail, type PausedReason } from '@/hooks/match-recovery';
 
 interface MatchPausedBannerProps {
   reason: PausedReason;
-  /** Original candidates still without a result — the resume target. */
   remaining: number;
-  /** The logical run's original candidate count. */
   total: number;
   onResume: () => void;
   onRestart: () => void;
-  /** A Resume/Restart request is in flight — both actions are single-submit. */
   busy: boolean;
 }
 
-/**
- * Shared match-phase recovery banner (#1864), rendered identically on the Library
- * Import and Manual Import surfaces (DRY-2). Copy is reason-mapped domain text only
- * (`pausedReasonDetail`) — never raw error/server strings. Both actions are
- * single-submit: disabled while their request is pending.
- */
+/** Reason copy must come from pausedReasonDetail, never raw server errors. */
 export function MatchPausedBanner({ reason, remaining, total, onResume, onRestart, busy }: MatchPausedBannerProps) {
   return (
     <div

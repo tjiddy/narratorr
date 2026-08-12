@@ -61,7 +61,6 @@ describe('toScoredCandidate', () => {
     expect(result.authorAsin).toBeUndefined();
   });
 
-  // #1097 — canonical primary-series preference
   it('emits seriesPrimary.name as seriesName when both seriesPrimary and a different series[0] exist', () => {
     const book = makeBook({
       seriesPrimary: { name: 'The Stormlight Archive', position: 1 },
@@ -104,7 +103,7 @@ describe('scoreCandidate — #1097 canonical primary-series scoring', () => {
   it('scores against seriesPrimary when it matches the gap, even when series[0] is an unrelated universe-series', () => {
     const book = makeBook({
       asin: 'B001',
-      // series[0] is the broader universe; series[1] / seriesPrimary is the real book series
+      // series[0] is the broader universe, not the canonical book series.
       series: [{ name: 'The Cosmere', position: 5 }, { name: 'The Stormlight Archive', position: 2 }],
       seriesPrimary: { name: 'The Stormlight Archive', position: 2 },
     });
@@ -113,7 +112,6 @@ describe('scoreCandidate — #1097 canonical primary-series scoring', () => {
     });
     const score = scoreCandidate(book, 'series', 1.0, signals);
     const baseline = scoreCandidate(makeBook({ asin: 'B001' }), 'series', 1.0, signals);
-    // The +20 series-gap bonus applies because seriesPrimary matched
     expect(score).toBeGreaterThanOrEqual(baseline + 20);
   });
 
@@ -174,19 +172,11 @@ describe('querySeriesCandidates — #1099 primary-first admission + article-equi
     expect(map.get('B002')?.reasonContext).toContain('The Stormlight Archive');
   });
 
-  // Deletion-proof regression guard for the reason-position source: if the reason
-  // callback regressed to read from `series[]` (the pre-#1099 shape), it would
-  // find the secondary at position 2, which equals `nextPosition` and renders no
-  // parenthetical. Forcing the matched-primary position to a value that differs
-  // from `nextPosition` makes the position observable in the rendered string.
+  // Different observable positions expose whether the reason used primary or secondary series.
   it("reads the matched canonical primary position (not a secondary series[] entry) into the reason text", async () => {
     const book = makeBook({
       asin: 'B009', language: 'english',
-      // Primary at position 3 — in missingPositions but ≠ nextPosition, so the
-      // callback should append "(position 3)" to the reason text.
       seriesPrimary: { name: 'The Stormlight Archive', position: 3 },
-      // Secondary at position 2 — equal to nextPosition, so a regressed callback
-      // reading the secondary would render NO parenthetical.
       series: [{ name: 'The Cosmere', position: 5 }, { name: 'The Stormlight Archive', position: 2 }],
     });
     const gap = { seriesName: 'Stormlight Archive', authorName: 'Sanderson', missingPositions: [2, 3], nextPosition: 2, maxOwned: 1 };

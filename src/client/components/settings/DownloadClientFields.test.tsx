@@ -20,8 +20,7 @@ function FieldWrapper({ type, clientId, dirty, isEdit, inModal }: { type: Downlo
     defaultValues: { name: 'Test', type: 'qbittorrent', enabled: true, priority: 50, settings: { host: '', port: 8080 } },
   });
   return (
-    // key={type} mirrors DownloadClientForm so a type change unmounts/remounts
-    // the hook instance — the production source of fresh category state.
+    // Match production: changing type must remount category state.
     <DownloadClientFields
       key={type}
       selectedType={type}
@@ -223,8 +222,7 @@ describe('DownloadClientFields', () => {
 
       await waitFor(() => {
         const payload = (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-        // Verify exact top-level keys — `id` is forwarded in edit mode (#844)
-        // so the route can resolve masked secrets against the persisted client.
+        // Edit-mode id lets the route resolve masked secrets.
         expect(Object.keys(payload).sort()).toEqual(['enabled', 'id', 'name', 'priority', 'settings', 'type']);
         expect(payload.id).toBe(1);
         expect(payload.name).toBe('Test');
@@ -245,7 +243,6 @@ describe('DownloadClientFields', () => {
 
       await waitFor(() => {
         const payload = (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-        // Verify exact top-level keys — no extra fields leak into the payload
         expect(Object.keys(payload).sort()).toEqual(['enabled', 'name', 'priority', 'settings', 'type']);
         expect(payload.name).toBe('Test');
         expect(payload.type).toBe('qbittorrent');
@@ -314,13 +311,11 @@ describe('DownloadClientFields', () => {
 
       render(<FieldWrapper type="qbittorrent" />);
 
-      // First fetch fails
       await user.click(screen.getByRole('button', { name: /fetch/i }));
       await waitFor(() => {
         expect(screen.getByText('Connection refused')).toBeInTheDocument();
       });
 
-      // Second fetch succeeds
       await user.click(screen.getByRole('button', { name: /fetch/i }));
       await waitFor(() => {
         expect(screen.queryByText('Connection refused')).not.toBeInTheDocument();
@@ -359,20 +354,16 @@ describe('DownloadClientFields', () => {
     it('shows stringified error and hides dropdown when API rejects a non-Error value', async () => {
       const user = userEvent.setup();
       const mockFn = downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>;
-      // First fetch succeeds and opens the dropdown
       mockFn.mockResolvedValueOnce({ categories: [] });
-      // Second fetch rejects with a non-Error value
       mockFn.mockRejectedValueOnce('string-rejection');
 
       render(<FieldWrapper type="qbittorrent" />);
 
-      // Open the dropdown with a successful fetch
       await user.click(screen.getByRole('button', { name: /fetch/i }));
       await waitFor(() => {
         expect(screen.getByText('No categories found')).toBeInTheDocument();
       });
 
-      // Trigger the non-Error rejection
       await user.click(screen.getByRole('button', { name: /fetch/i }));
       await waitFor(() => {
         expect(screen.getByText('string-rejection')).toBeInTheDocument();
@@ -398,7 +389,6 @@ describe('DownloadClientFields', () => {
 
       rerender(<FieldWrapper type="sabnzbd" />);
 
-      // Prior type's categories must be gone immediately — no flash of stale items.
       expect(screen.queryByText('audiobooks')).not.toBeInTheDocument();
       expect(screen.queryByText('movies')).not.toBeInTheDocument();
     });
@@ -411,17 +401,11 @@ describe('DownloadClientFields', () => {
 
       const { rerender } = render(<FieldWrapper type="qbittorrent" />);
 
-      // Start a fetch on the qbittorrent hook instance, but do NOT resolve it yet.
       await user.click(screen.getByRole('button', { name: /fetch/i }));
 
-      // Swap type before the in-flight promise resolves — the qbittorrent hook unmounts.
       rerender(<FieldWrapper type="sabnzbd" />);
 
-      // Resolve the original fetch and let React flush the unmounted hook's
-      // continuation. `await deferred` inside act guarantees fetchCategories'
-      // `await` resumes — its setCategories/setShowDropdown dispatches against
-      // the dead Fiber are silent no-ops, so 'stale-cat' must not appear on
-      // the sabnzbd UI.
+      // Await the old continuation so stale state has a chance to leak after the remount.
       await act(async () => {
         resolveFetch({ categories: ['stale-cat'] });
         await deferred;
@@ -444,8 +428,6 @@ describe('DownloadClientFields', () => {
         expect(screen.getByText('Connection refused')).toBeInTheDocument();
       });
 
-      // Re-render with same selectedType but a different unrelated prop. The hook
-      // does not remount (key unchanged), so the error survives.
       rerender(<FieldWrapper type="qbittorrent" inModal />);
 
       expect(screen.getByText('Connection refused')).toBeInTheDocument();
@@ -463,13 +445,10 @@ describe('DownloadClientFields', () => {
       await waitFor(() => {
         expect(screen.getByText('cat1')).toBeInTheDocument();
       });
-      // ToolbarDropdown renders a fixed z-30 portal container to document.body
       const portalContainer = screen.getByText('cat1').closest('div.fixed');
       expect(portalContainer).toHaveClass('z-30');
     });
   });
-
-  // #263: downloadRoot field removed
 
   describe('downloadRoot field removed (#263)', () => {
     it('does not render Download Root field', () => {
@@ -490,7 +469,6 @@ describe('DownloadClientFields', () => {
         expect(screen.getByText('cat1')).toBeInTheDocument();
       });
 
-      // Click outside the dropdown (on the document body)
       await user.click(document.body);
 
       await waitFor(() => {
@@ -555,7 +533,7 @@ describe('DownloadClientFields', () => {
         categories: ['audiobooks'],
       });
 
-      // Simulate a modal Escape listener (registered before dropdown)
+      // Register before the dropdown's Escape listener.
       const modalEscapeHandler = vi.fn();
       document.addEventListener('keydown', modalEscapeHandler);
 
@@ -567,11 +545,9 @@ describe('DownloadClientFields', () => {
 
       await user.keyboard('{Escape}');
 
-      // Dropdown closes
       await waitFor(() => {
         expect(screen.queryByText('audiobooks')).not.toBeInTheDocument();
       });
-      // Modal Escape handler was suppressed by stopImmediatePropagation
       expect(modalEscapeHandler).not.toHaveBeenCalled();
 
       document.removeEventListener('keydown', modalEscapeHandler);

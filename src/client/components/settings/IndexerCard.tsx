@@ -1,4 +1,4 @@
-// Does not use useSettingsForm: entity form for indexer CRUD, not a settings category patch.
+// Indexer CRUD is an entity form, not a settings-category patch.
 import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -42,7 +42,7 @@ function settingsFromIndexer(indexer: Indexer): CreateIndexerFormData['settings'
   for (const [key, val] of Object.entries(indexer.settings)) {
     if (val != null) result[key] = val;
   }
-  // Form schema's searchType is a string enum; legacy persisted MAM values may be numeric (0..3).
+  // Legacy MAM records may store numeric searchType; the form schema accepts only string enums.
   if (indexer.type === 'myanonamouse' && result.searchType !== undefined) {
     result.searchType = coerceSearchType(result.searchType);
   }

@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from 'vitest';
 import { clientSubmissionIdSchema } from '@core/import-staging/schemas.js';
 import { generateClientSubmissionId, EntropyUnavailableError } from './client-uuid.js';
 
-/** A deterministic getRandomValues that fills the buffer with an incrementing pattern. */
 function fixedGetRandomValues(seed = 1) {
   return (arr: Uint8Array) => {
     for (let i = 0; i < arr.length; i++) arr[i] = (seed + i) & 0xff;
@@ -23,7 +22,6 @@ describe('generateClientSubmissionId', () => {
     const impl = { getRandomValues: vi.fn(fixedGetRandomValues(0)) } as unknown as Crypto;
     const id = generateClientSubmissionId(impl);
     expect(clientSubmissionIdSchema.safeParse(id).success).toBe(true);
-    // version nibble (first char of 3rd group) is 4; variant nibble (first char of 4th group) is 8/9/a/b.
     const groups = id.split('-');
     expect(groups[2]![0]).toBe('4');
     expect(['8', '9', 'a', 'b']).toContain(groups[3]![0]);

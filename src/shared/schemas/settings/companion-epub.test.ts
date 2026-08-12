@@ -17,8 +17,6 @@ describe('companionEpubSettingsSchema', () => {
 });
 
 describe('companionEpubFormSchema', () => {
-  // The form schema carries no `.default()` (zod-resolver-effects-divergence): forms
-  // always pass explicit defaultValues, so an empty object must fail.
   it('rejects an empty object — no default survives into the form schema', () => {
     expect(companionEpubFormSchema.safeParse({}).success).toBe(false);
   });

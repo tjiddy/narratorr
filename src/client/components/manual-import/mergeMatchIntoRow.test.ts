@@ -68,10 +68,6 @@ describe('mergeMatchIntoRow', () => {
   });
 
   it('does NOT overwrite a userEdited row that has no metadata (manual fix without picking a result, #1374 F1)', () => {
-    // BookEditModal saves metadata: undefined when the user corrects fields
-    // manually without selecting a provider result. The auto-populate guard must
-    // honor userEdited, not just edited.metadata, or a later bestMatch clobbers
-    // the user's corrections.
     const manualFix = makeRow({
       userEdited: true,
       selected: true,
@@ -83,15 +79,11 @@ describe('mergeMatchIntoRow', () => {
     expect(merged.edited.author).toBe('My Author');
     expect(merged.edited.series).toBe('My Series');
     expect(merged.edited.metadata).toBeUndefined();
-    // The match result is still attached and selection is preserved.
     expect(merged.matchResult?.confidence).toBe('high');
     expect(merged.selected).toBe(true);
   });
 
   it('a late match does NOT clobber a userEdited row\'s explicit series/position edit (#1927 AC8)', () => {
-    // The user edited Series to `The Dresden Files #10` BEFORE the (long-running) match arrived.
-    // The late bestMatch carries a DIFFERENT primary series; the userEdited guard must leave the
-    // user's series/position untouched so the edit is not silently discarded by the race.
     const userEdited = makeRow({
       userEdited: true,
       selected: true,
@@ -148,7 +140,6 @@ describe('mergeMatchIntoRow', () => {
       makeRow({ selected: true }),
       makeMatch({ confidence: 'high', recordingVerdict: 'different-recording' }),
     );
-    // Not a hard duplicate — a deliberate new copy stays selected.
     expect(result.selected).toBe(true);
     expect(result.book.isDuplicate).toBe(false);
     expect(result.book.recordingVerdict).toBe('different-recording');

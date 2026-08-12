@@ -4,18 +4,14 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, type AttentionResponse, type AttentionSubmission } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { useImportAttention } from '@/hooks/useImportReport';
+import { useGenerationGuard, type GenerationContext } from '@/hooks/useGenerationGuard';
 import { attentionCopy } from '@/lib/import-report/attentionCopy';
 import { useAttentionDismissal, dismissalKey } from '@/lib/import-report/dismissalStore';
 
 /**
- * Server-authoritative attention banner (#1894). Renders the attention read's
- * `data.attention.kind` — the client never computes the abandonment grace or scans
- * a page. Import-page hosts pass a `source`; the Library-page host omits it
- * (cross-source). Dismissal is keyed by `${id}:${kind}` (a later
- * `completed-attention` on a dismissed-`abandoned` id re-raises). A failed
- * attention read is observable/retryable, never silently "no banner". Discard
- * failures retain the banner + error + retry. `onImportAgain` is host-injected
- * (page-reset semantics; the staged re-upload network flow is #1902).
+ * Server-authoritative banner. `source` scopes import pages; omission is
+ * cross-source. Dismissals use id + kind so later states reappear. Read failures
+ * remain visible and retryable; a discard failure is retryable against its own run.
  */
 export function ImportAttentionBanner({
   source,
@@ -28,23 +24,31 @@ export function ImportAttentionBanner({
   const { isDismissed, dismiss } = useAttentionDismissal();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [discardError, setDiscardError] = useState<string | null>(null);
+  // Attention resolves to the newest qualifying run, so a failure outlives the run it came from;
+  // the id is what keeps the error — and its Retry — attached to the run the operator acted on.
+  const [discardError, setDiscardError] = useState<{ id: number; message: string } | null>(null);
+
+  // Hook-level mutation callbacks still fire after the host route drops this banner; the guard
+  // suppresses lifecycle-local effects while shared caches still reconcile.
+  const { capture, isLive } = useGenerationGuard();
 
   const discardMutation = useMutation({
     mutationFn: (id: number) => api.discardImportSubmission(id),
-    onSuccess: (_result, discardedId) => {
-      setDiscardError(null);
-      // A successful DELETE is AUTHORITATIVE over stale cached attention (F45): drop
-      // the deleted submission from every cached attention entry BEFORE refetching,
-      // so its banner cannot linger (with a re-actionable Discard) if the subsequent
-      // attention read then fails. The refetch surfaces the next attention-worthy run.
+    onMutate: capture,
+    onSuccess: (_result, discardedId, context: GenerationContext) => {
+      // Clear every cached copy before refetch; a failed refetch must not resurrect the delete action.
       queryClient.setQueriesData<AttentionResponse>(
         { queryKey: ['importSubmissions', 'attention'] },
         (old) => (old && old.data?.id === discardedId ? { ...old, data: null } : old),
       );
       queryClient.invalidateQueries({ queryKey: ['importSubmissions'] });
+      if (!isLive(context)) return;
+      setDiscardError(null);
     },
-    onError: (error: unknown) => setDiscardError(getErrorMessage(error)),
+    onError: (error: unknown, failedId: number, context: GenerationContext | undefined) => {
+      if (!isLive(context)) return;
+      setDiscardError({ id: failedId, message: getErrorMessage(error) });
+    },
   });
 
   const attentionError = (
@@ -56,9 +60,7 @@ export function ImportAttentionBanner({
 
   const data = query.data?.data ?? null;
 
-  // A failed attention read is observable/retryable, NEVER silently "no banner" —
-  // this must hold even AFTER a cached `{data:null, watch}` response, whose retained
-  // envelope would otherwise leave `query.data` truthy and `data` null (F37).
+  // A cached null envelope must not hide a failed attention read.
   if (!data) {
     return query.isError ? attentionError : null;
   }
@@ -70,7 +72,7 @@ export function ImportAttentionBanner({
   return (
     <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3" data-testid="import-attention-banner">
       {query.isError && (
-        // A background poll failed but a last-good banner is retained — surface a retry.
+        // Retain last-good data while exposing the failed refresh.
         <div className="mb-2 flex items-center gap-2 text-xs text-destructive" data-testid="attention-refresh-error">
           <span>Couldn’t refresh attention.</span>
           <button type="button" className="underline" onClick={() => query.refetch()}>Retry</button>
@@ -119,10 +121,12 @@ export function ImportAttentionBanner({
           </button>
         </span>
       </div>
-      {discardError && (
+      {discardError && discardError.id === data.id && (
+        // Hidden, not cleared, while another run is displayed: the failure is still unresolved, so
+        // it must reappear if this run does. Retry re-targets its own run, never the displayed one.
         <div className="mt-2 flex items-center gap-2 text-xs text-destructive" data-testid="attention-discard-error">
-          <span>Couldn’t discard: {discardError}</span>
-          <button type="button" className="underline" onClick={() => discardMutation.mutate(data.id)}>Retry</button>
+          <span>Couldn’t discard: {discardError.message}</span>
+          <button type="button" className="underline" onClick={() => discardMutation.mutate(discardError.id)}>Retry</button>
         </div>
       )}
     </div>

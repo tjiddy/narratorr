@@ -6,12 +6,6 @@ import {
 } from './downloads.js';
 import * as barrel from '../../schemas.js';
 
-// A fully-hydrated, deliberately leaky source row: numeric rowid, FK columns,
-// grab/info-hash/url internals, output path, cleanup/grab snapshots, the derived
-// `status`/`indexerName` seam fields, and a leaky linked `book` carrying its
-// numeric rowid + every internal column. Typed wide (no explicit annotation) so
-// the extra internal fields model what the real `DownloadWithBook` row carries —
-// `toDownloadV1` must strip them all.
 function makeLeakyRow() {
   return {
     id: 42,
@@ -37,7 +31,6 @@ function makeLeakyRow() {
     completedAt: new Date('2024-01-02T04:05:06.000Z'),
     progressUpdatedAt: new Date('2024-01-02T03:30:00.000Z'),
     pendingCleanup: null,
-    // Derived display status + indexer name (the service's compatibility seam).
     status: 'completed' as const,
     indexerName: 'AudioBookBay',
     book: {
@@ -122,7 +115,6 @@ describe('toDownloadV1 projection (zero-leak)', () => {
     ] as const)('(%s, %s) -> %s', (clientStatus, pipelineStage, expected) => {
       const dto = toDownloadV1({ ...makeLeakyRow(), clientStatus, pipelineStage });
       expect(dto.status).toBe(expected);
-      // The canonical axes are exposed alongside the derived status.
       expect(dto.clientStatus).toBe(clientStatus);
       expect(dto.pipelineStage).toBe(pipelineStage);
     });
@@ -228,8 +220,6 @@ describe('downloadV1ListQuerySchema (pagination-only, strict)', () => {
   });
 });
 
-// The v1 schema module is re-exported from the top-level `src/shared/schemas.ts`
-// barrel; consumers import from there, not the domain file.
 describe('barrel re-export', () => {
   it('exposes downloadV1Schema, toDownloadV1, and downloadV1ListQuerySchema from the schemas barrel', () => {
     expect(barrel.downloadV1Schema).toBe(downloadV1Schema);

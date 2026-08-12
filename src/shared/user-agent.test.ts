@@ -3,8 +3,7 @@ import { getUserAgent } from './user-agent.js';
 
 describe('getUserAgent', () => {
   afterEach(() => {
-    // Restore the ambient GIT_TAG so a stubbed value never leaks into other
-    // tests (vitest does not auto-restore env stubs unless unstubEnvs is set).
+    // Vitest does not restore env stubs unless configured; prevent cross-test leakage.
     vi.unstubAllEnvs();
   });
 

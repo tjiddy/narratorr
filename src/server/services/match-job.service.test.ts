@@ -15,14 +15,11 @@ import type { BookService } from './book.service.js';
 import type { BookMetadata } from '@core/metadata/index.js';
 import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 
-// Mock audio scanner
 vi.mock('@core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn().mockResolvedValue(null),
 }));
 
-// Mock crypto.randomUUID for deterministic job IDs. Preserve the rest of
-// node:crypto — auth.service.ts (pulled in transitively via the service chain)
-// calls randomBytes() at module load to build its DUMMY_SALT.
+// Preserve crypto.randomBytes: auth.service builds DUMMY_SALT during transitive import.
 vi.mock('node:crypto', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return { ...actual, randomUUID: vi.fn().mockReturnValue('test-job-id') };
@@ -30,8 +27,6 @@ vi.mock('node:crypto', async (importOriginal) => {
 
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { randomUUID } from 'node:crypto';
-
-// -------- Helpers --------
 
 function makeBookMetadata(overrides: Partial<BookMetadata> = {}): BookMetadata {
   return {
@@ -45,9 +40,8 @@ function createMockMetadataService(): MetadataService {
   return inject<MetadataService>({
     searchBooks: vi.fn().mockResolvedValue([]),
     getBook: vi.fn().mockResolvedValue(null),
-    // #1942 — the lazy chapter-runtime bridge. Defaults to "no usable runtime",
-    // so every pre-existing duration expectation in this file is unchanged.
-    getChapterRuntimeSeconds: vi.fn().mockResolvedValue(undefined),
+    // The API represents no usable chapter runtime as `{}`.
+    getChapterRuntimeSeconds: vi.fn().mockResolvedValue({}),
     search: vi.fn(),
     searchSeries: vi.fn(),
     getAuthor: vi.fn(),
@@ -58,19 +52,16 @@ function createMockMetadataService(): MetadataService {
   });
 }
 
-/** Mock BookService for the post-match duplicate pass — defaults to no duplicate. */
 function createMockBookService(): BookService {
   return inject<BookService>({
     findDuplicate: vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null }),
   });
 }
 
-/** Flush microtask queue so async job work completes */
 function flushPromises(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, 50));
 }
 
-/** Wait for a job to reach a terminal status ('failed' is terminal too, #1864). */
 async function waitForJob(service: MatchJobService, id: string, maxMs = 2000): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < maxMs) {
@@ -85,8 +76,6 @@ const sampleCandidate: MatchCandidate = {
   title: 'The Way of Kings',
   author: 'Brandon Sanderson',
 };
-
-// -------- Tests --------
 
 describe('MatchJobService', () => {
   let service: MatchJobService;
@@ -179,13 +168,11 @@ describe('MatchJobService', () => {
       }));
 
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockImplementation(async () => {
-        // Small delay to give cancellation a chance
         await new Promise(resolve => setTimeout(resolve, 5));
         return [];
       });
 
       const id = service.createJob(books);
-      // Cancel immediately
       service.cancelJob(id);
 
       await waitForJob(service, id);
@@ -204,7 +191,7 @@ describe('MatchJobService', () => {
 
         const id = service.createJob([sampleCandidate]);
 
-        // Manually advance time in small increments to flush microtasks
+        // Advance in small increments to flush microtasks without reaching the TTL.
         for (let i = 0; i < 10; i++) {
           await vi.advanceTimersByTimeAsync(1);
         }
@@ -212,7 +199,6 @@ describe('MatchJobService', () => {
         expect(service.getJob(id)).not.toBeNull();
         expect(service.getJob(id)!.status).toBe('completed');
 
-        // Advance 10 minutes (TTL)
         vi.advanceTimersByTime(10 * 60 * 1000);
 
         expect(service.getJob(id)).toBeNull();
@@ -235,11 +221,9 @@ describe('MatchJobService', () => {
           await vi.advanceTimersByTimeAsync(1);
         }
 
-        // Advance 9 minutes — should still be there
         vi.advanceTimersByTime(9 * 60 * 1000);
         expect(service.getJob(id)).not.toBeNull();
 
-        // Advance past 10 minutes total
         vi.advanceTimersByTime(2 * 60 * 1000);
         expect(service.getJob(id)).toBeNull();
       } finally {
@@ -290,12 +274,9 @@ describe('MatchJobService', () => {
     });
   });
 
-  // #1864 §6/§6a — deterministic terminalization + first-terminal-wins matrix.
   describe('terminalization (#1864)', () => {
     it('injected top-level run() crash → status failed with error, retained results, logged', async () => {
-      // The orchestration awaits Promise.allSettled; a rejection there is the only
-      // path that escapes the per-book catch (remote in practice). Spy so the job's
-      // first allSettled call — issued synchronously inside createJob — rejects.
+      // Promise.allSettled rejection is the only top-level escape point.
       const spy = vi.spyOn(Promise, 'allSettled').mockRejectedValueOnce(new Error('orchestration boom'));
       try {
         const id = service.createJob([sampleCandidate]);
@@ -304,7 +285,7 @@ describe('MatchJobService', () => {
         const status = service.getJob(id)!;
         expect(status.status).toBe('failed');
         expect(status.error).toBe('orchestration boom');
-        expect(Array.isArray(status.results)).toBe(true); // partial results retained
+        expect(Array.isArray(status.results)).toBe(true);
         expect(log.error).toHaveBeenCalledWith(
           expect.objectContaining({ jobId: 'test-job-id' }),
           'Match job failed unexpectedly',
@@ -319,7 +300,6 @@ describe('MatchJobService', () => {
       try {
         const id = service.createJob([sampleCandidate]);
         await waitForJob(service, id);
-        // getJob returns the failed snapshot with error + retained results, not null.
         const status = service.getJob(id);
         expect(status).not.toBeNull();
         expect(status!.status).toBe('failed');
@@ -338,7 +318,6 @@ describe('MatchJobService', () => {
 
         vi.advanceTimersByTime(10 * 60 * 1000);
         expect(service.getJob(id)).toBeNull();
-        // Exactly one cleanup — the terminalizing transition owns the single schedule.
         expect(log.debug).toHaveBeenCalledWith({ jobId: id }, 'Match job expired and removed');
         const removals = (log.debug as ReturnType<typeof vi.fn>).mock.calls.filter(c => c[1] === 'Match job expired and removed');
         expect(removals).toHaveLength(1);
@@ -354,7 +333,6 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
       expect(service.getJob(id)!.status).toBe('completed');
 
-      // A cancel after completion is a no-op — returns false, status unchanged.
       expect(service.cancelJob(id)).toBe(false);
       expect(service.getJob(id)!.status).toBe('completed');
     });
@@ -366,9 +344,8 @@ describe('MatchJobService', () => {
         return [];
       });
       const id = service.createJob(books);
-      expect(service.cancelJob(id)).toBe(true); // matching → cancelled transition
+      expect(service.cancelJob(id)).toBe(true);
       await waitForJob(service, id);
-      // The run resolves afterward but completion no-ops over the cancelled terminal.
       expect(service.getJob(id)!.status).toBe('cancelled');
     });
 
@@ -386,24 +363,19 @@ describe('MatchJobService', () => {
     });
 
     it('failure-then-completion stays failed with the original error, results, and a single cleanup (F7)', async () => {
-      // run() terminalizes `failed` on the orchestration crash, then RESOLVES — so start()'s
-      // completion handler always fires afterward. That completion is the failure→completion
-      // matrix cell: it must no-op (write-once), leaving status/error/results owned by the
-      // failed transition and scheduling no second TTL cleanup.
+      // run() records failure but resolves, so createJob still attempts completion.
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
       const spy = vi.spyOn(Promise, 'allSettled').mockRejectedValueOnce(new Error('orchestration boom'));
       try {
         const id = service.createJob([sampleCandidate]);
-        // Flush the crash catch AND the subsequent completion handler (both microtasks).
+        // Flush both terminalization attempts.
         for (let i = 0; i < 10; i++) await vi.advanceTimersByTimeAsync(1);
 
         const status = service.getJob(id)!;
-        // The completion attempt no-oped: still failed, original error, retained results.
         expect(status.status).toBe('failed');
         expect(status.error).toBe('orchestration boom');
         expect(Array.isArray(status.results)).toBe(true);
 
-        // Exactly one cleanup — the failed transition owns it; the no-op completion schedules none.
         vi.advanceTimersByTime(10 * 60 * 1000);
         expect(service.getJob(id)).toBeNull();
         const removals = (log.debug as ReturnType<typeof vi.fn>).mock.calls.filter(c => c[1] === 'Match job expired and removed');
@@ -426,7 +398,7 @@ describe('MatchJobService', () => {
     it('returns false for an already-cancelled (terminal) job', () => {
       const id = service.createJob([sampleCandidate]);
       expect(service.cancelJob(id)).toBe(true);
-      expect(service.cancelJob(id)).toBe(false); // second cancel is a no-op
+      expect(service.cancelJob(id)).toBe(false);
     });
 
     it('returns false for a completed (terminal) job', async () => {
@@ -441,7 +413,7 @@ describe('MatchJobService', () => {
       const id = service.createJob([sampleCandidate]);
       service.cancelJob(id);
       (log.info as ReturnType<typeof vi.fn>).mockClear();
-      service.cancelJob(id); // already cancelled
+      service.cancelJob(id);
       expect(log.info).not.toHaveBeenCalledWith({ jobId: id }, 'Match job cancelled');
     });
   });
@@ -477,8 +449,7 @@ describe('MatchJobService', () => {
     });
 
     it('post-match: flags a resolved match that findDuplicate reports as owned (#1662)', async () => {
-      // The candidate has no author (bare no-author filename), but the resolved
-      // bestMatch carries the author/asin findDuplicate keys off.
+      // Candidate lacks author; only the resolved match supplies duplicate keys.
       const meta = makeBookMetadata({ title: 'Tehanu', authors: [{ name: 'Ursula K. Le Guin' }], asin: 'B01G9EPERE', providerId: 'p1' });
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([meta]);
       (metadataService.getBook as ReturnType<typeof vi.fn>).mockResolvedValue({ asin: 'B01G9EPERE', duration: 600 });
@@ -492,7 +463,6 @@ describe('MatchJobService', () => {
       expect(result.existingBookId).toBe(421);
       expect(result.duplicateReason).toBe('slug');
       expect(result.recordingVerdict).toBe('same-recording');
-      // findDuplicate is keyed off the MATCHED metadata, not the (author-less) candidate.
       expect(bookService.findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'Tehanu', authors: meta.authors, asin: 'B01G9EPERE' }));
     });
 
@@ -512,11 +482,7 @@ describe('MatchJobService', () => {
       expect(result.recordingVerdict).toBe('review');
     });
 
-    // #1728 F2/F4 — the matched edition's formatType is normalized and passed to
-    // findDuplicate so an abridged-vs-unabridged best match with no usable duration
-    // classifies as review (not a silent same-recording). The user-facing
-    // `reviewReason` display text stays the human warning — never the machine
-    // `recordingReviewReason` literal.
+    // Machine recordingReviewReason is logged; reviewReason remains human-facing text.
     it('post-match: normalizes bestMatch.formatType into findDuplicate; review keeps the human reviewReason text (#1728 F2)', async () => {
       const meta = makeBookMetadata({ title: 'Tehanu', authors: [{ name: 'Ursula K. Le Guin' }], asin: 'B01G9EPERE', providerId: 'p1', formatType: 'Abridged' });
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([meta]);
@@ -527,14 +493,10 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0]!;
-      // F2 — normalized production form reaches the resolver.
       expect(bookService.findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ productionType: 'abridged' }));
       expect(result.recordingVerdict).toBe('review');
-      // Display string is the human warning, NOT the machine reason literal.
       expect(result.reviewReason).toBe(RECORDING_REVIEW_REASON);
       expect(result.reviewReason).not.toBe('production-type-mismatch');
-      // Observability AC (#1728): the held downgrade is diagnosable — the machine
-      // reason rides the post-match review log context (never the display string).
       expect(log.debug).toHaveBeenCalledWith(
         expect.objectContaining({ recordingReviewReason: 'production-type-mismatch', existingBookId: 88 }),
         'Post-match recording review required',
@@ -616,14 +578,12 @@ describe('MatchJobService', () => {
     });
 
     it('considers all search results, not just the first few (DCC regression)', async () => {
-      // Simulates Audible returning the correct match at position 8 of 10
       const candidate: MatchCandidate = {
         path: '/audiobooks/Matt Dinniman/Dungeon Crawler Carl/01 - Dungeon Crawler Carl',
         title: 'Dungeon Crawler Carl',
         author: 'Matt Dinniman',
       };
 
-      // 7 wrong results followed by the correct one
       const wrongResults = Array.from({ length: 7 }, (_, i) =>
         makeBookMetadata({
           title: `Wrong Book ${i + 1}`,
@@ -653,7 +613,7 @@ describe('MatchJobService', () => {
   describe('runtime disambiguation', () => {
     it('promotes to high confidence when best match duration within the 90s band', async () => {
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-        totalDuration: 36050, // 600min provider (36000s) + 50s → Δ50s
+        totalDuration: 36050, // 600min + 50s
         files: [],
       });
 
@@ -663,7 +623,7 @@ describe('MatchJobService', () => {
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 600 }) // Δ50s — inside 90s
+        .mockResolvedValueOnce({ asin: 'A1', duration: 600 })
         .mockResolvedValueOnce({ asin: 'A2', duration: 800 });
 
       const id = service.createJob([sampleCandidate]);
@@ -676,7 +636,6 @@ describe('MatchJobService', () => {
     });
 
     it('stays medium confidence when best match duration exceeds strict 5% threshold (low score)', async () => {
-      // Use a candidate with slightly different title to get a combined score < 0.95
       const weakCandidate: MatchCandidate = {
         path: '/audiobooks/Doctor Sleep',
         title: 'Doctor Sleep',
@@ -694,7 +653,7 @@ describe('MatchJobService', () => {
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 650 }) // 8.3% off — exceeds strict 5%
+        .mockResolvedValueOnce({ asin: 'A1', duration: 650 })
         .mockResolvedValueOnce({ asin: 'A2', duration: 700 });
 
       const id = service.createJob([weakCandidate]);
@@ -707,25 +666,23 @@ describe('MatchJobService', () => {
 
     it('preserves similarity-ranked order — duration does not override winner', async () => {
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-        totalDuration: 36000, // 600 min
+        totalDuration: 36000,
         files: [],
       });
 
-      // "The Way of Kings" is best similarity match, even though "Completely Different" has closer duration
       const results = [
         makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
         makeBookMetadata({ title: 'Completely Different Book', providerId: 'p2' }),
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 900 }) // 50% off — but better similarity
-        .mockResolvedValueOnce({ asin: 'A2', duration: 600 }); // exact match — but worse similarity
+        .mockResolvedValueOnce({ asin: 'A1', duration: 900 })
+        .mockResolvedValueOnce({ asin: 'A2', duration: 600 });
 
       const id = service.createJob([sampleCandidate]);
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      // Similarity winner is bestMatch, not duration winner
       expect(result!.bestMatch!.title).toBe('The Way of Kings');
     });
 
@@ -755,7 +712,6 @@ describe('MatchJobService', () => {
     });
 
     it('converts audio seconds to minutes for duration confidence', async () => {
-      // 90 seconds = 2 minutes (rounded)
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
         totalDuration: 90,
         files: [],
@@ -767,14 +723,13 @@ describe('MatchJobService', () => {
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 2 }) // exact match at 2 min
+        .mockResolvedValueOnce({ asin: 'A1', duration: 2 })
         .mockResolvedValueOnce({ asin: 'A2', duration: 100 });
 
       const id = service.createJob([sampleCandidate]);
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      // Duration of top similarity result matches → high confidence
       expect(result!.confidence).toBe('high');
       expect(result!.bestMatch!.title).toBe('The Way of Kings');
     });
@@ -820,10 +775,7 @@ describe('MatchJobService', () => {
     });
   });
 
-  // #1929 — the raw scanned runtime (seconds) and a structured reasonKind ride the
-  // assembled MatchResult so the client can re-evaluate a medium re-pick without
-  // parsing the display string. scannedSeconds is threaded UNCONDITIONALLY whenever
-  // the scanner produced a positive runtime (F9), regardless of confidence.
+  // reasonKind avoids display-text parsing; scannedSeconds must survive every positive-runtime exit (#1929).
   describe('#1929 scannedSeconds + reasonKind threading (filename path)', () => {
     it('multi-result duration-mismatch top exposes scannedSeconds + reasonKind:duration-mismatch', async () => {
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 36000, files: [] });
@@ -833,7 +785,7 @@ describe('MatchJobService', () => {
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 650 }) // 39000s vs 36000s → Δ3000 out of band
+        .mockResolvedValueOnce({ asin: 'A1', duration: 650 })
         .mockResolvedValueOnce({ asin: 'A2', duration: 700 });
 
       const id = service.createJob([{ path: '/audiobooks/Doctor Sleep', title: 'Doctor Sleep', author: 'Stephen King' }]);
@@ -854,7 +806,7 @@ describe('MatchJobService', () => {
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 600 }) // Δ50s — inside band
+        .mockResolvedValueOnce({ asin: 'A1', duration: 600 })
         .mockResolvedValueOnce({ asin: 'A2', duration: 800 });
 
       const id = service.createJob([sampleCandidate]);
@@ -866,8 +818,6 @@ describe('MatchJobService', () => {
       expect(result.reasonKind).toBeUndefined();
     });
 
-    // F9 — scannedSeconds rides even the non-success exits (no results / title-floor /
-    // catch), never only the resolved-match ones.
     it('no-search-results none result still carries scannedSeconds (no reasonKind)', async () => {
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 36000, files: [] });
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
@@ -883,7 +833,6 @@ describe('MatchJobService', () => {
 
     it('title-floor none result still carries scannedSeconds', async () => {
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 36000, files: [] });
-      // A result whose title shares no similarity with the candidate → below the floor.
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([
         makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
       ]);
@@ -922,15 +871,9 @@ describe('MatchJobService', () => {
     });
   });
 
-  // #1821 — single-result filename path (uncapped): corroborate against runtime.
-  // A grossly-off duration demotes high → medium (Review); missing runtime or a
-  // within-tolerance runtime stays high. This is the exact path the Fablehaven
-  // mis-import travelled (a single wrong-book hit stamped high, never warned).
+  // Single-result filename matches need runtime corroboration after the Fablehaven false positive (#1821).
   describe('#1821 single-result runtime corroboration (filename path)', () => {
     it('Fablehaven repro — single 9h16m audio matched to a 13h27m record → medium + mismatch reason', async () => {
-      // 556min (9h16m) scanned vs 807min (13h27m) provider = 45% gap. No usable
-      // tags → tag pass skipped → filename-single branch. Before #1821 this was
-      // silently stamped high and written to the library as the wrong book.
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 556 * 60, files: [] });
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([
         makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1', duration: 807 }),
@@ -940,13 +883,11 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      // medium → the Review lane (mergeMatchIntoRow deselects a non-high row).
       expect(result!.confidence).toBe('medium');
       expect(result!.reason).toBe('Duration mismatch — scanned 9h 16m vs expected 13h 27m');
     });
 
     it('single result within runtime tolerance → high (no regression to correct matches)', async () => {
-      // 36050s scanned vs 600min (36000s) provider → Δ50s, inside the 90s band → verified.
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 36050, files: [] });
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([
         makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1', duration: 600 }),
@@ -961,7 +902,6 @@ describe('MatchJobService', () => {
     });
 
     it('single result with NO scanned duration → high (uncapped path, absent data does not demote)', async () => {
-      // Audio scan yields no duration → nothing to disprove the single hit → high.
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 0, files: [] });
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([
         makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1', duration: 807 }),
@@ -1198,7 +1138,6 @@ describe('MatchJobService', () => {
         { skipCover: true, ffprobePath: '/usr/bin/ffprobe', onWarn: expect.any(Function), onDebug: expect.any(Function) },
       );
 
-      // Diagnostic callback wiring — onWarn → log.warn(payload, msg); onDebug → log.debug(payload, msg)
       const options = vi.mocked(scanAudioDirectory).mock.calls[0]![1]!;
       options.onWarn!('warn-msg', { warnPayload: 1 });
       expect(log.warn).toHaveBeenCalledWith({ warnPayload: 1 }, 'warn-msg');
@@ -1249,7 +1188,6 @@ describe('MatchJobService', () => {
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockImplementation(async () => {
         concurrentCount++;
         maxConcurrent = Math.max(maxConcurrent, concurrentCount);
-        // Small real delay to let concurrency build up
         await new Promise(resolve => setTimeout(resolve, 20));
         concurrentCount--;
         return [];
@@ -1308,7 +1246,7 @@ describe('MatchJobService', () => {
   describe('edge cases', () => {
     it('handles exact 90s duration delta as high confidence (inclusive)', async () => {
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-        totalDuration: 36090, // 600min provider (36000s) + 90s → exactly the band edge
+        totalDuration: 36090,
         files: [],
       });
 
@@ -1318,20 +1256,19 @@ describe('MatchJobService', () => {
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 600 }) // Δ90s exactly
+        .mockResolvedValueOnce({ asin: 'A1', duration: 600 })
         .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
 
       const id = service.createJob([sampleCandidate]);
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      // The 90s band is inclusive (<=), so exactly 90s gets high confidence.
       expect(result!.confidence).toBe('high');
     });
 
     it('handles just under 90s delta as high confidence', async () => {
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-        totalDuration: 36080, // 600min provider (36000s) + 80s → Δ80s
+        totalDuration: 36080,
         files: [],
       });
 
@@ -1341,7 +1278,7 @@ describe('MatchJobService', () => {
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 600 }) // Δ80s
+        .mockResolvedValueOnce({ asin: 'A1', duration: 600 })
         .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
 
       const id = service.createJob([sampleCandidate]);
@@ -1383,23 +1320,15 @@ describe('MatchJobService', () => {
       const id = service.createJob([sampleCandidate]);
       await waitForJob(service, id);
 
-      // fetchDetails checks cancelled between each iteration, so after first call
-      // triggers cancel, subsequent iterations should break
       expect(getBookCalls).toBeLessThanOrEqual(2);
     });
 
-    // #1929 F1 (carried F9) — the empty-scored/cancellation exit is a SEPARATE result
-    // exit from the no-results/title-floor/catch ones; it must also carry the raw
-    // scanned seconds unconditionally. This fails if `withScanned` is dropped from the
-    // empty-scored return (match-job.service.ts:278) while every other test stays green.
+    // Cancellation here takes the distinct empty-scored exit, which must retain scannedSeconds.
     it('empty-scored (cancellation) none exit still carries positive scannedSeconds (#1929)', async () => {
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 36000, files: [] });
       const results = Array.from({ length: 5 }, (_, i) =>
         makeBookMetadata({ title: `Book ${i}`, providerId: `prov-${i}` }),
       );
-      // Cancel WHILE the search resolves so `fetchDetails` sees `isCancelled` on its very
-      // first iteration and returns an empty `detailed` → `scored` is empty even though the
-      // search returned 5 results → the empty-scored exit (not no-results/title-floor) fires.
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockImplementation(async () => {
         service.cancelJob('test-job-id');
         return results;
@@ -1407,12 +1336,10 @@ describe('MatchJobService', () => {
 
       const id = service.createJob([sampleCandidate]);
       await waitForJob(service, id);
-      // The empty-scored result is pushed in the microtask cascade following the cancel;
-      // let it settle before snapshotting.
+      // Allow the cancelled result to settle.
       await flushPromises();
 
       const result = service.getJob(id)!.results[0]!;
-      // The empty-scored none exit — bestMatch null, but getBook was never reached.
       expect(result.confidence).toBe('none');
       expect(result.bestMatch).toBeNull();
       expect(metadataService.getBook).not.toHaveBeenCalled();
@@ -1434,35 +1361,28 @@ describe('MatchJobService', () => {
 
       const id = service.createJob(books);
 
-      // Initially no results
       expect(service.getJob(id)!.matched).toBe(0);
 
-      // Resolve first book
       resolveFirst([]);
       await flushPromises();
 
       expect(service.getJob(id)!.matched).toBe(1);
       expect(service.getJob(id)!.status).toBe('matching');
 
-      // Resolve second book
       resolveSecond([]);
       await flushPromises();
 
-      // May need a bit more time for the done flag
       await waitForJob(service, id);
       expect(service.getJob(id)!.matched).toBe(2);
       expect(service.getJob(id)!.status).toBe('completed');
     });
   });
 
-  // ── #1850 Single absolute duration band (90s), score-independent ─────────
-  // Replaces the removed #335 relative %/score tier: one fixed 90s band, applied
-  // identically regardless of the title/author score.
+  // One score-independent 90s band replaced the relative score tiers (#1850).
   describe('absolute duration band (#1850)', () => {
     it('high combined score (1.0) + duration within 90s → confidence high', async () => {
-      // sampleCandidate: "The Way of Kings" by "Brandon Sanderson" → score 1.0
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-        totalDuration: 36050, // 600min provider (36000s) + 50s → Δ50s
+        totalDuration: 36050,
         files: [],
       });
 
@@ -1472,7 +1392,7 @@ describe('MatchJobService', () => {
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 600 }) // Δ50s — inside 90s
+        .mockResolvedValueOnce({ asin: 'A1', duration: 600 })
         .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
 
       const id = service.createJob([sampleCandidate]);
@@ -1483,16 +1403,14 @@ describe('MatchJobService', () => {
     });
 
     it('high combined score (1.0) — no relaxation: a 30h book 5min off → medium (the #335 tier removal)', async () => {
-      // Old code: score 1.0 relaxed the band to 15% (≈4.5h on a 30h book), so a
-      // 5-minute gap passed as high. The absolute 90s band demotes it — high title
-      // confidence makes a duration gap MORE diagnostic, not less.
+      // The retired 15% tier allowed ~4.5h on a 30h book; score no longer widens tolerance.
       const longCandidate: MatchCandidate = {
         path: '/audiobooks/The Way of Kings',
         title: 'The Way of Kings',
         author: 'Brandon Sanderson',
       };
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-        totalDuration: 108300, // 1800min provider (108000s) + 300s (5min) → Δ300s
+        totalDuration: 108300,
         files: [],
       });
 
@@ -1502,7 +1420,7 @@ describe('MatchJobService', () => {
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 1800 }) // 30h; Δ300s beyond 90s
+        .mockResolvedValueOnce({ asin: 'A1', duration: 1800 })
         .mockResolvedValueOnce({ asin: 'A2', duration: 2400 });
 
       const id = service.createJob([longCandidate]);
@@ -1515,7 +1433,7 @@ describe('MatchJobService', () => {
 
     it('high combined score (1.0) + duration just beyond the band → confidence medium', async () => {
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-        totalDuration: 36300, // 600min provider (36000s) + 300s → Δ300s
+        totalDuration: 36300,
         files: [],
       });
 
@@ -1525,7 +1443,7 @@ describe('MatchJobService', () => {
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 600 }) // Δ120s beyond 90s
+        .mockResolvedValueOnce({ asin: 'A1', duration: 600 })
         .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
 
       const id = service.createJob([sampleCandidate]);
@@ -1536,7 +1454,6 @@ describe('MatchJobService', () => {
     });
 
     it('low combined score + duration within 90s → confidence high (band is score-independent)', async () => {
-      // A weak title match still verifies within the same 90s band — no strict/relaxed split.
       const weakCandidate: MatchCandidate = {
         path: '/audiobooks/Doctor Sleep',
         title: 'Doctor Sleep',
@@ -1544,7 +1461,7 @@ describe('MatchJobService', () => {
       };
 
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-        totalDuration: 36060, // 600min provider (36000s) + 60s → Δ60s
+        totalDuration: 36060,
         files: [],
       });
 
@@ -1554,7 +1471,7 @@ describe('MatchJobService', () => {
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 600 }) // Δ60s — inside 90s
+        .mockResolvedValueOnce({ asin: 'A1', duration: 600 })
         .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
 
       const id = service.createJob([weakCandidate]);
@@ -1572,7 +1489,7 @@ describe('MatchJobService', () => {
       };
 
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-        totalDuration: 36000, // 600min → Δ2400s from a 640min provider
+        totalDuration: 36000,
         files: [],
       });
 
@@ -1582,7 +1499,7 @@ describe('MatchJobService', () => {
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 640 }) // Δ2400s beyond 90s
+        .mockResolvedValueOnce({ asin: 'A1', duration: 640 })
         .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
 
       const id = service.createJob([weakCandidate]);
@@ -1593,7 +1510,6 @@ describe('MatchJobService', () => {
     });
   });
 
-  // ── #229 Observability — elapsed time ───────────────────────────────────
   describe('elapsed time (#229)', () => {
     it('match job completion log includes elapsedMs field', async () => {
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
@@ -1616,7 +1532,6 @@ describe('MatchJobService', () => {
       const id = service.createJob([sampleCandidate]);
       service.cancelJob(id);
       await waitForJob(service, id);
-      // Allow the async run() to flush its final log after cancellation
       await flushPromises();
 
       expect(log.info).toHaveBeenCalledWith(
@@ -1628,7 +1543,6 @@ describe('MatchJobService', () => {
 
   describe('result scoring integration', () => {
     it('re-ranks results by scoreResult() before selection', async () => {
-      // Provider returns "Wrong Book" first, but "The Way of Kings" matches better
       const results = [
         makeBookMetadata({ title: 'Completely Wrong Book', providerId: undefined }),
         makeBookMetadata({ title: 'The Way of Kings', providerId: undefined }),
@@ -1639,7 +1553,6 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      // Re-ranking puts "The Way of Kings" first due to higher score
       expect(result!.bestMatch!.title).toBe('The Way of Kings');
     });
 
@@ -1658,8 +1571,7 @@ describe('MatchJobService', () => {
     });
 
     it('title similarity exactly 50% sets confidence to medium (boundary)', async () => {
-      // Use two similar-ish titles that produce ~50% similarity
-      // "Way Kings" vs "The Way of Kings" — enough overlap to reach ~50%
+      // Similar-ish titles keep the fixture near 50% similarity without reaching high confidence.
       const candidate: MatchCandidate = { path: '/books/test', title: 'Way Kings', author: 'Sanderson' };
       const results = [
         makeBookMetadata({ title: 'Way Kings Edition', providerId: undefined }),
@@ -1671,7 +1583,6 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      // With similar titles, confidence should be medium (not none)
       expect(result!.confidence).toBe('medium');
     });
 
@@ -1691,7 +1602,7 @@ describe('MatchJobService', () => {
 
     it('duration still promotes to high when within the 90s band with scoring', async () => {
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-        totalDuration: 36050, // 600min provider (36000s) + 50s → Δ50s
+        totalDuration: 36050,
         files: [],
       });
 
@@ -1723,7 +1634,7 @@ describe('MatchJobService', () => {
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 600 }) // exact match
+        .mockResolvedValueOnce({ asin: 'A1', duration: 600 })
         .mockResolvedValueOnce({ asin: 'A2', duration: 800 });
 
       const id = service.createJob([sampleCandidate]);
@@ -1735,28 +1646,24 @@ describe('MatchJobService', () => {
 
     it('similarity winner stays bestMatch even when worse-scoring result has closer duration', async () => {
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-        totalDuration: 36000, // 600 min
+        totalDuration: 36000,
         files: [],
       });
 
-      // "The Way of Kings" has higher similarity to candidate than "Ready Player One"
-      // But "Ready Player One" has closer duration
       const results = [
         makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
         makeBookMetadata({ title: 'Ready Player One', providerId: 'p2' }),
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 900 }) // 50% off — worse duration
-        .mockResolvedValueOnce({ asin: 'A2', duration: 601 }); // ~0.2% off — better duration
+        .mockResolvedValueOnce({ asin: 'A1', duration: 900 })
+        .mockResolvedValueOnce({ asin: 'A2', duration: 601 });
 
       const id = service.createJob([sampleCandidate]);
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      // Similarity winner remains bestMatch — duration does NOT override selection
       expect(result!.bestMatch!.title).toBe('The Way of Kings');
-      // Duration of bestMatch (900 vs 600) is 50% off → medium confidence
       expect(result!.confidence).toBe('medium');
     });
   });
@@ -1779,7 +1686,6 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      // Year tiebreaker prefers the 2010 match
       expect(result!.bestMatch!.publishedDate).toBe('2010-08-31');
     });
 
@@ -1820,7 +1726,6 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      // Without year, first result by score (they're equal, so order preserved)
       expect(result!.bestMatch!.publishedDate).toBe('2010-01-01');
     });
 
@@ -1841,13 +1746,11 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      // Higher score wins even though year matches the other result
       expect(result!.bestMatch!.title).toBe('The Way of Kings');
     });
   });
 
-  // #1849 — folder-pass position-agreement tiebreaker end-to-end: the candidate's
-  // seriesPosition reaches rankResults and selects the agreeing same-title entry.
+  // Direct ranking tests cannot catch the folder caller dropping seriesPosition (#1849).
   describe('position tiebreaker (folder pass, #1849)', () => {
     it('selects the position-matching entry as bestMatch on a same-title series tie', async () => {
       const candidate: MatchCandidate = {
@@ -1856,7 +1759,6 @@ describe('MatchJobService', () => {
         author: 'Brandon Mull',
         seriesPosition: 1,
       };
-      // Provider returned #2 first; tied title/author scores. Position must promote #1.
       const results = [
         makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], providerId: undefined, series: [{ name: 'Fablehaven', position: 2 }], asin: 'B2' }),
         makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], providerId: undefined, series: [{ name: 'Fablehaven', position: 1 }], asin: 'B1' }),
@@ -1872,16 +1774,10 @@ describe('MatchJobService', () => {
     });
   });
 
-  // #1882 — folder/Pass-2 duration-agreement tiebreaker end-to-end: the scanned
-  // seconds must reach `rankResults(detailed, context, audioResult?.totalDuration)`
-  // and select the sibling edition whose runtime agrees. This fails if the
-  // production call omits the scanned seconds (the direct rankResults test can't
-  // catch a caller that never supplies them).
+  // Direct ranking tests cannot catch the folder caller dropping scanned seconds (#1882).
   describe('duration tiebreaker (folder pass, #1882)', () => {
     it('Dogs of War — selects the 9h58m sibling and verifies high on a same-title edition tie', async () => {
-      // Scanned 35,936s. 598min (9h58m) = 35,880s, Δ56s ≤ 240 → verified;
-      // 568min (9h28m) = 34,080s, Δ1,856s → not verified. Provider ordered the
-      // wrong 9h28m sibling first.
+      // 35,936s is 56s from 598min but 1,856s from 568min; provider orders 568min first.
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({ totalDuration: 35_936, files: [] });
       const candidate: MatchCandidate = {
         path: '/audiobooks/Dogs of War',
@@ -1932,7 +1828,6 @@ describe('MatchJobService', () => {
     });
   });
 
-  // ── #415 Match confidence reason ──────────────────────────────────────
   describe('match confidence reason (#415)', () => {
     describe('reason populated for medium confidence', () => {
       it('duration beyond the 90s band (weak title score) → reason includes "Duration mismatch" with scanned and expected hours', async () => {
@@ -1942,7 +1837,7 @@ describe('MatchJobService', () => {
           author: 'Stephen King',
         };
         (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-          totalDuration: 36000, // 600 min → 10.0 hrs scanned
+          totalDuration: 36000,
           files: [],
         });
         const results = [
@@ -1951,7 +1846,7 @@ describe('MatchJobService', () => {
         ];
         (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
         (metadataService.getBook as ReturnType<typeof vi.fn>)
-          .mockResolvedValueOnce({ asin: 'A1', duration: 650 }) // Δ3000s — beyond 90s
+          .mockResolvedValueOnce({ asin: 'A1', duration: 650 })
           .mockResolvedValueOnce({ asin: 'A2', duration: 700 });
 
         const id = service.createJob([weakCandidate]);
@@ -1961,14 +1856,13 @@ describe('MatchJobService', () => {
         expect(result!.confidence).toBe('medium');
         expect(result!.reason).toBeDefined();
         expect(result!.reason).toContain('Duration mismatch');
-        // 600 min scanned; 650 min expected
         expect(result!.reason).toContain('10h 0m');
         expect(result!.reason).toContain('10h 50m');
       });
 
       it('duration beyond the 90s band (high title score, no relaxation) → reason includes "Duration mismatch" with both values', async () => {
         (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-          totalDuration: 36000, // 600 min → 10.0 hrs scanned
+          totalDuration: 36000,
           files: [],
         });
         const results = [
@@ -1977,7 +1871,7 @@ describe('MatchJobService', () => {
         ];
         (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
         (metadataService.getBook as ReturnType<typeof vi.fn>)
-          .mockResolvedValueOnce({ asin: 'A1', duration: 696 }) // Δ5760s — beyond 90s even at score 1.0
+          .mockResolvedValueOnce({ asin: 'A1', duration: 696 })
           .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
 
         const id = service.createJob([sampleCandidate]);
@@ -1987,7 +1881,6 @@ describe('MatchJobService', () => {
         expect(result!.confidence).toBe('medium');
         expect(result!.reason).toBeDefined();
         expect(result!.reason).toContain('Duration mismatch');
-        // 600 min scanned; 696 min expected
         expect(result!.reason).toContain('10h 0m');
         expect(result!.reason).toContain('11h 36m');
       });
@@ -2036,7 +1929,7 @@ describe('MatchJobService', () => {
 
       it('multiple results, top result lacks duration but scanned duration exists → reason is "Best match missing duration — cannot verify"', async () => {
         (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-          totalDuration: 36000, // 600 min
+          totalDuration: 36000,
           files: [],
         });
         const results = [
@@ -2044,9 +1937,8 @@ describe('MatchJobService', () => {
           makeBookMetadata({ title: 'The Way of Kings (Extended)', providerId: 'p2' }),
         ];
         (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
-        // Top result has NO duration, second result does
         (metadataService.getBook as ReturnType<typeof vi.fn>)
-          .mockResolvedValueOnce({ asin: 'A1' }) // no duration
+          .mockResolvedValueOnce({ asin: 'A1' })
           .mockResolvedValueOnce({ asin: 'A2', duration: 800 });
 
         const id = service.createJob([sampleCandidate]);
@@ -2064,7 +1956,7 @@ describe('MatchJobService', () => {
           author: 'Stephen King',
         };
         (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-          totalDuration: 60000, // 1000 min
+          totalDuration: 60000,
           files: [],
         });
         const results = [
@@ -2073,7 +1965,7 @@ describe('MatchJobService', () => {
         ];
         (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
         (metadataService.getBook as ReturnType<typeof vi.fn>)
-          .mockResolvedValueOnce({ asin: 'A1', duration: 1051 }) // Δ3060s — beyond 90s
+          .mockResolvedValueOnce({ asin: 'A1', duration: 1051 })
           .mockResolvedValueOnce({ asin: 'A2', duration: 1200 });
 
         const id = service.createJob([weakCandidate]);
@@ -2086,7 +1978,7 @@ describe('MatchJobService', () => {
 
       it('duration beyond 90s (high title score, no relaxation) → medium confidence with duration-mismatch reason', async () => {
         (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-          totalDuration: 60000, // 1000 min
+          totalDuration: 60000,
           files: [],
         });
         const results = [
@@ -2095,7 +1987,7 @@ describe('MatchJobService', () => {
         ];
         (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
         (metadataService.getBook as ReturnType<typeof vi.fn>)
-          .mockResolvedValueOnce({ asin: 'A1', duration: 1151 }) // Δ9060s — beyond 90s even at score 1.0
+          .mockResolvedValueOnce({ asin: 'A1', duration: 1151 })
           .mockResolvedValueOnce({ asin: 'A2', duration: 1300 });
 
         const id = service.createJob([sampleCandidate]);
@@ -2109,9 +2001,6 @@ describe('MatchJobService', () => {
 
     describe('reason NOT populated for high/none confidence', () => {
       it('single result with high confidence → reason is undefined', async () => {
-        // No scanned duration → nothing to disprove the single hit, so #1821's
-        // runtime corroboration leaves it high (explicit null so this doesn't
-        // inherit a prior test's leaked scan-duration mock).
         (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(null);
         const meta = makeBookMetadata({ providerId: 'asin-123' });
         (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([meta]);
@@ -2168,7 +2057,7 @@ describe('MatchJobService', () => {
 
       it('duration at exactly the 90s band edge (inclusive <=) → high confidence, no reason', async () => {
         (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-          totalDuration: 36090, // 600min provider (36000s) + 90s → exactly the band edge
+          totalDuration: 36090,
           files: [],
         });
         const results = [
@@ -2177,7 +2066,7 @@ describe('MatchJobService', () => {
         ];
         (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
         (metadataService.getBook as ReturnType<typeof vi.fn>)
-          .mockResolvedValueOnce({ asin: 'A1', duration: 600 }) // Δ90s exactly
+          .mockResolvedValueOnce({ asin: 'A1', duration: 600 })
           .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
 
         const id = service.createJob([sampleCandidate]);
@@ -2190,7 +2079,7 @@ describe('MatchJobService', () => {
 
       it('duration within the 90s band with high title score → high confidence, no reason', async () => {
         (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-          totalDuration: 36050, // 600min provider (36000s) + 50s → Δ50s
+          totalDuration: 36050,
           files: [],
         });
         const results = [
@@ -2199,7 +2088,7 @@ describe('MatchJobService', () => {
         ];
         (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
         (metadataService.getBook as ReturnType<typeof vi.fn>)
-          .mockResolvedValueOnce({ asin: 'A1', duration: 600 }) // Δ50s
+          .mockResolvedValueOnce({ asin: 'A1', duration: 600 })
           .mockResolvedValueOnce({ asin: 'A2', duration: 900 });
 
         const id = service.createJob([sampleCandidate]);
@@ -2214,7 +2103,7 @@ describe('MatchJobService', () => {
     describe('duration conversion in reason string', () => {
       it('converts minutes to h:mm correctly in reason string (e.g., 2229 min → 37h 9m)', async () => {
         (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
-          totalDuration: 2229 * 60, // 2229 min in seconds
+          totalDuration: 2229 * 60,
           files: [],
         });
         const results = [
@@ -2223,7 +2112,7 @@ describe('MatchJobService', () => {
         ];
         (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
         (metadataService.getBook as ReturnType<typeof vi.fn>)
-          .mockResolvedValueOnce({ asin: 'A1', duration: 2730 }) // ~22% off from 2229
+          .mockResolvedValueOnce({ asin: 'A1', duration: 2730 })
           .mockResolvedValueOnce({ asin: 'A2', duration: 3000 });
 
         const id = service.createJob([sampleCandidate]);
@@ -2256,8 +2145,8 @@ describe('MatchJobService', () => {
 
     it('retries with swapped author/title on zero results', async () => {
       vi.mocked(metadataService.searchBooks)
-        .mockResolvedValueOnce([])  // first search: empty
-        .mockResolvedValueOnce([    // swap search: found
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
           makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
         ]);
       vi.mocked(metadataService.getBook).mockResolvedValue(
@@ -2274,7 +2163,6 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       expect(metadataService.searchBooks).toHaveBeenCalledTimes(2);
-      // Second call should have swapped title/author
       expect(metadataService.searchBooks).toHaveBeenNthCalledWith(
         2,
         'Virginia Evans The Correspondent',
@@ -2325,18 +2213,16 @@ describe('MatchJobService', () => {
   });
 
   describe('swap retry with swapped context (issue #447)', () => {
-    // Misparsed folder: folder "To Kill a Mockingbird - Harper Lee" parsed as
-    // title="Harper Lee", author="To Kill a Mockingbird" (author/title reversed)
     const misparsedCandidate: MatchCandidate = {
       path: '/audiobooks/To Kill a Mockingbird - Harper Lee',
-      title: 'Harper Lee',           // actually the author
-      author: 'To Kill a Mockingbird', // actually the title
+      title: 'Harper Lee',
+      author: 'To Kill a Mockingbird',
     };
 
     it('accepts match when swap retry fires and result title matches book.author (misparsed folder)', async () => {
       vi.mocked(metadataService.searchBooks)
-        .mockResolvedValueOnce([])  // first search: empty (misparsed query)
-        .mockResolvedValueOnce([    // swap retry: found
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
           makeBookMetadata({ title: 'To Kill a Mockingbird', authors: [{ name: 'Harper Lee' }], providerId: 'p1' }),
         ]);
       vi.mocked(metadataService.getBook).mockResolvedValue(
@@ -2356,8 +2242,8 @@ describe('MatchJobService', () => {
       const wrongBook = makeBookMetadata({ title: 'Go Set a Watchman', authors: [{ name: 'Harper Lee' }], providerId: 'p2' });
 
       vi.mocked(metadataService.searchBooks)
-        .mockResolvedValueOnce([])  // first search: empty
-        .mockResolvedValueOnce([correctBook, wrongBook]); // swap retry: multiple results
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([correctBook, wrongBook]);
       vi.mocked(metadataService.getBook)
         .mockResolvedValueOnce(makeBookMetadata({ ...correctBook, asin: 'B1' }))
         .mockResolvedValueOnce(makeBookMetadata({ ...wrongBook, asin: 'B2' }));
@@ -2366,13 +2252,11 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      // Correct book should be bestMatch because ranking uses swapped context
       expect(result!.bestMatch?.title).toBe('To Kill a Mockingbird');
       expect(result!.confidence).not.toBe('none');
     });
 
     it('returns high confidence for single-result swap retry with misparsed folder', async () => {
-      // Single result → high confidence path (line 224-232)
       const correspondentCandidate: MatchCandidate = {
         path: '/audiobooks/The Correspondent - Virginia Evans',
         title: 'Virginia Evans',
@@ -2417,13 +2301,11 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      // Multiple results, no duration → medium confidence
       expect(result!.confidence).toBe('medium');
       expect(result!.bestMatch?.title).toBe('Hyperion');
     });
 
     it('uses original context for ranking and similarity when no swap retry occurs', async () => {
-      // Normal case: first search succeeds, no swap
       vi.mocked(metadataService.searchBooks).mockResolvedValue([
         makeBookMetadata({ title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], providerId: 'p1' }),
       ]);
@@ -2435,7 +2317,6 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      // searchBooks called once (no swap)
       expect(metadataService.searchBooks).toHaveBeenCalledTimes(1);
       expect(result!.confidence).toBe('high');
       expect(result!.bestMatch?.title).toBe('The Way of Kings');
@@ -2463,9 +2344,6 @@ describe('MatchJobService', () => {
     });
 
     it('accepts match when swapped-context title matches exactly', async () => {
-      // Use titles that produce ~0.5 dice coefficient against the swapped context
-      // "Way Ki" vs "The Way of Kings" won't work, need to find a pair that gives ~0.5
-      // diceCoefficient compares bigrams, so use a title where ~half the bigrams match
       const candidate: MatchCandidate = {
         path: '/audiobooks/test',
         title: 'Some Author',
@@ -2485,13 +2363,10 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      // Swapped context title = "Boundary Title", result title = "Boundary Title" → 1.0 similarity
-      // This is above floor, so should be accepted
       expect(result!.confidence).not.toBe('none');
     });
 
     it('rejects match when swapped-context similarity is below floor', async () => {
-      // Both title and author are completely different from the result
       const candidate: MatchCandidate = {
         path: '/audiobooks/test',
         title: 'Alpha Beta',
@@ -2511,19 +2386,13 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      // Swapped context title = "Gamma Delta" vs result "Completely Unrelated Book" → low similarity
-      // Original title = "Alpha Beta" vs result → also low similarity
-      // Both below floor → none confidence
       expect(result!.confidence).toBe('none');
     });
 
     it('falls back to original context when swap fires but book.author is undefined', async () => {
-      // This shouldn't happen per swap-retry logic (swap short-circuits without author),
-      // but the production code should be defensive
       const noAuthorCandidate: MatchCandidate = {
         path: '/audiobooks/Solo Title',
         title: 'Solo Title',
-        // author intentionally omitted
       };
 
       vi.mocked(metadataService.searchBooks).mockResolvedValue([]);
@@ -2532,7 +2401,6 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      // No author → swap never fires → no results → none confidence
       expect(metadataService.searchBooks).toHaveBeenCalledTimes(1);
       expect(result!.confidence).toBe('none');
     });
@@ -2557,13 +2425,10 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      // Swapped context title = "BBBB" vs "ZZZZ YYYY" → 0
-      // Original title = "AAAA" vs "ZZZZ YYYY" → 0
       expect(result!.confidence).toBe('none');
     });
   });
 
-  // ── #984 Tag-first matching ──────────────────────────────────────────
   describe('tag-first matching (#984)', () => {
     function makeTaggedScan(tagTitle: string, tagAuthor: string, totalDuration = 36000) {
       return {
@@ -2583,7 +2448,6 @@ describe('MatchJobService', () => {
     }
 
     const taggedCandidate: MatchCandidate = {
-      // Folder name parses messily; tags carry the truth
       path: '/audiobooks/Eric Discworld, Book 11.m4b',
       title: 'Eric Discworld',
       author: 'Eric Discworld',
@@ -2591,7 +2455,6 @@ describe('MatchJobService', () => {
 
     describe('Pass 1 fires when tagTitle and tagAuthor are populated', () => {
       it('first searchBooks call carries the tag-derived title/author (cleanTagTitle applied)', async () => {
-        // tag.title 'Eric: Discworld, Book 9' cleans to 'Eric: Discworld' (cleanName seriesMarker strip)
         vi.mocked(scanAudioDirectory).mockResolvedValue(
           makeTaggedScan('Eric: Discworld, Book 9', 'Terry Pratchett'),
         );
@@ -2605,7 +2468,6 @@ describe('MatchJobService', () => {
         const id = service.createJob([taggedCandidate]);
         await waitForJob(service, id);
 
-        // Tag pass fires first — only ONE searchBooks call (no Pass 2 fallback)
         expect(metadataService.searchBooks).toHaveBeenCalledTimes(1);
         expect(metadataService.searchBooks).toHaveBeenNthCalledWith(
           1,
@@ -2618,10 +2480,7 @@ describe('MatchJobService', () => {
       });
 
       it('strips trailing "(audio)" suffix from tagAuthor before Audible search (#1030)', async () => {
-        // UAT-confirmed Dune mega-pack case: tagAuthor "Frank Herbert (audio)"
-        // over-specifies Audible's structured author= field, returning zero results.
-        // deriveTagQuery -> cleanTagAuthor must strip the suffix so the search
-        // string AND structured options carry the clean "Frank Herbert".
+        // Audible rejected this literal UAT tag author; normalize both query forms.
         vi.mocked(scanAudioDirectory).mockResolvedValue(
           makeTaggedScan('Dune', 'Frank Herbert (audio)'),
         );
@@ -2642,16 +2501,12 @@ describe('MatchJobService', () => {
         );
       });
 
-      // #1849 — the wanted series position must survive the per-attempt
-      // `attemptQuery` rebuild (match-job.service.ts) and reach rankResultsCleaned
-      // on the REAL tag path, so a same-title series tie resolves to the right entry.
+      // Direct ranking tests cannot catch attemptQuery dropping the series position.
       it('threads tagSeriesPosition through attemptQuery so the tag-pass tiebreaker picks the right entry', async () => {
         vi.mocked(scanAudioDirectory).mockResolvedValue({
           ...makeTaggedScan('Fablehaven', 'Brandon Mull'),
           tagSeriesPosition: 1,
         });
-        // Provider returns #2 first; scores tie (same title/author). Both carry a
-        // full asin so fetchDetails passes them through without a getBook call.
         vi.mocked(metadataService.searchBooks).mockResolvedValue([
           makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 2 }], asin: 'B2' }),
           makeBookMetadata({ title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], series: [{ name: 'Fablehaven', position: 1 }], asin: 'B1' }),
@@ -2665,15 +2520,9 @@ describe('MatchJobService', () => {
         expect(pickPrimarySeries(result!.bestMatch!)?.position).toBe(1);
       });
 
-      // #1882 — the scanned seconds must survive the `runTagSearch → tryAttempt`
-      // hop and reach rankResultsCleaned on the REAL tag path, so a same-title
-      // edition tie resolves to the runtime-agreeing sibling. This is the tag
-      // twin of the folder regression above — the direct rankResultsCleaned test
-      // bypasses the threading these two hops perform.
+      // Direct ranking tests cannot catch runTagSearch → tryAttempt dropping totalDuration (#1882).
       it('threads totalDuration through runTagSearch → tryAttempt so the edition tiebreaker picks the 9h58m sibling', async () => {
-        // Scanned 35,936s → 598min sibling verifies; 568min does not. Provider
-        // ordered the wrong 9h28m sibling first. Both carry a full asin so
-        // fetchDetails passes them through with their duration.
+        // 35,936s verifies the 598min sibling, not the provider's first 568min result.
         vi.mocked(scanAudioDirectory).mockResolvedValue(
           makeTaggedScan('Dogs of War', 'Adrian Tchaikovsky', 35_936),
         );
@@ -2705,14 +2554,11 @@ describe('MatchJobService', () => {
         const id = service.createJob([taggedCandidate]);
         await waitForJob(service, id);
 
-        // Pass 2 would issue ANOTHER searchBooks call with filename-derived params
         expect(metadataService.searchBooks).toHaveBeenCalledTimes(1);
       });
     });
 
-    // #1929 — the tag assembly path threads the same scannedSeconds + reasonKind as
-    // the filename path, incl. through the attempt cap (a duration-mismatch reason and
-    // its kind survive the cap; a bypass-to-high carries neither).
+    // Attempt caps must preserve the tag path's scannedSeconds and specific reason kind.
     describe('#1929 scannedSeconds + reasonKind threading (tag path)', () => {
       it('tag-derived duration-mismatch result exposes scannedSeconds + reasonKind:duration-mismatch', async () => {
         vi.mocked(scanAudioDirectory).mockResolvedValue(
@@ -2722,7 +2568,6 @@ describe('MatchJobService', () => {
           makeBookMetadata({ title: 'Dogs of War', authors: [{ name: 'Adrian Tchaikovsky' }], providerId: 'p1' }),
         ]);
         vi.mocked(metadataService.getBook).mockResolvedValue(
-          // 700min → 42000s vs 36000s → Δ6000, out of band.
           makeBookMetadata({ title: 'Dogs of War', authors: [{ name: 'Adrian Tchaikovsky' }], providerId: 'p1', asin: 'B1', duration: 700 }),
         );
 
@@ -2744,7 +2589,6 @@ describe('MatchJobService', () => {
           makeBookMetadata({ title: 'Dogs of War', authors: [{ name: 'Adrian Tchaikovsky' }], providerId: 'p1' }),
         ]);
         vi.mocked(metadataService.getBook).mockResolvedValue(
-          // 600min → 36000s vs 36000s → Δ0, verified.
           makeBookMetadata({ title: 'Dogs of War', authors: [{ name: 'Adrian Tchaikovsky' }], providerId: 'p1', asin: 'B1', duration: 600 }),
         );
 
@@ -2766,7 +2610,6 @@ describe('MatchJobService', () => {
         const id = service.createJob([sampleCandidate]);
         await waitForJob(service, id);
 
-        // Only Pass 2 fires — single searchBooks call with filename-derived params
         expect(metadataService.searchBooks).toHaveBeenCalledWith(
           'The Way of Kings Brandon Sanderson',
           { title: 'The Way of Kings', author: 'Brandon Sanderson' },
@@ -2775,7 +2618,6 @@ describe('MatchJobService', () => {
 
       it('skips when tagTitle is empty', async () => {
         vi.mocked(scanAudioDirectory).mockResolvedValue(makeTaggedScan('', 'Brandon Sanderson'));
-        // Return a result so Pass 2 doesn't trigger swap retry
         vi.mocked(metadataService.searchBooks).mockResolvedValue([
           makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
         ]);
@@ -2784,9 +2626,7 @@ describe('MatchJobService', () => {
         const id = service.createJob([sampleCandidate]);
         await waitForJob(service, id);
 
-        // Pass 1 skipped → only ONE searchBooks call (Pass 2)
         expect(metadataService.searchBooks).toHaveBeenCalledTimes(1);
-        // First (and only) call carries filename-derived params, not tag-derived
         expect(metadataService.searchBooks).toHaveBeenNthCalledWith(
           1,
           'The Way of Kings Brandon Sanderson',
@@ -2818,7 +2658,6 @@ describe('MatchJobService', () => {
         vi.mocked(scanAudioDirectory).mockResolvedValue(
           makeTaggedScan('Tag Title', 'Tag Author'),
         );
-        // First call (tag pass) → 0; second call (Pass 2) → success
         vi.mocked(metadataService.searchBooks)
           .mockResolvedValueOnce([])
           .mockResolvedValueOnce([
@@ -2831,22 +2670,18 @@ describe('MatchJobService', () => {
         const id = service.createJob([sampleCandidate]);
         await waitForJob(service, id);
 
-        // Exactly TWO searchBooks calls: tag pass + Pass 2 initial. NO swap retry on the tag pass.
         expect(metadataService.searchBooks).toHaveBeenCalledTimes(2);
-        // First call uses tag-derived params
         expect(metadataService.searchBooks).toHaveBeenNthCalledWith(
           1,
           'Tag Title Tag Author',
           { title: 'Tag Title', author: 'Tag Author' },
         );
-        // Second call uses filename-derived params (no swap variant in argument shape)
         expect(metadataService.searchBooks).toHaveBeenNthCalledWith(
           2,
           'The Way of Kings Brandon Sanderson',
           { title: 'The Way of Kings', author: 'Brandon Sanderson' },
         );
-        // AC13 case 1: zero-results path is the throttled-provider-failure path; the
-        // tag-search warn log must NOT fire (only an unexpected throw should warn).
+        // A throttled provider returns []; only an unexpected throw should warn.
         expect(log.warn).not.toHaveBeenCalledWith(
           expect.anything(),
           'tag-search provider error — falling through to filename-derived path',
@@ -2870,7 +2705,6 @@ describe('MatchJobService', () => {
         await waitForJob(service, id);
 
         const result = service.getJob(id)!.results[0];
-        // Pass 2 wins
         expect(metadataService.searchBooks).toHaveBeenCalledTimes(2);
         expect(result!.bestMatch?.title).toBe('The Way of Kings');
       });
@@ -2879,7 +2713,6 @@ describe('MatchJobService', () => {
         vi.mocked(scanAudioDirectory).mockResolvedValue(
           makeTaggedScan('The Final Empire', 'Suzanne Collins'),
         );
-        // Tag pass: top result has matching title but completely different author
         vi.mocked(metadataService.searchBooks)
           .mockResolvedValueOnce([
             makeBookMetadata({ title: 'The Final Empire', authors: [{ name: 'Brandon Sanderson' }], providerId: 'p1' }),
@@ -2893,7 +2726,6 @@ describe('MatchJobService', () => {
         await waitForJob(service, id);
 
         const result = service.getJob(id)!.results[0];
-        // Predicate fail → fall through to Pass 2
         expect(metadataService.searchBooks).toHaveBeenCalledTimes(2);
         expect(result!.bestMatch?.title).toBe('The Way of Kings');
       });
@@ -2917,7 +2749,6 @@ describe('MatchJobService', () => {
         const result = service.getJob(id)!.results[0];
         expect(result!.confidence).toBe('high');
         expect(result!.bestMatch?.title).toBe('The Way of Kings');
-        // Warn log emitted with tag-search context
         expect(log.warn).toHaveBeenCalledWith(
           expect.objectContaining({
             tagTitle: 'Tag Title',
@@ -2941,7 +2772,6 @@ describe('MatchJobService', () => {
         const result = service.getJob(id)!.results[0];
         expect(result!.confidence).toBe('none');
         expect(result!.error).toBe('pass-2 failure');
-        // Tag-pass warn log fired before outer catch caught Pass 2 error
         expect(log.warn).toHaveBeenCalledWith(
           expect.objectContaining({ tagTitle: 'Tag Title' }),
           'tag-search provider error — falling through to filename-derived path',
@@ -2987,12 +2817,6 @@ describe('MatchJobService', () => {
       });
     });
 
-    // ========================================================================
-    // #1007 — production failure recovery: each of the seven cases that fell
-    // through under the old single-form cleanTagTitle pipeline now resolves
-    // via multi-form composition against series[].
-    // ========================================================================
-
     describe('#1007 production failure recovery (multi-form scoring against series[])', () => {
       it('Eric: tagTitle "Eric: Discworld" composes against series=[{name:"Discworld"}]', async () => {
         vi.mocked(scanAudioDirectory).mockResolvedValue(
@@ -3025,8 +2849,7 @@ describe('MatchJobService', () => {
       });
 
       it('Dark Forest: post-#1004 English-only fixture composes title + ":" + series.name to dice ≈ 1.0', async () => {
-        // Dark Forest depended on #1004 dropping the Spanish edition before scoring.
-        // Test fixture reflects post-#1004 state: only English candidates.
+        // Assumes #1004 has already removed the Spanish edition.
         vi.mocked(scanAudioDirectory).mockResolvedValue(
           makeTaggedScan('The Dark Forest: The Three-Body Problem', 'Cixin Liu'),
         );
@@ -3117,10 +2940,7 @@ describe('MatchJobService', () => {
       });
 
       it('Zero Hour: cleanTagTitle strips "(Unabridged)" before series-marker, then multi-form composes', async () => {
-        // Pipeline order check: tagTitle "Zero Hour: Expeditionary Force, Book 5 (Unabridged)"
-        //   bracket-strip: no change → trailing-paren strip: removes "(Unabridged)" (NOT an edition paren)
-        //   → series-marker strip: removes ", Book 5" → "Zero Hour: Expeditionary Force"
-        // Multi-form composition then matches series=[{name:"Expeditionary Force"}].
+        // Removing `(Unabridged)` first exposes the trailing `, Book 5` marker.
         vi.mocked(scanAudioDirectory).mockResolvedValue(
           makeTaggedScan('Zero Hour: Expeditionary Force, Book 5 (Unabridged)', 'Craig Alanson'),
         );
@@ -3151,8 +2971,7 @@ describe('MatchJobService', () => {
       });
 
       it('World War 3.1: cleanTagTitle preserves dots — Audible title= param is dot-sensitive', async () => {
-        // Pre-#1007: cleanTagTitle delegated to cleanName, which replaced "." with " ".
-        // Result was "World War 3 1", which Audible rejects token-wise.
+        // Audible rejects `World War 3 1`; periods are search-significant.
         vi.mocked(scanAudioDirectory).mockResolvedValue(
           makeTaggedScan('World War 3.1', 'John Birmingham'),
         );
@@ -3178,7 +2997,6 @@ describe('MatchJobService', () => {
         const result = service.getJob(id)!.results[0];
         expect(result!.confidence).toBe('high');
         expect(result!.bestMatch?.title).toBe('World War 3.1');
-        // The tag-derived title is passed to searchBooks WITHOUT dot-stripping
         expect(metadataService.searchBooks).toHaveBeenCalledWith(
           'World War 3.1 John Birmingham',
           { title: 'World War 3.1', author: 'John Birmingham' },
@@ -3211,16 +3029,12 @@ describe('MatchJobService', () => {
         await waitForJob(service, id);
 
         const result = service.getJob(id)!.results[0];
-        // Either high or medium — passes the 0.5 title floor that pre-#1007 single-form would fail
         expect(result!.confidence).not.toBe('none');
         expect(result!.bestMatch?.title).toBe('The Final Empire');
       });
 
       it('AC13 predicate-gate regression: Eric-shape passes the 0.5 floor with multi-form, would fail with single-form', async () => {
-        // Without applying tagTitleScore in tagPassPredicatesPass, the rank-side fix is no-op:
-        // single-form dice(cleanTagTitle("Eric"), "Eric: Discworld") ≈ 0.4 < 0.5 floor → fall-through.
-        // With tagTitleScore in the predicate, the composed candidate "Eric: Discworld" matches
-        // the input dice = 1.0 → passes the floor → the candidate is accepted.
+        // Ranking alone is insufficient: the predicate must use the same composed score (1.0 versus ~0.4).
         vi.mocked(scanAudioDirectory).mockResolvedValue(
           makeTaggedScan('Eric: Discworld, Book 9', 'Terry Pratchett'),
         );
@@ -3238,10 +3052,8 @@ describe('MatchJobService', () => {
         await waitForJob(service, id);
 
         const result = service.getJob(id)!.results[0];
-        // The candidate is accepted (not 'none' from floor failure)
         expect(result!.confidence).not.toBe('none');
         expect(result!.bestMatch?.title).toBe('Eric');
-        // Tag pass succeeded — only ONE searchBooks call, no Pass 2 fallback
         expect(metadataService.searchBooks).toHaveBeenCalledTimes(1);
       });
 
@@ -3268,7 +3080,6 @@ describe('MatchJobService', () => {
       });
     });
 
-    // ── #1036 Tag-search planner: ordered retry attempts ─────────────────
     describe('#1036 tag-search planner — ordered retry attempts', () => {
       function makeRichScan(
         tagTitle: string,
@@ -3300,12 +3111,7 @@ describe('MatchJobService', () => {
       };
 
       it('AC20 — Dark Forest: exact attempt zero results, album attempt wins with medium cap', async () => {
-        // Tag title is over-specified with `: The Three-Body Problem` — exact
-        // search returns zero. Album-derived `The Dark Forest` finds the book.
-        // (No `, Book N` marker, so #1650's deriveTagQuery album-substitution
-        // does NOT preempt the planner — this still exercises the album-recovery
-        // attempt; the `, Book N` substitution path is covered by the
-        // deriveTagQuery secondary-fix tests in match-job.helpers.test.ts.)
+        // With no `, Book N` marker, deriveTagQuery cannot preempt planner album recovery.
         vi.mocked(scanAudioDirectory).mockResolvedValue(
           makeRichScan('The Dark Forest: The Three-Body Problem', 'Cixin Liu', {
             tagAlbum: 'The Dark Forest (Unabridged)',
@@ -3328,11 +3134,9 @@ describe('MatchJobService', () => {
 
         const result = service.getJob(id)!.results[0];
         expect(result!.bestMatch?.title).toBe('The Dark Forest');
-        // #1266 — scanned runtime (600min) verifies the album-strip match (duration 600),
-        // so the medium cap is bypassed: confidence stays high with no review reason.
+        // 36,000s verifies 600min, bypassing the album attempt's medium cap.
         expect(result!.confidence).toBe('high');
         expect(result!.reason).toBeUndefined();
-        // Both planner attempts ran, no Pass 2 fallback
         expect(metadataService.searchBooks).toHaveBeenCalledTimes(2);
         expect(metadataService.searchBooks).toHaveBeenNthCalledWith(
           2,
@@ -3347,7 +3151,6 @@ describe('MatchJobService', () => {
             tagAlbum: 'Imagine Me - Shatter Me Series, Book 6',
           }),
         );
-        // Exact attempt fails (zero), album wins
         vi.mocked(metadataService.searchBooks)
           .mockResolvedValueOnce([])
           .mockResolvedValueOnce([
@@ -3365,7 +3168,6 @@ describe('MatchJobService', () => {
 
         const result = service.getJob(id)!.results[0];
         expect(result!.bestMatch?.title).toBe('Imagine Me');
-        // #1266 — scanned runtime (600min) verifies the album-strip match (duration 600) → high, no cap.
         expect(result!.confidence).toBe('high');
         expect(result!.reason).toBeUndefined();
         expect(metadataService.searchBooks).toHaveBeenNthCalledWith(
@@ -3396,7 +3198,6 @@ describe('MatchJobService', () => {
 
         const result = service.getJob(id)!.results[0];
         expect(result!.bestMatch?.title).toBe('Second Son');
-        // #1266 — scanned runtime (600min) verifies the Reacher prefix-strip match (duration 600) → high, no cap.
         expect(result!.confidence).toBe('high');
         expect(result!.reason).toBeUndefined();
         expect(metadataService.searchBooks).toHaveBeenNthCalledWith(
@@ -3420,7 +3221,6 @@ describe('MatchJobService', () => {
         const result = service.getJob(id)!.results[0];
         expect(result!.bestMatch?.title).toBe('Real Book Title');
         expect(result!.confidence).toBe('high');
-        // No searchBooks call — ASIN kill-shot returns before the planner loop
         expect(metadataService.searchBooks).not.toHaveBeenCalled();
         expect(metadataService.getBook).toHaveBeenCalledWith('B07KILLSHT');
       });
@@ -3429,7 +3229,6 @@ describe('MatchJobService', () => {
         vi.mocked(scanAudioDirectory).mockResolvedValue(
           makeRichScan('Some Book', 'Some Author', { tagAsin: 'B07MISSXXX' }),
         );
-        // ASIN kill-shot returns null → planner runs
         vi.mocked(metadataService.getBook).mockResolvedValueOnce(null);
         vi.mocked(metadataService.searchBooks).mockResolvedValueOnce([
           makeBookMetadata({
@@ -3453,8 +3252,6 @@ describe('MatchJobService', () => {
         vi.mocked(scanAudioDirectory).mockResolvedValue(
           makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi'),
         );
-        // Exact attempt fails, strip-trailing-part wins with single result.
-        // Without the cap, single-result shortcut returns 'high'; cap forces 'medium'.
         vi.mocked(metadataService.searchBooks)
           .mockResolvedValueOnce([])
           .mockResolvedValueOnce([
@@ -3489,20 +3286,15 @@ describe('MatchJobService', () => {
         await waitForJob(service, id);
 
         const result = service.getJob(id)!.results[0];
-        // #1266 — top.duration=600min matches the 600min scan, so the strip cap is
-        // bypassed: the duration-verified 'high' is NOT clobbered back to medium.
+        // Duration verification must bypass the stripped attempt's medium cap.
         expect(result!.confidence).toBe('high');
         expect(result!.reason).toBeUndefined();
       });
 
-      // ── #1052 Cap-driven downgrade supplies a user-facing reason ─────
       describe('#1052 capped-attempt review reason', () => {
         const CAPPED_REASON = 'Low confidence match. Please verify.';
 
         it('AC1 — single-result with medium-cap attempt: confidence=medium AND reason set', async () => {
-          // Strip-trailing-part attempt has maxConfidence=medium → cap forces medium
-          // and the result must carry the user-facing review reason so the badge
-          // tooltip explains why review is needed.
           vi.mocked(scanAudioDirectory).mockResolvedValue(
             makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi'),
           );
@@ -3526,7 +3318,6 @@ describe('MatchJobService', () => {
         });
 
         it('AC2 — single-result via ASIN kill-shot (high-cap): confidence=high AND no reason', async () => {
-          // ASIN kill-shot emits maxConfidence='high' so no cap-driven downgrade.
           vi.mocked(scanAudioDirectory).mockResolvedValue(
             makeRichScan('Anything', 'Anyone', { tagAsin: 'B07KILLSHT' }),
           );
@@ -3543,10 +3334,7 @@ describe('MatchJobService', () => {
         });
 
         it('#1821 — single-result via ASIN kill-shot (high-cap) + duration MISMATCH → medium + duration-specific reason', async () => {
-          // Exact-ASIN single hit with a grossly-wrong runtime (556min scan vs
-          // 807min record — the Fablehaven numbers). maxConfidence='high' so the
-          // attempt cap does NOT clamp; the demotion comes from the helper itself.
-          // An ASIN copied from a sibling is not absolute truth — runtime warns.
+          // A sibling ASIN is not absolute truth; measured 556min versus 807min must still demote.
           vi.mocked(scanAudioDirectory).mockResolvedValue(
             makeRichScan('Anything', 'Anyone', { tagAsin: 'B07KILLSHT', totalDuration: 556 * 60 }),
           );
@@ -3579,9 +3367,6 @@ describe('MatchJobService', () => {
         });
 
         it('#1266 AC3 — multi-result, duration verifies top result: cap bypassed, high with no reason', async () => {
-          // Stripped attempt wins, multiple results, duration matches top.duration.
-          // #1266 — duration verification corroborates the match, so the medium cap
-          // is bypassed: confidence resolves to 'high' with no review reason.
           vi.mocked(scanAudioDirectory).mockResolvedValue(
             makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 36000 }),
           );
@@ -3602,9 +3387,6 @@ describe('MatchJobService', () => {
         });
 
         it('AC4 — multi-result with duration mismatch under capped attempt: duration-specific reason wins', async () => {
-          // Top-result duration is 22% off scanned → resolveConfidenceFromDuration
-          // returns medium with a duration-mismatch reason. The cap fallback must
-          // NOT replace the more-specific duration reason.
           vi.mocked(scanAudioDirectory).mockResolvedValue(
             makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 600 * 60 }),
           );
@@ -3626,8 +3408,6 @@ describe('MatchJobService', () => {
         });
 
         it('AC4 — multi-result with no duration data under capped attempt: duration-derived reason wins', async () => {
-          // No duration → resolveConfidenceFromDuration returns medium with the
-          // "no duration data to disambiguate" reason. Cap fallback must not replace it.
           vi.mocked(scanAudioDirectory).mockResolvedValue(
             makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 0 }),
           );
@@ -3649,13 +3429,10 @@ describe('MatchJobService', () => {
         });
       });
 
-      // ── #1266 Duration-verified strip matches bypass the medium cap ─────
       describe('#1266 duration-verified strip-cap bypass', () => {
         const CAPPED_REASON = 'Low confidence match. Please verify.';
 
         it('single-result + strip cap + duration-verified → high, no reason', async () => {
-          // strip-trailing-part wins with one result whose duration (600min)
-          // matches the 600min scan → cap bypassed, high with no review reason.
           vi.mocked(scanAudioDirectory).mockResolvedValue(
             makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 36000 }),
           );
@@ -3675,10 +3452,7 @@ describe('MatchJobService', () => {
         });
 
         it('single-result + strip cap + duration within the 90s band → high (cap bypassed by verification)', async () => {
-          // #1266/#1850 — proves the single-result branch bypasses the strip `medium`
-          // cap when the scanned runtime verifies the candidate within the absolute 90s
-          // band. Scanned 36050s vs candidate 600min (36000s) = Δ50s, inside 90s →
-          // durationVerified → capBypassedByDuration → high. Band is score-independent.
+          // 36,050s versus 600min: Δ50s inside the score-independent band.
           vi.mocked(scanAudioDirectory).mockResolvedValue(
             makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 36050 }),
           );
@@ -3697,9 +3471,31 @@ describe('MatchJobService', () => {
           expect(result!.reason).toBeUndefined();
         });
 
+        it('#2168 single-result + strip cap + TRIMMED-only agreement → high (cap bypassed by the trimmed reference)', async () => {
+          // Cap-bypass recomputation must receive the same full and trimmed references as promotion.
+          // Full Δ1200s is out of band; trimmed Δ10s is in band.
+          vi.mocked(metadataService.getChapterRuntimeSeconds)
+            .mockResolvedValue({ fullSeconds: 36000, trimmedSeconds: 34810 });
+          vi.mocked(scanAudioDirectory).mockResolvedValue(
+            makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 34800 }),
+          );
+          vi.mocked(metadataService.searchBooks)
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([
+              makeBookMetadata({ title: 'Imagine Me', authors: [{ name: 'Tahereh Mafi' }], providerId: 'p1', duration: 600, asin: 'B0IMAGINEME' }),
+            ]);
+          vi.mocked(metadataService.getBook).mockResolvedValue(null);
+
+          const id = service.createJob([candidate]);
+          await waitForJob(service, id);
+
+          const result = service.getJob(id)!.results[0];
+          expect(result!.confidence).toBe('high');
+          expect(result!.reason).toBeUndefined();
+          expect(result!.reasonKind).toBeUndefined();
+        });
+
         it('single-result + strip cap + NO scanned duration → medium + capped reason', async () => {
-          // No scanned duration (totalDuration: 0) → nothing to verify against →
-          // cap applies, medium with the generic review reason.
           vi.mocked(scanAudioDirectory).mockResolvedValue(
             makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 0 }),
           );
@@ -3719,11 +3515,6 @@ describe('MatchJobService', () => {
         });
 
         it('single-result + strip cap + duration MISMATCH → medium + duration-specific reason', async () => {
-          // Scanned 600min vs candidate 900min → 50% off → not verified. #1821 —
-          // the single-result branch now supplies the duration-specific mismatch
-          // reason (via resolveSingleResultConfidence), which survives the strip
-          // cap (applyAttemptCap preserves a supplied durationReason). More
-          // informative than the old generic CAPPED_REASON.
           vi.mocked(scanAudioDirectory).mockResolvedValue(
             makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 600 * 60 }),
           );
@@ -3743,8 +3534,6 @@ describe('MatchJobService', () => {
         });
 
         it('multi-result + strip cap + duration MISMATCH → medium + duration-mismatch reason', async () => {
-          // Multi-result mismatch keeps the more-specific duration reason (F2):
-          // 600min scan vs 900min top → resolveConfidenceFromDuration reason wins.
           vi.mocked(scanAudioDirectory).mockResolvedValue(
             makeRichScan('Imagine Me - Part 5', 'Tahereh Mafi', { totalDuration: 600 * 60 }),
           );
@@ -3779,11 +3568,8 @@ describe('MatchJobService', () => {
             tagAlbum: 'Imagine Me - Shatter Me Series, Book 6',
           }),
         );
-        // Service-level rate-limit: first call sets state, all subsequent calls
-        // return [] without invoking provider. The mock here represents the
-        // post-gate behavior — every call returns [].
+        // Once rate-limited, the service gate returns [] for every attempt without throwing.
         vi.mocked(metadataService.searchBooks).mockResolvedValue([]);
-        // Pass 2 also gets [] (still rate-limited)
         vi.mocked(metadataService.getBook).mockResolvedValue(null);
 
         const id = service.createJob([candidate]);
@@ -3791,8 +3577,7 @@ describe('MatchJobService', () => {
 
         const result = service.getJob(id)!.results[0];
         expect(result!.confidence).toBe('none');
-        // Planner exhausted all attempts, fell through to Pass 2 — but no warn
-        // log fires because the service-level swallow returns [] rather than throwing.
+        // No warning: the service-level swallow returns [] rather than throwing.
         expect(log.warn).not.toHaveBeenCalledWith(
           expect.anything(),
           'tag-search provider error — falling through to filename-derived path',
@@ -3805,8 +3590,6 @@ describe('MatchJobService', () => {
             tagAlbum: 'The Dark Forest (Unabridged)',
           }),
         );
-        // Exact attempt: returns a wrong-author result (predicate fails on author)
-        // Album attempt: returns the right book
         vi.mocked(metadataService.searchBooks)
           .mockResolvedValueOnce([
             makeBookMetadata({
@@ -3856,9 +3639,8 @@ describe('MatchJobService', () => {
     });
   });
 
-  // ── #1650 narrator wrong-edition cap ─────────────────────────────────
   describe('#1650 narrator wrong-edition cap', () => {
-    // 443 min — the live Brave New World file duration.
+    // 443min is the measured Brave New World file runtime.
     function makeNarratorScan(overrides: Partial<Record<string, unknown>> = {}) {
       return {
         codec: 'AAC',
@@ -3888,10 +3670,7 @@ describe('MatchJobService', () => {
     }
 
     it('caps a duration-verified tag-pass high → medium on narrator mismatch (headline, multi-alternative)', async () => {
-      // Two unabridged editions; the scan (28850s) is within the 90s band of the
-      // marquee 480min edition (28800s, Δ50s) → duration verifies → high. Narrator
-      // is the discriminator duration lacks: file Adriel Brandt vs matched Michael
-      // York → cap to Review.
+      // Runtime verifies the 480min result (Δ50s); Adriel Brandt versus Michael York identifies the wrong edition.
       vi.mocked(scanAudioDirectory).mockResolvedValue(
         makeNarratorScan({ tagTitle: 'Brave New World', tagAuthor: 'Aldous Huxley', tagNarrator: 'Adriel Brandt', totalDuration: 28850 }),
       );
@@ -3934,10 +3713,7 @@ describe('MatchJobService', () => {
       expect(result.reason).toBeUndefined();
     });
 
-    // #1655: the complete UAT false-positive fixture, end-to-end. Each was a
-    // high-confidence library-import match wrongly demoted to Review by tag
-    // noise the normalizer now folds (6 string-noise cases) or by placeholder
-    // junk the comparison layer now drops as no-signal (2 placeholder cases).
+    // Six normalized-noise cases plus two no-signal placeholders from the UAT false positives.
     describe('#1655 UAT false-positive fixture resolves high (no cap)', () => {
       const fixture = [
         { title: 'Zero Hour', author: 'Joshua Dalzelle', tag: 'R. C. Bray', edition: ['R.C. Bray'] },
@@ -4041,8 +3817,6 @@ describe('MatchJobService', () => {
     });
 
     it('never promotes: a duration-capped medium with a MATCHING narrator stays medium with its original reason', async () => {
-      // Top duration 600min vs 443min scan → 35% off → resolveConfidenceFromDuration
-      // returns medium with a duration reason. Matching narrator must NOT promote it.
       vi.mocked(scanAudioDirectory).mockResolvedValue(
         makeNarratorScan({ tagTitle: 'Brave New World', tagAuthor: 'Aldous Huxley', tagNarrator: 'Michael York' }),
       );
@@ -4057,8 +3831,6 @@ describe('MatchJobService', () => {
     });
 
     it('Pass 2 (filename-derived): caps a single-result high → medium on narrator mismatch', async () => {
-      // No tagTitle/tagAuthor → Pass 1 falls through; Pass 2 runs on the folder
-      // name. The file still carries a narrator tag, so the cap applies there too.
       vi.mocked(scanAudioDirectory).mockResolvedValue(
         makeNarratorScan({ tagNarrator: 'Adriel Brandt' }),
       );
@@ -4075,7 +3847,6 @@ describe('MatchJobService', () => {
       vi.mocked(scanAudioDirectory).mockResolvedValue(
         makeNarratorScan({ tagTitle: 'Brave New World', tagAuthor: 'Aldous Huxley', tagNarrator: 'Adriel Brandt', tagAsin: 'B002V1BVK4' }),
       );
-      // getBook resolves the ASIN kill-shot to the marquee edition (Michael York).
       vi.mocked(metadataService.getBook).mockResolvedValue(
         makeBookMetadata({ title: 'Brave New World', authors: [{ name: 'Aldous Huxley' }], narrators: ['Michael York'], asin: 'B002V1BVK4' }),
       );
@@ -4084,17 +3855,13 @@ describe('MatchJobService', () => {
       expect(result.bestMatch?.title).toBe('Brave New World');
       expect(result.confidence).toBe('medium');
       expect(result.reason).toContain('Narrator mismatch');
-      // ASIN kill-shot returns before the planner — no search fired.
       expect(metadataService.searchBooks).not.toHaveBeenCalled();
     });
 
-    // ── #1652 hardening ────────────────────────────────────────────────
     const CAP_LOG = 'Narrator wrong-edition cap fired';
 
     it('#1652: does NOT cap on punctuation-only narrators (lone hyphen vs period — no signal)', async () => {
-      // The headline bug: file tag `-` and edition `.` both normalize to empty.
-      // The old looser file-side guard let this through as a spurious mismatch;
-      // now it is "no signal" and the high-confidence match is preserved.
+      // Both punctuation-only names normalize empty and must be treated as no signal.
       vi.mocked(scanAudioDirectory).mockResolvedValue(
         makeNarratorScan({ tagTitle: 'Brave New World', tagAuthor: 'Aldous Huxley', tagNarrator: '-' }),
       );
@@ -4109,10 +3876,6 @@ describe('MatchJobService', () => {
     });
 
     it('#1652 (item 3a): a duration-capped medium with a MISMATCHING narrator keeps its duration reason (no-op, no cap log)', async () => {
-      // Top duration 600min vs 443min scan → 35% off → medium with a duration
-      // reason. The mismatching narrator must NOT override it (downgrade-only /
-      // no-op-on-non-high): confidence stays medium, the duration reason is kept,
-      // and the cap-firing log does NOT fire (no high→medium transition).
       vi.mocked(scanAudioDirectory).mockResolvedValue(
         makeNarratorScan({ tagTitle: 'Brave New World', tagAuthor: 'Aldous Huxley', tagNarrator: 'Adriel Brandt' }),
       );
@@ -4129,9 +3892,7 @@ describe('MatchJobService', () => {
     });
 
     it('#1652 (item 5): logs the cap once with matchSource + durationVerified on a tag-pass demotion (F6: exact/ASIN duration-matched → durationVerified true)', async () => {
-      // ASIN kill-shot (source 'asin-tag', maxConfidence 'high'). The scanned
-      // 443min runtime matches the edition's 443min → isDurationVerified === true,
-      // even though capBypassedByDuration is false (it is gated on medium attempts).
+      // ASIN attempts can be durationVerified even though only medium attempts set capBypassedByDuration.
       vi.mocked(scanAudioDirectory).mockResolvedValue(
         makeNarratorScan({ tagTitle: 'Brave New World', tagAuthor: 'Aldous Huxley', tagNarrator: 'Adriel Brandt', tagAsin: 'B002V1BVK4' }),
       );
@@ -4153,8 +3914,6 @@ describe('MatchJobService', () => {
     });
 
     it('#1652 (item 5): the filename-single branch logs matchSource "filename-single" with durationVerified false', async () => {
-      // No tagTitle/tagAuthor → Pass 1 falls through; Pass 2 single result is the
-      // filename-derived high. The filename-single branch runs no duration check.
       vi.mocked(scanAudioDirectory).mockResolvedValue(
         makeNarratorScan({ tagNarrator: 'Adriel Brandt' }),
       );
@@ -4171,13 +3930,7 @@ describe('MatchJobService', () => {
     });
 
     it('#1652 (item 5) / #1821 (AC9): the filename-single branch logs durationVerified TRUE when the scanned runtime corroborates the edition', async () => {
-      // No tagTitle/tagAuthor → Pass 1 falls through; Pass 2 single result is the
-      // filename-derived high. #1821 wired the single-result branch to the scanned
-      // runtime: the edition's 443min matches the 443min scan → isDurationVerified
-      // === true, so the cap context carries durationVerified: true (not the old
-      // hardcoded false). The mismatching narrator then demotes high → medium. This
-      // is the true-case guard for AC9 — it FAILS if line ...service.ts:283 reverts
-      // capCtx.durationVerified to a hardcoded false.
+      // Guards against filename-single cap context reverting to a hard-coded false.
       vi.mocked(scanAudioDirectory).mockResolvedValue(
         makeNarratorScan({ tagNarrator: 'Adriel Brandt' }),
       );
@@ -4195,11 +3948,6 @@ describe('MatchJobService', () => {
     });
 
     it('#1652 (item 5): the filename duration-resolved multi-result branch logs matchSource "filename-duration-resolved" with durationVerified true', async () => {
-      // No tagTitle/tagAuthor → Pass 1 falls through. Pass 2 returns MULTIPLE
-      // results; the top edition's 443min runtime matches the 443min scan, so
-      // resolveConfidenceFromDuration returns 'high' (duration-verified). The
-      // mismatching narrator then demotes high → medium, and the cap log must
-      // carry the multi-result filename source with durationVerified: true.
       vi.mocked(scanAudioDirectory).mockResolvedValue(
         makeNarratorScan({ tagNarrator: 'Adriel Brandt' }),
       );
@@ -4231,20 +3979,16 @@ describe('MatchJobService', () => {
     });
   });
 
-  // ==========================================================================
-  // #1942 — chapter-runtime corroboration of a would-be duration mismatch.
-  //
-  // The Fablehaven Book 1 case, verbatim: the file is 33219.47s and matches the
-  // matched edition's own chapter table to 0.02s, but Audible's `runtimeLengthMin`
-  // scalar for that ASIN (539 min → 32340s) understates its own chapter table by
-  // ~14.6 minutes. Comparing against the scalar flags a pristine file. The chapter
-  // table is consulted as a corroborating SECOND source, lazily and suppress-only.
-  // ==========================================================================
+  // Measured Fablehaven: file 33219.47s, chapters 33219.49s, scalar 32340s.
+  // Chapter runtime is a lazy, suppress-only corroborating source.
   describe('#1942 chapter-runtime corroboration', () => {
     const FABLEHAVEN_ASIN = 'B00CXXEX8W';
     const SCANNED_SECONDS = 33219.47;
     const SCALAR_MINUTES = 539;
     const CHAPTER_SECONDS = 33219.49;
+    // No trimmable tail: preserve the full/trimmed reference shape (#2168).
+    const CHAPTER_REFS = { fullSeconds: CHAPTER_SECONDS, trimmedSeconds: CHAPTER_SECONDS };
+    const NO_CHAPTER_REFS = {};
     const CAP_LOG = 'Narrator wrong-edition cap fired';
     const MISMATCH = 'Duration mismatch';
 
@@ -4270,7 +4014,6 @@ describe('MatchJobService', () => {
       };
     }
 
-    /** Drives the TAG assembly path (`tagTitle` + `tagAuthor` populated). */
     function tagScan(overrides: Partial<Record<string, unknown>> = {}) {
       return makeScan({ tagTitle: 'Fablehaven', tagAuthor: 'Brandon Mull', ...overrides });
     }
@@ -4292,13 +4035,12 @@ describe('MatchJobService', () => {
       return service.getJob(id)!.results[0]!;
     }
 
-    /** Chapter lookups the job actually issued. */
     function chapterLookups(): unknown[][] {
       return vi.mocked(metadataService.getChapterRuntimeSeconds).mock.calls;
     }
 
     beforeEach(() => {
-      vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue(CHAPTER_SECONDS);
+      vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue(CHAPTER_REFS);
     });
 
     describe('AC6 — rescue, run independently through BOTH assembly paths (F21)', () => {
@@ -4348,18 +4090,14 @@ describe('MatchJobService', () => {
         const result = await runSingle();
 
         expect(result.confidence).toBe('high');
-        // Both reason fields, not just the kind: a rescued row must not carry
-        // stale mismatch TEXT alongside its promoted confidence.
         expect(result.reason).toBeUndefined();
         expect(result.reasonKind).toBeUndefined();
-        // The kill-shot short-circuits the planner, so it reaches the corroboration
-        // bridge by its own route — pin the count so duplicated or deleted wiring
-        // on that route fails here.
+        // Kill-shot bypasses the planner, so pin this separate bridge call.
         expect(chapterLookups()).toEqual([[FABLEHAVEN_ASIN]]);
       });
 
       it('without the corroboration the SAME inputs flag — the rescue is genuinely doing the work', async () => {
-        vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue(undefined);
+        vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue(NO_CHAPTER_REFS);
         vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan());
         vi.mocked(metadataService.searchBooks).mockResolvedValue([fablehaven()]);
 
@@ -4372,9 +4110,7 @@ describe('MatchJobService', () => {
     });
 
     describe('AC8 — cap routing: the promoted verdict reaches applyNarratorCap with durationVerified true', () => {
-      // The cap's observability log is the only place `capCtx.durationVerified`
-      // is observable, and it fires only on an actual high → medium demotion —
-      // so each case pairs the rescue with a narrator mismatch.
+      // durationVerified is observable only when narrator mismatch emits the cap log.
       it('FILENAME single assembly', async () => {
         vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan({ tagNarrator: 'Adriel Brandt' }));
         vi.mocked(metadataService.searchBooks).mockResolvedValue([fablehaven()]);
@@ -4443,7 +4179,7 @@ describe('MatchJobService', () => {
       });
 
       it('never demotes: a scalar-VERIFIED match stays high even if the chapter runtime disagrees', async () => {
-        vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue(1);
+        vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue({ fullSeconds: 1, trimmedSeconds: 1 });
         vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan({ totalDuration: SCALAR_MINUTES * 60 }));
         vi.mocked(metadataService.searchBooks).mockResolvedValue([fablehaven()]);
 
@@ -4454,7 +4190,7 @@ describe('MatchJobService', () => {
       });
 
       it('the mismatch reason still renders the SCALAR expectation when nothing rescues it', async () => {
-        vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue(undefined);
+        vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue(NO_CHAPTER_REFS);
         vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan());
         vi.mocked(metadataService.searchBooks).mockResolvedValue([fablehaven()]);
 
@@ -4536,7 +4272,7 @@ describe('MatchJobService', () => {
         ['exactly 240s from the chapter runtime verifies (inclusive)', 240, 'high'],
         ['241s flags', 241, 'medium'],
       ])('%s', async (_label, delta, expected) => {
-        vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue(SCANNED_SECONDS + delta);
+        vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue({ fullSeconds: SCANNED_SECONDS + delta, trimmedSeconds: SCANNED_SECONDS + delta });
         vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan());
         vi.mocked(metadataService.searchBooks).mockResolvedValue([fablehaven()]);
 
@@ -4585,6 +4321,138 @@ describe('MatchJobService', () => {
         expect(Object.keys(result).sort()).toEqual(
           ['alternatives', 'bestMatch', 'confidence', 'path', 'scannedSeconds'],
         );
+      });
+    });
+
+    // Measured Addie LaRue: a retail rip omits a 21.1min End Credits tail;
+    // the file is 1256s from full runtime and 10s from trimmed runtime.
+    describe('#2168 trimmed chapter-runtime corroboration', () => {
+      const ADDIE_ASIN = 'B0ADDIELARU';
+      const ADDIE_SCALAR_MINUTES = 1440;
+      const ADDIE_SCANNED = 85_144;
+      const ADDIE_FULL_SECONDS = 86_400;
+      const ADDIE_TRIMMED_SECONDS = 85_134;
+      const ADDIE_REFS = { fullSeconds: ADDIE_FULL_SECONDS, trimmedSeconds: ADDIE_TRIMMED_SECONDS };
+
+      function addie(overrides: Partial<BookMetadata> = {}): BookMetadata {
+        return makeBookMetadata({
+          title: 'Fablehaven',
+          authors: [{ name: 'Brandon Mull' }],
+          narrators: ['E. B. Stevens'],
+          duration: ADDIE_SCALAR_MINUTES,
+          asin: ADDIE_ASIN,
+          ...overrides,
+        });
+      }
+
+      beforeEach(() => {
+        vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue(ADDIE_REFS);
+      });
+
+      // Multi rows need the extra candidate; alternatives count proves the multi-result resolver ran.
+      it.each([
+        ['FILENAME single', () => makeScan({ totalDuration: ADDIE_SCANNED }), [] as BookMetadata[]],
+        ['FILENAME multi', () => makeScan({ totalDuration: ADDIE_SCANNED }), [addie({ asin: 'B0OTHEREDN', duration: 700 })]],
+        ['TAG single', () => tagScan({ totalDuration: ADDIE_SCANNED }), [] as BookMetadata[]],
+        ['TAG multi', () => tagScan({ totalDuration: ADDIE_SCANNED }), [addie({ asin: 'B0OTHEREDN', duration: 700 })]],
+      ])('%s assembly: the TRIMMED reference alone rescues the row — high with NO mismatch reason', async (_label, scan, extra) => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(scan());
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([addie(), ...extra]);
+
+        const result = await runSingle();
+
+        expect(result.confidence).toBe('high');
+        expect(result.reason).toBeUndefined();
+        expect(result.reasonKind).toBeUndefined();
+        expect(result.bestMatch?.asin).toBe(ADDIE_ASIN);
+        expect(result.alternatives).toHaveLength(extra.length);
+        expect(chapterLookups()).toEqual([[ADDIE_ASIN]]);
+      });
+
+      it('the FULL reference alone would NOT have rescued it — the trim is doing the work', async () => {
+        vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue({ fullSeconds: ADDIE_FULL_SECONDS });
+        vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan({ totalDuration: ADDIE_SCANNED }));
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([addie()]);
+
+        const result = await runSingle();
+
+        expect(result.confidence).toBe('medium');
+        expect(result.reasonKind).toBe('duration-mismatch');
+      });
+
+      it('AC23 — a trimmed-driven promotion reports durationVerified TRUE to the narrator cap', async () => {
+        // Passing only the full reference would make this false and let the cap demote.
+        vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan({ totalDuration: ADDIE_SCANNED, tagNarrator: 'Adriel Brandt' }));
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([addie()]);
+
+        await runSingle();
+
+        expect(log.info).toHaveBeenCalledWith(
+          expect.objectContaining({ matchSource: 'filename-single', durationVerified: true }),
+          expect.stringContaining(CAP_LOG),
+        );
+      });
+
+      it('AC23 — the TAG path reports durationVerified TRUE on the same basis', async () => {
+        vi.mocked(scanAudioDirectory).mockResolvedValue(tagScan({ totalDuration: ADDIE_SCANNED, tagNarrator: 'Adriel Brandt' }));
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([addie()]);
+
+        await runSingle();
+
+        expect(log.info).toHaveBeenCalledWith(
+          expect.objectContaining({ matchSource: 'exact', durationVerified: true }),
+          expect.stringContaining(CAP_LOG),
+        );
+      });
+
+      it('pin 2 (The Rook) — a file that runs LONG still flags, trimmable tail or not', async () => {
+        // Measured ~260s excess comes from 13 duplicated-narration overlaps; trimming widens the gap.
+        vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan({ totalDuration: ADDIE_FULL_SECONDS + 260 }));
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([addie()]);
+
+        const result = await runSingle();
+
+        expect(result.confidence).toBe('medium');
+        expect(result.reasonKind).toBe('duration-mismatch');
+      });
+
+      it('pin 2 control — the same long file with NO trimmable tail also flags', async () => {
+        vi.mocked(metadataService.getChapterRuntimeSeconds)
+          .mockResolvedValue({ fullSeconds: ADDIE_FULL_SECONDS, trimmedSeconds: ADDIE_FULL_SECONDS });
+        vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan({ totalDuration: ADDIE_FULL_SECONDS + 260 }));
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([addie()]);
+
+        const result = await runSingle();
+
+        expect(result.confidence).toBe('medium');
+        expect(result.reasonKind).toBe('duration-mismatch');
+      });
+
+      it('pin 3 (Legends & Lattes) — the walk stops on a named bonus story, so the row STILL flags', async () => {
+        // The named bonus story halts trimming before End Credits; the file genuinely lacks 57.5min.
+        const FULL = 22_800;
+        vi.mocked(metadataService.getChapterRuntimeSeconds)
+          .mockResolvedValue({ fullSeconds: FULL, trimmedSeconds: FULL });
+        vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan({ totalDuration: FULL - 3_450 }));
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([addie({ duration: 380 })]);
+
+        const result = await runSingle();
+
+        expect(result.confidence).toBe('medium');
+        expect(result.reasonKind).toBe('duration-mismatch');
+        // The reason remains based on the 380min scalar.
+        expect(result.reason).toBe('Duration mismatch — scanned 5h 22m vs expected 6h 20m');
+      });
+
+      it('a trimmed reference that is present but EQUAL to the full one behaves exactly as today (AC31)', async () => {
+        vi.mocked(metadataService.getChapterRuntimeSeconds).mockResolvedValue(CHAPTER_REFS);
+        vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan());
+        vi.mocked(metadataService.searchBooks).mockResolvedValue([fablehaven()]);
+
+        const result = await runSingle();
+
+        expect(result.confidence).toBe('high');
+        expect(result.reasonKind).toBeUndefined();
       });
     });
   });

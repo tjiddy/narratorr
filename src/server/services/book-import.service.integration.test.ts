@@ -9,8 +9,6 @@ import { createDb, runMigrations, type Db } from '@db/index.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import { BookImportService } from './book-import.service.js';
 
-// ===== #747 — integration tests against real libsql DB =====
-
 describe('BookImportService — enqueue (#747 integration with real libsql)', () => {
   let dir: string;
   let db: Db;
@@ -38,7 +36,7 @@ describe('BookImportService — enqueue (#747 integration with real libsql)', ()
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {
-      // libsql may keep the file handle on Windows — best effort
+      // libsql may retain Windows handles; cleanup is best-effort.
     }
   });
 
@@ -108,9 +106,7 @@ describe('BookImportService — enqueue (#747 integration with real libsql)', ()
   });
 
   it('partial unique index permits multiple active orphan rows (book_id IS NULL)', async () => {
-    // Orphan rows are created when a book is deleted while a job was still
-    // active (FK onDelete: 'set null'). The partial unique index only covers
-    // non-null book_id values, so multiple orphans must coexist.
+    // Book deletion nulls active-job FKs; the partial unique index must allow multiple orphans.
     await db.insert(importJobs).values([
       { bookId: null, type: 'auto', status: 'pending', metadata: '{"downloadId":1}' },
       { bookId: null, type: 'auto', status: 'pending', metadata: '{"downloadId":2}' },
@@ -122,20 +118,15 @@ describe('BookImportService — enqueue (#747 integration with real libsql)', ()
       .from(importJobs)
       .where(and(inArray(importJobs.status, ['pending', 'processing']), eq(importJobs.bookId, null as unknown as number)));
 
-    // SQLite returns no rows for `book_id = NULL` (NULL ≠ NULL); use a separate
-    // query that selects all rows then filters in JS to count orphans.
+    // SQL book_id = NULL matches nothing, so count orphans from the unfiltered rows.
     const allRows = await db.select().from(importJobs);
     const activeOrphans = allRows.filter((r) => r.bookId == null && (r.status === 'pending' || r.status === 'processing'));
     expect(activeOrphans).toHaveLength(3);
-    expect(orphans).toHaveLength(0); // confirms NULL-uniqueness query semantics
+    expect(orphans).toHaveLength(0);
   });
 
   it('second retry-import call returns 409 once an active row already exists (sequential race-loser)', async () => {
-    // libsql serializes writes on a single connection, so true Promise.all
-    // concurrency surfaces SQLITE_BUSY rather than two interleaved transactions.
-    // The unique-index DB constraint is the actual backstop — verify that a
-    // second retry attempt observes the now-existing active row and returns
-    // the conflict result instead of inserting a duplicate.
+    // One libsql connection serializes writes, so test the unique-index backstop with a sequential loser.
     const book = await seedBook({ status: 'failed' });
     await db.insert(importJobs).values({
       bookId: book!.id, type: 'manual', status: 'failed', metadata: '{"path":"/x"}',
@@ -145,9 +136,7 @@ describe('BookImportService — enqueue (#747 integration with real libsql)', ()
     const r1 = await service.retryImport(book!.id, nudge);
     expect(r1).toMatchObject({ jobId: expect.any(Number) });
 
-    // Reset the book status back to non-importing so the retry pre-check
-    // doesn't short-circuit on book.status==='importing'. The intent is
-    // to reach the enqueue() branch and observe the unique-index conflict.
+    // Reset status so the second call reaches enqueue and observes the index conflict.
     await db.update(books).set({ status: 'failed' }).where(eq(books.id, book!.id));
 
     const r2 = await service.retryImport(book!.id, nudge);
@@ -162,20 +151,12 @@ describe('BookImportService — enqueue (#747 integration with real libsql)', ()
 
   it('migration #747 dedupes existing active duplicates (keeps newest, marks losers failed) for non-null book_id', async () => {
     const book = await seedBook();
-    // Insert two pending rows for the same bookId (only possible because the
-    // dedupe ran successfully during migration; we simulate a pre-migration
-    // state by inserting via the DB directly — but the unique index now
-    // guards against this). To prove dedupe behavior, we manually insert
-    // ONE pending and assert the migration's outcome on the seeded fixture
-    // is preserved by the unique index check below.
+    // The migrated index prevents recreating a pre-migration duplicate fixture; seed one winner.
     const [first] = await db.insert(importJobs).values({
       bookId: book!.id, type: 'auto', status: 'pending', metadata: '{"downloadId":1}',
     }).returning();
 
-    // Attempt to insert a second active row directly — the partial unique
-    // index must reject this attempt at the DB layer. libsql wraps the
-    // SQLite UNIQUE error inside `cause` (see CLAUDE.md gotcha and
-    // blacklist.service.test.ts pattern).
+    // libsql wraps the partial-index UNIQUE message under cause.
     const indexError = await db
       .insert(importJobs)
       .values({
@@ -195,10 +176,7 @@ describe('BookImportService — enqueue (#747 integration with real libsql)', ()
   });
 
   it('rolls back the importJobs INSERT when the books UPDATE fails mid-tx (#799 AC1)', async () => {
-    // Atomicity proof against the real libsql DB. The retryImport path now
-    // wraps the importJobs INSERT and the books UPDATE in one transaction.
-    // Force the books UPDATE to throw inside the tx and assert the insert
-    // is rolled back: no pending row, books.status unchanged, nudge unfired.
+    // Sabotage the books update inside the real transaction; insert, status, and nudge must roll back together.
     const book = await seedBook({ status: 'failed' });
     await db.insert(importJobs).values({
       bookId: book!.id, type: 'manual', status: 'failed', metadata: '{"path":"/x"}',
@@ -216,7 +194,7 @@ describe('BookImportService — enqueue (#747 integration with real libsql)', ()
                       if (table === books) {
                         throw new Error('simulated books UPDATE failure');
                       }
-                      // Forward non-target updates to the real tx handle.
+                      // Forward non-target tables to the real transaction.
                       return (Reflect.get(txTarget, txProp, txReceiver) as
                         (t: unknown) => unknown)(table);
                     };
@@ -238,7 +216,6 @@ describe('BookImportService — enqueue (#747 integration with real libsql)', ()
       'simulated books UPDATE failure',
     );
 
-    // Rollback proven at the SQL layer: no active importJobs row was committed.
     const activeRows = await db
       .select()
       .from(importJobs)
@@ -248,17 +225,13 @@ describe('BookImportService — enqueue (#747 integration with real libsql)', ()
       ));
     expect(activeRows).toHaveLength(0);
 
-    // books.status remains unchanged from its seeded value.
     const [bookAfter] = await db.select().from(books).where(eq(books.id, book!.id));
     expect(bookAfter!.status).toBe('failed');
 
-    // nudge must NOT fire on the rollback path.
     expect(nudge).not.toHaveBeenCalled();
   });
 
   it('partial unique index does NOT reject rows with NULL book_id (orphan coexistence)', async () => {
-    // Multiple active orphan rows must be permitted — covered separately by
-    // the orphan test above; this assertion focuses on the insert path.
     const a = await db.insert(importJobs).values({
       bookId: null, type: 'auto', status: 'pending', metadata: '{"downloadId":11}',
     }).returning();

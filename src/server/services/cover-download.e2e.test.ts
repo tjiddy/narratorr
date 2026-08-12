@@ -14,9 +14,7 @@ vi.mock('node:fs/promises', () => ({
   unlink: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Mock dnsLookup at the OS boundary so the pre-flight resolveAndValidate inside
-// fetchWithSsrfRedirect (same module as resolveAndValidate, so module-export
-// mocks bypass the internal callsite) sees test-controlled answers.
+// Mock the OS lookup; mocking the module export cannot intercept its internal call site.
 vi.mock('node:dns/promises', () => ({ lookup: vi.fn() }));
 
 vi.mock('@core/utils/network-service.js', async (importActual) => {
@@ -125,9 +123,7 @@ describe('downloadRemoteCover (real-HTTP e2e — DNS rebinding revalidation)', (
       res.end();
     };
 
-    // Pre-flight resolveAndValidate (run inside fetchWithSsrfRedirect) sees
-    // public answers via the mocked OS lookup. The dispatcher's connect.lookup
-    // (testLookup) is the rebinding-defense seam under test.
+    // OS lookup passes preflight; dispatcher lookup exercises rebinding defense.
     mockedDnsLookup
       .mockResolvedValueOnce([{ address: '93.184.216.34', family: 4 }])
       .mockResolvedValueOnce([{ address: '93.184.216.34', family: 4 }]);

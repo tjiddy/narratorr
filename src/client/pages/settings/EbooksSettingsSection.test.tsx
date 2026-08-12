@@ -24,8 +24,7 @@ const mockApi = api as unknown as {
 };
 const mockToast = toast as unknown as { success: ReturnType<typeof vi.fn> };
 
-// The exact class string HealthDashboard.tsx uses for an external doc link (AC10).
-// Asserted with string EQUALITY, never toHaveClass — a subset check passes on a partial copy.
+// Equality catches partial copies of HealthDashboard's external-link class.
 const HEALTH_LINK_CLASS =
   'inline-block text-xs font-medium mt-1 text-primary hover:text-primary/80 underline decoration-primary/30 underline-offset-2 hover:decoration-primary/60 transition-colors';
 
@@ -67,9 +66,6 @@ describe('EbooksSettingsSection', () => {
     expect(mockApi.updateSettings).toHaveBeenCalledTimes(1);
   });
 
-  // ---------------------------------------------------------------------------
-  // AC9a — the six feature-unique strings, one assertion each, verbatim.
-  // ---------------------------------------------------------------------------
   describe('feature-unique copy', () => {
     it('renders the section title', async () => {
       await renderSection();
@@ -110,9 +106,6 @@ describe('EbooksSettingsSection', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // AC9b — the inherited strings, asserted as inherited (never re-authored).
-  // ---------------------------------------------------------------------------
   describe('inherited copy', () => {
     it('renders no submit button while the form is clean', async () => {
       await renderSection();
@@ -145,13 +138,6 @@ describe('EbooksSettingsSection', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // #1963 AC2 — a successful save evicts every cached Ebook-panel observation.
-  //
-  // Behaviour-only: nothing the owner sees in this section changes, and every existing
-  // assertion above still holds unchanged. Direction-independent by design, so a
-  // direction-branching implementation fails the "turns it off" case.
-  // ---------------------------------------------------------------------------
   describe('companion-ebook cache eviction on save', () => {
     const CACHED = { status: 'available' as const, filename: 'a.epub', sizeBytes: 10, validationCode: null, candidateCount: 0, selectedFilename: 'a.epub', candidates: [] };
 
@@ -196,9 +182,6 @@ describe('EbooksSettingsSection', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // AC10 / AC11
-  // ---------------------------------------------------------------------------
   describe('the docs link and the copy rules', () => {
     it('points at the docs URL, opens safely, and carries the HealthDashboard class string exactly', async () => {
       await renderSection();
@@ -222,8 +205,7 @@ describe('EbooksSettingsSection', () => {
       expect(visible).not.toContain('—');
       expect(visible.toLowerCase()).not.toContain('companion');
 
-      // Accessible names are where a customised aria-label would smuggle banned vocabulary
-      // past a visible-text sweep.
+      // Visible text alone would miss banned vocabulary in accessibility attributes.
       const accessibleNames = Array.from(container.querySelectorAll('[aria-label], [title], [alt]'))
         .map((el) => `${el.getAttribute('aria-label') ?? ''} ${el.getAttribute('title') ?? ''} ${el.getAttribute('alt') ?? ''}`)
         .join(' ');

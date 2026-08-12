@@ -5,59 +5,20 @@ import { jsonSchemaTransform } from 'fastify-type-provider-zod';
 import { getVersion } from '../../utils/version.js';
 import { isProwlarrCompatPath } from '../prowlarr-compat.js';
 
-// ============================================================================
-// Public API v1 — OpenAPI/Swagger documentation (S9 — #1454)
-// ============================================================================
-//
-// Generates an OpenAPI spec + browsable Swagger UI over the NATIVE `/api/v1`
-// surface ONLY. The spec is the public contract third-party consumers rely on,
-// so the entire docs subtree is intentionally reachable WITHOUT an API key — the
-// auth plugin exempts it via a prefix check keyed off `V1_DOCS_BASE_PATH` (the
-// single source of truth shared with `src/server/plugins/auth.ts`, mirroring the
-// `PROWLARR_COMPAT_PATHS` pattern so registration and exemption cannot drift).
-//
-// Scope: the `transform` below converts the route Zod schemas to OpenAPI JSON
-// Schema (via `jsonSchemaTransform`) for native v1 routes and `hide`s everything
-// else — internal `/api/*` routes AND the Prowlarr/Readarr compat shim under
-// `/api/v1/*` (NOT native v1, see `src/shared/schemas/v1/common.ts`) — so the
-// public spec never leaks the unstable internal surface.
+// Expose only native v1 routes; internal and compatibility routes stay hidden.
+// The auth plugin exempts this entire docs subtree through V1_DOCS_BASE_PATH.
 
-/**
- * Base path (WITHOUT URL_BASE) of the native v1 OpenAPI docs subtree. Swagger UI
- * serves a whole subtree under this prefix — the UI root (`/`), the spec JSON
- * (`/json`), YAML (`/yaml`), and static assets (`/static/*`) — so both the
- * registration `routePrefix` here and the auth exemption derive from this ONE
- * constant. A single exact-match allowlist entry would leave the sub-paths 401.
- */
+/** Shared registration/auth prefix for the Swagger UI, specs, and assets. */
 export const V1_DOCS_BASE_PATH = '/api/v1/docs';
 
-/**
- * Is `routePath` equal to or under the v1 docs subtree (URL_BASE-prefixed)?
- * Used by the auth plugin to exempt the whole docs subtree from API-key auth.
- * `urlBase` is the active URL_BASE (`''` when unset), never a hardcoded literal.
- */
 export function isV1DocsPath(routePath: string, urlBase: string): boolean {
   const prefix = `${urlBase}${V1_DOCS_BASE_PATH}`;
   return routePath === prefix || routePath.startsWith(`${prefix}/`);
 }
 
 /**
- * Build the `@fastify/swagger` `transform`: convert native v1 routes' Zod
- * schemas to OpenAPI JSON Schema, `hide` everything else. A route is native v1
- * when its url is `${urlBase}/api/v1` (or under it) AND it is neither the
- * Prowlarr/Readarr compat shim nor the docs subtree itself. The whole `input`
- * (including the swagger `documentObject` that carries the OAS version) is passed
- * through to `jsonSchemaTransform`; for non-v1 routes we set `hide: true`, which
- * `jsonSchemaTransform` honors with an early return BEFORE touching the (possibly
- * non-Zod) schema, so internal routes are excluded without choking the transform.
- *
- * URL_BASE handling: routes are registered under `${urlBase}/api/v1/...`, so the
- * url here carries the prefix. We strip it EXPLICITLY from the emitted path key
- * so the prefix lives ONLY in `servers[].url` — the effective URL is then exactly
- * `${urlBase}/api/v1/...`, never duplicated. Stripping here (paired with
- * `stripBasePath: false` at registration) makes this the single, explicit
- * normalization site rather than relying on `@fastify/swagger`'s implicit
- * `stripBasePath` default.
+ * Hide non-native routes before Zod conversion and strip URL_BASE from emitted paths.
+ * URL_BASE lives only in servers[].url; stripBasePath must remain false below.
  */
 function createV1Transform(urlBase: string): SwaggerTransform {
   const v1Prefix = `${urlBase}/api/v1`;
@@ -78,13 +39,7 @@ function createV1Transform(urlBase: string): SwaggerTransform {
   };
 }
 
-/**
- * Register `@fastify/swagger` + `@fastify/swagger-ui` scoped to the native v1
- * surface. MUST be registered BEFORE the v1 routes so the swagger `onRoute` hook
- * captures them. `urlBase` is the active URL_BASE prefix (`''` when unset); the
- * docs serve under `{urlBase}/api/v1/docs` and the spec's `servers` base path
- * reflects the prefix.
- */
+/** Register before v1 routes so Swagger's onRoute hook captures them. */
 export async function registerV1OpenApi(app: FastifyInstance, urlBase: string): Promise<void> {
   await app.register(fastifySwagger, {
     openapi: {
@@ -93,18 +48,9 @@ export async function registerV1OpenApi(app: FastifyInstance, urlBase: string): 
         description: 'Public API v1 for Narratorr — the self-hosted audiobook manager.',
         version: getVersion(),
       },
-      // The prefix lives ONLY in `servers[].url`; it is NOT duplicated into the
-      // path keys. The transform (`createV1Transform`) strips the URL_BASE prefix
-      // from each native route's path key, so e.g. a route registered at
-      // `/narratorr/api/v1/books` is emitted as path key `/api/v1/books` with
-      // `servers[].url = '/narratorr'` — effective URL exactly
-      // `/narratorr/api/v1/books`, never `/narratorr/narratorr/...`. Pinned by the
-      // URL_BASE no-duplication test in `openapi.test.ts`.
       servers: [{ url: urlBase || '/' }],
     },
-    // We strip the URL_BASE prefix ourselves in the transform, so disable
-    // @fastify/swagger's own basePath stripping — keeps a single, explicit
-    // normalization site instead of two overlapping mechanisms.
+    // createV1Transform owns URL_BASE stripping.
     stripBasePath: false,
     transform: createV1Transform(urlBase),
   });

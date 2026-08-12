@@ -25,8 +25,7 @@ export function useAuth(): AuthState {
     retry: 1,
   });
 
-  // Admin-only fields (#742) live behind authentication. Only fetch once the public
-  // status reports authenticated, so pre-login mounts (login page, layout) do not 401.
+  // Admin status is authenticated-only; pre-login mounts must not trigger a 401.
   const isAuthenticated = status?.authenticated ?? false;
   const { data: adminStatus } = useQuery({
     queryKey: queryKeys.auth.adminStatus(),

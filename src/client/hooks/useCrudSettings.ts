@@ -11,14 +11,7 @@ function parseEditParam(value: string | null): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-/**
- * Append the server's error message to a generic toast prefix when the rejection
- * is an `ApiError` (#1404). `ApiError.message` is always populated (server
- * `body.error`/`body.message`, falling back to `HTTP <status>`) and carries the
- * same validation strings the form shows inline — e.g. the strict-schema
- * "Unrecognized key(s)" text — so surfacing it turns a mystery into a fix. Any
- * non-`ApiError` rejection (network failure / plain Error) keeps the generic toast.
- */
+// Only ApiError carries trusted server validation copy; network failures keep generic text.
 function withApiMessage(prefix: string, error: unknown): string {
   return error instanceof ApiError ? `${prefix}: ${error.message}` : prefix;
 }
@@ -32,13 +25,7 @@ export interface CrudSettingsConfig<TItem extends { id: number; name: string }, 
   testById: (id: number) => Promise<TestResult>;
   testByConfig: (data: TFormData) => Promise<TestResult>;
   entityName: string;
-  /**
-   * Opt-in: when true, the editing entity id is merged into the testByConfig
-   * payload during edit-mode connection tests so the server can resolve sentinel
-   * placeholders for masked secret fields. Leave unset for adapters whose test
-   * endpoint does not accept an id (e.g. import lists, which test by saved id
-   * via a separate route).
-   */
+  /** Include the editing ID only for test endpoints that resolve masked-secret sentinels. */
   injectEditingId?: boolean;
 }
 
@@ -97,9 +84,7 @@ export function useCrudSettings<TItem extends { id: number; name: string }, TFor
       toast.success(`${entityName} updated`);
     },
     onError: (error, variables) => {
-      // If the URL was stripped while the save was pending (e.g. browser Back),
-      // restore ?edit=<id> so the URL→state effect doesn't close the modal once
-      // isSavePending flips to false. The user is supposed to recover and retry.
+      // Restore ?edit if Back removed it during save, keeping the failed form recoverable.
       setSearchParams((prev) => {
         const next = new URLSearchParams(prev);
         next.set('edit', String(variables.id));
@@ -109,15 +94,7 @@ export function useCrudSettings<TItem extends { id: number; name: string }, TFor
     },
   });
 
-  // URL → state: sync editingId from ?edit=<id> when items have loaded.
-  // Gated on items having loaded so we don't (a) clear editingId during the brief
-  // window between handleEdit's setEditingId call and the URL update, and
-  // (b) optimistically open with a stale id before items load.
-  // Also gated on save mutations being idle: during a save, browser Back / any URL
-  // change to the bare path must NOT close the modal — mirrors the existing
-  // isMutationPending guard at CrudSettingsPage.tsx:79 for Escape/cancel.
-  // setState inside the effect is intentional here: URL is an external state
-  // source (browser back/forward + deep-link), and React state must mirror it.
+  // Mirror ?edit only after items load and while saves are idle; Back cannot close an in-flight edit.
   const editParam = parseEditParam(searchParams.get('edit'));
   const isSavePending = createMutation.isPending || updateMutation.isPending;
   useEffect(() => {
@@ -152,8 +129,6 @@ export function useCrudSettings<TItem extends { id: number; name: string }, TFor
   const handleToggleForm = useCallback(() => {
     connectionTest.clearFormTestResult();
     if (!showForm) {
-      // Opening create form — clear any active edit AND strip ?edit so the URL
-      // doesn't re-open the modal once items load.
       if (editingId !== null) {
         setEditingId(null);
         stripEditParam();

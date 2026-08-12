@@ -13,7 +13,6 @@ import {
   type CreateConnectorFormData,
 } from '@shared/schemas.js';
 
-/** A test/targets failure envelope carries field-scoped errors at runtime. */
 type FieldErrorResult = TestResult & { fieldErrors?: Record<string, string> };
 
 interface ConnectorCardFormProps {
@@ -36,12 +35,8 @@ export function ConnectorCardForm(props: ConnectorCardFormProps) {
   } = props;
   const { register, handleSubmit, setError, getValues, setValue, formState: { errors } } = form;
 
-  // Drop fully-blank path-mapping rows BEFORE zodResolver runs. RHF invokes the
-  // resolver inside handleSubmit (before onSubmit), and the form schema now
-  // enforces .trim().min(1) on both row fields — so an all-blank appended row
-  // would otherwise fail validation and block the submit. Pruning here turns an
-  // all-blank set into [] (passthrough-only) while leaving partial rows (one side
-  // filled) in place for zodResolver to flag inline beside the missing field.
+  // Prune rows blank on both sides before zodResolver; partial rows remain for inline validation.
+  // Submit and Test must share this normalization.
   function pruneBlankPathMappings() {
     const rows = getValues('settings.pathMappings');
     if (!Array.isArray(rows)) return;
@@ -58,16 +53,11 @@ export function ConnectorCardForm(props: ConnectorCardFormProps) {
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState('');
 
-  // Gate fetched targets/errors to the type they were fetched for so a stale
-  // dropdown from one provider can't leak into another after a type switch
-  // (derived state — no reset effect needed).
+  // Type switches must not expose targets or errors fetched for the previous provider.
   const visibleTargets = fetchedType === selectedType ? targets : [];
   const visibleFetchError = fetchedType === selectedType ? fetchError : '';
 
-  // Map a field-scoped envelope onto the NESTED RHF paths (settings.*), routed by
-  // the registry's declared settings keys. A flat setError('token') would NOT
-  // highlight the rendered settings.token input; unknown keys fall back to the
-  // form-level test message (already rendered via TestResultMessage).
+  // Registry keys map server errors to nested settings.* inputs; unknown keys stay form-level.
   function applyFieldErrors(fieldErrors?: Record<string, string>) {
     if (!fieldErrors) return;
     const known = new Set(CONNECTOR_REGISTRY[selectedType]?.settingsFields.map((f) => f.key) ?? []);
@@ -78,7 +68,6 @@ export function ConnectorCardForm(props: ConnectorCardFormProps) {
     }
   }
 
-  // Surface field-scoped errors from the server's test result onto the inputs.
   useEffect(() => {
     applyFieldErrors((formTestResult as FieldErrorResult | null | undefined)?.fieldErrors);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -103,9 +92,7 @@ export function ConnectorCardForm(props: ConnectorCardFormProps) {
         applyFieldErrors((result as FieldErrorResult).fieldErrors);
       }
     } catch (error: unknown) {
-      // Surface the real reason (e.g. ApiError's "Authentication failed (HTTP 401)"
-      // / "Connection failed: …") instead of masking every failure as the generic
-      // string — the adapter produces specific, useful messages (#1523).
+      // Preserve adapter-specific messages instead of replacing them with the generic fallback.
       setFetchError(getErrorMessage(error) || 'Failed to fetch options');
     } finally {
       setFetching(false);

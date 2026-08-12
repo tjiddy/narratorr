@@ -20,11 +20,7 @@ export interface DownloadItemInfo {
   seeders: number;
   leechers: number;
   eta?: number | undefined; // Seconds
-  /**
-   * Current download rate in bytes/sec.
-   * `undefined` means the client did not report a rate; `0` means the download is
-   * active but currently stalled (zero throughput). Consumers must distinguish these.
-   */
+  /** Bytes/sec; undefined is unreported, while zero is a reported stall. */
   downloadSpeed?: number | undefined;
   addedAt: Date;
   completedAt?: Date | undefined;
@@ -43,11 +39,7 @@ export interface DownloadClientAdapter {
   readonly protocol: DownloadProtocol;
   readonly supportsCategories: boolean;
 
-  /**
-   * Send a pre-resolved download artifact to the client. Returns the external ID for tracking.
-   * Only the Blackhole adapter returns `null` (no external tracking system);
-   * all other adapters return a string ID or throw on failure.
-   */
+  /** Return the tracking ID; Blackhole alone returns null because it has no control channel. */
   addDownload(artifact: DownloadArtifact, options?: AddDownloadOptions): Promise<string | null>;
   getDownload(id: string): Promise<DownloadItemInfo | null>;
   getAllDownloads(category?: string): Promise<DownloadItemInfo[]>;

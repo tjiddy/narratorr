@@ -9,17 +9,9 @@ import { OPF_FILENAME, NARRATORR_OPF_MARKER, hasNarratorrMarker } from '@core/ut
 import type { BookService, BookWithAuthor } from '../services/book.service.js';
 import type { SettingsService } from '../services/settings.service.js';
 
-/**
- * Real-fs coverage for the #1670 foreign-file preservation invariant. The route tests
- * (`books.test.ts`) mock `writeOpfSidecar`, so they prove the route *calls* the writer but never
- * that a foreign `metadata.opf` actually survives the route→writer path against a real filesystem.
- * These exercise `refreshOpfForBook` + `writeOpfSidecar` end-to-end with real I/O. Mirrors the
- * temp-dir lifecycle in `delete-managed-files.test.ts`.
- */
+// Real filesystem coverage for foreign OPF preservation through refresh and writer.
 
-/** A foreign ABS/Calibre `metadata.opf` body (no narratorr marker → must be preserved verbatim). */
 const FOREIGN_OPF = '<?xml version="1.0"?>\n<package><metadata><dc:title>From Audiobookshelf</dc:title></metadata></package>\n';
-/** A narratorr-authored OPF stub (carries the provenance marker → eligible for overwrite). */
 const MARKED_OPF = `<?xml version="1.0"?>\n<package><metadata>\n  ${NARRATORR_OPF_MARKER}\n  <dc:title>Stale Title</dc:title></metadata></package>\n`;
 
 function makeLog(): FastifyBaseLogger {
@@ -32,7 +24,6 @@ function makeLog(): FastifyBaseLogger {
 
 const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
 
-/** A resolved book whose generated OPF is clearly distinct from the stub bodies above. */
 function makeBook(): BookWithAuthor {
   return {
     id: 1,
@@ -85,7 +76,6 @@ describe('refreshOpfForBook — real-fs foreign-file preservation (#1699)', () =
       log: makeLog(),
     });
 
-    // The foreign file (no narratorr marker) must survive untouched — byte-for-byte.
     expect(await readFile(opfPath, 'utf-8')).toBe(FOREIGN_OPF);
   }));
 
@@ -104,10 +94,9 @@ describe('refreshOpfForBook — real-fs foreign-file preservation (#1699)', () =
     });
 
     const after = await readFile(opfPath, 'utf-8');
-    // The own-file marker gate (mayWriteOpf → hasNarratorrMarker) returned true → rewritten.
     expect(after).not.toBe(MARKED_OPF);
-    expect(hasNarratorrMarker(after)).toBe(true); // freshly generated OPF re-stamps the marker
-    expect(after).toContain('The Real Current Title'); // body now reflects the book's current metadata
+    expect(hasNarratorrMarker(after)).toBe(true);
+    expect(after).toContain('The Real Current Title');
   }));
 
   it('skips entirely (no write, no throw) when bookFolder is null', withTmp(async (root) => {
@@ -122,8 +111,6 @@ describe('refreshOpfForBook — real-fs foreign-file preservation (#1699)', () =
       log: makeLog(),
     })).resolves.toBe('skipped');
 
-    // The null guard short-circuits before the writer — settings/book are never consulted and no
-    // stray file is joined into the process CWD.
     expect(settingsService.get).not.toHaveBeenCalled();
     expect(bookService.getById).not.toHaveBeenCalled();
     expect(await pathExists(join(root, OPF_FILENAME))).toBe(false);
@@ -144,17 +131,11 @@ describe('refreshOpfForBook — real-fs foreign-file preservation (#1699)', () =
       log: makeLog(),
     });
 
-    // The `enabled` short-circuit in writeOpfSidecar fires before the book load — the foreign file is
-    // never even read. (Asserting getById is not called distinguishes the short-circuit from the
-    // foreign-marker gate, which would *also* preserve this file but only after loading the book.)
     expect(bookService.getById).not.toHaveBeenCalled();
     expect(await readFile(opfPath, 'utf-8')).toBe(FOREIGN_OPF);
   }));
 
   it('writes nothing and never loads the book when writeOpf=false and no OPF exists', withTmp(async (root) => {
-    // With NO existing OPF, the foreign-marker gate can't be what prevents a write (an absent file is
-    // ENOENT → mayWriteOpf returns true → it WOULD write). So if no `metadata.opf` appears, the only
-    // thing that stopped it is the `enabled` short-circuit. Deleting that guard makes this test fail.
     const bookFolder = join(root, 'Author', 'Book');
     await mkdir(bookFolder, { recursive: true });
     const opfPath = join(bookFolder, OPF_FILENAME);

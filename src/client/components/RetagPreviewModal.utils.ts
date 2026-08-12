@@ -51,14 +51,7 @@ export function canonicalRows(plan: RetagPlan): { field: RetagExcludableField; v
   return rows;
 }
 
-/**
- * Given a plan file and the user's exclude selection, compute what the apply
- * path WOULD do — the file's "effective outcome". For a server `will-tag`
- * file with every metadata diff excluded and no cover-embed pending, the
- * apply path will actually short-circuit to skipped. Surfacing that here keeps
- * the per-file label, empty state, and apply count in lockstep with the
- * server's short-circuit logic in `resolveTags` + `tagFile`.
- */
+/** Mirrors apply: excluding every diff turns `will-tag` into `skip-populated` unless a cover is pending. */
 export function effectiveOutcome(
   file: RetagPlanFile,
   excludeSet: Set<RetagExcludableField>,
@@ -76,10 +69,6 @@ export function visibleDiffOf(
   return (file.diff ?? []).filter(d => !excludeSet.has(d.field as RetagExcludableField));
 }
 
-/**
- * Count files that will be tagged given the user's exclude selection.
- * A file counts when its effective outcome is `will-tag`.
- */
 export function countApplyFiles(plan: RetagPlan, excludeSet: Set<RetagExcludableField>): number {
   let count = 0;
   for (const file of plan.files) {

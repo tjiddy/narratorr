@@ -1,7 +1,9 @@
 export { ApiError } from './client.js';
 
-export type { Author, BookWithAuthor, BookIdentifier, LibraryEntry, CreateBookPayload, UpdateBookPayload, RenameResult, RenamePreviewResult, RetagResult, RetagExcludableField, RetagPlan, RetagPlanFile, RetagPlanFileDiff, RetagMode, RetagOverrides, SingleBookSearchResult, BookMetadata, AuthorMetadata, MetadataSearchResults, BookFile, BookListParams, LibraryBookListParams, BookStats, BookSeriesCardData, BookSeriesMemberCard, RefreshBookSeriesResponse, HardcoverSeriesCandidate, FixMatchPayload, LibraryBookListItem, LibraryBookListResponse } from './books.js';
-export { RenameConflictError, RetagFfmpegNotConfiguredError } from './books.js';
+export type { Author, BookWithAuthor, BookIdentifier, LibraryEntry, CreateBookPayload, UpdateBookPayload, RenameResult, RenamePreviewResult, RetagResult, RetagExcludableField, RetagPlan, RetagPlanFile, RetagPlanFileDiff, RetagMode, RetagOverrides, SingleBookSearchResult, BookMetadata, AuthorMetadata, MetadataSearchResults, BookFile, BookListParams, LibraryBookListParams, BookStats, BookSeriesCardData, BookSeriesMemberCard, RefreshBookSeriesResponse, HardcoverSeriesCandidate, FixMatchPayload, LibraryBookListItem, LibraryBookListResponse, AddAllSeriesResponse, AddAllMemberResult, AddAllDisposition } from './books.js';
+export { RenameConflictError, RetagDependencyNotConfiguredError } from './books.js';
+export { readAddBookConflict, formatReviewConflictMessage, formatReviewConflictSentence, REVIEW_CONFLICT_LABEL } from './add-book-conflict.js';
+export type { AddBookConflictDetails } from './add-book-conflict.js';
 export type { SearchResult, SearchResponse } from './search.js';
 export type { Download, ActivityCounts, QualityGateData, ActivityListParams } from './activity.js';
 export type { Indexer } from './indexers.js';
@@ -19,10 +21,10 @@ export type { BackupMetadata, RestoreValidation, BackupJobResult } from './backu
 export type { HealthState, HealthCheckResult, HealthCheckTarget, HealthSummary, TaskMetadata, SystemInfo, SystemStatus, ThirdPartyNotices } from './system.js';
 export type { ImportList, ImportListItem, ImportListPreview } from './import-lists.js';
 export type { SuggestionRow, MarkAddedResult, RefreshResult } from './discover.js';
-export type { BulkOpType, BulkJobStatus, BulkRenamePreview, BulkRenamePreviewItem } from './bulk-operations.js';
+export type { BulkOpType, BulkJobStatus, BulkJobFailure, BulkRenamePreview, BulkRenamePreviewItem } from './bulk-operations.js';
 export type { ImportJobWithBook, ImportJobBook, ImportJobsParams } from './import-jobs.js';
 export type { CompanionEbookState, CompanionEbookCandidate, CompanionEbookMetadata } from './companion-ebook.js';
-export type { ImportSubmissionListParams, AttentionResponse, AttentionSubmission, SubmissionAttention, CreateSubmissionBody, PutItemsBody, PutItemRow, SubmissionListResponse, SubmissionResponse, SubmissionSummary, StagedItemResultDto, StagedImportItem, SubmissionAggregates } from './submissions.js';
+export type { ImportSubmissionListParams, AttentionResponse, AttentionSubmission, SubmissionAttention, CreateSubmissionBody, PutItemsBody, PutItemRow, SubmissionBulkDeleteResponse, SubmissionListResponse, SubmissionResponse, SubmissionSummary, StagedItemResultDto, StagedImportItem, SubmissionAggregates } from './submissions.js';
 
 export { formatBytes } from '@core/utils/parse.js';
 export { formatBytesPerSec } from './formatBytesPerSec.js';
@@ -52,12 +54,8 @@ import { submissionsApi } from './submissions.js';
 import { companionEbookApi } from './companion-ebook.js';
 
 /**
- * Single source of truth for the API barrel. Both the runtime `api` object and
- * the collision test (`api-collision.test.ts`) derive from this one collection,
- * so a module added here is automatically merged into `api` AND covered by the
- * collision guard — there is no second list to keep in sync. Each entry carries
- * its module name so the collision test can report which modules define a
- * duplicate key (see CLAUDE.md: domain-prefixed API method names).
+ * Single source for runtime merging and collision checks. Names let failures
+ * identify both modules defining a duplicate method.
  */
 export const apiModules = [
   { name: 'booksApi', api: booksApi },
@@ -90,7 +88,7 @@ type UnionToIntersection<U> = (U extends unknown ? (arg: U) => void : never) ext
   ? I
   : never;
 
-/** Merged shape of every module's exported methods — the intersection of all `apiModules[*].api` types. */
+/** Intersection of every module's exported API methods. */
 export type Api = UnionToIntersection<(typeof apiModules)[number]['api']>;
 
 export const api = Object.assign({}, ...apiModules.map((m) => m.api)) as Api;

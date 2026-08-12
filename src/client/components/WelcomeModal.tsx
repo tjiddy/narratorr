@@ -82,13 +82,10 @@ function WarningBadge() {
 export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const scrollableRef = useRef<HTMLDivElement>(null);
-  // Guarded close: Escape dismisses the welcome screen, but only when not mid-dismiss —
-  // a raw onDismiss would let Escape re-fire the dismiss mutation while the first is in
-  // flight (the same double-submit the disabled Get Started button guards against).
+  // Escape must not resubmit dismissal while the mutation is pending.
   const guardedDismiss = useCallback(() => {
     if (!isPending) onDismiss();
   }, [isPending, onDismiss]);
-  // Scroll lock: prevent background page from scrolling behind the modal
   useEffect(() => {
     if (!isOpen) return;
     const previous = document.body.style.overflow;
@@ -97,15 +94,13 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
       document.body.style.overflow = previous;
     };
   }, [isOpen]);
-  // Scroll-to-top: reset inner scrollable container when modal opens
   useEffect(() => {
     if (!isOpen) return;
     if (scrollableRef.current) {
       scrollableRef.current.scrollTop = 0;
     }
   }, [isOpen]);
-  // When pending, pull focus back to the dialog container so card links are
-  // not reachable via Tab while saving (regression guard from issue #169)
+  // Keep focus in the dialog when the submit button becomes disabled.
   useEffect(() => {
     if (isOpen && isPending && modalRef.current) {
       modalRef.current.focus();
@@ -122,9 +117,7 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
         tabIndex={-1}
         className="flex flex-col min-h-0 flex-1 overflow-hidden outline-none"
       >
-        {/* Scrollable content */}
         <div ref={scrollableRef} data-testid="modal-content" className="flex-1 overflow-y-auto p-6 sm:p-8 [@media(max-height:60rem)]:p-5">
-        {/* Header */}
         <div className="text-center mb-8 [@media(max-height:60rem)]:mb-4">
           <div data-testid="welcome-header-icon" className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-br from-primary to-amber-500 mb-4 [@media(max-height:60rem)]:mb-2 shadow-glow">
             <HeadphonesIcon className="w-7 h-7 text-primary-foreground" />
@@ -137,7 +130,6 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
           </p>
         </div>
 
-        {/* Row 1 — Read This */}
         <section className="mb-6 [@media(max-height:60rem)]:mb-3">
           <h3 className="font-display text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
             Read This First
@@ -167,7 +159,6 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
           </div>
         </section>
 
-        {/* Row 2 — First Steps */}
         <section className="mb-6 [@media(max-height:60rem)]:mb-3">
           <h3 className="font-display text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
             First Steps
@@ -194,10 +185,8 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
           </div>
         </section>
 
-        {/* Row 3–4 — Feature Highlights */}
         <FeaturesSection />
 
-        {/* Footer */}
         <div className="flex flex-col items-center gap-3">
           <button
             type="button"
@@ -211,7 +200,7 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
             You can view this again anytime in Settings
           </p>
         </div>
-        </div>{/* end scrollable content */}
+        </div>
       </div>
     </Modal>
   );

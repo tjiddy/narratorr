@@ -3,7 +3,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockBook, createMockSettings } from '@/__tests__/factories';
-import { api, RetagFfmpegNotConfiguredError } from '@/lib/api';
+import { api, RetagDependencyNotConfiguredError } from '@/lib/api';
 import { BookDetails } from './BookDetails';
 import type { BookWithAuthor } from '@/lib/api';
 import type { MetadataBook } from './helpers';
@@ -39,9 +39,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
     ...actual,
     api: {
       ...actualApi,
-      // Caught by the #2043 no-real-network guard on its FIRST run: this suite never
-      // stubbed getBookSeries, so SeriesCard issued a genuine jsdom fetch
-      // (/api/books/1/series) in every test — silently, until the guard existed.
+      // SeriesCard calls this on mount; stub it so the partial mock cannot fall through to a real fetch.
       getBookSeries: vi.fn().mockResolvedValue({ series: null }),
       getBookFiles: vi.fn(),
       updateBook: vi.fn(),
@@ -59,11 +57,9 @@ vi.mock('@/lib/api', async (importOriginal) => {
       getFfmpegStatus: vi.fn(),
       retryBookImport: vi.fn(),
       checkRetryImportAvailable: vi.fn().mockResolvedValue({ available: false }),
-      // #1963 — every book with a path now issues the Ebook panel's /state query. A rejection
-      // is enough: AC3 makes an initial-load failure render nothing at all.
+      // Every book with a path queries Ebook state; rejection renders no panel.
       getCompanionEbookState: vi.fn().mockRejectedValue(new Error('no companion state in this fixture')),
-      // #2022 — stubbed for the same reason, so an `available` fixture could never leave the
-      // real method reachable (`vimock-barrel-replace-drops-named-exports`).
+      // Stub metadata too so an available fixture cannot reach the real barrel export.
       getCompanionEbookMetadata: vi.fn().mockRejectedValue(new Error('no companion metadata in this fixture')),
     },
   };
@@ -77,7 +73,6 @@ const RENAME_PLAN_FIXTURE = {
   fileRenames: [{ from: 'a.m4b', to: 'b.m4b' }],
 };
 
-/** Open the BookHero overflow menu to reveal secondary actions (Edit, Rename, Re-tag, etc.). */
 async function openOverflowMenu(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByLabelText('More actions'));
 }
@@ -136,11 +131,7 @@ const RETAG_PLAN_FIXTURE = {
 };
 
 describe('BookDetails', () => {
-  // #2043 — the standing no-real-network guard from `vimock-barrel-replace-drops-named-exports`,
-  // copied from BookPage.test.tsx where it caught three escapees. This suite's api mock spreads
-  // `actual.api`, so any method a child newly reaches and nobody stubs issues a GENUINE jsdom
-  // fetch that degrades silently. Mount-time escapees (the only class observed so far) call
-  // fetch during the first render, so asserting after the settled render catches them.
+  // Partial API mocks can silently fall through to real fetches; the settled render catches mount-time escapees.
   it('issues no real network request while rendering the fully-loaded details', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     try {
@@ -155,11 +146,7 @@ describe('BookDetails', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockNavigate.mockClear();
-    // Default: retag preview returns a plan with 3 will-tag files. Individual
-    // tests override via mockResolvedValue / mockRejectedValue when needed.
     (api.getBookRetagPreview as Mock).mockResolvedValue(RETAG_PLAN_FIXTURE);
-    // Default: ffmpeg detected (auto-detection replaced the path setting). The disabled-button
-    // test overrides to { detected: false }.
     (api.getFfmpegStatus as Mock).mockResolvedValue({ detected: true });
   });
 
@@ -263,9 +250,7 @@ describe('BookDetails', () => {
     it('renders placeholder icon when no cover URL', () => {
       renderBookDetails({ coverUrl: null }, null);
 
-      // The BookOpenIcon placeholder renders when no cover
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
-      // No cover image alt text
       expect(screen.queryByAltText(/Cover of/)).not.toBeInTheDocument();
     });
   });
@@ -351,7 +336,6 @@ describe('BookDetails', () => {
       const user = userEvent.setup();
       renderBookDetails();
 
-      // Before opening: neither the menu item nor the modal should be visible.
       expect(screen.queryByRole('menuitem', { name: /Fix Match/ })).not.toBeInTheDocument();
       expect(screen.queryByRole('dialog', { name: /fix match/i })).not.toBeInTheDocument();
 
@@ -360,7 +344,6 @@ describe('BookDetails', () => {
       expect(fixMatchItem).toBeInTheDocument();
       await user.click(fixMatchItem);
 
-      // The Fix Match modal renders with the dedicated heading 'Fix Match'.
       const dialog = await screen.findByRole('dialog', { name: /fix match/i });
       expect(dialog).toBeInTheDocument();
     });
@@ -450,11 +433,9 @@ describe('BookDetails', () => {
 
       await user.click(screen.getByText('Save'));
 
-      // Metadata update should have succeeded — modal should close
       await waitFor(() => {
         expect(api.updateBook).toHaveBeenCalled();
       });
-      // Rename was attempted despite being a separate operation
       expect(api.renameBook).toHaveBeenCalledWith(1);
     });
 
@@ -482,7 +463,6 @@ describe('BookDetails', () => {
   });
 
   describe('retag', () => {
-    /** Open the retag preview modal and click the apply button after the plan loads. */
     async function clickApplyInRetagModal(user: ReturnType<typeof userEvent.setup>) {
       await openOverflowMenu(user);
       await waitFor(() => {
@@ -606,7 +586,6 @@ describe('BookDetails', () => {
       renderBookDetails({ path: null });
 
       await openOverflowMenu(user);
-      // Wait for settings to load, then check button is absent
       await waitFor(() => {
         expect(screen.queryByRole("menuitem", { name: /Re-tag/ })).not.toBeInTheDocument();
       });
@@ -713,7 +692,6 @@ describe('BookDetails', () => {
       renderBookDetails();
       const tabs = screen.getAllByRole('tab');
 
-      // Right on last tab (History) → wraps to first (Details)
       await user.click(tabs[1]!);
       tabs[1]!.focus();
       await user.keyboard('{ArrowRight}');
@@ -721,7 +699,6 @@ describe('BookDetails', () => {
       expect(document.activeElement).toBe(tabs[0]);
       expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'tab-details');
 
-      // Left on first tab (Details) → wraps to last (History)
       tabs[0]!.focus();
       await user.keyboard('{ArrowLeft}');
       expect(tabs[1]).toHaveAttribute('aria-selected', 'true');
@@ -747,7 +724,6 @@ describe('BookDetails', () => {
       await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
 
       expect(screen.getByRole('dialog')).toBeInTheDocument();
-      // Header banner from RenamePreviewModal — not present in the legacy ConfirmModal
       expect(await screen.findByText('/library')).toBeInTheDocument();
       expect(api.renameBook).not.toHaveBeenCalled();
     });
@@ -756,7 +732,6 @@ describe('BookDetails', () => {
       (api.getBookRenamePreview as Mock).mockResolvedValue(RENAME_PLAN_FIXTURE);
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      // No click on Rename — modal stays closed
       expect(api.getBookRenamePreview).not.toHaveBeenCalled();
     });
 
@@ -841,7 +816,6 @@ describe('BookDetails', () => {
       await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
       expect(screen.getByRole('dialog')).toBeInTheDocument();
 
-      // Click the backdrop (fixed overlay behind the modal panel) — backdrop dismissal removed
       await user.click(document.querySelector('.fixed.inset-0')!);
 
       expect(screen.getByRole('dialog')).toBeInTheDocument();
@@ -975,20 +949,19 @@ describe('BookDetails', () => {
       await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
       expect(screen.getByRole('dialog')).toBeInTheDocument();
 
-      // backdrop dismissal removed — clicking the backdrop is a no-op
       await user.click(document.querySelector('.fixed.inset-0')!);
 
       expect(screen.getByRole('dialog')).toBeInTheDocument();
       expect(api.retagBook).not.toHaveBeenCalled();
     });
 
-    it('clicking Re-tag with ffmpeg unconfigured opens the preview modal and surfaces the inline error', async () => {
+    it('clicking Re-tag with the tag writer unconfigured opens the preview modal and surfaces the inline error', async () => {
       const user = userEvent.setup();
       (api.getSettings as Mock).mockResolvedValue(createMockSettings({
         processing: { outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, maxConcurrentProcessing: 1, postProcessingScript: '', postProcessingScriptTimeout: 300 },
       }));
       (api.getBookRetagPreview as Mock).mockRejectedValue(
-        new RetagFfmpegNotConfiguredError('ffmpeg is not configured'),
+        new RetagDependencyNotConfiguredError('mutagen is not configured'),
       );
 
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
@@ -998,8 +971,7 @@ describe('BookDetails', () => {
       await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
 
       const dialog = screen.getByRole('dialog');
-      expect(await within(dialog).findByRole('alert')).toHaveTextContent(/ffmpeg/);
-      // Apply button must be hidden in the ffmpeg-not-configured state
+      expect(await within(dialog).findByRole('alert')).toHaveTextContent(/mutagen/);
       expect(within(dialog).queryByRole('button', { name: /Re-tag \d+ file/ })).not.toBeInTheDocument();
       expect(api.retagBook).not.toHaveBeenCalled();
     });
@@ -1009,16 +981,13 @@ describe('BookDetails', () => {
       mockFfmpegEnabled();
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      // Open rename modal
       await openOverflowMenu(user);
       await user.click(screen.getByRole("menuitem", { name: /Rename/ }));
       expect(screen.getByRole('dialog')).toBeInTheDocument();
 
-      // Cancel rename — retag modal should not be open
       await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
-      // Open retag modal independently
       await openOverflowMenu(user);
       await waitFor(() => expect(screen.getByRole("menuitem", { name: /Re-tag/ })).not.toBeDisabled());
       await user.click(screen.getByRole("menuitem", { name: /Re-tag/ }));
@@ -1082,7 +1051,6 @@ describe('BookDetails', () => {
 
     it('disables Merge to M4B button when ffmpeg is not detected', async () => {
       const user = userEvent.setup();
-      // ffmpeg not detected → ffmpegConfigured = false → button disabled
       (api.getFfmpegStatus as Mock).mockResolvedValue({ detected: false });
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported', topLevelAudioFileCount: 12 });
 
@@ -1243,10 +1211,6 @@ describe('BookDetails', () => {
   });
 });
 
-// ============================================================================
-// #257 — Merge observability: progress indicator on BookDetails
-// ============================================================================
-
 describe('#257 merge observability — BookDetails progress', () => {
   it('progress indicator NOT visible when no merge in progress', () => {
     mockUseMergeProgress.mockReturnValue(null);
@@ -1288,7 +1252,6 @@ describe('#257 merge observability — BookDetails progress', () => {
     renderBookDetails({ path: '/library/test', status: 'imported', topLevelAudioFileCount: 3 });
 
     await openOverflowMenu(user);
-    // The merge button should show "Merging..." and be disabled
     await waitFor(() => {
       const mergeButton = screen.getByRole("menuitem", { name: /Merging/i });
       expect(mergeButton).toBeDisabled();
@@ -1353,7 +1316,6 @@ describe('#257 merge observability — BookDetails progress', () => {
       renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
       const indicator = screen.getByRole('status', { name: /merge progress/i });
       expect(indicator.className).toContain('animate-fade-out');
-      // Terminal state should show success icon (text-success), not spinning RefreshIcon
       const svg = indicator.querySelector('svg');
       expect(svg?.className.baseVal ?? svg?.getAttribute('class')).toContain('text-success');
       expect(svg?.className.baseVal ?? svg?.getAttribute('class')).not.toContain('animate-spin');
@@ -1466,7 +1428,6 @@ describe('#257 merge observability — BookDetails progress', () => {
         expect(screen.getByText(/blacklist this release/)).toBeInTheDocument();
       });
 
-      // Click the confirm button inside the modal dialog
       const dialog = screen.getByRole('dialog');
       const confirmButton = within(dialog).getByRole('button', { name: /Wrong Release/i });
       await user.click(confirmButton);
@@ -1493,7 +1454,6 @@ describe('#257 merge observability — BookDetails progress', () => {
         expect(screen.getByText(/blacklist this release/)).toBeInTheDocument();
       });
 
-      // Click cancel within the dialog (not the merge cancel button)
       const dialog = screen.getByRole('dialog');
       await user.click(within(dialog).getByRole('button', { name: /Cancel/i }));
 
@@ -1534,7 +1494,6 @@ describe('#257 merge observability — BookDetails progress', () => {
     });
   });
 
-  // #445 — Cover upload orchestration
   describe('cover upload', () => {
     it('shows upload overlay on cover when book has path', () => {
       renderBookDetails({ path: '/library/book', status: 'imported' });
@@ -1566,7 +1525,7 @@ describe('#257 merge observability — BookDetails progress', () => {
       renderBookDetails({ path: '/library/book', status: 'imported' });
 
       const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-      // Create a file that reports > 10 MB via Object.defineProperty
+      // Override jsdom's tiny file size to exceed 10 MB.
       const file = new File(['x'], 'big.jpg', { type: 'image/jpeg' });
       Object.defineProperty(file, 'size', { value: 10 * 1024 * 1024 + 1 });
       await user.upload(fileInput, file);
@@ -1579,7 +1538,6 @@ describe('#257 merge observability — BookDetails progress', () => {
       const user = userEvent.setup();
       renderBookDetails({ path: '/library/book', status: 'imported', coverUrl: 'https://example.com/cover.jpg' });
 
-      // Select file to enter preview state
       const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
       const file = new File(['image-data'], 'cover.jpg', { type: 'image/jpeg' });
       await user.upload(fileInput, file);
@@ -1588,7 +1546,6 @@ describe('#257 merge observability — BookDetails progress', () => {
         expect(screen.getByLabelText('Cancel cover')).toBeInTheDocument();
       });
 
-      // Cancel
       await user.click(screen.getByLabelText('Cancel cover'));
 
       await waitFor(() => {
@@ -1602,7 +1559,6 @@ describe('#257 merge observability — BookDetails progress', () => {
       const user = userEvent.setup();
       renderBookDetails({ id: 42, path: '/library/book', status: 'imported' });
 
-      // Select file
       const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
       const file = new File(['image-data'], 'cover.jpg', { type: 'image/jpeg' });
       await user.upload(fileInput, file);
@@ -1611,7 +1567,6 @@ describe('#257 merge observability — BookDetails progress', () => {
         expect(screen.getByLabelText('Confirm cover')).toBeInTheDocument();
       });
 
-      // Confirm upload
       await user.click(screen.getByLabelText('Confirm cover'));
 
       await waitFor(() => {
@@ -1657,7 +1612,6 @@ describe('#257 merge observability — BookDetails progress', () => {
 
       await waitFor(() => {
         expect(toast.error).toHaveBeenCalledWith('Cover upload failed: Server error');
-        // Preview stays visible on error so user can retry
         expect(screen.getByAltText('Cover preview')).toBeInTheDocument();
       });
     });
@@ -1665,7 +1619,7 @@ describe('#257 merge observability — BookDetails progress', () => {
     it('shows error toast for disallowed image type via paste', async () => {
       renderBookDetails({ path: '/library/book', status: 'imported' });
 
-      // Paste a GIF — useCoverPaste accepts image/* but handleCoverFile rejects non-jpg/png/webp
+      // Paste accepts image/*; validation still rejects formats outside jpg/png/webp.
       const file = new File(['gif-data'], 'image.gif', { type: 'image/gif' });
       const item = {
         kind: 'file',
@@ -1695,7 +1649,6 @@ describe('#257 merge observability — BookDetails progress', () => {
 
       const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
 
-      // First file selection → preview A
       const file1 = new File(['img1'], 'a.jpg', { type: 'image/jpeg' });
       await user.upload(fileInput, file1);
 
@@ -1703,7 +1656,6 @@ describe('#257 merge observability — BookDetails progress', () => {
         expect(screen.getByAltText('Cover preview')).toHaveAttribute('src', 'blob:first');
       });
 
-      // Second file selection → preview B (should revoke A first)
       revokeObjectURLSpy.mockClear();
       const file2 = new File(['img2'], 'b.png', { type: 'image/png' });
       await user.upload(fileInput, file2);
@@ -1904,7 +1856,6 @@ describe('#257 merge observability — BookDetails progress', () => {
       renderBookDetails({ status: 'failed', path: '/lib/book' });
 
       await openOverflowMenu(user);
-      // Wait for the menu to render, then check retry is absent
       await waitFor(() => {
         expect(screen.getByRole('menuitem', { name: /Remove/ })).toBeInTheDocument();
       });

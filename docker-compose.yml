@@ -3,13 +3,13 @@ version: '3.8'
 services:
   narratorr:
     image: narratorr/narratorr:latest
-    # To build from local source instead of pulling from the registry:
+    # Use this instead of the registry image for local builds:
     # build: .
     container_name: narratorr
     ports:
       - "3000:3000"
     volumes:
-      - ./config:/config           # Database and config
+      - ./config:/config
       - /path/to/audiobooks:/audiobooks  # Library path (change this)
       - /path/to/downloads:/downloads    # Download client save path (change this)
     environment:

@@ -35,7 +35,6 @@ export class QBittorrentClient implements DownloadClientAdapter {
   }
 
   private async login(): Promise<void> {
-    // Deduplicate concurrent login calls
     if (this.loginPromise) {
       return this.loginPromise;
     }
@@ -160,10 +159,6 @@ export class QBittorrentClient implements DownloadClientAdapter {
           body: formData,
         });
       } catch (error: unknown) {
-        // The magnet path has no raw Response — a duplicate-add surfaces as the
-        // generic HTTP 409 DownloadClientError thrown by request(). Adopt the
-        // existing torrent (mirror Transmission's torrent-duplicate) instead of
-        // failing the grab.
         if (this.isDuplicateAddError(error)) {
           return this.adoptDuplicateOrRethrow(artifact.infoHash, error);
         }
@@ -176,15 +171,8 @@ export class QBittorrentClient implements DownloadClientAdapter {
     throw new DownloadClientError(this.name, 'qBittorrent only supports torrent artifacts (torrent-bytes, magnet-uri)');
   }
 
-  /**
-   * qBittorrent answers a duplicate `/api/v2/torrents/add` with HTTP 409. The
-   * torrent the client already holds IS exactly the release we wanted (matched
-   * by infohash). Confirm it is actually present, then adopt it by returning its
-   * infohash so the grab persists a normal tracked download; the monitor
-   * discovers the real state on its next poll. If the client has no torrent for
-   * the infohash (race / removed between add and lookup), rethrow the original
-   * add error.
-   */
+  // Adopt a 409 only after confirming the same infohash exists. If it disappeared
+  // between add and lookup, preserve the original error.
   private async adoptDuplicateOrRethrow(infoHash: string, originalError: unknown): Promise<string> {
     const existing = await this.getDownload(infoHash);
     if (existing) {
@@ -234,8 +222,6 @@ export class QBittorrentClient implements DownloadClientAdapter {
           throw new DownloadClientAuthError(this.name, `Session expired: HTTP 403 /api/v2/torrents/add`);
         }
 
-        // Duplicate-add: qBittorrent returns 409 when it already holds this
-        // torrent. Adopt the existing torrent rather than failing the grab.
         if (response.status === 409) {
           return this.adoptDuplicateOrRethrow(
             infoHash,
@@ -259,16 +245,12 @@ export class QBittorrentClient implements DownloadClientAdapter {
       },
     );
   }
-
-
   async getDownload(hash: string): Promise<DownloadItemInfo | null> {
     const raw = await this.request<unknown>(
       `/api/v2/torrents/info?hashes=${hash.toLowerCase()}`
     );
 
-    // Pass `raw` through safeParse unconditionally — empty body / non-JSON body
-    // surface as undefined here and must fail validation with a ZodError cause
-    // rather than silently looking like "no torrents".
+    // Validate undefined too; empty/non-JSON responses are not an empty torrent list.
     const parsed = qbTorrentsResponseSchema.safeParse(raw);
     if (!parsed.success) {
       throw new DownloadClientError(
@@ -286,9 +268,6 @@ export class QBittorrentClient implements DownloadClientAdapter {
     const params = category ? `?category=${encodeURIComponent(category)}` : '';
     const raw = await this.request<unknown>(`/api/v2/torrents/info${params}`);
 
-    // Pass `raw` through safeParse unconditionally — empty body / non-JSON body
-    // surface as undefined here and must fail validation with a ZodError cause
-    // rather than silently looking like "no torrents".
     const parsed = qbTorrentsResponseSchema.safeParse(raw);
     if (!parsed.success) {
       throw new DownloadClientError(
@@ -417,8 +396,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
 
     const mapped = stateMap[state] || 'downloading';
 
-    // For seeding states, validate content_path is within save_path
-    // to catch the incomplete→complete directory move race condition
+    // A seeding item outside save_path is still in the incomplete-to-complete move race.
     if (mapped === 'seeding' && contentPath) {
       const rel = relative(savePath, contentPath);
       if (rel.startsWith('..') || rel === contentPath) {

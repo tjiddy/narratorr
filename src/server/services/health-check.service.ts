@@ -13,6 +13,7 @@ import { fireAndForget } from '../utils/fire-and-forget.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { getUpdateStatus, checkForUpdate } from '../jobs/version-check.js';
 import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
+import { resolveMutagenDetection } from '@core/utils/mutagen-resolver.js';
 
 
 export type HealthState = 'healthy' | 'warning' | 'error';
@@ -35,57 +36,24 @@ export interface SystemDeps {
   fsAccess: (path: string, mode?: number) => Promise<void>;
   fsStatfs: (path: string) => Promise<{ bavail: number; bsize: number }>;
   probeFfmpeg: (path: string) => Promise<string>;
+  probeMutagen: (pythonPath: string) => Promise<string>;
   resolveProxyIp: (proxyUrl: string) => Promise<string>;
 }
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 
-/**
- * Notification hysteresis for the flappy class of checks (#2090). External
- * dependencies blip for seconds at a time — a live specimen was Hardcover
- * returning HTTP 500 for a ~7-second window — and at the wrong tick alignment
- * that is exactly one "Unhealthy"/"Resolved" email pair for an incident that was
- * over before the first was read. Dispatch waits for the new state to hold this
- * many consecutive passes; detection, the health card, and every API response
- * stay instant.
- *
- * Deliberately a constant rather than a setting: a knob whose only sensible value
- * is the default is a constant with extra steps. Promoting it is a small
- * follow-up if a real need for tuning ever materializes.
- */
+// Three identical network states suppress short blips (observed Hardcover ~7s); card and API detection stay immediate.
 const NETWORK_CHECK_CONFIRMATION_PASSES = 3;
 
-/**
- * Whether a check's state depends on a live external dependency, and so is
- * subject to the confirmation window. A pure function of `checkName`: the
- * `indexer:` / `download-client:` prefixes are constructed by `checkIndexers` /
- * `checkDownloadClients`, so a user-supplied connector name cannot escape one.
- *
- * Everything else — `library-root`, `disk-space`, `ffmpeg`, `stuck-downloads`,
- * `version-update` — is local, doesn't flap, and when it fires the operator wants
- * to know now, so it keeps notifying on its first pass.
- */
+// Only live external checks use hysteresis; local failures notify on their first pass.
 function isNetworkBackedCheck(checkName: string): boolean {
   return checkName === 'hardcover'
     || checkName.startsWith('indexer:')
     || checkName.startsWith('download-client:');
 }
 
-/**
- * Stable identity for notification tracking — `checkName` *classifies*, it does
- * not *identify*. Connector names carry no unique constraint and are mutable, so
- * a display-text key would merge two same-named connectors into one confirmation
- * run and restart the run on every rename. Connector rows carry an AUTOINCREMENT
- * id that SQLite never reissues, so a deleted-and-recreated connector always gets
- * a fresh key and starts from the default `healthy` notified state rather than
- * inheriting a deleted connector's episode.
- *
- * NOT the client's `HealthDashboard.cardKey`: its non-connector arm is
- * `kind:path`, which collides `library-root` with `disk-space` (both carry
- * `{ kind: 'route', path: '/settings' }`). Server-side that would merge two
- * independent local checks into one tracking entry; singleton checks have fixed
- * literal `checkName`s, so falling back to that avoids the merge.
- */
+// Connector names are mutable and non-unique, so track them by kind plus never-reused database id.
+// Other targets can collide, so singleton checkName is their identity; HealthDashboard.cardKey mirrors this rule.
 function trackingKey(result: HealthCheckResult): string {
   const target = result.target;
   if (target?.kind === 'indexer' || target?.kind === 'download-client') {
@@ -95,30 +63,16 @@ function trackingKey(result: HealthCheckResult): string {
 }
 
 export class HealthCheckService {
-  /**
-   * Consecutive observations of the current state, per tracking key — the
-   * in-flight confirmation run. Clamped at the threshold so a check sitting in one
-   * state for months doesn't grow an unbounded counter.
-   */
+  // Consecutive exact-state observations, clamped at the confirmation threshold.
   private pendingStates: Map<string, { state: HealthState; passes: number }> = new Map();
-  /**
-   * Last state actually *announced* to the operator, per tracking key. Tracked
-   * separately from the observed state so a blip that self-heals inside the window
-   * sends nothing at all — no orphaned "resolved" email for a failure that was
-   * never announced. Defaults to `healthy` for a key never notified about, which
-   * preserves the pre-#2090 boot behavior (a broken check re-alerts after a
-   * restart, just three passes later).
-   */
+  // Announced state stays separate so unconfirmed blips cannot emit orphaned “resolved” notifications.
+  // Unseen keys default healthy, so persistent failures re-alert after restart and confirmation.
   private notifiedStates: Map<string, HealthState> = new Map();
   private cachedResults: HealthCheckResult[] = [];
   private running = false;
   private pendingRerun = false;
   private versionUpdateCallback?: () => void;
-  // Callers that coalesce into an in-flight pass park here and are resolved with
-  // the result of the *next* full pass — the guaranteed trailing rerun, which
-  // begins after they registered. This is what lets the manual "Run Now" path
-  // (#1411) observe its freshly-fetched version cache even when it overlaps an
-  // active scheduled pass, instead of getting the pre-fetch `cachedResults`.
+  // Overlapping callers wait for a full pass begun after registration, preserving manual version-fetch freshness.
   private trailingWaiters: Array<(results: HealthCheckResult[]) => void> = [];
 
   constructor(
@@ -131,31 +85,11 @@ export class HealthCheckService {
     private deps: SystemDeps,
   ) {}
 
-  /**
-   * Recompute every health check and store the result for the cached-read
-   * endpoints. Overlapping requests coalesce: a call that lands while a pass is
-   * already running sets `pendingRerun` and the active pass runs exactly one
-   * trailing recompute after it finishes, so the latest state (e.g. a freshly-
-   * cached version update from a manual/boot version-check) is always observed —
-   * never silently dropped. The trailing rerun is bounded to a single pass per
-   * overlapping request (no unbounded loop), and only fires when a request lands
-   * during an active pass, so non-overlapping scheduled cron runs are untouched.
-   *
-   * A coalesced caller resolves with the result of that guaranteed trailing
-   * rerun — a pass that *begins after the caller registered* — not with the
-   * pre-existing `cachedResults`. This is load-bearing for the manual "Run Now"
-   * path (#1411): `runManualChecks` awaits the live version fetch before calling
-   * `runAllChecks`, so the trailing rerun it awaits reads the post-fetch cache.
-   * Returning `cachedResults` immediately here would hand the route a report
-   * computed before the fetch resolved, violating AC #1's deterministic-freshness
-   * contract whenever the manual run overlaps a scheduled pass.
-   */
+  // Coalesce overlap into trailing passes; each overlapping caller waits for a pass begun after it registered.
+  // This prevents a manual version fetch from receiving cached results computed before that fetch.
   async runAllChecks(): Promise<HealthCheckResult[]> {
     if (this.running) {
       this.pendingRerun = true;
-      // Park until the next full pass completes; that pass starts after this
-      // call (pendingRerun guarantees the active loop iterates again), so the
-      // result reflects any state visible now.
       return new Promise<HealthCheckResult[]>((resolve) => {
         this.trailingWaiters.push(resolve);
       });
@@ -166,11 +100,7 @@ export class HealthCheckService {
       let results: HealthCheckResult[];
       do {
         this.pendingRerun = false;
-        // Capture the waiters registered before this iteration started; this
-        // pass's result satisfies exactly them. Waiters that arrive mid-pass go
-        // into a fresh list and are served by the next iteration (which their
-        // own `pendingRerun = true` guarantees) — so every coalesced caller gets
-        // a pass that began strictly after it registered.
+        // Snapshot waiters before the pass; arrivals during it wait for the next guaranteed iteration.
         const waiters = this.trailingWaiters;
         this.trailingWaiters = [];
         results = await this.runChecksOnce();
@@ -183,42 +113,14 @@ export class HealthCheckService {
     }
   }
 
-  /**
-   * Register the version-update health-nudge callback owned by the boot/2 AM
-   * version-check invocations (jobs/index.ts `onUpdateChanged`). The manual
-   * "Run Now" path (`runManualChecks`) passes this *same* callback into
-   * `checkForUpdate`, so its SSE/health-nudge side-effects stay identical to the
-   * scheduled path (#1411, AC #5). Set once during `startJobs`; left undefined in
-   * contexts that don't boot jobs (e.g. route tests), in which case the manual
-   * run simply fires no nudge callback — harmless, the awaited fetch still
-   * freshens the cache.
-   */
+  // Reuse the scheduled version job's update-change callback for manual runs; non-job contexts may omit it.
   setVersionUpdateCallback(callback: () => void): void {
     this.versionUpdateCallback = callback;
   }
 
-  /**
-   * Manual "Run Now" entry point: live-refresh the version-update cache *before*
-   * reading the health report, then run a full pass. The version-update row is
-   * otherwise a pure cache read (`checkVersionUpdate` → `getUpdateStatus`) fed
-   * only by the daily 2 AM version-check job, so a manual run could surface an
-   * up-to-24h-stale row presenting with the same freshness as the live-probed
-   * rows (#1411).
-   *
-   * Ordering is serial and deterministic: `checkForUpdate` is awaited to
-   * completion (bounded by its own 10s `AbortSignal.timeout`) before
-   * `runAllChecks` reads `getUpdateStatus` mid-pass, so the returned report
-   * always reflects the post-fetch cache — never a pre-fetch stale result. This
-   * holds even when the manual run overlaps an active scheduled pass: the
-   * `runAllChecks` call coalesces and resolves with the guaranteed trailing
-   * rerun, which begins after this fetch resolved (see `runAllChecks`).
-   *
-   * Best-effort: `checkForUpdate` already swallows all fetch/parse errors and
-   * resolves `void`; the defensive `.catch` is a contract guard so a hung or
-   * rejecting check never fails the health run — it falls through to the existing
-   * cached value. The scheduled `health-check` cron calls `runAllChecks` directly
-   * and pays no fetch cost (AC #3).
-   */
+  // Refresh the daily version cache before a manual report so its row cannot be up to 24 hours stale.
+  // Awaited fetch plus trailing-pass coalescing guarantees post-fetch results even during a scheduled pass.
+  // Fetch failure falls back to cached state; scheduled health runs call runAllChecks directly and pay no fetch cost.
   async runManualChecks(log: FastifyBaseLogger): Promise<HealthCheckResult[]> {
     await checkForUpdate(log, this.versionUpdateCallback).catch((error: unknown) => {
       log.error({ error: serializeError(error) }, 'Manual health run: live version check failed');
@@ -226,17 +128,17 @@ export class HealthCheckService {
     return this.runAllChecks();
   }
 
-  /** Run one full pass of every check and fire state-transition notifications. */
   private async runChecksOnce(): Promise<HealthCheckResult[]> {
     const results: HealthCheckResult[] = [];
 
-    // Run all checks independently — one failure doesn't prevent others
+    // Isolate checks so one failure cannot suppress the rest.
     const checks = [
       () => this.checkIndexers(),
       () => this.checkDownloadClients(),
       () => this.checkLibraryRoot(),
       () => this.checkDiskSpace(),
       () => this.checkFfmpeg(),
+      () => this.checkMutagen(),
       () => this.checkHardcover(),
       () => this.checkStuckDownloads(),
       () => this.checkVersionUpdate(),
@@ -251,28 +153,19 @@ export class HealthCheckService {
       }
     }
 
-    // Fire notifications for CONFIRMED state transitions (#2090). A tracking key
-    // absent from this pass's results — hardcover with no API key, ffmpeg with no
-    // automation needing it, a deleted or disabled connector — is simply not
-    // visited, which freezes its pending run rather than advancing or resetting
-    // it. For a local check `required` is 1, so `passes` is always 1 and this
-    // reduces exactly to the pre-#2090 `previousState !== result.state` compare.
+    // Missing checks freeze rather than reset confirmation state; local checks require only one pass.
     for (const result of results) {
       const key = trackingKey(result);
       const required = isNetworkBackedCheck(result.checkName) ? NETWORK_CHECK_CONFIRMATION_PASSES : 1;
       const pending = this.pendingStates.get(key);
-      // Confirmation is on the exact tri-state value, not a healthy/unhealthy
-      // boolean: a check flapping between `warning` and `error` restarts the run
-      // on every pass and so never confirms.
+      // Confirm exact tri-state values so warning/error flapping restarts the run.
       const passes = Math.min(pending?.state === result.state ? pending.passes + 1 : 1, required);
       this.pendingStates.set(key, { state: result.state, passes });
 
       const notifiedState = this.notifiedStates.get(key) ?? 'healthy';
       if (passes < required || result.state === notifiedState) continue;
 
-      // `checkName` and `message` come from the confirming pass, so a rename
-      // mid-episode reports the current name and the operator reads the freshest
-      // diagnostic rather than a stale one retained from observation 1.
+      // Use the confirming pass's current name and diagnostic, not the first observation's stale text.
       fireAndForget(
         this.notifierService.notify('on_health_issue', {
           event: 'on_health_issue',
@@ -302,17 +195,14 @@ export class HealthCheckService {
     return this.cachedResults;
   }
 
-  /** Probe ffmpeg binary at given path. Returns version string on success. */
   async probeFfmpeg(path: string): Promise<string> {
     return this.deps.probeFfmpeg(path);
   }
 
-  /** Resolve proxy IP by making a request through the proxy. */
   async probeProxy(proxyUrl: string): Promise<string> {
     return this.deps.resolveProxyIp(proxyUrl);
   }
 
-  /** Reset state tracking for tests */
   _reset(): void {
     this.pendingStates.clear();
     this.notifiedStates.clear();
@@ -389,7 +279,7 @@ export class HealthCheckService {
     }
 
     try {
-      // Check both read and write access (R_OK=4, W_OK=2)
+      // Require both read and write access (R_OK=4, W_OK=2).
       await this.deps.fsAccess(libraryPath, 4 | 2);
       return [{ checkName: 'library-root', state: 'healthy', target }];
     } catch (error: unknown) {
@@ -439,23 +329,16 @@ export class HealthCheckService {
     const ffmpegPath = await resolveFfmpegPath();
 
     if (!ffmpegPath) {
-      // ffmpeg is OPTIONAL — it only matters when an automation that runs on its own needs it.
-      // Manual merge/retag are UI-gated and surface the miss inline (Audio Tools status row), so an
-      // absent binary with no enabled automation stays SILENT here rather than firing a
-      // restart-persistent on_health_issue alarm on every bare-metal install that never uses audio
-      // processing. Only auto-merge and tag embedding fire unattended and would fail — alarm on those.
-      const [processing, tagging] = await Promise.all([
-        this.settingsService.get('processing'),
-        this.settingsService.get('tagging'),
-      ]);
-      const automationNeedsFfmpeg = processing?.autoMergeDownloads === true || tagging?.enabled === true;
-      if (!automationNeedsFfmpeg) {
+      // Missing ffmpeg is silent unless unattended auto-merge needs it. Tag embedding moved to the
+      // mutagen check; manual tools surface the absence inline and must not raise persistent alarms.
+      const processing = await this.settingsService.get('processing');
+      if (processing?.autoMergeDownloads !== true) {
         return [];
       }
       return [{
         checkName: 'ffmpeg',
         state: 'error',
-        message: 'ffmpeg not found but an audio automation (auto-merge or tag embedding) needs it — install it or set FFMPEG_PATH',
+        message: 'ffmpeg not found but auto-merge needs it — install it or set FFMPEG_PATH',
         target,
       }];
     }
@@ -468,18 +351,41 @@ export class HealthCheckService {
     }
   }
 
+  private async checkMutagen(): Promise<HealthCheckResult[]> {
+    const target: HealthCheckTarget = { kind: 'settings', path: 'processing' };
+    const tagging = await this.settingsService.get('tagging');
+    // Retag is also a manual action, but only the enabled toggle makes it unattended.
+    if (tagging?.enabled !== true) return [];
+
+    const detection = await resolveMutagenDetection();
+    if (!detection) {
+      return [{
+        checkName: 'mutagen',
+        state: 'error',
+        message: 'Tag embedding is enabled but Python with the mutagen module was not found — install it or set MUTAGEN_PYTHON',
+        target,
+      }];
+    }
+
+    try {
+      await this.deps.probeMutagen(detection.python);
+      return [{ checkName: 'mutagen', state: 'healthy', target }];
+    } catch {
+      return [{ checkName: 'mutagen', state: 'error', message: `mutagen not usable at: ${detection.python}`, target }];
+    }
+  }
+
   private async checkHardcover(): Promise<HealthCheckResult[]> {
     const target: HealthCheckTarget = { kind: 'settings', path: 'search' };
     const metadataSettings = await this.settingsService.get('metadata');
     const apiKey = metadataSettings?.hardcoverApiKey?.trim();
 
     if (!apiKey) {
-      return []; // Skip check if no Hardcover API key is configured
+      return [];
     }
 
     try {
-      // Live probe — same request the settings Test button uses. An empty
-      // results array is still success; resolving without throwing is the signal.
+      // Match the settings probe: any resolved response, including an empty result, is healthy.
       await new HardcoverClient(apiKey).searchSeries('test');
       return [{ checkName: 'hardcover', state: 'healthy', target }];
     } catch (error: unknown) {
@@ -517,21 +423,12 @@ export class HealthCheckService {
     }
   }
 
-  /**
-   * Surfaces an available app update as an ambient `warning` (an outdated
-   * version is a mild degradation, not an error). The row clears on its own
-   * once the running version catches up to latest.
-   * No `target` is set: the dashboard renders the release-notes `link` inline,
-   * and leaving `target` unset keeps the card out of the clickable-button path
-   * (no nested interactive controls).
-   */
+  // Updates are ambient warnings that disappear once current; omit target so the inline link is not nested in a button.
   private async checkVersionUpdate(): Promise<HealthCheckResult[]> {
     const update = getUpdateStatus();
-    if (!update) return []; // No newer version cached — omit the row entirely.
+    if (!update) return [];
 
-    // Channel-aware copy: stable renders the semver + release notes; develop
-    // renders generic build wording + a compare-diff link (the develop
-    // `latestVersion` is a bare sha, never `v`-prefixed into the message).
+    // Develop latestVersion is a bare SHA, so only stable copy receives a v-prefixed semver.
     const { message, label } = update.channel === 'develop'
       ? { message: 'A newer develop build is available', label: 'Compare changes' }
       : { message: `Update available: v${update.latestVersion}`, label: 'Release notes' };

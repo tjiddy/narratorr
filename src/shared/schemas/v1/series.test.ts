@@ -6,9 +6,6 @@ import {
 } from './series.js';
 import * as barrel from '../../schemas.js';
 
-// A leaky source row carrying every internal series column: numeric rowid,
-// normalizedName, hardcoverSeriesId, authorName, description, imageUrl,
-// lastFetchedAt, timestamps. `toSeriesV1` must strip all of them.
 function makeLeakyRow() {
   return {
     id: 7,
@@ -77,7 +74,6 @@ describe('seriesV1ListQuerySchema (composed, strict)', () => {
   });
 });
 
-// F5 — barrel re-export contract.
 describe('barrel re-export', () => {
   it('exposes seriesV1Schema and toSeriesV1 from the schemas barrel', () => {
     expect(barrel.seriesV1Schema).toBe(seriesV1Schema);

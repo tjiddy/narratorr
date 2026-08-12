@@ -12,7 +12,7 @@ import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { BYTES_PER_GB } from '@shared/constants.js';
 
-/** Default cap on the uncompressed size of the extracted narratorr.db (1 GB; cf. MAX_COVER_SIZE). */
+/** Bound extracted DB bytes to limit zip bombs. */
 const MAX_UNCOMPRESSED_DB_SIZE = BYTES_PER_GB;
 
 
@@ -34,7 +34,7 @@ interface PendingRestore {
   validatedAt: number;
 }
 
-const PENDING_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const PENDING_TTL_MS = 5 * 60 * 1000;
 
 export class BackupService {
   private backupInProgress = false;
@@ -64,7 +64,6 @@ export class BackupService {
     return this._pendingRestore;
   }
 
-  /** Get the app's current migration count from the live database */
   private async getAppMigrationCount(): Promise<number> {
     const client = createClient({ url: `file:${this.dbPath}` });
     try {
@@ -78,7 +77,6 @@ export class BackupService {
     }
   }
 
-  /** Create a backup using VACUUM INTO for a consistent snapshot */
   async create(): Promise<BackupMetadata> {
     if (this.backupInProgress) {
       throw new Error('Backup already in progress');
@@ -93,7 +91,6 @@ export class BackupService {
     const tempDbPath = path.join(this.configPath, `backup-temp-${timestamp}.db`);
 
     try {
-      // Step 1: VACUUM INTO for consistent snapshot
       const client = createClient({ url: `file:${this.dbPath}` });
       try {
         const escapedPath = tempDbPath.replace(/'/g, "''");
@@ -102,7 +99,6 @@ export class BackupService {
         client.close();
       }
 
-      // Step 2: Zip the snapshot
       await new Promise<void>((resolve, reject) => {
         const output = fss.createWriteStream(zipPath);
         const archive = new ZipArchive({ zlib: { level: 9 } });
@@ -115,7 +111,6 @@ export class BackupService {
         archive.finalize();
       });
 
-      // Step 3: Clean up temp file
       await fs.unlink(tempDbPath).catch(() => {});
 
       const stat = await fs.stat(zipPath);
@@ -128,7 +123,6 @@ export class BackupService {
       this.log.info({ filename, size: stat.size }, 'Backup created');
       return metadata;
     } catch (error: unknown) {
-      // Clean up on failure
       await fs.unlink(tempDbPath).catch(() => {});
       await fs.unlink(zipPath).catch(() => {});
       throw error;
@@ -137,7 +131,6 @@ export class BackupService {
     }
   }
 
-  /** List all backups sorted by timestamp descending */
   async list(): Promise<BackupMetadata[]> {
     await this.ensureBackupsDir();
 
@@ -150,7 +143,6 @@ export class BackupService {
       const filePath = path.join(this.backupsDir, file);
       const stat = await fs.stat(filePath);
 
-      // Exclude corrupted (zero-size) backups
       if (stat.size === 0) continue;
 
       backups.push({
@@ -163,7 +155,6 @@ export class BackupService {
     return backups.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
   }
 
-  /** Prune oldest backups exceeding retention limit */
   async prune(): Promise<number> {
     const systemSettings = await this.settingsService.get('system');
     const retention = systemSettings.backupRetention;
@@ -190,9 +181,8 @@ export class BackupService {
     return deleted;
   }
 
-  /** Get the file path for a backup, with path traversal protection */
+  /** Resolve only canonical backup filenames; reject traversal. */
   getBackupPath(filename: string): string | null {
-    // Reject path traversal
     if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
       return null;
     }
@@ -203,13 +193,8 @@ export class BackupService {
   }
 
   /**
-   * Delete a single server-side backup file. Takes the raw filename (same contract as
-   * restoreServerBackup) and resolves it via getBackupPath for path-traversal safety.
-   *
-   * Tolerates ENOENT like the retention pruner: a concurrent prune/delete may have already
-   * removed the file between the route's existence check and this unlink, which is a no-op
-   * success, not a failure. This deletes only the backups-dir zip — it never touches a
-   * staged restore, which lives in a separate temp path (PendingRestore.tempPath).
+   * Resolve through getBackupPath. ENOENT is success for concurrent prune/delete; this removes
+   * only the backup zip, never the separately staged PendingRestore path.
    */
   async deleteBackup(filename: string): Promise<void> {
     const filePath = this.getBackupPath(filename);
@@ -228,7 +213,6 @@ export class BackupService {
     this.log.info({ filename }, 'Backup deleted');
   }
 
-  /** Extract narratorr.db from a zip stream into a temp directory. Returns the temp DB path. */
   private async extractDbFromZip(source: Readable): Promise<{ tempDir: string; tempDbPath: string }> {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'narratorr-restore-'));
     const tempDbPath = path.join(tempDir, 'narratorr-restore.db');
@@ -239,9 +223,7 @@ export class BackupService {
       await new Promise<void>((resolve, reject) => {
         const zipStream = source.pipe(unzipper.Parse());
         let aborted = false;
-        // Route every reject site through a single guarded helper so the cap check,
-        // writeStream 'error', and zipStream 'error' settle the promise exactly once —
-        // destroying streams on overflow can emit follow-up 'error' events post-teardown.
+        // Stream destruction can emit follow-up errors; every rejection must settle exactly once.
         const failOnce = (error: Error) => {
           if (aborted) return;
           aborted = true;
@@ -263,8 +245,7 @@ export class BackupService {
               if (aborted) return;
               bytesWritten += chunk.length;
               if (bytesWritten > this.maxRestoreDbSize) {
-                // Destroy streams (release the temp-file handle) before rejecting; the
-                // catch block performs the single fs.rm cleanup for all error paths.
+                // Release the temp-file handle before the shared catch cleanup.
                 writeStream.destroy();
                 entry.destroy?.();
                 zipStream.destroy?.();
@@ -290,15 +271,12 @@ export class BackupService {
 
       return { tempDir, tempDbPath };
     } catch (error: unknown) {
-      // Unconditional cleanup: streams are destroyed at the overflow site before this
-      // runs, so the temp-file handle is released and rm succeeds for RestoreUploadError
-      // (OVERSIZED_DB, MISSING_DB) as well as system I/O errors.
+      // Overflow destroys streams first, so this one cleanup covers validation and system errors.
       await fs.rm(tempDir, { recursive: true }).catch(() => {});
       throw error;
     }
   }
 
-  /** Validate extracted DB, stage for confirmation, and return validation result. */
   private async validateAndStage(tempDir: string, tempDbPath: string): Promise<RestoreValidation> {
     const validation = await this.validateRestore(tempDbPath);
 
@@ -316,22 +294,19 @@ export class BackupService {
     };
   }
 
-  /** Process a restore file upload: extract zip, validate DB, stage for confirmation. */
   async processRestoreUpload(fileStream: Readable): Promise<RestoreValidation> {
     try {
       const { tempDir, tempDbPath } = await this.extractDbFromZip(fileStream);
       return await this.validateAndStage(tempDir, tempDbPath);
     } catch (error: unknown) {
       if (error instanceof RestoreUploadError) throw error;
-      // System-level I/O errors (ENOSPC, EACCES, etc.) should propagate as unexpected failures,
-      // not be misreported as bad zip files. Only zip-format parse failures become INVALID_ZIP.
+      // Preserve system I/O errors; only parser failures become INVALID_ZIP.
       const isSystemError = error instanceof Error && 'code' in error && typeof (error as NodeJS.ErrnoException).code === 'string';
       if (isSystemError) throw error;
       throw new RestoreUploadError('File is not a valid zip archive', 'INVALID_ZIP');
     }
   }
 
-  /** Restore directly from a server-side backup file: read zip, extract, validate, stage. */
   async restoreServerBackup(filename: string): Promise<RestoreValidation> {
     const filePath = this.getBackupPath(filename);
     if (!filePath) {
@@ -351,15 +326,12 @@ export class BackupService {
     }
   }
 
-  /** Validate an uploaded restore file */
   async validateRestore(tempPath: string): Promise<RestoreValidation> {
     const appMigrationCount = await this.getAppMigrationCount();
 
     try {
-      // Check it's a valid SQLite file by attempting to open with libSQL
       const client = createClient({ url: `file:${tempPath}` });
       try {
-        // Check migrations table exists via sqlite_master (structured check, no string matching)
         const tableCheck = await client.execute(
           "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name='__drizzle_migrations'",
         );
@@ -389,9 +361,7 @@ export class BackupService {
     }
   }
 
-  /** Store a validated restore for later confirmation */
   async setPendingRestore(tempPath: string): Promise<void> {
-    // Clean up existing pending restore if any
     if (this._pendingRestore) {
       await fs.unlink(this._pendingRestore.tempPath).catch(() => {});
     }
@@ -402,7 +372,6 @@ export class BackupService {
     };
   }
 
-  /** Confirm and stage the pending restore */
   async confirmRestore(): Promise<void> {
     if (!this._pendingRestore) {
       throw new Error('No pending restore');
@@ -416,10 +385,8 @@ export class BackupService {
 
     const { tempPath } = this._pendingRestore;
 
-    // Stage the validated DB to the well-known pending path
     await fs.copyFile(tempPath, this.restorePendingPath);
 
-    // Clean up the validation temp file and its parent extraction directory
     await fs.rm(path.dirname(tempPath), { recursive: true }).catch(() => {});
     this._pendingRestore = null;
 
@@ -437,10 +404,7 @@ export class RestoreUploadError extends Error {
   }
 }
 
-/**
- * Startup swap hook: check for restore-pending.db and swap it in before DB is opened.
- * Call this BEFORE runMigrations/createDb in main().
- */
+/** Apply before opening the DB or running migrations. */
 export function applyPendingRestore(configPath: string, dbPath: string, log: { info: (msg: string) => void; warn: (msg: string) => void }): void {
   const pendingPath = path.join(configPath, 'restore-pending.db');
 
@@ -450,7 +414,6 @@ export function applyPendingRestore(configPath: string, dbPath: string, log: { i
     fss.renameSync(pendingPath, dbPath);
     log.info('Restored database from pending backup');
   } catch {
-    // Rename failed (cross-device?) — fall back to copy + delete
     try {
       fss.copyFileSync(pendingPath, dbPath);
       fss.unlinkSync(pendingPath);

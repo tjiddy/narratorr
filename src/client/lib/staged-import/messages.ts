@@ -1,8 +1,4 @@
-/**
- * Exact, pinned user-facing copy for the staged-import lifecycle (#1902). Centralized
- * so the hooks and their tests reference ONE source — the spec pins these strings and
- * the test plan asserts them verbatim, so drift here is a behavior change.
- */
+// Centralized contract copy; changing these strings is a behavior change.
 export const STAGED_COPY = {
   /** Create exhaustion / lost response, and by-client lookup exhaustion — recoverable on reload. */
   createUnreachable: 'Couldn’t reach the server — reload to retry',
@@ -16,21 +12,17 @@ export const STAGED_COPY = {
   finalizeInvariant: 'Import couldn’t be finalized — please re-run',
   /** Finalized (processing/complete) 404 — invariant/data-loss, surfaced once then the hint evicts. */
   finalizedMissing: 'Import records are missing — the server may have lost this run',
-  /** PUT permanent failure (400/409/413) — NOT connectivity: the upload stopped, nothing imported; hint retained for receiving reconcile. Fallback when counts are unavailable. */
+  /** Permanent PUT rejection; upload stopped and the receiving hint remains recoverable. */
   putFailed: 'Some books couldn’t be uploaded — nothing was imported; reopen to try again',
-  /** Create non-retryable 4xx (invalid body) — a validation failure, not connectivity; hint evicted. */
+  /** Non-retryable create validation; nothing landed and the hint is evicted. */
   createInvalid: 'That import couldn’t be prepared — re-scan and try again',
-  /** Finalize 409 (gaps / digest-mismatch) — the submission can’t complete; hint evicted. */
+  /** Finalize mismatch; the submission cannot complete and the hint is evicted. */
   finalizeFailed: 'Import couldn’t be finalized — a mismatch was detected; please re-run',
 } as const;
 
 export type StagedBannerKey = keyof typeof STAGED_COPY;
 
-/**
- * The AC-pinned PUT-failure copy WITH received accounting (#1902): "X of Y received —
- * nothing imported". `received` counts fully-landed chunks only (the in-flight chunk's
- * fate is unknown; under-claiming is the honest direction alongside "nothing was imported").
- */
+// received counts only confirmed chunks; an in-flight chunk remains unknown.
 export function putFailedWithCounts(received: number, total: number): string {
   return `${received} of ${total} received — nothing was imported; reopen to try again`;
 }

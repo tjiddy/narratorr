@@ -3,30 +3,25 @@ import { SUBMISSION_ERROR_CODES, type StagedImportItem, type SubmissionSource } 
 import { packStagedChunks } from '@/lib/confirm-chunks.js';
 import { runWithRetry, isRetryableError, withSignal, type RetryOptions } from './retry.js';
 
-/**
- * The staged submit pipeline (#1902, F9/F10/F11): create → inert chunked PUT →
- * digest-verified finalize, each call wrapped in the shared retry policy. Every
- * failure resolves to a typed {@link SubmitDisposition} that fixes the banner copy,
- * whether the outbox hint is retained or evicted, and whether a by-client recovery
- * probe should follow — the caller (hook) maps the disposition onto UI + outbox.
- */
+// Create → inert chunked PUT → digest-verified finalize under the shared retry policy.
+// SubmitError dispositions select the hook's UI and outbox recovery policy.
 
 export type SubmitDisposition =
-  | 'aborted' // unmount/navigation — surface nothing
-  | 'create-unreachable' // create exhaustion / lost response — banner, hint retained, probe by-client next mount
-  | 'digest-conflict' // create 409 — a durable header with this id + a DIFFERENT digest exists; fresh UUID on retry
-  | 'create-invalid' // create non-retryable 4xx (invalid body) — surface error, evict hint
-  | 'put-failed' // PUT permanent/exhausted — stop upload, no finalize, rows stay selected, hint left for receiving reconcile
-  | 'finalize-failed' // finalize 409 gaps/digest-mismatch — error + evict
-  | 'finalize-invariant' // finalize 422 item-invalid — invariant copy + evict, no nudge
-  | 'finalize-missing' // finalize 404 — never landed, evict + safe re-run
-  | 'finalize-unreachable'; // finalize 5xx exhaustion — retry then by-client recovery, hint retained
+  | 'aborted' // Surface nothing.
+  | 'create-unreachable' // Retain hint; recover by client ID.
+  | 'digest-conflict' // Existing ID has another digest; retry with a fresh UUID.
+  | 'create-invalid' // Permanent create failure; evict hint.
+  | 'put-failed' // Stop upload and retain receiving hint.
+  | 'finalize-failed' // Finalize mismatch; evict hint.
+  | 'finalize-invariant' // Persisted-item invariant; evict hint.
+  | 'finalize-missing' // Never landed; evict and allow retry.
+  | 'finalize-unreachable'; // Recover by client ID and retain hint.
 
 export class SubmitError extends Error {
   constructor(
     public readonly disposition: SubmitDisposition,
     public readonly cause?: unknown,
-    /** `put-failed` only: upload accounting for the pinned "X of Y received" copy (#1902 AC). */
+    /** Confirmed upload count for put-failed copy. */
     public readonly counts?: { received: number; total: number },
   ) {
     super(disposition);
@@ -57,7 +52,7 @@ export interface SubmitParams {
   signal?: AbortSignal;
   /** Progress across the sequential PUT run — drives "Registering X of Y…". */
   onChunkProgress?: (progress: { current: number; total: number; chunks: number }) => void;
-  /** Fired once the durable `receiving` header lands (F8) — lets the caller refresh the #1894 reads. */
+  /** Fired once the durable receiving header lands. */
   onCreated?: (submissionId: number) => void;
 }
 
@@ -90,9 +85,7 @@ async function putStep(params: SubmitParams, submissionId: number): Promise<void
       await runWithRetry(() => api.putImportSubmissionItems(submissionId, { items: chunk }), withSignal(retry, signal));
     } catch (error: unknown) {
       if (isAbort(error, signal)) throw new SubmitError('aborted', error);
-      // Permanent (400/409/413) or exhausted transport → stop; the receiving header is inert.
-      // `sent` counts only fully-landed chunks — the in-flight chunk's fate is unknown, and
-      // under-claiming received is the honest direction for "nothing was imported" copy.
+      // Count only confirmed chunks because the failed in-flight chunk's fate is unknown.
       throw new SubmitError('put-failed', error, { received: sent, total: rows.length });
     }
     sent += chunk.length;
@@ -106,12 +99,11 @@ function mapFinalizeError(error: unknown, signal?: AbortSignal): SubmitError {
     const code = errorCode(error);
     if (error.status === 422 || code === SUBMISSION_ERROR_CODES.itemInvalid) return new SubmitError('finalize-invariant', error);
     if (error.status === 404) return new SubmitError('finalize-missing', error);
-    return new SubmitError('finalize-failed', error); // 409 gaps / digest-mismatch / other 4xx
+    return new SubmitError('finalize-failed', error);
   }
-  return new SubmitError('finalize-unreachable', error); // 5xx exhaustion → by-client recovery
+  return new SubmitError('finalize-unreachable', error);
 }
 
-/** Runs create → PUT → finalize. Resolves the durable submission id, or throws a {@link SubmitError}. */
 export async function runSubmit(params: SubmitParams): Promise<{ submissionId: number }> {
   const { api, retry, signal } = params;
   const submissionId = await createStep(params);

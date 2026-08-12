@@ -1,13 +1,6 @@
 /**
- * The I/O half of the query ladder (#2104) — what `search-query-ladder.ts`
- * deliberately does not own.
- *
- * The ladder module is pure: it decides WHICH queries to issue, in what order,
- * and what corroborates a segment-cut rung. This module supplies the per-rung
- * executors that actually talk to `IndexerSearchService`, and the cooldown
- * bookkeeping around one book's ladder run. It lives outside
- * `search-pipeline.ts` because that file sits ~19 counted lines under the 400
- * `max-lines` cap and cannot absorb new machinery.
+ * I/O half of the query ladder: the pure ladder chooses queries while this module executes them
+ * and settles cooldown state.
  */
 import type { SearchBook, SearchEventSink } from './search-event-sink.js';
 import type { IndexerSearchService } from './indexer-search.service.js';
@@ -22,21 +15,8 @@ import {
 } from './search-query-ladder.js';
 
 /**
- * Per-rung search executor for the broadcaster path.
- *
- * `search_started` and the per-indexer abort controllers are hoisted OUT of the
- * returned closure: the ladder may run the closure up to `MAX_SEARCH_RUNGS`
- * times, and the lifecycle event must be emitted exactly once per
- * `searchAndGrabForBook` call. Sticky controllers are what let the pre-adapter
- * abort guard in `searchAllStreaming` skip an indexer the user cancelled on an
- * earlier rung.
- *
- * Per-indexer counts need no buffering across rungs — the client REPLACES its
- * entry by `indexerId` on each completion, so the last rung to report wins,
- * which is the winning rung.
- *
- * `succeeded` counts indexers that ANSWERED. The ladder needs it to tell a real
- * zero from an outage; errored and cancelled indexers never increment it.
+ * Emit `search_started` once and retain abort controllers across rungs. `succeeded` counts
+ * responding indexers so the ladder can distinguish a real zero from an outage.
  */
 export async function createStreamingExecutor(
   book: SearchBook,
@@ -69,13 +49,7 @@ export async function createStreamingExecutor(
   };
 }
 
-/**
- * Per-rung search executor for the silent aggregate path — the SINGLE home,
- * shared by `searchAndGrabForBook`, `retrySearch`, and the public v1 discovery
- * route. Those three are separate chains with separate gates; sharing the
- * executor is what keeps the transport/ranking split (`author` vs
- * `rankingAuthor`) from drifting between them.
- */
+/** Shared silent executor preserves the transport/ranking author split across aggregate callers. */
 export function createAggregateExecutor(
   book: SearchBook,
   indexerSearchService: IndexerSearchService,
@@ -92,7 +66,7 @@ export function createAggregateExecutor(
 
 export interface BookLadderRunDeps {
   indexerSearchService: IndexerSearchService;
-  /** Present selects the streaming executor, absent the aggregate one. */
+  /** True selects the streaming executor. */
   streaming: boolean;
   sink: SearchEventSink;
   searchLadderCooldown?: SearchLadderCooldown | undefined;
@@ -100,12 +74,7 @@ export interface BookLadderRunDeps {
   ladderMode: 'scheduled' | 'always';
 }
 
-/**
- * Build one book's ladder, run it, and settle the cooldown.
- *
- * Rung 1 is today's canonical query verbatim, so a book findable there issues
- * exactly one query per indexer and nothing downstream sees a difference.
- */
+/** Rung one remains the canonical query, preserving the one-query success path. */
 export async function runBookQueryLadder(book: SearchBook, deps: BookLadderRunDeps): Promise<LadderRun> {
   const { indexerSearchService, sink, searchLadderCooldown } = deps;
 
@@ -122,8 +91,7 @@ export async function runBookQueryLadder(book: SearchBook, deps: BookLadderRunDe
   const ran = await runQueryLadder(ladder, execute);
 
   if (scheduled && searchLadderCooldown) {
-    // Never re-record off a RESTRICTED run: that would refresh the window on
-    // every cycle and the cooldown would never expire.
+    // Never re-record a restricted run or every cycle would extend the cooldown.
     if (ran.exhausted && !restricted) searchLadderCooldown.recordExhausted(book.id, rung1Key, Date.now());
     else if (ran.index === 0 && ran.results.length > 0) searchLadderCooldown.clear(book.id);
   }

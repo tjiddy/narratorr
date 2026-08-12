@@ -66,7 +66,6 @@ describe('NamingTokenModal', () => {
       expect(screen.getByText('{narrator}')).toBeInTheDocument();
       expect(screen.getByText('{narratorLastFirst}')).toBeInTheDocument();
       expect(screen.getByText('{year}')).toBeInTheDocument();
-      // #1712 — {edition} is discoverable in the Metadata group.
       expect(screen.getByText('{edition}')).toBeInTheDocument();
     });
   });
@@ -105,9 +104,7 @@ describe('NamingTokenModal', () => {
 
     it('renders the descriptor exactly once — no other chip gets one', () => {
       renderWithProviders(<NamingTokenModal {...defaultProps} />);
-      // Only {edition} carries a descriptor; siblings like {year} in the same Metadata group stay bare.
       expect(screen.getAllByText(/Added automatically to the folder/)).toHaveLength(1);
-      // The {year} chip renders as a bare token with no adjacent descriptive text.
       expect(screen.getByText('{year}')).toBeInTheDocument();
     });
 
@@ -129,8 +126,6 @@ describe('NamingTokenModal', () => {
           previewTokens={{ author: 'Brandon Sanderson', title: 'The Way of Kings', edition: 'Full Cast' }}
         />,
       );
-      // Fixture split (#1774) must keep an edition-bearing sample flowing to the modal — otherwise
-      // a user who inserts {edition} sees it render empty ("the modal lies").
       expect(screen.getByText(/Full Cast/)).toBeInTheDocument();
     });
   });
@@ -156,7 +151,6 @@ describe('NamingTokenModal', () => {
     it('footer shows rendered preview of current format value', () => {
       renderWithProviders(<NamingTokenModal {...defaultProps} />);
       expect(screen.getByText('Preview')).toBeInTheDocument();
-      // The mock renderTemplate returns the template as-is when no options
       expect(screen.getByText('{author}/{title}')).toBeInTheDocument();
     });
 
@@ -167,7 +161,6 @@ describe('NamingTokenModal', () => {
           namingOptions={{ separator: 'period', case: 'upper' }}
         />,
       );
-      // Mock prepends [sep:period] and [case:upper] when non-default options are passed
       expect(screen.getByText(/\[sep:period\]/)).toBeInTheDocument();
       expect(screen.getByText(/\[case:upper\]/)).toBeInTheDocument();
     });

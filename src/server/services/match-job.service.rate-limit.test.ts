@@ -1,18 +1,4 @@
-/**
- * AC26 / F2 — provider fan-out regression test.
- *
- * Wires a REAL MetadataService against a mocked `METADATA_SEARCH_PROVIDER_FACTORIES`
- * so we can observe the underlying provider's `searchBooks` call count after a
- * `RateLimitError`. The match-job mock-service test (`match-job.service.test.ts`)
- * stubs `metadataService.searchBooks` directly — that boundary cannot prove the
- * planner doesn't fan out to the provider when the service-level rate-limit gate
- * short-circuits.
- *
- * Strategy: the provider rejects on the first call with `RateLimitError`. The
- * service's internal `setRateLimited` sets the backoff, and `withThrottle`
- * short-circuits subsequent calls via `isRateLimited` — the planner's remaining
- * attempts return `[]` without ever invoking the provider.
- */
+// Use real MetadataService: a direct searchBooks stub cannot prove provider fan-out stops after 429.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { RateLimitError, METADATA_SEARCH_PROVIDER_FACTORIES } from '@core/index.js';
@@ -36,8 +22,6 @@ const mockAudnexus = {
   type: 'audnexus',
   getBook: vi.fn().mockResolvedValue(null),
   getAuthor: vi.fn().mockResolvedValue(null),
-  // #1942 — the chapter-runtime lookup the corroboration bridge calls on a
-  // would-be duration mismatch.
   getChapterRuntime: vi.fn().mockResolvedValue({ kind: 'not_found' }),
 };
 
@@ -74,7 +58,7 @@ describe('MatchJobService — rate-limit provider fan-out (AC26 / F2)', () => {
   let settingsService: SettingsService;
 
   beforeEach(() => {
-    vi.mocked(METADATA_SEARCH_PROVIDER_FACTORIES); // ensure mock factories are available
+    vi.mocked(METADATA_SEARCH_PROVIDER_FACTORIES);
     mockAudibleProvider.searchBooks.mockReset();
     mockAudibleProvider.searchSeries.mockReset();
     mockAudibleProvider.getBook.mockReset();
@@ -100,12 +84,7 @@ describe('MatchJobService — rate-limit provider fan-out (AC26 / F2)', () => {
   });
 
   it('AC26 — RateLimitError on first attempt: provider.searchBooks called exactly once across multi-attempt planner', async () => {
-    // Tag-derived input that drives the planner to emit MULTIPLE attempts:
-    //   1. exact: 'Imagine Me - Part 3 Tahereh Mafi'
-    //   2. album-derived: 'Imagine Me' (after dash-series-keyword + cleanTagTitle)
-    //   3. strip-trailing-part: 'Imagine Me'  (deduped against album)
-    //   4. strip-leading-series: same as exact (no match) → deduped
-    // Without the rate-limit gate, the planner would fan out to 2+ provider calls.
+    // These tags produce two distinct provider queries without the rate-limit gate.
     vi.mocked(scanAudioDirectory).mockResolvedValue({
       codec: 'AAC',
       bitrate: 128000,
@@ -122,10 +101,6 @@ describe('MatchJobService — rate-limit provider fan-out (AC26 / F2)', () => {
       tagAlbum: 'Imagine Me - Shatter Me Series, Book 6',
     });
 
-    // First provider call rejects with RateLimitError. The service's
-    // `withThrottle` catches it, sets `rateLimitUntil` for Audible.com, and
-    // returns the fallback `{ books: [] }`. Subsequent calls short-circuit via
-    // the `isRateLimited` gate before reaching the provider.
     mockAudibleProvider.searchBooks.mockRejectedValueOnce(new RateLimitError(60_000, 'Audible.com'));
 
     const candidate: MatchCandidate = {
@@ -137,23 +112,15 @@ describe('MatchJobService — rate-limit provider fan-out (AC26 / F2)', () => {
     const id = matchService.createJob([candidate]);
     await waitForJob(matchService, id);
 
-    // Per-book rate-limit containment must NOT reach the run() catch (#1864) — the
-    // job completes normally, never terminalizes 'failed'.
+    // Rate-limit containment must not terminalize the job.
     expect(matchService.getJob(id)!.status).toBe('completed');
     const result = matchService.getJob(id)!.results[0];
     expect(result!.confidence).toBe('none');
 
-    // The load-bearing assertion: provider was called EXACTLY ONCE despite the
-    // planner's multi-attempt sequence. If the planner bypassed the service
-    // gate (or if MetadataService's `isRateLimited` short-circuit broke), this
-    // would be ≥ 2.
     expect(mockAudibleProvider.searchBooks).toHaveBeenCalledTimes(1);
   });
 
-  // #1942 — same boundary, for the chapter-runtime corroboration. The mock-service
-  // match-job test stubs `metadataService.getChapterRuntimeSeconds` directly, which
-  // cannot prove the lookup is throttled and 429-gated rather than reaching the
-  // provider on its own.
+  // A direct chapter-runtime stub cannot prove the provider backoff boundary.
   describe('chapter-runtime corroboration through the real service (#1942)', () => {
     const FABLEHAVEN_ASIN = 'B00CXXEX8W';
 
@@ -189,7 +156,9 @@ describe('MatchJobService — rate-limit provider fan-out (AC26 / F2)', () => {
     }
 
     it('rescues the would-be mismatch through the real Audnexus bridge', async () => {
-      mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'ok', runtimeLengthMs: 33219490, isAccurate: true });
+      mockAudnexus.getChapterRuntime.mockResolvedValue({
+        kind: 'ok', runtimeLengthMs: 33219490, isAccurate: true, trimmedRuntimeMs: 33219490, trimmedChapterCount: 0,
+      });
 
       const result = await runMatch();
 
@@ -203,13 +172,12 @@ describe('MatchJobService — rate-limit provider fan-out (AC26 / F2)', () => {
 
       const result = await runMatch();
 
-      // Degrades — it must NOT escape into matchSingleBook's catch as 'none'.
       expect(result.confidence).toBe('medium');
       expect(result.reasonKind).toBe('duration-mismatch');
       expect(result.error).toBeUndefined();
 
-      // The provider-wide gate is armed, so the next Audnexus call short-circuits.
-      await expect(metadataService.getChapterRuntimeSeconds('B_ANY_OTHER')).resolves.toBeUndefined();
+      // The armed provider-wide gate returns the empty-runtime sentinel without another call.
+      await expect(metadataService.getChapterRuntimeSeconds('B_ANY_OTHER')).resolves.toEqual({});
       expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(1);
     });
   });

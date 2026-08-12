@@ -60,8 +60,7 @@ export class TorznabIndexer implements IndexerAdapter {
 
     const url = `${this.apiUrl}/api?${params.toString()}`;
 
-    // All errors (fetch, parse, proxy) bubble up to IndexerService.searchAll()
-    // which catches and logs warnings per-indexer, then continues with remaining indexers
+    // Let the service isolate and log per-indexer failures.
     const fetched = await this.fetchXml(url, options?.signal);
     const parsed = this.parseSearchResults(fetched.body, limit);
     return {
@@ -92,7 +91,7 @@ export class TorznabIndexer implements IndexerAdapter {
           : `Connected to ${this.name}`,
       };
 
-      // Resolve exit IP when using a standard proxy
+      // FlareSolverr does not expose the standard proxy's exit-IP path.
       if (this.proxyUrl && !this.flareSolverrUrl) {
         result.ip = await resolveProxyIp(this.proxyUrl);
       }
@@ -107,7 +106,7 @@ export class TorznabIndexer implements IndexerAdapter {
   }
 
   private async fetchXml(url: string, signal?: AbortSignal) {
-    // FlareSolverr takes precedence over standard proxy
+    // FlareSolverr takes precedence over the standard proxy.
     if (this.flareSolverrUrl) {
       return fetchWithProxy({
         url,
@@ -127,7 +126,7 @@ export class TorznabIndexer implements IndexerAdapter {
   private parseSearchResults(xml: string, limit: number): { results: SearchResult[]; parseStats: IndexerSearchResponse['parseStats']; debugTrace: IndexerParseTrace[] } {
     const $ = cheerio.load(xml, { xmlMode: true });
 
-    // Validate RSS structure — invalid/non-RSS payloads must throw, not silently return []
+    // Invalid/non-RSS payloads are boundary failures, not empty result sets.
     if ($('rss').length === 0 && $('channel').length === 0) {
       const apiError = $('error').attr('description') || $('error').attr('code');
       if (apiError) {
@@ -164,7 +163,6 @@ export class TorznabIndexer implements IndexerAdapter {
         $item.find('link').first().text().trim() ||
         undefined;
 
-      // If no direct download URL but we have an infoHash, build a magnet URI
       if (!downloadUrl && infoHash) {
         downloadUrl = buildMagnetUri(infoHash, title);
       }

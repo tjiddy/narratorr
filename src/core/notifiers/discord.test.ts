@@ -89,7 +89,7 @@ describe('DiscordNotifier', () => {
     const fields = new Map(body.embeds[0]!.fields.map((f) => [f.name, f.value]));
     expect(fields.get('Source')).toBe('library');
     expect(fields.get('Status')).toBe('complete');
-    expect(fields.get('Queued')).toBe('0'); // required zero not dropped
+    expect(fields.get('Queued')).toBe('0');
     expect(fields.get('Held')).toBe('1');
     expect(fields.get('Skipped')).toBe('0');
     expect(fields.get('Failed')).toBe('0');

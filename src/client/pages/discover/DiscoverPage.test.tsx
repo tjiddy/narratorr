@@ -9,7 +9,12 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
-vi.mock('@/lib/api', () => ({
+// The 409 reader is deliberately NOT stubbed: the discriminator rule is what these tests assert.
+// `ApiError` must be the REAL class — readAddBookConflict gates on `instanceof ApiError` inside a
+// module this factory does not replace, so a look-alike reads every 409 as a plain failure (#2258).
+vi.mock('@/lib/api', async () => ({
+  readAddBookConflict: (await import('@/lib/api/add-book-conflict.js')).readAddBookConflict,
+  formatReviewConflictMessage: (await import('@/lib/api/add-book-conflict.js')).formatReviewConflictMessage,
   api: {
     getDiscoverSuggestions: vi.fn(),
     addBook: vi.fn(),
@@ -19,11 +24,7 @@ vi.mock('@/lib/api', () => ({
     getBookStats: vi.fn(),
     getSettings: vi.fn(),
   },
-  ApiError: class extends Error {
-    status: number;
-    body: unknown;
-    constructor(s: number, b: unknown) { super(`HTTP ${s}`); this.status = s; this.body = b; }
-  },
+  ApiError: (await import('@/lib/api/client.js')).ApiError,
 }));
 
 import { api } from '@/lib/api';
@@ -123,7 +124,7 @@ describe('DiscoverPage', () => {
     });
 
     it('shows loading skeleton during initial fetch', () => {
-      mockApi.getDiscoverSuggestions.mockReturnValue(new Promise(() => {})); // never resolves
+      mockApi.getDiscoverSuggestions.mockReturnValue(new Promise(() => {})); // Never resolves; keeps the request pending.
       mockApi.getBookStats.mockResolvedValue(makeStats());
 
       renderWithProviders(<DiscoverPage />);
@@ -253,7 +254,7 @@ describe('DiscoverPage', () => {
     it('refresh button calls refreshDiscover() and shows loading indicator', async () => {
       mockApi.getDiscoverSuggestions.mockResolvedValue([makeSuggestion()]);
       mockApi.getBookStats.mockResolvedValue(makeStats());
-      mockApi.refreshDiscover.mockReturnValue(new Promise(() => {})); // never resolves
+      mockApi.refreshDiscover.mockReturnValue(new Promise(() => {})); // Never resolves; keeps the request pending.
 
       renderWithProviders(<DiscoverPage />);
 
@@ -274,7 +275,6 @@ describe('DiscoverPage', () => {
         makeSuggestion({ id: 2, title: 'Stays' }),
       ]);
       mockApi.getBookStats.mockResolvedValue(makeStats());
-      // Dismiss will succeed and hide the card
       mockApi.dismissDiscoverSuggestion.mockResolvedValue({ id: 1, status: 'dismissed' });
       mockApi.refreshDiscover.mockResolvedValue({});
 
@@ -284,17 +284,14 @@ describe('DiscoverPage', () => {
         expect(screen.getByText('Will Dismiss')).toBeInTheDocument();
       });
 
-      // Dismiss a card — it disappears optimistically
       await userEvent.click(screen.getByLabelText(/dismiss.*will dismiss/i));
       expect(screen.queryByText('Will Dismiss')).not.toBeInTheDocument();
 
-      // Click Refresh — should clear removedIds and show the card again
       await userEvent.click(screen.getByText('Refresh'));
 
       await waitFor(() => {
         expect(toast.success).toHaveBeenCalledWith('Suggestions refreshed');
       });
-      // Card visible again since removedIds was cleared
       expect(screen.getByText('Will Dismiss')).toBeInTheDocument();
     });
 
@@ -326,7 +323,6 @@ describe('DiscoverPage', () => {
       await waitFor(() => {
         expect(screen.getByTestId('discover-empty')).toBeInTheDocument();
       });
-      // Verify header affordances are present in no-suggestions state
       expect(screen.getByText('Refresh')).toBeInTheDocument();
       expect(screen.getByText('Showing 0 suggestions')).toBeInTheDocument();
     });
@@ -349,12 +345,10 @@ describe('DiscoverPage', () => {
         expect(screen.getByText('Add Me')).toBeInTheDocument();
       });
 
-      // Click Add to open popover, then confirm
       const addButtons = screen.getAllByRole('button', { name: /^add book$/i });
       await userEvent.click(addButtons[0]!);
       await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
 
-      // Card stays visible (no optimistic remove)
       await waitFor(() => {
         expect(toast.success).toHaveBeenCalledWith('Added to library');
       });
@@ -376,14 +370,12 @@ describe('DiscoverPage', () => {
         expect(screen.getByText('Fail Add')).toBeInTheDocument();
       });
 
-      // Click Add to open popover, then confirm
       await userEvent.click(screen.getByRole('button', { name: /^add book$/i }));
       await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
 
       await waitFor(() => {
         expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('Failed to add book'));
       });
-      // Card should still be visible
       expect(screen.getByText('Fail Add')).toBeInTheDocument();
     });
 
@@ -405,12 +397,10 @@ describe('DiscoverPage', () => {
 
       await userEvent.click(screen.getByLabelText(/dismiss.*dismiss me/i));
 
-      // Card disappears optimistically
       expect(screen.queryByText('Dismiss Me')).not.toBeInTheDocument();
       expect(screen.getByText('Stay Here')).toBeInTheDocument();
       expect(mockApi.dismissDiscoverSuggestion).toHaveBeenCalledWith(7);
 
-      // Resolve
       resolveDismiss({ id: 7, status: 'dismissed' });
 
       await waitFor(() => {
@@ -435,21 +425,16 @@ describe('DiscoverPage', () => {
 
       await userEvent.click(screen.getByLabelText(/dismiss.*fail dismiss/i));
 
-      // Card disappears optimistically (mutation still pending)
       expect(screen.queryByText('Fail Dismiss')).not.toBeInTheDocument();
 
-      // Now reject the mutation
       rejectDismiss(new Error('network'));
 
-      // Card reappears after error
       await waitFor(() => {
         expect(screen.getByText('Fail Dismiss')).toBeInTheDocument();
       });
       expect(toast.error).toHaveBeenCalledWith('Failed to dismiss suggestion');
     });
   });
-
-  // --- #501: Client-side language and reject word filtering ---
 
   describe('language filtering', () => {
     it('hides suggestions with language not in user configured languages', async () => {
@@ -538,12 +523,10 @@ describe('DiscoverPage', () => {
 
       renderWithProviders(<DiscoverPage />);
 
-      // Both should render — no filtering when settings unavailable
       await waitFor(() => {
         expect(screen.getByText('French Book')).toBeInTheDocument();
       });
       expect(screen.getByText('English Book')).toBeInTheDocument();
-      // Should NOT show error state
       expect(screen.queryByTestId('discover-error')).not.toBeInTheDocument();
     });
 
@@ -564,8 +547,6 @@ describe('DiscoverPage', () => {
       expect(screen.queryByText('Abridged English Book')).not.toBeInTheDocument();
       expect(screen.queryByText('Good German Book')).not.toBeInTheDocument();
     });
-
-    // ===== #993 — word-boundary matching =====
 
     it('does NOT hide "Unabridged" titles when rejectWords is "Abridged" (collision protection)', async () => {
       mockApi.getSettings.mockResolvedValue(makeSettings({ rejectWords: 'Abridged' }));
@@ -616,34 +597,24 @@ describe('DiscoverPage', () => {
         expect(screen.getByText('Added Book')).toBeInTheDocument();
       });
 
-      // Record call count before add
       const callsBefore = mockApi.getDiscoverSuggestions.mock.calls.length;
 
-      // Click Add to open popover, then confirm
       const addButtons = screen.getAllByRole('button', { name: /^add book$/i });
       await userEvent.click(addButtons[0]!);
       await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
 
-      // Card should still be visible with checkmark state
       await waitFor(() => {
         expect(screen.getByText('Added Book')).toBeInTheDocument();
       });
       expect(screen.getByText('Other Book')).toBeInTheDocument();
 
-      // The added card shows the "In library" checkmark and no longer has an Add button
       expect(screen.getByText('In Library')).toBeInTheDocument();
-      // Other Book should still have its Add button
       const remainingAddButtons = screen.getAllByRole('button', { name: /^add book$/i });
-      expect(remainingAddButtons).toHaveLength(1); // only Other Book's Add button
+      expect(remainingAddButtons).toHaveLength(1);
 
-      // Suggestions query should NOT have been re-fetched after add
       expect(mockApi.getDiscoverSuggestions.mock.calls.length).toBe(callsBefore);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // Diversity filter (#407)
-  // -------------------------------------------------------------------------
 
   describe('diversity filter option', () => {
     it('renders Diversity option in filter dropdown', async () => {
@@ -678,7 +649,6 @@ describe('DiscoverPage', () => {
     });
   });
 
-  // --- #524: unified add flow via api.addBook + mark-added ---
   describe('unified add flow', () => {
     it('calls api.addBook with full inline payload including authorAsin, publishedDate, and overrides', async () => {
       mockApi.addBook.mockResolvedValue({ id: 10 });
@@ -731,10 +701,10 @@ describe('DiscoverPage', () => {
       });
     });
 
-    it('treats addBook 409 as success and marks suggestion added', async () => {
+    it('treats a same-recording addBook 409 as success and marks suggestion added', async () => {
       const { ApiError: MockApiError } = await import('@/lib/api');
       const { toast } = await import('sonner');
-      mockApi.addBook.mockRejectedValue(new MockApiError(409, {}));
+      mockApi.addBook.mockRejectedValue(new MockApiError(409, { conflict: 'same-recording', id: 7, title: 'Owned' }));
       mockApi.markDiscoverSuggestionAdded.mockResolvedValue({ suggestion: { id: 1, status: 'added' } });
       mockApi.getDiscoverSuggestions.mockResolvedValue([makeSuggestion({ id: 1 })]);
       mockApi.getBookStats.mockResolvedValue(makeStats());
@@ -749,6 +719,81 @@ describe('DiscoverPage', () => {
         expect(toast.info).toHaveBeenCalledWith('Already in library');
       });
       expect(mockApi.markDiscoverSuggestionAdded).toHaveBeenCalledWith(1);
+    });
+
+    // The ordering pin (#2258): the review arm is tested first, so a 409 whose discriminator does
+    // not parse must fall through to the ownership claim. Inverting the branches lands these two
+    // bodies in the review arm and drops a real ownership claim on the floor.
+    it.each([
+      ['owned-race', { conflict: 'owned-race', id: 7, title: 'Owned' }],
+      ['an absent discriminator', { id: 7, title: 'Owned' }],
+      ['an unrecognized discriminator', { conflict: 'bogus', id: 7, title: 'Owned' }],
+    ])('claims ownership of the incumbent for %s', async (_label, body) => {
+      const { ApiError: MockApiError } = await import('@/lib/api');
+      const { toast } = await import('sonner');
+      mockApi.addBook.mockRejectedValue(new MockApiError(409, body));
+      mockApi.markDiscoverSuggestionAdded.mockResolvedValue({ suggestion: { id: 1, status: 'added' } });
+      mockApi.getDiscoverSuggestions.mockResolvedValue([makeSuggestion({ id: 1 })]);
+      mockApi.getBookStats.mockResolvedValue(makeStats());
+
+      renderWithProviders(<DiscoverPage />);
+      await waitFor(() => { expect(screen.getByText('Test Book')).toBeInTheDocument(); });
+
+      await userEvent.click(screen.getByRole('button', { name: /^add book$/i }));
+      await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
+
+      await waitFor(() => {
+        expect(toast.info).toHaveBeenCalledWith('Already in library');
+      });
+      expect(mockApi.markDiscoverSuggestionAdded).toHaveBeenCalledWith(1);
+      // The parsed incumbent id is what the card links to, so it is observable rather than internal.
+      expect(screen.getByTestId('suggestion-title-link')).toHaveAttribute('href', '/books/7');
+    });
+
+    // A review verdict is the resolver abstaining; marking the suggestion added would write a
+    // durable ownership claim the server never made (#2199).
+    describe('#2199 a review 409 leaves the suggestion unowned', () => {
+      async function addOnce() {
+        const { ApiError: MockApiError } = await import('@/lib/api');
+        mockApi.addBook.mockRejectedValue(new MockApiError(409, { conflict: 'review', id: 88, title: 'Piranesi' }));
+        mockApi.getDiscoverSuggestions.mockResolvedValue([makeSuggestion({ id: 1 })]);
+        mockApi.getBookStats.mockResolvedValue(makeStats());
+
+        renderWithProviders(<DiscoverPage />);
+        await waitFor(() => { expect(screen.getByText('Test Book')).toBeInTheDocument(); });
+
+        await userEvent.click(screen.getByRole('button', { name: /^add book$/i }));
+        await userEvent.click(screen.getByRole('button', { name: /add to library/i }));
+      }
+
+      it('never writes the server-side added mark', async () => {
+        const { toast } = await import('sonner');
+        await addOnce();
+
+        await waitFor(() => { expect(toast.info).toHaveBeenCalled(); });
+        expect(mockApi.markDiscoverSuggestionAdded).not.toHaveBeenCalled();
+      });
+
+      it('renders no In Library badge and keeps the Add control mounted', async () => {
+        const { toast } = await import('sonner');
+        await addOnce();
+
+        await waitFor(() => { expect(toast.info).toHaveBeenCalled(); });
+        expect(screen.queryByText('In Library')).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /^add book$/i })).toBeInTheDocument();
+      });
+
+      it('reuses the possible-duplicate wording rather than claiming ownership', async () => {
+        const { toast } = await import('sonner');
+        await addOnce();
+
+        await waitFor(() => {
+          expect(toast.info).toHaveBeenCalledWith(
+            "Possible duplicate (review): may be the same recording as 'Piranesi'",
+          );
+        });
+        expect(toast.info).not.toHaveBeenCalledWith('Already in library');
+      });
     });
 
     it('does not call mark-added on addBook non-409 failure', async () => {
@@ -770,7 +815,6 @@ describe('DiscoverPage', () => {
     });
   });
 
-  // #547/#586: markAdded fire-and-forget silently catches rejection
   describe('markAdded silent catch (#586)', () => {
     it('silently catches markDiscoverSuggestionAdded rejection and preserves optimistic added state', async () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -789,10 +833,8 @@ describe('DiscoverPage', () => {
         expect(mockApi.markDiscoverSuggestionAdded).toHaveBeenCalledWith(1);
       });
 
-      // Rejection is silently swallowed — no console.warn
       expect(warnSpy).not.toHaveBeenCalled();
 
-      // Optimistic added state is preserved despite rejection
       expect(screen.getByText('Test Book')).toBeInTheDocument();
       expect(screen.getByText('In Library')).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /^add book$/i })).not.toBeInTheDocument();

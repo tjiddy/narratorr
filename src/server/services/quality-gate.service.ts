@@ -27,10 +27,7 @@ export class QualityGateService {
     private log: FastifyBaseLogger,
   ) {}
 
-  /**
-   * Query completed downloads with externalId, left-joined with books + narrators.
-   * Batch-input seam for QualityGateOrchestrator (mirrors ImportService.getEligibleDownloads).
-   */
+  /** Batch input for the orchestrator, including books and narrators. */
   async getCompletedDownloads(): Promise<Array<{ download: DownloadRow; book: BookWithNarrators | null }>> {
     const rows = await this.db
       .select({ download: downloads, book: books })
@@ -60,7 +57,6 @@ export class QualityGateService {
     }));
   }
 
-  /** Single-record lookup for a completed download by ID, with book + narrators. */
   async getCompletedDownloadById(downloadId: number): Promise<{ download: DownloadRow; book: BookWithNarrators | null } | null> {
     const rows = await this.db
       .select({ download: downloads, book: books })
@@ -84,29 +80,18 @@ export class QualityGateService {
     return { download: row.download, book: null };
   }
 
-  /**
-   * Pure quality decision: given a download, book, and scan result,
-   * compute the decision (accept/reject/hold), execute the DB status transition,
-   * and return the result for the orchestrator to dispatch side effects.
-   */
+  /** Decide quality and persist its download transition; the orchestrator owns side effects. */
   async processDownload(
     download: DownloadRow,
     book: BookWithNarrators | null,
     scanResult: { totalSize: number; totalDuration: number; tagNarrator?: string; channels: number; codec: string },
   ): Promise<QualityDecision> {
-    // Build quality assessment (pure computation)
     const reason = buildQualityAssessment(scanResult, book);
     const { holdReasons, mbPerHour: newMbPerHour, existingMbPerHour } = reason;
 
-    // Imported-book replacement guard (#1103 F2, #1144): an auto-upgrade-style
-    // replacement of an already-imported book must be held for explicit review.
-    // Reads `download.bookStatusAtGrab` (the book's status when the user pressed
-    // Grab, captured by DownloadOrchestrator) rather than `book.status`, which
-    // is always `'importing'` by gate time. A null value (legacy pre-migration
-    // rows) defaults to `'imported'` — conservative; an old replacement that
-    // lacks the durable signal still gets held for review. Non-`imported`
-    // pre-grab statuses (`wanted`/`failed`/`missing`) signal explicit user
-    // intent to replace, so the guard skips and the decision falls through.
+    // Existing-file replacements grabbed while imported require explicit review.
+    // Use durable pre-grab status because book.status is importing by gate time; null legacy
+    // rows default conservatively to imported, while wanted/failed/missing show replacement intent.
     const grabStatus = download.bookStatusAtGrab ?? 'imported';
     if (book !== null && book.path !== null && grabStatus === 'imported') {
       reason.action = 'held';
@@ -116,14 +101,13 @@ export class QualityGateService {
       return { action: 'held', reason, statusTransition: { from: 'checking', to: 'pending_review' } };
     }
 
-    // Decision tree (book.path === null — first download flow)
     if (holdReasons.length > 0) {
       reason.action = 'held';
       await this.hold(download.id);
       this.log.info({ downloadId: download.id, holdReasons }, 'Quality gate: held for review');
       return { action: 'held', reason, statusTransition: { from: 'checking', to: 'pending_review' } };
     } else if (book !== null && book.path === null) {
-      // First download: book is a search placeholder with no files on disk — skip quality comparison
+      // A search placeholder has no existing files to compare.
       reason.action = 'imported';
       await this.autoImport(download.id);
       this.log.info({ downloadId: download.id }, 'Quality gate: first download auto-imported');
@@ -155,33 +139,20 @@ export class QualityGateService {
     });
   }
 
-  /** Hold for review — pipeline-only write to `pending_review`. */
   async hold(downloadId: number): Promise<void> {
     await transitionDownloadState(this.db, downloadId, { pipelineStage: 'pending_review' });
   }
 
-  /**
-   * Auto-import outcome — the pipeline approves with no import needed. This is a
-   * pipeline-only write that resets the stage to `idle` (display `completed`),
-   * NOT a `clientStatus` change: the client download had already finished. The
-   * import orchestrator then re-claims the `(completed, idle)` row.
-   */
+  // Approval resets only the pipeline stage; the import orchestrator reclaims completed/idle.
   async autoImport(downloadId: number): Promise<void> {
     await transitionDownloadState(this.db, downloadId, { pipelineStage: 'idle' });
   }
 
-  /**
-   * Pipeline failure — the sanctioned cross-axis write to the canonical failure
-   * tuple `(failed, idle)` in ONE guarded UPDATE.
-   */
+  /** Sanctioned cross-axis failure: land `(failed, idle)` in one transition. */
   async failPipeline(downloadId: number): Promise<void> {
     await transitionDownloadState(this.db, downloadId, { clientStatus: 'failed', pipelineStage: 'idle' });
   }
 
-  /**
-   * Approve a pending_review download — transition to importing.
-   * Returns context for the orchestrator to dispatch side effects.
-   */
   async approve(downloadId: number): Promise<{ id: number; status: string; download: DownloadRow; book: BookRow | null }> {
     const result = await this.db
       .select({ download: downloads, book: books })
@@ -197,7 +168,6 @@ export class QualityGateService {
       throw new QualityGateServiceError('Download is not pending review', 'INVALID_STATUS');
     }
 
-    // Pipeline-only write, guarded on the expected pending_review stage.
     await transitionDownloadState(this.db, downloadId, {
       expected: { pipelineStage: 'pending_review' },
       pipelineStage: 'importing',
@@ -207,10 +177,6 @@ export class QualityGateService {
     return { id: downloadId, status: 'importing', download: result[0]!.download, book: result[0]!.book };
   }
 
-  /**
-   * Reject a pending_review download — transition to failed.
-   * Returns context for the orchestrator to dispatch side effects.
-   */
   async reject(downloadId: number): Promise<{ id: number; status: string; download: DownloadRow; book: BookRow | null }> {
     const result = await this.db
       .select({ download: downloads, book: books })
@@ -230,7 +196,7 @@ export class QualityGateService {
       throw new QualityGateServiceError('Download is not pending review', 'INVALID_STATUS');
     }
 
-    // Pipeline rejection → canonical failure tuple in one guarded UPDATE.
+    // Canonical failure tuple must land atomically.
     await transitionDownloadState(this.db, downloadId, {
       expected: { pipelineStage: 'pending_review' },
       clientStatus: 'failed',
@@ -240,10 +206,7 @@ export class QualityGateService {
     return { id: downloadId, status: 'failed', download, book };
   }
 
-  /**
-   * Get quality gate data for a pending_review download.
-   * Returns the most recent held_for_review event reason as QualityDecisionReason.
-   */
+  /** Return the most recent held_for_review reason for a pending_review download, or null. */
   async getQualityGateData(downloadId: number): Promise<QualityDecisionReason | null> {
     const events = await this.db
       .select()
@@ -256,7 +219,6 @@ export class QualityGateService {
     const download = events[0]!;
     if (!download.bookId) return null;
 
-    // Find the most recent held_for_review event for this download
     const eventResults = await this.db
       .select()
       .from(bookEvents)
@@ -269,14 +231,10 @@ export class QualityGateService {
 
     if (eventResults.length === 0) return null;
 
-    // Validate the persisted JSON at the read boundary. A malformed or legacy blob
-    // (missing a required key, or a present-`null` non-null field) collapses to null
-    // — the activity route omits the qualityGate field and the card takes its no-data
-    // branch, rather than leaking a partial object that crashes downstream readers.
+    // Invalid legacy JSON becomes no data; never expose partial reasons to clients.
     const parsed = qualityGateReasonSchema.safeParse(eventResults[0]!.reason);
     if (!parsed.success) {
-      // Zod issue paths exclude input values (#1404) — log paths only, never the
-      // reason field values, so a malformed/legacy row is diagnosable.
+      // Log issue paths only; reason values may be sensitive.
       this.log.warn(
         { downloadId, issuePaths: parsed.error.issues.map((i) => i.path.join('.')) },
         'Malformed quality-gate reason — degrading to no-data',
@@ -286,22 +244,16 @@ export class QualityGateService {
     return parsed.data;
   }
 
-  /**
-   * Batch-fetch quality gate data for multiple downloads.
-   * Returns a Map from downloadId → QualityDecisionReason | null.
-   * Chunks IN(...) queries at 999 to respect SQLite parameter limits.
-   */
+  /** Batch-fetch quality gate data into a downloadId → reason-or-null Map. */
   async getQualityGateDataBatch(downloadIds: number[]): Promise<Map<number, QualityDecisionReason | null>> {
     const result = new Map<number, QualityDecisionReason | null>();
     if (downloadIds.length === 0) return result;
 
-    // Initialize all IDs as null (covers not-found and no-bookId cases)
     for (const id of downloadIds) {
       result.set(id, null);
     }
 
-    // SQLite max parameters = 999. Downloads query only binds IN(...) IDs.
-    // Events query binds IN(...) IDs + 1 extra for eventType, so chunk at 998.
+    // SQLite allows 999 binds; event queries reserve one for eventType.
     const DOWNLOAD_CHUNK = 999;
     const EVENT_CHUNK = 998;
 
@@ -315,14 +267,12 @@ export class QualityGateService {
       allDownloads.push(...rows);
     }
 
-    // Filter to downloads with bookId
     const validIds = allDownloads
       .filter((dl) => dl.bookId !== null)
       .map((dl) => dl.id);
 
     if (validIds.length === 0) return result;
 
-    // Batch-fetch held_for_review events for valid downloads
     const allEvents: Array<{ downloadId: number | null; reason: unknown }> = [];
     for (let i = 0; i < validIds.length; i += EVENT_CHUNK) {
       const chunk = validIds.slice(i, i + EVENT_CHUNK);
@@ -337,12 +287,8 @@ export class QualityGateService {
       allEvents.push(...rows);
     }
 
-    // Map events to downloads — take the first (most recent, desc-ordered) event per
-    // download. Track processed IDs in a separate set rather than reusing the map's `null`
-    // value as the "unfilled" sentinel: a newest event that fails safeParse stores `null`,
-    // which is indistinguishable from unfilled — so without `processed`, the next older
-    // event for the same download would overwrite that null with stale valid data, breaking
-    // newest-event-wins and making the batch path disagree with getQualityGateData.
+    // Desc order makes the first event newest. Track processed separately because null is both
+    // a parsed result and initial sentinel; otherwise an older valid event can replace a malformed newest.
     const processed = new Set<number>();
     for (const event of allEvents) {
       const { downloadId } = event;
@@ -350,8 +296,7 @@ export class QualityGateService {
       processed.add(downloadId);
       const parsed = qualityGateReasonSchema.safeParse(event.reason);
       if (!parsed.success) {
-        // Zod issue paths exclude input values (#1404) — log paths only, never
-        // the reason field values.
+        // Log issue paths only; reason values may be sensitive.
         this.log.warn(
           { downloadId, issuePaths: parsed.error.issues.map((i) => i.path.join('.')) },
           'Malformed quality-gate reason — degrading to no-data',
@@ -363,10 +308,6 @@ export class QualityGateService {
     return result;
   }
 
-  /**
-   * Query downloads with pendingCleanup set (deferred rejection cleanup candidates).
-   * Returns raw download rows — the orchestrator handles seed-time checks and cleanup.
-   */
   async getDeferredCleanupCandidates(): Promise<DownloadRow[]> {
     return this.db
       .select()

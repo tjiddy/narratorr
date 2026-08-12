@@ -29,10 +29,7 @@ vi.mock('@/hooks/useMergeProgress', () => ({
   _resetForTesting: vi.fn(),
 }));
 
-// Spy on clampToTotal calls to verify effect dependency stability (F1).
-// The spy wraps the real hook — all behavior is preserved. clampToTotal is
-// already a stable useCallback ref, so the WeakMap lookup returns the same
-// wrapper across renders, preserving referential identity for useEffect deps.
+// Cache spy wrappers so instrumentation preserves clampToTotal's dependency identity.
 let clampToTotalCallCount = 0;
 type ClampFn = (total: number) => void;
 const clampWrapperCache = new WeakMap<ClampFn, ClampFn>();
@@ -81,7 +78,6 @@ vi.mock('@/lib/api', async () => {
       markEventFailed: vi.fn(),
       deleteEvent: vi.fn(),
       deleteEvents: vi.fn(),
-      // #1894 — the import-history section renders in the History tab.
       listImportSubmissions: vi.fn().mockResolvedValue({ data: [], total: 0 }),
       getImportSubmissionDetail: vi.fn(),
     },
@@ -106,7 +102,6 @@ const makeDownload = (overrides: Partial<Download> = {}): Download => ({
   ...overrides,
 });
 
-/** Helper: mock getActivity to return queue data */
 function mockActivityQueue(queue: Download[]) {
   vi.mocked(api.getActivity).mockResolvedValue({ data: queue, total: queue.length });
 }
@@ -117,21 +112,16 @@ beforeEach(() => {
 });
 
 describe('ActivityPage pagination clamp (#93)', () => {
-  const LIMIT = 50; // DEFAULT_LIMITS.activity
+  const LIMIT = 50;
 
-  // Build the exact query key that useActivitySection constructs via { ...params, section }
   const activityKey = (params: ActivityListParams & { section: 'queue' | 'history' }) =>
     queryKeys.activity(params);
 
-  // Use status:'completed' so refetchInterval returns false (no polling interference)
+  // Completed fixtures disable refetch polling.
   const makeCompletedDownloads = (n: number, startId = 1) =>
     Array.from({ length: n }, (_, i) => makeDownload({ id: startId + i, status: 'completed' }));
 
-  // Disable background refetches so setQueryData values are authoritative.
-  // staleTime: Infinity prevents TanStack Query from refetching when the query key
-  // changes after a clamp (e.g., offset changes from 100→50). Without this, TQ sees
-  // the cached data as stale and fires a background refetch using the mock, which may
-  // return a different total and overwrite the manually set value.
+  // Keep cache writes authoritative; a clamped-key refetch would restore the mock's stale total.
   function makeClampTestClient() {
     return new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: Infinity } },
@@ -148,12 +138,10 @@ describe('ActivityPage pagination clamp (#93)', () => {
     );
   }
 
-  // timeout: 15s — test navigates 4 pages via userEvent, each needing a fetch + waitFor
   it('queue page clamps to last valid page when total shrinks (page 3 → page 2 of 2)', async () => {
     const user = userEvent.setup();
     const queryClient = makeClampTestClient();
 
-    // Return 150 items for every getActivity call so the queue shows 3 pages
     vi.mocked(api.getActivity).mockImplementation(async (params) => {
       const offset = params?.offset ?? 0;
       return {
@@ -164,7 +152,6 @@ describe('ActivityPage pagination clamp (#93)', () => {
 
     renderWithCustomClient(queryClient);
 
-    // Wait for initial render: queue paginator at page 1 of 3
     await waitFor(() => {
       const labels = screen.getAllByText(/Page \d+ of \d+/);
       expect(labels).toHaveLength(1);
@@ -173,19 +160,13 @@ describe('ActivityPage pagination clamp (#93)', () => {
 
     const pageLabels = () => screen.getAllByText(/Page \d+ of \d+/);
 
-    // Navigate queue to page 3 via rendered Next page controls.
-    // placeholderData in useActivitySection prevents data→undefined during key change,
-    // so the clamp useEffect never fires spuriously and navigation succeeds.
-    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]!); // queue 1→2
+    // placeholderData prevents transient empty totals from clamping during navigation.
+    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]!);
     await waitFor(() => expect(pageLabels()[0]).toHaveTextContent('Page 2 of 3'));
 
-    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]!); // queue 2→3
+    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]!);
     await waitFor(() => expect(pageLabels()[0]).toHaveTextContent('Page 3 of 3'));
 
-    // Simulate queue total shrinking to 100 (2 pages). Update both the current page
-    // (offset=100) and the clamped-to page (offset=50) so totalPages reflects the new total.
-    // staleTime: Infinity in makeClampTestClient prevents background refetches from
-    // overwriting these values with the mock's stale total=150.
     act(() => {
       queryClient.setQueryData(
         activityKey({ section: 'queue', limit: LIMIT, offset: 100 }),
@@ -197,7 +178,6 @@ describe('ActivityPage pagination clamp (#93)', () => {
       );
     });
 
-    // Queue's clampToTotal useEffect fires: page 3 > totalPages(100)=2 → clamps to page 2.
     await waitFor(() => expect(pageLabels()[0]).toHaveTextContent('Page 2 of 2'));
   }, 15000);
 
@@ -221,17 +201,11 @@ describe('ActivityPage pagination clamp (#93)', () => {
       expect(labels[0]).toHaveTextContent('Page 1 of 3');
     });
 
-    // Navigate queue to page 2
     await user.click(screen.getAllByRole('button', { name: /next page/i })[0]!);
     await waitFor(() => expect(screen.getAllByText(/Page \d+ of \d+/)[0]).toHaveTextContent('Page 2 of 3'));
 
-    // Snapshot clampToTotal call count after navigation settles.
-    // The queue effect has fired during initial render and navigation.
     const countBeforeRerender = clampToTotalCallCount;
 
-    // Trigger a re-render by updating query cache data WITHOUT changing totals.
-    // This causes usePagination to return a new object (unstable ref) but the
-    // destructured clampToTotal callbacks remain stable.
     act(() => {
       queryClient.setQueryData(
         activityKey({ section: 'queue', limit: LIMIT, offset: 50 }),
@@ -239,16 +213,11 @@ describe('ActivityPage pagination clamp (#93)', () => {
       );
     });
 
-    // Page labels are unchanged — paginator still shows pre-rerender state
     await waitFor(() => {
       const labels = screen.getAllByText(/Page \d+ of \d+/);
       expect(labels[0]).toHaveTextContent('Page 2 of 3');
     });
 
-    // With stable deps (clampQueuePage), the clamp effect does not re-fire
-    // because queueTotal didn't change and the callback is a stable ref.
-    // With the old full-object deps [queueTotal, queuePagination], the effect would
-    // re-fire on every render because usePagination returns a new object each time.
     expect(clampToTotalCallCount).toBe(countBeforeRerender);
   }, 15000);
 
@@ -272,14 +241,11 @@ describe('ActivityPage pagination clamp (#93)', () => {
       expect(labels[0]).toHaveTextContent('Page 1 of 3');
     });
 
-    // Navigate queue to page 3
     await user.click(screen.getAllByRole('button', { name: /next page/i })[0]!);
     await waitFor(() => expect(screen.getAllByText(/Page \d+ of \d+/)[0]).toHaveTextContent('Page 2 of 3'));
     await user.click(screen.getAllByRole('button', { name: /next page/i })[0]!);
     await waitFor(() => expect(screen.getAllByText(/Page \d+ of \d+/)[0]).toHaveTextContent('Page 3 of 3'));
 
-    // Shrink total to 30 (≤ limit=50, so only 1 page).
-    // staleTime: Infinity in makeClampTestClient prevents background refetches.
     act(() => {
       queryClient.setQueryData(
         activityKey({ section: 'queue', limit: LIMIT, offset: 100 }),
@@ -291,13 +257,11 @@ describe('ActivityPage pagination clamp (#93)', () => {
       );
     });
 
-    // Queue total (30) ≤ limit (50), so Pagination returns null — no page labels visible.
     await waitFor(() => {
       expect(screen.queryByText(/Page \d+ of \d+/)).not.toBeInTheDocument();
     });
 
-    // Restore queue total above limit to prove page state actually clamped to 1.
-    // If clamp failed (page stuck at 3), this would show "Page 3 of 3" instead.
+    // Restore pagination visibility to expose the hidden clamped page state.
     act(() => {
       queryClient.setQueryData(
         activityKey({ section: 'queue', limit: LIMIT, offset: 0 }),
@@ -308,7 +272,7 @@ describe('ActivityPage pagination clamp (#93)', () => {
     await waitFor(() => {
       const labels = screen.getAllByText(/Page \d+ of \d+/);
       expect(labels).toHaveLength(1);
-      expect(labels[0]).toHaveTextContent('Page 1 of 3'); // confirms page clamped to 1
+      expect(labels[0]).toHaveTextContent('Page 1 of 3');
     });
   }, 15000);
 
@@ -332,12 +296,9 @@ describe('ActivityPage pagination clamp (#93)', () => {
       expect(labels[0]).toHaveTextContent('Page 1 of 3');
     });
 
-    // Navigate queue to page 2
     await user.click(screen.getAllByRole('button', { name: /next page/i })[0]!);
     await waitFor(() => expect(screen.getAllByText(/Page \d+ of \d+/)[0]).toHaveTextContent('Page 2 of 3'));
 
-    // Shrink total to 0.
-    // staleTime: Infinity in makeClampTestClient prevents background refetches.
     act(() => {
       queryClient.setQueryData(
         activityKey({ section: 'queue', limit: LIMIT, offset: 50 }),
@@ -349,13 +310,11 @@ describe('ActivityPage pagination clamp (#93)', () => {
       );
     });
 
-    // Queue total (0) ≤ limit (50), so Pagination returns null — no page labels visible.
     await waitFor(() => {
       expect(screen.queryByText(/Page \d+ of \d+/)).not.toBeInTheDocument();
     });
 
-    // Restore queue total above limit to prove page state actually clamped to 1.
-    // If clamp failed (page stuck at 2), this would show "Page 2 of 3" instead.
+    // Restore pagination visibility to expose the hidden clamped page state.
     act(() => {
       queryClient.setQueryData(
         activityKey({ section: 'queue', limit: LIMIT, offset: 0 }),
@@ -366,7 +325,7 @@ describe('ActivityPage pagination clamp (#93)', () => {
     await waitFor(() => {
       const labels = screen.getAllByText(/Page \d+ of \d+/);
       expect(labels).toHaveLength(1);
-      expect(labels[0]).toHaveTextContent('Page 1 of 3'); // confirms page clamped to 1
+      expect(labels[0]).toHaveTextContent('Page 1 of 3');
     });
   }, 15000);
 });
@@ -387,8 +346,6 @@ describe('ActivityPage', () => {
 
     renderWithProviders(<ActivityPage />);
 
-    // Should not crash — TanStack Query handles the error
-    // After rejection, loading spinner disappears but page renders
     await waitFor(() => {
       expect(screen.getByText('Activity')).toBeInTheDocument();
     });
@@ -492,11 +449,9 @@ describe('ActivityPage', () => {
       expect(screen.getByText('Cancel Me')).toBeInTheDocument();
     });
 
-    // "Cancel & Blacklist" text is inside a hidden sm:inline span, so find via text then traverse to button
     const cancelSpan = screen.getByText('Cancel & Blacklist');
     await user.click(cancelSpan.closest('button')!);
 
-    // API was called with correct ID (TanStack Query passes extra context arg)
     await waitFor(() => {
       expect(vi.mocked(api.cancelDownload).mock.calls[0]![0]).toBe(7);
     });
@@ -516,14 +471,11 @@ describe('ActivityPage', () => {
       expect(screen.getByText('Retry Me')).toBeInTheDocument();
     });
 
-    // Error should be visible before retry
     expect(screen.getByText('Timed out')).toBeInTheDocument();
 
-    // "Retry" text is inside a hidden sm:inline span, so find via text then traverse to button
     const retrySpan = screen.getByText('Retry');
     await user.click(retrySpan.closest('button')!);
 
-    // API was called with correct ID (TanStack Query passes extra context arg)
     await waitFor(() => {
       expect(vi.mocked(api.retryDownload).mock.calls[0]![0]).toBe(9);
     });
@@ -563,7 +515,6 @@ describe('ActivityPage', () => {
       expect(screen.getByText('Review Me')).toBeInTheDocument();
     });
 
-    // Expand the pending review panel to reveal approve/reject buttons
     const expandToggle = screen.getByRole('button', { expanded: false });
     await user.click(expandToggle);
 
@@ -610,7 +561,6 @@ describe('ActivityPage', () => {
       expect(screen.getByText('Reject Me')).toBeInTheDocument();
     });
 
-    // Expand the pending review panel to reveal approve/reject buttons
     const expandToggle = screen.getByRole('button', { expanded: false });
     await user.click(expandToggle);
 
@@ -657,7 +607,6 @@ describe('ActivityPage', () => {
       expect(screen.getByText('Search Again')).toBeInTheDocument();
     });
 
-    // Expand the pending review panel
     const expandToggle = screen.getByRole('button', { expanded: false });
     await user.click(expandToggle);
 
@@ -693,7 +642,6 @@ describe('ActivityPage', () => {
     const row2 = makeDownload({ id: 31, title: 'Row Two', status: 'pending_review', qualityGate: gate });
 
     mockActivityQueue([row1, row2]);
-    // Never resolve — keeps mutation in pending state
     vi.mocked(api.rejectDownload).mockReturnValue(new Promise(() => {}));
 
     renderWithProviders(<ActivityPage />);
@@ -703,25 +651,20 @@ describe('ActivityPage', () => {
       expect(screen.getByText('Row Two')).toBeInTheDocument();
     });
 
-    // Expand both panels
     const expandToggles = screen.getAllByRole('button', { expanded: false });
     for (const toggle of expandToggles) {
       await user.click(toggle);
     }
 
-    // Click "Reject" on Row One
     const rejectButtons = screen.getAllByText('Reject');
     await user.click(rejectButtons[0]!.closest('button')!);
 
-    // Row One shows spinner on its Reject button
     await waitFor(() => {
       expect(screen.getByText('Rejecting...')).toBeInTheDocument();
     });
 
-    // Row Two's Reject button stays non-loading
     const remainingRejectButtons = screen.getAllByText('Reject');
     expect(remainingRejectButtons.length).toBeGreaterThanOrEqual(1);
-    // "Rejecting..." should appear exactly once (only on Row One)
     expect(screen.getAllByText('Rejecting...')).toHaveLength(1);
   });
 
@@ -749,7 +692,6 @@ describe('ActivityPage', () => {
     });
     expect(screen.getByText('Linked Audiobook')).toBeInTheDocument();
 
-    // Only one Retry button — for the linked download
     expect(screen.getAllByText('Retry')).toHaveLength(1);
     expect(screen.getByText('Book was deleted')).toBeInTheDocument();
     expect(screen.getByText('Timed out')).toBeInTheDocument();
@@ -814,11 +756,9 @@ describe('ActivityPage', () => {
       renderWithProviders(<ActivityPage />);
       await waitFor(() => expect(screen.getByText('Failed A')).toBeInTheDocument());
 
-      // Click retry on first card
       const retryBtns = screen.getAllByText('Retry');
       await user.click(retryBtns[0]!.closest('button')!);
 
-      // Only the clicked card shows Retrying..., the other stays as Retry
       await waitFor(() => {
         expect(screen.getAllByText('Retrying...')).toHaveLength(1);
         expect(screen.getAllByText('Retry')).toHaveLength(1);
@@ -884,11 +824,9 @@ describe('ActivityPage', () => {
       renderWithProviders(<ActivityPage />);
 
       await waitFor(() => {
-        // Active tab content visible — "Nothing running right now" empty state
         expect(screen.getByText('Nothing running right now')).toBeInTheDocument();
       });
 
-      // Event History content not rendered
       expect(screen.queryByText('All')).not.toBeInTheDocument();
     });
 
@@ -902,12 +840,10 @@ describe('ActivityPage', () => {
 
       await user.click(screen.getByRole('tab', { name: /history/i }));
 
-      // Downloads content hidden
       await waitFor(() => {
         expect(screen.queryByText('Nothing running right now')).not.toBeInTheDocument();
       });
 
-      // Event History section rendered — filter dropdown "All" option visible
       expect(screen.getByText('All')).toBeInTheDocument();
     });
 
@@ -918,18 +854,16 @@ describe('ActivityPage', () => {
       await user.click(screen.getByRole('tab', { name: /history/i }));
 
       const section = await screen.findByTestId('import-history-section');
-      expect(await screen.findByTestId('import-history-empty')).toBeInTheDocument(); // empty import history
-      // Event history is still rendered (its "All" filter) and comes AFTER the import section.
+      expect(await screen.findByTestId('import-history-empty')).toBeInTheDocument();
       const allFilter = screen.getByText('All');
       expect(allFilter).toBeInTheDocument();
       expect(section.compareDocumentPosition(allFilter) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
     it('an import-history render crash is isolated to its section fallback; Event history stays usable (F5/F31)', async () => {
-      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {}); // silence React's caught-error log
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {}); // Silence React's expected boundary log.
       const user = userEvent.setup();
-      // A malformed list row (no `aggregates`) crashes DispositionCounts during render —
-      // a real API/data-shape failure that must NOT reach the route boundary.
+      // Missing aggregates forces a real render-shape failure inside the section.
       vi.mocked(api.listImportSubmissions).mockResolvedValue({
         data: [{ id: 1, clientSubmissionId: 'c', source: 'library', status: 'complete', expectedCount: 1, receivedCount: 1, processedCount: 1, detailsPruned: false, itemsIncluded: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as never],
         total: 1,
@@ -938,9 +872,7 @@ describe('ActivityPage', () => {
       await waitFor(() => expect(screen.getByText('Nothing running right now')).toBeInTheDocument());
       await user.click(screen.getByRole('tab', { name: /history/i }));
 
-      // The section's local boundary shows its fallback…
       expect(await screen.findByTestId('import-history-boundary-fallback')).toBeInTheDocument();
-      // …and Event history below it remains usable (its "All" filter renders).
       expect(screen.getByText('All')).toBeInTheDocument();
       errSpy.mockRestore();
     });
@@ -953,13 +885,11 @@ describe('ActivityPage', () => {
         expect(screen.getByText('Nothing running right now')).toBeInTheDocument();
       });
 
-      // Switch to History
       await user.click(screen.getByRole('tab', { name: /history/i }));
       await waitFor(() => {
         expect(screen.queryByText('Nothing running right now')).not.toBeInTheDocument();
       });
 
-      // Switch back to Active
       await user.click(screen.getByRole('tab', { name: /active/i }));
 
       await waitFor(() => {
@@ -968,11 +898,7 @@ describe('ActivityPage', () => {
     });
   });
 
-// ============================================================================
-// #312 — Page-level SSE integration: ActivityPage + SSEProvider
-// ============================================================================
 
-// Mock EventSource for SSE integration tests
 class MockEventSource {
   static instances: MockEventSource[] = [];
   url: string;
@@ -1020,8 +946,7 @@ describe('#312 page-level SSE integration', () => {
       defaultOptions: { queries: { retry: false } },
     });
 
-    // Seed the stream token so SSEProvider connects (#1453 — SSE auth is via a
-    // short-lived stream token now, not the API key).
+    // SSEProvider connects only after a short-lived stream token is cached.
     queryClient.setQueryData(['auth', 'stream-token'], { token: 'test-stream-token', expiresInMs: 300_000 });
 
     const result = render(
@@ -1040,7 +965,6 @@ describe('#312 page-level SSE integration', () => {
     let callCount = 0;
     vi.mocked(api.getActivity).mockImplementation(() => {
       callCount++;
-      // First call: empty queue. After invalidation: queue has a download
       if (callCount <= 1) return Promise.resolve({ data: [], total: 0 });
       return Promise.resolve({
         data: [makeDownload({ id: 5, title: 'New Audiobook', status: 'downloading', progress: 0.3 })],
@@ -1050,20 +974,17 @@ describe('#312 page-level SSE integration', () => {
 
     renderWithSSE();
 
-    // Wait for initial empty state
     await waitFor(() => {
       expect(screen.getByText('Nothing running right now')).toBeInTheDocument();
     });
 
     const es = MockEventSource.instances[0];
 
-    // Simulate SSE event for a download not in cache → triggers cache-miss invalidation → refetch
     await act(async () => {
       es!.simulateOpen();
       es!.simulateEvent('download_progress', { download_id: 5, book_id: 10, percentage: 0.3, speed: null, eta: null });
     });
 
-    // After refetch, page should show the download
     await waitFor(() => {
       expect(screen.getByText('New Audiobook')).toBeInTheDocument();
     });
@@ -1080,7 +1001,6 @@ describe('#312 page-level SSE integration', () => {
 
     renderWithSSE();
 
-    // Wait for initial render with 50% progress
     await waitFor(() => {
       expect(screen.getByText('My Audiobook')).toBeInTheDocument();
     });
@@ -1089,25 +1009,19 @@ describe('#312 page-level SSE integration', () => {
     const es = MockEventSource.instances[0];
     const getActivityCallCount = vi.mocked(api.getActivity).mock.calls.length;
 
-    // Simulate progress update via SSE — should patch cache in-place
     await act(async () => {
       es!.simulateOpen();
       es!.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.75, speed: null, eta: null });
     });
 
-    // Progress should update without a full refetch
     await waitFor(() => {
       expect(screen.getByText('75%')).toBeInTheDocument();
     });
 
-    // No additional getActivity calls — patched in-place via setQueryData
     expect(vi.mocked(api.getActivity).mock.calls.length).toBe(getActivityCallCount);
   });
 });
 
-// ============================================================================
-// #392 — Search progress cards on Activity page
-// ============================================================================
 
 describe('#392 search progress cards', () => {
   it('renders search cards when useSearchProgress returns active entries', async () => {
@@ -1133,7 +1047,6 @@ describe('#392 search progress cards', () => {
     expect(screen.getByText('Searching Book')).toBeInTheDocument();
     expect(screen.getByText('MAM')).toBeInTheDocument();
 
-    // Restore default mock for other tests
     vi.mocked(useSearchProgress).mockReturnValue([]);
   });
 
@@ -1153,9 +1066,6 @@ describe('#392 search progress cards', () => {
   });
 });
 
-// ============================================================================
-// #422 — Merge activity cards in activity queue
-// ============================================================================
 
 describe('#422 merge activity cards', () => {
   it('renders merge cards when useMergeActivityCards returns active entries', async () => {
@@ -1217,7 +1127,6 @@ describe('#422 merge activity cards', () => {
       expect(screen.getByText('Nothing running right now')).toBeInTheDocument();
     });
 
-    // No merge-specific content should appear
     expect(screen.queryByText(/Encoding to M4B/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Merge started/)).not.toBeInTheDocument();
   });
@@ -1288,7 +1197,6 @@ describe('#478 cancel merge error recovery', () => {
       { bookId: 42, bookTitle: 'Merge Book', phase: 'processing', percentage: 0.5 },
     ]);
 
-    // Use a deferred promise so we can observe the disabled state before rejection settles
     let rejectFn!: (err: Error) => void;
     vi.mocked(api.cancelMergeBook).mockReturnValue(
       new Promise((_resolve, reject) => { rejectFn = reject; }) as Promise<{ success: boolean }>,
@@ -1303,12 +1211,10 @@ describe('#478 cancel merge error recovery', () => {
 
     await user.click(cancelButton);
 
-    // While the mutation is pending, the button should be disabled (cancellingMergeBookId is set)
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /cancel merge/i })).toBeDisabled();
     });
 
-    // Now reject the promise and verify the button re-enables
     await act(async () => { rejectFn(new Error('Server error')); });
 
     await waitFor(() => {
@@ -1326,7 +1232,6 @@ describe('ActivityPage tab buttons (#488)', () => {
 
     renderWithProviders(<ActivityPage />);
 
-    // Wait for data to load so tabs render (they're behind the loading guard)
     await waitFor(() => {
       expect(screen.getByText('Nothing running right now')).toBeInTheDocument();
     });
@@ -1341,9 +1246,6 @@ describe('ActivityPage tab buttons (#488)', () => {
   });
 });
 
-// ============================================================================
-// #637 — Activity page URL state
-// ============================================================================
 
 describe('#637 Activity page URL state', () => {
   beforeEach(() => {
@@ -1393,7 +1295,6 @@ describe('#637 Activity page URL state', () => {
       expect(historyTab).toHaveAttribute('aria-selected', 'true');
     });
 
-    // The event history API should be called with the filter
     await waitFor(() => {
       expect(api.getEventHistory).toHaveBeenCalledWith(
         expect.objectContaining({ eventType: 'import_failed' }),
@@ -1402,13 +1303,9 @@ describe('#637 Activity page URL state', () => {
   });
 });
 
-// ============================================================================
-// #748 — ActivityPage importJobs polling gates on SSE connection
-// ============================================================================
 
 describe('#748 importJobs SSE refetch gating', () => {
-  // Toggle setInterval/clearInterval only to keep TanStack Query's internal
-  // setTimeout machinery alive. See CLAUDE.md "vi.useFakeTimers() breaks TanStack Query".
+  // Fake intervals only; faking TanStack Query's timeouts deadlocks the suite.
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
@@ -1425,15 +1322,12 @@ describe('#748 importJobs SSE refetch gating', () => {
 
     renderWithProviders(<ActivityPage />);
 
-    // Initial fetch settles
     await waitFor(() => {
       expect(api.getImportJobs).toHaveBeenCalledTimes(1);
     });
 
-    // Advance well past the 5s polling interval
     await act(async () => { vi.advanceTimersByTime(6000); });
 
-    // No additional refetches — SSE-connected disables polling
     expect(api.getImportJobs).toHaveBeenCalledTimes(1);
   });
 
@@ -1446,7 +1340,6 @@ describe('#748 importJobs SSE refetch gating', () => {
       expect(api.getImportJobs).toHaveBeenCalledTimes(1);
     });
 
-    // Advance past the 5s interval — polling should fire one refetch
     await act(async () => { vi.advanceTimersByTime(6000); });
 
     await waitFor(() => {
@@ -1472,12 +1365,9 @@ describe('#748 importJobs SSE refetch gating', () => {
       expect(api.getImportJobs).toHaveBeenCalledTimes(1);
     });
 
-    // SSE connected — no polling
     await act(async () => { vi.advanceTimersByTime(6000); });
     expect(api.getImportJobs).toHaveBeenCalledTimes(1);
 
-    // SSE drops — re-render with the wrapper preserved so the new mock value
-    // takes effect when ActivityPage re-renders
     vi.mocked(useSSEConnected).mockReturnValue(false);
     rerender(
       <QueryClientProvider client={queryClient}>
@@ -1487,7 +1377,6 @@ describe('#748 importJobs SSE refetch gating', () => {
       </QueryClientProvider>,
     );
 
-    // Polling fallback resumes
     await act(async () => { vi.advanceTimersByTime(6000); });
     await waitFor(() => {
       expect(vi.mocked(api.getImportJobs).mock.calls.length).toBeGreaterThanOrEqual(2);

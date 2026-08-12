@@ -14,10 +14,7 @@ import type { z } from 'zod';
 
 type NamingFormData = z.infer<typeof namingFormSchema>;
 
-// Fixed edition label used only for the "Multiple editions" folder preview row and the modal
-// live-preview footer. The baseline rows (With series / Without series / Multi-file) render
-// edition-free — a normal single copy has no edition label — so `edition` is intentionally NOT
-// part of SAMPLE_TOKENS. It is re-attached only where an edition is meant to appear (#1774).
+// Baseline samples omit edition; only edition-specific previews add this discriminator.
 const SAMPLE_EDITION = 'Full Cast';
 const SAMPLE_TOKENS = {
   author: 'Brandon Sanderson', authorLastFirst: toLastFirst('Brandon Sanderson'),
@@ -77,17 +74,10 @@ function createFormatKeyDownHandler(
   };
 }
 
-/**
- * Live-preview derivations for both format editors — extracted from the component solely to keep
- * it under max-lines-per-function; behavior is byte-identical (pure relocation of the memos).
- */
 function useNamingPreviews(folderFormat: string | undefined, fileFormat: string | undefined, namingOptions: NamingOptions) {
   const folderPreview = useMemo(() => folderFormat ? renderTemplate(folderFormat, SAMPLE_TOKENS, namingOptions) : '', [folderFormat, namingOptions]);
   const folderPreviewNoSeries = useMemo(() => folderFormat ? renderTemplate(folderFormat, SAMPLE_TOKENS_NO_SERIES, namingOptions) : '', [folderFormat, namingOptions]);
-  // "Multiple editions" folder row (#1774): mirror `buildTargetPath`'s two branches exactly.
-  // If the template places {edition} itself, render it in place (verbatim, no suffix) so the row
-  // matches production's double-render guard. Otherwise apply the mandatory collision suffix to the
-  // With-series leaf via the real core primitives — byte-identical to the suffix branch by construction.
+  // Match buildTargetPath: explicit {edition} renders in place; otherwise suffix the folder leaf.
   const folderPreviewMultiEdition = useMemo(() => {
     if (!folderFormat) return '';
     if (templateHasToken(folderFormat, 'edition')) {
@@ -102,12 +92,7 @@ function useNamingPreviews(folderFormat: string | undefined, fileFormat: string 
   const filePreview = useMemo(() => fileFormat ? renderFilename(fileFormat, SAMPLE_TOKENS, namingOptions) : '', [fileFormat, namingOptions]);
   const filePreviewNoSeries = useMemo(() => fileFormat ? renderFilename(fileFormat, SAMPLE_TOKENS_NO_SERIES, namingOptions) : '', [fileFormat, namingOptions]);
   const filePreviewMultiFile = useMemo(() => fileFormat ? renderFilename(fileFormat, SAMPLE_TOKENS_MULTIFILE, namingOptions) : '', [fileFormat, namingOptions]);
-  // "With edition" file row (#1819): {edition} is file-supported but never appears in the baseline
-  // rows (they render edition-free). Unlike the folder row there is NO automatic-append branch to
-  // mirror — files get no side-by-side discriminator. So only render the sample when the template
-  // actually places {edition}; otherwise the row would be byte-identical to With-series and read as
-  // a bug. When absent, the row teaches the capability with a muted hint instead. `templateHasToken`
-  // detects {edition} inside conditional wrappers (e.g. `{ (?edition?)}`), so gating on it is safe.
+  // Files never auto-append edition, so render it only when the template contains the token.
   const filePreviewEdition = useMemo((): { hasToken: boolean; rendered: string } => {
     const hasToken = !!fileFormat && templateHasToken(fileFormat, 'edition');
     return {
@@ -119,7 +104,6 @@ function useNamingPreviews(folderFormat: string | undefined, fileFormat: string 
   return { folderPreview, folderPreviewNoSeries, folderPreviewMultiEdition, filePreview, filePreviewNoSeries, filePreviewMultiFile, filePreviewEdition };
 }
 
-// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
 const CARD_LABEL = 'File Naming';
 
 export function NamingSettingsSection() {
@@ -184,8 +168,7 @@ export function NamingSettingsSection() {
     else if (tokenModalScope === 'file') insertTokenAtCursor(fileFormatRef, 'fileFormat', token);
   };
 
-  // Carry the edition sample into the modal preview so a user who inserts {edition} sees it render
-  // (otherwise the modal footer would render it empty — the modal would "lie") (#1774).
+  // Include edition so the modal reflects an inserted {edition} token.
   const modalPreviewTokens = useMemo(() =>
     tokenModalScope === 'file'
       ? { ...SAMPLE_TOKENS, edition: SAMPLE_EDITION, trackNumber: 1, trackTotal: 12, partName: 'The Way of Kings' }

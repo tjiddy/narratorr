@@ -10,7 +10,7 @@ import { createMockSettings } from '@/__tests__/factories';
 import { toast } from 'sonner';
 import { wireStagedComplete, acceptedRow, heldRow, skippedRow, failedRow, type StagedMockFns } from '@/lib/staged-import/__tests__/staged-fixtures';
 import { __resetOutboxCache } from '@/lib/staged-import/outbox';
-import { FABLEHAVEN, FABLEHAVEN_BEST, FABLEHAVEN_ALTERNATIVES, fablehavenMismatch, fablehavenEdit, deferred } from '@/lib/__tests__/repick-fixtures';
+import { FABLEHAVEN, FABLEHAVEN_BEST, FABLEHAVEN_ALTERNATIVES, FABLEHAVEN_TRIMMED_RESPONSE, fablehavenMismatch, fablehavenEdit, deferred } from '@/lib/__tests__/repick-fixtures';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router', async () => {
@@ -25,7 +25,6 @@ const mockCancelMatchJob = vi.fn();
 const mockGetSettings = vi.fn();
 const mockGetBookIdentifiers = vi.fn();
 const mockCorroborateImportDuration = vi.fn();
-// Staged submit + poll pipeline (#1902) replaces the direct confirm.
 const mockCreateSubmission = vi.fn();
 const mockPutSubmissionItems = vi.fn();
 const mockFinalizeSubmission = vi.fn();
@@ -35,12 +34,10 @@ const stagedMocks: StagedMockFns = {
   create: mockCreateSubmission, put: mockPutSubmissionItems, finalize: mockFinalizeSubmission,
   get: mockGetSubmission, byClient: mockGetSubmissionByClientId,
 };
-/** The staged items actually PUT to the server, flattened across chunks. */
 const submittedItems = () =>
   mockPutSubmissionItems.mock.calls.flatMap(c => (c[1] as { items: { ordinal: number; item: Record<string, unknown> }[] }).items.map(r => r.item));
 
-// Preserve the real runtime exports (notably `ApiError`) and override only `api`. Replacing
-// the barrel wholesale would drop ApiError (vimock-barrel-replace-drops-named-exports).
+// Keep real exports such as ApiError; replacing the barrel would silently drop them.
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   api: {
@@ -91,11 +88,7 @@ describe('useLibraryImport hook (#133)', () => {
     mockStartMatchJob.mockResolvedValue({ jobId: 'job-1' });
     mockGetMatchJob.mockResolvedValue({ id: 'job-1', status: 'matching', total: 1, matched: 0, results: [] });
     mockCancelMatchJob.mockResolvedValue({ cancelled: true });
-    // Staged pipeline (#1902): reset the source-scoped outbox hint and wire a clean
-    // create→PUT→finalize→poll(complete)→detail chain. The poll's first tick fires
-    // immediately, so a summary that already reads `complete` resolves the terminal
-    // chain via microtasks — no fake timers needed. Tests that assert other outcomes
-    // re-wire with their own `wireStagedComplete(...)`.
+    // Default to a complete staged pipeline; failure tests override individual calls.
     localStorage.clear();
     __resetOutboxCache();
     wireStagedComplete(stagedMocks, { source: 'library', items: [acceptedRow(0, '/audiobooks/AuthorA/Book1', 'Book One')] });
@@ -147,8 +140,6 @@ describe('useLibraryImport hook (#133)', () => {
   });
 
   it('match results merge: confidence=none result deselects non-duplicate row; duplicate row stays unselected', async () => {
-    // Poll resolves immediately with a 'completed' job that has a 'none' confidence result
-    // for the non-duplicate row. The interval fires at POLL_INTERVAL (2s) so we extend timeout.
     mockGetMatchJob.mockResolvedValue({
       id: 'job-1',
       status: 'completed',
@@ -163,24 +154,19 @@ describe('useLibraryImport hook (#133)', () => {
 
     await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    // Before poll fires: non-dup starts selected
     const nonDupRowBefore = result.current.state.rows.find(r => !r.book.isDuplicate);
     expect(nonDupRowBefore?.selected).toBe(true);
 
-    // After poll fires (2s interval): non-dup row should be deselected due to confidence='none'
     await waitFor(() => {
       const nonDupRow = result.current.state.rows.find(r => !r.book.isDuplicate);
       expect(nonDupRow?.selected).toBe(false);
     }, { timeout: 5000 });
 
-    // Duplicate rows remain unselected regardless
     const pathDupRow = result.current.state.rows.find(r => r.book.duplicateReason === 'path');
     expect(pathDupRow?.selected).toBe(false);
   });
 
   it('post-match duplicate (F8): high-confidence result flagged isDuplicate deselects the row and excludes it from the confirm payload (#1662)', async () => {
-    // A selectable sibling keeps the confirm request non-empty so the payload actually ships;
-    // the flagged duplicate (Book1) must be absent from it.
     mockScanDirectory.mockResolvedValue({
       ...mockScanResult,
       discoveries: [
@@ -211,7 +197,6 @@ describe('useLibraryImport hook (#133)', () => {
     await waitFor(() => expect(result.current.state.step).toBe('review'));
     expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1')?.selected).toBe(true);
 
-    // After the post-match flag arrives, the row is flagged AND deselected.
     await waitFor(() => {
       const row = result.current.state.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1');
       expect(row?.book.isDuplicate).toBe(true);
@@ -219,7 +204,6 @@ describe('useLibraryImport hook (#133)', () => {
       expect(row?.selected).toBe(false);
     }, { timeout: 5000 });
 
-    // It is therefore absent from the staged submission (which still carries the sibling).
     act(() => result.current.actions.handleRegister());
     await waitFor(() => expect(mockCreateSubmission).toHaveBeenCalled());
     const paths = submittedItems().map(i => i.path);
@@ -228,8 +212,6 @@ describe('useLibraryImport hook (#133)', () => {
   });
 
   it('match results merge: confidence=medium (Review) deselects non-duplicate row; reviewCount increments, selectedCount excludes it', async () => {
-    // Medium-confidence ("Review" badge) rows must NOT default to checked — a human
-    // should eyeball the match before importing it (#1318).
     mockGetMatchJob.mockResolvedValue({
       id: 'job-1',
       status: 'completed',
@@ -244,18 +226,15 @@ describe('useLibraryImport hook (#133)', () => {
 
     await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    // Before poll fires: non-dup starts selected
     const nonDupRowBefore = result.current.state.rows.find(r => !r.book.isDuplicate);
     expect(nonDupRowBefore?.selected).toBe(true);
 
-    // After poll fires: non-dup row deselected due to confidence='medium'
     await waitFor(() => {
       const nonDupRow = result.current.state.rows.find(r => !r.book.isDuplicate);
       expect(nonDupRow?.matchResult?.confidence).toBe('medium');
       expect(nonDupRow?.selected).toBe(false);
     }, { timeout: 5000 });
 
-    // reviewCount counts the medium row; selectedCount must not include it
     expect(result.current.counts.reviewCount).toBe(1);
     const nonDupRow = result.current.state.rows.find(r => !r.book.isDuplicate);
     expect(result.current.counts.selectedCount).toBe(0);
@@ -267,11 +246,9 @@ describe('useLibraryImport hook (#133)', () => {
 
     await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    // First deselect the non-dup row to set up a partial state
     const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
     act(() => result.current.actions.handleToggle(nonDupIdx));
 
-    // Now handleSelectAll should re-select only non-dup rows
     act(() => result.current.actions.handleSelectAll());
 
     const pathDupRow = result.current.state.rows.find(r => r.book.duplicateReason === 'path');
@@ -303,10 +280,6 @@ describe('useLibraryImport hook (#133)', () => {
   });
 
   it('slug-duplicate row: case-only / colon-subtitle title change KEEPS row flagged (normalized contract #1662)', async () => {
-    // Existing book has title 'Book Three' / 'Author C'. Under the shared
-    // normalized-title + author-slug predicate, a case-only ('book three') or
-    // colon-subtitle ('Book Three: A Subtitle') change still collides — the row
-    // stays flagged (the recheck no longer uses exact title equality).
     mockGetBookIdentifiers.mockResolvedValue([
       { asin: null, title: 'Book Three', authorName: 'Author C', authorSlug: 'author-c' },
     ]);
@@ -321,15 +294,12 @@ describe('useLibraryImport hook (#133)', () => {
       result.current.actions.handleEdit(slugDupIdx, { title: 'Book Three: A Subtitle', author: 'author c', series: '' });
     });
 
-    // Give the recheck a tick; the row must remain flagged.
     await waitFor(() => expect(result.current.state.rows[slugDupIdx]!.userEdited).toBe(true));
     expect(result.current.state.rows[slugDupIdx]!.book.isDuplicate).toBe(true);
   });
 
   it('slug-duplicate row flagged by ASIN stays flagged after non-colliding title/author edits (#1662 F5)', async () => {
-    // The library entry shares only the ASIN. Editing the title + author to a
-    // genuinely different identity must NOT clear the flag, because the ASIN
-    // (carried on the edited state) still matches branch 1 of the predicate.
+    // ASIN identity outranks the edited title and author.
     mockGetBookIdentifiers.mockResolvedValue([
       { asin: 'B0OWNEDASIN', title: 'Book Three', authorName: 'Author C', authorSlug: 'author-c' },
     ]);
@@ -362,7 +332,6 @@ describe('useLibraryImport hook (#133)', () => {
   });
 
   it('handleRestartMatch: starts a new logical run with non-duplicate candidates and clears the pause (#1864)', async () => {
-    // Initial attempt fails at start (paused start-failed)
     mockStartMatchJob
       .mockRejectedValueOnce(new Error('first failure'))
       .mockResolvedValue({ jobId: 'job-2' });
@@ -372,12 +341,10 @@ describe('useLibraryImport hook (#133)', () => {
 
     await waitFor(() => expect(result.current.state.paused).toBe(true));
 
-    // Restart — beginLogical clears the pause synchronously before the new start.
     act(() => result.current.actions.handleRestartMatch());
 
     await waitFor(() => expect(result.current.state.paused).toBe(false));
 
-    // startMatchJob called twice: initial scan + restart
     expect(mockStartMatchJob).toHaveBeenCalledTimes(2);
     const restartCandidates = mockStartMatchJob.mock.calls[1]![0] as Array<{ path: string; title: string }>;
     expect(restartCandidates).toEqual(expect.arrayContaining([
@@ -385,20 +352,15 @@ describe('useLibraryImport hook (#133)', () => {
     ]));
   });
 
-  // #1849 — Restart threads the (possibly user-edited) seriesPosition into the
-  // re-match candidate so the position tiebreaker survives a Restart. Pins position 0
-  // (regression guard, #1028): deleting the spread at useLibraryImport.ts would drop it.
   it('handleRestartMatch: threads edited seriesPosition (including 0) into restart candidates (#1849)', async () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.state.step).toBe('review'));
 
     const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
-    // Seed a genuine position-0 via edit so the restart builder must carry it.
     act(() => {
       result.current.actions.handleEdit(nonDupIdx, { title: 'Book One', author: 'Author A', series: 'Fablehaven', seriesPosition: 0 });
     });
 
-    // Isolate the restart call from the initial auto-scan match job.
     mockStartMatchJob.mockClear();
     act(() => { result.current.actions.handleRestartMatch(); });
     await waitFor(() => { expect(mockStartMatchJob).toHaveBeenCalled(); });
@@ -411,7 +373,7 @@ describe('useLibraryImport hook (#133)', () => {
   it('recovering is true during an automatic retry backoff, activating the fail-closed gate (#1864 F1)', async () => {
     mockGetMatchJob.mockReset();
     mockGetMatchJob
-      .mockRejectedValueOnce(new Error('blip')) // first poll fails → backoff → recovering
+      .mockRejectedValueOnce(new Error('blip'))
       .mockResolvedValue({ id: 'job-1', status: 'matching', total: 1, matched: 0, results: [] });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
@@ -420,7 +382,7 @@ describe('useLibraryImport hook (#133)', () => {
   });
 
   it('Restart CLEARS already-matched rows to pending immediately (#1864 §5b/F5)', async () => {
-    // Drain any leaked `*Once()` queue from a prior test (vitest-clearallmocks-once-queue).
+    // clearAllMocks preserves queued once-values.
     mockGetMatchJob.mockReset();
     mockGetMatchJob.mockResolvedValue({
       id: 'job-1', status: 'completed', total: 1, matched: 1,
@@ -433,7 +395,6 @@ describe('useLibraryImport hook (#133)', () => {
     const idx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
     await waitFor(() => expect(result.current.state.rows[idx]!.matchResult?.confidence).toBe('high'), { timeout: 5000 });
 
-    // Restart clears the stale match to pending BEFORE the new run's first result lands.
     act(() => result.current.actions.handleRestartMatch());
     expect(result.current.state.rows[idx]!.matchResult).toBeUndefined();
   });
@@ -448,22 +409,20 @@ describe('useLibraryImport hook (#133)', () => {
     });
     const b1 = { path: '/audiobooks/A/B1', confidence: 'high', bestMatch: { title: 'B1', authors: [{ name: 'A' }] }, alternatives: [] };
     const b2 = { path: '/audiobooks/A/B2', confidence: 'high', bestMatch: { title: 'B2', authors: [{ name: 'A' }] }, alternatives: [] };
-    // Drain any leaked `*Once()` queue from a prior test (vitest-clearallmocks-once-queue).
+    // clearAllMocks preserves queued once-values.
     mockGetMatchJob.mockReset();
     mockGetMatchJob
-      .mockResolvedValueOnce({ id: 'job-1', status: 'matching', total: 2, matched: 1, results: [b1] })   // B1 observed (partial)
-      .mockRejectedValueOnce(new ApiError(400, { error: 'bad' }))                                          // pause request-rejected, id retained
-      .mockResolvedValueOnce({ id: 'job-1', status: 'completed', total: 2, matched: 2, results: [b1, b2] }); // resume-entry probe completes
+      .mockResolvedValueOnce({ id: 'job-1', status: 'matching', total: 2, matched: 1, results: [b1] })
+      .mockRejectedValueOnce(new ApiError(400, { error: 'bad' }))
+      .mockResolvedValueOnce({ id: 'job-1', status: 'completed', total: 2, matched: 2, results: [b1, b2] });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.state.rows.length).toBe(2));
 
-    // B1 matches, then the run pauses — B1's match is kept.
     await waitFor(() => expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/A/B1')?.matchResult?.confidence).toBe('high'), { timeout: 5000 });
     await waitFor(() => expect(result.current.state.paused).toBe(true), { timeout: 5000 });
     expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/A/B1')?.matchResult?.confidence).toBe('high');
 
-    // Resume preserves B1 and fills in B2.
     act(() => result.current.actions.handleResumeMatch());
     await waitFor(() => expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/A/B2')?.matchResult?.confidence).toBe('high'), { timeout: 5000 });
     expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/A/B1')?.matchResult?.confidence).toBe('high');
@@ -492,7 +451,6 @@ describe('useLibraryImport hook (#133)', () => {
     });
   });
 
-  // ── Staged submit + poll flow (#1902) ──────────────────────────────────────
   it('Register: createImportSubmission called with source=library, no mode, and the shaped items', async () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.state.step).toBe('review'));
@@ -533,7 +491,6 @@ describe('useLibraryImport hook (#133)', () => {
     await act(async () => { result.current.actions.handleRegister(); });
     await waitFor(() => expect(result.current.state.heldReview).toHaveLength(1));
 
-    // Re-confirm resubmits the held row with forceImport bypassing the safety-net.
     mockPutSubmissionItems.mockClear();
     wireStagedComplete(stagedMocks, { source: 'library', items: [acceptedRow(0, heldPath, 'Book One')] });
     await act(async () => { result.current.actions.handleReconfirmHeld(); });
@@ -669,12 +626,10 @@ describe('useLibraryImport hook (#133)', () => {
     await act(async () => { result.current.actions.handleRegister(); });
     await waitFor(() => expect(toast.warning).toHaveBeenCalledWith('1 registered · 1 already in your library'));
     expect(mockNavigate).not.toHaveBeenCalled();
-    // The accepted row (Book1) is deselected; the skipped row (Book2) stays as-is.
     await waitFor(() => expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1')?.selected).toBe(false));
   });
 
   it('create failure surfaces a recoverable banner and does not navigate (F9)', async () => {
-    // A non-retryable typed 4xx fails fast (no backoff) and surfaces its banner.
     mockCreateSubmission.mockRejectedValue(new ApiError(400, { error: 'invalid-body' }));
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
@@ -703,8 +658,6 @@ describe('useLibraryImport hook (#133)', () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    // A metadata author name over the 512-char bound is a pure `too_big` exclusion →
-    // oversize (not invalid), so the batch trips the zero-survivor too-large refusal.
     const idx = result.current.state.rows.findIndex(r => r.book.path === '/audiobooks/AuthorA/Book1');
     const oversizeMeta = { title: 'Book One', authors: [{ name: 'x'.repeat(513) }] } as unknown as import('@/lib/api').BookMetadata;
     act(() => result.current.actions.handleEdit(idx, { title: 'Book One', author: 'Author A', series: '', metadata: oversizeMeta }));
@@ -717,7 +670,6 @@ describe('useLibraryImport hook (#133)', () => {
     expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/AuthorA/Book1')?.selected).toBe(true);
   });
 
-  // AC3: empty state (#141)
   it('returns emptyResult=true when scan returns zero discoveries', async () => {
     mockScanDirectory.mockResolvedValue({ discoveries: [], totalFolders: 0 });
 
@@ -749,7 +701,6 @@ describe('useLibraryImport hook (#133)', () => {
   });
 
   it('returns emptyResult=false and starts matching when scan returns mix of new and duplicate books', async () => {
-    // mockScanResult has 1 new + 2 duplicate
     mockScanDirectory.mockResolvedValue(mockScanResult);
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
@@ -812,12 +763,10 @@ describe('match merge — selection behavior (#185)', () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    // Deselect the non-duplicate row before match results arrive
     const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
     act(() => result.current.actions.handleToggle(nonDupIdx));
     expect(result.current.state.rows[nonDupIdx]!.selected).toBe(false);
 
-    // Match result with high confidence merges — should NOT auto-select
     await waitFor(() => {
       expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
     }, { timeout: 5000 });
@@ -826,8 +775,6 @@ describe('match merge — selection behavior (#185)', () => {
   });
 
   it('high confidence keeps a default (still-checked) non-duplicate row selected', async () => {
-    // Regression guard: 'high' must preserve the default checked state — only
-    // 'medium' and 'none' flip to unchecked (#1318).
     mockGetMatchJob.mockResolvedValue({
       id: 'job-1', status: 'completed', total: 1, matched: 1,
       results: [{
@@ -841,7 +788,6 @@ describe('match merge — selection behavior (#185)', () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    // Do NOT touch the row — it starts selected by default
     await waitFor(() => {
       const nonDupRow = result.current.state.rows.find(r => !r.book.isDuplicate);
       expect(nonDupRow?.matchResult?.confidence).toBe('high');
@@ -853,7 +799,6 @@ describe('match merge — selection behavior (#185)', () => {
   });
 
   it('edit-during-matching preserves selection: a user-FIXED row stays checked when a later medium match merges (#1374)', async () => {
-    // Job is still matching when the user fixes the row via the edit modal.
     mockGetMatchJob.mockResolvedValue({ id: 'job-1', status: 'matching', total: 1, matched: 0, results: [] });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
@@ -861,7 +806,6 @@ describe('match merge — selection behavior (#185)', () => {
 
     const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
 
-    // User commits a fix — sets userEdited + auto-checks the row.
     act(() => {
       result.current.actions.handleEdit(nonDupIdx, {
         title: 'Corrected Title', author: 'Author A', series: '',
@@ -871,7 +815,6 @@ describe('match merge — selection behavior (#185)', () => {
     expect(result.current.state.rows[nonDupIdx]!.userEdited).toBe(true);
     expect(result.current.state.rows[nonDupIdx]!.selected).toBe(true);
 
-    // The in-flight job (searched on the scan-time title) returns a medium result.
     mockGetMatchJob.mockResolvedValue({
       id: 'job-1', status: 'completed', total: 1, matched: 1,
       results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'medium', bestMatch: { title: 'Official', authors: [{ name: 'Author A' }] }, alternatives: [] }],
@@ -881,14 +824,12 @@ describe('match merge — selection behavior (#185)', () => {
       expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
     }, { timeout: 5000 });
 
-    // userEdited row keeps its selection despite the medium merge.
     expect(result.current.state.rows[nonDupIdx]!.selected).toBe(true);
     expect(result.current.state.rows[nonDupIdx]!.userEdited).toBe(true);
     expect(result.current.counts.selectedCount).toBeGreaterThanOrEqual(1);
   });
 
   it('Retry Match preserves a user-FIXED row: a re-result at medium does not uncheck it (#1374)', async () => {
-    // Job first settles on a high match.
     mockGetMatchJob.mockResolvedValue({
       id: 'job-1', status: 'completed', total: 1, matched: 1,
       results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'high', bestMatch: { title: 'Official', authors: [{ name: 'Author A' }] }, alternatives: [] }],
@@ -900,7 +841,6 @@ describe('match merge — selection behavior (#185)', () => {
     const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
     await waitFor(() => expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('high'), { timeout: 5000 });
 
-    // User fixes the row.
     act(() => {
       result.current.actions.handleEdit(nonDupIdx, {
         title: 'Corrected', author: 'Author A', series: '',
@@ -910,7 +850,6 @@ describe('match merge — selection behavior (#185)', () => {
     expect(result.current.state.rows[nonDupIdx]!.userEdited).toBe(true);
     expect(result.current.state.rows[nonDupIdx]!.selected).toBe(true);
 
-    // Restart re-matches all non-dup rows; the re-result comes back medium.
     mockGetMatchJob.mockResolvedValue({
       id: 'job-1', status: 'completed', total: 1, matched: 1,
       results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'medium', bestMatch: { title: 'Other', authors: [{ name: 'Author A' }] }, alternatives: [] }],
@@ -928,7 +867,6 @@ describe('match merge — selection behavior (#185)', () => {
     await waitFor(() => expect(result.current.state.step).toBe('review'));
 
     const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
-    // Bare checkbox interaction (toggle off then on) must NOT set userEdited.
     act(() => result.current.actions.handleToggle(nonDupIdx));
     act(() => result.current.actions.handleToggle(nonDupIdx));
     expect(result.current.state.rows[nonDupIdx]!.selected).toBe(true);
@@ -980,7 +918,6 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
     act(() => result.current.actions.handleToggle(nonDupIdx));
     expect(result.current.state.rows[nonDupIdx]!.selected).toBe(false);
 
-    // Edit with metadata → auto-selects
     act(() => {
       result.current.actions.handleEdit(nonDupIdx, {
         title: 'Book One', author: 'Author A', series: '',
@@ -992,7 +929,6 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
   });
 
   it('confidence upgrade from none to medium when metadata provided', async () => {
-    // Set up match results with confidence=none
     mockGetMatchJob.mockResolvedValue({
       id: 'job-1', status: 'completed', total: 1, matched: 1,
       results: [{
@@ -1012,7 +948,6 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
       expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('none');
     }, { timeout: 5000 });
 
-    // Edit with metadata → confidence upgrades to medium
     act(() => {
       result.current.actions.handleEdit(nonDupIdx, {
         title: 'Book One', author: 'Author A', series: '',
@@ -1023,7 +958,6 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
     expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
   });
 
-  // ── #335 Manual match override: medium → high ──────────────────────────
   it('confidence upgrade from medium to high when provider metadata provided', async () => {
     mockGetMatchJob.mockResolvedValue({
       id: 'job-1', status: 'completed', total: 1, matched: 1,
@@ -1044,7 +978,6 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
       expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
     }, { timeout: 5000 });
 
-    // Edit with provider metadata → confidence upgrades to high
     act(() => {
       result.current.actions.handleEdit(nonDupIdx, {
         title: 'Book One', author: 'Author A', series: '',
@@ -1075,7 +1008,6 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
       expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
     }, { timeout: 5000 });
 
-    // Edit with provider metadata → confidence stays high
     act(() => {
       result.current.actions.handleEdit(nonDupIdx, {
         title: 'Book One', author: 'Author A', series: '',
@@ -1107,7 +1039,6 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
       expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
     }, { timeout: 5000 });
 
-    // Save with the SAME metadata reference (user opened modal without re-selecting)
     const preloadedMetadata = result.current.state.rows[nonDupIdx]!.edited.metadata;
     act(() => {
       result.current.actions.handleEdit(nonDupIdx, {
@@ -1116,7 +1047,6 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
       });
     });
 
-    // Should NOT upgrade — no explicit provider re-selection
     expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
   });
 
@@ -1141,7 +1071,7 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
       expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('medium');
     }, { timeout: 5000 });
 
-    // Simulate explicit click on the current match — applyMetadata spreads to new reference
+    // applyMetadata creates a new reference for an explicit pick.
     act(() => {
       result.current.actions.handleEdit(nonDupIdx, {
         title: 'Book One', author: 'Author A', series: '',
@@ -1162,7 +1092,6 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
 
     const slugDupIdx = result.current.state.rows.findIndex(r => r.book.duplicateReason === 'slug');
 
-    // Edit but keep same colliding title+author
     act(() => {
       result.current.actions.handleEdit(slugDupIdx, { title: 'Book Three', author: 'Author C', series: '' });
     });
@@ -1188,7 +1117,6 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
   });
 
   it('undefined bookIdentifiers (query not yet resolved) — no crash, guard prevents recheck', async () => {
-    // Return undefined for bookIdentifiers (simulating query not yet resolved)
     mockGetBookIdentifiers.mockReturnValue(undefined as never);
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
@@ -1196,16 +1124,13 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
 
     const slugDupIdx = result.current.state.rows.findIndex(r => r.book.duplicateReason === 'slug');
 
-    // Edit slug-duplicate row — should not crash even though bookIdentifiers is undefined
     act(() => {
       result.current.actions.handleEdit(slugDupIdx, { title: 'New Title', author: 'New Author', series: '' });
     });
 
-    // Row stays duplicate because the guard skipped the recheck
     expect(result.current.state.rows[slugDupIdx]!.book.isDuplicate).toBe(true);
   });
 
-  // ── #415 Match confidence reason passthrough ────────────────────────
   describe('confidence reason lifecycle (#415)', () => {
     it('mergeMatchResults preserves reason field from MatchResult onto ImportRow', async () => {
       mockGetMatchJob.mockResolvedValue({
@@ -1253,7 +1178,6 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
       }, { timeout: 5000 });
       expect(result.current.state.rows[nonDupIdx]!.matchResult?.reason).toBeDefined();
 
-      // Edit with NEW metadata → upgrades to high, reason must be cleared
       act(() => {
         result.current.actions.handleEdit(nonDupIdx, {
           title: 'Book One', author: 'Author A', series: '',
@@ -1284,7 +1208,6 @@ describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck 
         expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('none');
       }, { timeout: 5000 });
 
-      // Edit with metadata → upgrades to medium, but no system reason
       act(() => {
         result.current.actions.handleEdit(nonDupIdx, {
           title: 'Book One', author: 'Author A', series: '',
@@ -1309,7 +1232,6 @@ describe('retry mechanics (#185)', () => {
   });
 
   it('handleRetry resets stale offset so post-retry match results merge into rows from index 0', async () => {
-    // Phase 1: initial scan + first match result arrives
     mockScanDirectory.mockResolvedValue(mockScanResult);
     mockGetMatchJob.mockResolvedValue({
       id: 'job-1', status: 'completed', total: 1, matched: 1,
@@ -1319,13 +1241,11 @@ describe('retry mechanics (#185)', () => {
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    // Wait for initial match results to merge (poll interval fires)
     const nonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
     await waitFor(() => {
       expect(result.current.state.rows[nonDupIdx]!.edited.title).toBe('First Match');
     }, { timeout: 5000 });
 
-    // Phase 2: retry — new scan + new match with different result
     mockScanDirectory.mockResolvedValue(mockScanResult);
     mockStartMatchJob.mockResolvedValue({ jobId: 'job-2' });
     mockGetMatchJob.mockResolvedValue({
@@ -1336,7 +1256,6 @@ describe('retry mechanics (#185)', () => {
     await act(async () => { result.current.actions.handleRetry(); });
     await waitFor(() => expect(result.current.state.step).toBe('review'));
 
-    // Observable: post-retry result is merged from index 0, not lost to stale offset
     const retryNonDupIdx = result.current.state.rows.findIndex(r => !r.book.isDuplicate);
     await waitFor(() => {
       expect(result.current.state.rows[retryNonDupIdx]!.edited.title).toBe('Retry Match');
@@ -1344,7 +1263,6 @@ describe('retry mechanics (#185)', () => {
   });
 
   it('handleRestartMatch resets stale offset so new match results merge after restart', async () => {
-    // Phase 1: initial scan + match completes with none confidence
     mockScanDirectory.mockResolvedValue(mockScanResult);
     mockGetMatchJob.mockResolvedValue({
       id: 'job-1', status: 'completed', total: 1, matched: 1,
@@ -1359,7 +1277,6 @@ describe('retry mechanics (#185)', () => {
       expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('none');
     }, { timeout: 5000 });
 
-    // Phase 2: Restart — new match job with different result
     mockStartMatchJob.mockResolvedValue({ jobId: 'job-2' });
     mockGetMatchJob.mockResolvedValue({
       id: 'job-2', status: 'completed', total: 1, matched: 1,
@@ -1368,7 +1285,6 @@ describe('retry mechanics (#185)', () => {
 
     act(() => { result.current.actions.handleRestartMatch(); });
 
-    // Observable: post-retry result merged at index 0 — confidence upgraded and title changed
     await waitFor(() => {
       expect(result.current.state.rows[nonDupIdx]!.matchResult?.confidence).toBe('high');
     }, { timeout: 5000 });
@@ -1415,11 +1331,9 @@ describe('empty result edge case', () => {
       await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
       const findWs = () => result.current.state.rows.find(r => r.book.path === '/audiobooks/Copy/Author/Book');
-      // Starts selected (#1925 AC4). All actionable rows already selected → select-all toggles OFF.
       expect(findWs()?.selected).toBe(true);
       act(() => { result.current.actions.handleSelectAll(); });
       expect(findWs()?.selected).toBe(false);
-      // …and back ON — proving it is part of the toggled actionable set.
       act(() => { result.current.actions.handleSelectAll(); });
       expect(findWs()?.selected).toBe(true);
     });
@@ -1448,7 +1362,6 @@ describe('empty result edge case', () => {
     };
 
     it('initial matcher candidates include former within-scan rows but exclude DB duplicates', async () => {
-      // Must set before hook mounts (auto-scan fires on mount)
       mockScanDirectory.mockReset().mockResolvedValue(scanResultMatchFlow);
       mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-1' });
       renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
@@ -1462,8 +1375,6 @@ describe('empty result edge case', () => {
       expect(paths).not.toContain('/audiobooks/DbDup/Book');
     });
 
-    // #1849 — the parsed series position (including 0) must reach the match-start
-    // candidate so the server-side position tiebreaker can run.
     it('threads parsedSeriesPosition (including 0) into the match candidate', async () => {
       const scanWithPositions: ScanResult = {
         discoveries: [
@@ -1489,7 +1400,6 @@ describe('empty result edge case', () => {
     it('mergeMatchResults applies match data to a former within-scan row and seeds edited metadata', async () => {
       mockScanDirectory.mockReset().mockResolvedValue(scanResultMatchFlow);
       mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-1' });
-      // Poll returns a high-confidence match for the within-scan duplicate row
       mockGetMatchJob.mockResolvedValue({
         id: 'job-1',
         status: 'completed',
@@ -1509,7 +1419,6 @@ describe('empty result edge case', () => {
 
       await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
-      // After poll merges match results, within-scan row should have matchResult and edited metadata
       await waitFor(() => {
         const withinScanRow = result.current.state.rows.find(r => r.book.path === '/audiobooks/Copy/Author/Book');
         expect(withinScanRow?.matchResult?.confidence).toBe('high');
@@ -1538,11 +1447,9 @@ describe('empty result edge case', () => {
 
       await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
-      // The row is a normal candidate now, so it starts SELECTED (#1925 AC4).
       const initial = result.current.state.rows.find(r => r.book.path === '/audiobooks/Copy/Author/Book');
       expect(initial?.selected).toBe(true);
 
-      // After poll merges confidence=none, a no-match row is auto-deselected.
       await waitFor(() => {
         const row = result.current.state.rows.find(r => r.book.path === '/audiobooks/Copy/Author/Book');
         expect(row?.matchResult?.confidence).toBe('none');
@@ -1551,7 +1458,6 @@ describe('empty result edge case', () => {
     });
 
     it('handleRestartMatch includes former within-scan rows and excludes DB duplicates', async () => {
-      // Initial match attempt fails at start (paused) so we can trigger Restart
       mockScanDirectory.mockReset().mockResolvedValue(scanResultMatchFlow);
       mockStartMatchJob
         .mockRejectedValueOnce(new Error('first failure'))
@@ -1562,10 +1468,8 @@ describe('empty result edge case', () => {
 
       await waitFor(() => expect(result.current.state.paused).toBe(true));
 
-      // Clear call history so we can assert only the restart call
       mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-2' });
 
-      // Trigger Restart
       act(() => result.current.actions.handleRestartMatch());
 
       await waitFor(() => expect(mockStartMatchJob).toHaveBeenCalledTimes(1));
@@ -1591,7 +1495,6 @@ describe('empty result edge case', () => {
     it('readyCount includes selected former within-scan rows with high-confidence matches', async () => {
       mockScanDirectory.mockReset().mockResolvedValue(scanResultMixed);
       mockStartMatchJob.mockClear().mockResolvedValue({ jobId: 'job-1' });
-      // Poll returns high-confidence match for both the non-dup and within-scan dup
       mockGetMatchJob.mockResolvedValue({
         id: 'job-1',
         status: 'completed',
@@ -1607,10 +1510,8 @@ describe('empty result edge case', () => {
 
       await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
-      // Both actionable rows are default-selected (#1925 AC4) — no select-all needed. Wait for
-      // the high-confidence matches to merge; both selected + high → readyCount 2.
       await waitFor(() => {
-        expect(result.current.counts.readyCount).toBe(2); // non-dup + former within-scan row
+        expect(result.current.counts.readyCount).toBe(2);
       }, { timeout: 5000 });
     });
 
@@ -1620,21 +1521,15 @@ describe('empty result edge case', () => {
 
       await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
-      // Former within-scan row has no matchResult yet → should count as pending
-      // DB dup should NOT count as pending
-      // Non-dup has no matchResult yet → should count as pending
-      expect(result.current.counts.pendingCount).toBe(2); // non-dup + former within-scan row
+      expect(result.current.counts.pendingCount).toBe(2);
     });
 
-    // #1102 — selectedPendingCount is scoped to selection, excludes DB duplicates
     it('selectedPendingCount tracks pending rows scoped to user selection', async () => {
       mockScanDirectory.mockResolvedValue(scanResultMixed);
       const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
       await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
-      // Both the non-dup and the former within-scan row are auto-selected (#1925 AC4), so both
-      // pending rows are selected from the start; the DB slug dup is excluded.
       expect(result.current.counts.pendingCount).toBe(2);
       expect(result.current.counts.selectedPendingCount).toBe(2);
     });
@@ -1645,7 +1540,6 @@ describe('empty result edge case', () => {
 
       await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
-      // Locate the DB-dup row index (slug duplicate) and force-select it via handleToggle.
       const dbDupIndex = result.current.state.rows.findIndex(r =>
         r.book.isDuplicate && r.book.duplicateReason === 'slug',
       );
@@ -1653,8 +1547,6 @@ describe('empty result edge case', () => {
       act(() => { result.current.actions.handleToggle(dbDupIndex); });
       expect(result.current.state.rows[dbDupIndex]!.selected).toBe(true);
 
-      // DB dup must NOT contribute to selectedPendingCount (matches pendingCount semantics).
-      // Non-dup + former within-scan row remain the only two selected pending rows.
       expect(result.current.counts.selectedPendingCount).toBe(2);
     });
 
@@ -1664,7 +1556,7 @@ describe('empty result edge case', () => {
 
       await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
-      expect(result.current.counts.duplicateCount).toBe(1); // only DB slug dup
+      expect(result.current.counts.duplicateCount).toBe(1);
     });
 
     it('allSelected treats former within-scan rows as actionable', async () => {
@@ -1673,17 +1565,12 @@ describe('empty result edge case', () => {
 
       await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
-      // Both actionable rows (non-dup + former within-scan) are auto-selected, so allSelected
-      // is true from the start; the DB slug dup is excluded from the "all actionable" set.
       expect(result.current.counts.allSelected).toBe(true);
 
-      // Deselecting the former within-scan row breaks allSelected — proving it is counted
-      // among the actionable rows.
       const withinScanIdx = result.current.state.rows.findIndex(r => r.book.path === '/audiobooks/Copy/Author/Book');
       act(() => { result.current.actions.handleToggle(withinScanIdx); });
       expect(result.current.counts.allSelected).toBe(false);
 
-      // Reselecting all restores it.
       act(() => { result.current.actions.handleSelectAll(); });
       expect(result.current.counts.allSelected).toBe(true);
     });
@@ -1707,13 +1594,10 @@ describe('empty result edge case', () => {
 
       await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
-      // Both rows are normal candidates, default-selected (#1925 AC4) — register directly.
       act(() => { result.current.actions.handleRegister(); });
 
       await waitFor(() => { expect(mockCreateSubmission).toHaveBeenCalled(); });
 
-      // #1925 AC5: a former within-scan row flows through the confirm-time recording ladder
-      // rather than bypassing it — so neither row submits with forceImport.
       const items = submittedItems() as Array<{ path: string; forceImport?: boolean }>;
       const nonDup = items.find(i => i.path === '/audiobooks/Author/Book');
       const withinScanRow = items.find(i => i.path === '/audiobooks/Copy/Author/Book');
@@ -1845,8 +1729,6 @@ describe('empty result edge case', () => {
     });
   });
 
-  // #1929 — re-picking a match on a duration-mismatch Review row must re-check the
-  // picked edition against the scanned runtime, never blanket-clear to green.
   describe('#1929 re-pick re-evaluates duration evidence (library surface)', () => {
     const scanWithSingleNew: ScanResult = {
       discoveries: [
@@ -1854,7 +1736,6 @@ describe('empty result edge case', () => {
       ],
       totalFolders: 1,
     };
-    // scanned 14h53m vs the seeded 14h58m edition (Δ300s, out of band).
     const durationMismatchResult = {
       path: '/audiobooks/AuthorA/Book1',
       confidence: 'medium' as const,
@@ -1878,7 +1759,7 @@ describe('empty result edge case', () => {
     it('re-picking the SAME (out-of-band) edition keeps the row in Review, not green', async () => {
       const result = await seedMismatchRow();
 
-      // BookEditModal spreads the pick into a FRESH object — same values, new reference.
+      // The modal returns a fresh metadata object even when the same edition is selected.
       act(() => {
         result.current.actions.handleEdit(0, {
           title: 'Official', author: 'Author A', series: '',
@@ -1899,7 +1780,7 @@ describe('empty result edge case', () => {
       act(() => {
         result.current.actions.handleEdit(0, {
           title: 'Official', author: 'Author A', series: '',
-          metadata: { title: 'Official', authors: [{ name: 'Author A' }], duration: 894 }, // 14h54m → Δ60s
+          metadata: { title: 'Official', authors: [{ name: 'Author A' }], duration: 894 },
         });
       });
 
@@ -1912,9 +1793,7 @@ describe('empty result edge case', () => {
   });
 });
 
-// #2055 — the re-pick path judged duration against the provider SCALAR, so re-picking
-// the CORRECT edition still read as a mismatch. It now asks the server for the same
-// chapter-runtime second opinion the match job gets (#1942).
+// Re-pick uses the same chapter-runtime second opinion as the match job and Manual Import.
 describe('#2055 re-pick corroborates against the chapter runtime (library surface)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1956,8 +1835,6 @@ describe('#2055 re-pick corroborates against the chapter runtime (library surfac
     mockCorroborateImportDuration.mockResolvedValue({ corroborated: false });
   });
 
-  // Test 9 — the issue's reproduction. Fails against develop, where no request is made
-  // and the row is stranded on the scalar verdict.
   it('promotes the row to Matched when the chapter table corroborates the scanned file', async () => {
     const gate = deferred<{ corroborated: boolean; chapterSeconds?: number }>();
     mockCorroborateImportDuration.mockReturnValue(gate.promise);
@@ -1965,7 +1842,6 @@ describe('#2055 re-pick corroborates against the chapter runtime (library surfac
 
     act(() => { result.current.actions.handleEdit(0, fablehavenEdit()); });
 
-    // Optimistic: the synchronous verdict renders immediately, scalar-rendered.
     expect(matchAt(result)?.confidence).toBe('medium');
     expect(matchAt(result)?.reason).toBe(FABLEHAVEN.scalarReason);
     expect(mockCorroborateImportDuration).toHaveBeenCalledWith({
@@ -1978,12 +1854,27 @@ describe('#2055 re-pick corroborates against the chapter runtime (library surfac
     expect(matchAt(result)?.reason).toBeUndefined();
     expect(matchAt(result)?.reasonKind).toBeUndefined();
     expect(matchAt(result)?.scannedSeconds).toBe(FABLEHAVEN.scannedSeconds);
-    // B7 (F3) — suppress-only: the promotion patches confidence, not the selection evidence.
     expect(matchAt(result)?.bestMatch).toEqual(FABLEHAVEN_BEST);
     expect(matchAt(result)?.alternatives).toEqual(FABLEHAVEN_ALTERNATIVES);
   });
 
-  // Test 10 — the canonical ASIN is the trimmed one on BOTH sides of the round trip.
+  it('promotes the row when the server suppressed via the TRIMMED chapter sum', async () => {
+    const gate = deferred<typeof FABLEHAVEN_TRIMMED_RESPONSE>();
+    mockCorroborateImportDuration.mockReturnValue(gate.promise);
+    const { result } = await seed();
+
+    act(() => { result.current.actions.handleEdit(0, fablehavenEdit()); });
+    expect(matchAt(result)?.confidence).toBe('medium');
+
+    gate.resolve(FABLEHAVEN_TRIMMED_RESPONSE);
+    await waitFor(() => { expect(matchAt(result)?.confidence).toBe('high'); });
+
+    expect(matchAt(result)?.reason).toBeUndefined();
+    expect(matchAt(result)?.reasonKind).toBeUndefined();
+    expect(matchAt(result)?.bestMatch).toEqual(FABLEHAVEN_BEST);
+    expect(matchAt(result)?.alternatives).toEqual(FABLEHAVEN_ALTERNATIVES);
+  });
+
   it('sends the TRIMMED ASIN and still promotes the row when it resolves', async () => {
     const gate = deferred<{ corroborated: boolean; chapterSeconds?: number }>();
     mockCorroborateImportDuration.mockReturnValue(gate.promise);
@@ -1999,7 +1890,6 @@ describe('#2055 re-pick corroborates against the chapter runtime (library surfac
     await waitFor(() => { expect(matchAt(result)?.confidence).toBe('high'); });
   });
 
-  // Test 11 + F5 — an out-of-band chapter table changes nothing, and says nothing.
   it('leaves the sync verdict untouched when the chapter table also disagrees', async () => {
     mockCorroborateImportDuration.mockResolvedValue({
       corroborated: false, chapterSeconds: FABLEHAVEN.outOfBandChapterSeconds,
@@ -2016,8 +1906,6 @@ describe('#2055 re-pick corroborates against the chapter runtime (library surfac
 
     expect(matchAt(result)?.confidence).toBe('medium');
     expect(matchAt(result)?.reasonKind).toBe('duration-mismatch');
-    // The reason stays rendered against the PICKED edition's catalog runtime — 40000s
-    // would render as `11h 6m`, and the user must never be shown that number here.
     expect(matchAt(result)?.reason).toBe(FABLEHAVEN.scalarReason);
     expect(matchAt(result)?.reason).not.toContain('11h 6m');
     expect(toast.success).not.toHaveBeenCalled();
@@ -2026,7 +1914,6 @@ describe('#2055 re-pick corroborates against the chapter runtime (library surfac
     expect(result.current.state.banner).toEqual(bannerBefore);
   });
 
-  // Test 12 + F5 — transport failures are the same silent outcome.
   it.each([
     ['a network failure', new Error('network down')],
     ['a non-2xx ApiError', new ApiError(503, { error: 'unavailable' })],
@@ -2052,8 +1939,6 @@ describe('#2055 re-pick corroborates against the chapter runtime (library surfac
     expect(result.current.state.banner).toEqual(bannerBefore);
   });
 
-  // Test 13 — B3: a request fired from inside a `setRows` updater goes out twice, because
-  // React 19 StrictMode double-invokes updater functions.
   it('issues exactly one request per qualifying re-pick under StrictMode', async () => {
     const inner = createWrapper();
     const strictWrapper = ({ children }: { children: React.ReactNode }) =>
@@ -2071,7 +1956,6 @@ describe('#2055 re-pick corroborates against the chapter runtime (library surfac
     expect(mockCorroborateImportDuration).toHaveBeenCalledTimes(1);
   });
 
-  // Test 14 — the non-qualifying re-picks issue ZERO requests, at the hook level.
   it.each([
     ['an in-band re-pick the sync path already cleared', () => fablehavenEdit({ duration: 553 })],
     ['a picked edition with no runtime (missing-duration)', () => fablehavenEdit({ duration: undefined })],
@@ -2086,7 +1970,6 @@ describe('#2055 re-pick corroborates against the chapter runtime (library surfac
 
   it('issues no request for the by-reference no-op', async () => {
     const { result } = await seed();
-    // The modal hands the pre-populated bestMatch straight back, unspread.
     const sameRef = result.current.state.rows[0]!.edited.metadata!;
 
     await act(async () => {
@@ -2096,7 +1979,6 @@ describe('#2055 re-pick corroborates against the chapter runtime (library surfac
     expect(mockCorroborateImportDuration).not.toHaveBeenCalled();
   });
 
-  // Test 15 — a held response for a superseded edition must not resurrect its verdict.
   it('drops a held response after the user re-picks a DIFFERENT edition', async () => {
     const first = deferred<{ corroborated: boolean; chapterSeconds?: number }>();
     const second = deferred<{ corroborated: boolean; chapterSeconds?: number }>();
@@ -2116,10 +1998,7 @@ describe('#2055 re-pick corroborates against the chapter runtime (library surfac
     expect(matchAt(result)?.reasonKind).toBe('duration-mismatch');
   });
 
-  // Test 16 — the blocking case for B8's generation token. Every FIELD check passes here:
-  // Restart clears only `matchResult`, and `mergeMatchIntoRow` preserves `edited` for a
-  // `userEdited` row, so the fresh match reproduces path + ASIN + scannedSeconds +
-  // `duration-mismatch`. Only the stamp can reject the held response.
+  // Restart can reproduce every evidence field, so only the generation stamp rejects this response.
   it('drops a held response across a Restart that reproduces the same evidence fingerprint', async () => {
     const held = deferred<{ corroborated: boolean; chapterSeconds?: number }>();
     mockCorroborateImportDuration.mockReturnValue(held.promise);
@@ -2133,7 +2012,6 @@ describe('#2055 re-pick corroborates against the chapter runtime (library surfac
     await act(async () => { result.current.actions.handleRestartMatch(); });
     await waitFor(() => { expect(matchAt(result)?.reasonKind).toBe('duration-mismatch'); }, { timeout: 5000 });
 
-    // Precondition: the fingerprint really is identical, so only the stamp differs.
     expect(result.current.state.rows[0]!.edited.metadata?.asin).toBe(FABLEHAVEN.asin);
     expect(matchAt(result)?.scannedSeconds).toBe(FABLEHAVEN.scannedSeconds);
 
@@ -2144,9 +2022,7 @@ describe('#2055 re-pick corroborates against the chapter runtime (library surfac
     expect(matchAt(result)?.reasonKind).toBe('duration-mismatch');
   });
 
-  // Test 17 — a settle after unmount is harmless because the handler carries NO
-  // lifecycle-local side effect. Row state is unobservable after unmount, so the toast
-  // mock is the observation point that can actually fail.
+  // Row state is unobservable after unmount; toasts expose lifecycle-local side effects.
   it('settles after unmount without emitting any lifecycle-local side effect', async () => {
     const held = deferred<{ corroborated: boolean; chapterSeconds?: number }>();
     mockCorroborateImportDuration.mockReturnValue(held.promise);
@@ -2166,9 +2042,7 @@ describe('#2055 re-pick corroborates against the chapter runtime (library surfac
     expect(toast.warning).not.toHaveBeenCalled();
   });
 
-  // F4 — resolving one row's corroboration must not touch any other row. At the hook level
-  // the sibling row is rejected by its own (older) generation stamp; the `row.book.path`
-  // half of the guard is pinned directly in `repick-corroboration.test.ts`.
+  // The path half of this guard is covered in repick-corroboration.test.ts.
   it('patches only the row whose corroboration resolved', async () => {
     mockCorroborateImportDuration.mockResolvedValue({ corroborated: true, chapterSeconds: FABLEHAVEN.chapterSeconds });
     const { result } = await seed(scanTwo, [fablehavenMismatch(PATH), fablehavenMismatch(PATH2)]);
@@ -2179,5 +2053,22 @@ describe('#2055 re-pick corroborates against the chapter runtime (library surfac
     await waitFor(() => { expect(matchAt(result)?.confidence).toBe('high'); });
 
     expect(result.current.state.rows[1]).toBe(otherBefore);
+  });
+
+  // Selection changes must not advance the generation or reject a still-valid corroboration.
+  it('keeps a held response live across an unrelated selection toggle', async () => {
+    const held = deferred<{ corroborated: boolean; chapterSeconds?: number }>();
+    mockCorroborateImportDuration.mockReturnValue(held.promise);
+    const { result } = await seed();
+
+    act(() => { result.current.actions.handleEdit(0, fablehavenEdit()); });
+    expect(mockCorroborateImportDuration).toHaveBeenCalledTimes(1);
+
+    const selectedBefore = result.current.state.rows[0]!.selected;
+    act(() => { result.current.actions.handleToggle(0); });
+    expect(result.current.state.rows[0]!.selected).toBe(!selectedBefore);
+
+    held.resolve({ corroborated: true, chapterSeconds: FABLEHAVEN.chapterSeconds });
+    await waitFor(() => { expect(matchAt(result)?.confidence).toBe('high'); });
   });
 });

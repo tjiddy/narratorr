@@ -15,25 +15,14 @@ export interface ImportRow {
   book: DiscoveredBook;
   selected: boolean;
   edited: BookEditState;
-  /**
-   * True once the user commits a fix through the edit modal (`handleEdit`). A
-   * later, lower-confidence match merge must NOT force-uncheck such a row — the
-   * #1318 safe-default flip only applies to rows the user has not explicitly
-   * fixed. Bare checkbox toggles deliberately do NOT set this (#1374).
-   */
+  /** Set only by a committed modal edit; checkbox toggles do not count as edits. */
   userEdited: boolean;
-  matchResult?: MatchResult | undefined;
+  readonly matchResult?: MatchResult | undefined;
   /**
-   * Transient, client-only logical generation of this row's match evidence (#2055).
-   * Stamped by every write that installs, replaces, or clears `matchResult`, from a
-   * per-hook counter that only ever increments — so a re-scan or a Restart that rebuilds a
-   * row for the same folder path can never reproduce a value an in-flight chapter-
-   * corroboration request already captured. The async corroboration patch is the one write
-   * that does NOT stamp: it is the terminal write for the generation it answers.
-   *
-   * Optional so existing inline row fixtures need no change; an undefined stamp on either
-   * side makes the staleness guard reject, which is the safe direction (the row simply
-   * keeps its synchronous verdict).
+   * Monotonic client-only generation stamped whenever `matchResult` is installed,
+   * replaced, or cleared; corroboration applies only to its captured generation.
+   * Undefined fails closed. Keep the pair readonly and use `stampRow`/
+   * `applyCorroboration`; lint covers construction, not mutable-alias writes.
    */
-  matchGeneration?: number | undefined;
+  readonly matchGeneration?: number | undefined;
 }

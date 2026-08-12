@@ -28,7 +28,6 @@ interface CrudRouteOptions {
   secretEntity?: SecretEntity;
 }
 
-/** Mask the `settings` blob in a row if secretEntity is configured. */
 function maskRow(row: unknown, entity?: SecretEntity): unknown {
   if (!entity || !row || typeof row !== 'object') return row;
   const r = row as Record<string, unknown>;
@@ -44,13 +43,11 @@ export async function registerCrudRoutes(
 ) {
   const lower = entityName.toLowerCase();
 
-  // GET /api/<resource>
   app.get(basePath, async () => {
     const items = await service.getAll();
     return items.map((item) => maskRow(item, secretEntity));
   });
 
-  // GET /api/<resource>/:id
   app.get<{ Params: IdParam }>(
     `${basePath}/:id`,
     { schema: { params: idParamSchema } },
@@ -64,7 +61,6 @@ export async function registerCrudRoutes(
     },
   );
 
-  // POST /api/<resource>
   app.post<{ Body: Record<string, unknown> }>(
     basePath,
     { schema: { body: createSchema } },
@@ -76,7 +72,6 @@ export async function registerCrudRoutes(
     },
   );
 
-  // PUT /api/<resource>/:id
   app.put<{ Params: IdParam }>(
     `${basePath}/:id`,
     { schema: { params: idParamSchema, body: updateSchema } },
@@ -91,7 +86,6 @@ export async function registerCrudRoutes(
     },
   );
 
-  // DELETE /api/<resource>/:id
   app.delete<{ Params: IdParam }>(
     `${basePath}/:id`,
     { schema: { params: idParamSchema } },
@@ -113,7 +107,7 @@ export async function registerCrudRoutes(
     },
   );
 
-  // POST /api/<resource>/test — sentinel-aware schema with optional id
+  // Sentinel-aware test schema accepts masked secrets for an optional existing id.
   const testSchema = secretEntity ? makeTestSchema(createSchema, secretEntity) : createSchema;
   app.post<{ Body: { type: string; settings: Record<string, unknown>; id?: number } }>(
     `${basePath}/test`,
@@ -135,7 +129,6 @@ export async function registerCrudRoutes(
     },
   );
 
-  // POST /api/<resource>/:id/test
   app.post<{ Params: IdParam }>(
     `${basePath}/:id/test`,
     { schema: { params: idParamSchema } },

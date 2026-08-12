@@ -131,7 +131,6 @@ export class DownloadClientService {
       .where(eq(downloadClients.id, id))
       .returning();
 
-    // Clear cached adapter
     this.adapters.delete(id);
 
     this.log.info({ id }, 'Download client updated');
@@ -188,7 +187,6 @@ export class DownloadClientService {
     try {
       this.log.debug({ type: data.type, host: data.settings.host, port: data.settings.port, useSsl: data.settings.useSsl }, 'Testing download client config');
 
-      // When editing an existing client, resolve sentinel values against saved settings
       let resolvedSettings = data.settings;
       if (data.id != null) {
         const existing = await this.getById(data.id);

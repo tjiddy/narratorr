@@ -25,11 +25,10 @@ function createTestApp() {
   app.setSerializerCompiler(serializerCompiler);
   app.register(errorHandlerPlugin);
 
-  // Test routes that throw various errors
   app.get('/throw-rename-not-found', async () => { throw new RenameError('Book not found', 'NOT_FOUND'); });
   app.get('/throw-rename-no-path', async () => { throw new RenameError('No path set', 'NO_PATH'); });
   app.get('/throw-retag-not-found', async () => { throw new RetagError('NOT_FOUND', 'Book not found'); });
-  app.get('/throw-retag-ffmpeg', async () => { throw new RetagError('FFMPEG_NOT_CONFIGURED', 'ffmpeg not installed'); });
+  app.get('/throw-retag-mutagen', async () => { throw new RetagError('MUTAGEN_NOT_CONFIGURED', 'mutagen not installed'); });
   app.get('/throw-restore-invalid', async () => { throw new RestoreUploadError('Not a valid zip', 'INVALID_ZIP'); });
   app.get('/throw-qg-not-found', async () => { throw new QualityGateServiceError('Download not found', 'NOT_FOUND'); });
   app.get('/throw-qg-invalid-status', async () => { throw new QualityGateServiceError('Download is not pending review', 'INVALID_STATUS'); });
@@ -56,27 +55,23 @@ function createTestApp() {
   app.get('/throw-dc-auth', async () => { throw new DownloadClientAuthError('qBittorrent', 'Session expired'); });
   app.get('/throw-dc-timeout', async () => { throw new DownloadClientTimeoutError('SABnzbd', 'Request timed out'); });
   app.get('/throw-dc-generic', async () => { throw new DownloadClientError('Transmission', 'HTTP 500: Internal Server Error'); });
-  // #1418 — marker-recovery failures surfaced by the synchronous rename route
   app.get('/throw-backup-recovery', async () => { throw new BackupRecoveryError('/library/Author/Title'); });
   app.get('/throw-marker-conflict', async () => { throw new MarkerPathConflictError('/library/Author/Title.import-commit-pending'); });
   app.get('/throw-backup-ambiguity', async () => { throw new BackupAmbiguityError('/library/Author/Title', '/library/Author/.Title.import-backup', '/library/Author/Title.import-bak'); });
   app.get('/throw-generic', async () => { throw new Error('disk full'); });
   app.get('/throw-non-error', async () => { throw 'string error'; });
-  // #1831 — genuine Fastify framework 4xx (e.g. body-too-large) is surfaced verbatim…
   app.get('/throw-fst-413', async () => {
     const err = new Error('Request body is too large') as Error & { code: string; statusCode: number };
     err.code = 'FST_ERR_CTP_BODY_TOO_LARGE';
     err.statusCode = 413;
     throw err;
   });
-  // …but a 5xx-coded framework error is NOT passed through (stays masked).
   app.get('/throw-fst-500', async () => {
     const err = new Error('framework blew up with secrets') as Error & { code: string; statusCode: number };
     err.code = 'FST_ERR_SOMETHING';
     err.statusCode = 500;
     throw err;
   });
-  // …and an arbitrary thrown object carrying a statusCode (no FST_ code) stays masked.
   app.get('/throw-status-401', async () => {
     const err = new Error('sensitive: db password is hunter2') as Error & { statusCode: number };
     err.statusCode = 401;
@@ -84,7 +79,6 @@ function createTestApp() {
   });
   app.get('/success', async () => ({ ok: true }));
 
-  // Route with schema validation for F3
   const bodySchema = z.object({ name: z.string(), age: z.number() });
   app.post('/validated', { schema: { body: bodySchema } }, async (request) => {
     return request.body;
@@ -124,10 +118,10 @@ describe('error-handler plugin', () => {
       expect(JSON.parse(res.payload)).toEqual({ error: 'Book not found' });
     });
 
-    it('maps RetagError FFMPEG_NOT_CONFIGURED to 503', async () => {
-      const res = await app.inject({ method: 'GET', url: '/throw-retag-ffmpeg' });
+    it('maps RetagError MUTAGEN_NOT_CONFIGURED to 503', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-retag-mutagen' });
       expect(res.statusCode).toBe(503);
-      expect(JSON.parse(res.payload)).toEqual({ error: 'ffmpeg not installed' });
+      expect(JSON.parse(res.payload)).toEqual({ error: 'mutagen not installed' });
     });
 
     it('maps RestoreUploadError to 400', async () => {
@@ -203,7 +197,6 @@ describe('error-handler plugin', () => {
       expect(res.statusCode).toBe(409);
     });
 
-    // #1418 — marker-recovery error mappings on the synchronous rename route
     it('maps BackupRecoveryError BACKUP_RECOVERY_FAILED to 503', async () => {
       const res = await app.inject({ method: 'GET', url: '/throw-backup-recovery' });
       expect(res.statusCode).toBe(503);
@@ -216,8 +209,6 @@ describe('error-handler plugin', () => {
       expect(JSON.parse(res.payload).error).toContain('non-file already occupies');
     });
 
-    // #1911 — the both-populated ambiguity is structural + non-retryable (409, like the marker
-    // conflict), NOT the transient 503 of a recoverable backup failure. It names both backups.
     it('maps BackupAmbiguityError BACKUP_AMBIGUOUS to 409', async () => {
       const res = await app.inject({ method: 'GET', url: '/throw-backup-ambiguity' });
       expect(res.statusCode).toBe(409);
@@ -227,7 +218,6 @@ describe('error-handler plugin', () => {
       expect(err).toContain('.import-bak');
     });
 
-    // #149 — DownloadError and TaskRegistryError typed error mapping (ERR-1)
     it('maps DownloadError NOT_FOUND to 404', async () => {
       const res = await app.inject({ method: 'GET', url: '/throw-download-not-found' });
       expect(res.statusCode).toBe(404);
@@ -258,7 +248,6 @@ describe('error-handler plugin', () => {
       expect(JSON.parse(res.payload)).toEqual({ error: 'Task "foo" is already running' });
     });
 
-    // #197 — DuplicateDownloadError typed error mapping (ERR-1)
     it('maps DuplicateDownloadError ACTIVE_DOWNLOAD_EXISTS to 409', async () => {
       const res = await app.inject({ method: 'GET', url: '/throw-duplicate-active' });
       expect(res.statusCode).toBe(409);
@@ -271,7 +260,6 @@ describe('error-handler plugin', () => {
       expect(JSON.parse(res.payload)).toEqual({ error: 'Book 1 has pipeline download' });
     });
 
-    // #466 — CoverUploadError typed error mapping
     it('maps CoverUploadError NOT_FOUND to 404', async () => {
       const res = await app.inject({ method: 'GET', url: '/throw-cover-not-found' });
       expect(res.statusCode).toBe(404);
@@ -291,7 +279,6 @@ describe('error-handler plugin', () => {
     });
   });
 
-  // #558 — Download client typed error mapping
     describe('download client error mapping', () => {
       it('maps DownloadClientAuthError to 401', async () => {
         const res = await app.inject({ method: 'GET', url: '/throw-dc-auth' });
@@ -331,7 +318,6 @@ describe('error-handler plugin', () => {
     });
   });
 
-  // #1831 — scoped Fastify framework client-error passthrough
   describe('Fastify framework 4xx passthrough (#1831)', () => {
     it('passes through a FST_-coded 4xx (body-too-large) with an accurate { error } message', async () => {
       const res = await app.inject({ method: 'GET', url: '/throw-fst-413' });
@@ -399,7 +385,6 @@ describe('error-handler logging (F4)', () => {
     app = Fastify({ logger: false });
     await app.register(errorHandlerPlugin);
 
-    // Inject spyable logger via hook
     app.addHook('onRequest', async (request: FastifyRequest) => {
       request.log = logSpy as never;
     });

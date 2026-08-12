@@ -86,69 +86,44 @@ export const DOWNLOAD_STATUS_REGISTRY: Record<DownloadStatus, DownloadStatusMeta
   },
 };
 
-/** Check if a status represents an in-progress (non-terminal) download. */
 export function isInProgressStatus(status: string): status is DownloadStatus {
   const entry = DOWNLOAD_STATUS_REGISTRY[status as DownloadStatus];
   return entry?.category === 'inProgress';
 }
 
-/** Check if a status represents a terminal (finished) download. */
 export function isTerminalStatus(status: string): status is DownloadStatus {
   const entry = DOWNLOAD_STATUS_REGISTRY[status as DownloadStatus];
   return entry?.category === 'terminal';
 }
 
-/** Get all in-progress status values (for database queries). */
 export function getInProgressStatuses(): DownloadStatus[] {
   return downloadStatusSchema.options.filter(
     (s) => DOWNLOAD_STATUS_REGISTRY[s].category === 'inProgress',
   );
 }
 
-/** Get all terminal status values (for database queries). */
 export function getTerminalStatuses(): DownloadStatus[] {
   return downloadStatusSchema.options.filter(
     (s) => DOWNLOAD_STATUS_REGISTRY[s].category === 'terminal',
   );
 }
 
-/** Get terminal statuses excluding `failed` — the "completed" set for count queries. */
 export function getCompletedStatuses(): DownloadStatus[] {
   return getTerminalStatuses().filter((s) => s !== 'failed');
 }
 
-/**
- * Statuses that should be polled from external download clients.
- * Excludes internal pipeline statuses (checking, pending_review, importing)
- * that are managed by quality-gate/import flows, not download client APIs.
- */
+// Internal pipeline states are never polled from download clients.
 const CLIENT_POLLED_STATUSES: DownloadStatus[] = ['downloading', 'queued', 'paused'];
 
 export function getClientPolledStatuses(): DownloadStatus[] {
   return CLIENT_POLLED_STATUSES;
 }
 
-// ============================================================================
-// Two-axis derivation (#1445)
-//
-// `deriveDisplayStatus` is the compatibility seam: it collapses the
-// `(clientStatus, pipelineStage)` tuple back into the legacy 9-value display
-// enum, preserving the REST/SSE/client contract.
-// ============================================================================
-
-/**
- * Derive the legacy display status from the two-axis tuple.
- * When the pipeline is active (`pipelineStage !== 'idle'`) the pipeline stage
- * wins; otherwise the client status is the display status. Note `imported` is a
- * pipeline stage, so an imported download displays `imported` regardless of its
- * (always `completed`) client status — and the canonical failure tuple
- * `(failed, idle)` resolves to display `failed`.
- */
+// Active pipeline stages override client status to preserve the legacy display contract.
 export function deriveDisplayStatus(clientStatus: ClientStatus, pipelineStage: PipelineStage): DownloadStatus {
   return pipelineStage === 'idle' ? clientStatus : pipelineStage;
 }
 
-/** Tuple predicate: does the download display as terminal (finished)? */
 export function isTerminalState(clientStatus: ClientStatus, pipelineStage: PipelineStage): boolean {
   return isTerminalStatus(deriveDisplayStatus(clientStatus, pipelineStage));
 }

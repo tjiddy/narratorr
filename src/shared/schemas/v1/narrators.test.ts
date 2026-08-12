@@ -6,8 +6,6 @@ import {
 } from './narrators.js';
 import * as barrel from '../../schemas.js';
 
-// A leaky source row carrying every internal narrator column: numeric rowid,
-// slug, timestamps. `toNarratorV1` must strip all of them.
 function makeLeakyRow() {
   return {
     id: 9,
@@ -71,7 +69,6 @@ describe('narratorV1ListQuerySchema (composed, strict)', () => {
   });
 });
 
-// F5 — barrel re-export contract.
 describe('barrel re-export', () => {
   it('exposes narratorV1Schema and toNarratorV1 from the schemas barrel', () => {
     expect(barrel.narratorV1Schema).toBe(narratorV1Schema);

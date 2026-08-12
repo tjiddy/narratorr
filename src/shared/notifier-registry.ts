@@ -76,5 +76,3 @@ export const NOTIFIER_REGISTRY = {
     viewSubtitle: (s) => extractHostname(s.gotifyUrl as string, 'Gotify'),
   },
 } satisfies Record<NotifierType, NotifierTypeMetadata>;
-
-// EVENT_LABELS moved to src/shared/notification-events.ts (leaf module)

@@ -36,7 +36,6 @@ import { preserveBookCover } from '../utils/cover-cache.js';
 
 const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
 
-/** The empty three-bucket {@link DeleteManagedFilesResult} a successful no-foreign sweep returns. */
 const emptyDeleteResult = (): DeleteManagedFilesResult => ({ deletedManaged: [], preservedForeign: [], failedManaged: [] });
 
 function createService(opts?: {
@@ -181,9 +180,7 @@ describe('BookRejectionService', () => {
       expect(bookService.deleteBookFiles).toHaveBeenCalledWith('/audiobooks/Author/Book', '/audiobooks');
     });
 
-    // #1592 part B — the helper records per-file rm failures in `failedManaged` and never throws on
-    // them (replacing the old generic-throw best-effort test, which exercised a path the post-#1589
-    // helper can no longer produce). Rejection must stay nonfatal AND emit rejection-context diagnostics.
+    // Per-file failures are returned, not thrown; rejection must remain nonfatal and log orphan paths.
     it('continues and logs rejection-context diagnostics when deleteBookFiles reports failedManaged', async () => {
       const { service, bookService, db, log, eventHistory } = createService();
       (bookService.getById as Mock).mockResolvedValue(importedBook);
@@ -193,12 +190,9 @@ describe('BookRejectionService', () => {
         failedManaged: ['/audiobooks/Author/Book/locked.mp3'],
       } satisfies DeleteManagedFilesResult);
 
-      // Does not throw — the locked managed file is nonfatal.
       await service.rejectAsWrongRelease(42);
 
-      // Diagnostics carry bookId + the failed count + the failed paths (#1598 Gap 3), so an operator
-      // can find the orphaned managed audio after the DB path is nulled (the catch-level warn no
-      // longer fires for this path).
+      // Paths are required because the DB path is already null.
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({
           bookId: 42,
@@ -207,13 +201,11 @@ describe('BookRejectionService', () => {
         }),
         expect.stringContaining('Wrong release'),
       );
-      // Rejection still completes: DB reset ran and the event was recorded.
       expect(db.update).toHaveBeenCalled();
       expect(eventHistory.create).toHaveBeenCalled();
     });
 
-    // #1592 part A — foreign-file-preservation contract at the rejection site (the one destructive,
-    // no-opt-in delete). A bundled foreign file in the result must not abort or alter the rejection flow.
+    // Pin foreign-file preservation at this destructive, no-opt-in call site.
     it('completes rejection when deleteBookFiles preserves a foreign file', async () => {
       const { service, bookService, db, log, eventHistory } = createService();
       (bookService.getById as Mock).mockResolvedValue(importedBook);
@@ -227,21 +219,16 @@ describe('BookRejectionService', () => {
 
       await service.rejectAsWrongRelease(42);
 
-      // DB row reset to wanted/path null.
       const setFn = (chain as Record<string, Mock>).set;
       expect(setFn).toHaveBeenCalledWith(expect.objectContaining({ status: 'wanted', path: null }));
-      // wrong_release event recorded.
       expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'wrong_release' }));
-      // #1598 Gap 3: with no failed managed deletes, the failed-files diagnostic warn does NOT fire.
       expect(log.warn).not.toHaveBeenCalledWith(
         expect.anything(),
         expect.stringContaining('some managed files could not be deleted'),
       );
     });
 
-    // #1592 part A — real end-to-end proof: drive a true rejectAsWrongRelease against a real library
-    // root with a real BookService, and confirm a co-located foreign file survives on disk while the
-    // audio is removed (mirrors the helper's own tmpdir preservation test in delete-managed-files.test.ts).
+    // Exercise the rejection call site with a real filesystem and BookService, not only helper isolation.
     it('preserves a co-located .pdf on disk through a real rejectAsWrongRelease run', async () => {
       const root = mkdtempSync(join(tmpdir(), 'narratorr-1592-'));
       try {
@@ -250,8 +237,7 @@ describe('BookRejectionService', () => {
         await writeFile(join(bookDir, 'chapter1.mp3'), 'audio');
         await writeFile(join(bookDir, 'bundled.pdf'), 'pdf');
 
-        // Real BookService: deleteBookFiles touches only the filesystem + logger (no DB), so the mock
-        // DB is unused there; getById is spied to return the staged book.
+        // deleteBookFiles needs only filesystem/logger; stub getById with the staged row.
         const realBookService = new BookService(inject<Db>(createMockDb()), inject<FastifyBaseLogger>(createMockLogger()));
         vi.spyOn(realBookService, 'getById').mockResolvedValue({ ...importedBook, path: bookDir, userClearedFields: [] } as unknown as BookDetail);
 
@@ -262,7 +248,6 @@ describe('BookRejectionService', () => {
 
         await service.rejectAsWrongRelease(42);
 
-        // Foreign file survives; managed audio is gone.
         expect(await pathExists(join(bookDir, 'bundled.pdf'))).toBe(true);
         expect(await pathExists(join(bookDir, 'chapter1.mp3'))).toBe(false);
       } finally {
@@ -279,9 +264,7 @@ describe('BookRejectionService', () => {
 
       await expect(service.rejectAsWrongRelease(42)).rejects.toBeInstanceOf(PathOutsideLibraryError);
 
-      // DB reset still ran (steps 1–2 happen before the catch)
       expect(db.update).toHaveBeenCalled();
-      // Re-throw skips the post-deletion event recording
       expect(eventHistory.create).not.toHaveBeenCalled();
     });
 
@@ -350,7 +333,6 @@ describe('BookRejectionService', () => {
         eventHistory: { create: vi.fn().mockRejectedValue(new Error('DB error')) },
       });
 
-      // Should not throw
       await service.rejectAsWrongRelease(42);
     });
 
@@ -380,7 +362,6 @@ describe('BookRejectionService', () => {
       await expect(service.rejectAsWrongRelease(42)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     });
 
-    // #396 — cover cache copy-out before deletion
     it('copies cover file to cache before calling deleteBookFiles', async () => {
       const callOrder: string[] = [];
       const { service, bookService } = createService();
@@ -416,13 +397,9 @@ describe('BookRejectionService', () => {
       (bookService.getById as Mock).mockResolvedValue(importedBook);
       (preserveBookCover as Mock).mockRejectedValue(new Error('EACCES'));
 
-      // preserveBookCover normally handles its own errors, but if it somehow
-      // throws, the outer try/catch in rejectAsWrongRelease catches it and
-      // the rejection still completes (best-effort pattern)
+      // The shared catch completes rejection but skips deletion when cover preservation throws.
       await service.rejectAsWrongRelease(42);
 
-      // Deletion is skipped because error is caught in the same try/catch,
-      // but the overall rejection still completes without throwing
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ bookId: 42 }),
         expect.stringContaining('Wrong release'),
@@ -445,16 +422,9 @@ describe('BookRejectionService', () => {
       const { service, bookService } = createService();
       (bookService.getById as Mock).mockResolvedValue(importedBook);
 
-      // blacklistAndRetrySearch is awaited, so if it throws, the service should handle it
-      // Actually per spec, blacklist creation failure is inside the shared helper which catches it
-      // The mock throws from the top-level call — let's verify behavior
       await expect(service.rejectAsWrongRelease(42)).rejects.toThrow('blacklist error');
     });
   });
-
-  // ==========================================================================
-  // #1960 AC23/AC24 — the companion seam is hygiene, and provably writes nothing
-  // ==========================================================================
 
   describe('#1960 companion-ebook reconcile', () => {
     it('AC23: rejectAsWrongRelease triggers reconcileBook for that book', async () => {
@@ -484,31 +454,19 @@ describe('BookRejectionService', () => {
     });
 
     /**
-     * AC23 + AC24 together, and they are ONE test on purpose: the no-write outcome is a
-     * CONSEQUENCE of the ordering, not an independent fact.
-     *
-     * The book row the reconciler reads is SHARED, ordered state — it starts `imported` at a real
-     * on-disk directory holding a real EPUB, and only flips to `wanted`/`path: null` when the
-     * service's own reset UPDATE resolves. That is what makes the ordering falsifiable: run the
-     * trigger before the reset and the reconciler finds an ELIGIBLE book (imported, inside the
-     * root, a real directory with a real candidate) and commits an observation row. Run it after,
-     * and eligibility fails on the status term so `reconcileLocked` returns `skipped` before any
-     * write — never a zeroing one.
-     *
-     * The reset UPDATE is also gated, so "no reconcile while the write is still pending" is a
-     * direct observation rather than an inference.
+     * Shared book state makes ordering falsifiable: before reset the real EPUB is eligible and
+     * would write; after persisted wanted/path:null, reconciliation skips. A gated UPDATE proves
+     * the trigger does not start while persistence is pending.
      */
     it('AC23/AC24: the reconcile runs only after the reset PERSISTS, and therefore writes no companion_ebooks row', async () => {
       const root = mkdtempSync(join(tmpdir(), 'narratorr-1960-wrongrelease-'));
       try {
         const bookDir = join(root, 'Author', 'Book');
         await mkdir(bookDir, { recursive: true });
-        // A real, valid EPUB: pre-reset this book is eligible AND has a candidate, so a trigger
-        // that ran too early would commit an `available` row rather than skipping.
+        // Pre-reset eligibility plus a real candidate makes an early trigger write available.
         await writeFile(join(bookDir, 'companion.epub'), await buildEpub());
 
-        // The ONE shared view of the book row. `createMockDb`'s update terminus below is what
-        // advances it, so the reconciler observes exactly what the service has persisted so far.
+        // The UPDATE terminus advances the reconciler's shared view of persisted state.
         let bookState: { id: number; status: string; path: string | null } =
           { id: 42, status: 'imported', path: bookDir };
 
@@ -524,7 +482,7 @@ describe('BookRejectionService', () => {
           where: vi.fn().mockReturnThis(),
           limit: vi.fn().mockImplementation(() => {
             selectCall++;
-            // Odd read = the `books` snapshot (live shared state); even = the prior observation.
+            // Odd reads return books state; even reads return the prior observation.
             return Promise.resolve(selectCall % 2 === 1 ? [{ ...bookState }] : []);
           }),
         }));
@@ -537,8 +495,7 @@ describe('BookRejectionService', () => {
           inject<FastifyBaseLogger>(createMockLogger()),
         );
 
-        // The seam is fire-and-forget, so capture the real run's promise to drain it
-        // deterministically — no timers, and the reconciler underneath is the real one.
+        // Capture the fire-and-forget run so the real reconciler drains deterministically.
         const runs: Promise<void>[] = [];
         const { service, bookService, db } = createService({
           companionEbook: {
@@ -547,7 +504,7 @@ describe('BookRejectionService', () => {
         });
         (bookService.getById as Mock).mockResolvedValue({ ...importedBook, path: bookDir });
 
-        // Gate the service's reset UPDATE and advance the shared state only when it settles.
+        // Advance shared state only when the gated reset settles.
         db.update.mockReturnValue(inject<ReturnType<typeof mockDbChain>>({
           set: vi.fn().mockReturnValue({
             where: vi.fn().mockImplementation(() => {
@@ -559,8 +516,7 @@ describe('BookRejectionService', () => {
 
         const rejection = service.rejectAsWrongRelease(42);
         await resetIssued;
-        // Room for every pending microtask and a macrotask turn: a trigger sited above the reset
-        // would already have started by now.
+        // An incorrectly early trigger would start within this microtask/macrotask window.
         await new Promise(r => setTimeout(r, 20));
         expect(runs).toHaveLength(0);
 
@@ -570,8 +526,7 @@ describe('BookRejectionService', () => {
         expect(runs).toHaveLength(1);
         await Promise.all(runs);
 
-        // Non-vacuity: the run really did reach `reconcileLocked` (snapshot + prior-observation
-        // reads both issued) and only THEN skipped — it did not bail out during setup.
+        // Two reads prove reconcileLocked reached its snapshot and prior-observation gates.
         expect(selectCall).toBe(2);
         expect(companionDb.update).not.toHaveBeenCalled();
         expect(companionDb.insert).not.toHaveBeenCalled();

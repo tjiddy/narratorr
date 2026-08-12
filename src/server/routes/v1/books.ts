@@ -12,12 +12,13 @@ import type {
   IndexerService,
 } from '../../services/index.js';
 import { isRejectedByWords } from '../../services/index.js';
+import { decideIntake } from '../../services/book-intake/index.js';
 import type { BlacklistService } from '../../services/blacklist.service.js';
 import type { DownloadOrchestrator } from '../../services/download-orchestrator.js';
 import type { EventBroadcasterService } from '../../services/event-broadcaster.service.js';
 import type { FixMatchLookupResult } from '../../services/metadata-fix-match.js';
 import { triggerImmediateSearch } from '../../services/trigger-immediate-search.js';
-import { snapshotBookForEvent } from '../../utils/event-helpers.js';
+import { announceBookAdded, bookAddedSnapshotEvent } from '../../utils/event-helpers.js';
 import { serializeError } from '../../utils/serialize-error.js';
 import type { BookMetadata } from '@core/index.js';
 import { normalizeProductionType } from '@core/metadata/production-type.js';
@@ -38,9 +39,6 @@ import { fetchByPublicId, v1ErrorHandler } from './_helpers.js';
 export interface V1BooksRouteDeps {
   bookService: BookService;
   bookListService: BookListService;
-  // Add-by-ASIN (POST) deps — the same set the internal `POST /api/books` route
-  // takes (`src/server/routes/books.ts`): hydrate the ASIN, create the book,
-  // record the event, and (operator-gated) fire the immediate search.
   metadataService: MetadataService;
   downloadOrchestrator: DownloadOrchestrator;
   indexerSearchService: IndexerSearchService;
@@ -51,18 +49,14 @@ export interface V1BooksRouteDeps {
   eventBroadcaster?: EventBroadcasterService | undefined;
 }
 
-/** The exact input shape `BookService.create` accepts — derived from the
- *  service so the metadata→create mapping stays in lockstep with it. */
+/** Derived from BookService.create so the metadata mapping stays in sync. */
 type CreateBookInput = Parameters<BookService['create']>[0];
 
-/** Build a v1 error envelope body (`{ error: { code, message } }`). */
 function envelope(code: string, message: string): { error: { code: string; message: string } } {
   return { error: { code, message } };
 }
 
-/** Copy an optional field onto the create payload only when defined, so a
- *  `.optional()` create field stays ABSENT rather than explicit-`undefined`
- *  (exactOptionalPropertyTypes). Mirrors the Fix Match mapper's `copyOptional`. */
+/** exactOptionalPropertyTypes requires absent fields, not explicit undefined. */
 function copyOptional<K extends keyof CreateBookInput>(
   target: CreateBookInput,
   key: K,
@@ -72,12 +66,8 @@ function copyOptional<K extends keyof CreateBookInput>(
 }
 
 /**
- * Project an ok `BookMetadata` into the `BookService.create` payload. Mirrors
- * the Fix Match series/field logic (`metadataToFixMatchUpdate`) but targets the
- * create shape, NOT `FixMatchReplacement`. Key divergence: persist the REQUESTED
- * ASIN as a fallback (`meta.asin ?? requestedAsin`) — `BookMetadata.asin` is
- * optional, and storing a NULL asin would defeat the partial unique index on
- * `books.asin`, breaking the find-by-ASIN retry-safety guarantee.
+ * Mirrors the Fix Match field mapping for the create shape. Fall back to the requested ASIN:
+ * a null stored ASIN bypasses the partial unique index and breaks retry safety.
  */
 function metadataToCreatePayload(meta: BookMetadata, requestedAsin: string): CreateBookInput {
   const primarySeries = pickPrimarySeries(meta);
@@ -98,16 +88,11 @@ function metadataToCreatePayload(meta: BookMetadata, requestedAsin: string): Cre
   copyOptional(out, 'publishedDate', meta.publishedDate);
   copyOptional(out, 'genres', meta.genres);
   copyOptional(out, 'providerId', meta.providerId);
-  // Recording production form (#1731). Gate on presence: `normalizeProductionType`
-  // never returns undefined, so piping it unconditionally would write an explicit
-  // 'unknown' for ASINs with no formatType, regressing the absent-input contract.
+  // Normalize only a present formatType; absence must not become explicit unknown.
   if (meta.formatType) copyOptional(out, 'productionType', normalizeProductionType(meta.formatType));
   return out;
 }
 
-/** Map a non-ok `lookupForFixMatch` outcome to its v1 HTTP status + envelope
- *  fields: `not_found`/`invalid_record` → 422, `rate_limited` → 429,
- *  `transient_failure` → 502. */
 function mapLookupFailure(
   lookup: Exclude<FixMatchLookupResult, { kind: 'ok' }>,
 ): { status: 422 | 429 | 502; code: string; message: string } {
@@ -124,13 +109,8 @@ function mapLookupFailure(
 }
 
 /**
- * Read `quality` ONCE, fail-open, for the add-by-ASIN path (#1545). On a
- * successful read, gate the add on reject-words using the SAME predicate the
- * search filter uses (`isRejectedByWords`) so the add gate and the search cannot
- * drift, and capture `searchImmediately` to reuse after create. On a read
- * failure, fail open (a preference, not a security boundary — mirrors the search
- * filter's posture, #1004): proceed to create AND skip the immediate search. The
- * single read is what makes a thrown read unable to create-then-500.
+ * Read quality once and use the search predicate so reject-word behavior cannot drift.
+ * Preference failures fail open for creation but skip search; reading before create prevents create-then-500.
  */
 async function resolveQualityGate(
   deps: V1BooksRouteDeps,
@@ -154,13 +134,7 @@ async function resolveQualityGate(
   }
 }
 
-/**
- * Post-create tail: record the `manual` `book_added` event and, when the
- * operator opted in, fire the immediate search. Both are FIRE-AND-FORGET — the
- * caller returns `201` immediately and neither is awaited nor allowed to surface
- * an error. `searchImmediately` is the value captured by the single quality read
- * in `resolveQualityGate`.
- */
+/** Event recording and the captured immediate-search preference are fire-and-forget. */
 function recordCreateAndMaybeSearch(
   book: BookWithAuthor,
   searchImmediately: boolean,
@@ -168,14 +142,7 @@ function recordCreateAndMaybeSearch(
   deps: V1BooksRouteDeps,
   log: FastifyBaseLogger,
 ): void {
-  deps.eventHistory
-    .create({
-      bookId: book.id,
-      ...snapshotBookForEvent(book),
-      eventType: 'book_added',
-      source: 'manual',
-    })
-    .catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record book_added event'));
+  announceBookAdded(() => deps.eventHistory.create(bookAddedSnapshotEvent(book, 'manual')), book.id, log);
 
   log.info({ asin, publicId: book.publicId }, 'v1 add-by-ASIN: book created');
 
@@ -196,33 +163,14 @@ function recordCreateAndMaybeSearch(
   }
 }
 
-/** What `loadCompanionContext` resolves for a page (or a single row): the feature
- *  flag plus the batch-loaded observations keyed by numeric `books.id`. */
 interface CompanionContext {
   enabled: boolean;
   byBookId: Map<number, CompanionEbookRow>;
 }
 
 /**
- * Resolve `{ enabled, byBookId }` for a set of numeric book ids — the ONE
- * best-effort guard for both book GETs (#1961 AC 23a).
- *
- * `GET /api/v1/books` and `GET /api/v1/books/:publicId` read no settings at all
- * today (only `POST` does). Adding two dependencies to a working read endpoint
- * without a guard would let a transient `SettingsService` DB failure or a
- * companion-repository rejection propagate to `v1ErrorHandler`'s catch-all `500`
- * and turn two previously-working reads into 500s — "purely additive" has to hold
- * on the failure path too. So BOTH reads sit inside ONE try/catch: any rejection
- * logs exactly one warn and degrades to `{ enabled: false, byBookId: empty }`,
- * projecting `companionEbook: null` on every row and leaving the rest of the
- * response byte-identical to today's.
- *
- * Scope limit: this covers the companion enrichment ONLY. A failure of the core
- * book query still surfaces exactly as it does today.
- *
- * When the feature is disabled — or there are no rows — NO companion query is
- * issued. Otherwise `findCompanionEbooksByBookIds` chunks at 480, so a max-page
- * request (`limit=500`) costs two companion selects, not 500.
+ * Companion enrichment is best-effort: either read failing degrades the whole page to disabled/empty.
+ * Core book-query failures remain fatal. Disabled or empty pages skip the companion query; the repository chunks ids.
  */
 async function loadCompanionContext(
   db: Db,
@@ -244,18 +192,8 @@ async function loadCompanionContext(
 }
 
 /**
- * Native public API v1 — Books (read). Registers `GET /api/v1/books` and
- * `GET /api/v1/books/:publicId` inside an ENCAPSULATED plugin so the v1-scoped
- * `setErrorHandler` (v1 error envelope) does not leak onto internal `/api/*`
- * routes. API-key auth is inherited automatically via the global `/api/v*`
- * `onRequest` hook (`src/server/plugins/auth.ts`).
- *
- * The list reuses `BookListService.getAll()` with `exactStatus: true` so the v1
- * `status` filter matches the EXACT canonical state (e.g. `downloading` returns
- * only exactly-`downloading` books, NOT the library `searching+downloading`
- * bucket). Both endpoints declare a Fastify `response` schema and FAIL CLOSED:
- * the `.strict()` `bookV1Schema` rejects any leaked internal field at
- * serialization rather than silently stripping it.
+ * Encapsulation keeps the v1 error handler off internal routes. Status filters use exact canonical
+ * states rather than library buckets, and strict response schemas fail closed on internal-field leaks.
  */
 export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps, db: Db): Promise<void> {
   await app.register(
@@ -273,8 +211,7 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
         },
         async (request) => {
           const { limit, offset, status, author, series, narrator, sortField, sortDirection } = request.query;
-          // Conditional spreads (not explicit `undefined`) to satisfy
-          // exactOptionalPropertyTypes, mirroring the internal /api/books route.
+          // exactOptionalPropertyTypes requires conditional spreads, not explicit undefined.
           const pagination = {
             ...(limit !== undefined && { limit }),
             ...(offset !== undefined && { offset }),
@@ -294,9 +231,7 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
             data.map((row) => row.id),
             request.log,
           );
-          // An explicit closure, NOT `data.map(toBookV1)`: `Array.map` passes the
-          // array INDEX as the second argument, which would ship a numeric
-          // `companionEbook`.
+          // Do not pass toBookV1 directly: Array.map supplies its index as companionEbook.
           return {
             data: data.map((row) =>
               toBookV1(
@@ -317,11 +252,7 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
             response: { 200: bookV1Schema, 400: v1ErrorEnvelopeSchema, 404: v1ErrorEnvelopeSchema },
           },
         },
-        // The companion load happens inside the ASYNC `fetch` callback, which
-        // returns a tuple; `project` then stays trivially synchronous. That is
-        // why `_helpers.ts`'s `project: (row) => TDto` contract — shared by five
-        // v1 routes — needs no change at all. A missing book still returns `null`
-        // from `fetch`, so the 404 behaviour is untouched.
+        // Load companions in async fetch so the shared project contract stays synchronous; null still maps to 404.
         async (request) =>
           fetchByPublicId(
             db,
@@ -349,15 +280,7 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
           ),
       );
 
-      // POST /api/v1/books — add a book to the library by ASIN. Sonarr-style
-      // `POST /series`: find-by-ASIN → 409 (with `existingId`) if present, else
-      // hydrate the ASIN via the metadata provider, create the book, record a
-      // `manual` `book_added` event, and (operator-gated on
-      // `quality.searchImmediately`) fire a fire-and-forget immediate search.
-      // 422 outcomes: `asin_not_resolved` (provider miss) and `edition_rejected`
-      // (the hydrated edition matches the owner's reject-words filter — the same
-      // gate the search applies, enforced here so an out-of-band ASIN can't bypass
-      // it).
+      // Apply the same reject-word gate as search so an out-of-band ASIN cannot bypass it.
       typed.post(
         '/books',
         {
@@ -376,16 +299,16 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
         async (request, reply) => {
           const { asin } = request.body;
 
-          // Find-by-ASIN first (#1711). Add-by-ASIN is ASIN-only; an exact-ASIN
-          // incumbent resolves to `same-recording` (the resolver's authoritative
-          // ASIN-equal rule) → 409. A free ASIN gathers no incumbent →
-          // `different-recording` (book: null) → proceed.
-          const resolution = await deps.bookService.findDuplicate({ title: '', asin });
-          if (resolution.verdict !== 'different-recording' && resolution.book) {
-            request.log.info({ asin, existingId: resolution.book.publicId }, 'v1 add-by-ASIN: book already in library');
+          // v1 adopts the shared decision but not the shared pipeline: the probe stays AHEAD of the
+          // lookup so an owned ASIN 409s while the provider is down, and the arms below keep v1's
+          // own five-way failure taxonomy and its reject-word gate, which `addBook` has no seam for.
+          // An incumbent-less non-admit arm falls through: the 409 body has no `existingId` to send.
+          const decision = await decideIntake({ bookService: deps.bookService }, { item: { title: '', asin } });
+          if (decision.kind !== 'admit' && decision.incumbent) {
+            request.log.info({ asin, existingId: decision.incumbent.publicId }, 'v1 add-by-ASIN: book already in library');
             return reply.status(409).send({
               error: { code: 'book_exists', message: 'A book with this ASIN already exists' },
-              existingId: resolution.book.publicId,
+              existingId: decision.incumbent.publicId,
             });
           }
 
@@ -409,7 +332,7 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
           try {
             book = await deps.bookService.create(metadataToCreatePayload(lookup.book, asin));
           } catch (error: unknown) {
-            // Same-ASIN create-time race (#1711) — the recording is already owned.
+            // A concurrent same-ASIN create means the recording is already owned.
             if (error instanceof OwnedRecordingError) {
               const owner = await deps.bookService.getById(error.existingBookId);
               if (owner) {
@@ -425,9 +348,7 @@ export async function v1BooksRoutes(app: FastifyInstance, deps: V1BooksRouteDeps
 
           recordCreateAndMaybeSearch(book, gate.searchImmediately, asin, deps, request.log);
 
-          // Explicit `null`: a freshly created book is `wanted`, so the mapper's
-          // `imported` term forces `null` regardless of feature state. No
-          // settings read and no companion query is added to the create path.
+          // Freshly created wanted books force null without companion reads.
           return reply.status(201).send(toBookV1(book, null));
         },
       );

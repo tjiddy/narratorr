@@ -20,16 +20,12 @@ import { v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
 import { triggerImmediateSearch } from '../../services/trigger-immediate-search.js';
 import { OwnedRecordingError } from '../../services/book-dedup.js';
 
-// Mock config so the auth plugin runs with authBypass off (mirrors auth.plugin.test).
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));
 
-// The immediate-search trigger is fire-and-forget; mock it so we can assert
-// whether the operator-gated branch invoked it without touching real services.
+// Isolate the fire-and-forget trigger so branch invocation is observable.
 vi.mock('../../services/trigger-immediate-search.js', () => ({ triggerImmediateSearch: vi.fn() }));
 
-// #1961 — the companion batch loader. Mocked at the module boundary so the tests
-// can assert the exact id set it receives (batching, no N+1) and drive its
-// rejection path, without going through the mock-db chain.
+// Mock the batch-loader boundary to assert id sets and failure degradation directly.
 vi.mock('../../services/companion-ebook.repository.js', () => ({
   findCompanionEbooksByBookIds: vi.fn(),
 }));
@@ -39,7 +35,6 @@ const keyHeaders = { 'x-api-key': VALID_KEY };
 
 const narrator = { id: 9, publicId: 'nr_test000000000000000', name: 'Kate Reading', slug: 'kate-reading', createdAt: new Date(), updatedAt: new Date() };
 
-/** A hydrated BookWithAuthor row as the services return it (leaky internals included). */
 function hydratedRow(overrides?: Record<string, unknown>) {
   return {
     ...createMockDbBook({ status: 'imported', seriesName: 'Stormlight', seriesPosition: 1, ...overrides }),
@@ -49,7 +44,6 @@ function hydratedRow(overrides?: Record<string, unknown>) {
   };
 }
 
-/** An ok `BookMetadata` record as `lookupForFixMatch` returns it. */
 function metaBook(overrides?: Record<string, unknown>) {
   return {
     asin: 'B0ASIN12345',
@@ -88,8 +82,7 @@ const settingsService = { get: vi.fn() };
 const eventHistory = { create: vi.fn() };
 const db = createMockDb();
 
-/** The full POST dep set. Search-path services are unused stubs because the
- *  immediate-search trigger itself is mocked at the module boundary. */
+// Search-path services stay empty because the trigger is mocked at its module boundary.
 function postDeps() {
   return {
     bookService,
@@ -145,7 +138,6 @@ describe('v1 books routes', () => {
       expect(Object.keys(body).sort()).toEqual(['data', 'total']);
       expect(body.total).toBe(1);
       expect(bookV1Schema.parse(body.data[0])).toBeTruthy();
-      // No internal leaks shipped through serialization.
       expect(body.data[0]).not.toHaveProperty('lastGrabInfoHash');
       expect(body.data[0].id).toBe('bk_test000000000000000');
     });
@@ -168,8 +160,6 @@ describe('v1 books routes', () => {
 
       expect(bookListService.getAll as Mock).toHaveBeenCalledTimes(1);
       const [, pagination, options] = (bookListService.getAll as Mock).mock.calls[0]!;
-      // Every documented filter/sort param must reach the service — deleting any
-      // conditional spread in the route would drop it here while the request still 200s.
       expect(options).toMatchObject({
         author: 'Hugh Howey',
         series: 'Silo',
@@ -252,16 +242,13 @@ describe('v1 books routes', () => {
 
       const res = await app.inject({ method: 'GET', url: '/api/v1/books/bk_test000000000000000', headers: keyHeaders });
 
-      // The row-null guard must produce the required v1 404 envelope, not a projection 500.
       expect(res.statusCode).toBe(404);
       expectV1Envelope(res.json());
       expect(bookService.getById as Mock).toHaveBeenCalledWith(5);
     });
 
-    // #1983 F3 — pins the CANONICAL `v1PublicIdParamSchema` (`.trim().min(1)`) as this
-    // route's validator. Reverting this module to a private `z.string().min(1)` copy turns
-    // these back into 404 lookups, which `common.test.ts` (schema in isolation) and the
-    // companion-route suite (a different consumer) both stay green through.
+    // Pin the shared trimming schema; a private non-trimming copy would turn whitespace
+    // into 404 while schema-only and other-consumer tests remain green.
     it.each(['%20', '%20%20', '%09'])(
       'returns a 400 BAD_REQUEST envelope for the whitespace-only publicId %s, without resolving',
       async (encoded) => {
@@ -270,8 +257,6 @@ describe('v1 books routes', () => {
         expect(res.statusCode).toBe(400);
         expect(res.json()).toEqual({ error: { code: 'BAD_REQUEST', message: expect.any(String) } });
         expectV1Envelope(res.json());
-        // Validation precedes the handler: neither the publicId resolution nor the
-        // service read was reached.
         expect(db.select).not.toHaveBeenCalled();
         expect(bookService.getById as Mock).not.toHaveBeenCalled();
       },
@@ -284,7 +269,6 @@ describe('v1 books routes', () => {
 
       expect(res.statusCode).toBe(404);
       expectV1Envelope(res.json());
-      // The numeric value never reached getById — resolution failed first.
       expect(bookService.getById as Mock).not.toHaveBeenCalled();
     });
   });
@@ -302,7 +286,6 @@ describe('v1 books routes', () => {
       expect(res.statusCode).toBe(201);
       const body = res.json();
       expect(bookV1Schema.parse(body)).toBeTruthy();
-      // DTO no-leak: exactly the BookV1 keys, nothing internal.
       expect(Object.keys(body).sort()).toEqual(['authors', 'companionEbook', 'id', 'narrators', 'series', 'status', 'title']);
       expect(body).not.toHaveProperty('asin');
       expect(body).not.toHaveProperty('lastGrabInfoHash');
@@ -347,9 +330,6 @@ describe('v1 books routes', () => {
       await post({ asin: ASIN });
 
       const [payload] = (bookService.create as Mock).mock.calls[0]!;
-      // Every mapped field is asserted by value — deleting any single mapping
-      // (description/coverUrl/isbn/duration/publishedDate/genres/series*) would
-      // fail here, not silently survive.
       expect(payload).toEqual({
         title: 'The Way of Kings',
         subtitle: 'Book One of the Stormlight Archive',
@@ -370,8 +350,6 @@ describe('v1 books routes', () => {
     });
 
     it('falls back to series[0] for series name/position when seriesPrimary is absent (F2)', async () => {
-      // No seriesPrimary, but a series array → primarySeries = series[0]. seriesAsin
-      // was removed as a dead field (#1716), so it is never on the payload.
       (metadataService.lookupForFixMatch as Mock).mockResolvedValue({
         kind: 'ok',
         book: metaBook({ seriesPrimary: undefined, series: [{ name: 'Mistborn', position: 3 }] }),
@@ -386,7 +364,6 @@ describe('v1 books routes', () => {
     });
 
     it('omits create fields the provider record does not supply (no explicit undefined, F2)', async () => {
-      // A minimal ok record: only the required title/authors plus the requested ASIN.
       (metadataService.lookupForFixMatch as Mock).mockResolvedValue({
         kind: 'ok',
         book: { title: 'Bare', authors: [{ name: 'Solo' }] },
@@ -400,9 +377,7 @@ describe('v1 books routes', () => {
         authors: [{ name: 'Solo' }],
         asin: ASIN, // provider omitted asin → requested ASIN fallback
       });
-      // Unsupplied optional fields must be ABSENT, not present-as-undefined.
-      // productionType included: a record with no formatType must NOT write an
-      // explicit 'unknown' (defect vector — absent input stays unset, #1731).
+      // Missing formatType must not synthesize productionType: 'unknown'.
       for (const key of ['description', 'coverUrl', 'isbn', 'duration', 'publishedDate', 'genres', 'narrators', 'seriesName', 'seriesPosition', 'providerId', 'productionType']) {
         expect(payload).not.toHaveProperty(key);
       }
@@ -443,9 +418,87 @@ describe('v1 books routes', () => {
       expect(triggerImmediateSearch as Mock).not.toHaveBeenCalled();
     });
 
+    // The probe is the only part of the intake pipeline v1 adopts: its lookup, quality gate and
+    // create stay put because the published contract depends on their order and their taxonomy.
+    describe('the duplicate probe runs through decideIntake (#2251)', () => {
+      const ownedRow = () => hydratedRow({ publicId: 'bk_existing0000000000' });
+      const candidate = () => (bookService.findDuplicate as Mock).mock.calls[0]![0];
+
+      it('probes with title and asin ONLY — no authors/narrators/duration/productionType keys', async () => {
+        await post({ asin: ASIN });
+
+        // Key presence, not undefined-ness: a defaulted `undefined` would pass a toBeUndefined check.
+        expect(Object.keys(candidate()).sort()).toEqual(['asin', 'title']);
+        for (const key of ['authors', 'narrators', 'duration', 'productionType']) {
+          expect(candidate()).not.toHaveProperty(key);
+        }
+        expect(candidate().title).toBe('');
+      });
+
+      it("probes exactly once per request, through the route's own bookService", async () => {
+        await post({ asin: ASIN });
+
+        expect(bookService.findDuplicate as Mock).toHaveBeenCalledTimes(1);
+      });
+
+      it('409s an owned ASIN WITHOUT calling the provider', async () => {
+        (bookService.findDuplicate as Mock).mockResolvedValue({ verdict: 'same-recording', book: ownedRow() });
+
+        const res = await post({ asin: ASIN });
+
+        expect(res.statusCode).toBe(409);
+        expect(metadataService.lookupForFixMatch as Mock).not.toHaveBeenCalled();
+      });
+
+      // Resolve-then-decide would surface the provider's 429 here instead of the 409 v1 promises.
+      it('409s an owned ASIN even while the provider is rate-limited — not 429, and no Retry-After', async () => {
+        (bookService.findDuplicate as Mock).mockResolvedValue({ verdict: 'same-recording', book: ownedRow() });
+        (metadataService.lookupForFixMatch as Mock).mockResolvedValue({ kind: 'rate_limited', retryAfterMs: 5000 });
+
+        const res = await post({ asin: ASIN });
+
+        expect(res.statusCode).toBe(409);
+        expect(res.json().existingId).toBe('bk_existing0000000000');
+        expect(res.headers['retry-after']).toBeUndefined();
+        expect(metadataService.lookupForFixMatch as Mock).not.toHaveBeenCalled();
+      });
+
+      // A `kind !== 'admit'` port without the incumbent guard would 409 with no id to send.
+      it.each([['same-recording'], ['review']])(
+        'falls through to the lookup on a %s verdict carrying a NULL incumbent',
+        async (verdict) => {
+          (bookService.findDuplicate as Mock).mockResolvedValue({ verdict, book: null });
+
+          const res = await post({ asin: ASIN });
+
+          expect(res.statusCode).toBe(201);
+          expect(metadataService.lookupForFixMatch as Mock).toHaveBeenCalledWith(ASIN);
+          expect(bookService.create as Mock).toHaveBeenCalledTimes(1);
+        },
+      );
+
+      it('creates on a different-recording resolution that carries no hasIncumbent key at all', async () => {
+        (bookService.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
+
+        const res = await post({ asin: ASIN });
+
+        expect(res.statusCode).toBe(201);
+        expect(bookService.create as Mock).toHaveBeenCalledTimes(1);
+      });
+
+      it('sends the RAW request ASIN — canonicalization stays the resolver’s job', async () => {
+        const drifted = 'b0asin12345';
+        (bookService.findDuplicate as Mock).mockResolvedValue({ verdict: 'same-recording', book: ownedRow() });
+
+        const res = await post({ asin: drifted });
+
+        expect(res.statusCode).toBe(409);
+        expect(candidate().asin).toBe(drifted);
+      });
+    });
+
     it('retry-safe: first POST creates, a second POST of the same ASIN returns 409 + the created existingId (F1)', async () => {
-      // The created book carries the requested ASIN, so the next find-by-ASIN
-      // resolves to it. findDuplicate base (beforeEach) is null → first POST creates.
+      // The created book carries the requested ASIN, so the retry resolves to it.
       const created = hydratedRow({ publicId: 'bk_created00000000000', status: 'wanted', asin: ASIN });
       (bookService.create as Mock).mockResolvedValue(created);
 
@@ -453,7 +506,6 @@ describe('v1 books routes', () => {
       expect(first.statusCode).toBe(201);
       expect(first.json().id).toBe('bk_created00000000000');
 
-      // Lost-response retry: the same ASIN now finds the created row → 409, no second create.
       (bookService.findDuplicate as Mock).mockResolvedValueOnce({ verdict: 'same-recording', book: created });
       const second = await post({ asin: ASIN });
 
@@ -461,15 +513,9 @@ describe('v1 books routes', () => {
       const body = second.json();
       expect(body.error.code).toBe('book_exists');
       expect(body.existingId).toBe('bk_created00000000000');
-      // The retry produced no second book.
       expect(bookService.create as Mock).toHaveBeenCalledTimes(1);
     });
 
-    // #1723 F8 — the create-time ASIN race catch (distinct from the pre-create
-    // find-by-ASIN 409 above): findDuplicate clears the guard (different-recording)
-    // but create() fail-closes with OwnedRecordingError. With getById resolving the
-    // incumbent owner, the route returns the v1 book_exists envelope + the owner's
-    // publicId, and never fires the immediate search.
     it('409 on a create-time ASIN race (OwnedRecordingError): book_exists + incumbent existingId, no search (#1723 F8)', async () => {
       (bookService.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (bookService.create as Mock).mockRejectedValue(
@@ -488,8 +534,25 @@ describe('v1 books routes', () => {
       expect(triggerImmediateSearch as Mock).not.toHaveBeenCalled();
     });
 
+    // v1 diverges from the route ladder deliberately: with no owner to name there is no `existingId`
+    // for the 409 body, so the race error propagates rather than becoming an invented response.
+    it('500 on a create-time ASIN race whose owner cannot be hydrated — no invented book_exists', async () => {
+      (bookService.create as Mock).mockRejectedValue(
+        new OwnedRecordingError({ existingBookId: 5, title: 'The Way of Kings', reason: 'asin-owned' }),
+      );
+      (bookService.getById as Mock).mockResolvedValue(null);
+
+      const res = await post({ asin: ASIN });
+
+      expect(res.statusCode).toBe(500);
+      const body = res.json();
+      expectV1Envelope(body);
+      expect(body.error.code).not.toBe('book_exists');
+      expect(body).not.toHaveProperty('existingId');
+    });
+
     it('422 edition_rejected: a reject-word-matching edition is refused before create (#1545)', async () => {
-      // metaBook title is "The Way of Kings" → reject-word "kings" matches the surface.
+      // Default metadata title contains "kings".
       (settingsService.get as Mock).mockResolvedValue({ searchImmediately: false, rejectWords: 'kings' });
 
       const res = await post({ asin: ASIN });
@@ -511,8 +574,6 @@ describe('v1 books routes', () => {
     });
 
     it('201: searchImmediately survives the single quality read (regression guard, #1545)', async () => {
-      // The reject gate and the post-create immediate search now share ONE read —
-      // assert reusing the captured value did not drop the search.
       (settingsService.get as Mock).mockResolvedValue({ searchImmediately: true, rejectWords: 'dramatized' });
       const created = hydratedRow({ status: 'wanted' });
       (bookService.create as Mock).mockResolvedValue(created);
@@ -530,7 +591,6 @@ describe('v1 books routes', () => {
 
       const res = await post({ asin: ASIN });
 
-      // Single read ⇒ the throw cannot create-then-500: 201, book created, no search.
       expect(res.statusCode).toBe(201);
       expect(bookService.create as Mock).toHaveBeenCalledTimes(1);
       expect(triggerImmediateSearch as Mock).not.toHaveBeenCalled();
@@ -609,13 +669,9 @@ describe('v1 books routes', () => {
     });
   });
 
-  // #1961 — the top-level companion field. It is contract-pinned but DORMANT:
-  // its only Phase-1 consumer is these tests (the live surface is the nested
-  // `library.companionEbook` annotation on the metadata search).
   describe('companionEbook on the v1 book DTO (#1961)', () => {
     const EPUB = { format: 'epub', sizeBytes: 123456 };
 
-    /** An `available` observation row as `findCompanionEbooksByBookIds` returns it. */
     function observation(bookId: number, overrides?: Record<string, unknown>) {
       return { bookId, status: 'available', sizeBytes: 123456, filename: 'x.epub', ...overrides };
     }
@@ -624,12 +680,8 @@ describe('v1 books routes', () => {
       (settingsService.get as Mock).mockResolvedValue({ enabled: true, searchImmediately: false });
     }
 
-    // The settings category both GETs read is a bare string argument, and it is
-    // NOT self-checking: `tagging` (src/shared/schemas/settings/tagging.ts:7) and
-    // `discovery` (discovery.ts:5) also expose a boolean `enabled`, so swapping
-    // the key for either one typechecks and leaves every other test in this
-    // describe green while the endpoints start gating on an unrelated flag.
-    // These assertions pin the exact key AND the call count per request.
+    // Pin the exact key: tagging and discovery also expose `enabled`, so a category
+    // swap type-checks and can leave the other behavior tests green.
     describe('reads the companionEpub settings category by exact key', () => {
       it.each([
         ['list', '/api/v1/books'],
@@ -645,10 +697,7 @@ describe('v1 books routes', () => {
         const res = await app.inject({ method: 'GET', url, headers: keyHeaders });
 
         expect(res.statusCode).toBe(200);
-        // The whole call list, so a second read or a different category fails.
         expect((settingsService.get as Mock).mock.calls).toEqual([['companionEpub']]);
-        // The read is load-bearing, not incidental — this request did expose a
-        // companion, so the key that was read is the one that gated it.
         expect(res.json().companionEbook ?? res.json().data[0].companionEbook).toEqual(EPUB);
       });
 
@@ -687,8 +736,7 @@ describe('v1 books routes', () => {
         expect(res.statusCode).toBe(200);
         const items = res.json().data;
         expect(items.map((i: { companionEbook: unknown }) => i.companionEbook)).toEqual([null, EPUB, null]);
-        // Kills `data.map(toBookV1)` — `Array.map` would pass the array INDEX as
-        // the second argument, shipping a numeric companionEbook.
+        // Bare data.map(toBookV1) would pass the array index as companionEbook.
         for (const item of items) {
           expect(typeof item.companionEbook).not.toBe('number');
         }
@@ -705,8 +753,7 @@ describe('v1 books routes', () => {
         expect(findCompanionEbooksByBookIds as Mock).not.toHaveBeenCalled();
       });
 
-      // AC 22 — the `imported` term is the only thing stopping a book deleted off
-      // disk from advertising an ebook forever.
+      // Status gating prevents a missing book from advertising a stale observation forever.
       it('emits null for a missing book carrying a stale available observation', async () => {
         enableFeature();
         (bookListService.getAll as Mock).mockResolvedValue({
@@ -739,14 +786,12 @@ describe('v1 books routes', () => {
 
         const res = await app.inject({ method: 'GET', url: '/api/v1/books', headers: keyHeaders });
 
-        // A null size must NOT become a serialization 500 and must NOT become 0.
         expect(res.statusCode).toBe(200);
         const [zero, noSize] = res.json().data;
         expect(zero.companionEbook).toEqual({ format: 'epub', sizeBytes: 0 });
         expect(noSize.companionEbook).toBeNull();
       });
 
-      // AC 22a — batch-load once by numeric `books.id`, never one call per row.
       it('calls the companion loader ONCE with every page id (no N+1)', async () => {
         enableFeature();
         const page = Array.from({ length: 25 }, (_, i) =>
@@ -775,10 +820,7 @@ describe('v1 books routes', () => {
         expect((findCompanionEbooksByBookIds as Mock).mock.calls[0]![1]).toHaveLength(500);
       });
 
-      // AC 22a's query-count half: 500 > the loader's 480-id chunk size, so a max
-      // page costs TWO companion selects — not one, and emphatically not 500. The
-      // route hands the loader one call; the loader itself does the chunking, so
-      // the count is asserted against the REAL implementation.
+      // 500 exceeds the 480-id chunk size; assert the real loader rather than the mocked route seam.
       it('the real loader turns those 500 ids into exactly 2 selects (480-id chunking)', async () => {
         const { findCompanionEbooksByBookIds: real } = await vi.importActual<
           typeof import('../../services/companion-ebook.repository.js')
@@ -791,9 +833,6 @@ describe('v1 books routes', () => {
         expect(chunkDb.select).toHaveBeenCalledTimes(2);
       });
 
-      // AC 23a — a settings failure or a companion-read failure degrades to null,
-      // never a 500. These two reads are the only new dependencies on a pair of
-      // endpoints that read no settings at all today.
       it('returns 200 with every companionEbook null and one warn when the settings read rejects', async () => {
         (settingsService.get as Mock).mockRejectedValue(new Error('settings db down'));
         (bookListService.getAll as Mock).mockResolvedValue({ data: three, total: 3 });
@@ -805,7 +844,6 @@ describe('v1 books routes', () => {
         const items = res.json().data;
         expect(items).toHaveLength(3);
         expect(items.every((i: { companionEbook: unknown }) => i.companionEbook === null)).toBe(true);
-        // Core fields are untouched.
         expect(items[0].id).toBe('bk_one00000000000000000');
         expect(items[0].title).toBe('The Way of Kings');
         expect(warnSpy).toHaveBeenCalledTimes(1);
@@ -935,7 +973,6 @@ describe('v1 books routes', () => {
         expect(res.statusCode).toBe(201);
         expect(res.json().companionEbook).toBeNull();
         expect(findCompanionEbooksByBookIds as Mock).not.toHaveBeenCalled();
-        // The create path's ONE settings read is the existing `quality` read.
         expect(settingsService.get as Mock).toHaveBeenCalledTimes(1);
         expect(settingsService.get as Mock).not.toHaveBeenCalledWith('companionEpub');
       });
@@ -944,15 +981,11 @@ describe('v1 books routes', () => {
 
   describe('auth (real auth-plugin fixture, F3)', () => {
     it('rejects a missing API key with 401 (status only — missing key → ambient auth body, not the v1 envelope)', async () => {
-      // A no-key request falls through to handleAmbientAuth, which returns the
-      // ambient body (not a v1 envelope), so this case is genuinely envelope-exempt.
       const res = await app.inject({ method: 'GET', url: '/api/v1/books' });
       expect(res.statusCode).toBe(401);
     });
 
     it('rejects an invalid API key with the 401 v1 envelope (#1472)', async () => {
-      // An invalid (presented-but-rejected) key on a native v1 route now returns the
-      // canonical v1 envelope, built in the auth hook before this route's handler.
       (authService.validateApiKey as Mock).mockResolvedValue(false);
       const res = await app.inject({ method: 'GET', url: '/api/v1/books', headers: { 'x-api-key': 'wrong' } });
       expect(res.statusCode).toBe(401);
@@ -969,10 +1002,7 @@ describe('v1 books routes', () => {
   });
 });
 
-// F6 — prove Fastify response-schema enforcement is actually wired (not just that
-// the schema rejects via direct parse). A route declaring `response: bookV1Schema`
-// whose handler returns a leaky object must FAIL serialization (5xx), not strip
-// and ship the field. This pins the keystone behavior at the Fastify layer.
+// Exercise Fastify serialization itself; direct schema parsing cannot prove fail-closed wiring.
 describe('v1 response-schema fail-closed (Fastify serialization, F6)', () => {
   it('rejects a leaked field at serialization instead of stripping it', async () => {
     const leakyApp = Fastify({ logger: false });
@@ -997,7 +1027,6 @@ describe('v1 response-schema fail-closed (Fastify serialization, F6)', () => {
   });
 });
 
-/** Assert a body is the canonical v1 error envelope, NOT the internal `{ statusCode, error, message }`. */
 function expectV1Envelope(body: unknown): void {
   expect(v1ErrorEnvelopeSchema.safeParse(body).success).toBe(true);
   const b = body as Record<string, unknown>;

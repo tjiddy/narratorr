@@ -14,7 +14,7 @@ export interface RetagPlanFile {
   file: string;
   outcome: 'will-tag' | 'skip-populated' | 'skip-unsupported';
   diff?: RetagPlanFileDiff[];
-  /** True when cover-embed would run for this file; surfaces cover-only writes to the client. */
+  /** Includes cover-only writes. */
   coverPending?: boolean;
 }
 
@@ -25,7 +25,7 @@ export interface RetagPlanCanonical {
   albumArtist?: string;
   composer?: string;
   grouping?: string;
-  // ABS-survivable set (#1671). `seriesPart` is stringified for display.
+  // ABS-survivable fields; seriesPart is stringified for preview.
   series?: string;
   seriesPart?: string;
   subtitle?: string;
@@ -46,20 +46,14 @@ export interface RetagPlan {
   warnings: string[];
 }
 
-// String-valued tag fields handled uniformly by the truthy populate_missing gate,
-// the exclude filter, and the diff builder. `seriesPart` (numeric) and `track`
-// (numeric pair) are NOT here — they need `!= null` handling so a 0 survives.
+// Numeric fields stay separate because their null checks must preserve zero.
 export const SIMPLE_EXCLUDABLE_FIELDS = [
   'artist', 'albumArtist', 'album', 'title', 'composer', 'grouping',
   'series', 'subtitle', 'asin', 'publisher', 'description', 'date', 'genre',
 ] as const;
 const TAG_DIFF_FIELDS = SIMPLE_EXCLUDABLE_FIELDS;
 
-/**
- * Read existing tags from a file to determine which fields are already populated.
- * Empty strings are dropped — matches the apply path's truthy filter so files
- * with `album: ""` look the same as files with no album tag at all.
- */
+// Drop empty strings to match the apply path's truthy populate-missing check.
 export async function readExistingTags(filePath: string): Promise<Partial<TagMetadata>> {
   try {
     const metadata = await parseFile(filePath);
@@ -67,6 +61,7 @@ export async function readExistingTags(filePath: string): Promise<Partial<TagMet
       ...readCommonCoreTags(metadata.common),
       ...readCommonAbsTags(metadata.common),
       ...readNativeSeriesTags(metadata.native as NativeTags),
+      ...readNativePublisher(metadata.native as NativeTags),
     };
   } catch {
     return {};
@@ -76,7 +71,6 @@ export async function readExistingTags(filePath: string): Promise<Partial<TagMet
 type CommonTags = Awaited<ReturnType<typeof parseFile>>['common'];
 type NativeTags = Record<string, { id: string; value: unknown }[]> | undefined;
 
-/** The original Plex/track field set, read from music-metadata `common`. */
 function readCommonCoreTags(common: CommonTags): Partial<TagMetadata> {
   const result: Partial<TagMetadata> = {};
   if (common.artist) result.artist = common.artist;
@@ -86,17 +80,17 @@ function readCommonCoreTags(common: CommonTags): Partial<TagMetadata> {
   if (common.composer?.[0]) result.composer = common.composer[0];
   if (common.grouping) result.grouping = common.grouping;
   if (common.track?.no != null) result.track = common.track.no;
+  if (common.track?.of != null) result.trackTotal = common.track.of;
   return result;
 }
 
-/**
- * ABS-survivable set read from `common` (#1671). `subtitle`/`publisher`/
- * `description`/`genre` are arrays in music-metadata; `asin`/`date`/`year` scalars.
- */
 function readCommonAbsTags(common: CommonTags): Partial<TagMetadata> {
   const result: Partial<TagMetadata> = {};
   if (common.subtitle?.[0]) result.subtitle = common.subtitle[0];
-  if (common.publisher?.[0]) result.publisher = common.publisher[0];
+  // publisher is deliberately absent here: music-metadata maps neither MP4's
+  // `----:com.apple.iTunes:PUBLISHER` nor ID3's `TPUB` to common.publisher (TPUB becomes
+  // common.label), so reading it from `common` was a silent no-op that made populate_missing
+  // rewrite publisher on every pass. readNativePublisher reads the real frames instead.
   if (common.description?.[0]) result.description = common.description[0];
   if (common.genre?.[0]) result.genre = common.genre[0];
   if (common.asin) result.asin = common.asin;
@@ -105,21 +99,25 @@ function readCommonAbsTags(common: CommonTags): Partial<TagMetadata> {
   return result;
 }
 
-/**
- * `series` / `series-part` have no `common` mapping — read them from native frames
- * (TXXX:series, MP4 `----:…:series`, bare `series`) so populate_missing is field-aware.
- */
+// The movement atoms are the portability channel and carry a position music-metadata truncates to
+// an integer, so the lossless freeform is tried first and these only answer for foreign files.
+const SERIES_NATIVE_IDS = ['mvnm', '©mvn'] as const;
+const SERIES_PART_NATIVE_IDS = ['mvin', '©mvi'] as const;
+const PUBLISHER_NATIVE_IDS = ['tpub'] as const;
+
+function readNativePublisher(native: NativeTags): Partial<TagMetadata> {
+  const publisher = readNativeFreeform(native, 'publisher', PUBLISHER_NATIVE_IDS);
+  return publisher ? { publisher } : {};
+}
+
+// series fields have no common mapping, so inspect ID3, MP4, and bare native frames.
 function readNativeSeriesTags(native: NativeTags): Partial<TagMetadata> {
   const result: Partial<TagMetadata> = {};
-  const series = readNativeFreeform(native, 'series');
+  const series = readNativeFreeform(native, 'series', SERIES_NATIVE_IDS);
   if (series) result.series = series;
-  const seriesPart = readNativeFreeform(native, 'series-part');
+  const seriesPart = readNativeFreeform(native, 'series-part', SERIES_PART_NATIVE_IDS);
   if (seriesPart) {
-    // `nativeTagText` drops only the exact empty string and does not trim, so a
-    // whitespace-only frame stays truthy (and `Number('   ')` is a finite `0`).
-    // Trim, treat a blank result as absent, and assign only a finite parse — a
-    // non-numeric embedded value (`"Book 2"`) must read as absent so
-    // populate_missing still writes the canonical series part.
+    // Number('   ') is zero; reject blank and non-numeric frames so canonical data can populate.
     const trimmed = seriesPart.trim();
     const parsed = Number(trimmed);
     if (trimmed && Number.isFinite(parsed)) result.seriesPart = parsed;
@@ -128,20 +126,34 @@ function readNativeSeriesTags(native: NativeTags): Partial<TagMetadata> {
 }
 
 /**
- * Read a freeform native tag value by key (case-insensitive). Matches the bare id
- * (`series`), the ID3 `TXXX:series` shape, and the MP4 `----:com.apple.iTunes:series`
- * shape. TXXX values may arrive as `{ description, text }` objects — handle both.
+ * Match bare, ID3 TXXX, and MP4 freeform ids; TXXX values may wrap text in an object. The
+ * derived-name match is what keeps a 747-book library written by the pre-mutagen ffmpeg path
+ * (`series`, `TXXX:series`, `----:com.apple.iTunes:series`) readable, so it is tried before the
+ * explicit `fallbackIds` — those must already be lowercase.
  */
 function readNativeFreeform(
   native: Record<string, { id: string; value: unknown }[]> | undefined,
   key: string,
+  fallbackIds: readonly string[] = [],
 ): string | undefined {
   if (!native) return undefined;
   const keyLower = key.toLowerCase();
+  const derived = findNativeTag(native, id => id === keyLower || id.endsWith(`:${keyLower}`));
+  if (derived) return derived;
+  for (const fallback of fallbackIds) {
+    const found = findNativeTag(native, id => id === fallback);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function findNativeTag(
+  native: Record<string, { id: string; value: unknown }[]>,
+  matches: (idLower: string) => boolean,
+): string | undefined {
   for (const tags of Object.values(native)) {
     for (const tag of tags) {
-      const idLower = tag.id.toLowerCase();
-      if (idLower !== keyLower && !idLower.endsWith(`:${keyLower}`)) continue;
+      if (!matches(tag.id.toLowerCase())) continue;
       const value = nativeTagText(tag.value);
       if (value) return value;
     }
@@ -159,13 +171,7 @@ function nativeTagText(value: unknown): string | undefined {
   return undefined;
 }
 
-/**
- * Determine which tags to write based on mode.
- * In 'populate_missing' mode, only write tags that are currently empty.
- * In 'overwrite' mode, write all tags. Both modes return `null` when there
- * are no tags to write — callers then decide whether to short-circuit or
- * proceed (e.g. for cover-only embeds).
- */
+// null means no metadata write; callers may still embed cover art.
 export function resolveTags(
   desired: TagMetadata,
   existing: Partial<TagMetadata>,
@@ -215,10 +221,7 @@ export async function fileHasCoverArt(filePath: string): Promise<boolean> {
   }
 }
 
-/**
- * Build the canonical desired-tag set for a book. The same shape is used in
- * the apply path (per-file loop) and the preview's canonical card.
- */
+// Shared by apply and preview so their canonical tag sets cannot drift.
 export function buildCanonicalTags(
   metadata: {
     title: string;
@@ -241,9 +244,9 @@ export function buildCanonicalTags(
     title: metadata.title,
     ...(metadata.authorName && { artist: metadata.authorName, albumArtist: metadata.authorName }),
     ...(metadata.narrator && { composer: metadata.narrator }),
-    // `grouping` (survives M4B) and `series` (survives MP3) both carry the series name.
+    // M4B retains grouping; MP3 retains series.
     ...(metadata.seriesName && { grouping: metadata.seriesName, series: metadata.seriesName }),
-    // `!= null` so series position 0 is preserved (vs. a truthy check dropping it).
+    // Preserve series position zero.
     ...(metadata.seriesPosition != null && { seriesPart: metadata.seriesPosition }),
     ...(metadata.subtitle && { subtitle: metadata.subtitle }),
     ...(metadata.asin && { asin: metadata.asin }),
@@ -254,19 +257,8 @@ export function buildCanonicalTags(
   };
 }
 
-/**
- * For multi-file books, derive the per-file `title` so the apply path doesn't
- * clobber legitimate chapter titles with the book title (#1090).
- *
- * - `overwrite`: preserve the file's existing title when present; otherwise
- *   fall back to the file basename (extension stripped). Returns undefined
- *   when neither is available so the caller can leave title unset.
- * - `populate_missing`: return basename-derived title. `resolveTags`'s
- *   `!existing[key]` guard keeps existing titles intact; the basename value
- *   is only written for files that have no existing title tag.
- *
- * Single-file books should NOT use this helper — they keep `title = book.title`.
- */
+// Multi-file only: preserve an existing title in overwrite mode, otherwise use
+// the basename. populate_missing relies on resolveTags to protect existing titles.
 export function derivePerFileTitle(
   filePath: string,
   mode: TagMode,
@@ -278,17 +270,7 @@ export function derivePerFileTitle(
   return base || undefined;
 }
 
-/**
- * Build the per-file desired-tag set from canonical (book-wide) tags + file
- * context. Shared between the apply path (`tagBook` per-file loop) and the
- * preview path (`planRetag` per-file loop) so the two never diverge on the
- * per-file `title` rule.
- *
- * - Single-file books: passes canonical tags through unchanged
- *   (`title = book.title`, no track).
- * - Multi-file books: assigns sequential track numbers and replaces `title`
- *   with the per-file value from `derivePerFileTitle`.
- */
+// Shared by apply and preview; multi-file books replace title and add track numbers.
 export function buildTagsForFile(args: {
   canonicalTags: TagMetadata;
   filePath: string;
@@ -315,10 +297,7 @@ export function buildTagsForFile(args: {
   return result;
 }
 
-/**
- * Strip the user-excluded fields from a desired-tag set. The user-facing
- * `track` checkbox covers both `track` and `trackTotal` — exclude expands.
- */
+// The user-facing track exclusion covers both track and trackTotal.
 export function applyExcludeFields(tags: TagMetadata, excludeFields: ReadonlySet<RetagExcludableField>): TagMetadata {
   const result: TagMetadata = {};
   for (const field of SIMPLE_EXCLUDABLE_FIELDS) {
@@ -335,10 +314,6 @@ export function applyExcludeFields(tags: TagMetadata, excludeFields: ReadonlySet
   return result;
 }
 
-/**
- * Compute the per-file outcome a planRetag run would produce — same logic as
- * `tagFile` but without invoking ffmpeg or touching disk.
- */
 export async function planFile(
   filePath: string,
   desired: TagMetadata,
@@ -361,7 +336,6 @@ export async function planFile(
   return { file: fileName, outcome: 'will-tag', diff, coverPending };
 }
 
-/** Build the current→next diff rows for a will-tag file (string fields + numeric series-part/track). */
 function buildTagDiff(resolved: TagMetadata, existing: Partial<TagMetadata>): RetagPlanFileDiff[] {
   const diff: RetagPlanFileDiff[] = [];
   for (const field of TAG_DIFF_FIELDS) {
@@ -386,8 +360,7 @@ function stringify(value: string | number | null | undefined): string | null {
 }
 
 export function pickCanonical(tags: TagMetadata): RetagPlanCanonical {
-  // album + title are populated unconditionally by buildCanonicalTags from book.title
-  // (NOT NULL in DB), so RetagPlanCanonical can require both.
+  // buildCanonicalTags sources both required fields from the non-null book title.
   const result: RetagPlanCanonical = {
     album: tags.album ?? '',
     title: tags.title ?? '',

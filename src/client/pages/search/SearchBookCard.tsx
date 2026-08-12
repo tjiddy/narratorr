@@ -1,10 +1,11 @@
 import { useState } from 'react';
+import { Link } from 'react-router';
 import { CoverImage } from '@/components/CoverImage';
 import { AddBookPopover } from '@/components/AddBookPopover';
 import { InLibraryBadge } from '@/components/InLibraryBadge';
 import { Badge } from '@/components/Badge';
 import { useMutation, type useQueryClient } from '@tanstack/react-query';
-import { api, ApiError, type BookMetadata, type LibraryEntry } from '@/lib/api';
+import { api, readAddBookConflict, formatReviewConflictSentence, REVIEW_CONFLICT_LABEL, type BookMetadata, type LibraryEntry } from '@/lib/api';
 import { toast } from 'sonner';
 import { mapBookMetadataToPayload, findLibraryMatch, type LibraryMatch } from '@/lib/helpers';
 import { formatDurationMinutes } from '@/lib/format';
@@ -17,12 +18,7 @@ import {
   ClockIcon,
 } from '@/components/icons';
 
-// Derived ownership read-out (#1907), extracted so the card component stays under
-// the complexity cap. `inLibraryBookId` is the linked-"In Library" id: a completed
-// add/409 (`justAddedBookId`) always wins; otherwise only an exact-ASIN match
-// contributes a pre-existing id (derived-state-over-copied). A title-identity match
-// links to nothing until an add/409 completes, so it keeps its Add control and shows
-// the related-edition badge instead of ever linking to the incumbent edition (AC5).
+// A completed add/409 wins; exact-ASIN matches link, while title-only matches keep Add and show the related-edition badge.
 function deriveOwnership(
   libraryMatch: LibraryMatch<LibraryEntry> | null,
   justAddedBookId: number | null,
@@ -34,6 +30,12 @@ function deriveOwnership(
   };
 }
 
+/** The overrides the popover collects, plus the operator's explicit review override. */
+type AddOverrides = { searchImmediately: boolean; overrideRecordingReview?: boolean };
+
+/** Held so the operator can accept the risk; `overrides` replays the popover's search choice. */
+type ReviewConflict = { incumbentTitle: string | null; overrides: AddOverrides | undefined };
+
 export function SearchBookCard({
   book,
   index,
@@ -42,35 +44,37 @@ export function SearchBookCard({
 }: {
   book: BookMetadata;
   index: number;
-  // Canonical ownership-entry type (#1916): the search page supplies the
-  // unpaginated `BookIdentifier[]`; both branches carry the `id` the badge
-  // links at.
   libraryBooks?: LibraryEntry[] | undefined;
   queryClient: ReturnType<typeof useQueryClient>;
 }) {
   const [justAddedBookId, setJustAddedBookId] = useState<number | null>(null);
+  const [reviewConflict, setReviewConflict] = useState<ReviewConflict | null>(null);
   const authorNames = book.authors.map((a) => a.name).join(', ');
-  // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) — `series[0]`
-  // on Audible can be a broader universe entry rather than the real book series.
+  // Audible series[0] may be a broader universe; use canonical seriesPrimary.
   const seriesInfo = pickPrimarySeries(book);
   const libraryMatch = findLibraryMatch(book, libraryBooks);
   const { inLibraryBookId, showRelatedEditionBadge } = deriveOwnership(libraryMatch, justAddedBookId);
 
   const addMutation = useMutation({
-    mutationFn: (overrides?: { searchImmediately: boolean }) =>
+    mutationFn: (overrides?: AddOverrides) =>
       api.addBook(mapBookMetadataToPayload(book, overrides)),
     onSuccess: (created) => {
+      setReviewConflict(null);
       setJustAddedBookId(created.id);
       toast.success(`Added '${book.title}' to library`);
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
-    onError: (error: Error) => {
-      if (error instanceof ApiError && error.status === 409) {
-        // 409 body is the existing book row (see src/server/routes/books.ts:141)
-        const existingId = typeof error.body === 'object' && error.body !== null && 'id' in error.body && typeof (error.body as { id: unknown }).id === 'number'
-          ? (error.body as { id: number }).id
-          : null;
-        setJustAddedBookId(existingId);
+    onError: (error: Error, overrides) => {
+      const details = readAddBookConflict(error);
+      if (details) {
+        // Review is tested FIRST and ownership is the fallthrough: a null discriminator degrading
+        // into the review arm would silently drop a real ownership claim. `review` is an abstention,
+        // not an ownership claim, so the card must stay addable.
+        if (details.conflict === 'review') {
+          setReviewConflict({ incumbentTitle: details.incumbentTitle, overrides });
+          return;
+        }
+        setJustAddedBookId(details.incumbentId);
         toast.info('Already in library');
         queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       } else {
@@ -85,7 +89,6 @@ export function SearchBookCard({
       style={{ animationDelay: `${index * 50}ms` }}
     >
       <div className="flex gap-4 sm:gap-5">
-        {/* Cover Image */}
         <div className="shrink-0">
           <CoverImage
             src={book.coverUrl}
@@ -95,10 +98,15 @@ export function SearchBookCard({
           />
         </div>
 
-        {/* Content */}
         <div className="flex-1 min-w-0 flex flex-col">
           <h3 className="font-display text-lg sm:text-xl font-semibold line-clamp-2 group-hover:text-primary transition-colors">
-            {book.title}
+            {inLibraryBookId !== null ? (
+              <Link to={`/books/${inLibraryBookId}`} className="hover:underline focus-ring rounded" data-testid="search-card-title-link">
+                {book.title}
+              </Link>
+            ) : (
+              book.title
+            )}
           </h3>
 
           {authorNames && (
@@ -107,15 +115,30 @@ export function SearchBookCard({
             </p>
           )}
 
-          {/* Related-edition indicator (#1907). Lives in the content column — not
-              the action column — so it wraps with the title/metadata on narrow
-              screens instead of competing with the Add control for the fixed
-              `shrink-0` action width. Shown only in the related-edition state
-              (title-identity match, no completed add/409 yet); an exact-ASIN
-              match or a completed add flips to the linked InLibraryBadge instead. */}
+          {/* Keep this badge in the flexible content column so it cannot crowd the Add control. */}
           {showRelatedEditionBadge && (
             <div className="mt-1.5">
               <Badge variant="muted">Edition in library</Badge>
+            </div>
+          )}
+
+          {reviewConflict && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-2" role="status">
+              <Badge variant="warning">{REVIEW_CONFLICT_LABEL}</Badge>
+              <span className="text-sm text-muted-foreground">
+                {formatReviewConflictSentence(reviewConflict.incumbentTitle)}
+              </span>
+              <button
+                type="button"
+                onClick={() => addMutation.mutate({
+                  searchImmediately: reviewConflict.overrides?.searchImmediately ?? false,
+                  overrideRecordingReview: true,
+                })}
+                disabled={addMutation.isPending}
+                className="text-sm font-medium text-primary hover:underline disabled:opacity-50 focus-ring rounded"
+              >
+                Add anyway
+              </button>
             </div>
           )}
 
@@ -126,7 +149,6 @@ export function SearchBookCard({
             </p>
           )}
 
-          {/* Metadata */}
           <div className="flex flex-wrap items-center gap-3 mt-auto pt-3">
             {seriesInfo && (
               <span className="text-sm text-muted-foreground">
@@ -148,12 +170,6 @@ export function SearchBookCard({
           </div>
         </div>
 
-        {/* Add Button */}
-        {/* Ownership read-out (#1907): an exact-ASIN match (or a completed
-            add/409) links to the owned book with no Add control; otherwise Add
-            stays available. The related-edition (title-identity) case keeps Add
-            here AND surfaces the "Edition in library" badge in the content column
-            above — the server's recording-verdict decides create-vs-409. */}
         <div className="shrink-0 flex items-center">
           {inLibraryBookId !== null ? (
             <InLibraryBadge bookId={inLibraryBookId} />

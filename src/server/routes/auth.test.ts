@@ -22,12 +22,8 @@ import { config } from '../config.js';
 import { AuthService, UserExistsError, AuthConfigError, IncorrectPasswordError, NoCredentialsError } from '../services/auth.service.js';
 
 /**
- * Creates a test app with @fastify/cookie + auth routes + a hook that sets request.user.
- *
- * Installs NO auth plugin — auth is faked by unconditionally decorating `request.user`, so
- * every case built on this app reaches its handler authenticated and neither the `/api/*`
- * auth hook nor `enforceCsrf` ever runs. For real auth/CSRF behaviour use the shared
- * `createAuthTestApp` from `../__tests__/helpers.js` (see the two blocks below).
+ * Handler-only app: injects `request.user` without the auth plugin, so auth and CSRF never run.
+ * Use `createAuthTestApp` for real boundary behavior.
  */
 async function createFakeAuthTestApp(
   services: Services,
@@ -41,10 +37,8 @@ async function createFakeAuthTestApp(
   const { errorHandlerPlugin } = await import('../plugins/error-handler.js');
   await app.register(errorHandlerPlugin);
 
-  // Simulate auth middleware: set request.user for protected routes
   app.decorateRequest('user', null);
   app.addHook('onRequest', async (request) => {
-    // Set a default authenticated user for all requests (simulates auth pass)
     request.user = { username: 'admin' };
   });
 
@@ -256,7 +250,6 @@ describe('auth routes', () => {
     });
 
     it('logout clearCookie attributes match setCookie attributes from login', async () => {
-      // Login first to get the login cookie attributes
       (services.auth.verifyCredentials as Mock).mockResolvedValue({ username: 'admin' });
       (services.auth.getSessionSecret as Mock).mockResolvedValue('test-secret');
       (services.auth.createSessionCookie as Mock).mockReturnValue('signed-cookie-value');
@@ -268,23 +261,19 @@ describe('auth routes', () => {
       });
       const loginCookie = String(loginRes.headers['set-cookie']);
 
-      // Logout
       const logoutRes = await app.inject({ method: 'POST', url: '/api/auth/logout' });
       const logoutCookie = String(logoutRes.headers['set-cookie']);
 
-      // Both should have the same security attributes
       for (const attr of ['HttpOnly', 'SameSite=Lax', 'Path=/']) {
         expect(loginCookie, `login cookie missing ${attr}`).toContain(attr);
         expect(logoutCookie, `logout cookie missing ${attr}`).toContain(attr);
       }
 
-      // In dev mode (isDev=true), neither should have Secure
       expect(loginCookie).not.toContain('Secure');
       expect(logoutCookie).not.toContain('Secure');
     });
 
     it('login and logout cookies do not include Secure flag in dev mode', async () => {
-      // isDev=true (default) — Secure must never be set even with trustProxy + X-Forwarded-Proto: https
       const devServices = createMockServices();
       const devApp = await createFakeAuthTestApp(devServices, { trustProxy: true });
 
@@ -484,7 +473,6 @@ describe('auth routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      // Cookie is signed with the rotated secret and carries the 7-day Max-Age.
       expect(services.auth.createSessionCookie).toHaveBeenCalledWith('admin', 'rotated-secret');
       const setCookie = String(res.headers['set-cookie']);
       expect(setCookie).toContain('narratorr_session=new-cookie-value');
@@ -492,7 +480,6 @@ describe('auth routes', () => {
     });
 
     it('forms mode + username change: reissued cookie carries the NEW username (AC#6)', async () => {
-      // changePassword returns the effective (renamed) username.
       (services.auth.changePassword as Mock).mockResolvedValue('newadmin');
       (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false });
       (services.auth.getSessionSecret as Mock).mockResolvedValue('rotated-secret');
@@ -506,7 +493,6 @@ describe('auth routes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(services.auth.changePassword).toHaveBeenCalledWith('admin', 'old', 'newpassword1', 'newadmin');
-      // The reissued cookie must use the effective username, never the stale 'admin'.
       expect(services.auth.createSessionCookie).toHaveBeenCalledWith('newadmin', 'rotated-secret');
       expect(String(res.headers['set-cookie'])).toContain('narratorr_session=cookie-for-newadmin');
     });
@@ -523,7 +509,6 @@ describe('auth routes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(res.headers['set-cookie']).toBeUndefined();
-      // No cookie reissue path runs in basic mode.
       expect(services.auth.getSessionSecret).not.toHaveBeenCalled();
       expect(services.auth.createSessionCookie).not.toHaveBeenCalled();
     });
@@ -788,7 +773,6 @@ describe('auth routes', () => {
     });
 
     it('URL_BASE unset → Set-Cookie uses Path=/', async () => {
-      // Default config mock has no urlBase; helper falls back to '/'.
       const res = await app.inject({ method: 'POST', url: '/api/auth/logout' });
       expect(String(res.headers['set-cookie'])).toContain('Path=/');
       expect(String(res.headers['set-cookie'])).not.toContain('Path=/narratorr');
@@ -875,7 +859,6 @@ describe('auth routes', () => {
         url: '/api/auth/login',
         payload: { username: 'admin', password: 'password123' },
       });
-      // Reaches handler — login route is public.
       expect(res.statusCode).toBe(200);
     });
 
@@ -888,11 +871,7 @@ describe('auth routes', () => {
     });
   });
 
-  // #1453 — POST /api/auth/stream-token mints a short-lived stream token. It
-  // authenticates via the non-key chain (forms/basic+CSRF/none/LAN), is NOT
-  // API-key-reachable (non-`v*` path), and is NOT reachable by another stream
-  // token (mint is not an SSE endpoint). Uses the real authPlugin so the matrix
-  // is exercised end-to-end.
+  // #1453: use the real plugin to pin non-key auth, CSRF, and rejection of API/stream tokens.
   describe('POST /api/auth/stream-token (#1453)', () => {
     const basicAuthHeader = `Basic ${Buffer.from('admin:password123').toString('base64')}`;
     const VALID_COOKIE = 'valid-session-cookie';
@@ -980,7 +959,7 @@ describe('auth routes', () => {
           headers: { 'x-api-key': 'valid-key' },
         });
         expect(res.statusCode).toBe(401);
-        // Out of `/api/v*` scope → API-key contract body, key never validated, never mints.
+        // Outside `/api/v*`, the key is never validated despite the API-key error body.
         expect(JSON.parse(res.payload)).toEqual({ error: 'Invalid API key' });
         expect(authSvc.validateApiKey).not.toHaveBeenCalled();
         expect(authSvc.mintStreamToken).not.toHaveBeenCalled();
@@ -991,8 +970,7 @@ describe('auth routes', () => {
 
     it('stream-token-only → 401 (cannot mint from a stream token)', async () => {
       const { app, authSvc } = await buildApp({ mode: 'forms', hasUser: true, localBypass: false });
-      // Even if a token were valid, mint is not an SSE endpoint so the plugin
-      // never consults verifyStreamToken here.
+      // Mint is not an SSE endpoint, so even a valid stream token is never consulted.
       authSvc.verifyStreamToken = vi.fn().mockReturnValue({ kind: 'stream', issuedAt: Date.now(), expiresAt: Date.now() + 60_000 });
       try {
         const res = await app.inject({
@@ -1037,8 +1015,7 @@ describe('auth routes', () => {
     let currentSecret: string;
 
     beforeAll(async () => {
-      // Borrow the real (pure) cookie HMAC helpers — createSessionCookie /
-      // verifySessionCookie don't touch the injected db; verify only logs on failure.
+      // Real cookie HMAC helpers do not touch the injected DB.
       const noopLog = { debug() {}, info() {}, warn() {}, error() {}, fatal() {}, trace() {}, child() { return this; } };
       crypto = new AuthService(undefined as never, noopLog as never);
 
@@ -1048,13 +1025,11 @@ describe('auth routes', () => {
         routes: (app, services) => authRoutes(app, services.auth as Parameters<typeof authRoutes>[1]),
       }));
 
-      // The auth hook resolves authService methods per REQUEST, so swapping the helper's
-      // sentinel-cookie profile for the real HMAC helpers after the build takes effect.
+      // The hook resolves service methods per request, so post-build HMAC swaps take effect.
       const authSvc = formsServices.auth as unknown as Record<string, Mock>;
       authSvc.getSessionSecret = vi.fn().mockImplementation(async () => currentSecret);
       authSvc.createSessionCookie = vi.fn().mockImplementation((u: string, s: string) => crypto.createSessionCookie(u, s));
       authSvc.verifySessionCookie = vi.fn().mockImplementation((c: string, s: string) => crypto.verifySessionCookie(c, s));
-      // changePassword rotates the secret (as the real service does) and returns the effective username.
       authSvc.changePassword = vi.fn().mockImplementation(async (_u: string, _c: string, _n: string, newUsername?: string) => {
         currentSecret = 'secret-v2';
         return newUsername ?? 'admin';
@@ -1081,7 +1056,6 @@ describe('auth routes', () => {
       expect(match).not.toBeNull();
       const newCookie = match![1]!;
 
-      // Old cookie (signed with secret-v1) no longer authenticates — secret rotated to v2.
       const withOld = await formsApp.inject({
         method: 'GET',
         url: '/api/auth/config',
@@ -1089,7 +1063,6 @@ describe('auth routes', () => {
       });
       expect(withOld.statusCode).toBe(401);
 
-      // The reissued cookie (signed with secret-v2) authenticates.
       const withNew = await formsApp.inject({
         method: 'GET',
         url: '/api/auth/config',
@@ -1109,12 +1082,10 @@ describe('auth routes', () => {
       expect(change.statusCode).toBe(200);
       const newCookie = String(change.headers['set-cookie']).match(/narratorr_session=([^;]+)/)![1]!;
 
-      // The reissued cookie verifies under the rotated secret and carries the NEW username.
       const verified = crypto.verifySessionCookie(newCookie, 'secret-v2');
       expect(verified).not.toBeNull();
       expect(verified!.payload.username).toBe('newadmin');
 
-      // A subsequent protected request with it authenticates (no 401 on a stale/missing username).
       const withNew = await formsApp.inject({
         method: 'GET',
         url: '/api/auth/config',

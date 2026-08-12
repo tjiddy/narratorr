@@ -3,11 +3,13 @@ import type { LibraryBookListItem, LibraryBookListResponse } from '@shared/schem
 import type { BookMetadata, AuthorMetadata, MetadataSearchResults } from '@core/metadata/types.js';
 import { ApiError, fetchApi, fetchMultipart } from './client.js';
 import type { BookSeriesCardData, RefreshBookSeriesResponse, HardcoverSeriesCandidate } from './book-series.js';
+import type { AddAllSeriesResponse } from '@shared/series-add-all.js';
 
 export type { BookMetadata, AuthorMetadata, MetadataSearchResults };
 export type { LibraryBookListItem, LibraryBookListResponse };
 export type { RetagExcludableField };
 export type { BookSeriesMemberCard, BookSeriesCardData, RefreshBookSeriesResponse, HardcoverSeriesCandidate } from './book-series.js';
+export type { AddAllSeriesResponse, AddAllMemberResult, AddAllDisposition } from '@shared/series-add-all.js';
 
 export interface Author {
   id: number;
@@ -42,14 +44,8 @@ export interface BookWithAuthor {
   path?: string | null;
   size?: number | null;
   enrichmentStatus?: EnrichmentStatus | null;
-  /**
-   * The operator's explicit clears (#2069), PARSED — only ever received from a
-   * hydrated DETAIL response (`GET /api/books/:id`, and the PUT/Fix-Match/create
-   * echoes). Never a raw JSON string: the server projects the raw column out of
-   * every list and activity response. Absent on list rows.
-   */
+  /** Parsed clear tombstones; detail/write responses only, never list or activity rows. */
   userClearedFields?: ClearableBookField[];
-  // Audio technical info
   audioCodec?: string | null;
   audioBitrate?: number | null;
   audioSampleRate?: number | null;
@@ -85,13 +81,15 @@ export interface CreateBookPayload {
   genres?: string[] | undefined;
   providerId?: string | undefined;
   searchImmediately?: boolean | undefined;
+  /** Raw provider format; the server normalizes it for the duplicate veto and the stored row. */
+  formatType?: string | undefined;
+  /** Overrides an undecided `review` refusal only; an owned recording stays refused. */
+  overrideRecordingReview?: boolean | undefined;
 }
 
 
 export interface BookIdentifier {
-  // Required, not optional (#1916): consumers that render a link to the owned
-  // book (the Add-Book search card) read `entry.id` off the match. An optional
-  // `id` would let that silently fall back to null with no type error.
+  // Required because ownership matches are rendered as links to the existing book.
   id: number;
   asin: string | null;
   title: string;
@@ -99,20 +97,7 @@ export interface BookIdentifier {
   authorSlug: string | null;
 }
 
-/**
- * The one ownership-input contract for "is this search result already in the
- * library?" — the narrow unpaginated `/api/books/identifiers` row or a full
- * book row, whichever a surface happens to already hold.
- *
- * Canonical and exported (#1916 review F2): every ownership surface — the
- * search page/card, the author page's series sections, the metadata pickers,
- * and the bulk-add hook — takes THIS type rather than restating the union, and
- * `findLibraryMatch` / `isBookInLibrary` in `@/lib/helpers` constrain against
- * it. Both branches carry `id`, `asin`, `title`, and an author name, which is
- * the whole matching surface; widening the concept is a one-line edit here
- * instead of eight manually synchronized declarations that can drift apart
- * while still compiling.
- */
+/** Shared ownership-match input; both forms guarantee link and identity fields. */
 export type LibraryEntry = BookIdentifier | BookWithAuthor;
 
 export interface BookFile {
@@ -124,8 +109,7 @@ export interface UpdateBookPayload {
   title?: string | undefined;
   authors?: { name: string; asin?: string | undefined }[] | undefined;
   narrators?: string[] | undefined;
-  // `null` clears the stored column (detail page falls back to provider value);
-  // `undefined`/omitted = unchanged. Mirrors `updateBookBodySchema` (#1609).
+  // null clears a stored column; undefined/omitted leaves it unchanged.
   subtitle?: string | null | undefined;
   description?: string | null | undefined;
   publisher?: string | null | undefined;
@@ -144,11 +128,7 @@ export interface RenameResult {
   filesRenamed: number;
 }
 
-/**
- * Result of `DELETE /api/books/:id`. `fileSummary` is present only when files were removed from
- * disk (`deleteFiles=true` and the book had a path); it drives the "kept N files" disclosure when
- * foreign files (e-books, PDFs, …) were preserved alongside the audiobook (#1589).
- */
+/** fileSummary exists only for on-disk deletion and reports preserved foreign files. */
 export interface DeleteBookResult {
   success: boolean;
   fileSummary?: {
@@ -224,7 +204,7 @@ export interface RetagPlan {
     albumArtist?: string;
     composer?: string;
     grouping?: string;
-    // ABS-survivable set (#1671); `seriesPart` stringified for display.
+    // Fields Audiobookshelf preserves; seriesPart is stringified for display.
     series?: string; seriesPart?: string; subtitle?: string; asin?: string;
     publisher?: string; description?: string; date?: string; genre?: string;
   };
@@ -237,12 +217,16 @@ export interface RetagOverrides {
   embedCover?: boolean;
 }
 
-/** Thrown when GET /books/:id/retag/preview returns the ffmpeg-not-configured error. */
-export class RetagFfmpegNotConfiguredError extends Error {
-  readonly code = 'FFMPEG_NOT_CONFIGURED' as const;
+/**
+ * Thrown when GET /books/:id/retag/preview reports its tag-writer dependency missing. The coded
+ * error envelope carries no `code` field, so 503 is the only discriminator the client has — and it
+ * is unambiguous, because the retag routes stopped raising FFMPEG_NOT_CONFIGURED entirely (#2210 D8).
+ */
+export class RetagDependencyNotConfiguredError extends Error {
+  readonly code = 'MUTAGEN_NOT_CONFIGURED' as const;
   constructor(message: string) {
     super(message);
-    this.name = 'RetagFfmpegNotConfiguredError';
+    this.name = 'RetagDependencyNotConfiguredError';
   }
 }
 
@@ -286,8 +270,7 @@ export interface BookListParams {
   offset?: number;
 }
 
-// The library list filter carries a `LibraryFilterBucket` (bucket key), not a
-// per-book `BookStatus` — `all` is a client-only sentinel omitted from the wire.
+// Library filters use bucket keys; the client-only `all` sentinel stays off the wire.
 export interface LibraryBookListParams extends Omit<BookListParams, 'status'> {
   status?: LibraryFilterBucket;
   collapse?: boolean;
@@ -325,14 +308,9 @@ function buildLibraryBookListQuery(params?: LibraryBookListParams): string {
   return base;
 }
 
-// No `getBooks` wrapper here on purpose. The server's `GET /api/books` route is still
-// live (it is part of the v1 API contract), but no client code may read it: the route
-// applies a default limit of 120 ordered created-at-descending, so on a real library the
-// oldest rows — the likely owned incumbent — are invisible to an ownership or duplicate
-// check, and the bug never reproduces on a small dev library (#1916). The library list
-// uses `listLibraryBooks`; every ownership surface uses `getBookIdentifiers`, which is
-// unlimited and unordered. The wrapper was removed in #1951 once it had no callers left,
-// so the wrong choice is no longer reachable from the client.
+// Deliberately no getBooks: /api/books defaults to the newest 120 rows and is unsafe
+// for ownership checks. Use listLibraryBooks for pages and the unpaginated
+// getBookIdentifiers for ownership and duplicate detection.
 export const booksApi = {
   listLibraryBooks: (params?: LibraryBookListParams) =>
     fetchApi<LibraryBookListResponse>(`/library/books${buildLibraryBookListQuery(params)}`),
@@ -413,7 +391,7 @@ export const booksApi = {
         error.status === 503 &&
         typeof (error.body as { error?: string })?.error === 'string'
       ) {
-        throw new RetagFfmpegNotConfiguredError((error.body as { error: string }).error);
+        throw new RetagDependencyNotConfiguredError((error.body as { error: string }).error);
       }
       throw error;
     }
@@ -443,6 +421,11 @@ export const booksApi = {
     fetchApi<RefreshBookSeriesResponse>(`/books/${id}/series/refresh`, { method: 'POST' }),
   searchBookSeries: (id: number, query: string) =>
     fetchApi<{ candidates: HardcoverSeriesCandidate[] }>(`/books/${id}/series/search?q=${encodeURIComponent(query)}`),
+  addAllInSeries: (id: number, searchImmediately: boolean) =>
+    fetchApi<AddAllSeriesResponse>(`/books/${id}/series/add-all`, {
+      method: 'POST',
+      body: JSON.stringify({ searchImmediately }),
+    }),
   bindBookSeries: (id: number, hardcoverSeriesId: number) =>
     fetchApi<RefreshBookSeriesResponse>(`/books/${id}/series/bind`, {
       method: 'POST',

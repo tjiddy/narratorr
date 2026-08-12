@@ -15,15 +15,6 @@ export interface V1SeriesRouteDeps {
   referenceReadService: ReferenceReadService;
 }
 
-/**
- * Native public API v1 — Series (read). Registers `GET /api/v1/series` and
- * `GET /api/v1/series/:publicId` inside an ENCAPSULATED plugin so the v1-scoped
- * `v1ErrorHandler` does not leak onto internal `/api/*` routes. Mirrors
- * `v1BooksRoutes` (#1449): `.strict()` `response` schemas fail closed on the
- * series table's many internal columns, and auth is inherited from the global
- * `/api/v*` hook. Series sourced from Hardcover that are NOT linked to any local
- * book are in scope — the read service reads the base `series` table.
- */
 export async function v1SeriesRoutes(app: FastifyInstance, deps: V1SeriesRouteDeps, db: Db): Promise<void> {
   await app.register(
     async (v1) => {

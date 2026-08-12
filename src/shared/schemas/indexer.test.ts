@@ -401,7 +401,6 @@ describe('createIndexerFormSchema — apiUrl/apiKey trim (#272)', () => {
       settings: { apiUrl: '   ', apiKey: 'key123' },
     };
     const result = createIndexerFormSchema.safeParse(input);
-    // superRefine requires apiUrl for newznab, so trimmed whitespace-only is rejected
     expect(result.success).toBe(false);
   });
 });
@@ -564,7 +563,6 @@ describe('#363 — searchType string values', () => {
   });
 });
 
-// #557 — Typed adapter settings schemas (discriminated unions)
 describe('createIndexerSchema — typed settings validation', () => {
   const base = { name: 'Test', enabled: true, priority: 50 };
 
@@ -802,9 +800,6 @@ describe('#744 — coerceSearchType remains lenient for persisted/UI data', () =
 });
 
 describe('#1198 — torznab/newznab adapter-settings schema fail-closed contract', () => {
-  // Proves the CAUSAL path the mocked /test route cannot establish: the strict
-  // adapter-settings schema is what fails closed on missing creds and accepts the
-  // echo-only-stripped shape. This is why /test returns { success: false } → 400.
   for (const [name, schema] of [['torznab', torznabSettingsSchema], ['newznab', newznabSettingsSchema]] as const) {
     describe(`${name}SettingsSchema`, () => {
       it('rejects settings missing apiKey', () => {

@@ -2,16 +2,7 @@ import type { seriesMembers } from '@db/schema.js';
 import { findInLibraryMatch, type LibraryBookSummary } from './series-title-match.js';
 
 /**
- * How a series card's member entries are ASSEMBLED and ORDERED from a stored
- * member set plus the library pool — the pure half of `SeriesCardService`, with
- * no DB handle, no Hardcover client, and no transaction of its own.
- *
- * It lives apart from the service because the two answer different questions and
- * change for different reasons: the service decides when to fetch, persist and
- * reconcile; this module decides what the operator sees and which owned books
- * still lack a row. Keeping the rule in one place is what lets the render path,
- * the rebuild's seed and the reconcile's guard all derive their answer from the
- * same computation instead of three that can drift (#2144).
+ * Pure member projection shared by snapshot rendering, reconciliation, and seed decisions.
  */
 
 export interface BookSeriesMemberCard {
@@ -26,35 +17,24 @@ export interface BookSeriesMemberCard {
 
 export type SeriesMemberRow = typeof seriesMembers.$inferSelect;
 
-/** The card's inputs, always read together off one handle. */
 export interface MemberState {
   rows: SeriesMemberRow[];
   pool: LibraryBookSummary[];
   /**
-   * Pool book ids carrying a live `seriesPosition` tombstone (#2152 AC9a).
-   *
-   * Derived where the pool is loaded, so all three card-build sites inherit it:
-   * the snapshot render, the unclaimed-seed reconcile transaction, and the card
-   * `bindHardcoverSeries` returns. It gates PROJECTION only — the title/position
-   * matcher's inputs are deliberately untouched, so `LibraryBookSummary` stays
-   * narrow and claim behavior is unchanged.
+   * Position tombstones gate projection only, after matching, so claim behavior is unchanged.
    */
   positionClearedIds: ReadonlySet<number>;
 }
 
-/** What one partition/match pass over a {@link MemberState} yields. */
 export interface BuiltMembers {
-  /** The card's entries, in {@link compareByPositionThenTitle} order. */
   members: BookSeriesMemberCard[];
-  /** Pool books no member row claims — what a seed would have to write. */
+  /** Pool books no member row claims, used by seeding. */
   unclaimed: LibraryBookSummary[];
 }
 
 /**
- * Member ordering shared by the cache-driven and library-only paths: numeric
- * `series_position` ascending with NULL positions placed at the end. `title`
- * is the tie-breaker for stable order. SQLite's default ASC puts NULLs FIRST,
- * which is why the cache path can't lean on the DB's ORDER BY for parity.
+ * Sort numeric positions first and nulls last, then title for stability. SQLite's default null-first
+ * ordering cannot provide parity.
  */
 export function compareByPositionThenTitle(aPos: number | null, aTitle: string, bPos: number | null, bTitle: string): number {
   if (aPos === null && bPos === null) return aTitle.localeCompare(bTitle);
@@ -69,12 +49,8 @@ export function compareLibraryMembers(a: BookSeriesMemberCard, b: BookSeriesMemb
 }
 
 /**
- * A Hardcover member's entry: the stored row's text and numbering, plus whichever
- * library book the title/position matcher paired it with.
- *
- * The one place the `seriesPosition` tombstone reaches the card (#2152 AC9a). It
- * gates the RESOLVED book, after matching — a row that claimed nothing keeps its
- * canonical numbering, and which book each member claims is unchanged.
+ * Apply a position tombstone only to the resolved library book after matching; unmatched canonical
+ * rows retain their numbering.
  */
 function hardcoverMemberCard(
   row: SeriesMemberRow,
@@ -92,7 +68,6 @@ function hardcoverMemberCard(
   };
 }
 
-/** The owned-book entry shape: rendered from the BOOK, never from a stored row. */
 export function libraryMemberCard(book: LibraryBookSummary): BookSeriesMemberCard {
   return {
     hardcoverBookId: null,
@@ -106,41 +81,9 @@ export function libraryMemberCard(book: LibraryBookSummary): BookSeriesMemberCar
 }
 
 /**
- * ONE partition/match pass over a member set + its library pool — written once
- * and applied to the snapshot rows, to the reconcile transaction's returned rows,
- * and (through `unclaimed`) to the seed decision, so what the card shows and what
- * the DB stores are computed by the same rule (#2144).
- *
- * The order of the three phases is the contract:
- *
- *   1. **Local rows claim by `book_id`, BEFORE the matcher runs.** A local row is
- *      a durable statement that THIS book is a member, so it resolves through the
- *      pool by id and can never claim a different one — and, claiming first, no
- *      Hardcover member can take the book out from under it. A row whose `book_id`
- *      is NULL (the book was deleted; the FK is `ON DELETE SET NULL`) or whose
- *      book is no longer in the pool (its `books.series_name` moved) resolves to
- *      nothing and is DROPPED — residue renders as no entry at all, never as a
- *      phantom "+ Add".
- *   2. **Hardcover rows match by title/position** against the pool, minus what
- *      step 1 claimed, through the shared `findInLibraryMatch` + claim set. Local
- *      rows never enter the title matcher, or one could claim a sibling's book.
- *   3. **Every pool book not claimed by a Hardcover member gets its own entry**,
- *      rendered from the book's CURRENT title and `series_position` — so a local
- *      row whose stored title has since drifted does not render stale text, and
- *      position `0` stays `0` rather than coercing to null. Of those, the ones no
- *      local row claimed either are the `unclaimed` set: books with no row at all.
- *
- * Entries are interleaved by `compareByPositionThenTitle`, not appended as an
- * "extras" block, so an owned book sorts into its position among the canonical
- * members. This NARROWS the #1139 no-inflation rule rather than deleting it: the
- * card still never gains an entry that is neither a canonical member nor a book
- * in the pool.
- *
- * One projection gate rides on top (#2152 AC9a): a Hardcover row that resolved to
- * a library book whose position the operator cleared renders `position: null`, not
- * the row's own cached number. It applies AFTER matching, so which book a member
- * claims is unchanged; the member then sorts to the END alongside the other
- * unnumbered entries, exactly as an unnumbered owned book does today.
+ * Local rows claim by id before Hardcover rows match title/position against the remaining pool.
+ * Remaining books render from current library data and form the unclaimed seed set. Interleave all
+ * entries by position/title; tombstones affect only the post-match projection.
  */
 export function buildMembersFromState({ rows, pool, positionClearedIds }: MemberState): BuiltMembers {
   const sorted = [...rows].sort((a, b) =>

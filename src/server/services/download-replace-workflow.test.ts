@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Mock } from 'vitest';
 
-// Mock the side-effect helpers + the guarded revert so per-target cleanup (F11)
-// and status coordination (F9) are directly assertable.
+// Mock side-effect boundaries so cleanup and guarded status coordination stay observable.
 vi.mock('../utils/download-side-effects.js', () => ({
   emitDownloadStatusChange: vi.fn(),
   emitBookStatusChange: vi.fn(),
@@ -67,8 +66,7 @@ function makeCtx(over: Partial<ReplaceCtx> = {}): { ctx: ReplaceCtx; db: ReturnT
   return { ctx, db, grab, removeExternalItem, blacklistCreate };
 }
 
-/** Queue N gatherBookBlockers results onto db.select (each gather = a rows select
- *  then a pending-auto-jobs select). Also queue the claim tx recheck's gather. */
+/** Queue each blocker gather as rows followed by pending auto jobs. */
 function queueGathers(db: ReturnType<typeof createMockDb>, ...gathers: Array<{ rows?: DownloadRow[]; jobs?: Array<{ id: number }> }>) {
   for (const g of gathers) {
     db.select.mockReturnValueOnce(mockDbChain(g.rows ?? [])).mockReturnValueOnce(mockDbChain(g.jobs ?? []));
@@ -101,7 +99,7 @@ describe('runReplaceWorkflow (#1857)', () => {
   it('replaceable: claims, cleans up the old row, then grabs the replacement inheriting the snapshot', async () => {
     const { ctx, db, grab, removeExternalItem } = makeCtx();
     db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
-    queueGathers(db, { rows: [replaceableRow()] }, {}, {}); // gather, in-tx recheck, late-blocker
+    queueGathers(db, { rows: [replaceableRow()] }, {}, {}); // Initial, claim recheck, late recheck.
 
     const id = await runReplaceWorkflow(ctx, params);
 
@@ -113,7 +111,6 @@ describe('runReplaceWorkflow (#1857)', () => {
     );
   });
 
-  // ── F11 — per-target cleanup side effects ────────────────────────────────
   describe('per-target cleanup side effects (F11)', () => {
     it('blacklists, emits download-status SSE, and records failed history with the exact replace reason for EVERY target', async () => {
       const targets = [
@@ -126,13 +123,10 @@ describe('runReplaceWorkflow (#1857)', () => {
 
       await runReplaceWorkflow(ctx, params);
 
-      // Every target permanently blacklisted.
       expect(blacklistCreate).toHaveBeenCalledTimes(2);
       expect(blacklistCreate).toHaveBeenCalledWith(expect.objectContaining({ reason: 'user_cancelled', blacklistType: 'permanent' }));
-      // download-status SSE per target → failed.
       expect(emitDlStatus).toHaveBeenCalledWith(expect.objectContaining({ downloadId: 10, newStatus: 'failed' }));
       expect(emitDlStatus).toHaveBeenCalledWith(expect.objectContaining({ downloadId: 11, newStatus: 'failed' }));
-      // failed history with the exact replacement reason naming the new release.
       expect(recordFailed).toHaveBeenCalledWith(expect.objectContaining({ downloadId: 10, errorMessage: 'Replaced by "The New Release"' }));
       expect(recordFailed).toHaveBeenCalledWith(expect.objectContaining({ downloadId: 11, errorMessage: 'Replaced by "The New Release"' }));
     });
@@ -149,7 +143,6 @@ describe('runReplaceWorkflow (#1857)', () => {
     });
   });
 
-  // ── F7 — deterministic inherited snapshot ────────────────────────────────
   describe('deterministic inherited snapshot (F7/F16)', () => {
     async function snapshotFor(rows: DownloadRow[]): Promise<unknown> {
       const { ctx, db, grab } = makeCtx();
@@ -172,7 +165,6 @@ describe('runReplaceWorkflow (#1857)', () => {
     });
 
     it('picks the FIRST NON-NULL over the gathered (addedAt DESC, id DESC) cohort, skipping a leading null', async () => {
-      // gather returns most-recent first; the most-recent has a null snapshot.
       const rows = [
         replaceableRow({ id: 20, bookStatusAtGrab: null, addedAt: new Date('2026-03-01') }),
         replaceableRow({ id: 10, bookStatusAtGrab: 'missing', addedAt: new Date('2026-01-01') }),
@@ -189,18 +181,17 @@ describe('runReplaceWorkflow (#1857)', () => {
       db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
       queueGathers(db, { rows }, {}, {});
       await runReplaceWorkflow(ctx, params);
-      // Snapshot is chosen from the in-memory cohort BEFORE cleanup, so removal order is irrelevant.
+      // Snapshot selection precedes cleanup.
       expect(grab.mock.calls.at(-1)![1].bookStatusAtGrabOverride).toBe('imported');
       expect(removeExternalItem).toHaveBeenCalledTimes(2);
     });
   });
 
-  // ── F9 — synchronous status ownership + guarded revert ───────────────────
   describe('guarded book-status revert (F9)', () => {
     function setupLateBlocker(landed: boolean) {
       const ctx = makeCtx();
       ctx.db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
-      // gather (replaceable), recheck (clear), late-blocker (an auto job appeared)
+      // Initial cohort, clear claim recheck, then a late auto job.
       queueGathers(ctx.db, { rows: [replaceableRow()] }, {}, { jobs: [{ id: 99 }] });
       guardedRevert.mockResolvedValue({ landed, status: 'wanted' });
       return ctx;
@@ -218,13 +209,13 @@ describe('runReplaceWorkflow (#1857)', () => {
       const { ctx } = setupLateBlocker(false);
       await expect(runReplaceWorkflow(ctx, params)).rejects.toBeInstanceOf(DuplicateDownloadError);
       expect(guardedRevert).toHaveBeenCalled();
-      expect(emitBookStatus).not.toHaveBeenCalled(); // landed=false → no SSE (F29/F61)
+      expect(emitBookStatus).not.toHaveBeenCalled();
     });
 
     it('failed replacement grab → reverts from the same in-memory snapshot', async () => {
       const { ctx, db, grab } = makeCtx();
       db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
-      queueGathers(db, { rows: [replaceableRow({ bookStatusAtGrab: 'missing' })] }, {}, {}); // no late blocker
+      queueGathers(db, { rows: [replaceableRow({ bookStatusAtGrab: 'missing' })] }, {}, {});
       grab.mockRejectedValueOnce(new Error('client offline'));
 
       await expect(runReplaceWorkflow(ctx, params)).rejects.toThrow('client offline');
@@ -232,11 +223,10 @@ describe('runReplaceWorkflow (#1857)', () => {
     });
   });
 
-  // ── F8 — claim-miss disposition table ────────────────────────────────────
   describe('claim-miss dispositions (F8)', () => {
     it('post-miss pipeline blocker → PIPELINE_ACTIVE with ZERO external calls', async () => {
       const { ctx, db, grab, removeExternalItem, blacklistCreate } = makeCtx();
-      db.update.mockReturnValue(mockDbChain([])); // claim guard-misses → ClaimMissError
+      db.update.mockReturnValue(mockDbChain([])); // Guarded claim misses.
       queueGathers(db,
         { rows: [replaceableRow()] },                                          // initial gather → replaceable
         { rows: [replaceableRow({ clientStatus: 'completed', pipelineStage: 'importing' })] }, // re-gather → pipeline
@@ -250,8 +240,8 @@ describe('runReplaceWorkflow (#1857)', () => {
 
     it('post-miss no-blocker/no-active → proceeds as an ordinary grab', async () => {
       const { ctx, db, grab } = makeCtx();
-      db.update.mockReturnValue(mockDbChain([])); // claim miss
-      queueGathers(db, { rows: [replaceableRow()] }, {}); // initial replaceable, re-gather clear
+      db.update.mockReturnValue(mockDbChain([]));
+      queueGathers(db, { rows: [replaceableRow()] }, {});
 
       const id = await runReplaceWorkflow(ctx, params);
       expect(id).toBe(42);
@@ -260,7 +250,7 @@ describe('runReplaceWorkflow (#1857)', () => {
 
     it('post-miss still-replaceable → bounded single retry, then ACTIVE_DOWNLOAD_EXISTS on a second miss', async () => {
       const { ctx, db, grab } = makeCtx();
-      db.update.mockReturnValue(mockDbChain([])); // every claim misses
+      db.update.mockReturnValue(mockDbChain([])); // Every guarded claim misses.
       queueGathers(db,
         { rows: [replaceableRow()] }, // initial gather → replaceable (attempt 0 claim miss)
         { rows: [replaceableRow()] }, // handleClaimMiss re-gather → still replaceable → retry (attempt 1)

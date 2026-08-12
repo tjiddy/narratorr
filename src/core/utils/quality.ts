@@ -65,12 +65,8 @@ export function compareQuality(
 }
 
 /**
- * Resolve a book's quality-relevant size and duration from its fields, applying
- * the defined precedence. Size: `audioTotalSize` then `size`. Duration: prefer
- * `audioDuration` (already seconds); otherwise convert the minutes-backed
- * `duration` column to seconds. This is the single home for that minutes→seconds
- * conversion — every automated grab path (immediate search, retry, RSS) and the
- * display path funnels through here so the quality chain only ever sees seconds.
+ * Prefers audio-scan fields over legacy fields. Legacy duration is minutes and is converted here so
+ * every quality path receives seconds.
  */
 export function resolveBookQualityInputs(book: {
   size?: number | null;
@@ -87,7 +83,6 @@ export function resolveBookQualityInputs(book: {
   return { sizeBytes, durationSeconds };
 }
 
-/** Background color class for quality tier pill. */
 export function qualityTierBg(tier: QualityTier): string {
   switch (tier) {
     case 'Low': return 'bg-red-500/20 text-red-300';

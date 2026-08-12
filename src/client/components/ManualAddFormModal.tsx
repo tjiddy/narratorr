@@ -12,8 +12,7 @@ interface ManualAddFormModalProps {
 export function ManualAddFormModal({ isOpen, onClose, defaultTitle }: ManualAddFormModalProps) {
   const [isPending, setIsPending] = useState(false);
 
-  // Guarded close routed through the base Modal's Escape handling — Escape must not
-  // discard form state mid-submit (the X button carries the same inline guard).
+  // Escape and the close button must not discard the form mid-submit.
   const guardedClose = useCallback(() => {
     if (!isPending) onClose();
   }, [isPending, onClose]);

@@ -33,8 +33,7 @@ export function PathInput({
 
   function handleSelect(path: string) {
     onChange?.(path);
-    // Drive RHF directly so registration-only callers get Browse updates.
-    // Must include `name` in the synthetic target — RHF reads event.target.name to look up the field.
+    // RHF uses target.name to route synthetic Browse updates for registration-only callers.
     if (registration) {
       void registration.onChange({
         target: { name: registration.name, value: path },

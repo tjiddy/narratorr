@@ -9,12 +9,8 @@ export const AUTHOR_OVERLAP_THRESHOLD = 0.5;
 const NORMALIZABLE_SUFFIXES = [' series', ' trilogy', ' saga', ' novella'];
 
 /**
- * Normalize a Hardcover series name (or library `seriesName`) for the
- * step-2 normalized equality compare. Preserves alphanumerics with single
- * spaces, strips a leading `the `, strips trailing series/trilogy/saga/novella
- * markers, and folds curly apostrophes. Different from the DB-level
- * `normalizeSeriesName` because it removes article + suffix markers — those
- * are the empirical drift patterns Hardcover and Audible disagree on.
+ * Normalize Hardcover/Audible drift by removing leading articles and series suffixes in addition
+ * to punctuation and whitespace folding.
  */
 export function normalizeSeriesNameForResolver(name: string): string {
   let normalized = name
@@ -33,11 +29,6 @@ export function normalizeSeriesNameForResolver(name: string): string {
   return normalized;
 }
 
-/**
- * Tokenize an author name for overlap scoring: lowercase, strip terminal
- * punctuation, split on whitespace, drop empties. Tokens stay as-is (no
- * stemming) because we compare set membership, not similarity.
- */
 export function tokenizeAuthor(name: string): Set<string> {
   const cleaned = name
     .toLowerCase()
@@ -75,11 +66,8 @@ function scoreCandidate(libraryName: string, libraryAuthor: string, candidate: H
 }
 
 /**
- * Pick the best Hardcover series candidate per the spec's scoring formula:
- * `0.6 * authorOverlap + 0.4 * nameSim`. Drops anything below
- * `SCORE_THRESHOLD` OR `AUTHOR_OVERLAP_THRESHOLD` (the double gate prevents a
- * high name-sim from rescuing a weak author match). Tie-breakers: higher
- * books_count first, then lower Hardcover id (deterministic).
+ * Score 60% author overlap and 40% name similarity, with independent gates on both. Break ties
+ * by book count, then lower Hardcover id.
  */
 export function pickBestSearchCandidate(
   libraryName: string,
@@ -100,22 +88,13 @@ export function pickBestSearchCandidate(
 }
 
 export interface ResolverOptions {
-  /** Series name from the local library (`books.series_name`). */
   seriesName: string;
-  /** Primary author of the seed book. */
   author: string;
 }
 
 /**
- * Three-step disambiguation chain (see issue spec):
- *   1. Exact `name + author { name } _eq` on Hardcover.
- *   2. Normalize both inputs (strip leading `The `, trailing series/trilogy
- *      /saga/novella, fold curly apostrophes) and retry exact `_eq`.
- *   3. Hardcover `search` API fallback: scored top-10 candidates against
- *      `0.6 * authorOverlap + 0.4 * nameSim`, gated by both thresholds.
- *
- * Returns the resolved Hardcover series data on success, or null when no
- * step produces a match.
+ * Resolve by exact name/author, normalized exact match, then gated search scoring. Return null
+ * when all three miss.
  */
 export async function resolveSeriesViaHardcover(
   client: HardcoverClient,
@@ -137,9 +116,7 @@ export async function resolveSeriesViaHardcover(
   const candidates = await client.searchSeries(normalizedName || opts.seriesName);
   const best = pickBestSearchCandidate(opts.seriesName, opts.author, candidates);
   if (!best) return null;
-  // Re-fetch the picked candidate's members via the cached-id query so the
-  // resolved object carries the canonical member list, not just the search
-  // candidate's lightweight envelope.
+  // Re-fetch the winner so callers receive canonical members, not the search envelope.
   const members = await client.getSeriesMembersById(best.id);
   return members;
 }

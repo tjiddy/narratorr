@@ -2,14 +2,9 @@ import { basename, extname } from 'node:path';
 import { BYTES_PER_MB } from '@shared/constants.js';
 
 /**
- * Merge-biased classifier for leaf folders containing 2+ loose audio files.
- *
- * Decides whether a leaf folder represents ONE chapter-encoded book (merge —
- * default) or N standalone books loose-packed in a single folder (split). The
- * bias is asymmetric: false-merges produce 1 import row to fix; false-splits
- * produce N rows. Default to merge; split only when ALL split conditions hold.
- *
- * See issue #1016 for the full decision-rule rationale.
+ * Merge-biased leaf-folder classifier: one chapter-encoded book versus multiple loose-packed books.
+ * A false merge creates one row to fix; a false split creates many, so splitting requires every
+ * split condition to hold.
  */
 
 const COMPLETE_BOOK_MIN_SIZE = 120 * BYTES_PER_MB;
@@ -23,32 +18,17 @@ const NUMERIC_ONLY_MIN_COUNT = 2;
 const MIN_TITLE_CHARS = 3;
 
 /**
- * Anchored on start-or-separator BEFORE the marker; allow optional separator
- * + digits AFTER. A post-marker `\b` would FAIL on "Disc01" because both `c`
- * and `0` are word chars; the pre-marker boundary + required digits is the
- * correct shape.
- *
- * Excluded: book|volume|vol — too ambiguous (real titles like "Mistborn Book 1").
- *
- * Roman-numeral parts (#1267): the marker also accepts a canonical 1–39 Roman
- * numeral after the keyword (`Part I`, `Disc IV`), in ADDITION to Arabic digits.
- * The Roman alternative is `(?=[ivx])x{0,3}(?:ix|iv|v?i{0,3})(?=[\s_\-.]|$)`:
- * a non-empty run of `I`/`V`/`X` only (no `L`/`C`/`D`/`M`), required to be a
- * standalone token via the trailing boundary. Restricting to 1–39 / `IVX`-only
- * is what makes real-word tokens like `Mix`, `Civil`, and `Part XL` fail — an
- * open `[ivxlcdm]+` run would over-match those even with boundaries. The
- * trailing `(?=[\s_\-.]|$)` boundary lives INSIDE the Roman alternative only;
- * the Arabic `\d+` branch keeps its original shape (so `Part 12abc` still
- * matches `12`), preserving existing Arabic behavior unchanged.
+ * Marker needs a start/separator boundary before the keyword; a post-keyword word boundary would
+ * reject `Disc01`. `book|volume|vol` are excluded as title-ambiguous. Roman parts accept only
+ * standalone canonical I–XXXIX, avoiding words such as `Mix` and `Civil`. Its trailing boundary
+ * stays inside the Roman alternative so Arabic `Part 12abc` continues matching `12`.
  */
 const MERGE_MARKER_RE = /(?:^|[\s_\-.])(chapter|chap|track|trk|disc|disk|cd|part|pt)[\s_\-.]*(?:\d+|(?=[ivx])x{0,3}(?:ix|iv|v?i{0,3})(?=[\s_\-.]|$))/i;
 const MERGE_MARKER_GLOBAL_RE = /(?:^|[\s_\-.])(chapter|chap|track|trk|disc|disk|cd|part|pt)[\s_\-.]*(?:\d+|(?=[ivx])x{0,3}(?:ix|iv|v?i{0,3})(?=[\s_\-.]|$))/gi;
 const NUMERIC_ONLY_RE = /^\d+$/;
 const ALPHA_COUNT_RE = /[A-Za-z]/g;
 /**
- * Leading-numeric-prefix with mandatory separator boundary (#1051). The
- * `[-_.\s]+` requirement after the digits prevents bare digit-prefixed titles
- * like "1Q84" or "01Heir" from being treated as chapters of "Q84"/"Heir".
+ * Mandatory separator after a numeric prefix keeps titles such as `1Q84` and `01Heir` intact.
  */
 const NUMERIC_PREFIX_RE = /^\d+[-_.\s]+/;
 
@@ -70,10 +50,7 @@ export function classifyLeafFolder(files: ClassifierFile[]): ClassifierResult {
 
   const stems = files.map(f => basename(f.path, extname(f.path)));
 
-  // Marker rule (#1048): require ALL stems to match MERGE_MARKER_RE AND share a
-  // markerless prefix. The pre-#1048 `.some()` rule false-fired on a single stray
-  // "Part 1" in a batch of distinct titles, which mattered catastrophically when
-  // the same classifier drove mixed-content absorption.
+  // Every stem must carry a marker and share its markerless prefix; one stray `Part 1` proves nothing.
   const markerStems = stems.filter(s => MERGE_MARKER_RE.test(s));
   if (
     markerStems.length >= 2
@@ -102,13 +79,8 @@ export function classifyLeafFolder(files: ClassifierFile[]): ClassifierResult {
   const largeCount = files.filter(f => f.size >= COMPLETE_BOOK_MIN_SIZE).length;
   const largeRatio = count > 0 ? largeCount / count : 0;
 
-  // Three-condition layered evidence (issue #1035): a single ratio cutoff
-  // mis-merges series collections like Reacher (21 novels + 7 novellas →
-  // 0.75 ratio) where many obviously-complete books outweigh a handful of
-  // shorts. OR-combine a clean-pack ratio, a mixed-plurality count+ratio,
-  // and a big-collection floor. Source order encodes precedence for the
-  // matrix in the spec but is not surfaced — `sizeEvidence` reports the
-  // raw counts so callers can log without recomputation.
+  // Layer ratio, plurality, and absolute-count evidence: Reacher's 21 novels plus 7 novellas has
+  // only a 0.75 ratio but is still clearly a collection. Report raw counts for caller diagnostics.
   const sizeEvidenceForSplit =
     largeRatio >= LARGE_FILE_RATIO
     || (largeCount >= LARGE_COUNT_FOR_PLURALITY && largeRatio >= RATIO_FOR_PLURALITY)
@@ -135,10 +107,8 @@ function normalizeStemForComparison(stem: string): string {
 }
 
 /**
- * Strip the rightmost MERGE_MARKER_RE occurrence from each stem and compare the
- * leading prefixes. Empty markerless prefix (e.g., bare `Chapter NN` stems where
- * the entire stem IS the marker) collapses to `""` — treated as "shared" so a
- * folder of pure chapter stems still merges.
+ * Compares prefixes before the rightmost marker. Bare `Chapter NN` stems share an empty prefix and
+ * therefore still merge.
  */
 function sameMarkerlessPrefix(stems: string[]): boolean {
   const prefixes = new Set<string>();
@@ -153,16 +123,9 @@ function sameMarkerlessPrefix(stems: string[]): boolean {
 }
 
 /**
- * Strict-evidence predicate (#1048) for the mixed-content branch in
- * book-discovery. Returns true ONLY when the loose top-level audio set is
- * UNAMBIGUOUSLY a chapter-encoded book — never on count caps, size heuristics,
- * or subset-duplicate signals that are safe at leaf scope but catastrophic
- * when they drive recursive subtree absorption.
- *
- * Differs from `classifyLeafFolder` in three ways: (1) skips the count cap and
- * size guards entirely; (2) requires `distinct === 1` for the all-same-stem
- * rule (vs. classifier's `distinct < count`, which fires on any subset
- * duplicate); (3) consults no merge-biased default reasons.
+ * Strict mixed-content evidence for recursive absorption. Unlike the merge-biased leaf classifier,
+ * it ignores count/size guards and subset duplicates; every normalized stem must be identical or a
+ * positive marker/prefix rule must fire.
  */
 export function hasStrongChapterSetEvidence(files: ClassifierFile[]): boolean {
   if (files.length < 2) return false;
@@ -178,11 +141,7 @@ export function hasStrongChapterSetEvidence(files: ClassifierFile[]): boolean {
   const distinct = new Set(lowered).size;
   if (distinct === 1 && lowered[0]!.length > 0) return true;
 
-  // Leading-numeric-prefix shared title (#1051): catches real-world torrent
-  // naming like "01 Heir to the Empire.mp3" that the normalizer's `[-_.]`-only
-  // separator strip misses. The mandatory separator boundary after the digits
-  // (whitespace OR `-_.`) prevents bare digit-prefixed titles like "1Q84" /
-  // "01Heir" from being collapsed where leading digits are part of the title.
+  // Real torrents use `01 Heir...`; require a separator so digit-prefixed titles remain distinct.
   if (stems.every(s => NUMERIC_PREFIX_RE.test(s))) {
     const titlePortions = stems.map(
       s => s.replace(NUMERIC_PREFIX_RE, '').toLowerCase().trim(),

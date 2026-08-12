@@ -21,7 +21,6 @@ describe('generatePublicId()', () => {
     for (let i = 0; i < 50; i++) {
       const id = generatePublicId('nr');
       expect(id).toBe(encodeURIComponent(id));
-      // base64url alphabet only: A-Z a-z 0-9 - _
       expect(id).toMatch(/^nr_[A-Za-z0-9_-]+$/);
     }
   });
@@ -30,7 +29,6 @@ describe('generatePublicId()', () => {
     const a = generatePublicId('sr');
     const b = generatePublicId('sr');
     expect(a.length).toBe(b.length);
-    // 16 random bytes -> 22-char base64url body
     expect(a.slice('sr_'.length)).toHaveLength(22);
   });
 });
@@ -84,7 +82,6 @@ describe('resolveByPublicId()', () => {
   it('does not cross-match a publicId belonging to a different table', async () => {
     const bookPid = generatePublicId('bk');
     await db.insert(books).values({ publicId: bookPid, title: 'A Book' }).returning();
-    // The same string is not present in the authors table.
     await expect(resolveByPublicId(db, authors, bookPid)).resolves.toBeNull();
   });
 });

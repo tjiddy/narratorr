@@ -11,6 +11,59 @@ import {
 import { CoverImage } from '@/components/CoverImage';
 import { ProtocolBadge } from '@/components/ProtocolBadge';
 
+const BADGE = 'text-xs px-1.5 py-0.5 rounded-md font-medium';
+
+function MetaRow({ result, isInLibrary, quality, comparison }: {
+  result: SearchResult;
+  isInLibrary: boolean;
+  quality: ReturnType<typeof calculateQuality> | null;
+  comparison: ReturnType<typeof compareQuality> | null;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2.5 mt-auto pt-2">
+      {result.size != null && result.size > 0 && (
+        <span className="text-xs text-muted-foreground">{formatBytes(result.size)}</span>
+      )}
+      {result.seeders !== undefined && (
+        <span className="flex items-center gap-1 text-xs text-success">
+          <span className="w-1.5 h-1.5 bg-success rounded-full animate-pulse" />
+          {result.seeders} seeders
+        </span>
+      )}
+      <ProtocolBadge protocol={result.protocol} />
+      {result.isFreeleech && (
+        <span className={`${BADGE} bg-emerald-500/10 text-emerald-400 border border-emerald-500/20`}>Freeleech</span>
+      )}
+      {result.isVipOnly && (
+        <span className={`${BADGE} bg-amber-500/10 text-amber-400 border border-amber-500/20`}>VIP</span>
+      )}
+      <span className={`${BADGE} bg-muted text-muted-foreground`}>{result.indexer}</span>
+      {result.format && (
+        <span className={`${BADGE} bg-purple-500/10 text-purple-400 border border-purple-500/20`}>{result.format}</span>
+      )}
+      {result.language && (
+        <span className={`${BADGE} bg-blue-500/10 text-blue-400 border border-blue-500/20 capitalize`}>
+          {result.language.toLowerCase()}
+        </span>
+      )}
+      {isInLibrary && (
+        <span className={`${BADGE} bg-green-500/10 text-green-400 border border-green-500/20`}>In library</span>
+      )}
+      {quality && (
+        <span className={`${BADGE} ${qualityTierBg(quality.tier)}`}>
+          {quality.tier} · {quality.mbPerHour} MB/hr
+        </span>
+      )}
+      {comparison === 'lower' && (
+        <span className="flex items-center gap-1 text-xs text-yellow-400" title="Your copy is likely better quality">
+          <AlertTriangleIcon className="w-3 h-3" />
+          Lower quality
+        </span>
+      )}
+    </div>
+  );
+}
+
 // eslint-disable-next-line complexity -- conditional quality display + action buttons
 export function ReleaseCard({
   result,
@@ -47,7 +100,6 @@ export function ReleaseCard({
       isInLibrary ? 'border-l-[3px] border-l-green-500 border-green-500/25 bg-gradient-to-r from-green-500/10 via-green-500/[0.03] to-transparent' : ''
     }`}>
       <div className="flex gap-4 overflow-hidden">
-        {/* Cover */}
         <div className="shrink-0">
           <CoverImage
             src={result.coverUrl}
@@ -57,10 +109,8 @@ export function ReleaseCard({
           />
         </div>
 
-        {/* Content */}
         <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
-          {/* Title leads: the line is CSS-truncated, so the author list trails — a
-              multi-author anthology roll must eat the ellipsis, not the title. */}
+          {/* Keep the title first so a long author list is truncated, not the title. */}
           <h4 className="font-medium text-sm leading-tight truncate">
             {result.title}
             {result.author && <span className="text-muted-foreground"> — {result.author}</span>}
@@ -76,58 +126,9 @@ export function ReleaseCard({
               <span className="truncate">{result.narrator}</span>
             </p>
           )}
-          <div className="flex flex-wrap items-center gap-2.5 mt-auto pt-2">
-            {result.size != null && result.size > 0 && (
-              <span className="text-xs text-muted-foreground">{formatBytes(result.size)}</span>
-            )}
-            {result.seeders !== undefined && (
-              <span className="flex items-center gap-1 text-xs text-success">
-                <span className="w-1.5 h-1.5 bg-success rounded-full animate-pulse" />
-                {result.seeders} seeders
-              </span>
-            )}
-            <ProtocolBadge protocol={result.protocol} />
-            {result.isFreeleech && (
-              <span className="text-xs px-1.5 py-0.5 rounded-md font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                Freeleech
-              </span>
-            )}
-            {result.isVipOnly && (
-              <span className="text-xs px-1.5 py-0.5 rounded-md font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                VIP
-              </span>
-            )}
-            <span className="text-xs px-1.5 py-0.5 bg-muted rounded-md font-medium text-muted-foreground">
-              {result.indexer}
-            </span>
-            {result.language && (
-              <span className="text-xs px-1.5 py-0.5 rounded-md font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20 capitalize">
-                {result.language.toLowerCase()}
-              </span>
-            )}
-            {isInLibrary && (
-              <span className="text-xs px-1.5 py-0.5 rounded-md font-medium bg-green-500/10 text-green-400 border border-green-500/20">
-                In library
-              </span>
-            )}
-            {quality && (
-              <span className={`text-xs px-1.5 py-0.5 rounded-md font-medium ${qualityTierBg(quality.tier)}`}>
-                {quality.tier} · {quality.mbPerHour} MB/hr
-              </span>
-            )}
-            {comparison === 'lower' && (
-              <span
-                className="flex items-center gap-1 text-xs text-yellow-400"
-                title="Your copy is likely better quality"
-              >
-                <AlertTriangleIcon className="w-3 h-3" />
-                Lower quality
-              </span>
-            )}
-          </div>
+          <MetaRow result={result} isInLibrary={isInLibrary} quality={quality} comparison={comparison} />
         </div>
 
-        {/* Actions */}
         <div className="shrink-0 flex flex-col items-end gap-2">
           <button
             type="button"

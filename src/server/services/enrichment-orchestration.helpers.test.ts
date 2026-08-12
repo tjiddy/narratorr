@@ -23,25 +23,37 @@ import { orchestrateBookEnrichment, applyAudnexusEnrichment } from './enrichment
 import { mockDbChain } from '../__tests__/helpers.js';
 import { RateLimitError, TransientError } from '@core/index.js';
 
-/**
- * A db whose `update().set().where()` chain resolves; returns the captured chain
- * for assertions.
- *
- * Also carries the two seams #2069 AC11 added to this path: a `select` (the
- * pre-fetch ASIN capture AND the in-transaction re-read of
- * `{ asin, user_cleared_fields }`) and a `transaction` that runs its callback on
- * the same handle. Both reads hit the same stub, so the identity guard holds by
- * construction unless a test deliberately varies the row between them.
- */
-function dbWithUpdateChain(row?: { asin?: string | null; userClearedFields?: string | null }) {
+interface MockHandle {
+  update: ReturnType<typeof vi.fn>;
+  select: ReturnType<typeof vi.fn>;
+}
+
+// Filter by projection rather than brittle select-call order.
+function narratorReads(handle: MockHandle): unknown[] {
+  return handle.select.mock.calls.filter(
+    ([projection]) => projection && typeof projection === 'object' && 'narratorId' in (projection as object),
+  );
+}
+
+/** Root and transaction handles are distinct so routing regressions are observable. Narrator
+ * reads are selected by projection; both update spies share the assertion chain. */
+function dbWithUpdateChain(
+  row?: { asin?: string | null; userClearedFields?: string | null },
+  narratorRows: { narratorId: number }[] = [],
+) {
   const updateChain = mockDbChain();
   const selectRow = { asin: row?.asin ?? null, userClearedFields: row?.userClearedFields ?? null };
-  const db = {
+  const makeHandle = (): MockHandle => ({
     update: vi.fn().mockReturnValue(updateChain),
-    select: vi.fn().mockReturnValue(mockDbChain([selectRow])),
-  } as unknown as Db & { transaction: unknown };
-  db.transaction = vi.fn().mockImplementation((cb: (tx: Db) => Promise<unknown>) => cb(db));
-  return { db: db as Db, updateChain };
+    select: vi.fn().mockImplementation((projection?: Record<string, unknown>) =>
+      projection && 'narratorId' in projection ? mockDbChain(narratorRows) : mockDbChain([selectRow]),
+    ),
+  });
+
+  const tx = makeHandle();
+  const db = makeHandle() as MockHandle & { transaction: ReturnType<typeof vi.fn> };
+  db.transaction = vi.fn().mockImplementation((cb: (tx: Db) => Promise<unknown>) => cb(tx as unknown as Db));
+  return { db: db as unknown as Db, root: db as MockHandle, tx, updateChain };
 }
 
 const mockEnrichBookFromAudio = vi.mocked(enrichBookFromAudio);
@@ -158,11 +170,8 @@ describe('orchestrateBookEnrichment', () => {
     });
 
     it('does not emit events — eventHistory is not part of EnrichmentDeps', async () => {
-      // orchestrateBookEnrichment has no access to eventHistory — callers own events.
       await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null }, deps, { primaryAsin: null });
 
-      // The deps passed in (which the test built from createMockDeps) must not carry an eventHistory,
-      // and orchestrateBookEnrichment must not have synthesized a call against one.
       expect('eventHistory' in deps).toBe(false);
       expect(Object.keys(deps).sort()).toEqual(['bookService', 'db', 'log', 'metadataService', 'settingsService']);
     });
@@ -227,8 +236,6 @@ describe('applyAudnexusEnrichment', () => {
     expect(setArg).not.toHaveProperty('subtitle');
     expect(setArg).not.toHaveProperty('publisher');
   });
-
-  // ─── #1625: title/author search fallback ──────────────────────────────
 
   const mockEnrichBook = (d: typeof deps) => d.metadataService.enrichBook as ReturnType<typeof vi.fn>;
   const mockResolveBook = (d: typeof deps) => d.metadataService.resolveBook as ReturnType<typeof vi.fn>;
@@ -301,8 +308,6 @@ describe('applyAudnexusEnrichment', () => {
 
     await applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book', author: 'An Author' }, { ...deps, db });
 
-    // The collision check sees the canonical (uppercase) form, and the persisted
-    // ASIN is canonical — never the lowercase provider value.
     expect(mockFindCollision(deps)).toHaveBeenCalledWith(42, 'B0NEWEDITION');
     const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
     expect(setArg).toMatchObject({ asin: 'B0NEWEDITION', enrichmentStatus: 'enriched' });
@@ -315,7 +320,6 @@ describe('applyAudnexusEnrichment', () => {
 
     await applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book', author: 'An Author' }, { ...deps, db });
 
-    // A case-only "difference" from the primary is not a real ASIN change.
     expect(mockFindCollision(deps)).not.toHaveBeenCalled();
     const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
     expect(setArg).not.toHaveProperty('asin');
@@ -360,6 +364,9 @@ describe('applyAudnexusEnrichment', () => {
     await applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book' }, { ...deps, db });
 
     expect(updateChain.set).not.toHaveBeenCalled();
+    // #2202: a held ambiguous window is a plain null here, so no ASIN writeback and no apply pass.
+    expect(deps.bookService.update).not.toHaveBeenCalled();
+    expect(mockFindCollision(deps)).not.toHaveBeenCalled();
   });
 
   it('no ASINs and no title — early return, neither enrichBook nor resolveBook called', async () => {
@@ -404,17 +411,11 @@ describe('applyAudnexusEnrichment', () => {
     expect(updateChain.set).not.toHaveBeenCalled();
   });
 
-  // #1628 — a transient (non-rate-limit) error on the supplementary post-import
-  // search fallback is a NON-FATAL miss: the import completes, nothing is written,
-  // the book stays pending for the scheduled job to retry. (Contrast the
-  // RateLimitError case above, which still propagates and fails the import.)
   it('#1628: TransientError on the search fallback is a non-fatal miss (no throw, no writes)', async () => {
     const { db, updateChain } = dbWithUpdateChain();
     mockEnrichBook(deps).mockResolvedValue(null);
     mockResolveBook(deps).mockRejectedValueOnce(new TransientError('Audible.com', 'HTTP 503'));
 
-    // Resolves without throwing — the manual import must not be failed by a
-    // transient during supplementary enrichment.
     await applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book' }, { ...deps, db });
 
     expect(updateChain.set).not.toHaveBeenCalled();
@@ -432,6 +433,57 @@ describe('applyAudnexusEnrichment', () => {
     await applyAudnexusEnrichment(42, { primaryAsin: 'B001', title: 'My Book' }, { ...deps, db });
 
     expect(updateChain.set).not.toHaveBeenCalled();
+  });
+
+  // A durable failure is not a provider miss: only `metadataService.enrichBook` may recover per candidate.
+  it('#2075: a durable write failure propagates — no alternate candidate, no fallback, not warned as a provider miss', async () => {
+    const { db } = dbWithUpdateChain();
+    const writeError = new Error('db write boom');
+    (db as unknown as { transaction: ReturnType<typeof vi.fn> }).transaction.mockRejectedValueOnce(writeError);
+    mockEnrichBook(deps).mockResolvedValueOnce({ duration: 7200 });
+
+    await expect(
+      applyAudnexusEnrichment(42, { primaryAsin: 'B001', alternateAsins: ['B002'], title: 'My Book' }, { ...deps, db }),
+    ).rejects.toBe(writeError);
+
+    expect(mockEnrichBook(deps)).toHaveBeenCalledTimes(1);
+    expect(mockEnrichBook(deps)).not.toHaveBeenCalledWith('B002');
+    expect(mockResolveBook(deps)).not.toHaveBeenCalled();
+    expect(deps.log.warn).not.toHaveBeenCalledWith(expect.anything(), 'Audnexus enrichment failed');
+  });
+
+  it('#2075: a collision-query failure propagates too — the boundary moved for all of applyEnrichmentData', async () => {
+    const { db } = dbWithUpdateChain();
+    const collisionError = new Error('collision query boom');
+    // B003 makes "no later candidate" observable after B002's collision-query failure.
+    mockEnrichBook(deps).mockResolvedValueOnce(null).mockResolvedValueOnce({ duration: 7200 });
+    mockFindCollision(deps).mockRejectedValueOnce(collisionError);
+
+    await expect(
+      applyAudnexusEnrichment(42, { primaryAsin: 'B001', alternateAsins: ['B002', 'B003'], title: 'My Book' }, { ...deps, db }),
+    ).rejects.toBe(collisionError);
+
+    expect(mockEnrichBook(deps)).toHaveBeenCalledTimes(2);
+    expect(mockEnrichBook(deps)).not.toHaveBeenCalledWith('B003');
+    expect(mockResolveBook(deps)).not.toHaveBeenCalled();
+    expect(deps.log.warn).not.toHaveBeenCalledWith(expect.anything(), 'Audnexus enrichment failed');
+    expect((db as unknown as { transaction: ReturnType<typeof vi.fn> }).transaction).not.toHaveBeenCalled();
+  });
+
+  it('#2075 control: a provider ERROR still warns AND still continues to the next candidate and the fallback', async () => {
+    const { db } = dbWithUpdateChain();
+    mockEnrichBook(deps).mockRejectedValueOnce(new Error('API error')).mockResolvedValueOnce(null);
+    mockResolveBook(deps).mockResolvedValueOnce(null);
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', alternateAsins: ['B002'], title: 'My Book', author: 'An Author' }, { ...deps, db });
+
+    expect(deps.log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 42, asin: 'B001' }),
+      'Audnexus enrichment failed',
+    );
+    expect(mockEnrichBook(deps)).toHaveBeenCalledTimes(2);
+    expect(mockEnrichBook(deps)).toHaveBeenCalledWith('B002');
+    expect(mockResolveBook(deps)).toHaveBeenCalledWith({ title: 'My Book', author: 'An Author' });
   });
 
   it('conditional fill guards hold even when the search fallback returns values', async () => {
@@ -453,8 +505,6 @@ describe('applyAudnexusEnrichment', () => {
 });
 
 describe('buildBackgroundAudnexusConfig (#1625 — search-fallback title/author threading)', () => {
-  // AC2: title/author must be threaded from the import payload into the config so the
-  // production manual-import path can call resolveBook after the ASIN loop misses.
   it('threads title/author from the import payload onto the config', async () => {
     const { buildBackgroundAudnexusConfig, extractImportMetadata } = await import('./enrichment-orchestration.helpers.js');
     const item = { path: '/x', title: 'Mistborn', authorName: 'Brandon Sanderson', asin: 'B001' };
@@ -573,7 +623,6 @@ describe('buildBookCreatePayload (#1028)', () => {
     expect(payload.publisher).toBeUndefined();
   });
 
-  // #1927 — item-first, two-state, pair-locked series resolution (was #1071 metadata-first).
   it('item supplies series + position → payload uses the ITEM values, not metadata (#1927 AC1)', async () => {
     const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
     const payload = buildBookCreatePayload(
@@ -661,7 +710,6 @@ describe('buildBookCreatePayload (#1028)', () => {
     expect(payload.seriesPosition).toBeUndefined();
   });
 
-  // #1097 — canonical primary-series preference over series[0]
   it('prefers seriesPrimary over series[0] when both are present (#1097)', async () => {
     const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
     const payload = buildBookCreatePayload(
@@ -681,7 +729,6 @@ describe('buildBookCreatePayload (#1028)', () => {
     expect(payload.seriesPosition).toBe(2);
   });
 
-  // #1710 — production_type populated from meta.formatType on this path only
   it('populates productionType from meta.formatType (#1710)', async () => {
     const { buildBookCreatePayload } = await import('./enrichment-orchestration.helpers.js');
     const payload = buildBookCreatePayload(
@@ -709,12 +756,7 @@ describe('buildBookCreatePayload (#1028)', () => {
   });
 });
 
-// ─── #2069 AC10/AC11: the post-import fill surface honors tombstones ───
-//
-// This is the SECOND fill-empty writer. It writes no series field, so only
-// `subtitle`, `publisher` and `genres` are guardable here — that asymmetry with the
-// scheduled job (AC9) is deliberate. Its scalar write and its array writes now also
-// share ONE transaction, and re-read the row identity inside it.
+// This fill-empty path guards subtitle, publisher, and genres; scalar and array writes share one transaction.
 describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
   let deps: ReturnType<typeof createMockDeps>;
 
@@ -784,14 +826,7 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
     }
   });
 
-  // The F14 rollback proof deliberately does NOT live here. This suite's `db` and
-  // its transaction handle are the SAME object, so a regression that moved the
-  // scalar write before `db.transaction` would produce identical observations
-  // (same update chain, one transaction call, same rejected promise) — the test
-  // could not tell in-transaction from pre-transaction. It lives against a real
-  // migrated DB instead, with the split-transaction counterfactual executed
-  // alongside it: see `src/db/user-cleared-fields-schema.integration.test.ts`,
-  // 'AC11 / F14 — post-import atomicity, against a real DB'.
+  // These doubles prove handle routing, not rollback; the migrated-DB integration suite proves atomicity.
 
   describe('F21 / F5 — the genre telemetry is a DEFERRED post-commit effect', () => {
     it('runs the telemetry with the written payload, AFTER the write transaction resolves', async () => {
@@ -810,8 +845,6 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
       await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
 
       expect(deps.bookService.trackUnmatchedGenres).toHaveBeenCalledWith(['Fantasy']);
-      // Running this before the commit would strand it on a rollback — the tx arm of
-      // `update` emits no post-commit effects precisely so the owner can sequence it.
       expect(order).toEqual(['tx-committed', 'telemetry']);
     });
 
@@ -851,6 +884,43 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
       expect(deps.bookService.trackUnmatchedGenres).not.toHaveBeenCalled();
     });
 
+    // Re-read narrators in the transaction; embedded-tag fill may have changed the pre-fetch snapshot.
+    it('AC9: skips the narrator write when the row already carries narrators the snapshot missed', async () => {
+      const { db } = dbWithUpdateChain(undefined, [{ narratorId: 7 }]);
+      // Use a different narrator so "skipped" cannot pass vacuously.
+      (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ narrators: ['Audnexus Narrator'] });
+
+      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+
+      expect(deps.bookService.update).not.toHaveBeenCalledWith(42, { narrators: ['Audnexus Narrator'] }, expect.anything());
+    });
+
+    it('AC9: still fills narrators when the row genuinely has none', async () => {
+      const { db } = dbWithUpdateChain(undefined, []);
+      (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ narrators: ['Audnexus Narrator'] });
+
+      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+
+      expect(deps.bookService.update).toHaveBeenCalledWith(42, { narrators: ['Audnexus Narrator'] }, { tx: expect.anything() });
+    });
+
+    it('AC9: the re-read runs on the TRANSACTION handle, never the root connection', async () => {
+      const { db, root, tx } = dbWithUpdateChain(undefined, []);
+      (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ narrators: ['Audnexus Narrator'] });
+
+      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+
+      // Root reads miss uncommitted libSQL state; distinct spies make this routing observable.
+      expect(narratorReads(tx)).toHaveLength(1);
+      expect(narratorReads(root)).toHaveLength(0);
+
+      const updateCall = (deps.bookService.update as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      expect((updateCall[2] as { tx: unknown }).tx).toBe(tx);
+    });
+
     it('a telemetry failure is non-fatal — the success log still fires', async () => {
       const { db } = dbWithUpdateChain();
       (deps.bookService.trackUnmatchedGenres as ReturnType<typeof vi.fn>)
@@ -864,15 +934,13 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
   });
 
   it('F15: a Fix Match committed during the provider fetch aborts the write, tombstones held constant', async () => {
-    // The pre-fetch capture reads 'B001'; the in-transaction re-read sees the
-    // re-identified row. The tombstone column is NULL on both sides, so a
-    // tombstone-only guard could not catch this.
+    // Keep tombstones equal while ASIN changes between pre-fetch and transaction reads.
     const updateChain = mockDbChain();
     const db = {
       update: vi.fn().mockReturnValue(updateChain),
       select: vi.fn()
-        .mockReturnValueOnce(mockDbChain([{ asin: 'B001' }]))                                  // pre-fetch capture
-        .mockReturnValue(mockDbChain([{ asin: 'B999_REIDENTIFIED', userClearedFields: null }])), // in-tx re-read
+        .mockReturnValueOnce(mockDbChain([{ asin: 'B001' }]))
+        .mockReturnValue(mockDbChain([{ asin: 'B999_REIDENTIFIED', userClearedFields: null }])),
     } as unknown as Db & { transaction: unknown };
     db.transaction = vi.fn().mockImplementation((cb: (tx: Db) => Promise<unknown>) => cb(db as Db));
     (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
@@ -881,6 +949,29 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
 
     expect(updateChain.set).not.toHaveBeenCalled();
     expect(deps.bookService.update).not.toHaveBeenCalled();
+    expect(deps.log.info).not.toHaveBeenCalledWith(expect.anything(), 'Audnexus enrichment applied');
+  });
+
+  it('#2075 AC9: a stale drop still ENDS the call — no search fallback even with a title configured', async () => {
+    // Include a title so any fallback after the stale drop is observable.
+    const updateChain = mockDbChain();
+    const db = {
+      update: vi.fn().mockReturnValue(updateChain),
+      select: vi.fn()
+        .mockReturnValueOnce(mockDbChain([{ asin: 'B001' }]))
+        .mockReturnValue(mockDbChain([{ asin: 'B999_REIDENTIFIED', userClearedFields: null }])),
+    } as unknown as Db & { transaction: unknown };
+    db.transaction = vi.fn().mockImplementation((cb: (tx: Db) => Promise<unknown>) => cb(db as Db));
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
+
+    await applyAudnexusEnrichment(
+      42,
+      { primaryAsin: 'B001', title: 'My Book', author: 'An Author', existingNarrator: null, existingGenres: null },
+      { ...deps, db: db as Db },
+    );
+
+    expect(updateChain.set).not.toHaveBeenCalled();
+    expect(deps.metadataService.resolveBook).not.toHaveBeenCalled();
     expect(deps.log.info).not.toHaveBeenCalledWith(expect.anything(), 'Audnexus enrichment applied');
   });
 

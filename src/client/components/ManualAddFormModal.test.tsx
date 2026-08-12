@@ -22,6 +22,7 @@ vi.mock('sonner', () => ({
   toast: {
     success: vi.fn(),
     error: vi.fn(),
+    info: vi.fn(),
   },
 }));
 
@@ -72,7 +73,7 @@ describe('ManualAddFormModal', () => {
       const user = userEvent.setup();
       const onClose = vi.fn();
 
-      // Mock addBook to never resolve — keeps mutation in pending state
+      // Hold the mutation in its pending state.
       const { api } = await import('@/lib/api');
       vi.mocked(api.addBook).mockReturnValue(new Promise(() => {}));
 
@@ -80,17 +81,15 @@ describe('ManualAddFormModal', () => {
         <ManualAddFormModal isOpen={true} onClose={onClose} />,
       );
 
-      // Fill required field and submit to trigger pending state
       const titleInput = screen.getByPlaceholderText('Book title');
       await user.type(titleInput, 'Test Book');
       await user.click(screen.getByRole('button', { name: /add book/i }));
 
-      // Wait for the close button to become disabled (pending state propagated)
       await waitFor(() => {
         expect(screen.getByLabelText('Close')).toBeDisabled();
       });
 
-      // Use fireEvent to bypass disabled attribute — tests the onClick guard directly
+      // fireEvent bypasses disabled so the handler guard is exercised directly.
       fireEvent.click(screen.getByLabelText('Close'));
 
       expect(onClose).not.toHaveBeenCalled();
@@ -103,6 +102,41 @@ describe('ManualAddFormModal', () => {
       renderWithQuery(
         <ManualAddFormModal isOpen={true} onClose={onClose} />,
       );
+
+      await user.click(screen.getByLabelText('Close'));
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // Nothing was created and the modal offers no "Add anyway" control, so a held add leaves the
+  // operator with their typed values and the choice to close (#2212).
+  describe('#2212 a review 409 leaves the modal open and closable', () => {
+    it('keeps the modal mounted with its typed values and re-enables closing', async () => {
+      const user = userEvent.setup();
+      const onClose = vi.fn();
+      const { api, ApiError } = await import('@/lib/api');
+      const { toast } = await import('sonner');
+      vi.mocked(api.addBook).mockRejectedValue(
+        new ApiError(409, { conflict: 'review', id: 88, title: 'Piranesi' }),
+      );
+
+      renderWithQuery(
+        <ManualAddFormModal isOpen={true} onClose={onClose} />,
+      );
+
+      await user.type(screen.getByPlaceholderText('Book title'), 'Shogun');
+      await user.click(screen.getByRole('button', { name: /add book/i }));
+
+      await waitFor(() => {
+        expect(toast.info).toHaveBeenCalledWith(
+          "Possible duplicate (review): may be the same recording as 'Piranesi'",
+        );
+      });
+
+      expect(onClose).not.toHaveBeenCalled();
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('Book title')).toHaveValue('Shogun');
+      expect(screen.getByLabelText('Close')).toBeEnabled();
 
       await user.click(screen.getByLabelText('Close'));
       expect(onClose).toHaveBeenCalledTimes(1);
@@ -141,17 +175,14 @@ describe('ManualAddFormModal', () => {
         <ManualAddFormModal isOpen={true} onClose={onClose} />,
       );
 
-      // Fill required field and submit to trigger pending state
       const titleInput = screen.getByPlaceholderText('Book title');
       await user.type(titleInput, 'Test Book');
       await user.click(screen.getByRole('button', { name: /add book/i }));
 
-      // Wait for pending state
       await waitFor(() => {
         expect(screen.getByLabelText('Close')).toBeDisabled();
       });
 
-      // Escape should be suppressed by handleEscape guard
       await user.keyboard('{Escape}');
       expect(onClose).not.toHaveBeenCalled();
     });

@@ -4,23 +4,9 @@ import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import { safeEmit } from '../utils/safe-emit.js';
 
 /**
- * The live merge domain, mirrored in memory and broadcast as the `merge_state` snapshot (#2129).
- *
- * It is a *separate* container from `MergeService`'s `inProgress` / `queue` / `currentPhase` maps
- * on purpose: those are cleared by `finally` blocks that run AFTER the terminal event is emitted,
- * and a snapshot that still contained a terminal book would overwrite the terminal card the
- * client just installed. This state has its own lifecycle — install at admission, update on
- * progress, delete BEFORE the terminal emit (see {@link finishTerminal}) — with the service's
- * existing `finally` cleanups acting only as an idempotent backstop for the exits that end a
- * merge with no terminal event at all.
- *
- * Everything here is synchronous and in-memory: {@link snapshot} is called from the SSE route on
- * the same tick the client registers, so it can never await a DB read (a suspension there would
- * let a newer state change land first and be overwritten by the stale greeting). Titles are
- * captured at the points that already load the book (enqueue validation, promotion), because a
- * queued book's snapshot entry is the ONLY title source a late-joining client has for it.
- *
- * Every broadcast goes through `safeEmit`, so a broken broadcaster can never fail a merge.
+ * Keep synchronous snapshot state separate from MergeService cleanup maps. Remove terminal state
+ * before its event or the following snapshot can overwrite the client's terminal card. Snapshot
+ * reads cannot await DB without racing newer state, so titles are captured on admission.
  */
 export class MergeStateBroadcaster {
   private activeEntries = new Map<number, { title: string; phase: MergeActivePhase; percentage?: number }>();
@@ -32,7 +18,6 @@ export class MergeStateBroadcaster {
     private broadcaster?: EventBroadcasterService,
   ) {}
 
-  /** Synchronous, allocation-only view of the whole live merge domain. */
   snapshot(): MergeStateSnapshot {
     return {
       active: [...this.activeEntries].map(([bookId, entry]) => ({
@@ -45,7 +30,6 @@ export class MergeStateBroadcaster {
     };
   }
 
-  /** The book was appended to the merge queue. */
   enterQueued(bookId: number, bookTitle: string): void {
     this.activeEntries.delete(bookId);
     this.queuedTitles.set(bookId, bookTitle);
@@ -53,9 +37,7 @@ export class MergeStateBroadcaster {
   }
 
   /**
-   * Admission: the book was handed a semaphore slot. Leaving the queue and entering `active` is
-   * ONE transition and therefore ONE frame, so a promoted book never appears in both lists — nor,
-   * between two frames, in neither.
+   * Promote in one frame so the book never appears in both lists or transiently in neither.
    */
   enterActive(bookId: number, bookTitle: string): void {
     this.queuedTitles.delete(bookId);
@@ -64,11 +46,7 @@ export class MergeStateBroadcaster {
   }
 
   /**
-   * Phase / percentage update for an in-flight merge. An update that carries no `percentage`
-   * (a phase transition) clears the stored one, so a client never renders a stale percentage
-   * against a new phase. Broadcasts only when the book is actually tracked — an update for an
-   * untracked book (unreachable today) must not emit a no-change frame, matching the
-   * changed-only discipline `finishTerminal` and `clearResidue` follow.
+   * A phase-only update clears stale percentage. Untracked updates emit no unchanged frame.
    */
   updateProgress(bookId: number, phase: MergeActivePhase, percentage?: number): void {
     const entry = this.activeEntries.get(bookId);
@@ -80,16 +58,8 @@ export class MergeStateBroadcaster {
   }
 
   /**
-   * The terminal transition, in the one authoritative order: (1) drop the book's snapshot state,
-   * (2) emit the discrete terminal event, (3) broadcast the snapshot that already excludes it —
-   * with no `await` between the three. The client therefore installs the terminal card first and
-   * the cleared snapshot second, where its terminal-window exception retains the card.
-   * Broadcasting a snapshot that STILL contained the book after its terminal event would
-   * overwrite that card with an in-flight entry, cancel its dismiss timer, and let the next
-   * snapshot delete it outright.
-   *
-   * The broadcast is conditional on the delete having removed something, so a path that emits a
-   * second terminal event for an already-finished merge adds no extra frame.
+   * Atomically remove snapshot state, emit the terminal event, then broadcast the cleared snapshot.
+   * Reordering lets stale in-flight state overwrite the terminal card.
    */
   finishTerminal(bookId: number, emitTerminal: () => void): void {
     const removed = this.remove(bookId);
@@ -97,24 +67,12 @@ export class MergeStateBroadcaster {
     if (removed) this.broadcast();
   }
 
-  /**
-   * Idempotent backstop for any exit that ends a merge with NO terminal event — since #2142
-   * converted `executeMerge`'s pre-flight early returns to `MergeError` throws (terminal-
-   * reported by its catch), the known remaining case is the non-`MergeError` branch of
-   * `executeWithRevalidation`'s revalidation gate — which would otherwise strand a permanent
-   * chip. Broadcasts only when it actually removed something, so the normal terminal path
-   * stays at exactly one frame.
-   */
+  /** Idempotent cleanup for exits with no terminal event; broadcast only on change. */
   clearResidue(bookId: number): void {
     if (this.remove(bookId)) this.broadcast();
   }
 
-  /**
-   * The title captured when the book entered the snapshot, so a terminal emitter can take it as a
-   * parameter instead of re-reading the book (which would put an `await` inside the delete →
-   * terminal event → cleared snapshot sequence). Owns the placeholder for the untracked case
-   * (#2142) — one spelling, not one per caller.
-   */
+  /** Avoid a title re-read inside the synchronous terminal sequence. */
   titleFor(bookId: number): string {
     return this.activeEntries.get(bookId)?.title ?? this.queuedTitles.get(bookId) ?? `Book ${bookId}`;
   }

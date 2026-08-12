@@ -2,15 +2,9 @@ import type { BookMetadata } from '@/lib/api';
 import type { BookEditState } from './types.js';
 import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 
-/**
- * Maps an Audnexus best-match result onto a BookEditState row, falling back to
- * the row's existing fields when the metadata omits them. Shared by both
- * Manual Import and Library Import auto-match merge paths so future
- * ImportConfirmItem fields stay in sync between the two hooks.
- */
+/** Keeps Manual Import and Library Import best-match merging aligned. */
 export function buildEditedFromBestMatch(bestMatch: BookMetadata, fallback: BookEditState): BookEditState {
-  // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) — `series[0]`
-  // on Audible can be a broader universe entry rather than the real book series.
+  // Audible series[0] can be a broader universe; prefer the canonical primary series.
   const primary = pickPrimarySeries(bestMatch);
   const mergedSeriesPosition = primary?.position ?? fallback.seriesPosition;
   return {

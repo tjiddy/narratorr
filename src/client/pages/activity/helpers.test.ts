@@ -30,7 +30,6 @@ describe('statusConfig (derived from registry)', () => {
   });
 
   it('maps every registry icon id to the exact expected component', () => {
-    // Explicit icon-id → component-name parity map
     const expectedComponentNames: Record<string, string> = {
       'clock': 'ClockIcon',
       'arrow-down': 'ArrowDownIcon',

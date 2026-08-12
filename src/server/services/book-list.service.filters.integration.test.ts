@@ -9,9 +9,6 @@ import { books, bookAuthors, bookNarrators, authors, narrators } from '@db/schem
 import { BookListService } from './book-list.service.js';
 import type { BookStatus } from '@shared/schemas/book.js';
 
-// #1143 follow-up — behavior-level coverage for server-side author/series/narrator filters.
-// Asserts returned IDs/totals (not just SQL fragments) against a real libsql DB.
-
 function slugify(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
@@ -77,8 +74,6 @@ describe('BookListService — server-side author/series/narrator filter behavior
 
   describe('getAllForLibrary — author filter', () => {
     it('returns every book by the author regardless of pagination window', async () => {
-      // Three Sanderson books interleaved with non-Sanderson books — proves the
-      // filter is applied at the DB layer, not over the current page slice.
       const s1 = await seedBook(db, { title: 'The Way of Kings', authorNames: ['Brandon Sanderson'] });
       await seedBook(db, { title: 'Dune', authorNames: ['Frank Herbert'] });
       const s2 = await seedBook(db, { title: 'Mistborn', authorNames: ['Brandon Sanderson'] });
@@ -94,8 +89,6 @@ describe('BookListService — server-side author/series/narrator filter behavior
       const allIds = new Set([s1, s2, s3]);
       for (const id of ids) expect(allIds.has(id)).toBe(true);
 
-      // Second page returns the remaining Sanderson book — proves filter reaches
-      // both page and count queries identically.
       const page2 = await service.getAllForLibrary(undefined, { limit: 2, offset: 2 }, { author: 'Brandon Sanderson' });
       expect(page2.total).toBe(3);
       expect(page2.data).toHaveLength(1);
@@ -122,7 +115,6 @@ describe('BookListService — server-side author/series/narrator filter behavior
       expect(result.total).toBe(1);
       expect(result.data).toHaveLength(1);
       expect(result.data[0]!.id).toBe(id);
-      // Authors array preserves the metadata order — both names present, no row dup.
       expect(result.data[0]!.authors.map((a) => a.name)).toEqual(['Robert Jordan', 'Brandon Sanderson']);
     });
 
@@ -172,7 +164,6 @@ describe('BookListService — server-side author/series/narrator filter behavior
       const result = await service.getAllForLibrary(undefined, undefined, { narrator: 'Michael Kramer' });
       expect(result.total).toBe(2);
       const ids = result.data.map((r) => r.id);
-      // Each filtered book appears once even though the joined fixture has two narrator rows.
       expect(new Set(ids).size).toBe(2);
       expect(ids.sort()).toEqual([kramerOnly, kramerAndReading].sort());
     });
@@ -200,7 +191,6 @@ describe('BookListService — server-side author/series/narrator filter behavior
     });
 
     it('status + author + search compose with AND', async () => {
-      // status=imported AND author=Sanderson AND search matches Kings only
       const target = await seedBook(db, { title: 'The Way of Kings', status: 'imported', authorNames: ['Brandon Sanderson'] });
       await seedBook(db, { title: 'Mistborn', status: 'imported', authorNames: ['Brandon Sanderson'] });
       await seedBook(db, { title: 'The Way of Kings (Reread)', status: 'wanted', authorNames: ['Brandon Sanderson'] });
@@ -216,7 +206,6 @@ describe('BookListService — server-side author/series/narrator filter behavior
 
   describe('getAllForLibrary — filtered total contract', () => {
     it('total reflects filtered count, not library-wide count, and matches data.length for a single page', async () => {
-      // 5 books total, 2 by target author. Single page big enough to fit both.
       await seedBook(db, { title: 'A', authorNames: ['Target Author'] });
       await seedBook(db, { title: 'B', authorNames: ['Other Author'] });
       await seedBook(db, { title: 'C', authorNames: ['Target Author'] });
@@ -226,7 +215,6 @@ describe('BookListService — server-side author/series/narrator filter behavior
       const result = await service.getAllForLibrary(undefined, { limit: 100 }, { author: 'Target Author' });
       expect(result.total).toBe(2);
       expect(result.data).toHaveLength(2);
-      // Sanity: an empty-filter call still sees all 5.
       const all = await service.getAllForLibrary(undefined, { limit: 100 });
       expect(all.total).toBe(5);
     });
@@ -234,8 +222,6 @@ describe('BookListService — server-side author/series/narrator filter behavior
 });
 
 describe('BookListService.getAll — scope-expansion parity check (#1143)', () => {
-  // /api/books shares buildListWhere with /api/library/books. The parity tests
-  // below prove the new filters reach getAll() too — not just getAllForLibrary().
   let dir: string;
   let db: Db;
   let service: BookListService;

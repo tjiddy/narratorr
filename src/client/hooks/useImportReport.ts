@@ -7,13 +7,7 @@ import { patchImportHistoryCache } from '@/lib/import-report/cache';
 
 type ImportSource = 'library' | 'manual';
 
-/**
- * Last-import panel feed (#1894). The "latest" read is the list with `limit=1` +
- * `source`; the client consumes `data[0] ?? null`. Fresh on mount
- * (`refetchOnMount:'always'` over cache), retains last-good on error, and polls at
- * the two-tier cadence — fast while the latest submission is non-`complete`,
- * baseline (never stopped) once complete/absent so it discovers the next run.
- */
+/** Polls quickly while the latest import is active, then at baseline to discover a new run. */
 export function useLatestImport(source: ImportSource) {
   return useQuery<SubmissionSummary | null>({
     queryKey: queryKeys.importSubmissions.latest(source),
@@ -32,14 +26,7 @@ export function useLatestImport(source: ImportSource) {
   });
 }
 
-/**
- * Attention-banner feed (#1894). Server-authoritative: the client renders
- * `data.attention.kind` and drives its poll cadence off `watch` — fast while any
- * non-terminal submission exists, baseline (never stopped) otherwise, so an
- * attention state that arises later (another tab, a boot-resume completion) is
- * discovered without a remount. Retains last-good on error (a failed read is
- * observable/retryable, never silently "no banner").
- */
+/** Polls quickly while `watch` is true, then at baseline to discover later attention states. */
 export function useImportAttention(source?: ImportSource) {
   return useQuery<AttentionResponse>({
     queryKey: queryKeys.importSubmissions.attention(source),
@@ -52,22 +39,14 @@ export function useImportAttention(source?: ImportSource) {
   });
 }
 
-/**
- * Id-scoped report-detail feed shared by BOTH expansion surfaces (panel +
- * Activity), self-polling off its OWN returned `status` (#1894, F74/F81): fast
- * while non-`complete`, then STOPS at `complete` (a fixed run's terminal detail is
- * immutable — unlike the latest/attention reads there is no new run to discover on
- * a fixed id). On each response it promotes the freshened header back into the
- * list cache (F86/F89) so an Activity card's header never reverts on collapse.
- */
+/** A fixed report stops polling once complete and refreshes its cached history summary. */
 export function useImportSubmissionDetail(id: number | null, enabled = true) {
   const queryClient = useQueryClient();
   return useQuery<SubmissionResponse>({
     queryKey: queryKeys.importSubmissions.detail(id ?? -1),
     queryFn: async () => {
       const detail = await api.getImportSubmissionDetail(id!);
-      // Validate BEFORE any cache side effect (F29): a malformed header must never
-      // poison cached list pages. Consumers re-validate for their own render arm.
+      // Validate before any cache side effect so malformed detail cannot poison cached list pages.
       if (submissionResponseSchema.safeParse(detail).success) {
         patchImportHistoryCache(queryClient, detail);
       }
@@ -76,11 +55,9 @@ export function useImportSubmissionDetail(id: number | null, enabled = true) {
     enabled: id != null && enabled,
     staleTime: 0,
     refetchOnMount: 'always',
-    // A deep-linked 404 is gone — fail fast (no retry); transient errors retry twice.
+    // A deep-linked 404 is gone; transient errors retry twice.
     retry: (count, error) => !(error instanceof ApiError && error.status === 404) && count < 2,
-    // Retain the previous snapshot ONLY for the same id (F3): on an id transition
-    // (panel discovers a new latest id while expanded, or a deep-link id changes)
-    // the prior run's rows/status must NOT render under the new header.
+    // Never show the previous report under a newly selected id.
     placeholderData: (prev) => (prev != null && prev.id === id ? prev : undefined),
     refetchInterval: (query) => (query.state.data?.status === 'complete' ? false : FAST_POLL_MS),
   });

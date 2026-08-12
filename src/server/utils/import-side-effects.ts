@@ -9,9 +9,6 @@ import { getErrorMessage } from './error-message.js';
 import { safeEmit } from './safe-emit.js';
 import { serializeError } from './serialize-error.js';
 
-
-// ── emitDownloadImporting ────────────────────────────────────────────────
-
 export interface EmitDownloadImportingArgs {
   broadcaster: EventBroadcasterService | undefined;
   downloadId: number;
@@ -20,13 +17,10 @@ export interface EmitDownloadImportingArgs {
   log: FastifyBaseLogger;
 }
 
-/** Emit SSE download_status_change for the importing transition. */
 export function emitDownloadImporting(args: EmitDownloadImportingArgs): void {
   const { broadcaster, downloadId, bookId, downloadStatus, log } = args;
   safeEmit(broadcaster, 'download_status_change', { download_id: downloadId, book_id: bookId, old_status: downloadStatus, new_status: 'importing' }, log);
 }
-
-// ── emitBookImporting ───────────────────────────────────────────────────
 
 export interface EmitBookImportingArgs {
   broadcaster: EventBroadcasterService | undefined;
@@ -35,14 +29,11 @@ export interface EmitBookImportingArgs {
   log: FastifyBaseLogger;
 }
 
-/** Emit SSE book_status_change for the importing transition. */
 export function emitBookImporting(args: EmitBookImportingArgs): void {
   const { broadcaster, bookId, bookStatus, log } = args;
   if (bookStatus === 'importing') return;
   safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: bookStatus, new_status: 'importing' }, log);
 }
-
-// ── emitImportStatusSuccess ─────────────────────────────────────────────
 
 export interface EmitImportStatusSuccessArgs {
   broadcaster: EventBroadcasterService | undefined;
@@ -51,19 +42,12 @@ export interface EmitImportStatusSuccessArgs {
   log: FastifyBaseLogger;
 }
 
-/**
- * Emit download/book status_change SSE events on successful import. Each emit is
- * independent so a failure in one doesn't skip the rest. Job-lifecycle
- * completion (`import_complete`) is owned by `ImportQueueWorker.processJob`, not
- * this helper — see #1108.
- */
+// Each status emit is isolated; import_complete belongs to ImportQueueWorker (#1108).
 export function emitImportStatusSuccess(args: EmitImportStatusSuccessArgs): void {
   const { broadcaster, downloadId, bookId, log } = args;
   safeEmit(broadcaster, 'download_status_change', { download_id: downloadId, book_id: bookId, old_status: 'importing', new_status: 'imported' }, log);
   safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing', new_status: 'imported' }, log);
 }
-
-// ── notifyImportComplete ────────────────────────────────────────────────
 
 export interface NotifyImportCompleteArgs {
   notifierService: NotifierService | undefined;
@@ -74,7 +58,6 @@ export interface NotifyImportCompleteArgs {
   log: FastifyBaseLogger;
 }
 
-/** Fire-and-forget import notification. */
 export function notifyImportComplete(args: NotifyImportCompleteArgs): void {
   const { notifierService, bookTitle, authorName, targetPath, fileCount, log } = args;
   if (!notifierService) return;
@@ -89,8 +72,6 @@ export function notifyImportComplete(args: NotifyImportCompleteArgs): void {
   );
 }
 
-// ── recordImportEvent ───────────────────────────────────────────────────
-
 export interface RecordImportEventArgs {
   eventHistory: EventHistoryService | undefined;
   bookId: number;
@@ -104,7 +85,6 @@ export interface RecordImportEventArgs {
   log: FastifyBaseLogger;
 }
 
-/** Fire-and-forget event recording. */
 export function recordImportEvent(args: RecordImportEventArgs): void {
   const { eventHistory, bookId, bookTitle, authorName, downloadId, targetPath, fileCount, totalSize, log } = args;
   if (!eventHistory) return;
@@ -119,8 +99,6 @@ export function recordImportEvent(args: RecordImportEventArgs): void {
   }).catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record import event'));
 }
 
-// ── Failure-path side effects ───────────────────────────────────────────
-
 export interface EmitImportFailureArgs {
   broadcaster: EventBroadcasterService | undefined;
   downloadId: number;
@@ -129,7 +107,7 @@ export interface EmitImportFailureArgs {
   log: FastifyBaseLogger;
 }
 
-/** Emit SSE events for a failed import. Each emit is independent so a failure in one doesn't skip the rest. */
+// Keep failure emits independent so one cannot suppress the other.
 export function emitImportFailure(args: EmitImportFailureArgs): void {
   const { broadcaster, downloadId, bookId, revertedBookStatus, log } = args;
   safeEmit(broadcaster, 'download_status_change', { download_id: downloadId, book_id: bookId, old_status: 'importing', new_status: 'failed' }, log);
@@ -143,7 +121,6 @@ export interface NotifyImportFailureArgs {
   log: FastifyBaseLogger;
 }
 
-/** Fire-and-forget failure notification. */
 export function notifyImportFailure(args: NotifyImportFailureArgs): void {
   const { notifierService, downloadTitle, error, log } = args;
   if (!notifierService) return;
@@ -170,7 +147,6 @@ export interface RecordImportFailedEventArgs {
   log: FastifyBaseLogger;
 }
 
-/** Fire-and-forget failure event recording. */
 export function recordImportFailedEvent(args: RecordImportFailedEventArgs): void {
   const { eventHistory, bookId, bookTitle, authorName, narratorName, downloadId, source, error, log } = args;
   if (!eventHistory) return;

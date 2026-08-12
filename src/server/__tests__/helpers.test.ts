@@ -56,7 +56,6 @@ describe('mockDbChain', () => {
   describe('Proxy auto-discovery', () => {
     it('auto-generates stubs for previously unsupported methods', () => {
       const chain = mockDbChain();
-      // These methods were never in the old hard-coded list
       const result = chain.having('x').onConflictDoNothing().distinct();
       expect(result).toBe(chain);
     });
@@ -73,7 +72,6 @@ describe('mockDbChain', () => {
       expect(typeof chain.then).toBe('function');
       expect(typeof chain.catch).toBe('function');
       expect(typeof chain.finally).toBe('function');
-      // These should NOT be vi.fn() stubs
       expect(chain.then).not.toHaveProperty('mock');
       expect(chain.catch).not.toHaveProperty('mock');
       expect(chain.finally).not.toHaveProperty('mock');
@@ -217,9 +215,7 @@ describe('mockDbChain', () => {
 });
 
 describe('createMockServices / resetMockServices — canonical default contract', () => {
-  // The Proxy auto-stubs every accessed method at runtime, but TypeScript narrows the
-  // service to its production interface. Cast through unknown so we can drive the
-  // generic methodName -> Promise contract without depending on a specific signature.
+  // Cast through unknown to test the Proxy's generic method contract despite production interface narrowing.
   type AnyMock = ReturnType<typeof vi.fn>;
   const asMock = (fn: unknown): AnyMock => fn as AnyMock;
   const callAsync = (fn: unknown): Promise<unknown> => (fn as () => Promise<unknown>)();
@@ -244,17 +240,14 @@ describe('createMockServices / resetMockServices — canonical default contract'
     const fn = asMock(services.book.getById);
     fn.mockResolvedValue({ id: 7 });
 
-    // Sanity: override is in effect
     await expect(callAsync(services.book.getById)).resolves.toEqual({ id: 7 });
 
     resetMockServices(services);
 
-    // Default restored
     await expect(callAsync(services.book.getById)).rejects.toThrow(
       /mock not configured: book\.getById/,
     );
 
-    // Post-reset reconfiguration still works
     fn.mockResolvedValue({ id: 99 });
     await expect(callAsync(services.book.getById)).resolves.toEqual({ id: 99 });
   });
@@ -262,9 +255,7 @@ describe('createMockServices / resetMockServices — canonical default contract'
   it('fire-and-forget .catch chain swallows the default rejection without leaking', async () => {
     const services = createMockServices();
     const caught: unknown[] = [];
-    // Simulate a fire-and-forget production chain like
-    // `notifier.notify(...).catch(noop)`. The notifier proxy returns a vi.fn at runtime
-    // for any property access, regardless of NotifierService's strict signature.
+    // Runtime Proxy methods remain catchable promises despite the notifier's strict production signature.
     await callAsync(services.notifier.notify).catch((err: unknown) => {
       caught.push(err);
     });
@@ -275,11 +266,7 @@ describe('createMockServices / resetMockServices — canonical default contract'
 });
 
 describe('createAuthTestApp', () => {
-  /**
-   * One multi-method probe plus a dynamic-param probe, so both verbs exist on the
-   * same path (the CSRF gate short-circuits on GET but not on POST) and the
-   * `maxParamLength` case has a route to match.
-   */
+  // Shared probe covers verb-sensitive CSRF and long dynamic-parameter routing.
   const probeRoutes = (app: ZodTestApp) => {
     app.route({ method: ['GET', 'POST'], url: '/api/__probe', handler: async () => ({ ok: true }) });
     app.get('/api/__probe/:token', async () => ({ ok: true }));
@@ -288,9 +275,7 @@ describe('createAuthTestApp', () => {
   const SESSION = (value: string) => ({ cookie: `narratorr_session=${value}` });
 
   it('installs authPlugin where createTestApp does not — the trap, pinned structurally', async () => {
-    // `authPlugin` calls `app.decorateRequest('user', null)`; nothing else does. So the
-    // decorator's presence observes the plugin's INSTALLATION, not some status code that an
-    // unrelated 403/404 could also produce.
+    // Only authPlugin installs the user decorator, avoiding false positives from unrelated HTTP errors.
     const plain = await createTestApp(createMockServices());
     try {
       expect(plain.hasRequestDecorator('user')).toBe(false);
@@ -357,8 +342,7 @@ describe('createAuthTestApp', () => {
     it('matches a >100-char path param — the helper raises maxParamLength off Fastify\'s 100 default', async () => {
       const { app, authHeader } = await createAuthTestApp(createMockServices(), { routes: probeRoutes });
       try {
-        // Credentialed on purpose: without it the auth hook 401s even on a matched route,
-        // so the assertion could not distinguish route matching from auth rejection.
+        // Credentials keep auth rejection from masquerading as a route-length failure.
         const res = await app.inject({
           method: 'GET',
           url: `/api/__probe/${'t'.repeat(180)}`,
@@ -426,8 +410,7 @@ describe('createAuthTestApp', () => {
 
       expect((await post()).statusCode).toBe(403);
 
-      // resetMockServices re-applies the rejecting canonical default to getStatus, so the
-      // onRequest hook throws and the global error handler masks it as a 500.
+      // Reset restores rejecting auth defaults, which the global handler exposes as 500.
       resetMockServices(services);
       expect((await post()).statusCode).toBe(500);
 
@@ -444,7 +427,6 @@ describe('createAuthTestApp', () => {
     try {
       expect((await app.inject({ method: 'GET', url: '/api/__probe', headers: { authorization: authHeader } })).statusCode).toBe(200);
 
-      // The onRequest hook resolves authService methods per request, so this takes effect.
       (services.auth.verifyCredentials as Mock).mockResolvedValue(null);
 
       const res = await app.inject({ method: 'GET', url: '/api/__probe', headers: { authorization: authHeader } });
@@ -456,9 +438,6 @@ describe('createAuthTestApp', () => {
   });
 
   it('returns the caller\'s own services object, by identity', async () => {
-    // `services` is part of the documented return contract, so a suite can destructure it
-    // instead of threading its own variable. Returning a copy — or dropping the field —
-    // would leave every other case in this file green.
     const services = createMockServices();
     const built = await createAuthTestApp(services, { routes: probeRoutes });
     try {
@@ -473,7 +452,7 @@ describe('createAuthTestApp', () => {
     const { app } = await createAuthTestApp(createMockServices(), {
       register: (instance) => { instance.decorate('probeMarker', 'from-register'); },
       routes: (instance) => {
-        // Read at REGISTRATION time — if `register` ran second this would be false.
+        // Read during registration so later ordering cannot satisfy the assertion.
         decoratorVisibleToRoutes = instance.hasDecorator('probeMarker');
         probeRoutes(instance);
       },
@@ -485,13 +464,7 @@ describe('createAuthTestApp', () => {
     }
   });
 
-  /**
-   * The request-level cases above observe the profiles only where `authPlugin` happens to
-   * read them, which leaves several cells free to drift: the plugin never calls
-   * `validateApiKey` on a non-`/api/v*` probe, never re-checks that basic mode accepts an
-   * arbitrary password, and never inspects the session payload it is handed. Each cell is
-   * asserted directly here so deleting or changing one line of `stubAuthService` goes red.
-   */
+  // Direct assertions cover profile cells authPlugin never reads on these probe routes.
   describe('stubAuthService — the exact profiles', () => {
     const call = <T>(fn: unknown, ...args: unknown[]): T =>
       (fn as (...a: unknown[]) => T)(...args);
@@ -505,16 +478,14 @@ describe('createAuthTestApp', () => {
       });
       await expect(call<Promise<unknown>>(services.auth.hasUser)).resolves.toBe(true);
       await expect(call<Promise<unknown>>(services.auth.validateApiKey, 'any-key')).resolves.toBe(false);
-      // Deliberately NOT the password baked into BASIC_AUTH_HEADER — the profile's contract
-      // is that it accepts anything and always resolves the `admin` user.
+      // A different password proves the basic stub accepts any credential for admin.
       await expect(
         call<Promise<unknown>>(services.auth.verifyCredentials, 'admin', 'a-totally-different-password'),
       ).resolves.toEqual({ username: 'admin' });
     });
 
     it('forms: status, hasUser, a rejected API key, and the exact session-cookie triple', async () => {
-      // Freeze only Date — the payload's issuedAt/expiresAt are clock-derived, and full fake
-      // timers are unnecessary here (and stall unrelated machinery elsewhere in this repo).
+      // Fake only Date; full fake timers stall unrelated repository machinery.
       vi.useFakeTimers({ toFake: ['Date'] });
       const now = new Date('2026-07-30T12:00:00.000Z').getTime();
       vi.setSystemTime(now);
@@ -542,9 +513,7 @@ describe('createAuthTestApp', () => {
     });
 
     it('basic leaves the session methods unstubbed, and forms leaves verifyCredentials unstubbed', async () => {
-      // The two profiles are disjoint on purpose (AC4's "—" cells). An unstubbed method keeps
-      // createMockServices' rejecting canonical default, which is the loud failure a suite
-      // wants if it reaches for the wrong mode.
+      // Disjoint profiles retain rejecting defaults for methods the selected mode must not use.
       const basic = createMockServices();
       stubAuthService(basic);
       await expect(call<Promise<unknown>>(basic.auth.getSessionSecret)).rejects.toThrow(
@@ -559,14 +528,9 @@ describe('createAuthTestApp', () => {
     });
   });
 
-  /**
-   * Both callbacks are typed `void | Promise<void>` and the helper awaits each one. The
-   * synchronous ordering case above cannot see either await: a sync callback has already
-   * finished by the time the helper would resume. Parking each callback on a deferred
-   * promise is what pins the awaits themselves.
-   */
+  // Synchronous callbacks cannot prove an await; deferred gates pin both Promise-valued callback boundaries.
   describe('Promise-valued callbacks', () => {
-    /** Let pending microtasks and the current macrotask turn drain. */
+    // Drain pending microtasks and one macrotask turn.
     const settle = () => new Promise((resolve) => { setImmediate(resolve); });
 
     it('awaits a Promise-returning opts.register before invoking opts.routes', async () => {
@@ -580,7 +544,7 @@ describe('createAuthTestApp', () => {
       });
 
       await settle();
-      // Drop the await on opts.register and `routes` lands here while register is parked.
+      // Without the register await, routes would already appear here.
       expect(order).toEqual(['register:enter']);
 
       releaseRegister();
@@ -608,8 +572,7 @@ describe('createAuthTestApp', () => {
       const { app, authHeader } = await building;
       try {
         expect(resolved).toBe(true);
-        // The second observable: routes registered after the suspension are actually live.
-        // Without the await, ready() would have run first and this probe would 404.
+        // A live route proves ready() waited for asynchronous registration.
         const res = await app.inject({
           method: 'GET',
           url: '/api/__probe',
@@ -652,9 +615,7 @@ describe('createAuthTestApp', () => {
   });
 
   it('refuses to build while AUTH_BYPASS is enabled', async () => {
-    // Drive the config MODULE rather than the ambient environment: `config.ts` parses
-    // AUTH_BYPASS at boot and only the literal 'true' enables it, and suites hoist their own
-    // `../config.js` mocks. Precedent: src/server/routes/import-preview.test.ts.
+    // Mock the parsed config module; ambient env changes cannot affect its boot-time value.
     vi.resetModules();
     vi.doMock('../config.js', () => ({ config: { authBypass: true, isDev: true } }));
     try {
@@ -679,12 +640,10 @@ describe('createAuthTestApp', () => {
     try {
       const setup = () => app.inject({ method: 'POST', url: '/api/auth/setup' });
 
-      // Profile default hasUser=true: /api/auth/setup is deliberately absent from
-      // BASE_PUBLIC_ROUTES, so it is protected once a user exists.
+      // The default existing user keeps setup protected.
       expect((await setup()).statusCode).toBe(401);
 
-      // The exemption is read per request, ahead of both the AUTH_BYPASS check and the
-      // mode dispatch — so flipping it post-build reaches the handler.
+      // hasUser is read per request, so a post-build first-user override reaches the handler.
       (services.auth.hasUser as Mock).mockResolvedValue(false);
       const exempt = await setup();
       expect(exempt.statusCode).toBe(200);
@@ -733,8 +692,6 @@ describe('createAuthTestApp', () => {
     });
 
     it('refuses a second, service-controlled auth channel', () => {
-      // Each of these is a fact `mode` already fixes or a per-request stub the caller
-      // overrides after the build — never a construction option.
       // @ts-expect-error — `authStatus` would be a second source of truth over `mode`
       const authStatus: CreateAuthTestAppOptions = { routes: () => {}, authStatus: { mode: 'none' } };
       // @ts-expect-error — `localBypass` is a request-time AuthService fact; override the stub

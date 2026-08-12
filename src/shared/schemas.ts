@@ -1,4 +1,3 @@
-// Barrel re-export — all consumers import from here, domain files are internal organization
 export * from './schemas/common.js';
 export * from './schemas/indexer.js';
 export * from './schemas/download-client.js';

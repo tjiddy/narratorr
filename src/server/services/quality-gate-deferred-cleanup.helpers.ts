@@ -18,11 +18,7 @@ export interface DeferredCleanupDeps {
   log: FastifyBaseLogger;
 }
 
-/**
- * Process deferred rejection cleanups — downloads where seed time was not yet elapsed
- * at rejection time. Re-checks seed time and performs file deletion + client deregistration
- * for candidates where the threshold has now passed.
- */
+/** Re-check seed requirements and process deferred rejection cleanups once thresholds pass. */
 export async function cleanupDeferredRejections(deps: DeferredCleanupDeps): Promise<void> {
   const { qualityGateService, settingsService, log } = deps;
 
@@ -56,16 +52,14 @@ async function processDeferredCandidate(
 ): Promise<void> {
   const { downloadClientService, db, log } = deps;
 
-  // Deferred cleanup folds a missing adapter / live state into ratio 0 (deferOnUnavailableRatio:
-  // false) and treats a null adapter on the proceed path as adapter-success (so file deletion
-  // may still clear markers per `filesDeleted`).
+  // Unavailable ratios become zero here; a missing adapter can still permit file cleanup.
   const result = await removeOrDeferTorrent(download, importSettings,
     { downloadClientService, log },
     { deferOnUnavailableRatio: false });
 
   if (result.outcome === 'deferred' || result.outcome === 'live-state-unavailable') {
     log.debug({ downloadId: download.id }, 'Quality gate: deferred cleanup skipped — seed conditions not met');
-    return; // Leave the existing pendingCleanup marker untouched for next cycle.
+    return; // Preserve the marker for the next cycle.
   }
 
   if (result.outcome === 'removed') {
@@ -73,7 +67,7 @@ async function processDeferredCandidate(
   } else if (result.outcome === 'remove-failed') {
     log.warn({ downloadId: download.id, error: serializeError(result.error) }, 'Quality gate: deferred cleanup — failed to remove from client');
   }
-  // A null adapter ('no-adapter') counts as adapter-success — no removeDownload call was needed.
+  // No adapter counts as success because no client removal was required.
   const adapterSuccess = result.outcome !== 'remove-failed';
   const filesDeleted = await deleteDownloadOutputPath(download, log);
 

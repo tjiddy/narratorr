@@ -3,16 +3,9 @@ import { companionEbookV1Schema, toCompanionEbookV1 } from './companion-ebook.js
 import { COMPANION_EBOOK_STATUSES } from '../companion-ebook.js';
 import { BOOK_STATUSES } from '../book.js';
 
-// The single home for the exposure→DTO boundary (#1961 AC 10a). Both producers
-// (the metadata-search `library` annotation and the top-level book DTO) call
-// `toCompanionEbookV1` and nothing else, so proving the boundary HERE means each
-// producer only has to be proven to CALL it.
-
 const SIZE = 123456;
 
 describe('toCompanionEbookV1 — exposure terms (AC 10a)', () => {
-  // All five stored statuses × both feature states × four book statuses. The
-  // only non-null cell is `enabled && imported && available`.
   const bookStatuses = ['imported', 'missing', 'wanted', 'downloading'] as const;
   const cases = COMPANION_EBOOK_STATUSES.flatMap((status) =>
     [true, false].flatMap((enabled) =>
@@ -42,9 +35,7 @@ describe('toCompanionEbookV1 — exposure terms (AC 10a)', () => {
     expect(nonNull).toEqual([{ status: 'available', enabled: true, bookStatus: 'imported' }]);
   });
 
-  // AC 22: `library-scan.service.ts` flips imported → missing without clearing
-  // `books.path` or touching the companion row, so the `imported` term is the
-  // only thing stopping a deleted book from advertising an ebook forever.
+  // A scan marks a book missing without clearing its companion row, so book status gates stale data.
   it.each(BOOK_STATUSES.filter((s) => s !== 'imported'))(
     'yields null for a stale available observation on a %s book',
     (bookStatus) => {
@@ -75,8 +66,6 @@ describe('toCompanionEbookV1 — sizeBytes guard (AC 27/28)', () => {
   });
 
   it('returns null (no throw, never ?? 0) for an available observation with a null sizeBytes (AC 27)', () => {
-    // Unreachable through `ck_companion_ebooks_file_present`, but expressible in
-    // the `$inferSelect` type — the mapper is the single place that guards it.
     expect(() =>
       toCompanionEbookV1({
         enabled: true,

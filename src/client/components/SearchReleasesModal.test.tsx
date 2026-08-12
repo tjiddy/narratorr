@@ -36,26 +36,21 @@ vi.mock('@/lib/api', async () => {
       getAuthConfig: vi.fn().mockResolvedValue({ apiKey: 'test-key' }),
       getSettings: vi.fn().mockResolvedValue({ metadata: { languages: [] } }),
     },
-    // Override formatBytes with a GB-only formatter that existing assertions depend on.
     formatBytes: (bytes?: number) => {
       if (!bytes) return '0 B';
       return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
     },
-    // Override ApiError with a hoisted class so `instanceof ApiError` checks in the
-    // component match this test-local class (the real class is bundled separately).
+    // Hoisting preserves the component's instanceof check against this mock class.
     ApiError: MockApiError,
   };
 });
 
-// Mock useSearchStream — existing tests provide results via mockStreamState
 const mockStreamActions = {
   start: vi.fn(),
   cancelIndexer: vi.fn(),
   showResults: vi.fn(),
   reset: vi.fn(),
-  // The real hook owns identity matching (independent OR-match on either
-  // identifier) — exercised against the real filter in useSearchStream.test.tsx.
-  // Here we only assert the modal forwards the pair-shaped blacklist identifiers.
+  // Identity matching is covered by useSearchStream; this mock pins identifier forwarding.
   removeResult: vi.fn(),
 };
 
@@ -119,7 +114,6 @@ const mockResults: SearchResult[] = [
 ];
 
 
-/** Helper: set stream state to Phase 2 (results) with given data */
 function setStreamResults(results: SearchResult[], unsupported?: { count: number; titles: string[] }, durationUnknown = false, relaxedQuery?: string) {
   mockStreamState = {
     phase: 'results',
@@ -137,7 +131,6 @@ function setStreamResults(results: SearchResult[], unsupported?: { count: number
   };
 }
 
-/** Helper: set stream state to Phase 1 (searching) */
 function setStreamSearching(indexers: Array<{ id: number; name: string; status: string; resultCount?: number; error?: string }> = []) {
   mockStreamState = {
     phase: 'searching',
@@ -184,7 +177,6 @@ describe('SearchReleasesModal', () => {
   });
 
   it('auto-starts streaming search when opened', async () => {
-    // Start with idle phase (default from beforeEach) — authReady is true
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
     );
@@ -201,7 +193,6 @@ describe('SearchReleasesModal', () => {
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
     );
 
-    // Wait for results
     await waitFor(() => {
       expect(screen.getByText('The Way of Kings [Unabridged]')).toBeInTheDocument();
     });
@@ -246,11 +237,9 @@ describe('SearchReleasesModal', () => {
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={onClose} />,
     );
 
-    // Wait for results to render
     const title = await screen.findByText('The Way of Kings [Unabridged]');
     expect(title).toBeInTheDocument();
 
-    // Click Grab on first result
     const grabButtons = screen.getAllByText('Grab');
     await user.click(grabButtons[0]!);
 
@@ -275,7 +264,6 @@ describe('SearchReleasesModal', () => {
     });
   });
 
-  // #1857 F13 — the confirm-&-replace flow, driven as a real user interaction chain.
   describe('cancel-&-replace confirm flow (#1857 F13)', () => {
     const successDownload = {
       id: 2, title: 'The Way of Kings [Unabridged]', protocol: 'torrent' as const,
@@ -297,7 +285,6 @@ describe('SearchReleasesModal', () => {
 
     it('opens a ConfirmModal naming the active download + selected release on ACTIVE_DOWNLOAD_EXISTS', async () => {
       await openConfirm();
-      // The confirm message is a single node carrying BOTH the active + selected titles.
       const message = screen.getByText(/Existing Grab/);
       expect(message).toHaveTextContent('The Way of Kings [Unabridged]');
     });
@@ -308,7 +295,7 @@ describe('SearchReleasesModal', () => {
       await waitFor(() => expect(screen.queryByText('Replace active download?')).not.toBeInTheDocument());
       expect(screen.getByText('Releases for: The Way of Kings')).toBeInTheDocument();
       expect(onClose).not.toHaveBeenCalled();
-      expect(api.searchGrab).toHaveBeenCalledTimes(1); // only the initial grab
+      expect(api.searchGrab).toHaveBeenCalledTimes(1);
     });
 
     it('confirming re-issues the grab with replace: true and closes the modal on success', async () => {
@@ -326,9 +313,8 @@ describe('SearchReleasesModal', () => {
       const confirmBtn = screen.getByRole('button', { name: 'Cancel & Replace' });
       await user.click(confirmBtn);
       await waitFor(() => expect(confirmBtn).toBeDisabled());
-      await user.click(confirmBtn); // second click is a no-op on a disabled button
+      await user.click(confirmBtn);
       resolveReplace(successDownload);
-      // Exactly one replace grab (call 2); no third call.
       await waitFor(() => expect(api.searchGrab).toHaveBeenCalledTimes(2));
     });
 
@@ -346,7 +332,7 @@ describe('SearchReleasesModal', () => {
       await user.click(screen.getByRole('button', { name: 'Cancel & Replace' }));
       await waitFor(() => expect(screen.queryByText('Replace active download?')).not.toBeInTheDocument());
       expect(screen.getByText('Releases for: The Way of Kings')).toBeInTheDocument();
-      expect(onClose).not.toHaveBeenCalled(); // user can pick another release
+      expect(onClose).not.toHaveBeenCalled();
     });
 
     it('PIPELINE_ACTIVE shows a book-named toast and NO dialog', async () => {
@@ -364,7 +350,6 @@ describe('SearchReleasesModal', () => {
       setStreamResults(mockResults);
       vi.mocked(api.searchGrab).mockRejectedValueOnce(active409);
       const user = userEvent.setup();
-      // Render manually with a shared client so rerender keeps the providers.
       const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
       const wrap = (b: typeof mockBook) => (
         <QueryClientProvider client={client}>
@@ -495,7 +480,7 @@ describe('SearchReleasesModal', () => {
     });
 
     it('handleGrab sends guid undefined when search result has no guid', async () => {
-      setStreamResults(mockResults); // mockResults have no guid
+      setStreamResults(mockResults);
       vi.mocked(api.searchGrab).mockResolvedValue({
         id: 1,
         title: 'The Way of Kings [Unabridged]',
@@ -668,13 +653,11 @@ describe('SearchReleasesModal', () => {
 
     await screen.findByText('Some Book Title');
 
-    // Grab button is rendered and enabled despite long rawTitle
     await waitFor(() => {
       const grabButton = screen.getByText('Grab').closest('button');
       expect(grabButton).toBeInTheDocument();
       expect(grabButton).not.toBeDisabled();
 
-      // rawTitle is rendered (truncated visually via CSS, but present in DOM)
       expect(screen.getByTitle(longRawTitle)).toBeInTheDocument();
     });
   });
@@ -683,9 +666,8 @@ describe('SearchReleasesModal', () => {
     const importedBook = createMockBook({
       status: 'imported',
       path: '/audiobooks/existing',
-      audioTotalSize: 500 * 1024 * 1024, // 500 MB
-      audioDuration: 36000, // 10 hours
-      // Quality: 500 MB / 10hr = 50 MB/hr (Fair)
+      audioTotalSize: 500 * 1024 * 1024,
+      audioDuration: 36000,
     });
 
     const lowerQualityResult: SearchResult = {
@@ -694,7 +676,7 @@ describe('SearchReleasesModal', () => {
       protocol: 'torrent',
       infoHash: 'low123',
       downloadUrl: 'magnet:?xt=urn:btih:low123',
-      size: 100 * 1024 * 1024, // 100 MB → 10 MB/hr (much lower than 50)
+      size: 100 * 1024 * 1024,
       seeders: 5,
       indexer: 'TestIndexer',
     };
@@ -705,7 +687,7 @@ describe('SearchReleasesModal', () => {
       protocol: 'torrent',
       infoHash: 'high456',
       downloadUrl: 'magnet:?xt=urn:btih:high456',
-      size: 2000 * 1024 * 1024, // 2000 MB → 200 MB/hr (much higher than 50)
+      size: 2000 * 1024 * 1024,
       seeders: 10,
       indexer: 'TestIndexer',
     };
@@ -970,8 +952,6 @@ describe('SearchReleasesModal', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to blacklist: Server error');
     });
-    // Removal only fires on success — a future optimistic-removal refactor that
-    // dropped the row before the API resolved would fail these pins.
     expect(mockStreamActions.removeResult).not.toHaveBeenCalled();
     expect(screen.getByText('The Way of Kings [Unabridged]')).toBeInTheDocument();
   });
@@ -996,8 +976,6 @@ describe('SearchReleasesModal', () => {
 
     await user.click(screen.getAllByText('Blacklist')[0]!);
 
-    // The hook owns identity matching; the modal just forwards the pair-shaped
-    // identifiers. infoHash is present, guid absent (never coalesced into a string).
     await waitFor(() => {
       expect(mockStreamActions.removeResult).toHaveBeenCalledWith(
         expect.objectContaining({ infoHash: 'abc123' }),
@@ -1040,8 +1018,6 @@ describe('SearchReleasesModal', () => {
 
     await user.click(screen.getByText('Blacklist'));
 
-    // guid is forwarded; the empty-string infoHash is dropped at the payload
-    // boundary, so removeResult sees only the guid identifier.
     await waitFor(() => {
       expect(mockStreamActions.removeResult).toHaveBeenCalledWith(
         expect.objectContaining({ guid: 'https://indexer.example/details/guid789' }),
@@ -1085,7 +1061,6 @@ describe('SearchReleasesModal', () => {
     await user.click(screen.getByText('Blacklist'));
 
     await waitFor(() => {
-      // Payload is unchanged: both identifiers forwarded when both exist.
       expect(api.addToBlacklist).toHaveBeenCalledWith(
         {
           infoHash: 'hash999',
@@ -1097,8 +1072,6 @@ describe('SearchReleasesModal', () => {
         expect.anything(),
       );
     });
-    // Both identifiers are forwarded to removeResult unchanged — the hook
-    // OR-matches them independently (no coalescing to a single primary).
     await waitFor(() => {
       expect(mockStreamActions.removeResult).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1170,9 +1143,6 @@ describe('SearchReleasesModal', () => {
     expect(screen.getByLabelText('Refresh results')).toBeDisabled();
   });
 
-  // F13: Refresh re-fires the current (possibly edited) query through the single
-  // guarded start path — it calls `start` once and does NOT call a separate `reset`
-  // (start() internally closes the prior stream and clears results/session/error).
   it('refresh button calls start once and does not call reset', async () => {
     setStreamResults(mockResults);
     const user = userEvent.setup();
@@ -1355,7 +1325,6 @@ describe('SearchReleasesModal unsupported results', () => {
       expect(screen.getByText('Found, but unsupported format (3)')).toBeInTheDocument();
     });
 
-    // Titles should not be visible before expanding
     await waitFor(() => {
       expect(screen.queryByText('Book "1" of "3"')).not.toBeInTheDocument();
     });
@@ -1390,10 +1359,8 @@ describe('SearchReleasesModal unsupported results', () => {
       expect(screen.getByText('Found, but unsupported format (2)')).toBeInTheDocument();
     });
 
-    // Click to expand
     await user.click(screen.getByText('Found, but unsupported format (2)'));
 
-    // Titles should now be visible
     await waitFor(() => {
       expect(screen.getByText(unsupportedTitles[0]!)).toBeInTheDocument();
       expect(screen.getByText(unsupportedTitles[1]!)).toBeInTheDocument();
@@ -1446,7 +1413,6 @@ describe('SearchReleasesModal unsupported results', () => {
         expect(screen.getByText('Found 2 releases')).toBeInTheDocument();
       });
 
-      // Both results should render independently despite sharing title/author/indexer
       const grabButtons = screen.getAllByText('Grab');
       expect(grabButtons).toHaveLength(2);
     });
@@ -1508,7 +1474,6 @@ describe('SearchReleasesModal unsupported results', () => {
         expect(screen.getByText('Test Book')).toBeInTheDocument();
       });
 
-      // The mock formatBytes for -1 would produce "-0.0 GB"; with the guard it must not render
       expect(screen.queryByText('-0.0 GB')).not.toBeInTheDocument();
     });
 
@@ -1521,7 +1486,6 @@ describe('SearchReleasesModal unsupported results', () => {
         expect(screen.getByText('Test Book')).toBeInTheDocument();
       });
 
-      // size=0 should be hidden; the mock returns '0 B' for falsy values but guard should prevent render
       expect(screen.queryByText('0 B')).not.toBeInTheDocument();
     });
 
@@ -1547,7 +1511,6 @@ describe('SearchReleasesModal unsupported results', () => {
         expect(screen.getByText('Test Book')).toBeInTheDocument();
       });
 
-      // mock formatBytes: (500*1024*1024 / 1024^3).toFixed(1) = "0.5 GB"
       expect(screen.getByText('0.5 GB')).toBeInTheDocument();
     });
   });
@@ -1588,10 +1551,8 @@ describe('ReleaseCard', () => {
       expect(screen.getByText('Book Without Narrator')).toBeInTheDocument();
     });
 
-    // Narrator name appears exactly once — only for the first card
     expect(screen.getByText('Test Narrator Name')).toBeInTheDocument();
     expect(screen.queryAllByText('Test Narrator Name')).toHaveLength(1);
-    // Both cards render without crash (narrator-absent card still renders action buttons)
     expect(screen.getAllByRole('button', { name: /grab/i })).toHaveLength(2);
   });
 });
@@ -1649,7 +1610,6 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
         <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
       );
 
-      // Only one Cancel button (for the pending indexer)
       const cancelButtons = screen.getAllByText('Cancel');
       expect(cancelButtons).toHaveLength(1);
     });
@@ -1820,9 +1780,7 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
       );
 
       const dialog = screen.getByRole('dialog');
-      // The dialog wrapper must be a flex column with min-h-0 to propagate max-height
-      // to the scrollable body. Without min-h-0, flex children default to min-height: auto
-      // and overflow past the parent's max-height.
+      // min-h-0 lets the scrollable child shrink within the modal's max height.
       expect(dialog.className).toMatch(/flex/);
       expect(dialog.className).toMatch(/flex-col/);
       expect(dialog.className).toMatch(/min-h-0/);
@@ -1930,7 +1888,6 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
 
     it('renders "In library" badge on result card when book lastGrabInfoHash matches result infoHash (torrent path)', async () => {
       const { guid: _guid0, ...result0NoGuid } = mockResults[0]!;
-      // PHASE 1 SKIPPED — needs human review
       const { guid: _guid1, ...result1NoGuid } = mockResults[1]!;
       setStreamResults([
         { ...result0NoGuid, infoHash: 'abc123' },
@@ -1950,9 +1907,6 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
     });
   });
 
-  // ==========================================================================
-  // Editable query with re-search (#1905)
-  // ==========================================================================
   describe('editable query', () => {
     const QUERY_LABEL = 'Search query';
 
@@ -2047,10 +2001,6 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
       expect(screen.getByLabelText('Refresh results')).toBeDisabled();
     });
 
-    // F6 — the inclusive lower boundary (length 2), doubling as the explicitly
-    // preserved "sanitizer-empty" case: a raw `??` must stay submit-eligible AND stay
-    // raw (no client-side punctuation filtering). A `> 2` mutation or an added client
-    // sanitizer would fail this.
     it('a raw punctuation-only query (??) is submit-eligible and is not client-sanitized', async () => {
       const user = userEvent.setup();
       renderWithProviders(
@@ -2062,17 +2012,13 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
       await user.type(input, '??');
       vi.clearAllMocks();
 
-      expect(input.value).toBe('??'); // not client-sanitized
+      expect(input.value).toBe('??');
       const searchBtn = screen.getByRole('button', { name: /^Search$/ });
       expect(searchBtn).toBeEnabled();
       await user.click(searchBtn);
       expect(mockStreamActions.start).toHaveBeenCalledOnce();
     });
 
-    // F6 — the inclusive UPPER boundary: exactly 500 characters remains eligible. A
-    // `< 500` mutation would fail this. (Set via fireEvent to avoid typing 500 chars;
-    // `maxLength={500}` already bars a 501st via user input — over-500 ineligibility is
-    // covered by the prefill test below.)
     it('an exactly-500-character query is submit-eligible (inclusive upper boundary)', async () => {
       const user = userEvent.setup();
       renderWithProviders(
@@ -2146,7 +2092,7 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
 
       const input = screen.getByLabelText(QUERY_LABEL);
       await user.clear(input);
-      await user.type(input, 'a'); // one char → ineligible
+      await user.type(input, 'a');
       vi.clearAllMocks();
 
       const retry = screen.getByText('Retry');
@@ -2159,21 +2105,11 @@ describe('SearchReleasesModal — streaming search (Phase 1/Phase 2)', () => {
 });
 
 
-// ============================================================================
-// #2104 relaxed-query adoption — the BOX shows the string that actually matched
-// (UAT feedback 2026-08-04: no banner; the winning query replaces the canonical)
-// ============================================================================
-
 describe('SearchReleasesModal — relaxed-query adoption into the search box', () => {
-  // Module-level mock state does not re-render on mutation (mock-rerender trap),
-  // and renderWithProviders wraps JSX manually so ITS rerender would drop the
-  // providers — this local harness re-wraps identically on every rerender.
+  // Re-wrap providers with a fresh element on every rerender to avoid React's identical-element bailout.
   function renderModal() {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const onClose = vi.fn();
-    // The element MUST be built fresh per wrap(): a shared element reference
-    // triggers React's identical-element bailout on rerender, the mocked hook
-    // is never re-invoked, and mutated mockStreamState never reaches the tree.
     const wrap = () => (
       <QueryClientProvider client={client}>
         <MemoryRouter>
@@ -2202,10 +2138,7 @@ describe('SearchReleasesModal — relaxed-query adoption into the search box', (
   it('never clobbers a hand-edited query when relaxed results land', async () => {
     const { rerenderModal } = renderModal();
     await waitFor(() => expect(mockStreamActions.start).toHaveBeenCalled());
-    // Mirror the real hook: start() flips phase to 'searching' synchronously,
-    // which is what stops the auto-start effect re-firing after the hand-edit.
-    // Leaving the mock on 'idle' would let auto-start re-run and move the
-    // lastSearchedRef — a refire that is unreachable in production.
+    // Match real start(); idle would trigger an impossible auto-start refire.
     setStreamSearching();
     rerenderModal();
     fireEvent.change(screen.getByLabelText('Search query'), { target: { value: 'my hand-tuned query' } });

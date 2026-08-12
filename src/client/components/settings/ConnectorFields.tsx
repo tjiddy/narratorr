@@ -27,12 +27,7 @@ interface ConnectorFieldsProps {
   onFetchTargets: () => void;
 }
 
-/**
- * Registry-driven per-type connector form fields. Renders inputs in the order
- * declared by `CONNECTOR_REGISTRY[type].settingsFields`, choosing the control by
- * `field.type` — so adding a connector (e.g. Plex) needs only a registry entry,
- * not a hardcoded field block (mirrors NotifierFields / IndexerFields).
- */
+/** Renders each connector type's registry-declared settings fields in registry order. */
 export function ConnectorFields({ form, selectedType, targets, fetching, fetchError, onFetchTargets }: ConnectorFieldsProps) {
   const fields = CONNECTOR_REGISTRY[selectedType]?.settingsFields ?? [];
   return (
@@ -141,9 +136,7 @@ type PathMappingRowError = { localPath?: FieldError; serverPath?: FieldError };
 
 function PathMappingsField({ form, field }: { form: ConnectorForm; field: ConnectorSettingsField }) {
   const { fields, append, remove } = useFieldArray({ control: form.control, name: 'settings.pathMappings' });
-  // zodResolver reports partial-row violations at settings.pathMappings.${i}.*;
-  // surface them inline beside the offending input (CreateConnectorFormData's
-  // nested shape isn't reflected in the bare RHF error type, hence the cast).
+  // Cast nested rows so zodResolver's settings.pathMappings[i] errors render inline.
   const rowErrors = (form.formState.errors.settings as { pathMappings?: PathMappingRowError[] } | undefined)?.pathMappings;
   return (
     <div className="sm:col-span-2">

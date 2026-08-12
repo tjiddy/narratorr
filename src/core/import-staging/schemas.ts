@@ -3,40 +3,19 @@ import { importConfirmItemSchema, importModeSchema, importSkipReasonSchema } fro
 import type { ImportMode } from '@shared/schemas/library-scan.js';
 import { AuthorRefSchema, SeriesRefSchema, BookMetadataSchema } from '../metadata/schemas.js';
 
-// ============================================================================
-// Staged import submission — inert chunked upload / finalize / server-owned
-// async processing (#1893).
-//
-// Layer placement (F44): `src/core` may import `src/shared` but not vice-versa,
-// and both client + server may import `src/core`. Every staged wire schema that
-// references the staged item therefore lives HERE (core), importing the retained
-// shared base `importConfirmItemSchema`. No `src/shared` file imports this module.
-//
-// This repo's Zod default STRIPS unknown keys (compat-surface-zod-strip-not-strict);
-// narratorr owns this contract, so every wire schema is `.strict()`.
-// ============================================================================
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
+// Staged wire schemas live in core so client and server can compose the shared import base.
+// Narratorr-owned schemas are strict because Zod otherwise strips unknown keys.
 
 /** Upper bound on `expectedCount` — bounds create payloads and the finalize gaps report. */
 export const EXPECTED_COUNT_MAX = 10_000;
 
 /**
- * Hard cumulative cap on staged JSON bytes a single submission may persist (F58).
- * `expectedCount ≤ 10_000` × up to ~900 KiB/item would allow ~8.58 GiB of staged
- * JSON without this backstop. 64 MiB comfortably clears a realistic 10k-item
- * metadata payload while bounding the pathological disk-exhaustion case.
+ * Caps cumulative staged JSON at 64 MiB; the per-item and count limits alone permit
+ * roughly 8.58 GiB, while realistic 10k-item metadata remains below this backstop.
  */
-export const MAX_SUBMISSION_BYTES = 64 * 1024 * 1024; // 64 MiB
+export const MAX_SUBMISSION_BYTES = 64 * 1024 * 1024;
 
-/** Max entries in a finalize gaps report before it is truncated (F47). */
 export const FINALIZE_GAPS_REPORT_MAX = 100;
-
-// ---------------------------------------------------------------------------
-// Enums (DB text-enum columns + Zod; guarded by `.options ↔ enumValues` tests)
-// ---------------------------------------------------------------------------
 
 export const SUBMISSION_STATUSES = ['receiving', 'processing', 'complete'] as const;
 export const submissionStatusSchema = z.enum(SUBMISSION_STATUSES);
@@ -50,43 +29,35 @@ export const SUBMISSION_SOURCES = ['library', 'manual'] as const;
 export const submissionSourceSchema = z.enum(SUBMISSION_SOURCES);
 export type SubmissionSource = z.infer<typeof submissionSourceSchema>;
 
-// ---------------------------------------------------------------------------
-// Typed error codes (named so contracts are unique + testable)
-// ---------------------------------------------------------------------------
-
 export const SUBMISSION_ERROR_CODES = {
-  /** create: same clientSubmissionId, different digest → 409 */
+  /** Create: same clientSubmissionId with a different digest. */
   digestConflict: 'submission-digest-conflict',
-  /** PUT: ordinal < 0 or ≥ expectedCount → 400 (single status, F43) */
+  /** PUT ordinal outside [0, expectedCount). */
   ordinalOutOfRange: 'ordinal-out-of-range',
-  /** PUT: duplicate ordinals within one request → 409, no partial write */
+  /** Duplicate PUT ordinals; the request writes nothing. */
   ordinalConflict: 'ordinal-conflict',
-  /** PUT: conflicting content for an already-stored ordinal → 409 */
+  /** PUT content conflicts with an already-stored ordinal. */
   ordinalContentConflict: 'ordinal-content-conflict',
-  /** PUT: metadata/item over `stagedBookMetadataSchema` bounds → 400 */
+  /** PUT item violates staged metadata bounds. */
   itemInvalid: 'item-invalid',
-  /** PUT: submission not in 'receiving' → 409 */
+  /** PUT submission is no longer receiving. */
   submissionNotReceiving: 'submission-not-receiving',
-  /** PUT: would push receivedBytes over MAX_SUBMISSION_BYTES → 413 (F58) */
+  /** DELETE refused: the run is processing, so its report is still being written. */
+  submissionInFlight: 'submission-in-flight',
+  /** PUT would exceed MAX_SUBMISSION_BYTES. */
   byteBudgetExceeded: 'submission-byte-budget-exceeded',
-  /** finalize: missing ordinals → 409 with bounded gaps report (F47) */
+  /** Finalize has missing ordinals and a bounded gaps report. */
   finalizeGaps: 'finalize-gaps',
-  /** finalize: recomputed digest mismatch → 409, no state change */
+  /** Finalize digest mismatch; state remains unchanged. */
   digestMismatch: 'submission-digest-mismatch',
 } as const;
 export type SubmissionErrorCode = (typeof SUBMISSION_ERROR_CODES)[keyof typeof SUBMISSION_ERROR_CODES];
 
-// ---------------------------------------------------------------------------
-// Bounded staged metadata (F27 / F34) — strict, bounded derivative that COMPOSES
-// the canonical BookMetadataSchema / AuthorRefSchema / SeriesRefSchema via
-// `.extend()` rather than re-declaring their fields (ZOD-2 / F6). Because it is
-// built on the canonical `.shape`, a future canonical field can never be silently
-// omitted from hashing/persistence — the key-set test asserts the shapes stay
-// aligned, and `.extend()` only overrides the per-field validators to add bounds.
-// ---------------------------------------------------------------------------
+// Extend canonical metadata shapes with bounds so future fields cannot disappear from
+// hashing or persistence; the key-set test pins alignment.
 
-const ID_MAX = 64;       // asin/isbn/goodreadsId/providerId + array-element identifiers
-const SHORT_TEXT_MAX = 512; // title/subtitle/publisher/publishedDate/language/formatType/contentDeliveryType/author name/series name/narrator
+const ID_MAX = 64; // Provider and array-element identifiers.
+const SHORT_TEXT_MAX = 512;
 const DESCRIPTION_MAX = 8_000;
 const COVER_URL_MAX = 2_048;
 const GENRE_ELEMENT_MAX = 128;
@@ -127,14 +98,12 @@ export const stagedBookMetadataSchema = BookMetadataSchema.extend({
 }).strict();
 export type StagedBookMetadata = z.infer<typeof stagedBookMetadataSchema>;
 
-/** The canonical metadata key-set the staged schema must stay aligned with (F6). */
+/** Canonical key set used to guard staged-schema alignment. */
 export const CANONICAL_METADATA_KEYS = Object.keys(BookMetadataSchema.shape).sort();
 
 /**
- * The canonical staged item — SINGLE source for client hashing, PUT validation,
- * server hashing, ordinal content-equality, DB persistence (`itemPayload`), and
- * runner input reconstruction. Derives from the retained shared base's
- * non-metadata field shape and refines `metadata` to the bounded schema.
+ * Single staged-item contract for hashing, PUT validation, equality, persistence,
+ * and runner reconstruction; only the shared base's metadata shape is replaced.
  */
 export const stagedImportItemSchema = importConfirmItemSchema
   .omit({ metadata: true })
@@ -142,22 +111,13 @@ export const stagedImportItemSchema = importConfirmItemSchema
   .strict();
 export type StagedImportItem = z.infer<typeof stagedImportItemSchema>;
 
-// ---------------------------------------------------------------------------
-// Shared identifier validators (F56/F57) — the SAME validators govern create
-// bodies AND the `:clientSubmissionId` path param so the contracts cannot drift.
-// ---------------------------------------------------------------------------
+// Reuse these validators in create bodies and path params to prevent contract drift.
 
-/** A real UUID (rejects 36-hyphen / misplaced-hyphen / bad version-variant values, F57). */
 export const clientSubmissionIdSchema = z.string().uuid();
-/** Exactly 64 lowercase hex chars (SHA-256). */
 export const payloadDigestSchema = z
   .string()
   .regex(/^[0-9a-f]{64}$/, 'payloadDigest must be 64 lowercase hex characters');
 export const expectedCountSchema = z.number().int().min(1).max(EXPECTED_COUNT_MAX);
-
-// ---------------------------------------------------------------------------
-// Request wire schemas
-// ---------------------------------------------------------------------------
 
 const createSubmissionCommon = {
   clientSubmissionId: clientSubmissionIdSchema,
@@ -165,14 +125,14 @@ const createSubmissionCommon = {
   expectedCount: expectedCountSchema,
 };
 
-/** create body — source/mode discriminated union (library ⇒ no mode; manual ⇒ mode). */
+/** Library omits mode; manual requires it. */
 export const createSubmissionBodySchema = z.discriminatedUnion('source', [
   z.object({ source: z.literal('library'), ...createSubmissionCommon }).strict(),
   z.object({ source: z.literal('manual'), mode: importModeSchema, ...createSubmissionCommon }).strict(),
 ]);
 export type CreateSubmissionBody = z.infer<typeof createSubmissionBodySchema>;
 
-/** PUT row — `{ ordinal, item }` where `item` is the WHOLE staged item (no top-level path/title). */
+/** PUT carries the whole staged item; path and title are not duplicated at top level. */
 export const putItemRowSchema = z
   .object({
     ordinal: z.number().int(),
@@ -189,9 +149,7 @@ export const putItemsBodySchema = z
 export type PutItemsBody = z.infer<typeof putItemsBodySchema>;
 
 /**
- * GET query — `includeItems` arrives as the STRING `"true"`/`"false"` from Fastify
- * (F71). Enum-to-boolean transform, omitted default = `false` (summary is the safe
- * cheap default; the client explicitly passes `true` for the one-time detail fetch).
+ * Fastify supplies includeItems as a string. Omission defaults to the cheap summary arm.
  */
 export const submissionQuerySchema = z
   .object({
@@ -203,11 +161,6 @@ export const submissionQuerySchema = z
   .strict();
 export type SubmissionQuery = z.infer<typeof submissionQuerySchema>;
 
-// ---------------------------------------------------------------------------
-// Response DTOs
-// ---------------------------------------------------------------------------
-
-/** Bounded gaps report for a finalize with missing ordinals (F47). */
 export const finalizeGapsSchema = z
   .object({
     missing: z.array(z.number().int()).max(FINALIZE_GAPS_REPORT_MAX),
@@ -218,10 +171,8 @@ export const finalizeGapsSchema = z
 export type FinalizeGaps = z.infer<typeof finalizeGapsSchema>;
 
 /**
- * A per-item result row — strict discriminated union keyed by `disposition` (a
- * plain `.strict()` object still admits impossible field combos, so a union is
- * required — F42). `path`/`title` are always present (projected columns survive
- * `itemPayload` nulling).
+ * A disposition union prevents impossible field combinations. Projected path and
+ * title remain present after itemPayload is nulled.
  */
 export const stagedItemResultDtoSchema = z.discriminatedUnion('disposition', [
   z.object({ disposition: z.literal('pending'), ordinal: z.number().int(), path: z.string(), title: z.string() }).strict(),
@@ -279,10 +230,8 @@ const submissionAggregatesSchema = z
 export type SubmissionAggregates = z.infer<typeof submissionAggregatesSchema>;
 
 /**
- * The single disposition→aggregate mapping (F13). Both the runner's terminal
- * `maybeComplete` freeze and the service's live `computeProgress` counts call
- * THIS function, so pre-complete and post-complete progress can never disagree.
- * Only terminal dispositions contribute; `pending` is ignored.
+ * Shared by live progress and terminal freezing so aggregates cannot drift;
+ * pending contributes nothing.
  */
 export function aggregateDispositions(dispositions: readonly ItemDisposition[]): SubmissionAggregates {
   const agg: SubmissionAggregates = { accepted: 0, held: 0, skipped: 0, failed: 0 };
@@ -312,15 +261,9 @@ const submissionHeaderFields = {
 };
 
 /**
- * The query-selected response — one strict schema, three cells (F64):
- *  - summary request → `itemsIncluded:false`, no `items` (even while `detailsPruned:false`)
- *  - detail + retained → `itemsIncluded:true`, `items` present
- *  - detail + pruned → `itemsIncluded:false`, no `items`
- * The `itemsIncluded` discriminant drives `items` presence EXACTLY. Two further
- * cross-field invariants are enforced by refinement so the schema admits ONLY the
- * legal protocol arms (F4): (a) source/mode discrimination — `library` carries no
- * `mode`, `manual` requires one; (b) the detail arm (`itemsIncluded:true`) forbids
- * `detailsPruned:true` (a pruned record has no items to include).
+ * itemsIncluded exactly controls items presence across summary, retained-detail,
+ * and pruned-detail responses. Refinements also enforce source/mode pairing and
+ * forbid included items after detail pruning.
  */
 export const submissionResponseSchema = z
   .discriminatedUnion('itemsIncluded', [
@@ -346,31 +289,20 @@ export const submissionResponseSchema = z
   });
 export type SubmissionResponse = z.infer<typeof submissionResponseSchema>;
 
-// ---------------------------------------------------------------------------
-// Read-side (#1894): list / latest / attention contracts over the durable record
-// ---------------------------------------------------------------------------
-
-/**
- * The summary row shape (`itemsIncluded:false`) as a standalone schema — the row
- * type transferred by the list/latest reads. It is the summary arm of
- * `submissionResponseSchema`; declared separately so the list envelope and the
- * client wrapper can name a `SubmissionSummary` type without the union.
- */
+/** Standalone summary arm so list responses can name it without the detail union. */
 export const submissionSummarySchema = z
   .object({ ...submissionHeaderFields, itemsIncluded: z.literal(false) })
   .strict();
 export type SubmissionSummary = z.infer<typeof submissionSummarySchema>;
 
-/** List envelope — mirrors `PaginatedResponse<T>` (`common.ts`). */
 export const submissionListResponseSchema = z
   .object({ data: z.array(submissionSummarySchema), total: z.number().int() })
   .strict();
 export type SubmissionListResponse = z.infer<typeof submissionListResponseSchema>;
 
 /**
- * Strict list query (narratorr-owned). `limit`/`offset` arrive as query strings;
- * coerced to bounded integers. Unknown keys / out-of-range / non-integer → the
- * route's typed `400 invalid-query`.
+ * Coerces query-string pagination to bounded integers; unknown or invalid values
+ * feed the route's typed invalid-query response.
  */
 export const submissionListQuerySchema = z
   .object({
@@ -381,13 +313,21 @@ export const submissionListQuerySchema = z
   .strict();
 export type SubmissionListQuery = z.infer<typeof submissionListQuerySchema>;
 
-/** Strict attention query — `source?` only. */
+/** The bulk clear takes no input: its eligibility predicate lives server-side only. */
+export const submissionBulkDeleteQuerySchema = z.object({}).strict();
+export type SubmissionBulkDeleteQuery = z.infer<typeof submissionBulkDeleteQuerySchema>;
+
+/** `ids` are the rows the delete statement actually removed; the client keys its cache cleanup on them. */
+export const submissionBulkDeleteResponseSchema = z
+  .object({ deleted: z.number().int().min(0), ids: z.array(z.number().int().positive()) })
+  .strict();
+export type SubmissionBulkDeleteResponse = z.infer<typeof submissionBulkDeleteResponseSchema>;
+
 export const submissionAttentionQuerySchema = z
   .object({ source: submissionSourceSchema.optional() })
   .strict();
 export type SubmissionAttentionQuery = z.infer<typeof submissionAttentionQuerySchema>;
 
-/** Server-authoritative attention classification carried on the attention read's `data`. */
 export const submissionAttentionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('abandoned') }).strict(),
   z
@@ -396,26 +336,19 @@ export const submissionAttentionSchema = z.discriminatedUnion('kind', [
 ]);
 export type SubmissionAttention = z.infer<typeof submissionAttentionSchema>;
 
-/** A summary row plus its server-computed attention classification. */
 export const attentionSubmissionSchema = z
   .object({ ...submissionHeaderFields, itemsIncluded: z.literal(false), attention: submissionAttentionSchema })
   .strict();
 export type AttentionSubmission = z.infer<typeof attentionSubmissionSchema>;
 
 /**
- * Attention read envelope (F60/F68). `data` = the single newest attention-worthy
- * submission in scope (or null); `watch` = whether any non-terminal
- * (`receiving`/`processing`) submission exists in scope, so the client knows to
- * keep polling. Both are one atomic snapshot; always JSON, never 204.
+ * data is the newest attention-worthy submission; watch reports any non-terminal
+ * submission so the client can poll. Both come from one JSON snapshot.
  */
 export const attentionResponseSchema = z
   .object({ data: attentionSubmissionSchema.nullable(), watch: z.boolean() })
   .strict();
 export type AttentionResponse = z.infer<typeof attentionResponseSchema>;
-
-// ---------------------------------------------------------------------------
-// Canonical digest serialization (client at create ⇄ server at finalize)
-// ---------------------------------------------------------------------------
 
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -434,17 +367,14 @@ function canonicalize(value: unknown): unknown {
 
 export interface SubmissionDigestInput {
   source: SubmissionSource;
-  /** literal string for `manual`; the JSON key is ABSENT (not null) for `library`. */
+  /** Literal for manual; the library JSON key is absent, never null. */
   mode?: ImportMode;
   items: StagedImportItem[];
 }
 
 /**
- * Canonical JSON over `{ source, mode?, items }`: every object's keys emitted in
- * sorted order (recursively), `undefined` dropped, the `items` array order
- * significant, and the `mode` key absent for `library`. Hashing (SHA-256, hex) is
- * done per-environment (Web Crypto on the client, node:crypto on the server) over
- * this identical string.
+ * Canonical JSON recursively sorts object keys, drops undefined, preserves item
+ * order, and omits library mode. Client and server hash this identical string.
  */
 export function serializeSubmissionForDigest(input: SubmissionDigestInput): string {
   const payload: Record<string, unknown> = { source: input.source, items: input.items };

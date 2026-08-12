@@ -53,7 +53,6 @@ describe('import-lists routes', () => {
       const body = res.json();
       expect(body).toHaveLength(1);
       expect(body[0].name).toBe('My NYT List');
-      // Settings should have apiKey masked
       expect(body[0].settings.apiKey).toBe('********');
     });
   });
@@ -205,7 +204,6 @@ describe('import-lists routes', () => {
       expect(res.json()).toEqual({ success: true });
     });
 
-    // #827 — sentinel-laden body + valid id reaches the service (no schema 400)
     it('accepts sentinel in apiKey with id and forwards to testConfig', async () => {
       (services.importList.testConfig as Mock).mockResolvedValue({ success: true });
 
@@ -240,8 +238,6 @@ describe('import-lists routes', () => {
     });
   });
 
-  // The ABS import-list provider was removed (#1618). The custom library-fetch
-  // route went with it; no generic CRUD route shadows this path, so it 404s.
   describe('POST /api/import-lists/abs/libraries (removed)', () => {
     it('returns 404 — the ABS import-list provider was removed', async () => {
       const res = await app.inject({
@@ -306,7 +302,7 @@ describe('import-lists routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/import-lists/preview',
-        payload: { type: 'nyt', settings: { list: 'audio-fiction' } }, // missing apiKey
+        payload: { type: 'nyt', settings: { list: 'audio-fiction' } },
       });
 
       expect(res.statusCode).toBe(400);
@@ -314,7 +310,6 @@ describe('import-lists routes', () => {
       expect(services.importList.preview).not.toHaveBeenCalled();
     });
 
-    // ===== #844 — sentinel resolution =====
 
     it('resolves sentinel apiKey against persisted list and dispatches plaintext (nyt)', async () => {
       (services.importList.getById as Mock).mockResolvedValue({

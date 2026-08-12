@@ -6,20 +6,11 @@ vi.mock('node:dns/promises', () => ({
 }));
 
 const dispatcherCloseSpy = vi.fn().mockResolvedValue(undefined);
-// Spy wrapping the walker below so tests can assert the options (headers,
-// dispatcher, lanAllowlist) that resolveHttp passes to fetchWithSsrfRedirect.
-// Declared via vi.hoisted so it is initialized before the mock factory runs
-// (the factory calls .mockImplementation on it during module evaluation, which
-// is hoisted above plain top-level const initialization).
+// Mock factories run before top-level initialization, so this observable walker spy must be hoisted.
 const { fetchWithSsrfRedirectSpy } = vi.hoisted(() => ({ fetchWithSsrfRedirectSpy: vi.fn() }));
 
-// Override `fetchWithSsrfRedirect` with a `globalThis.fetch`-based walker so
-// the existing `vi.stubGlobal('fetch', mockFetch)` continues to intercept
-// download hops. Production routes through undici's fetch when a dispatcher
-// is attached — the helper's routing is asserted in network-service.test.ts.
-//
-// createSsrfSafeDispatcher is stubbed so we can spy on dispatcher.close()
-// without standing up a real undici Agent in unit tests.
+// Use global fetch so test stubs intercept hops; network-service tests cover production undici
+// routing. The Agent stub exists only to expose close().
 vi.mock('./network-service.js', async (importActual) => {
   const actual = await importActual<typeof NetworkServiceModule>();
   const MAX = 5;
@@ -72,7 +63,6 @@ import { createHash } from 'node:crypto';
 
 const mockedDnsLookup = vi.mocked(dnsLookup) as unknown as Mock;
 
-// ── Fixtures ──────────────────────────────────────────────────────────
 const KNOWN_HEX_HASH = 'aabbccddee00112233445566778899aabbccddee';
 const KNOWN_BASE32_HASH = 'VK54ZXPOACISGNCEKVTHO4EZTK54ZXPO'; // base32 of same
 
@@ -80,9 +70,7 @@ function buildMagnetUri(hash: string): string {
   return `magnet:?xt=urn:btih:${hash}&dn=Test+File`;
 }
 
-/** Minimal valid torrent file with a known info dict. */
 function fakeTorrentBuffer(): { buffer: Buffer; expectedHash: string } {
-  // Build a minimal bencoded torrent: d8:announce5:x.com4:infod6:lengthi1024e4:name8:test.mp3ee
   const inner = Buffer.from('d6:lengthi1024e4:name8:test.mp3e');
   const expectedHash = createHash('sha1').update(inner).digest('hex');
   const torrent = Buffer.from(`d8:announce5:x.com4:info${inner.toString()}e`);
@@ -93,7 +81,6 @@ function fakeDataUri(torrentBuffer: Buffer): string {
   return `data:application/x-bittorrent;base64,${torrentBuffer.toString('base64')}`;
 }
 
-// ── Mock fetch ────────────────────────────────────────────────────────
 const mockFetch = vi.fn<(url: string | URL | Request, init?: RequestInit) => Promise<Response>>();
 
 beforeEach(() => {
@@ -102,7 +89,7 @@ beforeEach(() => {
   mockedDnsLookup.mockReset();
   dispatcherCloseSpy.mockClear();
   fetchWithSsrfRedirectSpy.mockClear();
-  // Default every host to a public IP so the SSRF pre-flight gate is open.
+  // Default every host to a public IP so SSRF preflight stays open unless overridden.
   mockedDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
   vi.stubGlobal('fetch', mockFetch);
 });
@@ -118,7 +105,6 @@ function mockResponse(body: Buffer | string, init?: ResponseInit): Response {
   return new Response(bodyData, init);
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────
 describe('DownloadUrl', () => {
   describe('type discrimination', () => {
     it('isMagnet returns true for magnet: scheme', () => {
@@ -201,7 +187,7 @@ describe('DownloadUrl', () => {
     });
 
     it('throws when decoded buffer has no valid info dict', async () => {
-      const badBuffer = Buffer.from('d8:announce5:x.come'); // no 4:info
+      const badBuffer = Buffer.from('d8:announce5:x.come');
       const dl = new DownloadUrl(fakeDataUri(badBuffer), 'torrent');
       await expect(dl.resolve()).rejects.toThrow(/info hash/i);
     });
@@ -226,8 +212,6 @@ describe('DownloadUrl', () => {
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
-    // #1243 — the allowlist is carried on the nzb-url artifact so the Blackhole
-    // self-download can reach private/LAN configured-indexer NZB URLs.
     it('attaches the LAN allowlist to the nzb-url passthrough when provided (no HTTP fetch)', async () => {
       const allowlist = {
         hostPort: new Set(['192.168.0.22:9696']),
@@ -269,9 +253,6 @@ describe('DownloadUrl', () => {
       expect(tb.data).toEqual(buffer);
     });
 
-    // #1329 — the HTTP torrent artifact grab must identify with the canonical
-    // Narratorr User-Agent (not undici's default), mirroring the #1315 blackhole
-    // self-download. Asserted at the fetchWithSsrfRedirect call.
     it('sends the canonical Narratorr User-Agent on the torrent artifact fetch', async () => {
       vi.stubEnv('GIT_TAG', 'v9.9.9');
       const { buffer } = fakeTorrentBuffer();
@@ -372,11 +353,9 @@ describe('DownloadUrl', () => {
     it('301 redirect to http: URL follows redirect and returns torrent-bytes', async () => {
       const { buffer, expectedHash } = fakeTorrentBuffer();
 
-      // First fetch: redirect
       mockFetch.mockResolvedValueOnce(
         new Response(null, { status: 301, headers: { Location: 'https://cdn.example.com/file.torrent' } }),
       );
-      // Second fetch: actual file
       mockFetch.mockResolvedValueOnce(mockResponse(buffer, {
         status: 200,
         headers: { 'Content-Type': 'application/x-bittorrent' },
@@ -443,11 +422,9 @@ describe('DownloadUrl', () => {
     it('follows relative Location header by resolving against current URL', async () => {
       const { buffer, expectedHash } = fakeTorrentBuffer();
 
-      // First fetch: redirect with relative Location
       mockFetch.mockResolvedValueOnce(
         new Response(null, { status: 301, headers: { Location: '/file.torrent' } }),
       );
-      // Second fetch: actual file at resolved absolute URL
       mockFetch.mockResolvedValueOnce(mockResponse(buffer, {
         status: 200,
         headers: { 'Content-Type': 'application/x-bittorrent' },
@@ -458,12 +435,10 @@ describe('DownloadUrl', () => {
 
       expect(artifact.type).toBe('torrent-bytes');
       expect((artifact as Extract<DownloadArtifact, { type: 'torrent-bytes' }>).infoHash).toBe(expectedHash);
-      // Verify the second fetch used the resolved absolute URL
       expect(mockFetch).toHaveBeenCalledWith('https://indexer.example.com/file.torrent', expect.any(Object));
     });
 
     it('throws after max redirect depth (>5 hops)', async () => {
-      // Create a chain of unique URLs exceeding 5 redirects
       for (let i = 0; i < 6; i++) {
         mockFetch.mockResolvedValueOnce(
           new Response(null, { status: 302, headers: { Location: `https://hop${i}.example.com` } }),
@@ -544,7 +519,6 @@ describe('DownloadUrl', () => {
     });
 
     it('helper-thrown errors are sanitized (no raw URL with credentials in message)', async () => {
-      // 6 hops to trigger "Too many redirects"
       for (let i = 0; i < 6; i++) {
         mockFetch.mockResolvedValueOnce(
           new Response(null, {
@@ -620,7 +594,6 @@ describe('DownloadUrl', () => {
     });
   });
 
-  // #966 — LAN allowlist for Prowlarr-on-private-IP grabs
   describe('resolve() — LAN allowlist (#966)', () => {
     it('fetch succeeds when target host:port is in allowlist and resolves to a private IP', async () => {
       mockedDnsLookup.mockReset();
@@ -713,8 +686,8 @@ describe('DownloadUrl', () => {
     it('redirect to a different LAN host:port not in allowlist is refused (pre-flight)', async () => {
       mockedDnsLookup.mockReset();
       mockedDnsLookup
-        .mockResolvedValueOnce([{ address: '192.168.0.22', family: 4 }]) // hop 0 OK
-        .mockResolvedValueOnce([{ address: '192.168.0.99', family: 4 }]); // hop 1 not allowlisted
+        .mockResolvedValueOnce([{ address: '192.168.0.22', family: 4 }])
+        .mockResolvedValueOnce([{ address: '192.168.0.99', family: 4 }]);
 
       mockFetch.mockResolvedValueOnce(
         new Response(null, { status: 302, headers: { Location: 'http://192.168.0.99:9696/admin' } }),
@@ -873,7 +846,6 @@ describe('DownloadUrl', () => {
       expect((error as Error).message).toBe('Download failed: oops');
     });
 
-    // #541 — sanitizeNetworkError URL redaction for non-undici errors
     it('redacts URL with passkey/token from unknown error message', async () => {
       const secretUrl = 'https://indexer.example.com/dl/secret-passkey-12345';
       const err = new Error('connect ECONNREFUSED https://indexer.example.com/api?apikey=SECRET123');
@@ -922,7 +894,6 @@ describe('DownloadUrl', () => {
       expect((error as Error).message).toMatch(/^Download failed:/);
     });
 
-    // AC #5 — URL redaction still applies on the unmapped-cause fallthrough path
     it('redacts URL inside undici cause message for unknown codes', async () => {
       const secretUrl = 'https://indexer.example.com/dl/secret-passkey-12345';
       const cause = Object.assign(
@@ -955,13 +926,11 @@ describe('extractInfoHashFromTorrent', () => {
   });
 
   it('skips false 4:info markers in string payloads', () => {
-    // Build a torrent where a string contains "4:info" bytes before the real info dict
     const inner = Buffer.from('d6:lengthi1024e4:name8:test.mp3e');
     const expectedHash = createHash('sha1').update(inner).digest('hex');
-    // "7:x4:info" is a string payload of 7 bytes that contains "4:info" — should be skipped
+    // `7:y4:info` makes the marker part of a seven-byte string, not a key.
     const torrent = Buffer.from(`d8:announce5:x.com7:y4:info4:5:dummy4:info${inner.toString()}e`);
     const result = extractInfoHashFromTorrent(torrent);
-    // Should still find the real info dict
     expect(result).toBe(expectedHash);
   });
 

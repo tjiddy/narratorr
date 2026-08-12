@@ -20,11 +20,6 @@ describe('HardcoverClient', () => {
     return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' }, ...init });
   }
 
-  // Hardcover's docs surface the auth header value as `Bearer <token>`; users
-  // routinely paste the visible string verbatim. The constructor strips a
-  // leading `Bearer ` (case-insensitive) and trims surrounding whitespace so
-  // both the production resolver path and the settings test endpoint normalize
-  // before the key reaches the outbound Authorization header. See #1138 Bug 1.
   describe('Constructor apiKey normalization', () => {
     function getStoredKey(client: HardcoverClient): string {
       return (client as unknown as { apiKey: string }).apiKey;
@@ -110,18 +105,7 @@ describe('HardcoverClient', () => {
     });
   });
 
-  /**
-   * #2097 — Hardcover carries duplicate WORKS at one position (a translation
-   * registered as its own work rather than an edition). `distinct_on: position`
-   * let Hasura collapse those server-side, keeping the MOST-READ row regardless
-   * of script; the collapse now happens client-side in
-   * `pickPreferredMembersByPosition`, which prefers the Latin-script work first
-   * and only then falls back to readership.
-   *
-   * Both queries are asserted because both feed the single `mapSeries`
-   * producer: fixing only the by-id query would leave the automatic-resolve path
-   * (name + author) still collapsing by readership.
-   */
+  // Both member queries must expose duplicate positions to the client-side picker.
   describe('members query shape — no server-side collapse (#2097 AC1)', () => {
     async function outgoingQuery(call: () => Promise<unknown>): Promise<string> {
       fetchMock.mockResolvedValueOnce(buildJsonResponse({ data: { series: [] } }));
@@ -145,15 +129,10 @@ describe('HardcoverClient', () => {
       const query = await outgoingQuery(call);
       expect(query).toContain('position: asc');
       expect(query).toContain('users_count: desc');
-      // The tie-break reads it off the raw row, so it must stay selected.
       expect(query).toContain('book { id slug title image { url } users_count }');
     });
   });
 
-  /**
-   * #2097 — the adapter half of the fix: the response now legitimately carries
-   * several rows per position, and `mapSeries` resolves them.
-   */
   describe('same-position duplicate works (#2097)', () => {
     const RUSSIAN_WOW = { id: 465829, slug: 'pered-burey', title: 'World of Warcraft: Перед бурей', image: null, users_count: 62 };
     const ENGLISH_WOW = { id: 331, slug: 'before-the-storm', title: 'Before the Storm', image: null, users_count: 7 };
@@ -172,10 +151,7 @@ describe('HardcoverClient', () => {
       await expect(new HardcoverClient('K').getSeriesMembersById(2375)).resolves.not.toBeNull();
     });
 
-    /**
-     * AC14, live prod case (2026-08-03). The Russian work wins on readership
-     * 62-to-7 and still loses the slot — that inversion is the whole fix.
-     */
+    // Live inversion: the Russian work has more readers, but Latin-script preference must win.
     it('resolves WoW position 15 to the English work end to end (AC14)', async () => {
       fetchMock.mockResolvedValueOnce(seriesResponse([
         { position: 14, book: { id: 300, slug: 'illidan', title: 'Illidan', image: null, users_count: 200 } },
@@ -187,7 +163,6 @@ describe('HardcoverClient', () => {
       expect(atFifteen).toHaveLength(1);
       expect(atFifteen[0]!.title).toBe('Before the Storm');
       expect(atFifteen[0]!.hardcoverBookId).toBe(331);
-      // The other slot is untouched.
       expect(result!.members.map((m) => m.hardcoverBookId)).toEqual([300, 331]);
     });
 
@@ -200,13 +175,6 @@ describe('HardcoverClient', () => {
       expect(result!.members.map((m) => m.hardcoverBookId)).toEqual([331]);
     });
 
-    /**
-     * AC8 — the length filter runs BEFORE the picker, so an over-length title
-     * is out of the group entirely and its sibling keeps the slot instead of the
-     * position being lost. Both directions are asserted: a reversed
-     * implementation (dedupe first, drop after) yields an empty slot in exactly
-     * one of them.
-     */
     it('drops an over-length title before the pick, leaving the Cyrillic sibling holding the slot (AC8)', async () => {
       const overLength = 'B'.repeat(2049);
       fetchMock.mockResolvedValueOnce(seriesResponse([
@@ -230,11 +198,6 @@ describe('HardcoverClient', () => {
       expect(result!.members[0]!.hardcoverBookId).toBe(503);
     });
 
-    /**
-     * AC3 — the counter-assertion against the old collapse. `DISTINCT ON` treats
-     * SQL NULLs as equal, so all three unpositioned works used to come back as
-     * one row; each is a different book and each now surfaces.
-     */
     it('returns every unpositioned work instead of collapsing them to one (AC3)', async () => {
       fetchMock.mockResolvedValueOnce(seriesResponse([
         { position: null, book: { id: 601, slug: 'a', title: 'Companion A', image: null, users_count: 5 } },
@@ -246,11 +209,6 @@ describe('HardcoverClient', () => {
       expect(result!.members.map((m) => m.position)).toEqual([null, null, null]);
     });
 
-    /**
-     * AC9 non-regression — a series with no same-position duplicates maps
-     * exactly as it did before the picker existed: same ids, titles, positions,
-     * same order.
-     */
     it('leaves an all-distinct-position series byte-identical (AC9)', async () => {
       fetchMock.mockResolvedValueOnce(seriesResponse([
         { position: 1, book: { id: 1001, slug: 'kings', title: 'Kings of the Wyld', image: { url: 'https://img/1' }, users_count: 100 } },
@@ -316,33 +274,8 @@ describe('HardcoverClient', () => {
     });
   });
 
-  /**
-   * T13 / #2109 AC7 — bound the untrusted source by DROPPING the over-length
-   * member, never by truncating its title and never by rejecting the response.
-   *
-   * `mapSeries` is the sole producer of `HardcoverMember[]` — both
-   * `getSeriesMembers` and `getSeriesMembersById` route through it — so the one
-   * filter is a complete chokepoint. Titles here are community-edited UGC
-   * validated as a bare `z.string()`, and `persistMembers` runs variant
-   * generation for each one inside a transaction that serializes every other
-   * libSQL write.
-   *
-   * Three properties, one mocked response:
-   *
-   *  1. **Availability.** Every other member still comes back. This is the half
-   *     a `.max()` on `hardcoverBookSchema.title` would break: that schema nests
-   *     inside `seriesMembersResponseSchema`, whose `safeParse` failure throws
-   *     `MetadataError` — one absurd member would take down the ENTIRE series
-   *     card, converting a bounded perf problem into a hard outage.
-   *  2. **The over-length member is dropped**, not shortened.
-   *  3. **No sheared identity escapes.** A truncated title is a fragment the
-   *     matcher then trusts as a complete title: `persistMembers` passes
-   *     `member.title` straight to `findInLibraryMatch`, whose title tier treats
-   *     the member's FULL form as its complete identity, and on the manual-bind
-   *     path `bindHardcoverSeries` durably rewrites the claimed book's
-   *     `seriesName`/`seriesPosition`. This assertion is what fails if someone
-   *     later "helpfully" reintroduces truncation.
-   */
+  // Drop overlong UGC at the member-array chokepoint: truncation can create a false
+  // title identity, while schema rejection would discard otherwise safe siblings.
   describe('over-length member titles (#2109 AC7)', () => {
     const MAX_VARIANT_TITLE_LENGTH = 2048;
 
@@ -370,12 +303,9 @@ describe('HardcoverClient', () => {
         memberEntry(103, ABSURD, 3),
       ]);
 
-      // 1 — availability: the response parsed and the normal member survived.
       expect(members.map((m) => m.hardcoverBookId)).toEqual([101]);
       expect(members[0]!.title).toBe(NORMAL);
-      // 2 — dropped, not shortened.
       expect(members.some((m) => m.hardcoverBookId === 102 || m.hardcoverBookId === 103)).toBe(false);
-      // 3 — no sheared identity escaped.
       for (const member of members) {
         expect(member.title.length).toBeLessThanOrEqual(MAX_VARIANT_TITLE_LENGTH);
         expect(OVER_CAP.startsWith(member.title)).toBe(false);
@@ -383,13 +313,7 @@ describe('HardcoverClient', () => {
       }
     });
 
-    /**
-     * Spec-review F6 — the predicate's own boundary. AC7 implements the same
-     * numeric limit at a NEW predicate in a different module, so the generator's
-     * boundary quartet cannot observe it: a filter that mistakenly used `>=`
-     * would drop a perfectly valid member whose title is exactly at the cap and
-     * leave every other test in this repo green.
-     */
+    // Exact-cap coverage catches an accidental >= predicate.
     it('retains an exactly-at-cap member byte for byte and drops cap+1 (T13, F6)', async () => {
       const members = await membersFrom([
         memberEntry(201, AT_CAP, 1),
@@ -402,12 +326,6 @@ describe('HardcoverClient', () => {
       expect(members[0]!.title.length).toBe(MAX_VARIANT_TITLE_LENGTH);
     });
 
-    /**
-     * Every member over the cap resolves to `members: []` — an ALREADY-SUPPORTED
-     * shape (Hardcover legitimately returns `book_series: []` today, pinned
-     * above), so `persistMembers` iterates an empty list and writes no rows. No
-     * new state is introduced by the drop.
-     */
     it('resolves the series with members: [] when every member is over the cap', async () => {
       const members = await membersFrom([memberEntry(301, OVER_CAP, 1), memberEntry(302, ABSURD, 2)]);
       expect(members).toEqual([]);
@@ -419,9 +337,6 @@ describe('HardcoverClient', () => {
       return buildJsonResponse({ data: { search: { results } } });
     }
 
-    // Primary: Hardcover migrated search from Algolia to Typesense, which nests
-    // every field under a `document` key alongside `highlight` / `text_match`
-    // siblings, and returns `id` as a string. See #1206.
     it('unwraps a Typesense `document`-enveloped hit and coerces the string id', async () => {
       fetchMock.mockResolvedValueOnce(buildSearchResponse([
         {
@@ -444,7 +359,6 @@ describe('HardcoverClient', () => {
       expect(candidates).toEqual([
         { id: 3384, name: 'Star Wars: Aftermath', slug: 'star-wars-aftermath', authorName: 'Chuck Wendig', booksCount: 10, readersCount: 0, imageUrl: null },
       ]);
-      // id is coerced from the string "3384" to the number 3384.
       expect(typeof candidates[0]!.id).toBe('number');
     });
 
@@ -518,9 +432,6 @@ describe('HardcoverClient', () => {
     });
 
     it('re-ranks by readers_count desc and drops books_count:0 stubs (#1239)', async () => {
-      // Hits arrive low-to-high readers_count (opposite of desired output), with
-      // a zero-book stub interleaved. The flagship (highest readers) must surface
-      // at index 0 regardless of Hardcover's returned order, and the stub absent.
       fetchMock.mockResolvedValueOnce(buildSearchResponse([
         { document: { id: '1', name: 'Spinoff Graphic Novels', slug: 's1', books_count: 26, readers_count: 323 } },
         { document: { id: '2', name: 'Down Town', slug: 's2', books_count: 7, readers_count: 24 } },
@@ -530,13 +441,12 @@ describe('HardcoverClient', () => {
       ]));
       const candidates = await new HardcoverClient('K').searchSeries('dresden');
       expect(candidates.map((c) => c.name)).toEqual([
-        'The Dresden Files',         // 19966
-        'Spinoff Graphic Novels',    // 323
-        'The Dresden Codex',         // 26
-        'Down Town',                 // 24
+        'The Dresden Files',
+        'Spinoff Graphic Novels',
+        'The Dresden Codex',
+        'Down Town',
       ]);
       expect(candidates.map((c) => c.readersCount)).toEqual([19966, 323, 26, 24]);
-      // books_count:0 stub is filtered even though it has the highest readers_count.
       expect(candidates.find((c) => c.name === 'Empty Stub')).toBeUndefined();
     });
 

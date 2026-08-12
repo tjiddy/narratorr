@@ -45,13 +45,7 @@ export class IndexerService {
     return rows.map((r) => this.decryptRow(r));
   }
 
-  /**
-   * Build the host:port + hostname allowlist from configured indexer apiUrls.
-   * Used by torrent download (#966) and Usenet NZB-body enrichment (#1149) so
-   * outbound fetches to a configured-indexer URL succeed even when the address
-   * is private/loopback. Indexers with empty/missing/un-parseable apiUrl
-   * produce no entries.
-   */
+  /** Allow configured indexer hosts through LAN SSRF policy; invalid apiUrls contribute nothing. */
   async getLanAllowlist(): Promise<LanAllowlist> {
     const indexerRows = await this.getAll();
     const hostPort = new Set<string>();
@@ -101,7 +95,6 @@ export class IndexerService {
       .where(eq(indexers.id, id))
       .returning();
 
-    // Clear cached adapter
     this.adapters.delete(id);
 
     this.log.info({ id }, 'Indexer updated');
@@ -119,7 +112,6 @@ export class IndexerService {
     return true;
   }
 
-  /** Find an existing Prowlarr-sourced indexer by sourceIndexerId */
   async findByProwlarrSource(sourceIndexerId: number): Promise<IndexerRow | null> {
     const results = await this.db
       .select()
@@ -149,7 +141,6 @@ export class IndexerService {
     return row ? this.decryptRow(row) : null;
   }
 
-  /** Create or upsert a Prowlarr-sourced indexer (AC7, AC9) */
   async createOrUpsertProwlarr(data: {
     name: string;
     type: NewIndexer['type'];
@@ -158,17 +149,12 @@ export class IndexerService {
     settings: Record<string, unknown>;
     sourceIndexerId: number | null;
   }): Promise<{ row: IndexerRow; upserted: boolean }> {
-    // If sourceIndexerId is non-null, check for existing row to upsert
     if (data.sourceIndexerId !== null) {
       const existing = await this.findByProwlarrSource(data.sourceIndexerId);
       if (existing) {
-        // Upsert: overwrite Prowlarr-managed fields, preserve local-only fields
-        // Merge settings: incoming Prowlarr keys overwrite, but local-only keys are kept
+        // Replace Prowlarr fields but preserve local priority, enabled state, and unprovided settings.
         const existingSettings = (existing.settings ?? {}) as Record<string, unknown>;
-        // Strip Readarr echo-only keys from the merged result so a row that was
-        // persisted dirty by the pre-fix translation path is cleaned on upsert,
-        // rather than merging stale echo-only keys forward into settings the
-        // strict Torznab/Newznab adapter schema would later reject (#1198).
+        // Strip legacy Readarr echo fields before strict adapter validation.
         const mergedSettings = stripReadarrEchoOnlyFields({ ...existingSettings, ...data.settings });
         const updated = await this.update(existing.id, {
           name: data.name,
@@ -176,14 +162,12 @@ export class IndexerService {
           settings: mergedSettings,
           source: 'prowlarr',
           sourceIndexerId: data.sourceIndexerId,
-          // Preserve: priority, enabled from existing row
         });
         this.log.info({ id: existing.id, sourceIndexerId: data.sourceIndexerId }, 'Prowlarr indexer upserted');
         return { row: updated!, upserted: true };
       }
     }
 
-    // Insert new row
     const row = await this.create({
       name: data.name,
       type: data.type,
@@ -207,7 +191,7 @@ export class IndexerService {
 
     if (!adapter) {
       const proxyUrl = await this.getProxyUrl();
-      // Ensure settings are decrypted before creating the adapter
+      // Ensure settings are decrypted before creating the adapter.
       const decrypted = this.decryptRow(indexer);
       adapter = this.createAdapter(decrypted, proxyUrl);
       this.adapters.set(indexer.id, adapter);
@@ -228,9 +212,7 @@ export class IndexerService {
       indexer.settings as Record<string, unknown>,
     );
 
-    // Resolve effective proxy URL: only pass when indexer has useProxy enabled
-    // FlareSolverr takes precedence at the adapter level — we still pass proxyUrl,
-    // and each adapter handles precedence internally
+    // Pass proxy only when enabled; adapters resolve FlareSolverr precedence.
     const useProxy = settings.useProxy === true;
     const effectiveProxyUrl = useProxy ? proxyUrl : undefined;
 
@@ -246,7 +228,7 @@ export class IndexerService {
     try {
       this.log.debug({ type: data.type, hostname: data.settings.hostname, pageLimit: data.settings.pageLimit }, 'Testing indexer config');
 
-      // When editing an existing indexer, resolve sentinel values against saved settings
+      // Resolve masked sentinels against saved settings when editing.
       let resolvedSettings = data.settings;
       if (data.id != null) {
         const existing = await this.getById(data.id);
@@ -281,7 +263,6 @@ export class IndexerService {
       const result = await adapter.test();
       this.log.debug({ id, success: result.success }, 'Indexer test result');
 
-      // Persist VIP/class metadata from MAM adapter on successful test
       if (result.success && result.metadata && 'isVip' in result.metadata) {
         try {
           const existingSettings = (indexer.settings ?? {}) as Record<string, unknown>;

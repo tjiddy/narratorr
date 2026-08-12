@@ -39,13 +39,11 @@ describe('QBittorrentClient', () => {
 
   beforeEach(() => {
     client = new QBittorrentClient(config);
-    // Set up default login handler for all tests
     server.use(loginHandler());
   });
 
   describe('login', () => {
     it('extracts SID cookie on successful login', async () => {
-      // login is private, so we exercise it via test() which calls login()
       server.use(
         http.get(`${BASE_URL}/api/v2/app/version`, () => {
           return new HttpResponse('v4.6.0');
@@ -152,8 +150,6 @@ describe('QBittorrentClient', () => {
         }),
       );
 
-      // After #743: non-JSON bodies must surface as a typed validation failure
-      // at the boundary, not silently coerce to "no torrents".
       const err = await client.getDownload('abc123').catch((e: unknown) => e);
       expect(err).toBeInstanceOf(DownloadClientError);
       const zod = await import('zod');
@@ -517,7 +513,6 @@ describe('QBittorrentClient', () => {
       expect(result!.downloadSpeed).toBeUndefined();
     });
 
-    // #1778 — nullish response fields must parse and map like absence.
     it('parses null nullable fields and maps them identically to omitting them', async () => {
       server.use(
         http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
@@ -531,7 +526,7 @@ describe('QBittorrentClient', () => {
 
       server.use(
         http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
-          return HttpResponse.json([mockTorrent]); // dlspeed/content_path omitted
+          return HttpResponse.json([mockTorrent]);
         }),
       );
       const omitted = await client.getDownload('abc123');
@@ -859,7 +854,6 @@ describe('QBittorrentClient', () => {
       expect(categories).toEqual([]);
     });
 
-    // #1778 — inner name/savePath are nullish; a null must not fail the parse.
     it('parses category entries with null inner name/savePath and returns the keys', async () => {
       server.use(
         http.get(`${BASE_URL}/api/v2/torrents/categories`, () => {
@@ -875,8 +869,6 @@ describe('QBittorrentClient', () => {
     });
 
     it('throws DownloadClientError with ZodError cause when API returns empty body', async () => {
-      // Behavior change from #743: an empty body is a boundary failure, not
-      // a graceful empty category list.
       server.use(
         http.get(`${BASE_URL}/api/v2/torrents/categories`, () => {
           return new HttpResponse('', {
@@ -993,7 +985,6 @@ describe('QBittorrentClient', () => {
             ...mockTorrent,
             name: 'My Torrent',
             save_path: '/downloads',
-            // no content_path
           }]);
         }),
       );
@@ -1104,7 +1095,6 @@ describe('QBittorrentClient', () => {
               hash: 'bbb',
               name: 'Fallback Name',
               save_path: '/other',
-              // no content_path
             },
           ]);
         }),
@@ -1257,7 +1247,6 @@ describe('QBittorrentClient', () => {
       server.use(
         http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
           const torrent = { ...mockTorrent, state: 'uploading' };
-          // No content_path field
           return HttpResponse.json([torrent]);
         }),
       );

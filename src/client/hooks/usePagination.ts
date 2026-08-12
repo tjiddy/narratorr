@@ -9,7 +9,6 @@ export interface UsePaginationReturn {
   prevPage: () => void;
   reset: () => void;
   totalPages: (total: number) => number;
-  /** Call with current total to clamp page when data shrinks */
   clampToTotal: (total: number) => void;
 }
 

@@ -149,7 +149,6 @@ describe('error message constants', () => {
 
   it('lists {edition} in the allowed-token error copy, derived from the allow-list (#1712)', () => {
     expect(FOLDER_TOKEN_MSG).toContain('{edition}');
-    // Derived, not hand-maintained — every allowed folder token appears.
     for (const token of FOLDER_ALLOWED_TOKENS) {
       expect(FOLDER_TOKEN_MSG).toContain(`{${token}}`);
     }
@@ -165,7 +164,6 @@ describe('error message constants', () => {
 
   it('lists {edition} in the file allowed-token error copy, derived from the allow-list (#1712)', () => {
     expect(FILE_TOKEN_MSG).toContain('{edition}');
-    // Derived, not hand-maintained — every allowed file token appears.
     for (const token of FILE_ALLOWED_TOKENS) {
       expect(FILE_TOKEN_MSG).toContain(`{${token}}`);
     }
@@ -266,7 +264,7 @@ describe('namingFormSchema via .pick()', () => {
       fileFormat: '{title}',
       namingSeparator: 'space',
       namingCase: 'default',
-      path: '/lib', // extra field from libraryFormSchema
+      path: '/lib',
     });
     expect(result.success).toBe(true);
     if (result.success) {

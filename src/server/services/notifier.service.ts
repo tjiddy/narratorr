@@ -25,9 +25,7 @@ export class NotifierService {
 
   constructor(private db: Db, private log: FastifyBaseLogger) {}
 
-  // Any path that reads notifier rows for adapter construction MUST run them
-  // through decryptRow first — adapters need plaintext to fire real requests.
-  // getAdapter() decrypts on cache miss; getById() decrypts on read.
+  // Every adapter-construction path must decrypt settings first.
   private decryptRow(row: NotifierRow): NotifierRow {
     if (!row.settings) return row;
     const s = { ...(row.settings as Record<string, unknown>) };
@@ -83,10 +81,7 @@ export class NotifierService {
     return true;
   }
 
-  /**
-   * Fire-and-forget notification to all enabled notifiers matching the event.
-   * Failures are logged but never thrown.
-   */
+  /** Isolate and log adapter failures across all matching enabled notifiers. */
   async notify(event: NotificationEvent, payload: EventPayload): Promise<void> {
     const enabledNotifiers = await this.db
       .select()
@@ -143,8 +138,7 @@ export class NotifierService {
     try {
       this.log.debug({ type: data.type }, 'Testing notifier config');
 
-      // When editing an existing notifier, resolve sentinel values against
-      // the DECRYPTED saved settings — the adapter test needs real plaintext.
+      // Resolve edit sentinels against decrypted saved settings.
       let resolvedSettings = data.settings;
       if (data.id != null) {
         const existing = await this.getById(data.id);
@@ -170,11 +164,7 @@ export class NotifierService {
     }
   }
 
-  /**
-   * Resolve a cached adapter for the notifier, lazily creating + caching on
-   * miss. Accepts either a raw row from the DB or one already decrypted —
-   * decryptRow is idempotent on plaintext values.
-   */
+  /** Accept raw or already-decrypted rows; decryption is idempotent on plaintext. */
   getAdapter(notifier: NotifierRow): NotifierAdapter {
     let adapter = this.adapters.get(notifier.id);
 
@@ -197,7 +187,7 @@ export class NotifierService {
       notifier.settings as Record<string, unknown>,
     );
 
-    // Log warning for malformed webhook headers (factory silently ignores them)
+    // Surface malformed headers that the factory otherwise ignores.
     if (notifier.type === 'webhook') {
       const webhookSettings = settings as NotifierSettings & { headers?: string };
       if (typeof webhookSettings.headers === 'string') {

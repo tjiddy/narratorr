@@ -2,16 +2,25 @@ import type { FastifyBaseLogger } from 'fastify';
 import { serializeError } from '../utils/serialize-error.js';
 import type { BulkOpType, BulkJobStatus } from './bulk-operation.service.js';
 
-export type WorkFn = (setTotal: (n: number) => void, tick: (isFailure: boolean) => void) => Promise<void>;
+import type { BulkJobFailure } from '@shared/bulk-operation-types.js';
+
+export type { BulkJobFailure } from '@shared/bulk-operation-types.js';
 
 /**
- * A single in-flight bulk operation. Runs its `work` callback to completion,
- * tracking total/completed/failure counts that callers poll via `getStatus()`.
- * Extracted from `bulk-operation.service.ts` to keep that file under the line cap.
+ * Retain the first failures so the list stays stable while polled. The uncapped total drives the
+ * omitted-count summary.
  */
+export const MAX_JOB_FAILURE_DETAILS = 50;
+
+export type WorkFn = (
+  setTotal: (n: number) => void,
+  tick: (isFailure: boolean, detail?: BulkJobFailure) => void,
+) => Promise<void>;
+
 export class BulkJob {
   private _completed = 0;
   private _failures = 0;
+  private _failureDetails: BulkJobFailure[] = [];
   private _total = 0;
   private _status: 'running' | 'completed' = 'running';
   private startMs = Date.now();
@@ -32,6 +41,8 @@ export class BulkJob {
       completed: this._completed,
       total: this._total,
       failures: this._failures,
+      // Copy, never alias, so earlier poll responses cannot grow with later failures.
+      failureDetails: [...this._failureDetails],
     };
   }
 
@@ -47,9 +58,14 @@ export class BulkJob {
     try {
       await this.work(
         (n) => { this._total = n; },
-        (isFailure) => {
+        (isFailure, detail) => {
           this._completed++;
-          if (isFailure) this._failures++;
+          // A successful tick can never add failure details.
+          if (!isFailure) return;
+          this._failures++;
+          if (detail && this._failureDetails.length < MAX_JOB_FAILURE_DETAILS) {
+            this._failureDetails.push(detail);
+          }
         },
       );
     } finally {

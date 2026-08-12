@@ -11,7 +11,7 @@ const importFormSchema = stripDefaults(importSettingsSchema);
 
 type ImportFormData = z.infer<typeof importFormSchema>;
 
-// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
+// Guard label and section title must stay identical.
 const CARD_LABEL = 'Import';
 
 export function ImportSettingsSection() {

@@ -14,7 +14,6 @@ export function AuthorPageSkeleton() {
           <div className="h-20 w-full skeleton rounded-2xl" />
         </div>
       </div>
-      {/* Series skeleton */}
       <div className="space-y-4">
         <div className="h-6 w-48 skeleton rounded" />
         <div className="glass-card rounded-2xl p-4 space-y-3">

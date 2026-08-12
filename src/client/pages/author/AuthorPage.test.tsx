@@ -8,8 +8,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMockBook, createMockAuthor } from '@/__tests__/factories';
 import { AuthorPage } from './AuthorPage';
 
-// Mock api
-vi.mock('@/lib/api', () => ({
+// The 409 reader and its copy are deliberately NOT stubbed: the add hook's discriminator rule is
+// what the conflict tests below assert. `ApiError` must be the REAL class — readAddBookConflict
+// gates on `instanceof ApiError` inside a module this factory does not replace (#2258).
+vi.mock('@/lib/api', async () => ({
+  readAddBookConflict: (await import('@/lib/api/add-book-conflict.js')).readAddBookConflict,
+  formatReviewConflictMessage: (await import('@/lib/api/add-book-conflict.js')).formatReviewConflictMessage,
   api: {
     getAuthor: vi.fn(),
     getAuthorBooks: vi.fn(),
@@ -17,9 +21,9 @@ vi.mock('@/lib/api', () => ({
     addBook: vi.fn(),
     getSettings: vi.fn(),
   },
+  ApiError: (await import('@/lib/api/client.js')).ApiError,
 }));
 
-// Mock sonner
 vi.mock('sonner', () => ({
   toast: {
     success: vi.fn(),
@@ -124,10 +128,8 @@ describe('AuthorPage', () => {
     vi.mocked(api.getAuthor).mockReturnValue(new Promise(() => {}));
     renderAuthorPage();
 
-    // Skeleton renders visible placeholder content
     const skeletons = document.querySelectorAll('.skeleton');
     expect(skeletons.length).toBeGreaterThan(5);
-    // Avatar placeholder is a rounded-full skeleton
     expect(document.querySelector('.skeleton.rounded-full')).toBeInTheDocument();
   });
 
@@ -198,7 +200,6 @@ describe('AuthorPage', () => {
     await waitFor(() => {
       expect(screen.getByText('Mistborn')).toBeInTheDocument();
       expect(screen.getByText('Standalone')).toBeInTheDocument();
-      // All book titles present
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       expect(screen.getByText('Words of Radiance')).toBeInTheDocument();
       expect(screen.getByText('The Final Empire')).toBeInTheDocument();
@@ -214,7 +215,6 @@ describe('AuthorPage', () => {
       expect(screen.getByText('Author not found')).toBeInTheDocument();
     });
 
-    // Has a back-to-library link
     await waitFor(() => {
       const backLink = screen.getByText('Back to Library').closest('a');
       expect(backLink).toHaveAttribute('href', '/library');
@@ -228,11 +228,9 @@ describe('AuthorPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // AddBookPopover renders buttons — 4 books not in library + Add All buttons
-    // Each not-in-library book gets an Add popover button
     await waitFor(() => {
-      const inLibraryIcons = screen.queryAllByLabelText('In library');
-      expect(inLibraryIcons.length).toBe(0); // no books in library by default
+      const inLibraryIcons = screen.queryAllByLabelText('View this book in your library');
+      expect(inLibraryIcons.length).toBe(0);
     });
   });
 
@@ -246,14 +244,12 @@ describe('AuthorPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Find the first AddBookPopover's trigger button (excludes "Add All" buttons)
     const addButtons = screen.getAllByRole('button').filter(
       (btn) => btn.textContent?.includes('Add') && !btn.textContent?.includes('Add All'),
     );
     expect(addButtons.length).toBeGreaterThan(0);
     await user.click(addButtons[0]!);
 
-    // Click "Add to Library" in the popover
     const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
     await user.click(addToLibrary);
 
@@ -273,9 +269,8 @@ describe('AuthorPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // One book in library shows check icon
     await waitFor(() => {
-      const inLibrary = screen.getAllByLabelText('In library');
+      const inLibrary = screen.getAllByLabelText('View this book in your library');
       expect(inLibrary.length).toBe(1);
     });
   });
@@ -288,11 +283,8 @@ describe('AuthorPage', () => {
       expect(screen.getByText('Back')).toBeInTheDocument();
     });
 
-    // The back button exists and is clickable
     await user.click(screen.getByText('Back'));
-    // Navigation goes through useBackWithFallback (browser-back with a /library
-    // fallback for deep links) — branch behavior is pinned in that hook's own
-    // suite; here clicking must simply not throw
+    // useBackWithFallback branch behavior is pinned in its own suite; here clicking must simply not throw.
   });
 
   it('renders initials avatar when no image', async () => {
@@ -313,7 +305,6 @@ describe('AuthorPage', () => {
 
     await waitFor(() => {
       const addAllButtons = screen.getAllByText(/Add All/);
-      // 3 sections: Stormlight Archive, Mistborn, Standalone
       expect(addAllButtons.length).toBe(3);
     });
   });
@@ -329,7 +320,7 @@ describe('AuthorPage', () => {
     });
 
     const addAllButtons = screen.getAllByText(/Add All/);
-    // Click the first "Add All" (Mistborn comes first alphabetically, 1 book)
+    // Alphabetical order puts one-book Mistborn first.
     await user.click(addAllButtons[0]!);
 
     await waitFor(() => {
@@ -360,7 +351,6 @@ describe('AuthorPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Open popover and click Add to Library
     const addButtons = screen.getAllByRole('button').filter(
       (btn) => btn.textContent?.includes('Add') && !btn.textContent?.includes('Add All'),
     );
@@ -371,6 +361,50 @@ describe('AuthorPage', () => {
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalled();
+    });
+  });
+
+  // A held edition is the server abstaining, so the row must stay addable rather than reporting a
+  // hard failure the operator cannot act on (#2212).
+  it('reports a review 409 as a possible duplicate and leaves the Add control mounted', async () => {
+    const user = userEvent.setup();
+    const { ApiError: MockApiError } = await import('@/lib/api');
+    vi.mocked(api.addBook).mockRejectedValue(
+      new MockApiError(409, { conflict: 'review', id: 88, title: 'Piranesi' }),
+    );
+
+    renderAuthorPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    });
+
+    const addButtons = screen.getAllByRole('button').filter(
+      (btn) => btn.textContent?.includes('Add') && !btn.textContent?.includes('Add All'),
+    );
+    await user.click(addButtons[0]!);
+
+    const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
+    await user.click(addToLibrary);
+
+    await waitFor(() => {
+      expect(toast.info).toHaveBeenCalledWith(
+        "Possible duplicate (review): may be the same recording as 'Piranesi'",
+      );
+    });
+
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(screen.queryByRole('link', { name: /view this book in your library/i })).not.toBeInTheDocument();
+
+    // The hook never claimed the key, so `addBook`'s already-added short-circuit must not swallow a
+    // retry — this is the observation an ownership degrade would fail.
+    await user.click(screen.getAllByRole('button').filter(
+      (btn) => btn.textContent?.includes('Add') && !btn.textContent?.includes('Add All'),
+    )[0]!);
+    await user.click(await screen.findByRole('button', { name: /add to library/i }));
+
+    await waitFor(() => {
+      expect(api.addBook).toHaveBeenCalledTimes(2);
     });
   });
 

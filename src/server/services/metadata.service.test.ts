@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import { RateLimitError, TransientError, METADATA_SEARCH_PROVIDER_FACTORIES, NARRATOR_PLACEHOLDERS } from '@core/index.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { MetadataService, isRejectedByWords, PSEUDO_NARRATORS } from './metadata.service.js';
+import { AMBIGUOUS_WINDOW_COLLAPSED, AMBIGUOUS_WINDOW_HELD, exactTitleCandidates } from './metadata-resolve-book.js';
 import type { BookMetadata } from '@core/index.js';
 
 const mockFactories = vi.mocked(METADATA_SEARCH_PROVIDER_FACTORIES);
@@ -23,7 +24,6 @@ const mockAudnexus = {
   getBook: vi.fn().mockResolvedValue(null),
   getBookDetailed: vi.fn().mockResolvedValue({ kind: 'not_found' }),
   getAuthor: vi.fn().mockResolvedValue(null),
-  // #1942 — the chapter-runtime lookup the corroborator bridges to.
   getChapterRuntime: vi.fn().mockResolvedValue({ kind: 'not_found' }),
 };
 
@@ -44,8 +44,7 @@ describe('MetadataService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    // Per-mock reset drains stale `*Once()` queues — `clearAllMocks` does not (see CLAUDE.md).
-    // Avoids `resetAllMocks` so the module-mock factories above stay intact.
+    // clearAllMocks leaves *Once queues; reset individual methods to preserve module factories.
     mockAudibleProvider.searchBooks.mockReset();
     mockAudibleProvider.searchSeries.mockReset();
     mockAudibleProvider.getBook.mockReset();
@@ -55,7 +54,6 @@ describe('MetadataService', () => {
     mockAudnexus.getBookDetailed.mockReset();
     mockAudnexus.getAuthor.mockReset();
     mockAudnexus.getChapterRuntime.mockReset();
-    // Reset mock return values
     mockAudibleProvider.searchBooks.mockResolvedValue({ books: [] });
     mockAudibleProvider.searchSeries.mockResolvedValue([]);
     mockAudibleProvider.getBook.mockResolvedValue(null);
@@ -266,7 +264,6 @@ describe('MetadataService', () => {
     });
 
     describe('podcast-derived authors/series filtering (#1020)', () => {
-      // AC4
       it('returns empty authors and series when every book is filtered as a podcast', async () => {
         mockAudibleProvider.searchBooks.mockResolvedValueOnce({
           books: [
@@ -291,7 +288,6 @@ describe('MetadataService', () => {
         expect(result.series).toEqual([]);
       });
 
-      // AC5
       it('derives authors and series only from the audiobook subset when results mix audiobooks and podcasts', async () => {
         mockAudibleProvider.searchBooks.mockResolvedValueOnce({
           books: [
@@ -316,7 +312,6 @@ describe('MetadataService', () => {
         expect(result.series).toEqual([{ name: 'Mistborn', asin: 'SER_MB', books: [] }]);
       });
 
-      // AC6
       it('keeps authors and series derived from books with contentDeliveryType === undefined (Audnexus fallback-to-keep)', async () => {
         mockAudibleProvider.searchBooks.mockResolvedValueOnce({
           books: [
@@ -367,7 +362,6 @@ describe('MetadataService', () => {
         });
 
         const result = await service.search('dedup');
-        // First occurrence wins: 'Shared Author' carries no asin, 'Shared Series' carries the asin from book #2.
         expect(result.authors).toEqual([
           { name: 'Shared Author' },
           { name: 'Other' },
@@ -542,12 +536,9 @@ describe('MetadataService', () => {
         expect(result.books).toEqual([
           { title: 'Real', authors: [{ name: 'A' }], series: [{ name: 'Real Series' }], narrators: ['Jim Dale'] },
         ]);
-        // Authors/series are derived from kept books only — Virtual Voice entries are gone.
         expect(result.authors).toEqual([{ name: 'A' }]);
         expect(result.series).toEqual([{ name: 'Real Series', books: [] }]);
       });
-
-      // ===== #993 — formatType surface + word-boundary matching =====
 
       it('filters abridged books via formatType surface', async () => {
         setRejectWords('Abridged');
@@ -612,8 +603,6 @@ describe('MetadataService', () => {
         const result = await serviceWithSettings.searchBooks('query');
         expect(result).toEqual(books);
       });
-
-      // ===== #1032 — pseudo-narrator markers filtered from rejectWords surface =====
 
       it('does NOT reject a book whose narrators include "full cast" literal (Audible Original ensemble)', async () => {
         setRejectWords('Full Cast');
@@ -821,7 +810,6 @@ describe('MetadataService', () => {
         expect(result.books).toEqual(allBooks);
       });
 
-      // ── AC5: real-world fixture for Eric (Terry Pratchett) ─────────────
       it('searchBooks: tag-pass against Eric multi-language fixture returns only english unabridged', async () => {
         setLanguages(['english'], 'Abridged');
         mockAudibleProvider.searchBooks.mockResolvedValueOnce({
@@ -839,7 +827,6 @@ describe('MetadataService', () => {
         ]);
       });
 
-      // ── AC5: Dark Forest fixture — only spanish edition exists, language filter clears all ─
       it('searchBooks: Dark Forest fixture (only spanish result) returns empty after language filter', async () => {
         setLanguages(['english']);
         mockAudibleProvider.searchBooks.mockResolvedValueOnce({
@@ -853,7 +840,6 @@ describe('MetadataService', () => {
       });
     });
 
-    // ── AC9: symmetric fail-open coverage across all four surfaces ────────
     describe('symmetric fail-open (#1004)', () => {
       const mockSettingsService = { get: vi.fn(), getAll: vi.fn(), set: vi.fn() };
       let serviceWithSettings: MetadataService;
@@ -863,7 +849,6 @@ describe('MetadataService', () => {
         serviceWithSettings = new MetadataService(inject<FastifyBaseLogger>(mockLog), undefined, mockSettingsService as never);
       });
 
-      // metadata slice fails — language + duration skipped, rejectWords still runs
       const stubMetadataFails = () => {
         mockSettingsService.get.mockImplementation((key: string) => {
           if (key === 'quality') return Promise.resolve({ rejectWords: 'Virtual Voice', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'none', searchImmediately: false });
@@ -872,7 +857,6 @@ describe('MetadataService', () => {
         });
       };
 
-      // quality slice fails — rejectWords skipped, language + duration still run
       const stubQualityFails = () => {
         mockSettingsService.get.mockImplementation((key: string) => {
           if (key === 'quality') return Promise.reject(new Error('DB unavailable'));
@@ -893,7 +877,6 @@ describe('MetadataService', () => {
         mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: fixture() });
 
         const result = await serviceWithSettings.searchBooks('query');
-        // rejectWords drops Knockoff; language + duration skipped (Spanish + Short remain)
         expect(result.map((b) => b.title)).toEqual(['Real', 'Spanish', 'Short']);
         expect(mockLog.warn).toHaveBeenCalled();
       });
@@ -903,7 +886,6 @@ describe('MetadataService', () => {
         mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: fixture() });
 
         const result = await serviceWithSettings.searchBooks('query');
-        // rejectWords skipped → Knockoff remains; language drops Spanish; duration drops Short
         expect(result.map((b) => b.title)).toEqual(['Real', 'Knockoff']);
         expect(mockLog.warn).toHaveBeenCalled();
       });
@@ -942,9 +924,6 @@ describe('MetadataService', () => {
         expect(result.books.map((b) => b.title)).toEqual(['Real', 'Knockoff']);
       });
 
-      // ── AC4: filterAuthorBooks behavior diff under metadata-slice failure ─
-      // Previously bailed early returning ALL books unfiltered. New symmetric model
-      // applies rejectWords still and skips only the metadata-dependent filters.
       it('getAuthorBooks: metadata-slice failure leaves rejectWords applied (behavior diff vs old early-bail)', async () => {
         stubMetadataFails();
         mockAudnexus.getAuthor.mockResolvedValueOnce({ name: 'Author', asin: 'B123' });
@@ -1054,7 +1033,6 @@ describe('MetadataService', () => {
           { title: 'Real', authors: [{ name: 'Real Author' }], series: [{ name: 'Real Series' }], duration: 768 },
           { title: 'Unknown', authors: [{ name: 'Unknown Author' }], series: [{ name: 'Unknown Series' }] },
         ]);
-        // Authors/series are derived from kept books — Knockoff is dropped.
         expect(result.authors).toEqual([
           { name: 'Real Author' },
           { name: 'Unknown Author' },
@@ -1108,7 +1086,6 @@ describe('MetadataService', () => {
       });
 
       it('returns unfiltered results when settings lookup throws (fail-open)', async () => {
-        // First call (rejectWords) succeeds, second call (min-duration) throws — exercise duration fail-open path
         mockSettingsService.get.mockImplementation((key: string) => {
           if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'none', searchImmediately: false });
           if (key === 'metadata') return Promise.reject(new Error('DB unavailable'));
@@ -1298,8 +1275,7 @@ describe('MetadataService', () => {
         title: 'A Podcast',
         contentDeliveryType: 'PodcastParent',
       });
-      // Distinct from the search-path filter message so log-grep can tell the
-      // two drop sites apart.
+      // Keep direct-lookup and search-path messages distinct for log-grep.
       const searchPathCalls = debugSpy.mock.calls.filter(
         ([, msg]) => msg === 'Dropping non-audiobook from search results',
       );
@@ -1381,7 +1357,6 @@ describe('MetadataService', () => {
       expect(await service.getBook('123')).toBeNull();
       expect(mockAudibleProvider.getBook).not.toHaveBeenCalled();
 
-      // getAuthor uses Audnexus, not Audible — should still work during Audible backoff
       const mockAuthor = { name: 'Test Author', asin: '123' };
       mockAudnexus.getAuthor.mockResolvedValueOnce(mockAuthor);
       expect(await service.getAuthor('123')).toEqual(mockAuthor);
@@ -1392,8 +1367,6 @@ describe('MetadataService', () => {
       mockAudnexus.getBook.mockRejectedValueOnce(new RateLimitError(60000, 'Audnexus'));
       await expect(service.enrichBook('B000FIRST')).rejects.toThrow(RateLimitError);
 
-      // A second lookup during the active backoff must also throw (not return
-      // null), and must NOT hit the provider again — the backoff is pre-emptive.
       await expect(service.enrichBook('B000SECOND')).rejects.toThrow(RateLimitError);
       expect(mockAudnexus.getBook).toHaveBeenCalledTimes(1);
     });
@@ -1421,7 +1394,6 @@ describe('MetadataService', () => {
     });
 
     it('handles enrichBook with empty ASIN string gracefully', async () => {
-      // Empty string ASIN — Audnexus should still be called (validation is caller's job)
       mockAudnexus.getBook.mockResolvedValueOnce(null);
 
       const result = await service.enrichBook('');
@@ -1635,7 +1607,6 @@ describe('MetadataService', () => {
     it('returns null directly without delegating to any provider', async () => {
       const result = await service.getSeries('999');
       expect(result).toBeNull();
-      // Should NOT call any provider method
       expect(mockAudibleProvider.getBook).not.toHaveBeenCalled();
     });
   });
@@ -1644,7 +1615,6 @@ describe('MetadataService', () => {
     it('still has Audible provider when no API keys are set', async () => {
       const minService = new MetadataService(inject<FastifyBaseLogger>(createMockLogger()));
 
-      // Audible is always available (no API key required)
       expect(minService.getProviders()).toHaveLength(1);
       expect(minService.getProviders()[0]!.type).toBe('audible');
     });
@@ -1682,7 +1652,6 @@ describe('MetadataService', () => {
       mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [] });
 
       await service.searchBooksForDiscovery('test query');
-      // Called with query and undefined options (provider applies its own default)
       expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('test query', undefined);
     });
 
@@ -1738,15 +1707,10 @@ describe('MetadataService', () => {
       const result = await service.getAuthor('B001TEST');
       expect(result).toBeNull();
 
-      // Subsequent call should be skipped due to rate limit
       const result2 = await service.getAuthor('B002TEST');
       expect(result2).toBeNull();
-      // getAuthor should only have been called once (second was skipped)
       expect(mockAudnexus.getAuthor).toHaveBeenCalledTimes(1);
-      // #1944 — the operator-visible signal must carry the finite window too. A `NaN`
-      // window pino-serialises to `null`, so the one log line that says this is
-      // happening would itself be misleading. Not the `ExactlyOnce` variant: the
-      // second, gated lookup emits its own 'Author lookup skipped' warn.
+      // A non-finite window serializes as null; this log must expose the finite retry interval.
       expect(mockLog.warn).toHaveBeenCalledWith(
         { provider: 'Audnexus', retryAfterMs: 30000 },
         'Provider rate limited',
@@ -1776,13 +1740,11 @@ describe('MetadataService', () => {
     let emptyService: MetadataService;
 
     beforeEach(() => {
-      // Temporarily empty the registry
       const saved = { ...mockFactories };
       for (const key of Object.keys(mockFactories)) {
         delete (mockFactories as Record<string, unknown>)[key];
       }
       emptyService = new MetadataService(inject<FastifyBaseLogger>(createMockLogger()));
-      // Restore registry for other tests
       Object.assign(mockFactories, saved);
     });
 
@@ -1854,7 +1816,6 @@ describe('MetadataService', () => {
     });
   });
 
-  // ── #229 Observability — debug logging ──────────────────────────────────
   describe('debug logging (#229)', () => {
     it('searchBooks() logs { query, provider, resultCount } at debug on completion', async () => {
       mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [{ title: 'A' }] });
@@ -1927,7 +1888,6 @@ describe('MetadataService', () => {
     });
   });
 
-  // ── #229 Observability — SearchBooksResult contract ─────────────────────
   describe('SearchBooksResult contract (#229)', () => {
     it('search() correctly unwraps .books from SearchBooksResult', async () => {
       mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [{ title: 'X' }] });
@@ -1984,34 +1944,41 @@ describe('MetadataService', () => {
     });
   });
 
-  // #1942 — the chapter-runtime bridge. These run against a REAL MetadataService
-  // (only the provider is mocked), so they prove the corroborator is genuinely
-  // wired to the service's shared throttle and provider-wide 429 backoff rather
-  // than reaching Audnexus on its own.
-  describe('getChapterRuntimeSeconds bridge (#1942)', () => {
+  // Use the real service to exercise its shared throttle and provider-wide Audnexus backoff.
+  describe('getChapterRuntimeSeconds bridge (#1942/#2168)', () => {
     const ASIN = 'B00CXXEX8W';
+    // Fablehaven's live fixture has no trimmable tail, so full and trimmed totals match.
+    const FABLEHAVEN_OK = { kind: 'ok', runtimeLengthMs: 33219490, isAccurate: true, trimmedRuntimeMs: 33219490, trimmedChapterCount: 0 } as const;
+    // No usable runtime is {}, never undefined.
+    const NONE = {};
+
+    it('#2168 — a trimmed record bridges BOTH references through in SECONDS', async () => {
+      mockAudnexus.getChapterRuntime.mockResolvedValue({
+        kind: 'ok', runtimeLengthMs: 86_400_000, isAccurate: true, trimmedRuntimeMs: 85_134_000, trimmedChapterCount: 1,
+      });
+
+      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual({ fullSeconds: 86_400, trimmedSeconds: 85_134 });
+    });
 
     it('returns the trusted chapter runtime in SECONDS', async () => {
-      mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'ok', runtimeLengthMs: 33219490, isAccurate: true });
+      mockAudnexus.getChapterRuntime.mockResolvedValue(FABLEHAVEN_OK);
 
-      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBe(33219.49);
+      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual({ fullSeconds: 33219.49, trimmedSeconds: 33219.49 });
       expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledExactlyOnceWith(ASIN);
     });
 
     it('a returned 429 sets the shared backoff, so the IMMEDIATELY subsequent Audnexus call short-circuits', async () => {
       mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'rate_limited', retryAfterMs: 60_000 });
 
-      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
       expect(mockLog.warn).toHaveBeenCalledWith(
         { provider: 'Audnexus', retryAfterMs: 60_000 },
         'Provider rate limited',
       );
 
-      // The gate is provider-wide, not per-ASIN: the very next Audnexus lookup
-      // (a different call, a different ASIN) is skipped without a request.
+      // Backoff is provider-wide, not per method or ASIN.
       await expect(service.getAuthor('B001H6UJO8')).resolves.toBeNull();
       expect(mockAudnexus.getAuthor).not.toHaveBeenCalled();
-      // And the chapter path itself does not re-request during the window...
       await service.getChapterRuntimeSeconds('B_OTHER');
       expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(1);
     });
@@ -2021,19 +1988,12 @@ describe('MetadataService', () => {
 
       await service.getChapterRuntimeSeconds(ASIN);
 
-      // A NaN window leaves `Date.now() + NaN` = NaN, which `isRateLimited` reads
-      // as "not limited" — so the provider WOULD be retried immediately. The
-      // adapter guarantees finite windows; this pins the failure signature so a
-      // regression there surfaces here as an un-gated retry.
+      // Date.now() + NaN disables the gate, so a bad adapter window causes an immediate retry.
       await service.getChapterRuntimeSeconds('B_OTHER');
       expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(2);
     });
 
-    // The backoff deadline is `Date.now() + retryAfterMs`, so a real-time sleep
-    // can only ever approximate the transition. Freezing Date (and ONLY Date —
-    // `toFake: ['Date']` leaves the throttle's and the runner's real timers alone)
-    // lets the window be stepped exactly, pinning both sides of the boundary
-    // instead of just "eventually expired".
+    // Fake only Date: real timers stay live while the exact deadline remains deterministic.
     describe('backoff window expiry, frozen clock', () => {
       const NOW = Date.parse('2026-07-25T12:00:00.000Z');
 
@@ -2045,22 +2005,19 @@ describe('MetadataService', () => {
 
       it('holds the gate up to the last millisecond of the window, then retries and promotes', async () => {
         mockAudnexus.getChapterRuntime.mockResolvedValueOnce({ kind: 'rate_limited', retryAfterMs: 60_000 });
-        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
         expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(1);
 
-        // 1ms short of the deadline — still gated, no request.
         vi.setSystemTime(NOW + 59_999);
-        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
         expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(1);
 
-        // Exactly at the deadline — the gate releases and the provider is retried.
         vi.setSystemTime(NOW + 60_000);
-        mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'ok', runtimeLengthMs: 33219490, isAccurate: true });
-        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBe(33219.49);
+        mockAudnexus.getChapterRuntime.mockResolvedValue(FABLEHAVEN_OK);
+        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual({ fullSeconds: 33219.49, trimmedSeconds: 33219.49 });
         expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(2);
 
-        // ...and the promotion settles, so a fourth lookup issues no request.
-        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBe(33219.49);
+        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual({ fullSeconds: 33219.49, trimmedSeconds: 33219.49 });
         expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(2);
       });
 
@@ -2071,9 +2028,7 @@ describe('MetadataService', () => {
         vi.setSystemTime(NOW + 60_000);
         mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'not_found' });
 
-        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
-        // Two real requests for the SAME ASIN: the 429 is transient, so it left no
-        // settled verdict for the post-window call to short-circuit against.
+        await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
         expect(mockAudnexus.getChapterRuntime.mock.calls).toEqual([[ASIN], [ASIN]]);
       });
     });
@@ -2082,18 +2037,18 @@ describe('MetadataService', () => {
       mockAudnexus.getBook.mockRejectedValue(new RateLimitError(60_000, 'Audnexus'));
       await expect(service.enrichBook(ASIN)).rejects.toBeInstanceOf(RateLimitError);
 
-      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
       expect(mockAudnexus.getChapterRuntime).not.toHaveBeenCalled();
     });
 
     it('never throws — a provider that rejects degrades to "no usable runtime"', async () => {
       mockAudnexus.getChapterRuntime.mockRejectedValue(new Error('boom'));
 
-      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+      await expect(service.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
     });
 
     it('cache state is per-service-instance, so a second service performs its own lookup (F14)', async () => {
-      mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'ok', runtimeLengthMs: 33219490, isAccurate: true });
+      mockAudnexus.getChapterRuntime.mockResolvedValue(FABLEHAVEN_OK);
       await service.getChapterRuntimeSeconds(ASIN);
       await service.getChapterRuntimeSeconds(ASIN);
       expect(mockAudnexus.getChapterRuntime).toHaveBeenCalledTimes(1);
@@ -2134,7 +2089,7 @@ describe('MetadataService', () => {
       const result = await service.lookupForFixMatch('B_NEW');
       expect(result.kind).toBe('ok');
       if (result.kind === 'ok') {
-        expect(result.book.title).toBe('New Title'); // Audible authoritative
+        expect(result.book.title).toBe('New Title'); // Audible remains authoritative.
         expect(result.book.seriesPrimary?.asin).toBe('SERIES_ID');
         expect(result.book.genres).toEqual(['Fantasy']);
         expect(result.book.isbn).toBe('9781234567890');
@@ -2232,7 +2187,6 @@ describe('MetadataService', () => {
   });
 });
 
-// ===== #1545 — shared reject-words predicate (add gate ⇔ search filter lockstep) =====
 describe('isRejectedByWords (shared predicate)', () => {
   const book = (overrides?: Partial<BookMetadata>): BookMetadata =>
     ({ title: 'Clean Title', authors: [{ name: 'Real Author' }], ...overrides }) as BookMetadata;
@@ -2264,13 +2218,9 @@ describe('isRejectedByWords (shared predicate)', () => {
 
   it('does NOT reject when the word matches only a pseudo-narrator (stripped from surface)', () => {
     expect(isRejectedByWords(book({ narrators: ['full cast'] }), 'Full Cast')).toBe(false);
-    // …but a real narrator containing the phrase IS rejected.
     expect(isRejectedByWords(book({ narrators: ['GraphicAudio Full Cast'] }), 'Full Cast')).toBe(true);
   });
 
-  // Lockstep: the search filter (via the public searchBooks path) and the predicate
-  // must agree on the same fixture + reject list — the search keeps exactly the books
-  // the predicate does not reject.
   it('agrees with the search filter: searchBooks keeps exactly the books the predicate does not reject', async () => {
     const REJECT = 'Virtual Voice';
     const fixtures: BookMetadata[] = [
@@ -2292,12 +2242,10 @@ describe('isRejectedByWords (shared predicate)', () => {
 
     const expectedKept = fixtures.filter((b) => !isRejectedByWords(b, REJECT));
     expect(kept).toEqual(expectedKept);
-    // Sanity: the partition is non-trivial (one dropped, two kept).
     expect(kept).toHaveLength(2);
   });
 });
 
-// ── #1622 resolveBook — shared ASIN-fast-path → search-fallback resolver ──
 describe('MetadataService.resolveBook', () => {
   let service: MetadataService;
   let mockLog: ReturnType<typeof createMockLogger>;
@@ -2326,12 +2274,12 @@ describe('MetadataService.resolveBook', () => {
   });
 
   it('ASIN present but enrichBook returns null → falls back to search → returns validated candidate', async () => {
-    mockAudnexus.getBook.mockResolvedValueOnce(null); // print/Kindle ASIN 404s on Audnexus
+    mockAudnexus.getBook.mockResolvedValueOnce(null);
     mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [audiobook] });
 
     const result = await service.resolveBook({ asin: '1338589016', title: 'The Way of Kings', author: 'Brandon Sanderson' });
 
-    expect(result).toEqual(audiobook); // carries the real audiobook ASIN it found
+    expect(result).toEqual(audiobook);
     expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('The Way of Kings Brandon Sanderson');
   });
 
@@ -2364,7 +2312,6 @@ describe('MetadataService.resolveBook', () => {
 
   it('ASIN miss + non-matching top candidate → validation rejects → null', async () => {
     mockAudnexus.getBook.mockResolvedValueOnce(null);
-    // Wrong author → matchPassesValidation rejects.
     mockAudibleProvider.searchBooks.mockResolvedValueOnce({
       books: [{ title: 'The Way of Kings', authors: [{ name: 'Some Romance Author' }], asin: 'B_WRONG' }],
     });
@@ -2382,12 +2329,11 @@ describe('MetadataService.resolveBook', () => {
   });
 
   it('#1629: validates beyond books[0] — a later candidate is returned when the top one fails', async () => {
-    // applyBookFilters preserves provider order (no relevance rank), so the
-    // resolver must scan a top-N window, not just books[0].
+    // Filters preserve provider order, so resolution must scan a top-N window rather than trust books[0].
     mockAudibleProvider.searchBooks.mockResolvedValueOnce({
       books: [
-        { title: 'The Way of Kings', authors: [{ name: 'Some Romance Author' }], asin: 'B_WRONG' }, // fails author check
-        audiobook, // passes
+        { title: 'The Way of Kings', authors: [{ name: 'Some Romance Author' }], asin: 'B_WRONG' },
+        audiobook,
       ],
     });
 
@@ -2400,16 +2346,12 @@ describe('MetadataService.resolveBook', () => {
 
     const result = await service.resolveBook({ title: 'The Way of Kings', author: '   ' });
 
-    // Query carries the title only (no trailing whitespace), and the near-exact
-    // title clears the no-author path.
     expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('The Way of Kings');
     expect(result).toEqual(audiobook);
   });
 
   it('#1629: a 0.70–0.84 title-only match is rejected → null (no fuzzy ASIN to write back)', async () => {
-    // 'The Lost Hero' vs 'The Last Hero' → dice ≈ 0.83: clears the loose 0.7 gate
-    // but not the stricter no-author 0.85 gate, so no ASIN is returned to be
-    // written back onto the row by any of the three writeback surfaces.
+    // Dice is about 0.83: above the general 0.70 gate but below the no-author 0.85 gate.
     mockAudibleProvider.searchBooks.mockResolvedValueOnce({
       books: [{ title: 'The Last Hero', authors: [{ name: 'Whoever' }], asin: 'B_FUZZY' }],
     });
@@ -2427,15 +2369,12 @@ describe('MetadataService.resolveBook', () => {
   });
 
   it('F1/B5: ASIN path propagates the rate limit even when Audnexus is ALREADY in backoff (not treated as a miss)', async () => {
-    // Trip the Audnexus backoff window via a fresh 429.
     mockAudnexus.getBook.mockRejectedValueOnce(new RateLimitError(60000, 'Audnexus'));
     await expect(
       service.resolveBook({ asin: 'B0AUDIO', title: 'The Way of Kings', author: 'Brandon Sanderson' }),
     ).rejects.toBeInstanceOf(RateLimitError);
 
-    // Audnexus is now in an active backoff. A subsequent resolve must STILL
-    // throw rather than fall through to search and return a `null` no-match —
-    // and must not hit either provider (pre-emptive backoff, no fallback search).
+    // Active backoff must throw before either provider runs; it is not an ASIN miss.
     mockAudnexus.getBook.mockClear();
     mockAudibleProvider.searchBooks.mockClear();
     await expect(
@@ -2446,7 +2385,7 @@ describe('MetadataService.resolveBook', () => {
   });
 
   it('F5: provider RateLimitError on the FALLBACK SEARCH path → re-throws (NOT swallowed to [] / null)', async () => {
-    mockAudnexus.getBook.mockResolvedValueOnce(null); // miss → fall back to search
+    mockAudnexus.getBook.mockResolvedValueOnce(null);
     mockAudibleProvider.searchBooks.mockRejectedValueOnce(new RateLimitError(30000, 'Audible.com'));
 
     await expect(
@@ -2461,18 +2400,17 @@ describe('MetadataService.resolveBook', () => {
   });
 
   it('#1628: provider TransientError on the FALLBACK SEARCH path → re-throws (NOT swallowed to [] / null)', async () => {
-    mockAudnexus.getBook.mockResolvedValueOnce(null); // miss → fall back to search
+    mockAudnexus.getBook.mockResolvedValueOnce(null);
     mockAudibleProvider.searchBooks.mockRejectedValueOnce(new TransientError('Audible.com', 'HTTP 503'));
 
-    // A transient provider failure must be distinguishable from a real no-match:
-    // it propagates so callers leave the book pending, not `failed`.
+    // Propagation lets callers keep the book pending instead of recording a no-match.
     await expect(
       service.resolveBook({ asin: 'B_DEAD', title: 'The Way of Kings', author: 'Brandon Sanderson' }),
     ).rejects.toBeInstanceOf(TransientError);
   });
 
   it('#1628: a generic Error on the FALLBACK SEARCH path → re-throws (any caught fallback error is transient)', async () => {
-    mockAudnexus.getBook.mockResolvedValueOnce(null); // miss → fall back to search
+    mockAudnexus.getBook.mockResolvedValueOnce(null);
     mockAudibleProvider.searchBooks.mockRejectedValueOnce(new Error('Network error'));
 
     await expect(
@@ -2482,22 +2420,20 @@ describe('MetadataService.resolveBook', () => {
 
   it('#1628: an empty fallback search result is still a no-match → null (NOT a throw)', async () => {
     mockAudnexus.getBook.mockResolvedValueOnce(null);
-    mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [] }); // provider responded, genuinely zero books
+    mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [] });
 
     const result = await service.resolveBook({ asin: 'B_DEAD', title: 'Obscure', author: 'Nobody' });
     expect(result).toBeNull();
   });
 
   it('#1628: a fallback RateLimitError records the backoff (setRateLimited) so a later resolve is pre-empted', async () => {
-    mockAudnexus.getBook.mockResolvedValue(null); // always miss → fall back to search
+    mockAudnexus.getBook.mockResolvedValue(null);
     mockAudibleProvider.searchBooks.mockRejectedValueOnce(new RateLimitError(60000, 'Audible.com'));
 
     await expect(
       service.resolveBook({ asin: 'B_DEAD', title: 'The Way of Kings', author: 'Brandon Sanderson' }),
     ).rejects.toBeInstanceOf(RateLimitError);
 
-    // The fallback catch must call setRateLimited before re-throwing, so the next
-    // resolve is pre-empted by the active backoff without hitting the provider.
     mockAudibleProvider.searchBooks.mockClear();
     await expect(
       service.resolveBook({ title: 'Words of Radiance', author: 'Brandon Sanderson' }),
@@ -2506,16 +2442,758 @@ describe('MetadataService.resolveBook', () => {
   });
 });
 
+describe('MetadataService.resolveBook — ambiguous validation windows (#2202)', () => {
+  // The unchanged arms (one passing, zero passing, empty result, #1629 books[1] recovery, and every
+  // error-propagation case) are the pre-existing controls in the block above; they must stay green.
+  let service: MetadataService;
+  let mockLog: ReturnType<typeof createMockLogger>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // clearAllMocks leaves *Once queues intact; window fixtures queue several, so reset outright.
+    mockAudibleProvider.searchBooks.mockReset().mockResolvedValue({ books: [] });
+    mockAudnexus.getBook.mockReset().mockResolvedValue(null);
+    mockLog = createMockLogger();
+    service = new MetadataService(inject<FastifyBaseLogger>(mockLog));
+  });
+
+  function candidate(title: string, author: string, overrides: Partial<BookMetadata> = {}): BookMetadata {
+    return { title, authors: [{ name: author }], ...overrides };
+  }
+
+  function window(...books: BookMetadata[]): void {
+    mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books });
+  }
+
+  function holdLogCalls(): unknown[][] {
+    return (mockLog.info as Mock).mock.calls.filter((call) => call[1] === AMBIGUOUS_WINDOW_HELD);
+  }
+
+  const HERBERT = 'Frank Herbert';
+  const COLFER = 'Eoin Colfer';
+
+  describe('the hold (AC1, AC4)', () => {
+    it('two distinct passing candidates and no exact-title match → null, not an arbitrary pick', async () => {
+      window(
+        candidate('Dune', HERBERT, { asin: 'B_DUNE' }),
+        candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }),
+      );
+
+      const result = await service.resolveBook({ title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(result).toBeNull();
+    });
+
+    it('all five window entries passing with no exact-title match → null', async () => {
+      window(
+        ...['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon'].map((part, i) =>
+          candidate(`Artemis Fowl Chronicles: ${part}`, COLFER, { asin: `B_${i}` })),
+      );
+
+      const result = await service.resolveBook({ title: 'Artemis Fowl Chronicles', author: COLFER });
+
+      expect(result).toBeNull();
+    });
+
+    it('AC4: a sixth passing candidate is outside the window, so books[0] resolves instead of holding', async () => {
+      window(
+        candidate('Dune', HERBERT, { asin: 'B_DUNE' }),
+        candidate('Mistborn', HERBERT, { asin: 'B_1' }),
+        candidate('Elantris', HERBERT, { asin: 'B_2' }),
+        candidate('Warbreaker', HERBERT, { asin: 'B_3' }),
+        candidate('Skyward', HERBERT, { asin: 'B_4' }),
+        candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }),
+      );
+
+      const result = await service.resolveBook({ title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(result).toEqual(candidate('Dune', HERBERT, { asin: 'B_DUNE' }));
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+
+    it('AC4 inverse: the two passing candidates sit at the window tail → null', async () => {
+      window(
+        candidate('Mistborn', HERBERT, { asin: 'B_1' }),
+        candidate('Elantris', HERBERT, { asin: 'B_2' }),
+        candidate('Warbreaker', HERBERT, { asin: 'B_3' }),
+        candidate('Dune', HERBERT, { asin: 'B_DUNE' }),
+        candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }),
+      );
+
+      const result = await service.resolveBook({ title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(result).toBeNull();
+    });
+
+    it('title-only path: two same-titled editions both clear 0.85 → null (the tie-break names two)', async () => {
+      window(
+        candidate('Leviathan Wakes', 'James S A Corey', { asin: 'B_ED1' }),
+        candidate('Leviathan Wakes', 'James S A Corey', { asin: 'B_ED2' }),
+      );
+
+      expect(await service.resolveBook({ title: 'Leviathan Wakes' })).toBeNull();
+
+      window(candidate('Leviathan Wakes', 'James S A Corey', { asin: 'B_ED1' }));
+
+      expect(await service.resolveBook({ title: 'Leviathan Wakes' }))
+        .toEqual(candidate('Leviathan Wakes', 'James S A Corey', { asin: 'B_ED1' }));
+    });
+  });
+
+  describe('candidate identity (AC3)', () => {
+    it.each([
+      ['undefined + undefined', undefined, undefined],
+      ['undefined + empty string', undefined, ''],
+      ['empty string + whitespace', '', '   '],
+    ])('canonical-null ASINs never collapse with each other: %s → null', async (_label, left, right) => {
+      window(
+        candidate('Dune', HERBERT, { asin: left }),
+        candidate('Dune Messiah', HERBERT, { asin: right }),
+      );
+
+      const result = await service.resolveBook({ title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(result).toBeNull();
+    });
+
+    it('a canonical-null key never collapses with a non-null key → null', async () => {
+      window(
+        candidate('Dune', HERBERT, { asin: 'B_DUNE' }),
+        candidate('Dune Messiah', HERBERT, { asin: '' }),
+      );
+
+      const result = await service.resolveBook({ title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(result).toBeNull();
+    });
+
+    it('a single passing candidate with no ASIN is still returned (missing identity is not a hold)', async () => {
+      window(candidate('Dune Messiah', HERBERT, { asin: undefined }));
+
+      const result = await service.resolveBook({ title: 'Dune Messiah', author: HERBERT });
+
+      expect(result).toEqual(candidate('Dune Messiah', HERBERT, { asin: undefined }));
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+
+    it('equal non-null ASINs differing only in case collapse to one candidate → returned, not held', async () => {
+      window(
+        candidate('Dune', HERBERT, { asin: 'b0dune' }),
+        candidate('Dune Messiah', HERBERT, { asin: 'B0DUNE' }),
+      );
+
+      const result = await service.resolveBook({ title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(result).toEqual(candidate('Dune', HERBERT, { asin: 'b0dune' }));
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+
+    it('negative control: the same window with two genuinely different ASINs holds', async () => {
+      window(
+        candidate('Dune', HERBERT, { asin: 'B0DUNE' }),
+        candidate('Dune Messiah', HERBERT, { asin: 'B0MESSIAH' }),
+      );
+
+      const result = await service.resolveBook({ title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(result).toBeNull();
+    });
+
+    it('a candidate the gate rejects for empty authors does not contribute to the count', async () => {
+      window(
+        candidate('Dune', HERBERT, { asin: 'B_DUNE', authors: [] }),
+        candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }),
+      );
+
+      const result = await service.resolveBook({ title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(result).toEqual(candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }));
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+  });
+
+  describe('filter and ASIN-path interactions (AC5, AC6, AC7)', () => {
+    it('AC5: a sibling dropped by the podcast filter leaves one passing candidate → returned', async () => {
+      window(
+        candidate('Dune', HERBERT, { asin: 'B_DUNE', contentDeliveryType: 'PodcastParent' }),
+        candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }),
+      );
+
+      const result = await service.resolveBook({ title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(result).toEqual(candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }));
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+
+    it('AC6: the ASIN fast path wins over a five-way ambiguous window; search is never called', async () => {
+      const direct = candidate('Dune', HERBERT, { asin: 'B0AUDIO' });
+      mockAudnexus.getBook.mockResolvedValueOnce(direct);
+      window(
+        ...['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon'].map((part, i) =>
+          candidate(`Artemis Fowl Chronicles: ${part}`, COLFER, { asin: `B_${i}` })),
+      );
+
+      const result = await service.resolveBook({ asin: 'B0AUDIO', title: 'Artemis Fowl Chronicles', author: COLFER });
+
+      expect(result).toEqual(direct);
+      expect(mockAudibleProvider.searchBooks).not.toHaveBeenCalled();
+    });
+
+    it('AC6: a whitespace-only ASIN goes straight to search, where the ambiguous window holds', async () => {
+      window(
+        candidate('Dune', HERBERT, { asin: 'B_DUNE' }),
+        candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }),
+      );
+
+      const result = await service.resolveBook({ asin: '   ', title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(result).toBeNull();
+      expect(mockAudnexus.getBook).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['TransientError', new TransientError('Audnexus', 'HTTP 503')],
+      ['a generic Error', new Error('Network error')],
+    ])('AC7: %s on the ASIN path is swallowed by enrichBook, so the ambiguous fallback window holds', async (_label, error) => {
+      mockAudnexus.getBook.mockRejectedValueOnce(error);
+      window(
+        candidate('Dune', HERBERT, { asin: 'B_DUNE' }),
+        candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }),
+      );
+
+      const result = await service.resolveBook({ asin: 'B_DEAD', title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(result).toBeNull();
+      expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('Dune Chronicles Messiah Frank Herbert');
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ asin: 'B_DEAD' }),
+        'Audnexus enrichment lookup failed',
+      );
+    });
+  });
+
+  describe('the exact-title tie-break (AC13)', () => {
+    it('recovers the correct sibling when the wrong one is first — the #2202 wrong-sibling bug', async () => {
+      const messiah = candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' });
+      window(candidate('Dune', HERBERT, { asin: 'B_DUNE' }), messiah);
+
+      const result = await service.resolveBook({ title: 'Dune Messiah', author: HERBERT });
+
+      expect(result).toEqual(messiah);
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+
+    it('counterfactual twin: the same rule when the exact match is already first (fixture order decides the tag)', async () => {
+      const opener = candidate('Artemis Fowl', COLFER, { asin: 'B_OPENER' });
+      window(
+        opener,
+        candidate('The Artemis Fowl Files', COLFER, { asin: 'B_FILES' }),
+        candidate('Artemis Fowl: The Arctic Incident', COLFER, { asin: 'B_ARCTIC' }),
+        candidate('Artemis Fowl: The Eternity Code', COLFER, { asin: 'B_CODE' }),
+        candidate('Artemis Fowl: The Opal Deception', COLFER, { asin: 'B_OPAL' }),
+      );
+
+      const result = await service.resolveBook({ title: 'Artemis Fowl', author: COLFER });
+
+      expect(result).toEqual(opener);
+    });
+
+    it.each([
+      ['a parenthesised audio-edition tail', 'Artemis Fowl (Unabridged)'],
+      ['a bracketed audio-edition tail', 'Artemis Fowl [Audible]'],
+    ])('the fold tolerates case, doubled whitespace and %s', async (_label, exactTitle) => {
+      const exact = candidate(exactTitle, COLFER, { asin: 'B_EXACT' });
+      window(candidate('The Artemis Fowl Files', COLFER, { asin: 'B_FILES' }), exact);
+
+      const result = await service.resolveBook({ title: 'artemis  fowl', author: COLFER });
+
+      expect(result).toEqual(exact);
+    });
+
+    it('the fold tolerates a curly apostrophe against a straight one', async () => {
+      const exact = candidate('Artemis Fowl’s Tale', COLFER, { asin: 'B_EXACT' });
+      window(candidate("Artemis Fowl's Tale: The Files", COLFER, { asin: 'B_FILES' }), exact);
+
+      const result = await service.resolveBook({ title: "artemis  fowl's tale", author: COLFER });
+
+      expect(result).toEqual(exact);
+    });
+
+    it.each([
+      ['Cyrillic', 'Дозоры', 'Дозоры II'],
+      ['Japanese', '影の書', '影の書物'],
+    ])('%s: the fold preserves the script, so a byte-identical candidate behind a sibling still wins', async (_label, rowTitle, sibling) => {
+      const exact = candidate(rowTitle, 'A B', { asin: 'B_EXACT' });
+      window(candidate(sibling, 'A B', { asin: 'B_SIBLING' }), exact);
+
+      const result = await service.resolveBook({ title: rowTitle, author: 'A B' });
+
+      expect(result).toEqual(exact);
+    });
+
+    it('two different non-Latin candidates, neither an exact match → null (the fold did not empty them)', async () => {
+      window(
+        candidate('影の書物', 'A B', { asin: 'B_ONE' }),
+        candidate('影の書庫', 'A B', { asin: 'B_TWO' }),
+      );
+
+      const result = await service.resolveBook({ title: '影の書', author: 'A B' });
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('the tie-break fold must be identity-preserving, not the tolerant dedup fold', () => {
+    // Each row below is uniquely "matched" to the WRONG sibling by normalizeTitleCore, which strips
+    // trailing volume markers and generic parentheticals. These pin that collapse out of the resolver.
+    it.each([
+      ['numbered siblings', 'Saga Book 1', 'A B', 'Saga Companion', 'Saga Book 2'],
+      ['comma and Vol marker forms', 'Saga, Book 1', 'A B', 'Saga Companion', 'Saga Vol 2'],
+      ['a numbered sibling ahead of a companion', 'Dune Book 1', HERBERT, 'Dune Book 2', 'Dune Companion'],
+      ['a differing generic parenthetical', 'Dune', HERBERT, 'Dune Messiah', 'Dune (Book 2)'],
+      [
+        'a series-position parenthetical',
+        'The Farthest Shore',
+        'Ursula K Le Guin',
+        'The Farthest Shore Companion',
+        'The Farthest Shore (The Earthsea Cycle Book 3)',
+      ],
+    ])('%s hold instead of resolving', async (_label, rowTitle, author, first, second) => {
+      window(
+        candidate(first, author, { asin: 'B_ONE' }),
+        candidate(second, author, { asin: 'B_TWO' }),
+      );
+
+      const result = await service.resolveBook({ title: rowTitle, author });
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('observability (AC11)', () => {
+    it('a hold emits exactly one info line carrying the query, the distinct passing count and the window size', async () => {
+      window(
+        candidate('Dune', HERBERT, { asin: 'B_DUNE' }),
+        candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }),
+      );
+
+      await service.resolveBook({ title: 'Dune Chronicles Messiah', author: HERBERT });
+
+      expect(holdLogCalls()).toEqual([
+        [
+          // exact: 0 — neither candidate survives the lossless fold against this query.
+          expect.objectContaining({ query: 'Dune Chronicles Messiah Frank Herbert', passing: 2, exact: 0, window: 5 }),
+          AMBIGUOUS_WINDOW_HELD,
+        ],
+      ]);
+    });
+
+    // The two hold populations need opposite fixes — a title/normalization miss versus a failed
+    // equivalence proof — and `passing` alone cannot tell them apart. Both arms are pinned so the
+    // field cannot be dropped without a test failing.
+    it('distinguishes the two hold populations: exact 0 for a title miss, exact >= 2 for a failed equivalence proof', async () => {
+      window(
+        candidate('Dune Messiah', HERBERT, { asin: 'B_ONE', duration: 600, narrators: ['Scott Brick'] }),
+        candidate('Dune Messiah', HERBERT, { asin: 'B_TWO', duration: 900, narrators: ['Simon Vance'] }),
+      );
+
+      await service.resolveBook({ title: 'Dune Messiah', author: HERBERT });
+
+      expect(holdLogCalls()).toEqual([
+        [
+          expect.objectContaining({ query: 'Dune Messiah Frank Herbert', passing: 2, exact: 2, window: 5 }),
+          AMBIGUOUS_WINDOW_HELD,
+        ],
+      ]);
+    });
+
+    it('the tie-break-resolved, one-passing and zero-passing branches emit no hold line', async () => {
+      window(candidate('Dune', HERBERT, { asin: 'B_DUNE' }), candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }));
+      await service.resolveBook({ title: 'Dune Messiah', author: HERBERT });
+
+      window(candidate('Dune Messiah', HERBERT, { asin: 'B_MESSIAH' }));
+      await service.resolveBook({ title: 'Dune Messiah', author: HERBERT });
+
+      window(candidate('Mistborn', 'Brandon Sanderson', { asin: 'B_MIST' }));
+      await service.resolveBook({ title: 'Dune Messiah', author: HERBERT });
+
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+  });
+
+  describe('exactTitleCandidates — the empty-fold domain guard (AC13)', () => {
+    // Asserted at the helper: no window reachable through matchPassesValidation distinguishes
+    // guard-present from guard-absent, so a resolveBook-level test here would be vacuous.
+    it('a row title whose lossless fold is empty never names a winner, even against a lone twin', () => {
+      const twin: BookMetadata = { title: '!!!', authors: [{ name: 'A B' }] };
+
+      expect(exactTitleCandidates([twin], '!!!')).toEqual([]);
+    });
+
+    it('positive control: a non-empty fold still names its unique match', () => {
+      const winner: BookMetadata = { title: 'Dune Messiah', authors: [{ name: HERBERT }] };
+      const other: BookMetadata = { title: 'Dune', authors: [{ name: HERBERT }] };
+
+      const exact = exactTitleCandidates([other, winner], 'dune  messiah');
+
+      expect(exact).toHaveLength(1);
+      expect(exact[0]).toBe(winner);
+    });
+  });
+});
+
+describe('MetadataService.resolveBook — collapsing proven-equivalent duplicate listings (#2219)', () => {
+  let service: MetadataService;
+  let mockLog: ReturnType<typeof createMockLogger>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // clearAllMocks leaves *Once queues intact; window fixtures queue several, so reset outright.
+    mockAudibleProvider.searchBooks.mockReset().mockResolvedValue({ books: [] });
+    mockAudnexus.getBook.mockReset().mockResolvedValue(null);
+    mockLog = createMockLogger();
+    service = new MetadataService(inject<FastifyBaseLogger>(mockLog));
+  });
+
+  const TCHAIKOVSKY = 'Adrian Tchaikovsky';
+  const BEAR_HEAD_NARRATORS = ['Sophie Aldred', 'Mark Elstob', 'Ben Allen'];
+  /** 12h57m expressed in MINUTES — `BookMetadata.duration` is minutes, not seconds. */
+  const BEAR_HEAD_MINUTES = 777;
+
+  function candidate(title: string, author: string, overrides: Partial<BookMetadata> = {}): BookMetadata {
+    return { title, authors: [{ name: author }], ...overrides };
+  }
+
+  /** A collapse-eligible listing: exact title, canonical ASIN, positive duration, narrator signal. */
+  function listing(asin: string, overrides: Partial<BookMetadata> = {}): BookMetadata {
+    return candidate('Bear Head', TCHAIKOVSKY, {
+      asin,
+      duration: BEAR_HEAD_MINUTES,
+      narrators: BEAR_HEAD_NARRATORS,
+      ...overrides,
+    });
+  }
+
+  function window(...books: BookMetadata[]): void {
+    mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books });
+  }
+
+  function holdLogCalls(): unknown[][] {
+    return (mockLog.info as Mock).mock.calls.filter((call) => call[1] === AMBIGUOUS_WINDOW_HELD);
+  }
+
+  function collapseLogCalls(): unknown[][] {
+    return (mockLog.debug as Mock).mock.calls.filter((call) => call[1] === AMBIGUOUS_WINDOW_COLLAPSED);
+  }
+
+  function resolveBearHead(): Promise<BookMetadata | null> {
+    return service.resolveBook({ title: 'Bear Head', author: TCHAIKOVSKY });
+  }
+
+  describe('the collapse set is the exact-title candidates, never the passing window (AC2)', () => {
+    // The sibling reaches recording scope on purpose: matchesLibraryIdentity folds through
+    // normalizeTitleCore, which strips `Book N`, so `Saga Book 2` compares same-recording against
+    // BOTH `Saga Book 1` listings (#1896 pins that collapse and it must not be "fixed" here).
+    // Exactness of the collapse set — not the recording predicate — is what excludes it.
+    it('a same-recording sibling whose ASIN sorts first is never selected', async () => {
+      const sibling = candidate('Saga Book 2', 'A B', { asin: 'B00000000', duration: 600, narrators: ['Jim Dale'] });
+      const first = candidate('Saga Book 1', 'A B', { asin: 'B00000001', duration: 600, narrators: ['Jim Dale'] });
+      const second = candidate('Saga Book 1', 'A B', { asin: 'B00000009', duration: 600, narrators: ['Jim Dale'] });
+      window(sibling, first, second);
+
+      const result = await service.resolveBook({ title: 'Saga Book 1', author: 'A B' });
+
+      expect(result).toEqual(first);
+      expect(collapseLogCalls()).toEqual([
+        [
+          expect.objectContaining({ selectedAsin: 'B00000001', equivalentAsins: ['B00000001', 'B00000009'] }),
+          AMBIGUOUS_WINDOW_COLLAPSED,
+        ],
+      ]);
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+  });
+
+  describe('the Bear Head specimen (AC1)', () => {
+    it('two regional listings of one recording — same narrators in a different order — resolve instead of holding', async () => {
+      const regionA = listing('B08REGIONA');
+      const regionB = listing('B09REGIONB', { narrators: [...BEAR_HEAD_NARRATORS].reverse() });
+      window(regionA, regionB);
+
+      const result = await resolveBearHead();
+
+      expect(result).toEqual(regionA);
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+  });
+
+  describe('gate negatives — each still holds (AC3, AC4, AC5, AC7)', () => {
+    it('a non-transitive triple holds: 600 and 608 minutes are a duration mismatch even though each adjacent pair matches', async () => {
+      window(
+        listing('B_D600', { duration: 600 }),
+        listing('B_D604', { duration: 604 }),
+        listing('B_D608', { duration: 608 }),
+      );
+
+      expect(await resolveBearHead()).toBeNull();
+      expect(collapseLogCalls()).toHaveLength(0);
+      expect(holdLogCalls()).toHaveLength(1);
+    });
+
+    it.each([
+      ['duration absent on both sides', { duration: undefined }, { duration: undefined }],
+      ['duration zero on one side', {}, { duration: 0 }],
+      ['a negative duration on one side', {}, { duration: -BEAR_HEAD_MINUTES }],
+      ['an empty-string ASIN on one side', {}, { asin: '' }],
+      ['a whitespace-only ASIN on one side', {}, { asin: '   ' }],
+      ['narrators absent on both sides', { narrators: undefined }, { narrators: undefined }],
+      ['an empty narrator array on one side', {}, { narrators: [] }],
+      ['placeholder-only narrators on one side', {}, { narrators: ['Full Cast'] }],
+      ['a different narrator set', {}, { narrators: ['Someone Else'] }],
+      ['a production-form conflict', { formatType: 'abridged' }, { formatType: 'unabridged' }],
+    ])('%s → held', async (_label, left, right) => {
+      window(listing('B_LEFT', left), listing('B_RIGHT', right));
+
+      expect(await resolveBearHead()).toBeNull();
+      expect(collapseLogCalls()).toHaveLength(0);
+      expect(holdLogCalls()).toHaveLength(1);
+    });
+
+    it('divergent primary author spellings hold — bibliographic scope refuses the pair', async () => {
+      // Title-only input: an author on the row would reject the divergent spelling at the gate,
+      // leaving one candidate, so the refusal being asserted would never be reached.
+      window(listing('B_TCH'), listing('B_CZA', { authors: [{ name: 'Adrian Czajkowski' }] }));
+
+      expect(await service.resolveBook({ title: 'Bear Head' })).toBeNull();
+      expect(collapseLogCalls()).toHaveLength(0);
+    });
+
+    it('two authorless listings that fold equal but differ raw hold — scope compares raw titles there', async () => {
+      const authorless = (title: string, asin: string): BookMetadata => ({
+        title, authors: [], asin, duration: 600, narrators: ['Nathaniel Parker'],
+      });
+      window(authorless('Artemis Fowl', 'B_AF1'), authorless('artemis  fowl', 'B_AF2'));
+
+      expect(await service.resolveBook({ title: 'Artemis Fowl' })).toBeNull();
+      expect(collapseLogCalls()).toHaveLength(0);
+    });
+
+    it.each([
+      ['an absent formatType on the other side', {}],
+      ['an unrecognized formatType on the other side', { formatType: 'audiodrama' }],
+    ])('the production veto needs two KNOWN, different forms: %s still collapses', async (_label, right) => {
+      window(listing('B_AAA', { formatType: 'unabridged' }), listing('B_ZZZ', right));
+
+      expect((await resolveBearHead())?.asin).toBe('B_AAA');
+      expect(collapseLogCalls()).toHaveLength(1);
+    });
+  });
+
+  describe('selection among the collapsed set (AC8, AC9, AC10)', () => {
+    it('the pick and the debug payload are independent of provider order', async () => {
+      const rich = listing('B_ZZZ', { coverUrl: 'https://example.com/z.jpg' });
+      const plain = listing('B_AAA');
+
+      window(rich, plain);
+      const forwards = await resolveBearHead();
+      window(plain, rich);
+      const backwards = await resolveBearHead();
+
+      expect(forwards).toEqual(rich);
+      expect(backwards).toEqual(rich);
+      expect(collapseLogCalls()).toEqual([
+        [expect.objectContaining({ selectedAsin: 'B_ZZZ', equivalentAsins: ['B_AAA', 'B_ZZZ'] }), AMBIGUOUS_WINDOW_COLLAPSED],
+        [expect.objectContaining({ selectedAsin: 'B_ZZZ', equivalentAsins: ['B_AAA', 'B_ZZZ'] }), AMBIGUOUS_WINDOW_COLLAPSED],
+      ]);
+    });
+
+    // Every row is two otherwise-identical equivalent listings arranged so the ASIN tie-break would
+    // pick the OTHER one, so a green row proves the series rule fired and not the fallback.
+    it.each([
+      ['a seriesPrimary with a usable name', { seriesPrimary: { name: 'Dogs of War' } }, 'B_ZZZ'],
+      ['series[0] with a usable name and no primary', { series: [{ name: 'Dogs of War' }] }, 'B_ZZZ'],
+      ['both shapes present and usable', { seriesPrimary: { name: 'Dogs of War' }, series: [{ name: 'Other' }] }, 'B_ZZZ'],
+      ['an empty seriesPrimary name', { seriesPrimary: { name: '' } }, 'B_AAA'],
+      ['a whitespace-only seriesPrimary name', { seriesPrimary: { name: '   ' } }, 'B_AAA'],
+      // AC9b: pickPrimarySeries resolves on the OBJECT, so a blank primary shadows a good series[0].
+      // An implementation that ORs the two shapes together passes every other row and fails this one.
+      ['a blank seriesPrimary shadowing a usable series[0]', { seriesPrimary: { name: '  ' }, series: [{ name: 'Dogs of War' }] }, 'B_AAA'],
+      ['an empty series array', { series: [] }, 'B_AAA'],
+      ['a whitespace-only series[0] name', { series: [{ name: '   ' }] }, 'B_AAA'],
+    ])('AC9.2 series usability — %s', async (_label, shape, expectedAsin) => {
+      window(listing('B_ZZZ', shape), listing('B_AAA'));
+
+      expect((await resolveBearHead())?.asin).toBe(expectedAsin);
+    });
+
+    it('AC9.2 outranks AC9.3: a series-bearing candidate beats a peer with more useful fields', async () => {
+      window(
+        listing('B_ZZZ', { seriesPrimary: { name: 'Dogs of War' } }),
+        listing('B_AAA', { coverUrl: 'https://example.com/a.jpg', description: 'Blurb', publisher: 'Tor' }),
+      );
+
+      expect((await resolveBearHead())?.asin).toBe('B_ZZZ');
+    });
+
+    it.each([
+      ['coverUrl', { coverUrl: 'https://example.com/c.jpg' }],
+      ['description', { description: 'A real blurb' }],
+      ['subtitle', { subtitle: 'A Novel' }],
+      ['publisher', { publisher: 'Tor' }],
+      ['publishedDate', { publishedDate: '2021-01-01' }],
+      ['language', { language: 'english' }],
+      ['genres', { genres: ['Science Fiction'] }],
+    ])('AC9.3 a usable %s outranks a bare peer whose ASIN sorts first', async (_label, extra) => {
+      window(listing('B_ZZZ', extra), listing('B_AAA'));
+
+      expect((await resolveBearHead())?.asin).toBe('B_ZZZ');
+    });
+
+    it('AC9.3 counts the fields: two useful fields beat one', async () => {
+      window(
+        listing('B_AAA', { publisher: 'Tor' }),
+        listing('B_ZZZ', { coverUrl: 'https://example.com/z.jpg', description: 'Blurb' }),
+      );
+
+      expect((await resolveBearHead())?.asin).toBe('B_ZZZ');
+    });
+
+    // The blank-bearing candidate holds the SMALLER ASIN, so counting a blank would flip the pick.
+    it.each([
+      ['a whitespace-only publisher', { publisher: '   ' }],
+      ['an empty description', { description: '' }],
+      ['a whitespace-only description', { description: '  ' }],
+      ['an empty subtitle', { subtitle: '' }],
+      ['a whitespace-only language', { language: '   ' }],
+      ['a whitespace-only publishedDate', { publishedDate: ' ' }],
+      ['an empty genres array', { genres: [] }],
+      ['a genres array of blanks', { genres: ['   ', ''] }],
+    ])('AC9 %s is not a useful field, so the peer carrying one real field wins', async (_label, blank) => {
+      window(listing('B_AAA', blank), listing('B_ZZZ', { publisher: 'Tor' }));
+
+      expect((await resolveBearHead())?.asin).toBe('B_ZZZ');
+    });
+
+    it('AC9.4 two equally rich, series-less listings fall to the smallest canonical ASIN, from either order', async () => {
+      window(listing('B_AAA'), listing('B_ZZZ'));
+      expect((await resolveBearHead())?.asin).toBe('B_AAA');
+
+      window(listing('B_ZZZ'), listing('B_AAA'));
+      expect((await resolveBearHead())?.asin).toBe('B_AAA');
+    });
+
+    it('AC9.1 the requested ASIN wins over a richer peer and over the smaller ASIN, comparing canonically', async () => {
+      window(
+        listing('B_AAA', { coverUrl: 'https://example.com/a.jpg', description: 'Blurb' }),
+        listing('B_REGIONAL'),
+      );
+
+      // The ASIN fast path misses (getBook → null), so resolution falls through to the window.
+      const result = await service.resolveBook({ asin: 'b_regional', title: 'Bear Head', author: TCHAIKOVSKY });
+
+      expect(result?.asin).toBe('B_REGIONAL');
+      expect(mockAudnexus.getBook).toHaveBeenCalledWith('b_regional');
+    });
+
+    it('AC9.1 an input ASIN absent from the collapsed set does not disturb the ranking', async () => {
+      window(listing('B_AAA'), listing('B_ZZZ', { publisher: 'Tor' }));
+
+      const result = await service.resolveBook({ asin: 'B_ELSEWHERE', title: 'Bear Head', author: TCHAIKOVSKY });
+
+      expect(result?.asin).toBe('B_ZZZ');
+    });
+
+    it('AC10 the selected object is returned verbatim — no peer field is merged in', async () => {
+      const rich = listing('B_ZZZ', { coverUrl: 'https://example.com/z.jpg', description: 'Blurb' });
+      const plain = listing('B_AAA', { publisher: 'Tor' });
+      window(rich, plain);
+
+      const result = await resolveBearHead();
+
+      expect(result).toEqual(rich);
+      expect(result).not.toHaveProperty('publisher');
+    });
+  });
+
+  describe('observability (AC15, AC16, AC17)', () => {
+    it('a collapse emits exactly one debug line with the full payload and no hold line', async () => {
+      window(
+        listing('B_AAA'),
+        listing('B_ZZZ'),
+        candidate('Bear Head Companion', TCHAIKOVSKY, { asin: 'B_COMP', duration: 100, narrators: ['Someone Else'] }),
+      );
+
+      await resolveBearHead();
+
+      expect(collapseLogCalls()).toEqual([
+        [
+          {
+            query: 'Bear Head Adrian Tchaikovsky',
+            passing: 3,
+            exact: 2,
+            selectedAsin: 'B_AAA',
+            equivalentAsins: ['B_AAA', 'B_ZZZ'],
+          },
+          AMBIGUOUS_WINDOW_COLLAPSED,
+        ],
+      ]);
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+
+    it('equivalentAsins is sorted, so the payload is identical from either provider order', async () => {
+      window(listing('B_ZZZ'), listing('B_AAA'));
+      await resolveBearHead();
+
+      expect(collapseLogCalls()[0]![0]).toEqual(
+        expect.objectContaining({ equivalentAsins: ['B_AAA', 'B_ZZZ'] }),
+      );
+    });
+
+    it('a true hold still emits exactly one info line with the existing payload and no collapse line', async () => {
+      window(listing('B_AAA', { duration: 600 }), listing('B_ZZZ', { duration: 900 }));
+
+      await resolveBearHead();
+
+      expect(holdLogCalls()).toEqual([
+        [
+          expect.objectContaining({ query: 'Bear Head Adrian Tchaikovsky', passing: 2, window: 5 }),
+          AMBIGUOUS_WINDOW_HELD,
+        ],
+      ]);
+      expect(collapseLogCalls()).toHaveLength(0);
+    });
+  });
+
+  describe('unchanged paths (AC11, AC12, AC13)', () => {
+    it('a single passing candidate is returned without consulting the collapse arm', async () => {
+      window(listing('B_ONLY'));
+
+      expect((await resolveBearHead())?.asin).toBe('B_ONLY');
+      expect(collapseLogCalls()).toHaveLength(0);
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+
+    it('zero passing candidates still return null with no collapse line', async () => {
+      window(candidate('Something Else Entirely', 'Nobody At All', { asin: 'B_NO' }));
+
+      expect(await resolveBearHead()).toBeNull();
+      expect(collapseLogCalls()).toHaveLength(0);
+    });
+
+    it('AC11: two listings sharing a canonical ASIN collapse at distinctness, not at the recording gate', async () => {
+      window(listing('b08regiona'), listing('B08REGIONA', { duration: 900 }));
+
+      // Distinctness drops the second, leaving one passing candidate — a duration that would have
+      // failed the collapse gate never gets consulted.
+      expect((await resolveBearHead())?.asin).toBe('b08regiona');
+      expect(collapseLogCalls()).toHaveLength(0);
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+  });
+});
+
 describe('narrator-placeholder vocabulary subset consistency (#1657)', () => {
-  // PSEUDO_NARRATORS (the reject-word strip in this service) and
-  // NARRATOR_PLACEHOLDERS (the fuzzy-match no-signal vocabulary, the single home
-  // in src/core/utils/similarity.ts) are two DISTINCT decisions that overlap.
-  // The reject-word strip is intentionally NARROWER — a strict subset. Pinning
-  // that subset relationship here means adding a junk value to the shared core
-  // vocabulary can never make the two paths silently disagree; widening
-  // PSEUDO_NARRATORS to the full set (a runtime change, out of scope for #1657)
-  // would still satisfy the subset, but the explicit current-value assertion
-  // below guards that the reject-word set stays its current 3 values.
+  // Reject-word pseudo narrators are intentionally narrower than the fuzzy-match no-signal vocabulary.
 
   it('PSEUDO_NARRATORS ⊆ NARRATOR_PLACEHOLDERS (every reject-word marker is a known placeholder)', () => {
     for (const marker of PSEUDO_NARRATORS) {

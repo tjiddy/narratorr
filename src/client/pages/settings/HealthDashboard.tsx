@@ -40,21 +40,19 @@ function targetToHref(target: HealthCheckTarget): string {
   }
 }
 
+// Server trackingKey collides for singleton route checks; checkName stays unique.
 function cardKey(check: HealthCheckResult): string {
   const target = check.target;
-  if (!target) return check.checkName;
-  if (target.kind === 'indexer' || target.kind === 'download-client') {
+  if (target?.kind === 'indexer' || target?.kind === 'download-client') {
     return `${target.kind}:${target.id}`;
   }
-  return `${target.kind}:${target.path}`;
+  return check.checkName;
 }
 
 function HealthCard({ check }: { check: HealthCheckResult }) {
   const style = stateStyles[check.state] ?? stateStyles.healthy;
   const Icon = style.icon;
-  // A `link` makes the card non-clickable so its inline <a> isn't nested inside
-  // a <button> (invalid interactive nesting). Today only `version-update` sets
-  // `link`, and it carries no `target`, but this guard keeps that invariant safe.
+  // A link makes the card non-clickable to prevent invalid interactive nesting.
   const href = check.target && !check.link ? targetToHref(check.target) : null;
 
   const content = (
@@ -94,9 +92,7 @@ function HealthCard({ check }: { check: HealthCheckResult }) {
     );
   }
 
-  // A Link (not a programmatic navigate) so the unsaved-changes guard can
-  // intercept it while a settings form is dirty (#1888). `to={href}` carries any
-  // query params (e.g. ?edit=…) verbatim through the Router pipeline.
+  // Router Link lets the unsaved-changes guard intercept while preserving query parameters.
   return (
     <Link
       to={href}

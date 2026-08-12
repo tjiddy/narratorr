@@ -1,73 +1,61 @@
-# Dependencies
 node_modules/
 .pnpm-store/
 
-# Build outputs
 dist/
 build/
 *.tsbuildinfo
 
-# Environment
 .env
 .env.local
 .env.*.local
 
-# IDE
 .idea/
 .vscode/
 
-# Codex symlink (resolves to .claude/ — don't track as separate dir)
+# .agents is a symlink to .claude; do not track it twice.
 .agents/
 *.swp
 *.swo
 
-# OS
 .DS_Store
 Thumbs.db
 
-# Claude auto-memory (belongs in ~/.claude/projects/, not repo)
+# Claude memory belongs in ~/.claude/projects/, not the repository.
 memory/
 
-# Logs
 *.log
 npm-debug.log*
 pnpm-debug.log*
 
-# Testing
 coverage/
 lighthouse-reports/
 .lighthouseci/
 .lighthouserc.json
 
-# Playwright E2E
 e2e/test-results/
 e2e/playwright-report/
-# Persisted forms-auth storageState — holds a live session cookie, never commit
+# Contains a live session cookie; never commit.
 e2e/.auth/
 
-# Turbo
 .turbo/
 
-# Database
 *.db
 *.db-journal
 
-# Config directory (for local development)
 config/
 
-# Temp files
 tmp/
 temp/
 
-# Claude Code — ignore everything except docs, templates, settings, and whitelisted skills
+# Ignore Claude state except portable docs, templates, settings, and whitelisted skills.
 .claude/*
 !.claude/docs/
 !.claude/templates/
 !.claude/settings.json
 !.claude/skills/
-# Skills: ignore everything by default; add `!.claude/skills/<name>/` lines to ship specific skills
+# Add !.claude/skills/<name>/ to ship a skill.
 .claude/skills/*
 
 
-# Local scratch for non-committing artifacts (plans, reviews, assessments, audits, handoffs)
+# Uncommitted local planning and audit artifacts.
 /.scratch/

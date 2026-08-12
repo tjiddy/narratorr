@@ -19,7 +19,6 @@ export interface DownloadStatusConfig {
   textColor: string;
 }
 
-/** Map registry icon identifiers to React icon components. */
 const ICON_COMPONENTS: Record<string, React.FC<{ className?: string }>> = {
   'clock': ClockIcon,
   'arrow-down': ArrowDownIcon,

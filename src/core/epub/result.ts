@@ -1,21 +1,6 @@
 /**
- * The frozen result vocabulary for companion-EPUB validation and inspection
- * (#1986, design §4).
- *
- * Types only — no logic, no predicates, no constructor helpers. The module has
- * no runtime surface at all, so every consumer imports from it with
- * `import type` (`tsconfig.json` sets `isolatedModules` and
- * `verbatimModuleSyntax`; a value import would fail the build). The union is
- * pinned at compile time by `result.test.ts`.
- */
-
-/**
- * The eleven validation codes, frozen. Each one is persisted in
- * `companion_ebooks.validation_code` and maps to one owner-facing sentence in
- * the panel, so minting a twelfth has slate-wide cost. In particular a
- * non-regular file reuses `not_a_zip` — it reads as "this path does not present
- * a readable ZIP archive", which is exactly true of a directory, FIFO, socket,
- * device, or symlink.
+ * Persisted validation vocabulary; adding a code requires an owner-facing message.
+ * Non-regular files reuse `not_a_zip` rather than expanding this union.
  */
 export type EpubValidationCode =
   | 'not_a_zip'
@@ -43,24 +28,17 @@ export interface EpubTocEntry {
   depth: number;
 }
 
-/** A cover image extracted from inside the archive. */
 export interface EpubCover {
   mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
   bytes: Buffer;
 }
 
-/**
- * The structural-validation outcome (1.1d).
- *
- * `drm_protected` is a **status**, not a validation code: the owner message and
- * the Kindle outcome both differ from `invalid`, and it is never downgraded.
- */
+/** DRM is a distinct status because its owner message and Kindle outcome differ from invalid. */
 export type EpubValidation =
   | { status: 'available' }
   | { status: 'drm_protected' }
   | { status: 'invalid'; code: EpubValidationCode };
 
-/** The inspection outcome (1.1e) — validation plus the payload the owner panel renders. */
 export type EpubInspection =
   | { status: 'available'; metadata: EpubMetadata; toc: EpubTocEntry[] | null; cover: EpubCover | null }
   | { status: 'drm_protected' }

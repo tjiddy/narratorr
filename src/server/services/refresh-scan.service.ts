@@ -1,12 +1,16 @@
 import { stat, readdir } from 'node:fs/promises';
-import { extname } from 'node:path';
+import { basename, extname } from 'node:path';
+import type { Stats } from 'node:fs';
 import type { FastifyBaseLogger } from 'fastify';
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
+import { tokenizeNarrators } from '@core/utils/similarity.js';
 import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
 import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
 import { getVisiblePathSize } from '../utils/import-helpers.js';
 import { isDefinitiveAbsence } from '../utils/fs-errno.js';
+import { readOpfMetadata } from '../utils/opf-reader.js';
+import type { OpfMetadata } from '../utils/opf-reader.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 
@@ -29,6 +33,40 @@ export class RefreshScanError extends Error {
   }
 }
 
+/**
+ * Narrator precedence is OPF→tags→stored. Re-read OPF because import provenance is not persisted.
+ * undefined means no replacement and must omit narrators; BookService ignores [], which would make
+ * narratorsUpdated disagree with the write.
+ */
+export function selectRefreshNarrators(
+  opf: OpfMetadata | null,
+  tagNarrator: string | undefined,
+): string[] | undefined {
+  // OPF arrays are already normalized; re-splitting would shred a duo credited under one name.
+  if (opf?.narrators.length) return opf.narrators;
+
+  const fromTags = tagNarrator ? tokenizeNarrators(tagNarrator) : [];
+  return fromTags.length > 0 ? fromTags : undefined;
+}
+
+/** One root stat answers both existence and file-root classification. */
+async function statRoot(path: string): Promise<Stats> {
+  try {
+    return await stat(path);
+  } catch (error: unknown) {
+    // ENOENT/ENOTDIR prove absence; EACCES, ESTALE, EIO, and other uncertain errors must propagate.
+    if (isDefinitiveAbsence(error)) {
+      throw new RefreshScanError('PATH_MISSING', `Book path does not exist on disk: ${path}`);
+    }
+    throw error;
+  }
+}
+
+/** Keep pointer-file classification aligned with audio scanning and size walking; input is a basename. */
+function isVisibleAudioName(name: string): boolean {
+  return !isHiddenName(name) && AUDIO_EXTENSIONS.has(extname(name).toLowerCase());
+}
+
 export async function refreshScanBook(
   bookId: number,
   bookService: BookService,
@@ -44,20 +82,7 @@ export async function refreshScanBook(
     throw new RefreshScanError('NO_PATH', `Book ${bookId} has no library path — import it first`);
   }
 
-  try {
-    await stat(book.path);
-  } catch (error: unknown) {
-    // `isDefinitiveAbsence` is the shared discriminator for "the filesystem looked
-    // and found nothing" (src/server/utils/fs-errno.ts, #1955). It covers ENOTDIR as
-    // well as ENOENT — a book whose library path became a regular file, or whose
-    // parent did, statted ENOTDIR and used to escape as a raw errno instead of the
-    // intended PATH_MISSING. Everything else (EACCES on a re-mounting share, ESTALE,
-    // EIO) is undetermined and must still rethrow rather than claim the path is gone.
-    if (isDefinitiveAbsence(error)) {
-      throw new RefreshScanError('PATH_MISSING', `Book path does not exist on disk: ${book.path}`);
-    }
-    throw error;
-  }
+  const rootStat = await statRoot(book.path);
 
   const ffprobePath = resolveFfprobePathFromSettings(await resolveFfmpegPath());
 
@@ -71,28 +96,28 @@ export async function refreshScanBook(
     throw new RefreshScanError('NO_AUDIO_FILES', 'No audio files found in book directory');
   }
 
-  // Count top-level (non-recursive) audio files — exclude born-hidden transients (`.002.tmp.mp3`)
-  const topLevelEntries = await readdir(book.path);
-  const topLevelAudioFileCount = topLevelEntries.filter(
-    (f) => !isHiddenName(String(f)) && AUDIO_EXTENSIONS.has(extname(String(f)).toLowerCase()),
-  ).length;
+  // Root kind comes from stat, never extension: pointer files count directly, while directories
+  // named *.m4b are read. Let non-file readdir errors propagate instead of persisting zero.
+  let topLevelAudioFileCount: number;
+  if (rootStat.isFile()) {
+    topLevelAudioFileCount = isVisibleAudioName(basename(book.path)) ? 1 : 0;
+  } else {
+    const topLevelEntries = await readdir(book.path);
+    topLevelAudioFileCount = topLevelEntries.filter((f) => isVisibleAudioName(String(f))).length;
+  }
 
-  // Total directory size (all visible files, not just audio) — the visibility-aware walk skips
-  // leading-dot files and dot-dir subtrees so a mid-op `.merge-tmp/` never inflates stored `size`.
+  // Count all visible bytes, excluding dotfiles/subtrees such as mid-operation .merge-tmp.
   const directorySize = await getVisiblePathSize(book.path);
 
   const durationMinutes = Math.round(scanResult.totalDuration / 60);
-  const narratorsUpdated = !!scanResult.tagNarrator;
 
-  // Narrator names from tags (split on delimiters)
-  const narrators = scanResult.tagNarrator
-    ? scanResult.tagNarrator.split(/[,;&]/).map(n => n.trim()).filter(n => n.length > 0)
-    : undefined;
+  // The shared reader maps absent/unreadable/invalid OPF to null; pointer files have no sidecar.
+  const opf = await readOpfMetadata(book.path, log);
+  const narrators = selectRefreshNarrators(opf, scanResult.tagNarrator);
+  // True only when OPF or usable tags supplied a replacement.
+  const narratorsUpdated = narrators !== undefined;
 
-  // Skip-write guard: an all-rejected scan yields totalDuration 0 (every file's duration was
-  // omitted as implausible). Writing that zero would silently clobber a correct provider/prior
-  // duration and poison the baseline future quality-gate durationDelta comparisons run against,
-  // so preserve the stored duration/audioDuration in that case. Other fields refresh as today.
+  // An all-rejected scan reports zero; preserve prior duration or future quality deltas use a poisoned baseline.
   const durationFields =
     scanResult.totalDuration === 0
       ? {}
@@ -101,7 +126,7 @@ export async function refreshScanBook(
     log.warn({ bookId }, 'Refresh scan produced 0 total duration; preserving existing duration/audioDuration');
   }
 
-  // bookService.update() wraps narrator sync + book row update in a single transaction
+  // BookService updates narrator links and the row in one transaction.
   await bookService.update(bookId, {
     audioCodec: scanResult.codec,
     audioBitrate: scanResult.bitrate,

@@ -5,7 +5,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { RetagPreviewModal } from './RetagPreviewModal';
 import { countApplyFiles } from './RetagPreviewModal.utils';
-import { api, RetagFfmpegNotConfiguredError, type RetagPlan, type RetagExcludableField, type RetagMode } from '@/lib/api';
+import { api, RetagDependencyNotConfiguredError, type RetagPlan, type RetagExcludableField, type RetagMode } from '@/lib/api';
 
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>();
@@ -85,9 +85,7 @@ const emptyPlan: RetagPlan = {
   warnings: ['No taggable audio files found'],
 };
 
-// Single-file plan carrying the #1671 ABS-survivable set in both the canonical card
-// and the per-file diff, so the new FIELD_LABELS/FIELD_ORDER entries are load-bearing
-// (deleting them would drop these rows and fail the assertions below).
+// Includes every ABS-survivable field in both canonical and per-file data.
 const absFieldsPlan: RetagPlan = {
   mode: 'overwrite',
   embedCover: false,
@@ -155,7 +153,6 @@ describe('RetagPreviewModal', () => {
     vi.mocked(api.getBookRetagPreview).mockResolvedValue(multiFilePlan);
     renderModal();
 
-    // Overwrite radio reflects plan.mode and is the active selection
     const overwriteRadio = await screen.findByRole('radio', { name: /overwrite/i });
     expect(overwriteRadio).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByRole('checkbox', { name: /embed cover art/i })).toBeInTheDocument();
@@ -199,7 +196,6 @@ describe('RetagPreviewModal', () => {
     const titleCheckbox = screen.getByRole('checkbox', { name: /Include Title/ });
     await user.click(titleCheckbox);
 
-    // Other diffs (artist, track) still pending → still 2 files
     expect(screen.getByRole('button', { name: /Re-tag 2 files/ })).toBeEnabled();
   });
 
@@ -223,13 +219,11 @@ describe('RetagPreviewModal', () => {
     for (const cb of screen.getAllByRole('checkbox', { name: /^Include / })) await user.click(cb);
 
     expect(screen.getByText(/You.ve unchecked every field/)).toBeInTheDocument();
-    // Per-file disclosure should not render when the visible plan is empty
     expect(screen.queryByRole('button', { name: /per-file changes/ })).not.toBeInTheDocument();
   });
 
   it('mixed plan: excluding a field flips zero-write rows to skip-populated but leaves rows with other diffs labelled Will tag', async () => {
-    // Two files: ch01 has only an `artist` diff, ch02 has both `artist` and `title` diffs.
-    // Excluding `artist` zeros out ch01 but leaves ch02 still tagging.
+    // ch01 has only artist; ch02 retains title when artist is excluded.
     const mixedPlan: RetagPlan = {
       mode: 'overwrite',
       embedCover: false,
@@ -255,12 +249,9 @@ describe('RetagPreviewModal', () => {
     const user = userEvent.setup();
 
     await screen.findByRole('heading', { name: /These values will be written/ });
-    // Expand the per-file disclosure for multi-file plans
     await user.click(screen.getByRole('button', { name: /Show per-file changes/ }));
-    // Before opt-out: two Will tag labels
     expect(screen.getAllByText('Will tag')).toHaveLength(2);
 
-    // Exclude Artist → ch01 has no remaining diff and no cover-pending → effective skip-populated
     await user.click(screen.getByRole('checkbox', { name: 'Include Artist' }));
 
     expect(screen.getAllByText('Will tag')).toHaveLength(1);
@@ -269,7 +260,6 @@ describe('RetagPreviewModal', () => {
   });
 
   it('unchecking every diff field on a single will-tag file flips its row label to skip-populated (live recompute)', async () => {
-    // Single-file plan, no cover pending — excluding the diff field should produce a zero-write effective outcome.
     const singleDiffPlan: RetagPlan = {
       mode: 'overwrite',
       embedCover: false,
@@ -291,14 +281,10 @@ describe('RetagPreviewModal', () => {
     const user = userEvent.setup();
 
     await screen.findByRole('heading', { name: /These values will be written/ });
-    // Before opt-out: row labelled Will tag
     expect(screen.getByText('Will tag')).toBeInTheDocument();
 
-    // Exclude every excludable field — only Artist has a checkbox here, but be permissive
     for (const cb of screen.getAllByRole('checkbox', { name: /^Include / })) await user.click(cb);
 
-    // After opt-out, the live empty-state replaces the per-file table — assert the empty-state copy
-    // is what the user sees, not a stale "Will tag" label.
     expect(screen.queryByText('Will tag')).not.toBeInTheDocument();
     expect(screen.getByText(/You.ve unchecked every field/)).toBeInTheDocument();
   });
@@ -323,9 +309,7 @@ describe('RetagPreviewModal', () => {
     const trackCheckboxes = screen.getAllByRole('checkbox', { name: /Include Track/ });
     expect(trackCheckboxes).toHaveLength(1);
     await user.click(trackCheckboxes[0]!);
-    // exclude payload is asserted via apply click below
     await user.click(screen.getByRole('button', { name: /Re-tag/ }));
-    // The single click should submit a payload containing 'track' (which is the bundled name)
   });
 
   it('apply click submits excludeFields containing the unchecked fields', async () => {
@@ -340,7 +324,6 @@ describe('RetagPreviewModal', () => {
     expect(onConfirm).toHaveBeenCalledTimes(1);
     const calledWith = onConfirm.mock.calls[0]![0] as { excludeFields: RetagExcludableField[]; mode?: RetagMode; embedCover?: boolean };
     expect(calledWith.excludeFields).toEqual(['title']);
-    // Default overrides untouched — wire payload omits them
     expect(calledWith.mode).toBeUndefined();
     expect(calledWith.embedCover).toBeUndefined();
   });
@@ -350,12 +333,11 @@ describe('RetagPreviewModal', () => {
     renderModal();
 
     await screen.findByRole('heading', { name: /These values will be written/ });
-    // Exact accessible-name match ("Include Series" must not match "Include Series Part").
+    // Exact names keep Series distinct from Series Part.
     for (const label of ['Series', 'Series Part', 'Subtitle', 'ASIN', 'Publisher', 'Description', 'Year', 'Genre']) {
       expect(screen.getByRole('checkbox', { name: `Include ${label}` })).toBeChecked();
     }
-    // The new fields also surface in the (inline, single-file) per-file diff —
-    // each new value appears in both the canonical card and the diff row (>= 2).
+    // Each value appears in both canonical and per-file rows.
     expect(screen.getAllByText('B00ABCDEFG').length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText('Fantasy').length).toBeGreaterThanOrEqual(2);
   });
@@ -371,7 +353,6 @@ describe('RetagPreviewModal', () => {
 
     expect(onConfirm).toHaveBeenCalledTimes(1);
     const calledWith = onConfirm.mock.calls[0]![0] as { excludeFields: RetagExcludableField[] };
-    // Excluding a new field omits its -metadata arg in apply — preview/apply agree.
     expect(calledWith.excludeFields).toEqual(['asin']);
   });
 
@@ -403,24 +384,26 @@ describe('RetagPreviewModal', () => {
     renderModal();
 
     await screen.findByRole('heading', { name: /These values will be written/ });
-    // Tailored unsupported-only message — NOT the populated-metadata copy.
     expect(screen.getByText(/None of the audio files in this folder are in a taggable format/)).toBeInTheDocument();
     expect(screen.queryByText(/already populated/)).not.toBeInTheDocument();
-    // The unsupported file names are surfaced so the user knows which files are blocked.
     expect(screen.getByText('book.flac')).toBeInTheDocument();
     expect(screen.getByText('extra.ogg')).toBeInTheDocument();
     expect(screen.getByText('side.wav')).toBeInTheDocument();
-    // Apply button still says 0 files, disabled.
     expect(screen.getByRole('button', { name: /Re-tag 0 files/ })).toBeDisabled();
   });
 
-  it('ffmpeg-not-configured renders inline error and hides apply button', async () => {
+  it('dependency-not-configured renders inline error naming mutagen and hides apply button', async () => {
     vi.mocked(api.getBookRetagPreview).mockRejectedValue(
-      new RetagFfmpegNotConfiguredError('ffmpeg is not configured'),
+      new RetagDependencyNotConfiguredError('mutagen is not configured'),
     );
     renderModal();
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/ffmpeg/);
+    // This string is the operator's only remediation instruction, so assert it exactly.
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/mutagen/);
+    expect(alert).toHaveTextContent(/MUTAGEN_PYTHON/);
+    expect(alert).not.toHaveTextContent(/ffmpeg/i);
+    expect(alert).not.toHaveTextContent(/FFMPEG_PATH/);
     expect(screen.queryByRole('button', { name: /Re-tag/ })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
   });
@@ -464,7 +447,6 @@ describe('RetagPreviewModal', () => {
     renderModal();
 
     await screen.findByRole('heading', { name: /These values will be written/ });
-    // Both null sides render as (empty), never as the ∅ glyph — Modal portals to body
     const empties = await screen.findAllByText('(empty)');
     expect(empties.length).toBeGreaterThanOrEqual(2);
     expect(document.body.textContent ?? '').not.toContain('∅');
@@ -482,7 +464,6 @@ describe('RetagPreviewModal', () => {
     expect(vi.mocked(api.getBookRetagPreview)).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByRole('radio', { name: /populate missing/i }));
-    // Refetch with override
     expect(vi.mocked(api.getBookRetagPreview).mock.calls.at(-1)![1]).toEqual({ mode: 'populate_missing' });
   });
 
@@ -500,7 +481,6 @@ describe('RetagPreviewModal', () => {
     expect(checkbox).not.toBeChecked();
     await user.click(checkbox);
 
-    // Override propagates to fetch + apply payload
     expect(vi.mocked(api.getBookRetagPreview).mock.calls.at(-1)![1]).toEqual({ embedCover: true });
     await user.click(screen.getByRole('button', { name: /Re-tag/ }));
     expect(onConfirm.mock.calls[0]![0]).toMatchObject({ embedCover: true });
@@ -534,26 +514,20 @@ describe('RetagPreviewModal', () => {
   });
 
   it('apply payload omits mode override when user toggles to non-default then back to default (F2)', async () => {
-    // The reviewer flagged that emitting overrides based on "touched" state violates the AC:
-    // overrides must compare against settings defaults, not user interaction.
     vi.mocked(api.getBookRetagPreview).mockImplementation(async (_id, overrides) => ({
       ...multiFilePlan,
-      // Settings default is 'overwrite' (mirrors multiFilePlan.mode); echo the override-or-default.
       mode: overrides?.mode ?? 'overwrite',
     }));
     const { onConfirm } = renderModal();
     const user = userEvent.setup();
 
     await screen.findByRole('heading', { name: /These values will be written/ });
-    // Toggle to populate_missing (non-default) — fetch should send the override
     await user.click(screen.getByRole('radio', { name: /populate missing/i }));
     expect(vi.mocked(api.getBookRetagPreview).mock.calls.at(-1)![1]).toEqual({ mode: 'populate_missing' });
 
-    // Toggle back to overwrite (settings default) — fetch should omit the override now
     await user.click(screen.getByRole('radio', { name: /^overwrite$/i }));
     expect(vi.mocked(api.getBookRetagPreview).mock.calls.at(-1)![1]).toEqual({});
 
-    // Apply — payload must omit mode since the active value matches settings default
     await user.click(screen.getByRole('button', { name: /Re-tag/ }));
     const payload = onConfirm.mock.calls[0]![0] as Record<string, unknown>;
     expect(payload.mode).toBeUndefined();
@@ -564,7 +538,6 @@ describe('RetagPreviewModal', () => {
     vi.mocked(api.getBookRetagPreview).mockImplementation(async (_id, overrides) => ({
       ...multiFilePlan,
       hasCoverFile: true,
-      // Settings default is false; echo override-or-default.
       embedCover: overrides?.embedCover ?? false,
     }));
     const { onConfirm } = renderModal();
@@ -572,10 +545,8 @@ describe('RetagPreviewModal', () => {
 
     await screen.findByRole('heading', { name: /These values will be written/ });
     const checkbox = screen.getByRole('checkbox', { name: /embed cover art/i });
-    // Toggle on (non-default)
     await user.click(checkbox);
     expect(vi.mocked(api.getBookRetagPreview).mock.calls.at(-1)![1]).toEqual({ embedCover: true });
-    // Toggle back off (settings default)
     await user.click(screen.getByRole('checkbox', { name: /embed cover art/i }));
     expect(vi.mocked(api.getBookRetagPreview).mock.calls.at(-1)![1]).toEqual({});
 
@@ -586,16 +557,11 @@ describe('RetagPreviewModal', () => {
   });
 
   it('DiffRow uses single-line shrinkable grid with truncating value cells (F1)', async () => {
-    // Regression guard for the UX layout contract: the row must use a 4-col grid
-    // with minmax(0,1fr) value cells + truncate, so long values ellipsize instead
-    // of wrapping the row to a new line at modal width. If the layout classes
-    // are deleted or reverted, the long-value no-wrap behavior breaks silently.
     vi.mocked(api.getBookRetagPreview).mockResolvedValue(multiFilePlan);
     renderModal();
     const user = userEvent.setup();
 
     await screen.findByRole('heading', { name: /These values will be written/ });
-    // Multi-file disclosure is collapsed by default — open it so DiffRows render
     await user.click(screen.getByRole('button', { name: /Show per-file changes/ }));
 
     const allLis = Array.from(document.body.querySelectorAll('ul li')) as HTMLLIElement[];
@@ -604,8 +570,6 @@ describe('RetagPreviewModal', () => {
     );
     expect(diffRows.length).toBeGreaterThan(0);
 
-    // Each diff row must include `truncate` value cells so long content ellipsizes.
-    // The label + current + next spans all use `truncate` (3 cells per row).
     for (const row of diffRows) {
       const truncating = row.querySelectorAll('.truncate');
       expect(truncating.length).toBeGreaterThanOrEqual(3);
@@ -628,7 +592,6 @@ describe('RetagPreviewModal', () => {
     const user = userEvent.setup();
 
     await screen.findByRole('heading', { name: /These values will be written/ });
-    // Exclude the only diff field — falls back to cover-only labeling
     await user.click(screen.getByRole('checkbox', { name: 'Include Artist' }));
     await user.click(screen.getByRole('checkbox', { name: 'Include Album Artist' }));
     await user.click(screen.getByRole('checkbox', { name: 'Include Album' }));

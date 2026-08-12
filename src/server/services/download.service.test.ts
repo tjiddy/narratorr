@@ -11,7 +11,6 @@ import { createMockDbBook, createMockDbIndexer } from '../__tests__/factories.js
 import * as statusRegistry from '@shared/download-status-registry.js';
 import { deriveDisplayStatus } from '@shared/download-status-registry.js';
 
-/** Serialize a Drizzle SQL expression into a raw SQL+params pair for predicate assertions. */
 const dialect = new SQLiteSyncDialect();
 function toSQL(expr: unknown): { sql: string; params: unknown[] } {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -142,14 +141,12 @@ describe('DownloadService', () => {
     });
 
     it('derives the display status from the (clientStatus, pipelineStage) tuple (#1445 F1 seam)', async () => {
-      // A completed client download mid-pipeline displays the pipeline stage.
       db.select.mockReturnValue(
         mockDbChain([{ download: { ...mockDownload, clientStatus: 'completed', pipelineStage: 'pending_review' }, book: mockBook }]),
       );
 
       const result = await service.getById(1);
       expect(result!.status).toBe('pending_review');
-      // The underlying axis fields are exposed alongside the derived status.
       expect(result!.clientStatus).toBe('completed');
       expect(result!.pipelineStage).toBe('pending_review');
     });
@@ -214,7 +211,6 @@ describe('DownloadService', () => {
 
       expect(completedSpy).toHaveBeenCalled();
       expect(inProgressSpy).toHaveBeenCalled();
-      // Verify the effective completed set excludes 'failed'
       const completedStatuses = completedSpy.mock.results[0]!.value as string[];
       expect(completedStatuses).not.toContain('failed');
       expect(completedStatuses).toContain('completed');
@@ -269,11 +265,8 @@ describe('DownloadService', () => {
 
       db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.update.mockReturnValue(mockDbChain());
-      // First select: getActiveByBookId (no active downloads)
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // Second select: import_jobs same-book auto-job lookup (no pending jobs)
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // Third select: getById for return
       db.select.mockReturnValueOnce(
         mockDbChain([{ download: mockDownload, book: mockBook }]),
       );
@@ -313,7 +306,6 @@ describe('DownloadService', () => {
     });
 
     it('throws when bookId already has an active download', async () => {
-      // getActiveByBookId returns an existing active download
       db.select.mockReturnValue(
         mockDbChain([{ download: mockDownload, book: mockBook }]),
       );
@@ -326,7 +318,6 @@ describe('DownloadService', () => {
         }),
       ).rejects.toThrow(DuplicateDownloadError);
 
-      // No insert should have been called
       expect(db.insert).not.toHaveBeenCalled();
     });
 
@@ -350,7 +341,6 @@ describe('DownloadService', () => {
 
       expect(result).toBeDefined();
       expect(db.insert).toHaveBeenCalledTimes(1);
-      // Only one db.select call — the final getById, NOT getActiveByBookId
       expect(db.select).toHaveBeenCalledTimes(1);
     });
 
@@ -368,7 +358,6 @@ describe('DownloadService', () => {
         mockDbChain([{ download: mockDownload, book: mockBook }]),
       );
 
-      // Even though bookId is provided, skipDuplicateCheck bypasses the guard
       const result = await service.grab({
         downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
         title: 'Test',
@@ -378,7 +367,6 @@ describe('DownloadService', () => {
 
       expect(result).toBeDefined();
       expect(db.insert).toHaveBeenCalledTimes(1);
-      // Only one db.select call — the final getById, NOT getActiveByBookId
       expect(db.select).toHaveBeenCalledTimes(1);
     });
 
@@ -404,7 +392,6 @@ describe('DownloadService', () => {
       });
 
       expect(result).toBeDefined();
-      // Verify insert was called with completed status
       const insertCall = db.insert.mock.calls[0];
       expect(insertCall).toBeDefined();
     });
@@ -438,7 +425,6 @@ describe('DownloadService', () => {
       expect(insertValues.indexerId).toBe(42);
     });
 
-    // #1144 — pre-grab status persistence
     it('persists bookStatusAtGrab to insert payload when provided in grab params', async () => {
       const mockAdapter = {
         addDownload: vi.fn().mockResolvedValue('ext-123'),
@@ -488,7 +474,6 @@ describe('DownloadService', () => {
       expect(insertValues.bookStatusAtGrab).toBeNull();
     });
 
-    // #1443 — opaque publicId on the downloads insert boundary
     it('writes a dl_-prefixed publicId to the downloads insert payload', async () => {
       const mockAdapter = {
         addDownload: vi.fn().mockResolvedValue('ext-123'),
@@ -513,7 +498,6 @@ describe('DownloadService', () => {
       expect(insertValues.publicId).toMatch(/^dl_/);
     });
 
-    // #966 — LAN allowlist construction for HTTP torrent grabs
     describe('LAN allowlist (#966)', () => {
       const httpTorrentUrl = 'http://192.168.0.22:9696/dl/foo.torrent';
 
@@ -546,7 +530,6 @@ describe('DownloadService', () => {
 
         await service.grab({ downloadUrl: httpTorrentUrl, title: 'Test', protocol: 'torrent' });
 
-        // Delegation contract: one call to getLanAllowlist, allowlist passed through unchanged
         expect(indexerService.getLanAllowlist).toHaveBeenCalledTimes(1);
         const allowlist = resolveSpy.mock.calls[0]![0]!;
         expect(allowlist).toBe(sharedAllowlist);
@@ -573,8 +556,7 @@ describe('DownloadService', () => {
         resolveSpy.mockRestore();
       });
 
-      // #1243 — usenet HTTP grabs now thread the LAN allowlist so the Blackhole
-      // self-download can reach private/LAN configured-indexer NZB URLs.
+      // Usenet HTTP grabs need the LAN allowlist for Blackhole to fetch private indexer NZBs (#1243).
       it('delegates LAN allowlist construction to IndexerService.getLanAllowlist for usenet HTTP grabs (#1243)', async () => {
         setupCommonGrabMocks();
         const sharedAllowlist = {
@@ -645,7 +627,7 @@ describe('DownloadService', () => {
 
       await service.setError(1, 'Connection refused');
 
-      // Full tuple so the row derives as `failed` regardless of prior pipeline stage.
+      // Reset pipelineStage so a prior stage cannot override the failed display status.
       expect(chain.set).toHaveBeenCalledWith({ clientStatus: 'failed', pipelineStage: 'idle', errorMessage: 'Connection refused' });
       expect(deriveDisplayStatus('failed', 'idle')).toBe('failed');
     });
@@ -681,7 +663,6 @@ describe('DownloadService', () => {
 
       expect(result).toBe(true);
       expect(mockAdapter.removeDownload).toHaveBeenCalledWith(mockDownload.externalId, true);
-      // Idle cancel still carries the explicit pipelineStage: 'idle' (no-op on that axis).
       expect(chain.set).toHaveBeenCalledWith({ clientStatus: 'failed', pipelineStage: 'idle', errorMessage: 'Cancelled by user' });
     });
 
@@ -699,7 +680,6 @@ describe('DownloadService', () => {
 
         expect(result).toBe(true);
         expect(chain.set).toHaveBeenCalledWith({ clientStatus: 'failed', pipelineStage: 'idle', errorMessage: 'Cancelled by user' });
-        // The written tuple derives as `failed`, not the stale in-pipeline stage.
         expect(deriveDisplayStatus('failed', 'idle')).toBe('failed');
       },
     );
@@ -770,7 +750,7 @@ describe('DownloadService', () => {
       (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit', type: 'blackhole' });
       (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
 
-      // Capture the inserted row to prove '' is normalized to null at insert (#1861).
+      // Capture the insert: empty externalId must become null rather than a permanent QG blocker (#1861).
       const valuesSpy = vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([{ id: 1 }]) });
       db.insert.mockReturnValue({ values: valuesSpy } as never);
       db.update.mockReturnValue(mockDbChain());
@@ -786,12 +766,10 @@ describe('DownloadService', () => {
         title: 'Test',
       });
 
-      // Empty string is falsy → treated as handoff → log.info about handoff
       expect(log.info).toHaveBeenCalledWith(
         expect.objectContaining({ title: 'Test', clientType: 'blackhole' }),
         expect.stringContaining('Handoff client'),
       );
-      // '' → null at the insert seam so it can never persist as a permanent QG blocker.
       expect(valuesSpy).toHaveBeenCalledWith(expect.objectContaining({ externalId: null }));
     });
 
@@ -841,8 +819,7 @@ describe('DownloadService', () => {
       ).rejects.toThrow('UNIQUE constraint failed');
     });
 
-    // #1857 AC6/F5/F30 — client-add succeeded, insert failed → best-effort compensate
-    // the just-admitted tracked download with delete-files (externalId, true).
+    // Once the client accepts a tracked download, DB failure requires best-effort external cleanup (#1857).
     it('compensates a tracked download with removeDownload(externalId, true) when insert fails, then rethrows', async () => {
       const mockAdapter = {
         addDownload: vi.fn().mockResolvedValue('ext-456'),
@@ -870,7 +847,6 @@ describe('DownloadService', () => {
       (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
       db.insert.mockImplementation(() => { throw new Error('UNIQUE constraint failed'); });
 
-      // Insert error still surfaces even though compensation failed.
       await expect(
         svc.grab({ downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc', title: 'Test' }),
       ).rejects.toThrow('UNIQUE constraint failed');
@@ -881,15 +857,14 @@ describe('DownloadService', () => {
       );
     });
 
-    // #1857 F1 — a NULL adapter (compensation cannot run) must NOT silently skip the
-    // recovery log; the orphaned externalId still has to be logged for the operator.
+    // Missing compensation adapters still leave operator-recoverable external orphans (#1857).
     it('logs the orphan when the compensation adapter is unavailable (getAdapter → null)', async () => {
       const log = createMockLogger();
       const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
       (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
       (clientService.getAdapter as Mock)
-        .mockResolvedValueOnce({ addDownload: vi.fn().mockResolvedValue('ext-null') }) // add succeeds
-        .mockResolvedValueOnce(null); // compensation lookup returns no adapter
+        .mockResolvedValueOnce({ addDownload: vi.fn().mockResolvedValue('ext-null') })
+        .mockResolvedValueOnce(null);
       db.insert.mockImplementation(() => { throw new Error('UNIQUE constraint failed'); });
 
       await expect(
@@ -938,11 +913,8 @@ describe('DownloadService', () => {
 
       db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.update.mockReturnValue(mockDbChain());
-      // First select: getActiveByBookId (no active downloads)
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // Second select: import_jobs same-book auto-job lookup (no pending jobs)
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // Third select: getById for return
       db.select.mockReturnValueOnce(
         mockDbChain([{ download: mockDownload, book: mockBook }]),
       );
@@ -1030,7 +1002,6 @@ describe('DownloadService', () => {
         title: 'Test',
       });
 
-      // db.update should NOT have been called (no book status update)
       expect(db.update).not.toHaveBeenCalled();
     });
 
@@ -1048,7 +1019,7 @@ describe('DownloadService', () => {
         mockDbChain([{ download: mockDownload, book: mockBook }]),
       );
 
-      // Build a minimal valid torrent for the resolver to extract a hash
+      // Minimal valid torrent lets the resolver extract an info hash.
       const inner = Buffer.from('d6:lengthi1024e4:name8:test.mp3e');
       const torrentContent = Buffer.from(`d8:announce5:x.com4:info${inner.toString()}e`);
       const dataUri = `data:application/x-bittorrent;base64,${torrentContent.toString('base64')}`;
@@ -1058,7 +1029,6 @@ describe('DownloadService', () => {
         title: 'MAM Torrent',
       });
 
-      // Adapter should receive a torrent-bytes artifact (not the raw data: URI)
       expect(mockAdapter.addDownload).toHaveBeenCalledWith(
         expect.objectContaining({ type: 'torrent-bytes', data: expect.any(Buffer) }),
         undefined,
@@ -1102,7 +1072,6 @@ describe('DownloadService', () => {
       (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
       (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
 
-      // Use a magnet URI with no info hash — resolver will throw
       await expect(
         service.grab({
           downloadUrl: 'magnet:?dn=Test+File',
@@ -1110,7 +1079,6 @@ describe('DownloadService', () => {
         }),
       ).rejects.toThrow(/info hash/i);
 
-      // Neither adapter nor DB should have been called
       expect(mockAdapter.addDownload).not.toHaveBeenCalled();
       expect(db.insert).not.toHaveBeenCalled();
     });
@@ -1129,7 +1097,6 @@ describe('DownloadService', () => {
         mockDbChain([{ download: mockDownload, book: mockBook }]),
       );
 
-      // Build a minimal valid torrent and data: URI
       const { createHash: createHashFn } = await import('node:crypto');
       const inner = Buffer.from('d6:lengthi1024e4:name8:test.mp3e');
       const expectedHash = createHashFn('sha1').update(inner).digest('hex');
@@ -1184,7 +1151,6 @@ describe('DownloadService', () => {
         mockDbChain([{ download: mockDownload, book: mockBook }]),
       );
 
-      // Build a minimal valid torrent
       const inner = Buffer.from('d6:lengthi1024e4:name8:test.mp3e');
       const torrentContent = Buffer.from(`d8:announce5:x.com4:info${inner.toString()}e`);
       const dataUri = `data:application/x-bittorrent;base64,${torrentContent.toString('base64')}`;
@@ -1197,7 +1163,6 @@ describe('DownloadService', () => {
         title: 'MAM Torrent',
       });
 
-      // Should log truncated data URI, not full base64 content
       expect(log.debug).toHaveBeenCalledWith(
         expect.objectContaining({ downloadUrl: expect.stringContaining('data:application/x-bittorrent') }),
         expect.any(String),
@@ -1296,7 +1261,6 @@ describe('DownloadService', () => {
 
       await service.cancel(1);
 
-      // Only one db.update call — for download status, not for book status
       const setCalls = (chain.set as Mock).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
       expect(setCalls).toHaveLength(1);
       expect(setCalls[0]).toEqual({ clientStatus: 'failed', pipelineStage: 'idle', errorMessage: 'Cancelled by user' });
@@ -1415,13 +1379,9 @@ describe('DownloadService', () => {
         expect(chain.set).toHaveBeenCalledWith({ errorMessage: 'No viable candidates' });
       });
 
-      // #1857 F12 / #1861 — the book is already served by a grab blocker (a live
-      // download / replacement winner, a QG-eligible completed row, or a pending auto
-      // import job). retry() must map to { status: 'already_active' } WITHOUT deleting
-      // the old failed row or touching its errorMessage.
+      // Any grab blocker maps to already_active without deleting or rewriting the failed row (#1857, #1861).
       it('returns already_active and preserves the old failed row (not deleted, errorMessage untouched)', async () => {
         const failedDownload = { ...mockDownload, id: 1, clientStatus: 'failed' as const, pipelineStage: 'idle' as const, errorMessage: 'Original failure' };
-        // Early precheck sees a grab blocker for the book → retrySearch returns already_active.
         mockRetryDeps.downloadOrchestrator.hasGrabBlocker.mockResolvedValue(true);
 
         db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
@@ -1431,12 +1391,9 @@ describe('DownloadService', () => {
         const result = await retryService.retry(1);
 
         expect(result.status).toBe('already_active');
-        // Old row NOT deleted, errorMessage NOT rewritten, indexer search never run.
         expect(db.delete).not.toHaveBeenCalled();
         expect(chain.set).not.toHaveBeenCalled();
         expect(mockRetryDeps.indexerSearchService.searchAllWithStatus).not.toHaveBeenCalled();
-        // #1861 F2 — the manual-retry diagnostic is blocker-neutral (the outcome now also
-        // covers QG-completed rows and pending auto import jobs, not just live downloads).
         expect(retryServiceLog.info).toHaveBeenCalledWith(
           { id: 1 },
           'Manual retry: book already has a blocking download or import — not retrying',
@@ -1448,19 +1405,9 @@ describe('DownloadService', () => {
         retryBudget.consumeAttempt(1);
         retryBudget.consumeAttempt(1);
         retryBudget.consumeAttempt(1);
-        // Budget reset by retry(), then immediately exhausted — need 4 total since reset clears
-        // Actually retry() calls reset(bookId) first, so let's re-exhaust after
-        // We need to make the budget report exhausted AFTER the reset
-        // The retry method resets, then calls retrySearch which checks hasRemaining
-        // To exhaust: we need retrySearch to return 'exhausted'
-        // Since retry() resets first, we can't exhaust by pre-consuming. Instead test the no_candidates/exhausted mapping:
-        // Both no_candidates and exhausted map to the same response. Let's verify with no_candidates already tested above.
-
-        // For exhausted specifically, we need the budget to be exhausted WITHIN the retrySearch call
-        // This means consuming 3 attempts on the same bookId after the reset
-        // We can spy on retryBudget to prevent the reset:
+        // Suppress retry's reset so retrySearch observes the pre-exhausted budget.
         vi.spyOn(retryBudget, 'reset').mockImplementation(() => {
-          // no-op — don't actually reset so budget stays exhausted
+          // Preserve the exhausted state.
         });
 
         db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
@@ -1522,13 +1469,10 @@ describe('DownloadService', () => {
         );
       });
 
-      // #1103 F5 — manual retry guard on imported books
       it('throws DownloadError IMPORTED_BOOK_NO_RETRY when linked book has been imported (book.path != null)', async () => {
         const failedDownload = { ...mockDownload, id: 1, clientStatus: 'failed' as const, pipelineStage: 'idle' as const };
-        // First select: getById(downloadId) returns the download row
         db.select
           .mockReturnValueOnce(mockDbChain([{ download: failedDownload, book: mockBook }]))
-          // Second select: books.path lookup returns a non-null path
           .mockReturnValueOnce(mockDbChain([{ path: '/library/imported-book' }]));
         const resetSpy = vi.spyOn(retryBudget, 'reset');
 
@@ -1536,7 +1480,6 @@ describe('DownloadService', () => {
           (e: unknown) => e instanceof DownloadError && e.code === 'IMPORTED_BOOK_NO_RETRY',
         );
 
-        // Budget reset and retrySearch must NOT be reached
         expect(resetSpy).not.toHaveBeenCalled();
         expect(mockRetryDeps.indexerSearchService.searchAllWithStatus).not.toHaveBeenCalled();
       });
@@ -1601,7 +1544,6 @@ describe('DownloadService', () => {
 
       await service.cancel(1);
 
-      // Should have been called for both download status and book status reset
       expect(db.update).toHaveBeenCalled();
     });
   });
@@ -1632,7 +1574,6 @@ describe('DownloadService', () => {
     });
 
     it('includes progressUpdatedAt when progress changes', async () => {
-      // Mock select to return existing progress of 0.3
       db.select.mockReturnValueOnce(mockDbChain([{ progress: 0.3 }]));
       const chain = mockDbChain();
       db.update.mockReturnValue(chain);
@@ -1644,7 +1585,6 @@ describe('DownloadService', () => {
     });
 
     it('omits progressUpdatedAt when progress is unchanged', async () => {
-      // Mock select to return existing progress matching the update value
       db.select.mockReturnValueOnce(mockDbChain([{ progress: 0.5 }]));
       const chain = mockDbChain();
       db.update.mockReturnValue(chain);
@@ -1656,7 +1596,6 @@ describe('DownloadService', () => {
     });
   });
 
-  // #372 — Section split for queue/history pagination
   describe('getAll with section', () => {
     it('accepts section=queue without error', async () => {
       db.select
@@ -1809,14 +1748,11 @@ describe('DownloadService', () => {
       (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
     });
 
-    // #1861 — checkDuplicateDownloads now runs the ONE consolidated blocker
-    // classification (`gatherBookBlockers` → `classifyBlockers`): first a plain
-    // `downloads` SELECT (raw rows, NOT the joined getActiveByBookId shape), then
-    // the auto-import-jobs SELECT. Seed both.
+    // Duplicate checks read raw download rows, then auto-import jobs, before aggregate classification (#1861).
     it('throws DuplicateDownloadError with code ACTIVE_DOWNLOAD_EXISTS when replaceable active download exists', async () => {
       const replaceableDownload = { ...mockDownload, id: 5, clientStatus: 'queued' as const, pipelineStage: 'idle' as const };
       db.select.mockReturnValueOnce(mockDbChain([replaceableDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([])); // no auto import job
+      db.select.mockReturnValueOnce(mockDbChain([]));
 
       const err = await service.grab({
         downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
@@ -1834,7 +1770,7 @@ describe('DownloadService', () => {
     it('throws DuplicateDownloadError with PIPELINE_ACTIVE code when only importing downloads exist', async () => {
       const pipelineDownload = { ...mockDownload, id: 5, clientStatus: 'completed' as const, pipelineStage: 'importing' as const };
       db.select.mockReturnValueOnce(mockDbChain([pipelineDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([])); // no auto import job
+      db.select.mockReturnValueOnce(mockDbChain([]));
 
       const err = await service.grab({
         downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
@@ -1848,7 +1784,6 @@ describe('DownloadService', () => {
       expect(db.insert).not.toHaveBeenCalled();
     });
 
-    // #197 — DuplicateDownloadError typed error assertions (ERR-1)
     it('throws DuplicateDownloadError with code ACTIVE_DOWNLOAD_EXISTS for replaceable-active duplicate', async () => {
       const replaceableDownload = { ...mockDownload, id: 5, clientStatus: 'queued' as const, pipelineStage: 'idle' as const };
       db.select.mockReturnValueOnce(mockDbChain([replaceableDownload]));
@@ -1881,8 +1816,6 @@ describe('DownloadService', () => {
       expect((err as DuplicateDownloadError).name).toBe('DuplicateDownloadError');
     });
 
-    // #1861 accepted delta: a `checking`/`pending_review` active row is now a
-    // PIPELINE_ACTIVE blocker (legacy counted it replaceable → ACTIVE_DOWNLOAD_EXISTS).
     it('throws PIPELINE_ACTIVE (not ACTIVE_DOWNLOAD_EXISTS) for a checking-stage active row', async () => {
       const checkingRow = { ...mockDownload, id: 5, clientStatus: 'completed' as const, pipelineStage: 'checking' as const };
       db.select.mockReturnValueOnce(mockDbChain([checkingRow]));
@@ -1898,8 +1831,7 @@ describe('DownloadService', () => {
     });
 
     it('throws PIPELINE_ACTIVE (not admitted) for a QG-eligible completed row — closes the dupe window (#1861)', async () => {
-      // completed display + tracked externalId = the quality gate WILL pick it up;
-      // legacy admitted the grab here (200), leaving two live downloads.
+      // A completed row with externalId remains QG-eligible and must block a second live download.
       const qgRow = { ...mockDownload, id: 5, clientStatus: 'completed' as const, pipelineStage: 'idle' as const, externalId: 'ext-tracked' };
       db.select.mockReturnValueOnce(mockDbChain([qgRow]));
       db.select.mockReturnValueOnce(mockDbChain([]));
@@ -1916,9 +1848,8 @@ describe('DownloadService', () => {
 
     it('admits the grab (clear) for a Blackhole handoff completed row (externalId null) — unchanged', async () => {
       const blackholeRow = { ...mockDownload, id: 5, clientStatus: 'completed' as const, pipelineStage: 'idle' as const, externalId: null };
-      db.select.mockReturnValueOnce(mockDbChain([blackholeRow])); // gatherBookBlockers: downloads
-      db.select.mockReturnValueOnce(mockDbChain([]));             // gatherBookBlockers: importJobs
-      // Grab proceeds past the guard → insert + re-read the created row.
+      db.select.mockReturnValueOnce(mockDbChain([blackholeRow]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
       db.insert.mockReturnValue(mockDbChain([{ id: 7 }]));
       db.select.mockReturnValue(mockDbChain([{ download: { ...mockDownload, id: 7 }, book: mockBook }]));
 
@@ -1933,9 +1864,7 @@ describe('DownloadService', () => {
     });
 
     it('throws PIPELINE_ACTIVE when no active downloads but a pending auto import job exists for the same book', async () => {
-      // getActiveByBookId returns empty
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // import_jobs same-book auto-job lookup returns one pending job
       const importJobsChain = mockDbChain([{ id: 77 }]);
       db.select.mockReturnValueOnce(importJobsChain);
 
@@ -1949,8 +1878,6 @@ describe('DownloadService', () => {
       expect((err as DuplicateDownloadError).code).toBe('PIPELINE_ACTIVE');
       expect(db.insert).not.toHaveBeenCalled();
 
-      // Assert the import_jobs lookup encodes the exact contract:
-      //   bookId = <input> AND type = 'auto' AND status IN ('pending', 'processing')
       expect(importJobsChain.where).toHaveBeenCalledOnce();
       const whereArg = (importJobsChain.where as Mock).mock.calls[0]![0];
       const { sql, params } = toSQL(whereArg);
@@ -1962,7 +1889,6 @@ describe('DownloadService', () => {
 
     it('throws PIPELINE_ACTIVE when a processing auto import job exists for the same book', async () => {
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // import_jobs lookup returns a processing auto job row
       const importJobsChain = mockDbChain([{ id: 88 }]);
       db.select.mockReturnValueOnce(importJobsChain);
 
@@ -1976,24 +1902,18 @@ describe('DownloadService', () => {
       expect((err as DuplicateDownloadError).code).toBe('PIPELINE_ACTIVE');
       expect(db.insert).not.toHaveBeenCalled();
 
-      // Predicate contract includes both 'pending' and 'processing' statuses and
-      // binds the caller's bookId — not a different or unbounded book.
       const whereArg = (importJobsChain.where as Mock).mock.calls[0]![0];
       const { sql, params } = toSQL(whereArg);
       expect(sql).toMatch(/"status" in \(\?, \?\)/i);
       expect(params).toEqual([42, 'auto', 'pending', 'processing']);
     });
 
-    // #1861 F5 — mixed-blocker precedence at the REAL DownloadService seam. If
-    // checkDuplicateDownloads reintroduced first-row/replaceable precedence (or
-    // otherwise bypassed the aggregate classifier), a single-blocker-class test would
-    // still pass; seeding BOTH a replaceable row AND a pipeline row proves the service
-    // gives PIPELINE_ACTIVE precedence.
+    // Mixed blockers prove aggregate classification gives PIPELINE_ACTIVE precedence over replaceable rows (#1861).
     it('throws PIPELINE_ACTIVE (not ACTIVE_DOWNLOAD_EXISTS) when a replaceable row AND a pipeline row both exist', async () => {
       const replaceableRow = { ...mockDownload, id: 5, clientStatus: 'queued' as const, pipelineStage: 'idle' as const };
       const pipelineRow = { ...mockDownload, id: 6, clientStatus: 'completed' as const, pipelineStage: 'importing' as const };
-      db.select.mockReturnValueOnce(mockDbChain([replaceableRow, pipelineRow])); // gatherBookBlockers: downloads
-      db.select.mockReturnValueOnce(mockDbChain([]));                            // importJobs (none)
+      db.select.mockReturnValueOnce(mockDbChain([replaceableRow, pipelineRow]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
 
       const err = await service.grab({
         downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
@@ -2008,8 +1928,8 @@ describe('DownloadService', () => {
 
     it('throws PIPELINE_ACTIVE (not ACTIVE_DOWNLOAD_EXISTS) when a replaceable row AND a pending auto job both exist', async () => {
       const replaceableRow = { ...mockDownload, id: 5, clientStatus: 'queued' as const, pipelineStage: 'idle' as const };
-      db.select.mockReturnValueOnce(mockDbChain([replaceableRow]));   // gatherBookBlockers: downloads (replaceable)
-      db.select.mockReturnValueOnce(mockDbChain([{ id: 91 }]));       // importJobs (pending auto job)
+      db.select.mockReturnValueOnce(mockDbChain([replaceableRow]));
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 91 }]));
 
       const err = await service.grab({
         downloadUrl: 'magnet:?xt=urn:btih:0000000000000000000000000000000000000abc',
@@ -2023,12 +1943,9 @@ describe('DownloadService', () => {
     });
 
     it('proceeds when no active downloads and no pending auto import jobs exist for the book', async () => {
-      // getActiveByBookId returns empty
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // import_jobs lookup returns empty
       const importJobsChain = mockDbChain([]);
       db.select.mockReturnValueOnce(importJobsChain);
-      // getById for return after insert
       db.select.mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: mockBook }]));
       db.insert.mockReturnValue(mockDbChain([{ id: 10 }]));
       db.update.mockReturnValue(mockDbChain());
@@ -2042,9 +1959,7 @@ describe('DownloadService', () => {
       expect(result).toBeDefined();
       expect(db.insert).toHaveBeenCalledTimes(1);
 
-      // Even on the pass-through path, the import_jobs probe must have been
-      // scoped to the correct predicates — a broader query would pass this
-      // test today but leak false negatives in production.
+      // Even an empty result must use the scoped import-job predicate.
       const whereArg = (importJobsChain.where as Mock).mock.calls[0]![0];
       const { sql, params } = toSQL(whereArg);
       expect(sql).toContain('"book_id" = ?');
@@ -2183,7 +2098,6 @@ describe('DownloadService', () => {
     });
   });
 
-  // ── #229 Observability — addDownload logging ────────────────────────────
   describe('logging improvements (#229)', () => {
     it('addDownload success logged at debug with { externalId, clientName, bookId }', async () => {
       const log = createMockLogger();
@@ -2199,8 +2113,8 @@ describe('DownloadService', () => {
 
       db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.update.mockReturnValue(mockDbChain());
-      db.select.mockReturnValueOnce(mockDbChain([])); // no active downloads
-      db.select.mockReturnValueOnce(mockDbChain([])); // no pending auto import jobs
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
       db.select.mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: mockBook }]));
 
       await svc.grab({
@@ -2216,7 +2130,6 @@ describe('DownloadService', () => {
     });
   });
 
-  // ── #739 — required-wiring contract ────────────────────────────────────
   describe('required-wiring contract', () => {
     it('wire() called twice throws ServiceWireError', () => {
       const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(createMockLogger()));
@@ -2226,7 +2139,6 @@ describe('DownloadService', () => {
     });
   });
 
-  // ── #1156 — adapter resolveDownloadUrl hook integration ──────────────────
   describe('#1156 — resolveDownloadUrl adapter hook', () => {
     function makeIndexerServiceMock(adapter: { resolveDownloadUrl?: ReturnType<typeof vi.fn> }) {
       return {
@@ -2324,7 +2236,7 @@ describe('DownloadService', () => {
     });
 
     it('passes through params.downloadUrl unchanged when adapter does not implement resolveDownloadUrl', async () => {
-      const indexerAdapter = {}; // no resolveDownloadUrl method
+      const indexerAdapter = {};
       const indexerService = makeIndexerServiceMock(indexerAdapter as never);
       service.wire({ retrySearchDeps: {} as never, indexerService: indexerService as never });
       setupGrabHappyPath(service);
@@ -2415,19 +2327,7 @@ describe('DownloadService', () => {
   });
 });
 
-// ─── #2069 AC16: the raw tombstone column must not reach a serialized response ───
-//
-// `DownloadWithBook.book` is a `BookRowPublic`, and each builder copies the joined
-// row wholesale into five responses that declare NO response schema — nothing
-// downstream strips extra keys, so the projection has to happen in the service.
-// Typecheck alone cannot catch a regression here: the leak is a runtime object key
-// and the old code reached the response through a `BookRow`-typed field that
-// compiles fine. These assert on key PRESENCE, not value — an implementation that
-// copies `undefined` through serializes nothing but should not pass by accident,
-// and one that copies the raw string must fail.
-//
-// Counterfactual: revert `DownloadWithBook.book` to `BookRow` (drop the
-// `stripClearedFields` calls) and every case below goes red.
+// These schema-less responses require runtime removal of userClearedFields; assert key presence, not value (#2069).
 describe('DownloadService — user_cleared_fields is projected out (#2069 AC16)', () => {
   let db: ReturnType<typeof createMockDb>;
   let service: DownloadService;

@@ -16,12 +16,6 @@ function buildLogPayload(params: { indexerId?: number | undefined; guid?: string
   return { indexerId: params.indexerId, title: params.title, guid: params.guid };
 }
 
-/**
- * Call the indexer adapter's grab-time hook if present. Currently only MAM
- * implements `resolveDownloadUrl` (to apply freeleech wedge logic and lazily
- * fetch the torrent bytes). Returns the URL to use for the rest of the
- * pipeline — `params.downloadUrl` unchanged when no adapter or no hook.
- */
 export async function resolveAdapterDownloadUrl(
   params: ResolveAdapterUrlParams,
   log: FastifyBaseLogger,

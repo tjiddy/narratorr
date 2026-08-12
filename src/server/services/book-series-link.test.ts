@@ -7,17 +7,13 @@ import { eq } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from '@db/index.js';
 import { books, series, seriesMembers } from '@db/schema.js';
-import { readPositionClearedBookIds, relinkBookToBoundSeries, replaceSeriesLink, upsertSeriesLink } from './book-series-link.js';
+import { detachBookFromSeriesMembers, readPositionClearedBookIds, relinkBookToBoundSeries, replaceSeriesLink, upsertSeriesLink } from './book-series-link.js';
+import { normalizeMemberTitleForMatch } from './series-title-match.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 
 /**
- * #1139 Bug 1: `upsertSeriesLink` is the book-create / re-import path. When
- * the resolved series row already carries `hardcover_series_id`, it must NOT
- * insert a local row — otherwise the next series-card GET renders the book
- * twice (once via the Hardcover row matched by `findInLibraryMatch`, once via
- * the redundant local row). Asserting "no row" alone is not enough because
- * the helper is best-effort and swallows all throws into `log.warn(...)` —
- * we additionally assert no warn-level log fired during the call.
+ * #1139: a canonical Hardcover series must not get a redundant local row or render the book twice.
+ * The helper is best-effort, so tests also reject errors swallowed into `log.warn`.
  */
 describe('book-series-link', () => {
   let dir: string;
@@ -39,7 +35,7 @@ describe('book-series-link', () => {
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {
-      // libsql may keep the file handle on Windows
+      // libsql may retain Windows file handles.
     }
   });
 
@@ -51,7 +47,6 @@ describe('book-series-link', () => {
   describe('upsertSeriesLink', () => {
     it('AC1.1: skips the local insert when the series already has hardcover_series_id, with no warn log', async () => {
       const bookId = await seedBook('Bloody Rose');
-      // Pre-seed a Hardcover-canonical series row
       await db.insert(series).values({ publicId: generatePublicId('sr'),
         hardcoverSeriesId: 5523,
         name: 'The Band',
@@ -69,8 +64,7 @@ describe('book-series-link', () => {
 
       const memberRows = await db.select().from(seriesMembers);
       expect(memberRows).toHaveLength(0);
-      // The helper swallows throws into log.warn — if the short-circuit threw
-      // accidentally, the row count would still pass. Assert no warn fired.
+      // A swallowed short-circuit error would otherwise make the row-count assertion pass.
       expect(warnSpy).not.toHaveBeenCalled();
     });
 
@@ -83,10 +77,7 @@ describe('book-series-link', () => {
         authorName: 'Nicholas Eames',
         lastFetchedAt: new Date(),
       }).returning();
-      // Hardcover-sourced member for this same bookId (pre-matched by the
-      // matcher during the cache-miss persist). This is the original Bug 1
-      // setup: with the old `isNull(hardcoverBookId)` filter we'd insert a
-      // second local row alongside this one.
+      // Seed the pre-matched Hardcover row that the old local-only dedupe missed.
       await db.insert(seriesMembers).values({
         seriesId: seedRow!.id,
         bookId,
@@ -107,7 +98,6 @@ describe('book-series-link', () => {
       });
 
       const memberRows = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));
-      // Exactly one row — the Hardcover one — should remain.
       expect(memberRows).toHaveLength(1);
       expect(memberRows[0]!.source).toBe('hardcover');
       expect(warnSpy).not.toHaveBeenCalled();
@@ -115,8 +105,6 @@ describe('book-series-link', () => {
 
     it('AC1.2: inserts a local row when the resolved series has hardcover_series_id IS NULL', async () => {
       const bookId = await seedBook('Bloody Rose');
-      // No pre-existing series row — resolveSeriesId will create one with hardcoverSeriesId: null
-
       await upsertSeriesLink(db, log, bookId, {
         name: 'The Band',
         position: 2,
@@ -139,14 +127,12 @@ describe('book-series-link', () => {
 
     it('AC1.2: updates an existing local row when called again with hardcover_series_id IS NULL', async () => {
       const bookId = await seedBook('Bloody Rose');
-      // First call seeds the series row (hardcoverSeriesId NULL) + the local member
       await upsertSeriesLink(db, log, bookId, {
         name: 'The Band',
         position: 2,
         title: 'Bloody Rose',
         authorName: 'Nicholas Eames',
       });
-      // Second call with a different title — should update in place, not duplicate
       await upsertSeriesLink(db, log, bookId, {
         name: 'The Band',
         position: 2,
@@ -162,11 +148,8 @@ describe('book-series-link', () => {
   });
 
   describe('replaceSeriesLink', () => {
-    // AC1.3: Fix Match path is untouched — it still delete-and-inserts a
-    // fresh local row regardless of whether the target series has
-    // hardcover_series_id set. The known Fix-Match-into-Hardcover-cached
-    // duplicate pattern is deliberately deferred to a follow-up issue.
-    it('AC1.3: always inserts a fresh local row even when the series has hardcover_series_id', async () => {
+    // #2150: a local row claims its book before title matching, stealing the canonical member pairing.
+    it('#2150 AC5: seeds no local row when the target series is Hardcover-canonical', async () => {
       const bookId = await seedBook('Bloody Rose');
       await db.insert(series).values({ publicId: generatePublicId('sr'),
         hardcoverSeriesId: 5523,
@@ -183,14 +166,124 @@ describe('book-series-link', () => {
         authorName: 'Nicholas Eames',
       });
 
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId))).toHaveLength(0);
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.source, 'local'))).toHaveLength(0);
+    });
+
+    it('#2150 AC6: a non-canonical target still gets exactly one local row, with the full field mapping', async () => {
+      const bookId = await seedBook('Bloody Rose');
+
+      await replaceSeriesLink(db, bookId, {
+        name: 'The Band',
+        position: 2,
+        title: 'Bloody Rose: Deluxe',
+        authorName: 'Nicholas Eames',
+      });
+
       const memberRows = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));
       expect(memberRows).toHaveLength(1);
       expect(memberRows[0]!.source).toBe('local');
+      expect(memberRows[0]!.title).toBe('Bloody Rose: Deluxe');
+      expect(memberRows[0]!.normalizedTitle).toBe(normalizeMemberTitleForMatch('Bloody Rose: Deluxe'));
+      expect(memberRows[0]!.authorName).toBe('Nicholas Eames');
+      expect(memberRows[0]!.position).toBe(2);
+      expect(memberRows[0]!.hardcoverBookId).toBeNull();
+
+      const seriesRows = await db.select().from(series);
+      expect(seriesRows).toHaveLength(1);
+      expect(seriesRows[0]!.hardcoverSeriesId).toBeNull();
+    });
+
+    it('#2150 AC3/AC1: deletes the local rows, null-links the provider rows in OTHER series, and bumps their updated_at', async () => {
+      const bookId = await seedBook('Bloody Rose');
+      const [seriesA] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+        name: 'Old Series', normalizedName: 'old series',
+      }).returning();
+      const [seriesB] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+        hardcoverSeriesId: 77, name: 'Sibling Series', normalizedName: 'sibling series',
+      }).returning();
+      await db.insert(seriesMembers).values({
+        seriesId: seriesA!.id, bookId, title: 'Bloody Rose', normalizedTitle: 'bloody rose', position: 9, source: 'local',
+      });
+      // Nothing reads `series_members.updated_at`; a stale fixture makes the required bump observable.
+      const stale = new Date('2020-01-01T00:00:00Z');
+      const [provider] = await db.insert(seriesMembers).values({
+        seriesId: seriesB!.id, bookId, hardcoverBookId: 1002, slug: 'bloody', imageUrl: 'https://example.com/br.jpg',
+        title: 'Bloody Rose', normalizedTitle: 'bloody rose', authorName: 'Nicholas Eames', position: 2,
+        source: 'hardcover', updatedAt: stale,
+      }).returning();
+
+      await replaceSeriesLink(db, bookId, {
+        name: 'The Band',
+        position: 2,
+        title: 'Bloody Rose',
+        authorName: 'Nicholas Eames',
+      });
+
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesA!.id))).toHaveLength(0);
+      const [survivor] = await db.select().from(seriesMembers).where(eq(seriesMembers.id, provider!.id));
+      expect(survivor).toBeDefined();
+      expect(survivor!.bookId).toBeNull();
+      expect(survivor!.hardcoverBookId).toBe(1002);
+      expect(survivor!.slug).toBe('bloody');
+      expect(survivor!.imageUrl).toBe('https://example.com/br.jpg');
+      expect(survivor!.title).toBe('Bloody Rose');
+      expect(survivor!.position).toBe(2);
+      expect(survivor!.updatedAt.getTime()).toBeGreaterThan(stale.getTime());
+    });
+
+    it('#2150 AC2: a provider row in the TARGET series keeps its book link and its timestamp', async () => {
+      const bookId = await seedBook('Bloody Rose');
+      const [target] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+        hardcoverSeriesId: 5523, name: 'The Band', normalizedName: 'the band',
+      }).returning();
+      const stale = new Date('2020-01-01T00:00:00Z');
+      const [row] = await db.insert(seriesMembers).values({
+        seriesId: target!.id, bookId, hardcoverBookId: 1002, slug: 'bloody', title: 'Bloody Rose',
+        normalizedTitle: 'bloody rose', position: 2, source: 'hardcover', updatedAt: stale,
+      }).returning();
+
+      await replaceSeriesLink(db, bookId, {
+        name: 'The Band',
+        position: 3,
+        title: 'Bloody Rose',
+        authorName: 'Nicholas Eames',
+      });
+
+      const [after] = await db.select().from(seriesMembers).where(eq(seriesMembers.id, row!.id));
+      expect(after!.bookId).toBe(bookId);
+      expect(after!.updatedAt.getTime()).toBe(stale.getTime());
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.source, 'local'))).toHaveLength(0);
+    });
+
+    it('#2150 AC4: args=null deletes the local rows, null-links every provider row, and inserts nothing', async () => {
+      const bookId = await seedBook('Bloody Rose');
+      const [seriesA] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+        name: 'Old Series', normalizedName: 'old series',
+      }).returning();
+      const [seriesB] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+        hardcoverSeriesId: 77, name: 'Sibling Series', normalizedName: 'sibling series',
+      }).returning();
+      await db.insert(seriesMembers).values({
+        seriesId: seriesA!.id, bookId, title: 'Bloody Rose', normalizedTitle: 'bloody rose', position: 9, source: 'local',
+      });
+      await db.insert(seriesMembers).values({
+        seriesId: seriesB!.id, bookId, hardcoverBookId: 1002, slug: 'bloody', title: 'Bloody Rose',
+        normalizedTitle: 'bloody rose', position: 2, source: 'hardcover',
+      });
+
+      await replaceSeriesLink(db, bookId, null);
+
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId))).toHaveLength(0);
+      // Query by series_id because the unlink makes a book_id query blind to the survivor.
+      const survivors = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesB!.id));
+      expect(survivors).toHaveLength(1);
+      expect(survivors[0]!.hardcoverBookId).toBe(1002);
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, seriesA!.id))).toHaveLength(0);
     });
 
     it('AC1.3: deletes all prior series_members rows for the book before inserting (replace semantic)', async () => {
       const bookId = await seedBook('Bloody Rose');
-      // Seed an existing series + member so we can verify delete-then-insert
       const [seedRow] = await db.insert(series).values({ publicId: generatePublicId('sr'),
         name: 'Old Series',
         normalizedName: 'old series',
@@ -218,7 +311,61 @@ describe('book-series-link', () => {
     });
   });
 
-  // #1228: the dedicated bind re-link helper.
+  /** #2150 F1: metadata clear shares this total-detach helper; pin its otherwise-unobserved timestamp bump here. */
+  describe('detachBookFromSeriesMembers', () => {
+    it('#2150 F1: deletes every local row and null-links every provider row, with no series exempted', async () => {
+      const bookId = await seedBook('Tress of the Emerald Sea');
+      const [localSeries] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+        name: 'The Cosmere', normalizedName: 'the cosmere',
+      }).returning();
+      const [providerSeries] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+        hardcoverSeriesId: 4242, name: 'Secret Projects', normalizedName: 'secret projects',
+      }).returning();
+      const [localRow] = await db.insert(seriesMembers).values({
+        seriesId: localSeries!.id, bookId, title: 'Tress of the Emerald Sea',
+        normalizedTitle: 'tress of the emerald sea', position: 1, source: 'local',
+      }).returning();
+      const stale = new Date('2020-01-01T00:00:00Z');
+      const [providerRow] = await db.insert(seriesMembers).values({
+        seriesId: providerSeries!.id, bookId, hardcoverBookId: 4242, slug: 'tress',
+        imageUrl: 'https://example.com/tress.jpg', title: 'Tress of the Emerald Sea',
+        normalizedTitle: 'tress of the emerald sea', authorName: 'Brandon Sanderson',
+        position: 1, source: 'hardcover', updatedAt: stale,
+      }).returning();
+
+      await db.transaction((tx) => detachBookFromSeriesMembers(tx, bookId));
+
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.id, localRow!.id))).toHaveLength(0);
+      const [survivor] = await db.select().from(seriesMembers).where(eq(seriesMembers.id, providerRow!.id));
+      expect(survivor).toBeDefined();
+      expect(survivor!.bookId).toBeNull();
+      expect(survivor!.hardcoverBookId).toBe(4242);
+      expect(survivor!.slug).toBe('tress');
+      expect(survivor!.imageUrl).toBe('https://example.com/tress.jpg');
+      expect(survivor!.title).toBe('Tress of the Emerald Sea');
+      expect(survivor!.position).toBe(1);
+      expect(survivor!.updatedAt.getTime()).toBeGreaterThan(stale.getTime());
+    });
+
+    // `replaceSeriesLink` exempts its target; a total clear must not.
+    it('#2150 F1: exempts no series — a provider row is unlinked even in the book\'s own current series', async () => {
+      const bookId = await seedBook('Tress of the Emerald Sea');
+      const [only] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+        hardcoverSeriesId: 4242, name: 'The Cosmere', normalizedName: 'the cosmere',
+      }).returning();
+      const [row] = await db.insert(seriesMembers).values({
+        seriesId: only!.id, bookId, hardcoverBookId: 9001, slug: 'tress', title: 'Tress of the Emerald Sea',
+        normalizedTitle: 'tress of the emerald sea', position: 1, source: 'hardcover',
+      }).returning();
+
+      await db.transaction((tx) => detachBookFromSeriesMembers(tx, bookId));
+
+      const [after] = await db.select().from(seriesMembers).where(eq(seriesMembers.id, row!.id));
+      expect(after!.bookId).toBeNull();
+      expect(after!.hardcoverBookId).toBe(9001);
+    });
+  });
+
   describe('relinkBookToBoundSeries', () => {
     it('unlinks the book from old series, deletes emptied old rows, and leaves the target untouched', async () => {
       const bookId = await seedBook('A Wizard of Earthsea');
@@ -233,9 +380,7 @@ describe('book-series-link', () => {
 
       await db.transaction((tx) => relinkBookToBoundSeries(tx, bookId, target!.id));
 
-      // Emptied old row removed.
       expect(await db.select().from(series).where(eq(series.id, oldRow!.id))).toHaveLength(0);
-      // Target row's member preserved (NOT deleted — it equals targetSeriesId).
       const targetMembers = await db.select().from(seriesMembers).where(eq(seriesMembers.seriesId, target!.id));
       expect(targetMembers).toHaveLength(1);
       expect(targetMembers[0]!.bookId).toBe(bookId);
@@ -271,7 +416,6 @@ describe('book-series-link', () => {
         throw new Error('boom');
       })).rejects.toThrow('boom');
 
-      // The member-row deletion was rolled back.
       const members = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));
       expect(members).toHaveLength(1);
     });

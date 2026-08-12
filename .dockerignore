@@ -1,41 +1,31 @@
-# Dependencies
 node_modules/
 .pnpm-store/
 
-# Build outputs (we rebuild in Docker)
 dist/
 build/
 
-# Development files
 .git/
 .gitignore
 .idea/
 .vscode/
 *.md
 !README.md
-# The third-party notice must ship in the runner image (COPY below). The
-# extensionless LICENSE is already in context — *.md does not match it.
+# Keep the notice in the build context; extensionless LICENSE is not excluded by *.md.
 !THIRD_PARTY_NOTICES.md
 
-# Environment
 .env
 .env.local
 .env.*.local
 
-# Logs
 *.log
 
-# Testing
 coverage/
 
-# Turbo cache
 .turbo/
 
-# Database files (we use mounted volumes)
 *.db
 *.db-journal
 config/
 
-# OS files
 .DS_Store
 Thumbs.db

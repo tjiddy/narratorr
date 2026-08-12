@@ -93,7 +93,6 @@ describe('mapBookMetadataToPayload', () => {
     expect(payload.searchImmediately).toBeUndefined();
   });
 
-  // #1097 — canonical primary-series preference
   it('prefers seriesPrimary over series[0] when both are present (#1097)', () => {
     const book: BookMetadata = {
       title: 'The Way of Kings',
@@ -303,7 +302,6 @@ describe('isBookInLibrary — array author matching (#71)', () => {
       title: 'The Way of Kings',
       authors: [{ name: 'Brandon Sanderson' }],
     };
-    // BookIdentifier has authorName (not authors array) — should still match
     expect(isBookInLibrary(searchBook, [bookId as never])).toBe(true);
   });
 });
@@ -421,7 +419,6 @@ describe('findLibraryMatch (#1150, #1907)', () => {
     expect(findLibraryMatch(book, [libBook])).toBeNull();
   });
 
-  // AC1a — exact-ASIN precedence is order-independent.
   it('prefers the exact-ASIN entry over a title-identity entry when the title-identity is FIRST', () => {
     const titleIdentity: BookWithAuthor = {
       ...createMockBook({ id: 1 }),
@@ -473,12 +470,9 @@ describe('findLibraryMatch (#1150, #1907)', () => {
     };
     const match = findLibraryMatch(book, [bookId]);
     expect(match).not.toBeNull();
-    // Narrowed back to BookIdentifier — exposes authorName, not authors array.
     expect(match!.entry.authorName).toBe('Brandon Sanderson');
   });
 
-  // #1916 — the search page now matches against BookIdentifier rows, so the
-  // `entry.id` the card links at has to come off the narrow union branch too.
   describe('BookIdentifier entries expose entry.id (#1916)', () => {
     const book: BookMetadata = {
       title: 'The Way of Kings',
@@ -506,5 +500,32 @@ describe('findLibraryMatch (#1150, #1907)', () => {
       expect(match!.kind).toBe('title-identity');
       expect(match!.entry.id).toBe(9);
     });
+  });
+});
+
+describe('mapBookMetadataToPayload — provider formatType and the review override (#2199)', () => {
+  const base: BookMetadata = {
+    title: 'Piranesi',
+    authors: [{ name: 'Susanna Clarke' }],
+    narrators: ['Chiwetel Ejiofor'],
+  };
+
+  it('forwards the provider formatType so the server can normalize it', () => {
+    expect(mapBookMetadataToPayload({ ...base, formatType: 'Abridged' }).formatType).toBe('Abridged');
+  });
+
+  // An `undefined` value would still serialize as an absent key, but the omission is the contract:
+  // the server distinguishes "no format supplied" from "format is unknown".
+  it('omits the key entirely when the provider supplied no formatType', () => {
+    expect(mapBookMetadataToPayload(base)).not.toHaveProperty('formatType');
+  });
+
+  it('forwards the review override when the caller sets it', () => {
+    expect(mapBookMetadataToPayload(base, { searchImmediately: false, overrideRecordingReview: true }))
+      .toMatchObject({ overrideRecordingReview: true });
+  });
+
+  it('omits the override key when the caller does not set it', () => {
+    expect(mapBookMetadataToPayload(base, { searchImmediately: true })).not.toHaveProperty('overrideRecordingReview');
   });
 });

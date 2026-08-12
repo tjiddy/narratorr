@@ -19,15 +19,22 @@ const { mockHardcoverSearchSeries, mockHardcoverClientCtor, mockFetchWithTimeout
   };
 });
 
-const { mockResolveFfmpegPath, mockProbeFfmpeg } = vi.hoisted(() => ({
+const { mockResolveFfmpegPath, mockProbeFfmpeg, mockResolveMutagenDetection, mockProbeMutagen } = vi.hoisted(() => ({
   mockResolveFfmpegPath: vi.fn(),
   mockProbeFfmpeg: vi.fn(),
+  mockResolveMutagenDetection: vi.fn(),
+  mockProbeMutagen: vi.fn(),
 }));
 
 vi.mock('@core/utils/audio-processor.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@core/utils/audio-processor.js')>();
   return { ...actual, resolveFfmpegPath: mockResolveFfmpegPath, probeFfmpeg: mockProbeFfmpeg };
 });
+
+vi.mock('@core/utils/mutagen-resolver.js', () => ({
+  resolveMutagenDetection: mockResolveMutagenDetection,
+  probeMutagen: mockProbeMutagen,
+}));
 
 vi.mock('@core/utils/network-service.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@core/utils/network-service.js')>();
@@ -76,9 +83,7 @@ describe('settings routes', () => {
 
   beforeEach(() => {
     resetMockServices(services);
-    // `PUT /api/settings` snapshots the persisted `library` / `companionEpub` values before it
-    // writes (#1960 AC25), and that read is deliberately unguarded — an unconfigured rejecting
-    // stub would 500 every PUT in this suite. Default to the fixture; tests that care override.
+    // PUT snapshots library and companionEpub before writing, so the default mock must satisfy that read.
     (services.settings.get as Mock).mockImplementation((cat: string) =>
       Promise.resolve(mockSettings[cat as keyof typeof mockSettings]));
     for (const s of Object.values(logSpies)) s.mockClear();
@@ -87,6 +92,8 @@ describe('settings routes', () => {
     mockFetchWithTimeout.mockReset();
     mockResolveFfmpegPath.mockReset();
     mockProbeFfmpeg.mockReset();
+    mockResolveMutagenDetection.mockReset();
+    mockProbeMutagen.mockReset();
   });
 
   describe('GET /api/settings/ffmpeg-status', () => {
@@ -116,6 +123,38 @@ describe('settings routes', () => {
     });
   });
 
+  // Mirrors the ffmpeg-status contract; this is what D8's client gate reads (#2210 D5).
+  describe('GET /api/settings/mutagen-status', () => {
+    it('returns {detected:false} when no mutagen-capable interpreter resolves', async () => {
+      mockResolveMutagenDetection.mockResolvedValue(null);
+      const res = await app.inject({ method: 'GET', url: '/api/settings/mutagen-status' });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ detected: false });
+      expect(mockProbeMutagen).not.toHaveBeenCalled();
+    });
+
+    it('returns {detected, version, path} with the resolved interpreter as path', async () => {
+      mockResolveMutagenDetection.mockResolvedValue({
+        python: '/usr/bin/python3', version: '1.47.0', override: undefined, overrideSuperseded: false,
+      });
+      mockProbeMutagen.mockResolvedValue('1.47.0');
+      const res = await app.inject({ method: 'GET', url: '/api/settings/mutagen-status' });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ detected: true, version: '1.47.0', path: '/usr/bin/python3' });
+      expect(mockProbeMutagen).toHaveBeenCalledWith('/usr/bin/python3');
+    });
+
+    it('returns {detected:false} (not a 500) when detection succeeded but the probe throws', async () => {
+      mockResolveMutagenDetection.mockResolvedValue({
+        python: '/usr/bin/python3', version: '1.47.0', override: undefined, overrideSuperseded: false,
+      });
+      mockProbeMutagen.mockRejectedValue(new Error('interpreter vanished'));
+      const res = await app.inject({ method: 'GET', url: '/api/settings/mutagen-status' });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ detected: false });
+    });
+  });
+
   describe('GET /api/settings', () => {
     it('returns all settings', async () => {
       (services.settings.getAll as Mock).mockResolvedValue(mockSettings);
@@ -128,9 +167,7 @@ describe('settings routes', () => {
       expect(body.search.enabled).toBe(true);
     });
 
-    // #1567 — no decrypted secret is ever echoed by GET for any encrypt-on-write
-    // category. getAll() returns plaintext (post-decrypt); the route must mask it.
-    // Derived from the canonical map so a new secret category is covered for free.
+    // Derive cases from the canonical map so new encrypt-on-write fields cannot escape this test.
     it('masks every encrypt-on-write secret field, never echoing plaintext', async () => {
       const plaintext = (cat: string, field: string) => `PLAIN-${cat}-${field}`;
       const withSecrets = structuredClone(mockSettings) as Record<string, Record<string, unknown>>;
@@ -184,15 +221,10 @@ describe('settings routes', () => {
     });
   });
 
-  // ==========================================================================
-  // #1960 AC25–AC25d — the companion sweep on enable and on a library-root change
-  // ==========================================================================
-
   describe('PUT /api/settings — companion-ebook sweep (#1960 AC25–AC25d)', () => {
     const ROOT_BEFORE = '/audiobooks';
     const ROOT_AFTER = '/media/audiobooks';
 
-    /** Persisted-BEFORE state the pre-update snapshot reads. */
     function primePersisted(opts: { root?: string; enabled?: boolean } = {}) {
       const before = {
         ...mockSettings,
@@ -204,7 +236,6 @@ describe('settings routes', () => {
       return before;
     }
 
-    /** Persisted-AFTER state `SettingsService.update` returns (it returns `getAll()`). */
     function primeUpdated(opts: { root?: string; enabled?: boolean } = {}) {
       (services.settings.update as Mock).mockResolvedValue({
         ...mockSettings,
@@ -216,8 +247,6 @@ describe('settings routes', () => {
     beforeEach(() => {
       (services.companionEbook.reconcileAll as Mock).mockResolvedValue(undefined);
     });
-
-    // --- AC25c, the exhaustive matrix -------------------------------------
 
     it('enable arm alone (false → true) fires exactly one sweep', async () => {
       primePersisted({ enabled: false });
@@ -257,8 +286,6 @@ describe('settings routes', () => {
       expect(services.companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
     });
 
-    // The row that proves the arms are INDEPENDENT: the enable arm does not fire on
-    // `true → false`, but the root arm still does. (Carried obligation F10.)
     it('DISABLE plus a changed root still fires exactly one sweep', async () => {
       primePersisted({ root: ROOT_BEFORE, enabled: true });
       primeUpdated({ root: ROOT_AFTER, enabled: false });
@@ -314,8 +341,7 @@ describe('settings routes', () => {
       expect(services.settings.get).not.toHaveBeenCalledWith('companionEpub');
     });
 
-    // AC25b — `patch` MERGES a partial category, so a `companionEpub` object with no
-    // `enabled` key leaves the persisted value alone and must not fire.
+    // Partial category patches merge, so omitting enabled preserves the stored value.
     it('a companionEpub payload with no `enabled` key does not fire', async () => {
       primePersisted({ enabled: false });
       primeUpdated({ enabled: false });
@@ -328,15 +354,9 @@ describe('settings routes', () => {
       expect(services.companionEbook.reconcileAll).not.toHaveBeenCalled();
     });
 
-    // --- AC25d, partial persistence --------------------------------------
-
     it('a persisted root change followed by a LATER category failure still sweeps, and the original error propagates', async () => {
-      // A REAL `SettingsService.update` failure with a DISTINCT status + body (400, its own
-      // message). That is what makes "the original error propagates" falsifiable here: a
-      // leaked recovery-read error would surface as a generic 500 / 'Internal server error'.
+      // A distinct 400 failure keeps a leaked recovery-read 500 observable.
       const failure = new SentinelOnNonSecretFieldError('processing.bitrate');
-      // The `library` write LANDS, then a later category blows up — so the pre-update read
-      // sees the old root and the post-failure re-read sees the new one.
       let phase: 'before' | 'after' = 'before';
       (services.settings.get as Mock).mockImplementation((cat: string) =>
         Promise.resolve(cat === 'library'
@@ -355,9 +375,6 @@ describe('settings routes', () => {
     });
 
     it('a persisted companionEpub enable followed by a LATER category failure still sweeps, and the original error propagates', async () => {
-      // A REAL `SettingsService.update` failure with a DISTINCT status + body (400, its own
-      // message). That is what makes "the original error propagates" falsifiable here: a
-      // leaked recovery-read error would surface as a generic 500 / 'Internal server error'.
       const failure = new SentinelOnNonSecretFieldError('processing.bitrate');
       let updateCalled = false;
       (services.settings.get as Mock).mockImplementation((cat: string) => {
@@ -378,8 +395,6 @@ describe('settings routes', () => {
       expect(JSON.parse(res.payload).error).toBe(failure.message);
       expect(services.companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
     });
-
-    // --- AC25d, per-arm read independence ---------------------------------
 
     it('library re-read SUCCEEDS (changed) while companionEpub re-read THROWS → exactly one call, original error propagates', async () => {
       primePersisted({ root: ROOT_BEFORE, enabled: false });
@@ -492,8 +507,6 @@ describe('settings routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      // The removed editable ffmpegPath field is gone — assert the service receives exactly the
-      // engine fields sent, and nothing more, so a silently-dropped or injected field is caught.
       expect(services.settings.update).toHaveBeenCalledWith({
         processing: { outputFormat: 'mp3', bitrate: 256, maxConcurrentProcessing: 4 },
       });
@@ -515,9 +528,7 @@ describe('settings routes', () => {
       expect(payload.processing.bitrate).toBe(192);
     });
 
-    // #2056 — same shape for the removed mergeBehavior knob: an old client (or a stale bookmarked
-    // form post) can still send it, and the registry's default-strip schema must drop it at the
-    // route rather than 400 or forward it into the persisted blob.
+    // Default-strip accepts stale clients without persisting the removed mergeBehavior knob.
     it('strips the removed mergeBehavior field before it reaches the service', async () => {
       (services.settings.update as Mock).mockResolvedValue(mockSettings);
 
@@ -805,7 +816,6 @@ describe('settings routes', () => {
         expect(services.healthCheck.probeProxy).not.toHaveBeenCalledWith('********');
       });
 
-      // F1 — success log emits the resolved + redacted URL, not the sentinel
       it('success log emits the resolved redacted URL, not the sentinel', async () => {
         (services.settings.get as Mock).mockResolvedValue({ proxyUrl: 'http://real:cred@host:9191' });
         (services.healthCheck.probeProxy as Mock).mockResolvedValue('1.2.3.4');
@@ -828,7 +838,6 @@ describe('settings routes', () => {
         expect(sentinelLog).toBeUndefined();
       });
 
-      // F1 — failure log emits the resolved + redacted URL, not the sentinel
       it('failure log emits the resolved redacted URL, not the sentinel', async () => {
         (services.settings.get as Mock).mockResolvedValue({ proxyUrl: 'http://real:cred@host:9191' });
         (services.healthCheck.probeProxy as Mock).mockRejectedValue(new Error('ECONNREFUSED'));
@@ -955,7 +964,6 @@ describe('settings routes', () => {
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
-      // proxyUrl is masked in API response (secret field)
       expect(body.network.proxyUrl).toBe('********');
     });
 
@@ -970,7 +978,6 @@ describe('settings routes', () => {
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
-      // proxyUrl is masked in API response (secret field)
       expect(body.network.proxyUrl).toBe('********');
     });
 
@@ -990,7 +997,6 @@ describe('settings routes', () => {
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
-      // Empty proxyUrl is preserved as-is — not masked to sentinel
       expect(body.network.proxyUrl).toBe('');
     });
 
@@ -1064,7 +1070,6 @@ describe('settings routes', () => {
       (services.settings.get as Mock).mockResolvedValue(currentNetwork);
       (services.settings.update as Mock).mockResolvedValue(updated);
 
-      // UI sends back '********' for proxyUrl (masked value from GET)
       const res = await app.inject({
         method: 'PUT',
         url: '/api/settings',
@@ -1076,11 +1081,7 @@ describe('settings routes', () => {
     });
   });
 
-  // F2 (PR #1135 review): live route coverage for the metadata.hardcoverApiKey
-  // secret-handling surface. The route layer's job is to mask non-empty values
-  // and pass sentinels through to SettingsService unchanged. Encryption and
-  // sentinel-preservation are exercised at the service level in
-  // settings.service.test.ts and end-to-end by the secret-migration test below.
+  // Route tests own masking and passthrough; service tests own encryption and sentinel preservation.
   describe('metadata.hardcoverApiKey secret surface', () => {
     it('GET /api/settings masks a configured hardcoverApiKey as the sentinel', async () => {
       const settingsWithKey = {
@@ -1094,7 +1095,6 @@ describe('settings routes', () => {
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
       expect(body.metadata.hardcoverApiKey).toBe('********');
-      // Adjacent non-secret metadata fields are NOT masked
       expect(body.metadata.audibleRegion).toBe(mockSettings.metadata.audibleRegion);
       expect(body.metadata.languages).toEqual(mockSettings.metadata.languages);
     });
@@ -1127,10 +1127,8 @@ describe('settings routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      // SettingsService receives the PLAINTEXT so it can encrypt downstream
       const updateArg = (services.settings.update as Mock).mock.calls[0]![0] as { metadata?: { hardcoverApiKey?: string } };
       expect(updateArg.metadata?.hardcoverApiKey).toBe('sk-new-9999');
-      // Response is masked, never echoes plaintext
       const body = JSON.parse(res.payload);
       expect(body.metadata.hardcoverApiKey).toBe('********');
     });
@@ -1149,10 +1147,7 @@ describe('settings routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      // The route does NOT replace the sentinel — it lets SettingsService.set
-      // resolve it against the existing stored value. (The route's network
-      // sentinel-normalize block is scoped to the cache-clear comparison, not
-      // to the update payload.)
+      // Network sentinel normalization is only for cache comparison, not this update payload.
       const updateArg = (services.settings.update as Mock).mock.calls[0]![0] as { metadata?: { hardcoverApiKey?: string } };
       expect(updateArg.metadata?.hardcoverApiKey).toBe('********');
       const body = JSON.parse(res.payload);
@@ -1172,8 +1167,6 @@ describe('settings routes', () => {
         payload: { metadata: { hardcoverApiKey: 'metadata-key' } },
       });
 
-      // SettingsService.update was called with ONLY metadata, never with an
-      // import-list payload — proving the two key fields don't cross-write.
       const updateArg = (services.settings.update as Mock).mock.calls[0]![0] as Record<string, unknown>;
       expect(updateArg).toHaveProperty('metadata');
       expect(updateArg).not.toHaveProperty('importList');
@@ -1197,10 +1190,7 @@ describe('settings routes', () => {
       expect(services.settings.get).not.toHaveBeenCalled();
     });
 
-    // AC9 — the cheap-query contract: must call searchSeries('test'), not a heavier
-    // query (e.g. getSeriesMembers) and not an arbitrary string. A regression to
-    // any other query would skip the AC9 contract silently if we only asserted
-    // "searchSeries was called".
+    // The literal cheap query guards against replacing searchSeries with a heavier probe.
     it("invokes HardcoverClient.searchSeries with the literal 'test' query", async () => {
       mockHardcoverSearchSeries.mockResolvedValue([]);
 
@@ -1317,9 +1307,7 @@ describe('settings routes', () => {
       });
     });
 
-    // #1138 Bug 2: HTTP 401/403 from `mapHttpError` and GraphQL-envelope auth
-    // failures (Hardcover often returns HTTP 200 with the error in the body)
-    // both map to a single friendly Bearer-prefix hint.
+    // HTTP and HTTP-200 GraphQL auth failures share the same Bearer-prefix hint.
     const INVALID_KEY_HINT =
       'Invalid Hardcover API key. (If you copied from the Hardcover docs, drop the "Bearer " prefix.)';
 
@@ -1406,9 +1394,7 @@ describe('settings routes', () => {
       });
     });
 
-    // #1138 Bug 3: the route hands the raw body value to HardcoverClient — the
-    // constructor (verified in hardcover.test.ts) does the trim/Bearer strip.
-    // We assert the route's responsibility here: do not pre-process the key.
+    // The route passes raw keys; HardcoverClient owns trimming and Bearer-prefix removal.
     it('whitespace-wrapped apiKey reaches HardcoverClient untouched and succeeds', async () => {
       mockHardcoverSearchSeries.mockResolvedValue([]);
 

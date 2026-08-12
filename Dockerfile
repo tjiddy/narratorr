@@ -1,34 +1,25 @@
-# Build stage
-# Pinned to alpine3.23 to match the runner base (baseimage-alpine:3.23): the runner
-# copies this stage's musl-linked node binary, so both must share an Alpine release
-# to avoid a musl/loader ABI mismatch (#1667).
+# Keep builder and runner on one Alpine release: the copied Node binary shares its musl ABI.
 FROM node:24-alpine3.23 AS builder
 
-# Enable corepack for pnpm
 RUN corepack enable
 
 WORKDIR /app
 
-# Copy package files
 COPY pnpm-lock.yaml package.json ./
 
-# Install dependencies
 RUN pnpm install --frozen-lockfile
 
-# Copy source code, configs, and migration files
 COPY src/ src/
 COPY drizzle/ drizzle/
 COPY tsconfig.json tsup.config.ts vite.config.ts ./
 
-# Accept git commit SHA and build timestamp as build args
 ARG GIT_COMMIT=unknown
 ARG GIT_TAG=unknown
 ARG BUILD_TIME=unknown
 
-# Build application — GIT_COMMIT, GIT_TAG, and BUILD_TIME are inlined into the server bundle by tsup esbuildOptions
+# tsup inlines build identity into the server bundle.
 RUN GIT_COMMIT=$GIT_COMMIT GIT_TAG=$GIT_TAG BUILD_TIME=$BUILD_TIME pnpm build
 
-# Production dependencies stage
 FROM node:24-alpine3.23 AS deps
 
 RUN corepack enable
@@ -39,51 +30,38 @@ COPY pnpm-lock.yaml package.json ./
 
 RUN pnpm install --prod --frozen-lockfile
 
-# Production stage — linuxserver.io base image with s6-overlay
-# Alpine 3.23 ships ffmpeg 8.0.1, which natively decodes xHE-AAC / USAC (audio object
-# type 42) — 3.21/3.22 ship 6.1.2, which cannot. Bumped for #1667. Keep the builder/deps
-# node:24-alpine3.23 pin above in lockstep (musl ABI).
+# Alpine 3.23 supplies ffmpeg 8 for xHE-AAC/USAC; keep builder/deps aligned for musl.
 FROM ghcr.io/linuxserver/baseimage-alpine:3.23 AS runner
 
 WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Install ffmpeg (LSIO base does not include it)
-RUN apk add --no-cache ffmpeg
+# ffmpeg still merges, converts and probes; py3-mutagen writes the tags (#2210).
+RUN apk add --no-cache ffmpeg python3 py3-mutagen
 
 # Copy Node.js binary from builder (Alpine 3.23 does not ship Node 24 packages)
 COPY --from=builder /usr/local/bin/node /usr/local/bin/node
 
-# Copy production dependencies from deps stage
 COPY --from=deps /app/node_modules ./node_modules
 
-# Copy built application
 COPY --from=builder /app/dist ./dist
 
-# Copy migration files (not bundled, loaded at runtime)
+# Migrations are loaded at runtime rather than bundled.
 COPY --from=builder /app/drizzle ./drizzle
 
-# Copy package files for production install
 COPY pnpm-lock.yaml package.json ./
 
-# Ship the third-party notice and the project license alongside the bundled ffmpeg
-# binary + node_modules, so the FFmpeg GPL/LGPL notice (and Narratorr's own
-# GPL-3.0-only LICENSE) travel to every image puller (#1862, simplified 2026-07-15:
-# single FFmpeg notice + pointers; the per-component enumeration was retired).
+# Ship FFmpeg attribution and the project license with every image.
 COPY THIRD_PARTY_NOTICES.md LICENSE ./
 
-# Presence gate: the notice + LICENSE must ship non-empty in every image. Content
-# sanity (FFmpeg attribution, license texts, no stale version pins) is enforced by
-# docker/license-notice.test.ts in `pnpm verify` — not at image build time.
+# Build gates presence; `docker/license-notice.test.ts` owns content validation.
 RUN set -eu; \
     test -s /app/THIRD_PARTY_NOTICES.md; \
     test -s /app/LICENSE
 
-# Copy s6-overlay service definition
 COPY docker/root/ /
 
-# Create directories for config and data
 RUN mkdir -p /config /audiobooks /downloads
 
 EXPOSE 3000
@@ -93,6 +71,6 @@ VOLUME ["/config", "/audiobooks", "/downloads"]
 ENV CONFIG_PATH=/config
 ENV DATABASE_URL=file:/config/narratorr.db
 
-# Health check — uses URL_BASE env var for subpath deployments
+# `URL_BASE` keeps health probes valid behind a subpath proxy.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -sf http://localhost:3000${URL_BASE:-}/api/health || exit 1

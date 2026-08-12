@@ -8,10 +8,7 @@ import { serializeError } from './serialize-error.js';
 
 export { COVER_FILE_REGEX };
 
-/**
- * Copy a cover image from the book directory to a persistent cache.
- * Best-effort — failures are logged but never thrown.
- */
+// Cache maintenance is best-effort; filesystem failures must not fail callers.
 export async function preserveBookCover(
   bookPath: string,
   bookId: number,
@@ -26,7 +23,7 @@ export async function preserveBookCover(
     const cacheDir = join(configPath, 'covers', String(bookId));
     await mkdir(cacheDir, { recursive: true });
 
-    // Remove stale siblings with different extensions to prevent nondeterministic serving
+    // Remove other extensions so serving cannot depend on directory order.
     const existing = await readdir(cacheDir).catch(() => [] as string[]);
     for (const file of existing) {
       if (COVER_FILE_REGEX.test(file) && file !== coverFile) {
@@ -41,9 +38,6 @@ export async function preserveBookCover(
   }
 }
 
-/**
- * Remove cached cover for a book. Best-effort — failures are logged but never thrown.
- */
 export async function cleanCoverCache(
   bookId: number,
   configPath: string,
@@ -56,9 +50,6 @@ export async function cleanCoverCache(
   }
 }
 
-/**
- * Serve a cached cover image. Returns data + MIME type, or null if not cached.
- */
 export async function serveCoverFromCache(
   bookId: number,
   configPath: string,

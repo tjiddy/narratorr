@@ -140,10 +140,6 @@ describe('v1 narrators routes', () => {
       expect(referenceReadService.getNarratorById as Mock).toHaveBeenCalledWith(5);
     });
 
-    // #1983 F3 — pins the CANONICAL `v1PublicIdParamSchema` (`.trim().min(1)`) as this
-    // route's validator. Reverting this module to a private `z.string().min(1)` copy turns
-    // these back into 404 lookups, which `common.test.ts` (schema in isolation) and the
-    // companion-route suite (a different consumer) both stay green through.
     it.each(['%20', '%20%20', '%09'])(
       'returns a 400 BAD_REQUEST envelope for the whitespace-only publicId %s, without resolving',
       async (encoded) => {
@@ -152,8 +148,6 @@ describe('v1 narrators routes', () => {
         expect(res.statusCode).toBe(400);
         expect(res.json()).toEqual({ error: { code: 'BAD_REQUEST', message: expect.any(String) } });
         expectV1Envelope(res.json());
-        // Validation precedes the handler: neither the publicId resolution nor the
-        // service read was reached.
         expect(db.select).not.toHaveBeenCalled();
         expect(referenceReadService.getNarratorById as Mock).not.toHaveBeenCalled();
       },

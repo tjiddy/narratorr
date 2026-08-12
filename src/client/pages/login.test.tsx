@@ -65,11 +65,9 @@ describe('LoginPage', () => {
     });
   });
 
-  // Theme selection logic (localStorage + matchMedia → dark class on <html>) is tested in
-  // src/client/lib/inline-bootstrap.test.ts where the production inline IIFE is exercised directly.
+  // Theme bootstrap is covered by inline-bootstrap.test.ts.
 
   it('submit disables button while pending', async () => {
-    // Make login hang until we resolve it
     let resolveLogin!: () => void;
     (api.authLogin as ReturnType<typeof vi.fn>).mockReturnValue(
       new Promise<void>((resolve) => { resolveLogin = resolve; }),
@@ -82,12 +80,10 @@ describe('LoginPage', () => {
     await user.type(screen.getByLabelText('Password'), 'password123');
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
 
-    // Button should be disabled while pending
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /signing in/i })).toBeDisabled();
     });
 
-    // Resolve the login
     resolveLogin();
   });
 });

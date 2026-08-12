@@ -16,9 +16,7 @@ describe('buildFastifyOptions (production Fastify constructor options)', () => {
     expect(opts.routerOptions.maxParamLength).toBeGreaterThanOrEqual(2048);
   });
 
-  // Boot-level regression — without the cap bump, /api/import/preview/<token>
-  // 404s before the handler ever runs. This test boots a real Fastify with the
-  // production options and asserts a long path-param hits the handler.
+  // Boot real Fastify: without the cap bump, the router rejects before the handler.
   it('boots a Fastify instance that routes long preview-token path params (>100 chars)', async () => {
     const app = Fastify(buildFastifyOptions()).withTypeProvider<ZodTypeProvider>();
     app.setValidatorCompiler(validatorCompiler);
@@ -42,10 +40,7 @@ describe('buildFastifyOptions (production Fastify constructor options)', () => {
     }
   });
 
-  // Negative regression — the default cap (100) rejects the same long token before
-  // the handler runs, proving the production option is what makes the feature work.
-  // fastify 5.11 / find-my-way 9.7 changed the rejection from a generic 404 to an
-  // explicit 414 URI Too Long; either way the request never reaches the handler.
+  // Default Fastify rejects before the handler; current find-my-way reports 414.
   it('default-cap Fastify (no maxParamLength override) rejects the same long token with 414', async () => {
     const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
     app.setValidatorCompiler(validatorCompiler);

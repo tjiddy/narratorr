@@ -16,20 +16,8 @@ import {
   type SettleInterruptedMergesDeps,
 } from './merge-boot-recovery.js';
 
-/**
- * #2099 — boot settlement for merges interrupted by a process death.
- *
- * The filesystem is REAL (tmpdir): classification, the symlink-aware containment guard and the
- * recursive cleanup are the behaviors under test, and a mocked fs proves none of them. Only
- * `readdir` / `rm` / `realpath` are wrapped in spies over their real implementations, so the
- * transient-failure rows of D6's taxonomy (EACCES on any of the three) can be injected without
- * giving up real on-disk behavior everywhere else.
- *
- * The detection QUERY is out of scope here — a mocked drizzle chain cannot validate the
- * `MAX(id)`-per-book grouping. It is covered against real SQLite in
- * `merge-boot-recovery.integration.test.ts`; this suite stubs the query's result and exercises
- * everything downstream of it.
- */
+// Use a real tmpdir for classification and containment; only failure-injection seams are mocked.
+// The MAX(id)-per-book detection query is covered by merge-boot-recovery.integration.test.ts.
 const actualFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -42,7 +30,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   };
 });
 
-/** Windows raises EPERM on `symlink()` without Developer Mode — probe, don't assume (see the windows-hostile-test-primitives learning). */
+// Windows may reject symlink creation without Developer Mode.
 const CAN_SYMLINK = await (async () => {
   const probe = await actualFs.mkdtemp(join(tmpdir(), 'merge-recovery-symlink-probe-'));
   try {
@@ -74,7 +62,7 @@ describe('#2099 merge boot recovery — settlement phase', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    // Real fs behavior by default; individual tests inject a rejection with mockImplementationOnce.
+    // Tests override one call at a time; all other filesystem behavior stays real.
     (readdir as Mock).mockImplementation(actualFs.readdir as never);
     (rm as Mock).mockImplementation(actualFs.rm as never);
     (realpath as Mock).mockImplementation(actualFs.realpath as never);
@@ -105,12 +93,10 @@ describe('#2099 merge boot recovery — settlement phase', () => {
     };
   }
 
-  /** Stub the detection query's result — the query itself is covered by the integration suite. */
   function setCandidates(rows: CandidateRow[]): void {
     db.select.mockReturnValue(mockDbChain(rows));
   }
 
-  /** Seed `<libraryRoot>/Author/<title>` with two originals; returns its path. */
   async function seedBook(title: string, id = 42, source: EventSource = 'auto'): Promise<string> {
     const bookPath = join(libraryRoot, 'Author', title);
     await actualFs.mkdir(bookPath, { recursive: true });
@@ -121,7 +107,6 @@ describe('#2099 merge boot recovery — settlement phase', () => {
     return bookPath;
   }
 
-  /** Create the derived staging sibling `<parent>/.<base>.merge-tmp` with the given entries. */
   async function seedStaging(bookPath: string, entries: string[]): Promise<string> {
     const stagingDir = join(libraryRoot, 'Author', `.${bookPath.split(/[/\\]/).pop()}.merge-tmp`);
     await actualFs.mkdir(stagingDir, { recursive: true });
@@ -178,7 +163,6 @@ describe('#2099 merge boot recovery — settlement phase', () => {
     expect(eventHistory.create).toHaveBeenCalledWith(settlementFor(628, 'auto'));
     expect(plan.requeue).toEqual([628]);
     expect(plan.counters).toEqual({ candidates: 1, cleaned: 1, settled: 1, retryable: 0, failed: 0 });
-    // AC4 — recovery never touches the sources.
     expect((await actualFs.readdir(bookPath)).sort()).toEqual(['01.mp3', '02.mp3']);
   });
 
@@ -281,7 +265,6 @@ describe('#2099 merge boot recovery — settlement phase', () => {
       expect(first.counters).toEqual({ candidates: 1, cleaned: 0, settled: 0, retryable: 1, failed: 0 });
       expect(log.warn).toHaveBeenCalled();
 
-      // Second boot, transient condition cleared.
       const second = await settleInterruptedMerges(deps());
       expect(await exists(stagingDir)).toBe(false);
       expect(eventHistory.create).toHaveBeenCalledWith(settlementFor(628, 'auto'));
@@ -373,12 +356,8 @@ describe('#2099 merge boot recovery — settlement phase', () => {
       }
     });
 
-    // A PARENT-directory symlink is the case the lexical guard cannot see: `<root>/Author` is
-    // lexically inside the root, so only the realpath-canonicalized re-check catches that the
-    // recursive delete would land outside the library. The fixture must make the DERIVED
-    // staging path itself resolvable outside the root, or the guard is never reached — creating
-    // only `<external>` would ENOENT the classification into `no-staging`, and even reaching the
-    // guard, its non-strict variant swallows a realpath ENOENT.
+    // The external staging target must exist or classification returns no-staging before the
+    // realpath guard can catch this parent-directory symlink escape.
     it.skipIf(!CAN_SYMLINK)('a parent-directory symlink escape is caught by the realpath re-check', async () => {
       const external = mkdtempSync(join(tmpdir(), 'narratorr-2099-external-'));
       try {
@@ -391,8 +370,6 @@ describe('#2099 merge boot recovery — settlement phase', () => {
         bookService.getById.mockResolvedValue({ id: 628, title: 'Stormrage', path: bookPath });
         setCandidates([{ bookId: 628, eventId: 7, source: 'auto', bookTitle: 'Stormrage' }]);
 
-        // The derived path resolves THROUGH the symlink, so classification sees the audio —
-        // this is the branch that would otherwise clean *and* re-queue, the most dangerous one.
         expect(await classifyStagingDir(join(libraryRoot, 'Author', '.Stormrage.merge-tmp'))).toBe('pre-commit');
 
         const plan = await settleInterruptedMerges(deps());
@@ -422,7 +399,6 @@ describe('#2099 merge boot recovery — settlement phase', () => {
       expect(realpath).not.toHaveBeenCalled();
       expect(rm).not.toHaveBeenCalled();
       expect(plan).toEqual({ requeue: [], counters: { candidates: 0, cleaned: 0, settled: 0, retryable: 0, failed: 0 } });
-      // Same single record as the rejecting-read branch, but with no cause to attach.
       expect(log.warn).toHaveBeenCalledTimes(1);
       expect(log.warn).toHaveBeenCalledWith({}, expect.any(String));
     });
@@ -437,7 +413,6 @@ describe('#2099 merge boot recovery — settlement phase', () => {
       expect(readdir).not.toHaveBeenCalled();
       expect(rm).not.toHaveBeenCalled();
       expect(plan.counters).toEqual({ candidates: 0, cleaned: 0, settled: 0, retryable: 0, failed: 0 });
-      // D6 gives the pass-level skip a SINGLE record — a throwing read must not warn twice.
       expect(log.warn).toHaveBeenCalledTimes(1);
       expect(log.warn).toHaveBeenCalledWith(
         { error: expect.objectContaining({ message: 'settings unavailable' }) },
@@ -474,8 +449,7 @@ describe('#2099 merge boot recovery — settlement phase', () => {
 
     const first = await settleInterruptedMerges(deps());
 
-    // The clean landed; only the insert failed. `cleaned` is a STEP counter, so the removal the
-    // operator can see on disk stays reported even though the candidate's outcome is `failed`.
+    // `cleaned` records the completed filesystem step even when settlement later fails.
     expect(await exists(stagingDir)).toBe(false);
     expect(first.counters).toEqual({ candidates: 1, cleaned: 1, settled: 0, retryable: 0, failed: 1 });
     expect(first.requeue).toEqual([]);
@@ -483,7 +457,7 @@ describe('#2099 merge boot recovery — settlement phase', () => {
     const second = await settleInterruptedMerges(deps());
 
     expect(second.counters).toEqual({ candidates: 1, cleaned: 0, settled: 1, retryable: 0, failed: 0 });
-    expect(second.requeue).toEqual([]); // no-staging forfeits the re-queue, by design
+    expect(second.requeue).toEqual([]); // no-staging is settled but not requeued
   });
 });
 
@@ -540,11 +514,10 @@ describe('#2099 merge boot recovery — re-queue phase', () => {
 
     await requeueRecoveredMerges(merge as never, plan, inject<FastifyBaseLogger>(log));
 
-    expect(log.info).toHaveBeenCalledTimes(2); // one summary + the swallowed MergeError record
+    expect(log.info).toHaveBeenCalledTimes(2);
     const summaryCalls = (log.info as Mock).mock.calls.filter((c) => c[1] === 'Merge boot recovery complete');
     expect(summaryCalls).toHaveLength(1);
-    // requeued counts ONLY the success; failed = settlement failures + the raw-Error rejection;
-    // the MergeError increments nothing.
+    // MergeError increments neither counter; raw errors add to settlement failures.
     expect(summaryCalls[0]![0]).toEqual({ candidates: 5, cleaned: 3, settled: 4, requeued: 1, retryable: 1, failed: 3 });
   });
 

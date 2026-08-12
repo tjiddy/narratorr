@@ -27,7 +27,6 @@ describe('seedE2ERun', () => {
   }
 
   it('runs Drizzle migrations against the per-run DB path before inserting rows', async () => {
-    // If migrations didn't run, the insert would throw `no such table: indexers`.
     await expect(seedE2ERun({
       dbPath, mamUrl: 'http://localhost:4100', qbitHost: 'localhost', qbitPort: 4200, libraryPath: '/tmp/library',
     })).resolves.toBeDefined();
@@ -64,7 +63,6 @@ describe('seedE2ERun', () => {
       expect(settings.host).toBe('localhost');
       expect(settings.port).toBe(4200);
       expect(settings.useSsl).toBe(false);
-      // qbittorrentSettingsSchema is .strict() — savePath is not a valid field.
       expect(settings.savePath).toBeUndefined();
     } finally {
       client.close();
@@ -132,8 +130,7 @@ describe('seedE2ERun', () => {
       expect(row).toBeDefined();
       const value = row!.value as Record<string, unknown>;
       expect(value.path).toBe('/some/absolute/library-path');
-      // Folder/file formats must be valid token strings so library form validation
-      // doesn't reject them if the UI ever round-trips these settings.
+      // Valid token strings prevent form validation from rejecting a settings round trip.
       expect(value.folderFormat).toBe('{author}/{title}');
       expect(value.fileFormat).toBe('{author} - {title}');
     } finally {
@@ -151,9 +148,6 @@ describe('seedE2ERun', () => {
       const row = (await db.select().from(settings).where(eq(settings.key, 'import')))[0];
       expect(row).toBeDefined();
       const value = row!.value as Record<string, unknown>;
-      // minFreeSpaceGB=0 is the early-return sentinel in checkDiskSpace
-      // (src/server/utils/import-steps.ts) — without it a low-disk host trips
-      // the gate and imports fail.
       expect(value.minFreeSpaceGB).toBe(0);
       expect(value.deleteAfterImport).toBe(false);
       expect(value.redownloadFailed).toBe(true);

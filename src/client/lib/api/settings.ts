@@ -11,6 +11,13 @@ export interface FfmpegStatus {
   path?: string;
 }
 
+/** `path` is the resolved Python interpreter, which serves both the probe and every tag write. */
+export interface MutagenStatus {
+  detected: boolean;
+  version?: string;
+  path?: string;
+}
+
 export interface ProxyTestResult {
   success: boolean;
   ip?: string;
@@ -30,6 +37,7 @@ export const settingsApi = {
       body: JSON.stringify(data),
     }),
   getFfmpegStatus: () => fetchApi<FfmpegStatus>('/settings/ffmpeg-status'),
+  getMutagenStatus: () => fetchApi<MutagenStatus>('/settings/mutagen-status'),
   testProxy: (proxyUrl: string) =>
     fetchApi<ProxyTestResult>('/settings/test-proxy', {
       method: 'POST',

@@ -16,21 +16,9 @@ import { ManualImportAdapter } from './manual.js';
 import * as importOrchestration from '../import-orchestration.helpers.js';
 import { writeOpfForImport } from '../../utils/opf-writer.js';
 
-// Boundary choice: this file mocks fs primitives + stageSourceAudio (the import-steps `copyToLibrary`
-// the pipeline now calls per #1602) + getAudioPathSize, NOT the pipeline `copyToLibrary` /
-// renameFilesWithTemplate. Real pipeline copyToLibrary and renameFilesWithTemplate run against these
-// lower mocks, so a regression at the adapter↔helper seam (wrong source/target path, missing
-// callback, broken rollback) surfaces here. The audio-only copier (`stageSourceAudio`) is mocked
-// rather than its stream primitives because its dedicated tests (import-steps.test.ts,
-// copy-to-library-progress.test.ts) exercise real audio-filtering + streaming behavior; here it is
-// the copy boundary the pipeline forwards (sourcePath, targetPath, sourceStats, onProgress) into.
-//
-// Exception (#1740): the edition-threading test ("uses the FRESH copy-result label") narrowly
-// `vi.spyOn`s the pipeline `copyToLibrary` to return a non-empty `editionLabel` — the only place
-// that label is derived is the occupied-target disambiguation path, which is impractical to fake
-// faithfully here. These spies are restored by the suite-level `afterEach(vi.restoreAllMocks)` —
-// failure-safe even if an awaited `process()` rejects — so every other test keeps the real pipeline
-// copier running against the lower mocks.
+// Keep pipeline copy/rename real while mocking fs, audio staging, and sizing so adapter↔helper seam regressions surface.
+// Lower-level filtering/streaming has dedicated suites. Only #1740 spies on pipeline copyToLibrary because occupied-target
+// edition-label derivation is impractical here; afterEach restores that spy even when process rejects.
 
 vi.mock('../enrichment-orchestration.helpers.js', async () => ({
   ...(await vi.importActual('../enrichment-orchestration.helpers.js')),
@@ -41,10 +29,7 @@ vi.mock('../library-scan.helpers.js', () => ({
   getAudioStats: vi.fn().mockResolvedValue({ fileCount: 3, totalSize: 100_000 }),
 }));
 
-// #1602: the empty-target fast path now reuses the import-steps `copyToLibrary` (aliased
-// stageSourceAudio in the pipeline) — the SAME copier the populated-target staged swap uses — instead
-// of streamCopyWithProgress. Mock it as the copy boundary; real audio-filtering/streaming lives in
-// its own suites. Preserve every other import-steps export (stagedAudioReplace, marker helpers, …).
+// Mock the shared audio copier while preserving staged-swap and marker helpers (#1602).
 vi.mock('../../utils/import-steps.js', async () => ({
   ...(await vi.importActual('../../utils/import-steps.js')),
   copyToLibrary: vi.fn(),
@@ -53,9 +38,7 @@ vi.mock('../../utils/import-steps.js', async () => ({
 vi.mock('../../utils/import-helpers.js', async () => ({
   ...(await vi.importActual('../../utils/import-helpers.js')),
   getAudioPathSize: vi.fn(),
-  // copyDiscGroup uses real fs streams when given a progress callback; mock it so the disc-group
-  // wiring (reconstruct → flatten member set) is asserted without touching real fs. The actual
-  // flattening behavior is covered in import-helpers.test.ts.
+  // Mock streams here; import-helpers.test.ts covers real disc-group flattening.
   copyDiscGroup: vi.fn(),
 }));
 
@@ -73,17 +56,12 @@ vi.mock('../../utils/safe-emit.js', () => ({
   safeEmit: vi.fn(),
 }));
 
-// #1598: empty-target move cleanup now routes through deleteManagedBookFiles (preserves foreign
-// files + symlink-safe) instead of a blanket fs.rm. Mock it here so the adapter↔helper move-cleanup
-// seam is asserted by the helper invocation — the real helper would lstat these fake paths to ENOENT.
-// Its foreign-preservation/symlink behavior is covered against real tmpdirs in delete-managed-files.test.ts
-// and import-orchestration.helpers.test.ts.
+// Mock managed cleanup at the adapter seam; real foreign-file and symlink safety uses tmpdirs elsewhere (#1598).
 vi.mock('../../utils/delete-managed-files.js', () => ({
   deleteManagedBookFiles: vi.fn().mockResolvedValue({ deletedManaged: [], preservedForeign: [], failedManaged: [] }),
 }));
 
-// #1669: mock the OPF writer — the adapter-wiring (gate, finalPath, fresh bookId) is asserted via the
-// spy; the writer's own behavior (fresh reload, XML shape, nonfatal write) lives in opf-writer.test.ts.
+// Assert OPF wiring here; opf-writer.test.ts covers reload, XML, and nonfatal writes (#1669).
 vi.mock('../../utils/opf-writer.js', () => ({
   writeOpfForImport: vi.fn().mockResolvedValue(undefined),
 }));
@@ -100,8 +78,7 @@ function makeDirent(name: string, isFile: boolean): Dirent {
   return { name, isFile: () => isFile, isDirectory: () => !isFile } as Dirent;
 }
 
-// path.join produces backslashes on Windows; normalize captured rename args to POSIX before
-// comparing against forward-slash literals so these assertions work on both platforms.
+// Normalize native join output before comparing with POSIX fixtures.
 const normPath = (p: unknown): string => String(p).split('\\').join('/');
 
 function createMockDb() {
@@ -144,8 +121,7 @@ function makeJob(overrides: Partial<ImportJob> = {}): ImportJob {
   };
 }
 
-// Default settings (path:'/library', folderFormat:'{author}/{title}') + payload (title:'Test Book',
-// authorName:'Author') yield this target path via buildTargetPath.
+// Derived from default library settings and makeJob payload.
 const TARGET_PATH = '/library/Author/Test Book';
 
 describe('ManualImportAdapter', () => {
@@ -168,11 +144,7 @@ describe('ManualImportAdapter', () => {
     vi.mocked(fs.rename).mockResolvedValue(undefined);
     vi.mocked(fs.readdir).mockResolvedValue([] as never);
     vi.mocked(fs.cp).mockResolvedValue(undefined);
-    // #1602: the pipeline now `stat`s the source (item.path) before handing it to stageSourceAudio.
-    // Test sources live under /audiobooks (fake paths) — synthesize Stats for those (file when the
-    // basename has an extension, e.g. Doctor Sleep.m4b; directory otherwise). Any other path (a
-    // /library target/marker probed by recoverInterruptedCommit) delegates to the real stat so its
-    // ENOENT-tolerant behavior is unchanged.
+    // Fake /audiobooks sources (extension means file); delegate target/marker probes so ENOENT recovery stays real (#1602).
     vi.mocked(fs.stat).mockImplementation((async (p: Parameters<typeof realFs.stat>[0]) => {
       const path = String(p);
       if (path.startsWith('/audiobooks')) {
@@ -186,11 +158,7 @@ describe('ManualImportAdapter', () => {
     vi.mocked(stageSourceAudio).mockResolvedValue(undefined);
 
     const { getAudioPathSize } = await import('../../utils/import-helpers.js');
-    // Source/target return equal sizes so target/source >= 0.99 verification passes.
-    // mockReset drains any leftover *Once() queue from a prior test before we re-seed
-    // (clearAllMocks does not — see CLAUDE.md). The first read is the #1287 pre-copy
-    // target gate: default it to 0 (empty target) so standard tests exercise the
-    // direct-copy fast path; the staged-swap tests below override the gate to > 0.
+    // Reset the once-queue, seed target gate=0, then equal sizes; clearAllMocks does not drain queued responses (#1287).
     vi.mocked(getAudioPathSize).mockReset();
     vi.mocked(getAudioPathSize).mockResolvedValue(100);
     vi.mocked(getAudioPathSize).mockResolvedValueOnce(0);
@@ -231,12 +199,7 @@ describe('ManualImportAdapter', () => {
     adapter = new ManualImportAdapter(deps);
   });
 
-  // Un-install any `vi.spyOn` spies (e.g. the temporary importOrchestration.copyToLibrary
-  // spies below) after every test — including when an awaited `adapter.process(...)` rejects
-  // before a manual restore would run — so a stubbed copier can never leak into a later test.
-  // Complements beforeEach's `clearAllMocks()` (which resets call state but does not restore
-  // spies) and leaves the module-level import-steps `vi.mock` factory and `vi.fn()` doubles
-  // untouched — `restoreAllMocks()` only reverts `vi.spyOn` spies.
+  // Restore narrow pipeline spies even after rejection; clearAllMocks does not uninstall them.
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -251,11 +214,7 @@ describe('ManualImportAdapter', () => {
       expect(phases).toContain('copying');
       expect(phases).toContain('fetching_metadata');
 
-      // Direct assertion on the helper-backed status promotion (#1446): the adapter
-      // must write `status: 'imported'` via transitionBookStatus → db.update(books).set(...).
-      // Without this, deleting/no-opping the promotion line still passes the phase/event
-      // assertions above. The adapter calls set() twice (path/size, then status); grab the
-      // status write from the shared set call log.
+      // Phase/event assertions miss a no-op promotion; pin the imported status write directly (#1446).
       const statusUpdateSet = (mockDb.update.mock.results[0]!.value as { set: ReturnType<typeof vi.fn> }).set;
       const statusCall = statusUpdateSet.mock.calls.find((c: unknown[]) => {
         const arg = c[0] as Record<string, unknown>;
@@ -266,7 +225,6 @@ describe('ManualImportAdapter', () => {
       expect(mockEventHistory.create).toHaveBeenCalled();
     });
 
-    // ── #1491 connector refresh hook ───────────────────────────────────────
     it('mode=copy: enqueues a connector refresh with reason "import"', async () => {
       const job = makeJob();
       await adapter.process(job, ctx);
@@ -277,7 +235,6 @@ describe('ManualImportAdapter', () => {
     });
 
     it('pointer mode (in-place adopt, no mode): enqueues a connector refresh with reason "adopt"', async () => {
-      // No `mode` key → pointer/adopt path; finalPath stays the source path.
       const job = makeJob({ metadata: JSON.stringify({ path: '/audiobooks/Author/Title', title: 'Test Book', authorName: 'Author' }) });
       await adapter.process(job, ctx);
 
@@ -322,7 +279,6 @@ describe('ManualImportAdapter', () => {
         vi.mocked(writeOpfForImport).mockRejectedValueOnce(new Error('disk full'));
 
         await expect(makeOpfAdapter(true).process(makeJob(), ctx)).resolves.toBeUndefined();
-        // Connector refresh after the OPF write still fires → import path was not aborted.
         expect(mockConnectorService.notifyRefresh).toHaveBeenCalled();
         expect(deps.log.warn).toHaveBeenCalledWith(
           expect.objectContaining({ bookId: 42 }),
@@ -337,8 +293,6 @@ describe('ManualImportAdapter', () => {
       const job = makeJob();
       await adapter.process(job, ctx);
 
-      // #1602: target creation is the audio-only copier's responsibility now, so the pipeline no
-      // longer mkdirs ahead of the copy — it stats the source and hands the stats to stageSourceAudio.
       expect(vi.mocked(stageSourceAudio)).toHaveBeenCalledWith(expect.objectContaining({
         sourcePath: '/audiobooks/Author/Title',
         targetPath: TARGET_PATH,
@@ -369,7 +323,6 @@ describe('ManualImportAdapter', () => {
       const job = makeJob({ metadata: JSON.stringify(payload) });
       await adapter.process(job, ctx);
 
-      // #1598: managed-file cleanup (foreign-preserving, symlink-safe) replaces the blanket fs.rm.
       expect(vi.mocked(deleteManagedBookFiles)).toHaveBeenCalledWith(
         '/audiobooks/Author/Title', expect.any(String), expect.anything(), { assertInsideLibrary: false },
       );
@@ -382,7 +335,6 @@ describe('ManualImportAdapter', () => {
         path: '/audiobooks/Author/Title',
         title: 'Test Book',
         authorName: 'Author',
-        // mode omitted = pointer
       };
       const job = makeJob({ metadata: JSON.stringify(payload) });
 
@@ -396,26 +348,18 @@ describe('ManualImportAdapter', () => {
     });
 
     describe('coalesced disc-group rows (#1272)', () => {
-      // Built with join() so they carry the same native separators reconstructDiscGroup emits
-      // (join(parent, name) → backslashes on Windows). Forward-slash literals would mismatch the
-      // reconstructed member paths on a Windows dev box while passing on Linux CI.
+      // Use native join output to match reconstruction on Windows and POSIX.
       const MEMBER_PATHS = [
         join('/audiobooks', 'Author - Book Disc 1 of 3'),
         join('/audiobooks', 'Author - Book Disc 2 of 3'),
         join('/audiobooks', 'Author - Book Disc 3 of 3'),
       ];
 
-      /**
-       * Mock the reconstruction filesystem: readdir('/audiobooks') lists `names`, and each named
-       * subdir is audio-bearing (returns an audio file) unless listed in `audioless` (returns only
-       * non-audio). reconstructDiscGroup now filters siblings to audio-bearing dirs before the
-       * guard (#1280), so the per-sibling probe must be served, not just the parent listing.
-       */
+      /** Mock parent listing and per-sibling audio probes; audioless entries return only cover art (#1280). */
       async function mockSiblingTree(names: string[], audioless: string[] = []): Promise<void> {
         const fs = await import('node:fs/promises');
         vi.mocked(fs.readdir).mockImplementation(async (p: unknown) => {
-          // reconstructDiscGroup probes siblings with join(parent, name) → backslashes on Windows;
-          // normalize so the POSIX-keyed tree matches regardless of host separator.
+          // Normalize native sibling probes into the POSIX-keyed fixture.
           const key = String(p).split('\\').join('/');
           if (key === '/audiobooks') return names.map(n => makeDirent(n, false)) as never;
           const name = key.slice('/audiobooks/'.length);
@@ -425,7 +369,6 @@ describe('ManualImportAdapter', () => {
         });
       }
 
-      /** The standard 3-disc audio-bearing sibling set used by the copy/move tests. */
       async function mockDiscSiblings(): Promise<void> {
         await mockSiblingTree([
           'Author - Book Disc 1 of 3',
@@ -438,7 +381,6 @@ describe('ManualImportAdapter', () => {
         await mockDiscSiblings();
         const { copyDiscGroup, getAudioPathSize } = await import('../../utils/import-helpers.js');
         const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
-        // 3 member-size reads then the aggregated target size — verification passes (300 vs 300)
         vi.mocked(getAudioPathSize)
           .mockResolvedValueOnce(100).mockResolvedValueOnce(100).mockResolvedValueOnce(100)
           .mockResolvedValueOnce(300);
@@ -449,10 +391,8 @@ describe('ManualImportAdapter', () => {
         await adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx);
 
         expect(vi.mocked(copyDiscGroup)).toHaveBeenCalledWith(MEMBER_PATHS, TARGET_PATH, expect.any(Function));
-        // Single-source copy must NOT run — the whole group is flattened, not just Disc 1
         expect(vi.mocked(stageSourceAudio)).not.toHaveBeenCalled();
-        // AC2: verification sums every member size, then reads the target — not item.path alone.
-        // The leading [TARGET_PATH] read is the #1287 pre-copy populated-target gate (here empty → 0).
+        // First target read is the empty-target gate; remaining reads verify every member and aggregate target (AC2/#1287).
         expect(vi.mocked(getAudioPathSize).mock.calls).toEqual([
           [TARGET_PATH],
           [MEMBER_PATHS[0]],
@@ -475,15 +415,12 @@ describe('ManualImportAdapter', () => {
         };
         await adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx);
 
-        // #1598: each member is swept by the managed-file helper (foreign-preserving, symlink-safe).
         for (const member of MEMBER_PATHS) {
           expect(vi.mocked(deleteManagedBookFiles)).toHaveBeenCalledWith(
             member, expect.any(String), expect.anything(), { assertInsideLibrary: false },
           );
         }
-        // AC2: move-mode runs the same full-member copy verification before the rm sweep —
-        // every member size is read, then the target, not item.path alone.
-        // The leading [TARGET_PATH] read is the #1287 pre-copy populated-target gate (here empty → 0).
+        // First target read is the empty-target gate; remaining reads verify every member and aggregate target (AC2/#1287).
         expect(vi.mocked(getAudioPathSize).mock.calls).toEqual([
           [TARGET_PATH],
           [MEMBER_PATHS[0]],
@@ -499,7 +436,7 @@ describe('ManualImportAdapter', () => {
         const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
 
         const payload: ManualImportJobPayload = {
-          path: MEMBER_PATHS[0]!, title: 'Test Book', authorName: 'Author', // mode omitted = pointer
+          path: MEMBER_PATHS[0]!, title: 'Test Book', authorName: 'Author',
         };
 
         await expect(adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx))
@@ -518,7 +455,6 @@ describe('ManualImportAdapter', () => {
         };
         await adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx);
 
-        // Discovery left this row ungrouped → import copies only its single folder
         expect(vi.mocked(copyDiscGroup)).not.toHaveBeenCalled();
         expect(vi.mocked(stageSourceAudio)).toHaveBeenCalledWith(expect.objectContaining({
           sourcePath: '/audiobooks/Author - Book Disc 1 of 10',
@@ -528,7 +464,6 @@ describe('ManualImportAdapter', () => {
       });
 
       it('pointer mode: AUDIO-bearing partial-marker sibling set is NOT rejected (discovery left it ungrouped)', async () => {
-        // An audio-bearing markerless sibling is genuinely ambiguous → all-or-nothing guard refuses.
         await mockSiblingTree([
           'Author - Book Disc 1 of 3',
           'Author - Book Disc 2 of 3',
@@ -537,19 +472,17 @@ describe('ManualImportAdapter', () => {
         const { copyDiscGroup } = await import('../../utils/import-helpers.js');
 
         const payload: ManualImportJobPayload = {
-          path: '/audiobooks/Author - Book Disc 1 of 3', title: 'Test Book', authorName: 'Author', // pointer
+          path: '/audiobooks/Author - Book Disc 1 of 3', title: 'Test Book', authorName: 'Author',
         };
         await adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx);
 
-        // No multi-disc rejection, no flatten — ordinary pointer registration of the single folder
         const phases = setPhase.mock.calls.map((c: unknown[]) => c[0]);
         expect(phases).toContain('fetching_metadata');
         expect(vi.mocked(copyDiscGroup)).not.toHaveBeenCalled();
       });
 
       it('mode=copy: an AUDIOLESS stem-sharing sibling no longer drops discs — flattens ALL members (#1280)', async () => {
-        // The data-loss case: previously an audioless `<stem> Artwork` sibling broke the import-side
-        // all-or-nothing guard, silently copying only Disc 1. Now it is filtered out before the guard.
+        // Audioless stem siblings once broke grouping and silently copied only Disc 1; filter them before the guard (#1280).
         await mockSiblingTree(
           [
             'Author - Book Disc 1 of 3',
@@ -570,15 +503,10 @@ describe('ManualImportAdapter', () => {
         };
         await adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx);
 
-        // All 3 audio-bearing discs flattened (Artwork excluded), not just Disc 1
         expect(vi.mocked(copyDiscGroup)).toHaveBeenCalledWith(MEMBER_PATHS, TARGET_PATH, expect.any(Function));
         expect(vi.mocked(stageSourceAudio)).not.toHaveBeenCalled();
 
-        // AC2: copy verification must sum EVERY reconstructed member's size, then read the target —
-        // not silently fall back to checking only the anchor disc (item.path) against the target.
-        // The exact call sequence proves all 3 member sizes are accumulated before the target read;
-        // a regression to single-path verification would yield only [item.path, target] (2 calls).
-        // The leading [TARGET_PATH] read is the #1287 pre-copy populated-target gate (here empty → 0).
+        // Exact reads distinguish full-group verification from the old anchor-only check (AC2/#1287).
         expect(vi.mocked(getAudioPathSize).mock.calls).toEqual([
           [TARGET_PATH],
           [MEMBER_PATHS[0]],
@@ -590,9 +518,7 @@ describe('ManualImportAdapter', () => {
     });
 
     describe('single-file payloads (issue #982)', () => {
-      // Helper: pull the {path, size, ...} update from the shared setMock call log.
-      // The adapter calls db.update(books).set(...) twice: once for path/size, once for status.
-      // We filter by the presence of `path` to grab the persistence update.
+      // Select the path/size write from the shared set log, excluding the separate status write.
       function findPathSizeUpdate(): { path: unknown; size: unknown } | undefined {
         const updateResults = mockDb.update.mock.results;
         if (updateResults.length === 0) return undefined;
@@ -606,20 +532,17 @@ describe('ManualImportAdapter', () => {
 
       it('pointer mode + file-path payload: persists source file path with the file byte size', async () => {
         const { getAudioStats } = await import('../library-scan.helpers.js');
-        // Pointer mode: getAudioStats sees the file path directly, returns single-file stats.
         vi.mocked(getAudioStats).mockResolvedValueOnce({ fileCount: 1, totalSize: 12_345 });
 
         const payload: ManualImportJobPayload = {
           path: '/audiobooks/Doctor Sleep.m4b',
           title: 'Test Book',
           authorName: 'Author',
-          // mode omitted = pointer
         };
         const job = makeJob({ metadata: JSON.stringify(payload) });
 
         await adapter.process(job, ctx);
 
-        // getAudioStats was called with the source file path (no copy/rename phase)
         expect(vi.mocked(getAudioStats)).toHaveBeenCalledWith(
           '/audiobooks/Doctor Sleep.m4b',
           expect.anything(),
@@ -635,7 +558,6 @@ describe('ManualImportAdapter', () => {
       it('mode=copy + file-path payload: stageSourceAudio receives the file source, persists target dir and copied-file size', async () => {
         const { copyToLibrary: stageSourceAudio } = await import('../../utils/import-steps.js');
         const { getAudioStats } = await import('../library-scan.helpers.js');
-        // After copy, getAudioStats is called against the target directory; size reflects copied file.
         vi.mocked(getAudioStats).mockResolvedValueOnce({ fileCount: 1, totalSize: 67_890 });
 
         const payload: ManualImportJobPayload = {
@@ -648,8 +570,6 @@ describe('ManualImportAdapter', () => {
 
         await adapter.process(job, ctx);
 
-        // The source forwarded to the audio-only copier is the original file path. The copier itself
-        // (import-steps copyToLibrary) handles the file-vs-directory branch — covered by its own suite.
         expect(vi.mocked(stageSourceAudio)).toHaveBeenCalledWith(expect.objectContaining({
           sourcePath: '/audiobooks/Doctor Sleep.m4b',
           targetPath: TARGET_PATH,
@@ -657,8 +577,6 @@ describe('ManualImportAdapter', () => {
           onProgress: expect.any(Function),
         }));
 
-        // After copy completes, books.path is the target directory and size is the
-        // copied-file size returned by getAudioStats(targetPath).
         const persisted = findPathSizeUpdate();
         expect(persisted).toMatchObject({
           path: TARGET_PATH,
@@ -687,7 +605,6 @@ describe('ManualImportAdapter', () => {
           onProgress: expect.any(Function),
         }));
 
-        // #1598: move cleans the original source via the managed-file helper after copy verification.
         const { deleteManagedBookFiles } = await import('../../utils/delete-managed-files.js');
         expect(vi.mocked(deleteManagedBookFiles)).toHaveBeenCalledWith(
           '/audiobooks/Doctor Sleep.m4b', expect.any(String), expect.anything(), { assertInsideLibrary: false },
@@ -735,7 +652,6 @@ describe('ManualImportAdapter', () => {
       const job = makeJob();
       await adapter.process(job, ctx);
 
-      // mode='copy' → stageSourceAudio should run
       expect(vi.mocked(stageSourceAudio)).toHaveBeenCalled();
     });
 
@@ -806,9 +722,7 @@ describe('ManualImportAdapter', () => {
         const job = makeJob();
         await adapter.process(job, ctx);
 
-        // Adapter takes one snapshot it passes to renameIfConfigured; real copyToLibrary
-        // fetches independently. Total of 2 — a regression that adds a second adapter
-        // fetch for rename would push this to 3.
+        // Real copy takes one snapshot; adapter rename must add exactly one more, not two.
         const libraryCalls = (settingsSvc.get as ReturnType<typeof vi.fn>).mock.calls
           .filter((c: unknown[]) => c[0] === 'library');
         expect(libraryCalls).toHaveLength(2);
@@ -825,8 +739,7 @@ describe('ManualImportAdapter', () => {
         const job = makeJob();
         await adapter.process(job, ctx);
 
-        // 3 forward renames; stems collide on '{title}' → every file gets a padded
-        // sequential ordinal incl. the first (#1192): 'Test Book (1/2/3)'.
+        // Colliding stems number every file, including the first (#1192).
         expect(vi.mocked(fs.rename)).toHaveBeenCalledTimes(3);
         const calls = vi.mocked(fs.rename).mock.calls;
         expect(calls[0]!.map(normPath)).toEqual(
@@ -873,7 +786,6 @@ describe('ManualImportAdapter', () => {
 
       it('zero audio files in target dir: no fs.rename calls, no renaming progress events', async () => {
         const fs = await import('node:fs/promises');
-        // Non-audio entries only — paths.ts:72 short-circuit returns 0.
         await mockReaddirAudioFiles([]);
         const settingsSvc = makeRenameSettingsService('{title}');
         deps.settingsService = inject<SettingsService>(settingsSvc);
@@ -906,7 +818,6 @@ describe('ManualImportAdapter', () => {
 
       it('mode=copy + fileFormat empty (defensive): does NOT call setPhase(renaming) or fs.rename', async () => {
         const fs = await import('node:fs/promises');
-        // fileFormat already '' in default beforeEach setup
         const job = makeJob();
         await adapter.process(job, ctx);
 
@@ -947,8 +858,7 @@ describe('ManualImportAdapter', () => {
       it('rename rollback: Nth fs.rename rejects, helper rewinds completed renames in reverse', async () => {
         const fs = await import('node:fs/promises');
         await mockReaddirAudioFiles(['a.mp3', 'b.mp3', 'c.mp3']);
-        // Forward renames produce: a→Test Book (1), b→Test Book (2), c→Test Book (3).
-        // Rollback after 3rd fails: reverses b→Test Book (2) and a→Test Book (1) (only the completed pair).
+        // The third forward rename fails; rollback unwinds the two completed pairs in reverse.
         vi.mocked(fs.rename)
           .mockResolvedValueOnce(undefined) // a.mp3 → Test Book (1).mp3
           .mockResolvedValueOnce(undefined) // b.mp3 → Test Book (2).mp3
@@ -964,17 +874,14 @@ describe('ManualImportAdapter', () => {
         const job = makeJob();
         await expect(adapter.process(job, ctx)).rejects.toThrow('ENOSPC');
 
-        // 3 forward + 2 rollback = 5 total
         expect(vi.mocked(fs.rename)).toHaveBeenCalledTimes(5);
         const calls = vi.mocked(fs.rename).mock.calls;
-        // Forward calls
         expect(calls[0]!.map(normPath)).toEqual(
           [`${TARGET_PATH}/a.mp3`, `${TARGET_PATH}/Test Book (1).mp3`]);
         expect(calls[1]!.map(normPath)).toEqual(
           [`${TARGET_PATH}/b.mp3`, `${TARGET_PATH}/Test Book (2).mp3`]);
         expect(calls[2]!.map(normPath)).toEqual(
           [`${TARGET_PATH}/c.mp3`, `${TARGET_PATH}/Test Book (3).mp3`]);
-        // Rollback calls (reverse order, swapped from/to)
         expect(calls[3]!.map(normPath)).toEqual(
           [`${TARGET_PATH}/Test Book (2).mp3`, `${TARGET_PATH}/b.mp3`]);
         expect(calls[4]!.map(normPath)).toEqual(
@@ -1005,11 +912,7 @@ describe('ManualImportAdapter', () => {
         }));
       });
 
-      // #1736 — a FORCED import's copy-time OwnedRecordingError is not translated into a generic
-      // failure. The adapter must rethrow the typed error WITHOUT emitting the generic
-      // `book_status_change → failed` SSE or recording the opaque generic `import_failed` event — the
-      // worker's refused terminal disposition owns it. Contrast with the ENOSPC failure above, which
-      // DOES emit/record the generic side effects.
+      // Forced OwnedRecordingError belongs to the worker's refused disposition; rethrow without generic failure side effects (#1736).
       it('mode=copy + forceImport + copyToLibrary throws OwnedRecordingError: rethrows typed error, skips generic failure side effects', async () => {
         const { safeEmit } = await import('../../utils/safe-emit.js');
         const ownedError = new OwnedRecordingError({ existingBookId: 99, title: 'Owned', reason: 'recording-review' });
@@ -1018,30 +921,23 @@ describe('ManualImportAdapter', () => {
         const job = makeJob({ metadata: JSON.stringify({ path: '/audiobooks/Author/Title', title: 'Test Book', authorName: 'Author', mode: 'copy', forceImport: true }) });
         await expect(adapter.process(job, ctx)).rejects.toBe(ownedError);
 
-        // No generic `book_status_change → failed` SSE (the placeholder is deleted by the worker, not reverted).
         expect(vi.mocked(safeEmit)).not.toHaveBeenCalledWith(
           expect.anything(), 'book_status_change',
           expect.objectContaining({ new_status: 'failed' }),
           expect.anything(),
         );
-        // No generic opaque `import_failed` event recorded by the adapter.
         expect(mockEventHistory.create).not.toHaveBeenCalledWith(expect.objectContaining({ eventType: 'import_failed' }));
       });
 
-      // #1736 F1 — a NON-forced import's copy-time OwnedRecordingError was never user-forced, so the
-      // copy-time fence's refusal is an ordinary generic failure, NOT a "force refused" event. The
-      // adapter must keep the generic side effects (gate on `forceImport`), exactly as it did before
-      // #1736 — otherwise a non-forced collision is silently mislabeled as a forced refusal.
+      // Without forceImport, OwnedRecordingError is ordinary failure; suppressing side effects would mislabel it as force-refused (#1736 F1).
       it('mode=copy WITHOUT forceImport + copyToLibrary throws OwnedRecordingError: keeps the generic failure side effects', async () => {
         const { safeEmit } = await import('../../utils/safe-emit.js');
         const ownedError = new OwnedRecordingError({ existingBookId: 99, title: 'Owned', reason: 'recording-review' });
         vi.spyOn(importOrchestration, 'copyToLibrary').mockRejectedValue(ownedError);
 
-        // makeJob()'s default payload has no `forceImport`.
         const job = makeJob();
         await expect(adapter.process(job, ctx)).rejects.toBe(ownedError);
 
-        // Generic failure path retained: book reverted to failed + opaque import_failed event recorded.
         expect(vi.mocked(safeEmit)).toHaveBeenCalledWith(
           expect.anything(), 'book_status_change',
           expect.objectContaining({ book_id: 42, new_status: 'failed' }),
@@ -1088,11 +984,7 @@ describe('ManualImportAdapter', () => {
       });
 
       it('mode=copy + fileFormat=\'{title} ({edition})\' + copyToLibrary derives editionLabel: rename uses the FRESH copy-result label, not the stale getById value (#1740)', async () => {
-        // Regression guard (#1740): the rename runs BEFORE edition_label is persisted, so the
-        // hydrated `getById` book still carries the stale/null label. The label that must drive the
-        // rename is the one `copyToLibrary` returned on THIS import. We stub the pipeline copier
-        // (the documented seam is otherwise real — see boundary note above) to return a non-empty
-        // editionLabel while `getById` returns a DIFFERENT (null) value, proving precedence.
+        // Rename precedes label persistence, so the current copy result must beat stale hydrated metadata (#1740).
         const fs = await import('node:fs/promises');
         await mockReaddirAudioFiles(['a.mp3']);
         vi.spyOn(importOrchestration, 'copyToLibrary')
@@ -1119,8 +1011,6 @@ describe('ManualImportAdapter', () => {
       });
 
       it('mode=copy + fileFormat=\'{title} ({edition})\' + no copy-result label + getById returns editionLabel: falls back to the stored label (#1740)', async () => {
-        // The undefined-passthrough branch: when no disambiguation occurred (copyToLibrary returns
-        // no editionLabel), the rename still honors the hydrated/stored edition_label (#1712).
         const fs = await import('node:fs/promises');
         await mockReaddirAudioFiles(['a.mp3']);
         const settingsSvc = makeRenameSettingsService('{title} ({edition})');
@@ -1280,16 +1170,12 @@ describe('ManualImportAdapter', () => {
         mode: 'copy',
       };
       const job = makeJob({ metadata: JSON.stringify(payload) });
-      // Should not throw — schema accepts the new fields incl. 0
       await adapter.process(job, ctx);
       expect(setPhase).toHaveBeenCalled();
     });
 
     it('worker rehydration: persisted seriesPosition: 0 reaches copyToLibrary target path via {seriesPosition} token (AC9/F2/#1028)', async () => {
-      // Override settings so the folder format actually consumes seriesPosition — without
-      // {seriesPosition} in the format, dropping toImportConfirmItem's conditional spread
-      // for seriesPosition would not affect any observable downstream output. With this
-      // format, a dropped seriesPosition makes the rendered path differ.
+      // Include {seriesPosition}; otherwise dropping the conditional spread has no observable target effect.
       const settingsSvc = createMockSettingsService({
         library: { path: '/library', folderFormat: '{author}/{series} #{seriesPosition}/{title}', fileFormat: '' },
       });
@@ -1309,8 +1195,6 @@ describe('ManualImportAdapter', () => {
       const job = makeJob({ metadata: JSON.stringify(payload) });
       await adapter.process(job, ctx);
 
-      // The expected target rendered from {author}/{series} #{seriesPosition}/{title}. seriesPosition: 0
-      // must survive into the copier's target — a dropped conditional-spread would render a different path.
       const expectedTarget = '/library/Author/Discworld #0/Test Book';
       expect(vi.mocked(stageSourceAudio)).toHaveBeenCalledWith(expect.objectContaining({
         sourcePath: payload.path,
@@ -1320,9 +1204,7 @@ describe('ManualImportAdapter', () => {
     });
 
     it('worker rehydration: a non-empty user series + paired position survives the strict schema round-trip and WINS over matched metadata in the copy target (#1927 F6/AC2)', async () => {
-      // Full live chain: JSON → strict manualImportJobPayloadSchema parse → toImportConfirmItem →
-      // copyToLibrary. The user's `Custom Saga #7` must reach the folder target, NOT the matched
-      // metadata's `Provider Saga #2` — the item-first resolver runs at the persisted boundary.
+      // Exercise JSON→strict schema→item conversion→copy; the user pair must beat provider metadata at the persisted boundary.
       const settingsSvc = createMockSettingsService({
         library: { path: '/library', folderFormat: '{author}/{series} #{seriesPosition}/{title}', fileFormat: '' },
       });
@@ -1351,9 +1233,7 @@ describe('ManualImportAdapter', () => {
     });
 
     it('worker rehydration: a whitespace-only seriesName defers to the matched metadata pair — no whitespace third state (#1927 F4/F10/AC5)', async () => {
-      // A non-React/persisted caller can submit `seriesName: "   "` (the schema accepts any string).
-      // The authoritative server resolver classifies it absent, so the copy target defers to the
-      // metadata pair (Provider Saga #2), NOT a whitespace folder or the item's orphan position 99.
+      // Schema accepts whitespace; the server treats it absent and ignores orphan position 99 in favor of provider metadata.
       const settingsSvc = createMockSettingsService({
         library: { path: '/library', folderFormat: '{author}/{series} #{seriesPosition}/{title}', fileFormat: '' },
       });
@@ -1475,6 +1355,37 @@ describe('ManualImportAdapter', () => {
         source: 'manual',
         narratorName: null,
       }));
+    });
+  });
+
+  // ImportSubmissionRunner computes narratorSource; this adapter only threads it through (#2158).
+  // Resulting row behavior is covered end-to-end in import-opf-ladder.integration.test.ts.
+  describe('narratorSource threading (#2158 AC8)', () => {
+    async function processWith(extra: Partial<ManualImportJobPayload>) {
+      const payload: ManualImportJobPayload = {
+        path: '/audiobooks/Author/Title', title: 'Test Book', authorName: 'Author', mode: 'copy', ...extra,
+      };
+      await adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx);
+      const { orchestrateBookEnrichment } = await import('../enrichment-orchestration.helpers.js');
+      return vi.mocked(orchestrateBookEnrichment).mock.calls[0]![2];
+    }
+
+    it.each(['curated', 'provider', 'none'] as const)('forwards narratorSource=%s', async (narratorSource) => {
+      expect(await processWith({ narratorSource })).toMatchObject({ narratorSource });
+    });
+
+    it('omits the key entirely when the payload carries no provenance (default-preserving)', async () => {
+      // Older persisted jobs omit this key; preserve fill-empty semantics and sibling exact-argument mocks.
+      expect(await processWith({})).not.toHaveProperty('narratorSource');
+    });
+
+    it('a narratorSource the schema does not know is rejected at parse, not silently forwarded', async () => {
+      const payload = {
+        path: '/audiobooks/Author/Title', title: 'Test Book', authorName: 'Author', mode: 'copy',
+        narratorSource: 'invented',
+      };
+      await expect(adapter.process(makeJob({ metadata: JSON.stringify(payload) }), ctx))
+        .rejects.toThrow(/shape mismatch/);
     });
   });
 });

@@ -53,7 +53,6 @@ function rpcHandler(expectedMethod?: string, responseArgs?: Record<string, unkno
   });
 }
 
-// Returns 409 first, then success on retry
 function sessionIdRotationHandler(responseArgs?: Record<string, unknown>) {
   let callCount = 0;
   return http.post(RPC_URL, async () => {
@@ -152,8 +151,6 @@ describe('TransmissionClient', () => {
       expect(result.message).toContain('unexpected session-get response');
     });
 
-    // #1778 — version is `.nullish()`, so a null maps like an absent version:
-    // success with the fallback "Connected to Transmission" message.
     it('returns success with fallback name when session-get version is null', async () => {
       server.use(rpcHandler('session-get', { version: null }));
 
@@ -346,8 +343,6 @@ describe('TransmissionClient', () => {
     });
 
     it('leaves downloadSpeed undefined (deferred — see #655 out-of-scope note)', async () => {
-      // Transmission's RPC exposes rate_download but this adapter does not request it today.
-      // Downstream consumers must treat undefined as "not reported".
       server.use(rpcHandler('torrent-get', { torrents: [mockTorrent] }));
 
       const result = await client.getDownload('abc123def456');
@@ -538,8 +533,6 @@ describe('TransmissionClient', () => {
       expect(result.message).toContain('RPC error');
     });
 
-    // #1778 — the RPC `arguments` wrapper is nullish; a null must parse and map
-    // like an absent wrapper (no torrents).
     it('getAllDownloads treats a null arguments wrapper like an empty result', async () => {
       server.use(
         http.post(RPC_URL, () => {
@@ -564,7 +557,6 @@ describe('TransmissionClient', () => {
     it('uses HTTPS when useSsl is true', () => {
       const sslClient = new TransmissionClient({ ...config, useSsl: true });
       expect(sslClient.type).toBe('transmission');
-      // Can't directly test URL, but constructor should succeed
     });
 
     it('lowercases hash from addDownload response', async () => {
@@ -687,7 +679,6 @@ describe('TransmissionClient', () => {
     });
 
     it('preserves cause from envelope-level result: error response', async () => {
-      // result: "error" passes the envelope schema but triggers the explicit error branch.
       server.use(http.post(RPC_URL, () => HttpResponse.json({ result: 'session-broken' }, {
         headers: { 'X-Transmission-Session-Id': SESSION_ID },
       })));

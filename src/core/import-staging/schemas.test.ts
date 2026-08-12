@@ -11,6 +11,9 @@ import {
   payloadDigestSchema,
   serializeSubmissionForDigest,
   aggregateDispositions,
+  submissionBulkDeleteQuerySchema,
+  submissionBulkDeleteResponseSchema,
+  SUBMISSION_ERROR_CODES,
   CANONICAL_METADATA_KEYS,
   MAX_SUBMISSION_BYTES,
   EXPECTED_COUNT_MAX,
@@ -45,6 +48,16 @@ describe('stagedImportItemSchema', () => {
 });
 
 describe('stagedBookMetadataSchema bounds (F34)', () => {
+  // Already-persisted staged rows carrying a provider blank must keep round-tripping (#2224).
+  it('accepts a whitespace-only series name', () => {
+    expect(stagedBookMetadataSchema.safeParse({
+      ...validMetadata,
+      series: [{ name: '   ' }],
+      seriesPrimary: { name: '   ', position: 2 },
+    }).success).toBe(true);
+  });
+
+
   it('accepts array elements at the boundary and rejects just over', () => {
     const at = {
       ...validMetadata,
@@ -71,8 +84,7 @@ describe('stagedBookMetadataSchema bounds (F34)', () => {
     expect(stagedBookMetadataSchema.safeParse({ ...validMetadata, coverUrl: 'not-a-url' }).success).toBe(false);
   });
 
-  // F34: exhaustive at/over matrix for EVERY independent bound so removing/reversing
-  // any single bound fails a test.
+  // Cover every independent bound at and immediately above its maximum.
   const parse = (over: Record<string, unknown>) => stagedBookMetadataSchema.safeParse({ ...validMetadata, ...over }).success;
 
   it('bounds every scalar string field at exactly its maximum', () => {
@@ -83,18 +95,17 @@ describe('stagedBookMetadataSchema bounds (F34)', () => {
       ['formatType', shortMax], ['contentDeliveryType', shortMax], ['description', descMax],
     ];
     for (const [field, max] of scalars) {
-      expect(parse({ [field]: 'x'.repeat(max) })).toBe(true);   // at boundary
-      expect(parse({ [field]: 'x'.repeat(max + 1) })).toBe(false); // just over
+      expect(parse({ [field]: 'x'.repeat(max) })).toBe(true);
+      expect(parse({ [field]: 'x'.repeat(max + 1) })).toBe(false);
     }
-    // title has both a min(1) and a 512 max.
     expect(parse({ title: 'x'.repeat(512) })).toBe(true);
     expect(parse({ title: 'x'.repeat(513) })).toBe(false);
   });
 
   it('bounds coverUrl length at exactly 2048 and enforces url() (F44)', () => {
-    expect(parse({ coverUrl: 'https://e.com/' + 'a'.repeat(2034) })).toBe(true); // exactly 2048
-    expect(parse({ coverUrl: 'https://e.com/' + 'a'.repeat(2035) })).toBe(false); // 2049 — first byte over
-    expect(parse({ coverUrl: 'a'.repeat(100) })).toBe(false); // not a URL
+    expect(parse({ coverUrl: 'https://e.com/' + 'a'.repeat(2034) })).toBe(true);
+    expect(parse({ coverUrl: 'https://e.com/' + 'a'.repeat(2035) })).toBe(false);
+    expect(parse({ coverUrl: 'a'.repeat(100) })).toBe(false);
   });
 
   it('bounds nested AuthorRef/SeriesRef fields and enforces their strictness', () => {
@@ -102,16 +113,15 @@ describe('stagedBookMetadataSchema bounds (F34)', () => {
     expect(parse({ authors: [{ name: 'x'.repeat(513) }] })).toBe(false);
     expect(parse({ authors: [{ name: 'A', asin: 'x'.repeat(64) }] })).toBe(true);
     expect(parse({ authors: [{ name: 'A', asin: 'x'.repeat(65) }] })).toBe(false);
-    expect(parse({ authors: [{ name: 'A', bogus: 1 }] })).toBe(false); // AuthorRef strict
+    expect(parse({ authors: [{ name: 'A', bogus: 1 }] })).toBe(false);
     expect(parse({ series: [{ name: 'x'.repeat(512) }] })).toBe(true);
     expect(parse({ series: [{ name: 'x'.repeat(513) }] })).toBe(false);
-    expect(parse({ series: [{ name: 'S', asin: 'x'.repeat(64) }] })).toBe(true); // series ASIN exactly at 64
-    expect(parse({ series: [{ name: 'S', asin: 'x'.repeat(65) }] })).toBe(false); // just over
-    expect(parse({ series: [{ name: 'S', bogus: 1 }] })).toBe(false); // SeriesRef strict
-    // seriesPrimary reuses the same SeriesRef bound table.
+    expect(parse({ series: [{ name: 'S', asin: 'x'.repeat(64) }] })).toBe(true);
+    expect(parse({ series: [{ name: 'S', asin: 'x'.repeat(65) }] })).toBe(false);
+    expect(parse({ series: [{ name: 'S', bogus: 1 }] })).toBe(false);
     expect(parse({ seriesPrimary: { name: 'S', asin: 'x'.repeat(64) } })).toBe(true);
     expect(parse({ seriesPrimary: { name: 'S', asin: 'x'.repeat(65) } })).toBe(false);
-    expect(parse({ seriesPrimary: { name: 'S', bogus: 1 } })).toBe(false); // nested strict
+    expect(parse({ seriesPrimary: { name: 'S', bogus: 1 } })).toBe(false);
   });
 
   it('rejects non-finite numbers on position/duration/relevance', () => {
@@ -119,7 +129,6 @@ describe('stagedBookMetadataSchema bounds (F34)', () => {
     expect(parse({ duration: Number.NaN })).toBe(false);
     expect(parse({ relevance: Infinity })).toBe(false);
     expect(parse({ series: [{ name: 'S', position: Infinity }] })).toBe(false);
-    // finite values are accepted
     expect(parse({ duration: 3600, relevance: 0.9, series: [{ name: 'S', position: 1 }] })).toBe(true);
   });
 
@@ -132,8 +141,8 @@ describe('stagedBookMetadataSchema bounds (F34)', () => {
       ['genres', 64, () => 'g'],
     ];
     for (const [field, max, make] of counts) {
-      expect(parse({ [field]: Array.from({ length: max }, make) })).toBe(true);   // at
-      expect(parse({ [field]: Array.from({ length: max + 1 }, make) })).toBe(false); // over
+      expect(parse({ [field]: Array.from({ length: max }, make) })).toBe(true);
+      expect(parse({ [field]: Array.from({ length: max + 1 }, make) })).toBe(false);
     }
   });
 });
@@ -213,19 +222,19 @@ describe('createSubmissionBodySchema (source/mode union)', () => {
     ).toBe(true);
     expect(
       createSubmissionBodySchema.safeParse({ source: 'manual', clientSubmissionId: VALID_UUID, payloadDigest: VALID_DIGEST, expectedCount: 3 }).success,
-    ).toBe(false); // manual without mode
+    ).toBe(false);
     expect(
       createSubmissionBodySchema.safeParse({ source: 'library', mode: 'copy', clientSubmissionId: VALID_UUID, payloadDigest: VALID_DIGEST, expectedCount: 3 }).success,
-    ).toBe(false); // library with mode
+    ).toBe(false);
   });
 
   it('bounds expectedCount 1..EXPECTED_COUNT_MAX inclusive (F33)', () => {
     const base = { source: 'library' as const, clientSubmissionId: VALID_UUID, payloadDigest: VALID_DIGEST };
-    expect(createSubmissionBodySchema.safeParse({ ...base, expectedCount: 0 }).success).toBe(false); // below min
-    expect(createSubmissionBodySchema.safeParse({ ...base, expectedCount: 1 }).success).toBe(true); // at min
-    expect(createSubmissionBodySchema.safeParse({ ...base, expectedCount: EXPECTED_COUNT_MAX }).success).toBe(true); // EXACTLY at max
-    expect(createSubmissionBodySchema.safeParse({ ...base, expectedCount: EXPECTED_COUNT_MAX + 1 }).success).toBe(false); // over max
-    expect(createSubmissionBodySchema.safeParse({ ...base, expectedCount: 1.5 }).success).toBe(false); // non-integer
+    expect(createSubmissionBodySchema.safeParse({ ...base, expectedCount: 0 }).success).toBe(false);
+    expect(createSubmissionBodySchema.safeParse({ ...base, expectedCount: 1 }).success).toBe(true);
+    expect(createSubmissionBodySchema.safeParse({ ...base, expectedCount: EXPECTED_COUNT_MAX }).success).toBe(true);
+    expect(createSubmissionBodySchema.safeParse({ ...base, expectedCount: EXPECTED_COUNT_MAX + 1 }).success).toBe(false);
+    expect(createSubmissionBodySchema.safeParse({ ...base, expectedCount: 1.5 }).success).toBe(false);
   });
 });
 
@@ -301,11 +310,8 @@ describe('submissionResponseSchema arms (F64)', () => {
   });
 
   it('rejects impossible source/mode arms (F4)', () => {
-    // manual without a mode
     expect(submissionResponseSchema.safeParse({ ...header, source: 'manual', itemsIncluded: false }).success).toBe(false);
-    // library carrying a mode
     expect(submissionResponseSchema.safeParse({ ...header, mode: 'copy', itemsIncluded: false }).success).toBe(false);
-    // manual WITH a mode is legal
     expect(submissionResponseSchema.safeParse({ ...header, source: 'manual', mode: 'copy', itemsIncluded: false }).success).toBe(true);
   });
 
@@ -339,8 +345,33 @@ describe('serializeSubmissionForDigest', () => {
   });
 });
 
+describe('submissionBulkDeleteResponseSchema (#2220)', () => {
+  it('accepts a multi-id clear and an empty clear', () => {
+    expect(submissionBulkDeleteResponseSchema.parse({ deleted: 2, ids: [1, 2] })).toEqual({ deleted: 2, ids: [1, 2] });
+    expect(submissionBulkDeleteResponseSchema.parse({ deleted: 0, ids: [] })).toEqual({ deleted: 0, ids: [] });
+  });
+
+  it('rejects a missing ids array, a non-integer id, and an unknown key', () => {
+    expect(submissionBulkDeleteResponseSchema.safeParse({ deleted: 1 }).success).toBe(false);
+    expect(submissionBulkDeleteResponseSchema.safeParse({ deleted: 1, ids: [1.5] }).success).toBe(false);
+    expect(submissionBulkDeleteResponseSchema.safeParse({ deleted: 1, ids: [1], extra: true }).success).toBe(false);
+  });
+});
+
+describe('submissionBulkDeleteQuerySchema (#2220)', () => {
+  it('accepts only an empty querystring', () => {
+    expect(submissionBulkDeleteQuerySchema.safeParse({}).success).toBe(true);
+    expect(submissionBulkDeleteQuerySchema.safeParse({ source: 'library' }).success).toBe(false);
+  });
+});
+
 describe('constants', () => {
   it('MAX_SUBMISSION_BYTES is 64 MiB', () => {
     expect(MAX_SUBMISSION_BYTES).toBe(64 * 1024 * 1024);
+  });
+
+  it('names the in-flight delete refusal separately from the PUT not-receiving code', () => {
+    expect(SUBMISSION_ERROR_CODES.submissionInFlight).toBe('submission-in-flight');
+    expect(SUBMISSION_ERROR_CODES.submissionNotReceiving).toBe('submission-not-receiving');
   });
 });

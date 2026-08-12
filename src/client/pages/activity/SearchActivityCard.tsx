@@ -28,7 +28,6 @@ function IndexerRow({ state }: { state: IndexerState }) {
     );
   }
 
-  // error
   return (
     <div className="flex items-center gap-2 text-sm">
       <AlertCircleIcon className="w-4 h-4 text-destructive shrink-0" />
@@ -55,7 +54,6 @@ export function SearchActivityCard({ state }: { state: SearchCardState }) {
 
   return (
     <div className="glass-card rounded-2xl p-4 sm:p-5 animate-fade-in-up border border-primary/20">
-      {/* Header */}
       <div className="flex items-center gap-3 mb-3">
         <div className="p-1.5 bg-primary/10 rounded-lg">
           <LoadingSpinner className={`w-4 h-4 text-primary ${overallStatus !== 'searching' ? 'hidden' : ''}`} />
@@ -68,7 +66,6 @@ export function SearchActivityCard({ state }: { state: SearchCardState }) {
         </div>
       </div>
 
-      {/* Outcome message */}
       {state.outcome === 'grabbed' && state.grabbedFrom && (
         <p className="text-sm text-success mb-2">Grabbed from {state.grabbedFrom}</p>
       )}
@@ -82,7 +79,6 @@ export function SearchActivityCard({ state }: { state: SearchCardState }) {
         <p className="text-sm text-destructive mb-2">Grab failed</p>
       )}
 
-      {/* Per-indexer breakdown */}
       <div className="space-y-1.5">
         {[...state.indexers.values()].map((indexer, i) => (
           <IndexerRow key={i} state={indexer} />

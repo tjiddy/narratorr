@@ -34,9 +34,7 @@ export class AutoImportAdapter implements ImportAdapter {
 
     await ctx.setPhase('analyzing');
 
-    // Delegate to ImportOrchestrator.importDownload() — the full side-effect wrapper.
-    // This preserves all success/failure side effects: SSE, tagging, post-processing,
-    // notifications, event history, blacklist + retry-search.
+    // Use the orchestrator so every success and failure side effect remains attached.
     await this.importOrchestrator.importDownload(payload.downloadId, {
       setPhase: ctx.setPhase,
       emitProgress: ctx.emitProgress,

@@ -1,9 +1,4 @@
-/**
- * Shared fetch utility with optional FlareSolverr/Byparr proxy support.
- *
- * When `proxyUrl` is provided, requests are routed through FlareSolverr's API
- * (POST {proxyUrl}/v1 with cmd: "request.get"). When absent, uses direct fetch.
- */
+/** Fetch indexer content directly or through a FlareSolverr-compatible proxy. */
 
 import { z } from 'zod';
 
@@ -31,27 +26,14 @@ export interface FetchWithProxyOptions {
   signal?: AbortSignal | undefined;
 }
 
-/**
- * Body + transport metadata. `requestUrl` is the URL actually fetched (target
- * URL for direct/proxy-agent paths; FlareSolverr also returns the target URL).
- * `httpStatus` is the upstream HTTP status (FlareSolverr's solution.status when
- * available, otherwise the proxy HTTP response status).
- */
+/** Response body plus the target URL and upstream status. */
 export interface FetchResult {
   body: string;
   requestUrl: string;
   httpStatus: number;
 }
 
-/**
- * Fetch a URL, optionally routing through a FlareSolverr-compatible proxy.
- *
- * - Direct: standard fetch() with AbortController timeout
- * - Proxied: POST to {proxyUrl}/v1 with FlareSolverr request.get command
- *
- * All proxy errors throw with descriptive messages that distinguish proxy
- * failures from indexer failures. Direct fetch errors throw as-is.
- */
+/** Fetch directly or via FlareSolverr while preserving caller cancellation. */
 export async function fetchWithProxy(options: FetchWithProxyOptions): Promise<FetchResult> {
   const { url, headers, proxyUrl } = options;
 
@@ -131,7 +113,6 @@ async function fetchViaProxy(
         signal,
       });
     } catch (error: unknown) {
-      // Network-level failure reaching the proxy itself
       if (error instanceof DOMException && error.name === 'AbortError') {
         throw new Error(`FlareSolverr proxy timed out after ${Math.round(timeoutMs / 1000)}s`, { cause: error });
       }

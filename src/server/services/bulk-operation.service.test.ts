@@ -22,15 +22,13 @@ import type { ConnectorService } from './connector.service.js';
 import type { CompanionSweepTrigger } from './companion-ebook-trigger.js';
 import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
 
-/** Serialize a Drizzle SQL expression into a raw SQL+params pair for predicate assertions. */
 const dialect = new SQLiteSyncDialect();
 function toSQL(expr: unknown): { sql: string; params: unknown[] } {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return dialect.sqlToQuery((expr as any).getSQL());
 }
 
-// #1670 — the reconcile job composes the OPF writer + cover downloader; mock them at their module
-// boundaries to drive per-book outcomes (isRemoteCoverUrl stays real for the remote/local gate).
+// Mock outcome-producing I/O while keeping isRemoteCoverUrl's gating logic real.
 vi.mock('../utils/opf-writer.js', () => ({
   writeOpfSidecar: vi.fn().mockResolvedValue('written'),
 }));
@@ -116,8 +114,6 @@ async function waitForJob(service: BulkOperationService, jobId: string, maxMs = 
   throw new Error('waitForJob timed out');
 }
 
-// ===== waitForJob helper tests =====
-
 describe('waitForJob helper', () => {
   it('rejects with timeout error when job never reaches completed', async () => {
     const stalledService = {
@@ -126,8 +122,6 @@ describe('waitForJob helper', () => {
     await expect(waitForJob(stalledService, 'any-job-id', 50)).rejects.toThrow('waitForJob timed out');
   });
 });
-
-// ===== Count tests =====
 
 describe('BulkOperationService — countRetagEligible', () => {
   beforeEach(() => { vi.resetAllMocks(); });
@@ -161,8 +155,8 @@ describe('BulkOperationService — previewRenameEligible', () => {
   it('returns library-relative from→to rows (from !== to) plus totals for inside-root books', async () => {
     const { service, db } = createService();
     db.select.mockReturnValueOnce(mockDbChain([
-      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }), // matches
-      bookRow({ id: 2, path: '/library/Author Name/OldName', title: 'Book2' }), // mismatched
+      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }),
+      bookRow({ id: 2, path: '/library/Author Name/OldName', title: 'Book2' }),
     ]));
     const result = await service.previewRenameEligible();
     expect(result.mismatchedTotal).toBe(1);
@@ -221,7 +215,6 @@ describe('BulkOperationService — previewRenameEligible', () => {
 
   it('deduplicates a multi-author book into exactly one preview row', async () => {
     const { service, db } = createService();
-    // Same bookId joined to two authors yields two rows; preview must collapse to one.
     db.select.mockReturnValueOnce(mockDbChain([
       bookRow({ id: 7, path: '/library/Author Name/OldName', title: 'Book7', authorName: 'Author Name' }),
       bookRow({ id: 7, path: '/library/Author Name/OldName', title: 'Book7', authorName: 'Second Author' }),
@@ -240,8 +233,6 @@ describe('BulkOperationService — previewRenameEligible', () => {
     expect(readdir).not.toHaveBeenCalled();
   });
 
-  // Narrator-token parity (AC #3/#7): preview, job, and the shared helper all render
-  // {narrator} from the ordered narrators supplied by the extended projection.
   it('renders {narrator} folder formats from the ordered narrator projection', async () => {
     const { service, db } = createService({
       settingsOverrides: { library: { path: '/library', folderFormat: '{narrator}/{title}', fileFormat: '' } },
@@ -255,8 +246,6 @@ describe('BulkOperationService — previewRenameEligible', () => {
         { bookId: 1, name: 'Kate Reading', position: 1 },
       ]));
     const result = await service.previewRenameEligible();
-    // Path already matches the narrator-based target → no rename needed. Without the
-    // narrator projection the target would render with an empty {narrator} and mismatch.
     expect(result.folderMatching).toBe(1);
     expect(result.mismatchedTotal).toBe(0);
   });
@@ -271,7 +260,6 @@ describe('BulkOperationService — previewRenameEligible', () => {
       ]))
       .mockReturnValueOnce(mockDbChain([]));
     const result = await service.previewRenameEligible();
-    // The loaded edition_label feeds the {edition} token; no doubled suffix (template carries the token).
     expect(result.items[0]?.to).toBe('Blake Crouch/Dark Matter (Full Cast)');
   });
 
@@ -279,8 +267,8 @@ describe('BulkOperationService — previewRenameEligible', () => {
     const renameService = makeRenameService();
     const { service, db } = createService({ renameService });
     const rows = [
-      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }), // matches
-      bookRow({ id: 2, path: '/library/Author Name/OldName', title: 'Book2' }), // mismatched
+      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }),
+      bookRow({ id: 2, path: '/library/Author Name/OldName', title: 'Book2' }),
     ];
     // previewRenameEligible (2 selects: books, narrators) then the job (2 more).
     db.select
@@ -299,10 +287,7 @@ describe('BulkOperationService — previewRenameEligible', () => {
   });
 });
 
-// ===== File-format eligibility (#1493) =====
-// When a `fileFormat` rule exists the bulk op must visit ALL imported books, not just
-// folder mismatches — a folder-matching book can still have file-level renames.
-
+// A file-format rule requires visiting every imported book, even when its folder matches.
 describe('BulkOperationService — fileFormat eligibility (#1493)', () => {
   beforeEach(() => { vi.resetAllMocks(); });
 
@@ -322,7 +307,6 @@ describe('BulkOperationService — fileFormat eligibility (#1493)', () => {
 
   it('preview: a folder-matching book is still part of the job set when fileFormat is set', async () => {
     const { service, db } = createService(FILE_FORMAT_SETTINGS);
-    // Folder already matches the target → zero folder mismatches.
     db.select.mockReturnValueOnce(mockDbChain([
       bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }),
     ]));
@@ -330,7 +314,6 @@ describe('BulkOperationService — fileFormat eligibility (#1493)', () => {
     expect(result.mismatchedTotal).toBe(0);
     expect(result.folderMatching).toBe(1);
     expect(result.importedTotal).toBe(1);
-    // jobTotal tracks importedTotal because file-level work is possible on every book.
     expect(result.jobTotal).toBe(1);
   });
 
@@ -347,9 +330,9 @@ describe('BulkOperationService — fileFormat eligibility (#1493)', () => {
   });
 
   it('preview: fileFormat empty keeps the folder-mismatch-only filter (jobTotal === mismatchedTotal)', async () => {
-    const { service, db } = createService(); // default fileFormat is ''
+    const { service, db } = createService();
     db.select.mockReturnValueOnce(mockDbChain([
-      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }), // matches
+      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }),
     ]));
     const result = await service.previewRenameEligible();
     expect(result.mismatchedTotal).toBe(0);
@@ -361,8 +344,8 @@ describe('BulkOperationService — fileFormat eligibility (#1493)', () => {
     const renameService = makeRenameService();
     const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService });
     const rows = [
-      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }), // folder matches
-      bookRow({ id: 2, path: '/library/Author Name/OldName', title: 'Book2' }), // folder mismatch
+      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }),
+      bookRow({ id: 2, path: '/library/Author Name/OldName', title: 'Book2' }),
     ];
     db.select
       .mockReturnValueOnce(mockDbChain(rows))
@@ -370,7 +353,6 @@ describe('BulkOperationService — fileFormat eligibility (#1493)', () => {
     (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '', newPath: '', message: 'Renamed 1 file(s)', filesRenamed: 1 });
     const id = await service.startRenameJob();
     await waitForJob(service, id);
-    // Both books visited — the folder-matching one is no longer pre-filtered out.
     expect(renameService.renameBook).toHaveBeenCalledTimes(2);
     expect(renameService.renameBook).toHaveBeenCalledWith(1);
     expect(renameService.renameBook).toHaveBeenCalledWith(2);
@@ -382,10 +364,9 @@ describe('BulkOperationService — fileFormat eligibility (#1493)', () => {
     const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService });
     db.select
       .mockReturnValueOnce(mockDbChain([
-        bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }), // folder + file match
+        bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }),
       ]))
       .mockReturnValueOnce(mockDbChain([]));
-    // renameBook returns the idempotent "Already organized" result for a fully-organized book.
     (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '/library/Author Name/Book1', newPath: '/library/Author Name/Book1', message: 'Already organized', filesRenamed: 0 });
     const id = await service.startRenameJob();
     await waitForJob(service, id);
@@ -404,8 +385,6 @@ describe('BulkOperationService — fileFormat eligibility (#1493)', () => {
         bookRow({ id: 2, path: '/library/Author Name/Book2', title: 'Book2' }),
       ]))
       .mockReturnValueOnce(mockDbChain([]));
-    // Visit order is targetIds order [1, 2]: book 1 fails (tick(true)), book 2 is the
-    // idempotent "Already organized" skip (tick(false)). Both still increment completed.
     (renameService.renameBook as Mock)
       .mockRejectedValueOnce(new RenameError('conflict', 'CONFLICT'))
       .mockResolvedValueOnce({ oldPath: '/library/Author Name/Book2', newPath: '/library/Author Name/Book2', message: 'Already organized', filesRenamed: 0 });
@@ -420,8 +399,6 @@ describe('BulkOperationService — fileFormat eligibility (#1493)', () => {
   it('job: duplicate author-join rows for one book call renameBook exactly once (dedup holds on visit-all)', async () => {
     const renameService = makeRenameService();
     const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService });
-    // Same bookId joined to two authors yields two rows; the loadRenameRows `seen`
-    // Set must collapse them so the file-rule visit-all branch still acts once per book.
     db.select
       .mockReturnValueOnce(mockDbChain([
         bookRow({ id: 7, path: '/library/Author Name/Book7', title: 'Book7', authorName: 'Author Name' }),
@@ -440,8 +417,8 @@ describe('BulkOperationService — fileFormat eligibility (#1493)', () => {
     const renameService = makeRenameService();
     const { service, db } = createService({ ...FILE_FORMAT_SETTINGS, renameService });
     const rows = [
-      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }), // folder matches
-      bookRow({ id: 2, path: '/library/Author Name/OldName', title: 'Book2' }), // folder mismatch
+      bookRow({ id: 1, path: '/library/Author Name/Book1', title: 'Book1' }),
+      bookRow({ id: 2, path: '/library/Author Name/OldName', title: 'Book2' }),
     ];
     // previewRenameEligible (2 selects: books, narrators) then the job (2 more).
     db.select
@@ -450,20 +427,16 @@ describe('BulkOperationService — fileFormat eligibility (#1493)', () => {
       .mockReturnValueOnce(mockDbChain(rows))
       .mockReturnValueOnce(mockDbChain([]));
     const preview = await service.previewRenameEligible();
-    // With a file rule, the denominator is every imported book regardless of folder match.
     expect(preview.jobTotal).toBe(preview.importedTotal);
     expect(preview.jobTotal).toBe(2);
 
     (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '', newPath: '', message: 'Renamed 1 file(s)', filesRenamed: 1 });
     const id = await service.startRenameJob();
     await waitForJob(service, id);
-    // Lockstep invariant: preview denominator === job setTotal === actual renameBook calls.
     expect(service.getJob(id)?.total).toBe(preview.jobTotal);
     expect((renameService.renameBook as Mock).mock.calls).toHaveLength(preview.jobTotal);
   });
 });
-
-// ===== #1960 AC21 — rename caller 3: ONE post-loop sweep, never a per-book fan-out =====
 
 describe('BulkOperationService — companion-ebook sweep after bulk rename (#1960 AC21)', () => {
   beforeEach(() => { vi.resetAllMocks(); });
@@ -474,12 +447,7 @@ describe('BulkOperationService — companion-ebook sweep after bulk rename (#196
     },
   };
 
-  /**
-   * Bulk rename is a SWEEP-only seam, so the stub carries `reconcileAll` — plus a
-   * `reconcileBook` PROBE that `CompanionSweepTrigger` does not declare. AC21's whole point is
-   * that a whole-library rename must NOT fan out N direct runs, and the probe is what makes
-   * that assertable at runtime on top of the type-level guarantee.
-   */
+  // The extra reconcileBook probe catches forbidden per-book fan-out at runtime.
   function makeCompanionStub() {
     return {
       reconcileAll: vi.fn().mockResolvedValue(undefined),
@@ -513,21 +481,11 @@ describe('BulkOperationService — companion-ebook sweep after bulk rename (#196
     await waitForJob(service, id);
 
     expect(renameService.renameBook).toHaveBeenCalledTimes(3);
-    // N-wide direct fan-out is exactly what this AC prevents: direct runs do not coalesce.
     expect(companionEbook.reconcileBook).not.toHaveBeenCalled();
     expect(companionEbook.reconcileAll).toHaveBeenCalledTimes(1);
   });
 
-  /**
-   * AC21's ORDERING half. The call-count test above cannot see it: moving the sweep above the
-   * `for (const bookId of targetIds)` loop preserves "3 renames, 1 sweep" exactly, and every
-   * status assertion with it — while the sweep would then observe the OLD paths and miss every
-   * folder the rename just moved.
-   *
-   * The final rename is held pending, so "no sweep yet" is observed while the loop is provably
-   * still mid-flight, and the ordered trace pins the sweep strictly after the last rename
-   * returns.
-   */
+  // Holding the final rename proves ordering that call counts alone cannot.
   it('AC21: the sweep runs strictly AFTER the loop — held on the final rename, no sweep until it settles', async () => {
     const order: string[] = [];
     const companionEbook = {
@@ -560,8 +518,7 @@ describe('BulkOperationService — companion-ebook sweep after bulk rename (#196
 
     const id = await service.startRenameJob();
     await finalRenameStarted;
-    // Room for any pending microtask AND a macrotask turn — a sweep hoisted above the loop
-    // would already have run by this point.
+    // Give a wrongly hoisted sweep both microtask and macrotask opportunities to run.
     await new Promise(r => setTimeout(r, 20));
 
     expect(order).toEqual(['rename:1', 'rename:2', 'rename:3']);
@@ -598,7 +555,7 @@ describe('BulkOperationService — companion-ebook sweep after bulk rename (#196
   it('is NOT fired when the target set is empty', async () => {
     const companionEbook = makeCompanionStub();
     const { service, db } = createService({ companionEbook });
-    db.select.mockReturnValue(mockDbChain([])); // no eligible rows at all
+    db.select.mockReturnValue(mockDbChain([]));
 
     const id = await service.startRenameJob();
     await waitForJob(service, id);
@@ -624,17 +581,15 @@ describe('BulkOperationService — companion-ebook sweep after bulk rename (#196
   });
 });
 
-// ===== Job lifecycle tests =====
-
 describe('BulkOperationService — job lifecycle', () => {
   beforeEach(() => { vi.resetAllMocks(); });
 
   it('startRenameJob returns UUID immediately (non-blocking)', async () => {
     const { service, db } = createService();
-    db.select.mockReturnValue(mockDbChain([])); // empty batch
+    db.select.mockReturnValue(mockDbChain([]));
     const id = await service.startRenameJob();
     expect(typeof id).toBe('string');
-    expect(id).toHaveLength(36); // UUID format
+    expect(id).toHaveLength(36);
   });
 
   it('startRetagJob returns UUID immediately', async () => {
@@ -661,7 +616,7 @@ describe('BulkOperationService — job lifecycle', () => {
 
   it('getJob returns completed status after job finishes', async () => {
     const { service, db } = createService();
-    db.select.mockReturnValue(mockDbChain([])); // no books — completes immediately
+    db.select.mockReturnValue(mockDbChain([]));
     const id = await service.startRenameJob();
     await waitForJob(service, id);
     const status = service.getJob(id);
@@ -670,7 +625,7 @@ describe('BulkOperationService — job lifecycle', () => {
 
   it('getActiveJob returns running job while job is in progress', async () => {
     const { service, db, renameService } = createService();
-    // Make rename take a bit so we can check mid-flight
+    // Delay rename so the running state can be checked mid-flight.
     let resolveRename!: () => void;
     const renamePromise = new Promise<void>(r => { resolveRename = r; });
     db.select.mockReturnValueOnce(mockDbChain([
@@ -678,7 +633,7 @@ describe('BulkOperationService — job lifecycle', () => {
     ]));
     (renameService.renameBook as Mock).mockReturnValueOnce(renamePromise.then(() => ({ oldPath: '', newPath: '', message: 'ok', filesRenamed: 0 })));
     const id = await service.startRenameJob();
-    await new Promise(r => setTimeout(r, 20)); // let job start
+    await new Promise(r => setTimeout(r, 20));
     const active = service.getActiveJob();
     expect(active?.jobId).toBe(id);
     expect(active?.status).toBe('running');
@@ -700,14 +655,11 @@ describe('BulkOperationService — job lifecycle', () => {
   });
 });
 
-// ===== Cross-operation exclusivity =====
-
 describe('BulkOperationService — cross-operation exclusivity', () => {
   beforeEach(() => { vi.resetAllMocks(); });
 
   function makeStallService() {
     const { service, db } = createService();
-    // Stall on the batch query so job stays in running state
     let resolveQuery!: (rows: unknown[]) => void;
     const queryPromise = new Promise<unknown[]>(r => { resolveQuery = r; });
     db.select.mockReturnValue({
@@ -745,14 +697,11 @@ describe('BulkOperationService — cross-operation exclusivity', () => {
     db.select.mockReturnValue(mockDbChain([]));
     const id1 = await service.startRenameJob();
     await waitForJob(service, id1);
-    // Should not throw
     const id2 = service.startRetagJob();
     expect(id2).toBeTruthy();
     await waitForJob(service, id2);
   });
 });
-
-// ===== Pre-flight validation =====
 
 describe('BulkOperationService — pre-flight validation', () => {
   beforeEach(() => { vi.resetAllMocks(); });
@@ -767,8 +716,6 @@ describe('BulkOperationService — pre-flight validation', () => {
   });
 });
 
-// ===== Rename batch =====
-
 describe('BulkOperationService — rename batch', () => {
   beforeEach(() => { vi.resetAllMocks(); });
 
@@ -776,13 +723,12 @@ describe('BulkOperationService — rename batch', () => {
     const renameService = makeRenameService();
     const { service, db } = createService({ renameService });
     db.select.mockReturnValueOnce(mockDbChain([
-      { id: 1, path: '/library/Author Name/Book1', title: 'Book1', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' }, // matches
-      { id: 2, path: '/library/Author Name/OldName', title: 'Book2', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' }, // mismatched
+      { id: 1, path: '/library/Author Name/Book1', title: 'Book1', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
+      { id: 2, path: '/library/Author Name/OldName', title: 'Book2', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
     ]));
     (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '', newPath: '', message: 'Moved', filesRenamed: 0 });
     const id = await service.startRenameJob();
     await waitForJob(service, id);
-    // Only the mismatched book should have been renamed
     expect(renameService.renameBook).toHaveBeenCalledTimes(1);
     expect(renameService.renameBook).toHaveBeenCalledWith(2);
   });
@@ -826,8 +772,6 @@ describe('BulkOperationService — rename naming options wiring', () => {
   beforeEach(() => { vi.resetAllMocks(); });
 
   it('non-default namingSeparator/namingCase affect rename path comparison', async () => {
-    // With separator=period, case=upper: buildTargetPath produces /library/AUTHOR.NAME/BOOK1
-    // A book whose current path already matches this should be "folderMatching"
     const { service, db } = createService({
       settingsOverrides: {
         library: { path: '/library', folderFormat: '{author}/{title}', fileFormat: '', namingSeparator: 'period' as const, namingCase: 'upper' as const },
@@ -838,9 +782,7 @@ describe('BulkOperationService — rename naming options wiring', () => {
       { id: 2, path: '/library/Author Name/Book2', title: 'Book2', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
     ]));
     const result = await service.previewRenameEligible();
-    // Book1 path matches the transformed target — folder matching
     expect(result.folderMatching).toBe(1);
-    // Book2 path uses default spacing/casing — mismatched under new settings
     expect(result.mismatchedTotal).toBe(1);
   });
 
@@ -853,21 +795,16 @@ describe('BulkOperationService — rename naming options wiring', () => {
       },
     });
     db.select.mockReturnValueOnce(mockDbChain([
-      // Book1 path matches transformed target (AUTHOR.NAME/BOOK1) — should be skipped
       { id: 1, path: '/library/AUTHOR.NAME/BOOK1', title: 'Book1', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
-      // Book2 path uses default format — mismatched under period/upper settings
       { id: 2, path: '/library/Author Name/Book2', title: 'Book2', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
     ]));
     (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '', newPath: '', message: 'Moved', filesRenamed: 0 });
     const id = await service.startRenameJob();
     await waitForJob(service, id);
-    // Only the mismatched book (id=2) should be processed
     expect(renameService.renameBook).toHaveBeenCalledTimes(1);
     expect(renameService.renameBook).toHaveBeenCalledWith(2);
   });
 });
-
-// ===== Re-tag batch =====
 
 describe('BulkOperationService — re-tag batch', () => {
   beforeEach(() => { vi.resetAllMocks(); });
@@ -913,7 +850,6 @@ describe('BulkOperationService — re-tag batch', () => {
     expect(status?.failures).toBe(0);
   });
 
-  // #1707 — connector refresh after a bulk re-tag that actually tagged ≥1 file
   it("enqueues a 'metadata' refresh for a book that tagged ≥1 file, and none for an all-skipped book", async () => {
     const taggingService = makeTaggingService();
     const notifyRefresh = vi.fn().mockResolvedValue(undefined);
@@ -931,13 +867,10 @@ describe('BulkOperationService — re-tag batch', () => {
     ]);
   });
 
-  // #1721 — the refresh is built from RetagResult.refreshItem (loaded before the in-place tag
-  // rewrite), so a transient post-re-tag book reload failure can no longer drop it. The old code
-  // reloaded via bookService.getById after the mutation; this proves the refresh survives that miss.
+  // Refresh data must come from RetagResult; a post-mutation reload can fail.
   it("still fires the 'metadata' refresh from preloaded state when a post-retag reload would fail", async () => {
     const taggingService = makeTaggingService();
     const notifyRefresh = vi.fn().mockResolvedValue(undefined);
-    // getById rejects — the new path must not depend on it for the refresh item.
     const bookService = inject<BookService>({ getById: vi.fn().mockRejectedValue(new Error('libSQL read failed')) });
     const { service, db } = createService({ taggingService, bookService, connectorService: { notifyRefresh } });
     db.select.mockReturnValueOnce(mockDbChain([{ id: 1 }]));
@@ -955,16 +888,12 @@ describe('BulkOperationService — re-tag batch', () => {
   });
 });
 
-// ===== Retag eligibility: single shared predicate (count ↔ job lockstep) =====
-
 describe('BulkOperationService — retag eligibility (single source)', () => {
   beforeEach(() => { vi.resetAllMocks(); });
 
   it('lockstep: countRetagEligible total === job setTotal === retagBook call count for the same fixture', async () => {
     const taggingService = makeTaggingService();
     const { service, db } = createService({ taggingService });
-    // One fixture set of imported books with non-null paths drives both reads:
-    // the count select reports count(*), the job select returns the row ids.
     const eligible = [{ id: 1 }, { id: 2 }, { id: 3 }];
     db.select
       .mockReturnValueOnce(mockDbChain([{ count: eligible.length }])) // countRetagEligible
@@ -975,7 +904,6 @@ describe('BulkOperationService — retag eligibility (single source)', () => {
     const id = service.startRetagJob();
     await waitForJob(service, id);
 
-    // The preview denominator the modal shows must equal the job's real total.
     expect(total).toBe(eligible.length);
     expect(service.getJob(id)?.total).toBe(total);
     expect((taggingService.retagBook as Mock).mock.calls).toHaveLength(total);
@@ -1012,8 +940,6 @@ describe('BulkOperationService — retag eligibility (single source)', () => {
 
     const countWhere = (countChain.where as Mock).mock.calls[0]![0];
     const jobWhere = (jobChain.where as Mock).mock.calls[0]![0];
-    // Structurally identical where-args prove both sites consume one shared source,
-    // not two inlined copies that merely happen to agree.
     expect(toSQL(countWhere)).toEqual(toSQL(jobWhere));
     const { sql } = toSQL(countWhere);
     expect(sql).toMatch(/"books"\."status" = \?/i);
@@ -1025,12 +951,11 @@ describe('TTL cleanup', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       const { service, db } = createService();
-      // Return empty list — rename job completes immediately with 0 items
       db.select.mockReturnValueOnce(mockDbChain([]));
 
       const jobId = await service.startRenameJob();
 
-      // Flush microtasks to let the async job work function complete
+      // Flush the asynchronous job work function.
       for (let i = 0; i < 10; i++) {
         await vi.advanceTimersByTimeAsync(1);
       }
@@ -1038,7 +963,6 @@ describe('TTL cleanup', () => {
       expect(service.getJob(jobId)).not.toBeNull();
       expect(service.getJob(jobId)!.status).toBe('completed');
 
-      // Advance past 10-minute TTL
       vi.advanceTimersByTime(10 * 60 * 1000);
 
       expect(service.getJob(jobId)).toBeNull();
@@ -1061,11 +985,9 @@ describe('TTL cleanup', () => {
 
       expect(service.getJob(jobId)!.status).toBe('completed');
 
-      // Advance 9 minutes — still within TTL
       vi.advanceTimersByTime(9 * 60 * 1000);
       expect(service.getJob(jobId)).not.toBeNull();
 
-      // Advance past the 10-minute mark
       vi.advanceTimersByTime(2 * 60 * 1000);
       expect(service.getJob(jobId)).toBeNull();
     } finally {
@@ -1073,11 +995,10 @@ describe('TTL cleanup', () => {
     }
   });
 
-  // ── #229 Observability — elapsed time and correlation ───────────────────
   describe('logging improvements (#229)', () => {
     it('bulk operation completion log includes elapsedMs field', async () => {
       const { service, db, log } = createService();
-      db.select.mockReturnValue(mockDbChain([])); // empty batch — completes immediately
+      db.select.mockReturnValue(mockDbChain([]));
       const id = await service.startRenameJob();
       await waitForJob(service, id);
 
@@ -1104,8 +1025,6 @@ describe('TTL cleanup', () => {
     });
   });
 });
-
-// ===== Library reconcile: write/refresh metadata sidecars (#1670) =====
 
 describe('BulkOperationService — startWriteMetadataSidecarsJob (#1670)', () => {
   const writeOpfMock = vi.mocked(writeOpfSidecar);
@@ -1143,7 +1062,7 @@ describe('BulkOperationService — startWriteMetadataSidecarsJob (#1670)', () =>
     await waitForJob(service, id);
 
     expect(writeOpfMock).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, bookId: 1, bookFolder: '/lib/A/1' }));
-    expect(downloadMock).toHaveBeenCalledWith(1, '/lib/A/1', 'https://x/c.png', expect.anything(), expect.anything());
+    expect(downloadMock).toHaveBeenCalledWith(1, '/lib/A/1', 'https://x/c.png', expect.anything(), expect.anything(), expect.any(Function));
     const status = service.getJob(id);
     expect(status?.status).toBe('completed');
     expect(status?.failures).toBe(0);
@@ -1210,13 +1129,11 @@ describe('BulkOperationService — startWriteMetadataSidecarsJob (#1670)', () =>
 
   it('F5: a remote coverUrl is downloaded on the first run but a now-local one is not on the second', async () => {
     const { service, db } = createService();
-    // First run sees a remote URL → download attempted (localizes the DB in production).
     db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: '/lib/A/1', coverUrl: 'https://x/c.png' }]));
     const id1 = service.startWriteMetadataSidecarsJob();
     await waitForJob(service, id1);
     expect(downloadMock).toHaveBeenCalledTimes(1);
 
-    // Second run sees the now-local URL → no remote download attempted (idempotent from here on).
     downloadMock.mockClear();
     db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: '/lib/A/1', coverUrl: '/api/books/1/cover' }]));
     const id2 = service.startWriteMetadataSidecarsJob();
@@ -1226,7 +1143,7 @@ describe('BulkOperationService — startWriteMetadataSidecarsJob (#1670)', () =>
 
   it('rejects a second concurrent start with BULK_OP_IN_PROGRESS and reports the active job', async () => {
     const { service, db } = createService();
-    // Never-resolving where() keeps the first job running so the second start collides.
+    // Keep the first query unresolved so the second start collides with it.
     let resolveFn!: (v: unknown[]) => void;
     db.select.mockReturnValue({
       from: vi.fn().mockReturnThis(),
@@ -1239,5 +1156,288 @@ describe('BulkOperationService — startWriteMetadataSidecarsJob (#1670)', () =>
     expect(service.getActiveJob()?.type).toBe('write_metadata_sidecars');
     expect(() => service.startWriteMetadataSidecarsJob()).toThrow(expect.objectContaining({ code: 'BULK_OP_IN_PROGRESS' }));
     resolveFn([]);
+  });
+});
+
+function renameRow(id: number, title: string) {
+  return { id, path: `/library/Old${id}`, title, seriesName: null, seriesPosition: null, publishedDate: null, editionLabel: null, authorName: 'A' };
+}
+
+describe('BulkOperationService — named failure details (#2159)', () => {
+  const writeOpfMock = vi.mocked(writeOpfSidecar);
+  const downloadMock = vi.mocked(downloadRemoteCover);
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    writeOpfMock.mockResolvedValue('written');
+    downloadMock.mockResolvedValue('written');
+  });
+
+  describe('rename', () => {
+    it('records { bookId, title, error } for a CONFLICT, naming the book the preview named', async () => {
+      const renameService = makeRenameService();
+      const { service, db } = createService({ renameService });
+      db.select.mockReturnValueOnce(mockDbChain([renameRow(2, 'Storm Front')]));
+      (renameService.renameBook as Mock).mockRejectedValueOnce(new RenameError('Target folder already exists', 'CONFLICT'));
+
+      const id = await service.startRenameJob();
+      await waitForJob(service, id);
+
+      expect(service.getJob(id)?.failureDetails).toEqual([
+        { bookId: 2, title: 'Storm Front', error: 'CONFLICT: Target folder already exists' },
+      ]);
+    });
+
+    it('records NOTHING for a NO_PATH skip while still ticking completed', async () => {
+      const renameService = makeRenameService();
+      const { service, db } = createService({ renameService });
+      db.select.mockReturnValueOnce(mockDbChain([renameRow(3, 'Fool Moon')]));
+      (renameService.renameBook as Mock).mockRejectedValueOnce(new RenameError('no path', 'NO_PATH'));
+
+      const id = await service.startRenameJob();
+      await waitForJob(service, id);
+
+      const status = service.getJob(id);
+      expect(status?.completed).toBe(1);
+      expect(status?.failures).toBe(0);
+      expect(status?.failureDetails).toEqual([]);
+    });
+
+    it('routes the recorded error through the formatter — a URL secret is redacted', async () => {
+      const renameService = makeRenameService();
+      const { service, db } = createService({ renameService });
+      db.select.mockReturnValueOnce(mockDbChain([renameRow(4, 'Grave Peril')]));
+      (renameService.renameBook as Mock).mockRejectedValueOnce(
+        new Error('Rename hook failed at https://hooks.example.com/run?apikey=SECRET'),
+      );
+
+      const id = await service.startRenameJob();
+      await waitForJob(service, id);
+
+      const recorded = service.getJob(id)!.failureDetails[0]!.error;
+      expect(recorded).not.toContain('SECRET');
+      expect(recorded).toContain('Rename hook failed at https://hooks.example.com/run');
+    });
+  });
+
+  describe('re-tag', () => {
+    it('widens the eligible-row projection to { id, title }', async () => {
+      const { service, db } = createService();
+      db.select.mockReturnValueOnce(mockDbChain([]));
+
+      const id = service.startRetagJob();
+      await waitForJob(service, id);
+
+      const projection = db.select.mock.calls[0]![0] as Record<string, unknown>;
+      expect(Object.keys(projection).sort()).toEqual(['id', 'title']);
+      expect(toSQL(projection.title).sql).toMatch(/"books"\."title"/i);
+    });
+
+    it('records the title AND the code-first text for a PATH_MISSING failure', async () => {
+      const taggingService = makeTaggingService();
+      const { service, db } = createService({ taggingService });
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 7, title: 'Summer Knight' }]));
+      (taggingService.retagBook as Mock).mockRejectedValueOnce(new RetagError('PATH_MISSING', 'Book folder no longer exists'));
+
+      const id = service.startRetagJob();
+      await waitForJob(service, id);
+
+      expect(service.getJob(id)?.failureDetails).toEqual([
+        { bookId: 7, title: 'Summer Knight', error: 'PATH_MISSING: Book folder no longer exists' },
+      ]);
+    });
+
+    it('records the failure and continues the batch when the tag writer dependency is missing', async () => {
+      const taggingService = makeTaggingService();
+      const { service, db } = createService({ taggingService });
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 7, title: 'Summer Knight' }, { id: 8, title: 'Death Masks' }]));
+      (taggingService.retagBook as Mock)
+        .mockRejectedValueOnce(new RetagError('MUTAGEN_NOT_CONFIGURED', 'mutagen is not available'))
+        .mockResolvedValueOnce({ bookId: 8, tagged: 1, skipped: 0, failed: 0, warnings: [], refreshItem: null });
+
+      const id = service.startRetagJob();
+      await waitForJob(service, id);
+
+      expect(service.getJob(id)?.failureDetails).toEqual([
+        { bookId: 7, title: 'Summer Knight', error: 'MUTAGEN_NOT_CONFIGURED: mutagen is not available' },
+      ]);
+      // The batch continues: the second book is still attempted.
+      expect(taggingService.retagBook).toHaveBeenCalledTimes(2);
+    });
+
+    it('records NOTHING for a NO_PATH skip', async () => {
+      const taggingService = makeTaggingService();
+      const { service, db } = createService({ taggingService });
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 8, title: 'Death Masks' }]));
+      (taggingService.retagBook as Mock).mockRejectedValueOnce(new RetagError('NO_PATH', 'no path'));
+
+      const id = service.startRetagJob();
+      await waitForJob(service, id);
+
+      expect(service.getJob(id)?.failureDetails).toEqual([]);
+      expect(service.getJob(id)?.failures).toBe(0);
+    });
+
+    it('routes the recorded error through the formatter — a URL secret is redacted', async () => {
+      const taggingService = makeTaggingService();
+      const { service, db } = createService({ taggingService });
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 9, title: 'Blood Rites' }]));
+      (taggingService.retagBook as Mock).mockRejectedValueOnce(
+        new Error('ffmpeg probe failed for https://media.example.com/f.m4b?token=SECRET'),
+      );
+
+      const id = service.startRetagJob();
+      await waitForJob(service, id);
+
+      const recorded = service.getJob(id)!.failureDetails[0]!.error;
+      expect(recorded).not.toContain('SECRET');
+      expect(recorded).toContain('ffmpeg probe failed for https://media.example.com/f.m4b');
+    });
+  });
+
+  describe('sidecars', () => {
+    it("records a detail naming the book when the OPF write returns 'failed'", async () => {
+      const { service, db } = createService();
+      writeOpfMock.mockResolvedValue('failed');
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 226, path: '/lib/A/1', coverUrl: null, title: "Captain's Fury" }]));
+
+      const id = service.startWriteMetadataSidecarsJob();
+      await waitForJob(service, id);
+
+      expect(service.getJob(id)?.failureDetails).toEqual([
+        { bookId: 226, title: "Captain's Fury", error: 'OPF write failed' },
+      ]);
+    });
+
+    it('records the formatter output for a thrown per-book error', async () => {
+      const { service, db } = createService();
+      writeOpfMock.mockRejectedValue(Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }));
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 11, path: '/lib/A/1', coverUrl: null, title: 'Dead Beat' }]));
+
+      const id = service.startWriteMetadataSidecarsJob();
+      await waitForJob(service, id);
+
+      expect(service.getJob(id)?.failureDetails).toEqual([
+        { bookId: 11, title: 'Dead Beat', error: 'EACCES: permission denied' },
+      ]);
+    });
+
+    it('routes a thrown per-book error through the formatter — a URL secret is redacted', async () => {
+      const { service, db } = createService();
+      writeOpfMock.mockRejectedValue(new Error('Sidecar hook failed at https://hooks.example.com/run?apikey=SECRET'));
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 12, path: '/lib/A/1', coverUrl: null, title: 'Proven Guilty' }]));
+
+      const id = service.startWriteMetadataSidecarsJob();
+      await waitForJob(service, id);
+
+      const recorded = service.getJob(id)!.failureDetails[0]!.error;
+      expect(recorded).not.toContain('SECRET');
+      expect(recorded).toContain('Sidecar hook failed at https://hooks.example.com/run');
+    });
+
+    it('names the OPF cause the writer reported (the live ENOENT case)', async () => {
+      const { service, db } = createService();
+      writeOpfMock.mockImplementation(async (args) => {
+        args.onFailure?.(Object.assign(new Error("ENOENT: no such file or directory, open '/audiobooks/x/metadata.opf'"), { code: 'ENOENT' }));
+        return 'failed';
+      });
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 226, path: '/lib/A/1', coverUrl: null, title: "Captain's Fury" }]));
+
+      const id = service.startWriteMetadataSidecarsJob();
+      await waitForJob(service, id);
+
+      const detail = service.getJob(id)!.failureDetails[0]!;
+      expect(detail.error).toContain('ENOENT');
+      expect(`${detail.title} (book ${detail.bookId}): ${detail.error}`).toMatch(/^Captain's Fury \(book 226\): ENOENT/);
+    });
+  });
+
+  it('keeps failureDetails at [] and the payload otherwise unchanged for a clean job', async () => {
+    const { service, db } = createService();
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: '/lib/A/1', coverUrl: null, title: 'Clean' }]));
+
+    const id = service.startWriteMetadataSidecarsJob();
+    await waitForJob(service, id);
+
+    expect(service.getJob(id)).toEqual({
+      jobId: id,
+      type: 'write_metadata_sidecars',
+      status: 'completed',
+      completed: 1,
+      total: 1,
+      failures: 0,
+      failureDetails: [],
+    });
+  });
+});
+
+// Logs retain full serialized errors; failureDetails intentionally store only the short form.
+describe('BulkOperationService — per-book failure logs are unchanged (#2159 AC14)', () => {
+  const writeOpfMock = vi.mocked(writeOpfSidecar);
+  const downloadMock = vi.mocked(downloadRemoteCover);
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    writeOpfMock.mockResolvedValue('written');
+    downloadMock.mockResolvedValue('written');
+  });
+
+  it('rename: warn with the serialized error, bookId and jobId', async () => {
+    const renameService = makeRenameService();
+    const { service, db, log } = createService({ renameService });
+    db.select.mockReturnValueOnce(mockDbChain([renameRow(2, 'Storm Front')]));
+    (renameService.renameBook as Mock).mockRejectedValueOnce(new RenameError('Target folder already exists', 'CONFLICT'));
+
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+
+    expect(log.warn).toHaveBeenCalledWith(
+      {
+        bookId: 2,
+        jobId: id,
+        error: { message: 'Target folder already exists', stack: expect.any(String), type: 'RenameError', code: 'CONFLICT' },
+      },
+      'Bulk rename: book failed',
+    );
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
+  it('re-tag: warn with the serialized error, bookId and jobId', async () => {
+    const taggingService = makeTaggingService();
+    const { service, db, log } = createService({ taggingService });
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 7, title: 'Summer Knight' }]));
+    (taggingService.retagBook as Mock).mockRejectedValueOnce(new RetagError('PATH_MISSING', 'Book folder no longer exists'));
+
+    const id = service.startRetagJob();
+    await waitForJob(service, id);
+
+    expect(log.warn).toHaveBeenCalledWith(
+      {
+        bookId: 7,
+        jobId: id,
+        error: { message: 'Book folder no longer exists', stack: expect.any(String), type: 'RetagError', code: 'PATH_MISSING' },
+      },
+      'Bulk re-tag: book failed',
+    );
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
+  it('sidecars: warn with the serialized error, bookId and jobId', async () => {
+    const { service, db, log } = createService();
+    writeOpfMock.mockRejectedValue(Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }));
+    db.select.mockReturnValueOnce(mockDbChain([{ id: 11, path: '/lib/A/1', coverUrl: null, title: 'Dead Beat' }]));
+
+    const id = service.startWriteMetadataSidecarsJob();
+    await waitForJob(service, id);
+
+    expect(log.warn).toHaveBeenCalledWith(
+      {
+        bookId: 11,
+        jobId: id,
+        error: { message: 'EACCES: permission denied', stack: expect.any(String), type: 'Error', code: 'EACCES' },
+      },
+      'Bulk write-sidecars: book failed',
+    );
+    expect(log.error).not.toHaveBeenCalled();
   });
 });

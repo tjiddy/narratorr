@@ -8,12 +8,7 @@ import { IMPORT_LIST_REGISTRY, IMPORT_LIST_TYPES, type ImportListType } from '@s
 import type { ImportList } from '@/lib/api';
 import type { Mock } from 'vitest';
 
-// Every settings key declared by an import-list type OTHER than `ownType`, minus any key
-// `ownType` also declares (e.g. all three share `apiKey`). Delegates to the shared #908-family
-// helper so all four leak-guard suites derive foreign keys identically. NOTE: this is
-// `defaultSettings`-derived, so it does NOT see hardcover's dynamically-minted `shelfId`
-// (ImportListProviderSettings.tsx, absent from the registry defaults) — that key is asserted
-// explicitly in the hardcover case below.
+// Registry defaults omit dynamic shelfId, so tests assert it separately.
 const foreignImportListKeys = (ownType: ImportListType): string[] =>
   foreignRegistryKeys(ownType, IMPORT_LIST_TYPES, IMPORT_LIST_REGISTRY);
 
@@ -68,7 +63,6 @@ describe('ImportListCard', () => {
         <ImportListCard list={mockList} mode="view" onSubmit={noop} />
       );
 
-      // Green check circle for enabled
       const toggleButton = screen.getByText('My NYT List').closest('.flex')!.querySelector('button')!;
       expect(toggleButton.querySelector('.text-green-500')).not.toBeNull();
     });
@@ -153,7 +147,7 @@ describe('ImportListCard', () => {
         <ImportListCard list={mockList} mode="view" onDelete={onDelete} onSubmit={noop} />
       );
 
-      // Delete button is the last button in the row, identifiable by its trash icon child
+      // The icon-only delete button is identifiable only by its trash icon.
       const allButtons = screen.getAllByRole('button');
       const deleteBtn = allButtons.find(btn => btn.querySelector('svg.w-4.h-4') !== null && btn.closest('.flex.items-center.gap-2'));
       expect(deleteBtn).toBeDefined();
@@ -171,7 +165,6 @@ describe('ImportListCard', () => {
       expect(screen.getByLabelText('Name')).toBeInTheDocument();
       expect(screen.getByLabelText('Provider Type')).toBeInTheDocument();
       expect(screen.getByLabelText('Sync Interval (minutes)')).toBeInTheDocument();
-      // NYT fields shown by default (nyt is the default provider)
       expect(screen.getByLabelText('Bestseller List')).toBeInTheDocument();
     });
 
@@ -232,13 +225,10 @@ describe('ImportListCard', () => {
         />
       );
 
-      // Test result should be visible initially
       expect(screen.getByText('Connection OK')).toBeInTheDocument();
 
-      // Switch provider type
       await user.selectOptions(screen.getByLabelText('Provider Type'), 'nyt');
 
-      // Test result should be hidden after provider change
       expect(screen.queryByText('Connection OK')).not.toBeInTheDocument();
     });
 
@@ -254,15 +244,12 @@ describe('ImportListCard', () => {
         />
       );
 
-      // Switch provider to hide stale result
       await user.selectOptions(screen.getByLabelText('Provider Type'), 'nyt');
       expect(screen.queryByText('Connection OK')).not.toBeInTheDocument();
 
-      // Click Test Connection — clears stale flag, feedback should reappear
       await user.click(screen.getByRole('button', { name: 'Test Connection' }));
       expect(onFormTest).toHaveBeenCalledWith(expect.objectContaining({ type: 'nyt' }));
 
-      // formTestResult prop is still { success: true } — now visible again after stale flag cleared
       expect(screen.getByText('Connection OK')).toBeInTheDocument();
     });
 
@@ -285,7 +272,6 @@ describe('ImportListCard', () => {
       expect(screen.getByText('Showing 1 of 5 items')).toBeInTheDocument();
     });
 
-    // #844 — id forwarding for sentinel resolution
     it('Preview Items omits id on the create-mode path', async () => {
       const user = userEvent.setup();
       (api.previewImportList as Mock).mockResolvedValue({ items: [], total: 0 });
@@ -380,10 +366,7 @@ describe('ImportListCard', () => {
       expect(onTest).toHaveBeenCalledWith(1);
     });
 
-    // #1057 — non-regression: import-list edit-mode test must use the saved-id flow
-    // (onTest(initial.id) / /import-lists/:id/test) and MUST NOT route through the
-    // generic test-by-config payload path. The centralization in #1057 explicitly
-    // opts out of import lists.
+    // Import-list edits use the saved-id endpoint, not test-by-config.
     it('#1057 edit-mode Test fires onTest(initial.id) and does NOT call onFormTest', async () => {
       const user = userEvent.setup();
       const onTest = vi.fn();
@@ -434,7 +417,6 @@ describe('ImportListCard', () => {
       }));
     });
 
-    // #844 — id forwarding for sentinel resolution
     it('Preview Items forwards initial.id when editing an existing list', async () => {
       const user = userEvent.setup();
       (api.previewImportList as Mock).mockResolvedValue({ items: [], total: 0 });
@@ -451,17 +433,7 @@ describe('ImportListCard', () => {
     });
   });
 
-  // #908 family — registry-overlay leak guard (siblings: IndexerCard.test.tsx,
-  // DownloadClientForm.test.tsx, NotifierCard.test.tsx). ImportListCard has NO
-  // `settingsFromImportList` helper and none should be added — its leak-prevention
-  // mechanism is `handleTypeChange` (ImportListCard.tsx:173), which resets `settings`
-  // to the newly selected type's `defaultSettings` on a create-mode provider switch.
-  // The provider-type selector is rendered only in create mode (ImportListCard.tsx:228,
-  // `{!initial && …}`), so create mode is the only surface that both exposes the switch
-  // and routes Test through the `onFormTest(formData)` payload path. Edit mode is
-  // covered by the separate #1057 saved-id test above and must NOT be normalized into
-  // this payload pattern. Regress the guard by removing the `setSettings` reset in
-  // `handleTypeChange` and these assertions go red.
+  // Only create mode switches providers; handleTypeChange must reset to the new defaults.
   describe('#908 — ImportListCard handleTypeChange registry reset (no foreign-type leak)', () => {
     it('hardcover → nyt switch drops hardcover-only keys from the Test payload', async () => {
       const user = userEvent.setup();
@@ -470,19 +442,13 @@ describe('ImportListCard', () => {
         <ImportListCard mode="create" onSubmit={noop} onFormTest={onFormTest} />
       );
 
-      // Start on hardcover and populate hardcover-only settings before switching, so the reset
-      // is proven to drop real stored values — not merely empty registry defaults. The apiKey
-      // sentinel makes the `apiKey: ''` assertion below non-vacuous: it reds the `{ ...defaults,
-      // apiKey: settings.apiKey }` same-named-key carryover mutation (apiKey exists on both
-      // surviving types, so the strict per-type schema cannot 400 it — the test is the only guard).
+      // Populate shared apiKey so a same-key carryover mutation cannot pass vacuously.
       await user.selectOptions(screen.getByLabelText('Provider Type'), 'hardcover');
       await user.type(screen.getByLabelText('API Key'), 'hc-secret-key');
       await user.selectOptions(screen.getByLabelText('List Type'), 'shelf');
       await user.type(await screen.findByLabelText('Shelf ID'), '42');
 
-      // Switch provider type — handleTypeChange resets settings to nyt defaults.
       await user.selectOptions(screen.getByLabelText('Provider Type'), 'nyt');
-      // Await the nyt-specific field render so the reset has flushed before we click Test.
       await screen.findByLabelText('Bestseller List');
 
       await user.click(screen.getByRole('button', { name: 'Test Connection' }));
@@ -490,20 +456,13 @@ describe('ImportListCard', () => {
       expect(onFormTest).toHaveBeenCalled();
       const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
 
-      // No key from any non-nyt provider may survive the switch — covers hardcover (listType),
-      // matching the full no-foreign-keys contract.
       const foreignKeys = foreignImportListKeys('nyt');
       expect(foreignKeys).toEqual(expect.arrayContaining(['listType']));
       for (const key of foreignKeys) {
         expect(payloadSettings).not.toHaveProperty(key);
       }
-      // `shelfId` is hardcover's dynamically-minted key — absent from registry defaults, so the
-      // foreignImportListKeys helper can't list it. Assert it explicitly so a switch that leaked
-      // a stale shelfId would still red.
       expect(payloadSettings).not.toHaveProperty('shelfId');
 
-      // nyt defaults MUST be present (value-checked so the reset is confirmed). apiKey reset to
-      // '' proves the typed `hc-secret-key` did not carry across the switch.
       expect(payloadSettings).toHaveProperty('list', 'audio-fiction');
       expect(payloadSettings).toHaveProperty('apiKey', '');
     });
@@ -515,12 +474,9 @@ describe('ImportListCard', () => {
         <ImportListCard mode="create" onSubmit={noop} onFormTest={onFormTest} />
       );
 
-      // nyt is the default provider; set a non-default Bestseller List value.
       await user.selectOptions(screen.getByLabelText('Bestseller List'), 'audio-nonfiction');
 
-      // Switch to hardcover — handleTypeChange resets settings to hardcover defaults.
       await user.selectOptions(screen.getByLabelText('Provider Type'), 'hardcover');
-      // Await the hardcover-specific field render so the reset has flushed before we click Test.
       await screen.findByLabelText('List Type');
 
       await user.click(screen.getByRole('button', { name: 'Test Connection' }));
@@ -528,24 +484,16 @@ describe('ImportListCard', () => {
       expect(onFormTest).toHaveBeenCalled();
       const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
 
-      // No key from any non-hardcover provider may survive the switch — covers nyt (list),
-      // matching the full no-foreign-keys contract.
       const foreignKeys = foreignImportListKeys('hardcover');
       expect(foreignKeys).toEqual(expect.arrayContaining(['list']));
       for (const key of foreignKeys) {
         expect(payloadSettings).not.toHaveProperty(key);
       }
 
-      // hardcover defaults MUST be present.
       expect(payloadSettings).toHaveProperty('listType', 'trending');
       expect(payloadSettings).toHaveProperty('apiKey', '');
     });
 
-    // Hardcover's `shelfId` is minted dynamically by ImportListProviderSettings.tsx (only when
-    // List Type === 'shelf') and is absent from the registry defaults, so foreignImportListKeys
-    // can never see it. This third case mints a real shelfId, switches away to nyt, and proves
-    // handleTypeChange's reset drops it from the Test payload — the leak the registry-derived
-    // helper alone would miss.
     it('hardcover shelfId minted then switched away is dropped from the Test payload', async () => {
       const user = userEvent.setup();
       const onFormTest = vi.fn();
@@ -553,12 +501,10 @@ describe('ImportListCard', () => {
         <ImportListCard mode="create" onSubmit={noop} onFormTest={onFormTest} />
       );
 
-      // Switch to hardcover and mint shelfId (List Type = shelf reveals the Shelf ID field).
       await user.selectOptions(screen.getByLabelText('Provider Type'), 'hardcover');
       await user.selectOptions(screen.getByLabelText('List Type'), 'shelf');
       await user.type(await screen.findByLabelText('Shelf ID'), '42');
 
-      // Switch away to nyt — handleTypeChange resets settings to nyt defaults, dropping shelfId.
       await user.selectOptions(screen.getByLabelText('Provider Type'), 'nyt');
       await screen.findByLabelText('Bestseller List');
 
@@ -573,9 +519,6 @@ describe('ImportListCard', () => {
     });
   });
 
-  // #1879 — Hardcover list-type change handler leak matrix through the real card.
-  // Complements the ImportListProviderSettings suite (AC12): the list-type dropdown
-  // scrubs foreign keys, proven here against the onFormTest payload.
   describe('#1879 — Hardcover list-type change scrubs foreign keys', () => {
     const CUSTOM_URL = 'https://hardcover.app/@LisaRae/lists/2025-year-in-books';
 
@@ -589,7 +532,6 @@ describe('ImportListCard', () => {
       await user.type(await screen.findByLabelText('List URL'), CUSTOM_URL);
       await user.selectOptions(screen.getByLabelText('Import Max'), '100');
 
-      // Switch List Type back to trending — handler drops listUrl/importMax.
       await user.selectOptions(screen.getByLabelText('List Type'), 'trending');
       await user.click(screen.getByRole('button', { name: 'Test Connection' }));
 
@@ -608,7 +550,6 @@ describe('ImportListCard', () => {
       await user.selectOptions(screen.getByLabelText('List Type'), 'shelf');
       await user.type(await screen.findByLabelText('Shelf ID'), '42');
 
-      // Switch List Type to custom — handler drops shelfId.
       await user.selectOptions(screen.getByLabelText('List Type'), 'custom');
       await user.click(screen.getByRole('button', { name: 'Test Connection' }));
 
@@ -617,9 +558,7 @@ describe('ImportListCard', () => {
       expect(payloadSettings).toMatchObject({ listType: 'custom' });
     });
 
-    // F7 — AC12 requires custom→shelf in the real-card payload matrix. Populate the
-    // minted listUrl/importMax first so the assertion reds a shelf-branch scrub that
-    // forgot to drop them (not merely empty defaults).
+    // Populate listUrl/importMax first so the scrub assertion is non-vacuous.
     it('custom → shelf drops the minted listUrl/importMax from the Test payload', async () => {
       const user = userEvent.setup();
       const onFormTest = vi.fn();
@@ -630,7 +569,6 @@ describe('ImportListCard', () => {
       await user.type(await screen.findByLabelText('List URL'), CUSTOM_URL);
       await user.selectOptions(screen.getByLabelText('Import Max'), '100');
 
-      // Switch List Type to shelf — handler drops the custom-only keys.
       await user.selectOptions(screen.getByLabelText('List Type'), 'shelf');
       await screen.findByLabelText('Shelf ID');
       await user.click(screen.getByRole('button', { name: 'Test Connection' }));
@@ -641,9 +579,7 @@ describe('ImportListCard', () => {
       expect(payloadSettings).toMatchObject({ listType: 'shelf' });
     });
 
-    // F7 — populated-custom → provider switch. The existing #908 provider-switch tests
-    // only mint/assert shelfId; this proves handleTypeChange's registry reset also drops
-    // the dynamically minted listUrl/importMax when leaving the hardcover provider entirely.
+    // Populated custom keys cover the dynamic-key gap in registry-derived checks.
     it('provider switch away from a populated custom list drops listUrl/importMax (and listType)', async () => {
       const user = userEvent.setup();
       const onFormTest = vi.fn();
@@ -654,7 +590,6 @@ describe('ImportListCard', () => {
       await user.type(await screen.findByLabelText('List URL'), CUSTOM_URL);
       await user.selectOptions(screen.getByLabelText('Import Max'), 'all');
 
-      // Switch Provider Type to nyt — handleTypeChange resets settings to nyt defaults.
       await user.selectOptions(screen.getByLabelText('Provider Type'), 'nyt');
       await screen.findByLabelText('Bestseller List');
       await user.click(screen.getByRole('button', { name: 'Test Connection' }));

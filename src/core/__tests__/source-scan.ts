@@ -2,42 +2,27 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 /**
- * The one recursive source scanner behind every static architecture guard in
- * `src/core/epub/` (#2000).
- *
- * Those guards used to hand-roll the same "read every production file in this
- * folder, then assert no source matches pattern X" scaffolding six times over,
- * with quietly different roots, file filters, and comment handling. The
- * *patterns* stay with the runtime property each one guards; only the
- * scaffolding lives here.
- *
- * **Deliberately outside `src/core/epub/`**, beside the fixture builders, so
- * the folder's own layer guard cannot mistake it for a production module.
- *
- * **Only `readdir` and `readFile`, never `open` or `lstat`.** All three large
- * EPUB suites partially mock `node:fs/promises` and replace `open` (plus
- * `lstat` in `validate.test.ts`); every factory spreads the real module, so
- * these two pass through. Reaching for a third primitive would hand the scan a
- * spy instead of the filesystem.
+ * Shared recursive scanner for EPUB architecture guards, deliberately outside their
+ * production-scanned folder. Use only readdir and readFile because consuming suites
+ * replace other fs primitives with spies.
  */
 
 export interface SourceScanOptions {
-  /** Absolute directory to enumerate, recursively. */
   root: string;
   /** Suffixes to keep. Default `['.ts']`. */
   extensions?: readonly string[] | undefined;
   /** Keep `*.test.ts` / `*.test.tsx` as well. Default `false`. */
   includeTests?: boolean | undefined;
-  /** Apply the comment transform documented on `stripCommentText`. Default `false`. */
+  /** Apply the text-only comment transform. Default false. */
   stripComments?: boolean | undefined;
-  /** Absolute directories to prune, matched by path segment. Default none. */
+  /** Absolute directories to prune by path segment. Default none. */
   excludeDirs?: readonly string[] | undefined;
 }
 
 export interface ScannedSource {
-  /** Path relative to the scan root, POSIX-separated on every platform. */
+  /** Root-relative path, POSIX-separated on every platform. */
   file: string;
-  /** The file's text, comment-stripped when the caller asked for it. */
+  /** File text, optionally comment-stripped. */
   code: string;
 }
 
@@ -48,15 +33,8 @@ function toPosix(value: string): string {
 }
 
 /**
- * Block comments first, then line comments — the order is load-bearing and the
- * transform is deliberately text-only, not syntax-aware.
- *
- * It truncates a line at a `//` that sits inside a string literal, and it
- * removes a block comment that itself contains `//`. Both are relied on by the
- * guards that enable stripping; a parser-based or reordered implementation is a
- * behaviour change even though ordinary comments still disappear. Pinned by
- * exact expected output in `source-scan.test.ts` ›
- * `describe('scanSources comment stripping')`.
+ * Text-only and order-sensitive: remove block comments before truncating lines at //,
+ * including markers inside strings. Exact quirks are pinned by source-scan.test.ts.
  */
 function stripCommentText(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
@@ -68,17 +46,8 @@ function isUnder(file: string, dir: string): boolean {
 }
 
 /**
- * Enumerate `root` recursively and read every file the options select.
- *
- * Throws when the selection is empty. Nearly every caller asserts only that an
- * offender list `toEqual([])`, so a scan that silently looked at nothing would
- * turn those guards green while guarding nothing — the failure mode this throw
- * exists to prevent.
- *
- * Reads are **strictly sequential**: at most one `readFile` is in flight at any
- * moment, for every caller and every root. The widest caller sweeps the whole
- * of `src/`, where any fan-out large enough to be worth having is also large
- * enough to exhaust file descriptors on a low-`ulimit` host.
+ * Recursively reads selected files. Empty selection throws so guards cannot pass
+ * vacuously. Reads stay strictly sequential to avoid descriptor exhaustion on full-src scans.
  */
 export async function scanSources(options: SourceScanOptions): Promise<ScannedSource[]> {
   const {
@@ -115,13 +84,8 @@ export async function scanSources(options: SourceScanOptions): Promise<ScannedSo
 }
 
 /**
- * The selection every `src/core/epub/` guard shares: production `*.ts` in one
- * folder, tests excluded, recursive so a new module is in scope with no edit.
- *
- * Comment stripping is the only thing those guards differ on. Going through
- * this one preset is what lets `validate.test.ts` ›
- * `describe('public surface and guardrails')` prove the layer guard's *real*
- * reach rather than re-deriving it.
+ * Shared recursive production-TypeScript selection for EPUB guards. Tests are
+ * excluded; callers vary only comment stripping.
  */
 export async function scanProductionSources(
   root: string,

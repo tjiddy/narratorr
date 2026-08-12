@@ -14,7 +14,6 @@ function FieldWrapper({ type }: { type: NotifierType }) {
   return <NotifierFields selectedType={type} register={register} errors={errors} />;
 }
 
-/** Wrapper that injects form errors for specific settings fields */
 function ErrorFieldWrapper({ type, errorFields }: { type: NotifierType; errorFields: string[] }) {
   const { register, formState: { errors }, setError } = useForm<CreateNotifierFormData>({
     defaultValues: { name: '', type: 'webhook', events: [], settings: {} },

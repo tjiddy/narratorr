@@ -26,7 +26,7 @@ export async function requestWithRetry<T>(
       lastError = error;
       if (attempt < maxRetries && shouldRetry(error)) {
         if (onRetry) await onRetry();
-        // Jitter prevents synchronized retry storms across concurrent clients
+        // Jitter avoids synchronized retries across clients.
         if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs + Math.random() * delayMs * 0.3));
         continue;
       }
@@ -38,7 +38,7 @@ export async function requestWithRetry<T>(
     try {
       await Promise.resolve(onExhausted({ clientName, attempts, error: lastError }));
     } catch {
-      // fire-and-forget — callback errors must not mask the real failure
+      // Exhaustion reporting must not mask the real failure.
     }
   }
 

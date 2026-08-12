@@ -46,9 +46,7 @@ export type EnqueueImportResult =
   | { jobId: number }
   | { error: 'active-job-exists'; status: 409 };
 
-// Both the index-name and column-message forms are matched — SQLite surfaces
-// either depending on whether the conflict is detected via the named index or
-// the underlying column unique check (pattern from blacklist.service.test.ts).
+// SQLite may name either the partial index or its underlying column constraint.
 const ACTIVE_JOB_UNIQUE_VIOLATION =
   /UNIQUE constraint failed.*(?:idx_import_jobs_book_active|import_jobs\.book_id)/;
 
@@ -59,16 +57,8 @@ export class BookImportService {
   ) {}
 
   /**
-   * Centralized active-job check + insert. All three insert sites (retry, auto, manual)
-   * route through here so the transactional logic lives in exactly one place.
-   *
-   * Returns `{ jobId }` on success or `{ error: 'active-job-exists', status: 409 }`
-   * when an active job already exists for the same bookId — either detected by
-   * the in-tx pre-check or caught from the partial unique-index defensive backstop.
-   *
-   * Pass `tx` to participate in a caller-owned transaction (so the caller can
-   * atomically pair the insert with adjacent writes — see `retryImport`). When
-   * omitted, opens its own transaction (preserves existing caller behavior).
+   * Central active-job check and insert. A supplied transaction keeps adjacent writes atomic;
+   * otherwise this opens its own, with the partial unique index as the race backstop.
    */
   async enqueue(input: EnqueueImportInput, tx?: DbOrTx): Promise<EnqueueImportResult> {
     if (tx) {

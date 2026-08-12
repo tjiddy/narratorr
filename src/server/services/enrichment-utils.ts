@@ -6,11 +6,13 @@ import type { FastifyBaseLogger } from 'fastify';
 import { books } from '@db/schema.js';
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
+import { tokenizeNarrators } from '@core/utils/similarity.js';
 import type { BookService } from './book.service.js';
 import { downloadRemoteCover, isRemoteCoverUrl } from './cover-download.js';
 import { mimeToExt } from '../utils/mime.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
+import type { NarratorSource } from './import-adapters/types.js';
 
 
 export interface EnrichmentResult {
@@ -22,19 +24,17 @@ export interface AudioEnrichmentBook {
   narrators?: Array<{ name: string }> | null;
   duration: number | null;
   coverUrl: string | null;
+  /** Per-import provenance. Absent preserves legacy behavior: fill only when narrators are empty. */
+  narratorSource?: NarratorSource | undefined;
 }
 
-/**
- * Scan audio files in a directory and enrich the book record.
- * Tag data only fills empty fields; technical info is always written.
- * Narrator writes go through the junction table via bookService.
- */
-/**
- * Apply the two duration writes to the enrichment update, honoring the zero-total skip-write
- * guard (#1846). An all-rejected scan yields totalDuration 0; writing that zero would silently
- * clobber a correct stored `audioDuration`, so it is omitted (logged at warn) and the existing
- * value stands. The fill-empty `duration` behavior is preserved (it already skips a 0 total).
- */
+/** Auto-matched provider narrators arrive nonempty, so protect curated provenance rather than emptiness. */
+function tagNarratorFillAllowed(book: AudioEnrichmentBook): boolean {
+  if (book.narratorSource === undefined) return !book.narrators?.length;
+  return book.narratorSource !== 'curated';
+}
+
+/** A zero total means every scan was rejected; omit duration writes instead of clobbering storage. */
 function applyDurationFields(
   update: Record<string, unknown>,
   totalDuration: number,
@@ -73,14 +73,12 @@ export async function enrichBookFromAudio(
       return { enriched: false };
     }
 
-    // Count top-level (non-recursive) audio files for UI eligibility check
-    // readdir returns strings; use String() to be safe with non-string entries
+    // UI eligibility depends on the nonrecursive visible-audio count.
     const topLevelEntries = await readdir(targetPath).catch(() => [] as string[]);
     const topLevelAudioFileCount = topLevelEntries.filter(
       (f) => !isHiddenName(String(f)) && AUDIO_EXTENSIONS.has(extname(String(f)).toLowerCase()),
     ).length;
 
-    // Build update: always write technical info
     const update: Record<string, unknown> = {
       audioCodec: scanResult.codec,
       audioBitrate: scanResult.bitrate,
@@ -97,14 +95,12 @@ export async function enrichBookFromAudio(
 
     applyDurationFields(update, scanResult.totalDuration, book.duration, log, bookId, targetPath);
 
-    // Tag data: only fill empty fields (don't overwrite user edits)
-    // Narrator writes go through the junction table via bookService
-    if (!book.narrators?.length && scanResult.tagNarrator && bookService) {
-      const narratorNames = scanResult.tagNarrator.split(/[,;&]/).map(n => n.trim()).filter(n => n.length > 0);
+    // Narrators write through the junction table and respect provenance.
+    if (tagNarratorFillAllowed(book) && scanResult.tagNarrator && bookService) {
+      const narratorNames = tokenizeNarrators(scanResult.tagNarrator);
       await bookService.update(bookId, { narrators: narratorNames });
     }
 
-    // Save embedded cover art when no cover URL exists
     if (!book.coverUrl && scanResult.coverImage) {
       try {
         const ext = mimeToExt(scanResult.coverMimeType) ?? 'jpg';
@@ -117,7 +113,6 @@ export async function enrichBookFromAudio(
       }
     }
 
-    // Download remote cover if book has a remote coverUrl and no embedded cover was saved
     if (isRemoteCoverUrl(book.coverUrl) && !update.coverUrl) {
       downloadRemoteCover(bookId, targetPath, book.coverUrl!, db, log)
         .catch((err: unknown) => log.warn({ error: serializeError(err), bookId }, 'Fire-and-forget remote cover download failed'));

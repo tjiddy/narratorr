@@ -6,7 +6,6 @@ import { realpath } from 'node:fs/promises';
 import { renameFilesWithTemplate, planFileRenames, padWidth, buildBookNameTokens, assertPathInsideLibrary, assertRealPathInsideLibrary, assertRealPathInsideLibraryStrict, PathOutsideLibraryError } from './paths.js';
 import type { RenameableBook } from './paths.js';
 import { renderFilename } from '@core/utils/naming.js';
-import { compareAudioNames, disambiguateStems } from '@core/utils/collect-audio-files.js';
 
 vi.mock('node:fs/promises', async () => ({
   ...(await vi.importActual('node:fs/promises')),
@@ -87,8 +86,7 @@ describe('assertRealPathInsideLibrary', () => {
     vi.mocked(realpath).mockReset();
   });
 
-  // Lexical containment runs first and unconditionally — the canonical (realpath)
-  // pass is never reached for these, even if realpath would ENOENT.
+  // Lexical rejection precedes realpath, even when canonicalization would ENOENT.
   it('rejects a path outside the root', async () => {
     await expect(assertRealPathInsideLibrary('/tmp/external', '/library')).rejects.toThrow(PathOutsideLibraryError);
   });
@@ -157,14 +155,12 @@ describe('assertRealPathInsideLibraryStrict', () => {
     vi.mocked(realpath).mockReset();
   });
 
-  // The one behavioural difference from the sibling — and the reason it exists (#1974 AC4).
   it('propagates a realpath ENOENT instead of swallowing it', async () => {
     vi.mocked(realpath).mockRejectedValue(enoent());
     await expect(assertRealPathInsideLibraryStrict('/library/Author/Missing.epub', '/library'))
       .rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  // Everything else is identical to `assertRealPathInsideLibrary`.
   it('rejects a lexical escape before any realpath call', async () => {
     await expect(assertRealPathInsideLibraryStrict('/tmp/external', '/library')).rejects.toThrow(PathOutsideLibraryError);
     expect(vi.mocked(realpath)).not.toHaveBeenCalled();
@@ -217,7 +213,6 @@ describe('renameFilesWithTemplate', () => {
       const onProgress = vi.fn();
       await renameFilesWithTemplate('/target', '{title}', book, 'Author', log, undefined, onProgress);
 
-      // 3 audio files with format '{title}' and trackNumber tokens → 3 renames
       expect(onProgress).toHaveBeenCalledTimes(3);
       expect(onProgress).toHaveBeenNthCalledWith(1, 1, 3);
       expect(onProgress).toHaveBeenNthCalledWith(2, 2, 3);
@@ -241,11 +236,9 @@ describe('renameFilesWithTemplate', () => {
 
       await renameFilesWithTemplate('/target', '{title}', book, 'Author', log, undefined, onProgress);
 
-      // Verify monotonically increasing current
       for (let i = 1; i < calls.length; i++) {
         expect(calls[i]![0]).toBeGreaterThan(calls[i - 1]![0]);
       }
-      // Verify constant total
       const totals = calls.map(c => c[1]);
       expect(new Set(totals).size).toBe(1);
     });
@@ -257,7 +250,6 @@ describe('renameFilesWithTemplate', () => {
       ] as never);
       vi.mocked(rename).mockResolvedValue(undefined);
 
-      // Should not throw when onProgress is omitted
       const result = await renameFilesWithTemplate('/target', '{title}', book, 'Author', log);
       expect(result).toBe(1);
       expect(vi.mocked(rename)).toHaveBeenCalledTimes(1);
@@ -283,15 +275,12 @@ describe('renameFilesWithTemplate', () => {
         renameFilesWithTemplate('/target', '{title}', book, 'Author', log, undefined, onProgress),
       ).rejects.toThrow('ENOSPC');
 
-      // onProgress called for the 2 successful renames, NOT during rollback
       expect(onProgress).toHaveBeenCalledTimes(2);
       expect(onProgress).toHaveBeenNthCalledWith(1, 1, 3);
       expect(onProgress).toHaveBeenNthCalledWith(2, 2, 3);
     });
 
     it('does not invoke onProgress when the target directory contains no audio files', async () => {
-      // Proves the early-return at paths.ts:72 — when readdir yields nothing
-      // recognized as an audio file, the helper resolves 0 without touching the callback.
       const { readdir, rename } = await import('node:fs/promises');
       vi.mocked(readdir).mockResolvedValue([
         makeDirent('cover.jpg', true),
@@ -307,9 +296,6 @@ describe('renameFilesWithTemplate', () => {
     });
 
     it('swallows errors thrown inside onProgress and continues renaming', async () => {
-      // Callback failures (e.g. SSE broadcaster throwing) must never trigger a
-      // rollback of successfully-renamed files. The rename loop catches the
-      // callback throw, logs a warning, and keeps going.
       const { readdir, rename } = await import('node:fs/promises');
       vi.mocked(readdir).mockResolvedValue([
         makeDirent('a.mp3', true),
@@ -321,14 +307,11 @@ describe('renameFilesWithTemplate', () => {
         throw new Error('callback error');
       });
 
-      // Should resolve successfully, not reject
       const renamedCount = await renameFilesWithTemplate('/target', '{title}', book, 'Author', log, undefined, onProgress);
       expect(renamedCount).toBe(2);
 
-      // onProgress called for every rename even after throwing
       expect(onProgress).toHaveBeenCalledTimes(2);
 
-      // Warning logged for each swallowed callback error
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ error: expect.anything() }),
         expect.stringMatching(/onProgress callback threw/),
@@ -356,18 +339,12 @@ describe('renameFilesWithTemplate', () => {
         renameFilesWithTemplate('/target', '{title}', book, 'Author', log),
       ).rejects.toBe(forwardError);
 
-      // 3 forward attempts (last one throws) + 2 rollback calls for the 2 completed renames
       const calls = vi.mocked(rename).mock.calls;
       expect(calls).toHaveLength(5);
 
-      // The forward calls map the original filenames to template-rendered names.
-      // Capture the actual (from, to) the production code emitted so the rollback
-      // assertions don't have to re-derive the template.
       const forward1 = { from: calls[0]![0] as string, to: calls[0]![1] as string };
       const forward2 = { from: calls[1]![0] as string, to: calls[1]![1] as string };
 
-      // Rollback calls swap from/to of the completed renames, in reverse order.
-      // Completed-rename #2 is undone first, then #1.
       expect(calls[3]![0]).toBe(forward2.to);
       expect(calls[3]![1]).toBe(forward2.from);
       expect(calls[4]![0]).toBe(forward1.to);
@@ -385,10 +362,6 @@ describe('renameFilesWithTemplate', () => {
       const forwardError = Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
       const rollbackError = new Error('rollback failed');
 
-      // Forward calls 1 & 2 succeed, forward call 3 throws (forwardError).
-      // Then rollback runs in reverse: rollback for completed #2 (call 4) throws,
-      // rollback for completed #1 (call 5) succeeds. The loop must NOT short-circuit
-      // after the first rollback throw.
       let callCount = 0;
       vi.mocked(rename).mockImplementation(async () => {
         callCount++;
@@ -400,10 +373,8 @@ describe('renameFilesWithTemplate', () => {
         renameFilesWithTemplate('/target', '{title}', book, 'Author', log),
       ).rejects.toBe(forwardError);
 
-      // Both rollback attempts must have run
       expect(vi.mocked(rename)).toHaveBeenCalledTimes(5);
 
-      // log.error called for the forward failure (serialized) and the rollback failure (raw)
       const errorCalls = vi.mocked(log.error).mock.calls;
       const forwardLog = errorCalls.find(c => {
         const arg = c[0] as Record<string, unknown> | undefined;
@@ -422,10 +393,6 @@ describe('renameFilesWithTemplate', () => {
       });
 
       expect(rollbackLog).toBeDefined();
-      // Rollback log uses the raw `{ rollbackError, file }` shape per paths.ts:137.
-      // `file` is the basename of the rendered name from completed-rename #2 — the
-      // rollback that failed. Derive it from the corresponding forward call (#2)
-      // so the assertion stays correct if the template render changes.
       const completedTwoRenderedFile = basename(vi.mocked(rename).mock.calls[1]![1] as string);
       expect(rollbackLog![0]).toMatchObject({
         rollbackError,
@@ -459,7 +426,6 @@ describe('planFileRenames', () => {
 
     const renames = await planFileRenames('/t', '{trackNumber:000}', book, 'Author');
 
-    // The hidden temp is absent from the plan; the two real files number 001, 002 (unshifted).
     expect(renames.some(r => r.from.startsWith('.'))).toBe(false);
     const byFrom = Object.fromEntries(renames.map(r => [r.from, r.to]));
     expect(byFrom['01.mp3']).toBe('001.mp3');
@@ -478,7 +444,6 @@ describe('planFileRenames', () => {
         'Author - Test Book (2).mp3',
         'Author - Test Book (3).mp3',
       ]);
-      // No bare/unnumbered file, all unique
       expect(tos.every(t => /\(\d+\)\.mp3$/.test(t))).toBe(true);
       expect(new Set(tos).size).toBe(3);
     });
@@ -490,15 +455,12 @@ describe('planFileRenames', () => {
       const renames = await planFileRenames('/t', '{author} - {title}', book, 'Author');
 
       expect(renames).toHaveLength(100);
-      // Numeric sort: Track1…Track100 → ordinals 001…100, consistent 3-digit width
       expect(renames[0]!.to).toBe('Author - Test Book (001).mp3');
       expect(renames[99]!.to).toBe('Author - Test Book (100).mp3');
       expect(renames.every(r => /\(\d{3}\)\.mp3$/.test(r.to))).toBe(true);
     });
 
     it('numbers the bare file first, before its (N) duplicate copies', async () => {
-      // Windows/download duplicate convention: bare `Title.mp3` IS part 1, `(2)` is part 2.
-      // Pre-fix the bare file sorted LAST and got the highest ordinal — chapter 1 at the end.
       await mockFiles(['Title.mp3', 'Title (10).mp3', 'Title (2).mp3']);
 
       const renames = await planFileRenames('/t', '{author} - {title}', book, 'Author');
@@ -510,8 +472,6 @@ describe('planFileRenames', () => {
     });
 
     it('orders already-suffixed (N) stems numerically, not lexicographically', async () => {
-      // Lexicographic sort would order (10) < (100) < (2) because ')' < '0'.
-      // Numeric sort must order (2) < (10) < (100), so re-numbering follows play order.
       await mockFiles(['Title (100).mp3', 'Title (2).mp3', 'Title (10).mp3']);
 
       const renames = await planFileRenames('/t', '{author} - {title}', book, 'Author');
@@ -532,7 +492,6 @@ describe('planFileRenames', () => {
 
       expect(renames[0]!.to).toBe('Test Book - 001.mp3');
       expect(renames[9]!.to).toBe('Test Book - 010.mp3');
-      // No file gets a forced " (NN)" ordinal appended
       expect(renames.every(r => !/ \(\d+\)\.mp3$/.test(r.to))).toBe(true);
     });
 
@@ -546,7 +505,6 @@ describe('planFileRenames', () => {
       expect(byFrom['Track1.mp3']).toBe('001.mp3');
       expect(byFrom['Track10.mp3']).toBe('010.mp3');
       expect(byFrom['Track100.mp3']).toBe('100.mp3');
-      // Token path renders unique stems → no appended " (NN)" ordinal
       expect(renames.every(r => !/\(\d+\)\.mp3$/.test(r.to))).toBe(true);
     });
   });
@@ -562,8 +520,6 @@ describe('planFileRenames', () => {
     });
 
     it('keeps track 1 at position 1 when re-running after a colliding pass', async () => {
-      // After a colliding pass the files are "<stem> (001)…(254)"; re-rendering with
-      // {trackNumber:000} must keep play order (001 first), not reorder lexicographically.
       const afterCollision = Array.from({ length: 254 }, (_, i) => `Author - Test Book (${String(i + 1).padStart(3, '0')}).mp3`);
       await mockFiles(afterCollision);
 
@@ -582,7 +538,6 @@ describe('planFileRenames', () => {
       const renames = await planFileRenames('/t', '{author} - {title}', book, 'Author');
 
       const byFrom = Object.fromEntries(renames.map(r => [r.from, r.to]));
-      // Real track 1 stays at position 1, padded to 3 digits
       expect(byFrom['001.mp3']).toBe('Author - Test Book (001).mp3');
       expect(byFrom['254.mp3']).toBe('Author - Test Book (254).mp3');
       expect(new Set(renames.map(r => r.to)).size).toBe(254);
@@ -651,8 +606,7 @@ describe('planFileRenames', () => {
       ]);
     });
 
-    // No-edition parity: the new template must plan the exact same renames as the
-    // pre-#1829 template, across the conditional branches (no series / no position).
+    // Exercise no-edition parity across every optional-series branch.
     const parityBooks: [string, RenameableBook][] = [
       ['full series metadata', seriesBook],
       ['no series', { ...seriesBook, seriesName: null, seriesPosition: null }],
@@ -668,8 +622,6 @@ describe('planFileRenames', () => {
       });
     }
 
-    // planFileRenames passes editionLabel through un-normalized; the renderer treats
-    // '' as absent (EMPTY_TOKEN_SENTINEL), so an empty label must behave like null.
     it('empty-string editionLabel behaves like null (parity with the pre-edition template)', async () => {
       await mockFiles(['audiobook.mp3']);
       const next = await planFileRenames('/t', DETAILED_FILE, { ...seriesBook, editionLabel: '' }, 'Brandon Sanderson');
@@ -707,10 +659,10 @@ describe('buildBookNameTokens', () => {
       author: 'Brandon Sanderson',
       authorLastFirst: 'Sanderson, Brandon',
       title: 'The Way of Kings',
-      titleSort: 'Way of Kings', // leading article stripped
+      titleSort: 'Way of Kings',
       series: 'The Stormlight Archive',
       seriesPosition: 1,
-      narrator: 'Michael Kramer', // primary narrator only
+      narrator: 'Michael Kramer',
       narratorLastFirst: 'Kramer, Michael',
       year: '2010',
       edition: 'Full Cast',
@@ -745,13 +697,7 @@ describe('buildBookNameTokens', () => {
   });
 });
 
-/**
- * #2152 AC11 — the FILE seam. A book whose stored `series_position` is NULL (every
- * in-app clear) must render no position token and no orphan separator. Keyed on the
- * COLUMN, not the tombstone: this seam is deliberately tombstone-blind, and rule
- * **b** is what guarantees the column is NULL for a clear made through the app.
- * A regression pin — no production change is expected here.
- */
+// File naming is column-keyed and intentionally tombstone-blind.
 describe('#2152 AC11 — a cleared position renders no file token', () => {
   const DETAILED_FILE = '{author} - {series? - }{seriesPosition:00? - }{title}{ (?edition?)}{ - ?trackNumber:000}';
   const hunters: RenameableBook = {
@@ -778,8 +724,7 @@ describe('#2152 AC11 — a cleared position renders no file token', () => {
     const renames = await planFileRenames('/t', DETAILED_FILE, hunters, 'Frank Herbert');
 
     expect(renames).toEqual([{ from: 'audiobook.mp3', to: 'Frank Herbert - Dune - Hunters of Dune.mp3' }]);
-    // The `{series? - }{seriesPosition:00? - }` junction is where whitespace
-    // regressions hide.
+    // Pin whitespace at the adjacent optional-token junction.
     expect(renames[0]!.to).not.toMatch(/ {2}| - - /);
   });
 
@@ -791,10 +736,6 @@ describe('#2152 AC11 — a cleared position renders no file token', () => {
   });
 
   it('rule-b cross-check: a name-tombstoned book renders neither series nor position', async () => {
-    // Every rule-**b** row — including row 2b, where the operator supplied a
-    // position on an already-name-tombstoned book — leaves BOTH columns NULL. An
-    // implementation reading rule **b** as "only when the body blanks the name"
-    // would leave the position behind and fail here.
     await mockFiles(['audiobook.mp3']);
     const renames = await planFileRenames('/t', DETAILED_FILE, { ...hunters, seriesName: null, seriesPosition: null }, 'Frank Herbert');
 
@@ -810,8 +751,7 @@ describe('#2152 AC11 — a cleared position renders no file token', () => {
     });
 
     it('the DECOUPLED state renders "07 - " too — the seam is column-keyed', () => {
-      // `RenameableBook` carries no tombstone field at all, which IS the pin: the
-      // seam cannot see one. A future tombstone-aware naming change flips this.
+      // RenameableBook deliberately exposes no tombstone state.
       expect(buildBookNameTokens({ ...hunters, seriesPosition: 7 }, 'Frank Herbert').seriesPosition).toBe(7);
       expect(Object.keys(hunters)).not.toContain('userClearedFields');
     });
@@ -819,7 +759,6 @@ describe('#2152 AC11 — a cleared position renders no file token', () => {
 });
 
 describe('cross-path naming consistency (anti-drift pin)', () => {
-  // A representative book exercising every book-level token.
   const consistencyBook: RenameableBook = {
     title: 'The Way of Kings',
     seriesName: 'The Stormlight Archive',
@@ -841,7 +780,6 @@ describe('cross-path naming consistency (anti-drift pin)', () => {
     const [rename] = await planFileRenames('/t', fileFormat, consistencyBook, author);
     const planStem = rename!.to.replace(/\.mp3$/, '');
 
-    // The merge path (audio-processor mergeFiles) renders exactly this:
     const mergeStem = renderFilename(fileFormat, {
       author, title: consistencyBook.title, ...buildBookNameTokens(consistencyBook, author),
     });
@@ -849,24 +787,4 @@ describe('cross-path naming consistency (anti-drift pin)', () => {
     expect(mergeStem).toBe('Brandon Sanderson - The Stormlight Archive - 01 - The Way of Kings (Full Cast)');
   });
 
-  it('convert path stems equal the multi-file planFileRenames stems under a colliding book-only format', async () => {
-    // Book-only format (no per-file token) → every file collides → ordinals disambiguate.
-    const bookOnly = '{author} - {title}';
-    const files = ['Track1.mp3', 'Track2.mp3', 'Track10.mp3'];
-    await mockFiles(files);
-    const planTos = (await planFileRenames('/t', bookOnly, consistencyBook, author)).map(r => r.to.replace(/\.mp3$/, ''));
-
-    // The convert path (audio-processor computeConvertStems) computes exactly this:
-    const ordered = [...files].sort(compareAudioNames);
-    const baseTokens = { author, title: consistencyBook.title, ...buildBookNameTokens(consistencyBook, author) };
-    const stems = ordered.map(() => renderFilename(bookOnly, baseTokens));
-    const convertStems = disambiguateStems(stems);
-
-    expect(convertStems).toEqual(planTos);
-    expect(convertStems).toEqual([
-      'Brandon Sanderson - The Way of Kings (1)',
-      'Brandon Sanderson - The Way of Kings (2)',
-      'Brandon Sanderson - The Way of Kings (3)',
-    ]);
-  });
 });

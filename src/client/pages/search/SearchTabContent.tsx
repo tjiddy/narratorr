@@ -13,8 +13,7 @@ export function BooksTabContent({
   searchTerm,
 }: {
   books: BookMetadata[];
-  // The canonical ownership-entry type (#1916) — the search page feeds this
-  // the unpaginated `/api/books/identifiers` list.
+  // Supplied from the unpaginated identifiers endpoint.
   libraryBooks: LibraryEntry[] | undefined;
   queryClient: ReturnType<typeof useQueryClient>;
   searchTerm?: string;

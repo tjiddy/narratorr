@@ -1,6 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
 
-/** Deduplicates repeated stderr lines before logging. */
 export function createStderrDeduplicator(log: FastifyBaseLogger) {
   let lastLine = '';
   let count = 0;

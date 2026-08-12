@@ -3,41 +3,17 @@ import type { DbOrTx } from '@db/index.js';
 import { books } from '@db/schema.js';
 import type { BookStatus } from '@shared/schemas/book.js';
 
-// ============================================================================
-// Authoritative book-status transitions (#1446, epic #1441 / S2c)
-//
-// `transitionBookStatus` is the SOLE guarded writer of `books.status` for the
-// writers S2c owns. It mirrors S2b's `transitionDownloadState`
-// (`download-state.ts`) so the two lifecycle axes (downloads / books) stay
-// symmetric:
-//   * Only the fields explicitly set on the transition land in the SQL SET
-//     clause — an omitted field is never written, so a single-axis writer can
-//     never clobber an unrelated column.
-//   * The optional `expected` guard compiles to a WHERE predicate, so a
-//     transition only lands when the row is in the expected state (lets a
-//     library-scan reconciliation skip a row an in-flight import already moved).
-//   * Accepts either the base `Db` or a transaction executor (`tx`) so writers
-//     that run inside an `import_jobs` + `books` transaction (#1448) preserve
-//     single-transaction atomicity.
-// ============================================================================
+// Omitted fields never clobber concurrent writers; expected is an atomic lifecycle guard.
 
 export interface BookStatusTransition {
-  /** Optional precondition — the UPDATE only lands when the row matches. */
   expected?: { status?: BookStatus };
   status?: BookStatus;
-  // Side fields written atomically with the transition (all optional, all
-  // omitted-when-undefined so they never clobber a concurrent writer).
   path?: string | null;
   size?: number;
   lastGrabGuid?: string | null;
   lastGrabInfoHash?: string | null;
 }
 
-/**
- * Atomically transition a book's status (and any co-written side fields).
- * Returns `true` if a row was updated (i.e. the `expected` guard, if any,
- * matched), `false` otherwise. Always stamps `updatedAt`.
- */
 export async function transitionBookStatus(
   db: DbOrTx,
   id: number,
@@ -50,9 +26,7 @@ export async function transitionBookStatus(
   if (t.lastGrabGuid !== undefined) set.lastGrabGuid = t.lastGrabGuid;
   if (t.lastGrabInfoHash !== undefined) set.lastGrabInfoHash = t.lastGrabInfoHash;
 
-  // Unconditional write (no precondition) always lands → skip the RETURNING
-  // round-trip and report success. Only a guarded transition needs RETURNING to
-  // learn whether the `expected` predicate matched a row.
+  // Only guarded transitions need RETURNING to report whether they landed.
   if (t.expected?.status === undefined) {
     await db.update(books).set(set).where(eq(books.id, id));
     return true;
@@ -68,27 +42,10 @@ export async function transitionBookStatus(
   return result.length > 0;
 }
 
-/**
- * Conservative fallback when no explicit prior lifecycle is available (legacy /
- * orphan download rows with a null `bookStatusAtGrab` snapshot). Matches the
- * quality gate's `download.bookStatusAtGrab ?? 'imported'` policy
- * (`quality-gate.service.ts`) — a single named constant so the fallback can
- * never drift between revert paths or reintroduce path inference.
- */
+// Legacy null snapshots revert to imported; never infer lifecycle from path.
 export const REVERT_FALLBACK_STATUS: BookStatus = 'imported';
 
-/**
- * Revert a book to its explicit prior lifecycle state after a grab/import is
- * cancelled, rejected, or fails. The prior state is supplied by the caller
- * (the `bookStatusAtGrab` snapshot captured at grab, or an equivalently
- * explicit value) — it is NEVER inferred from `path` presence, which collapses
- * `failed`/`missing`/`searching` into `imported`/`wanted` and corrupts the
- * authoritative `books.status` (the headline bug this replaces).
- *
- * A `null` prior state (legacy rows) falls back to the conservative
- * `REVERT_FALLBACK_STATUS`, not to path inference. Returns the resolved status
- * so callers can emit a matching `book_status_change` SSE.
- */
+// Restore the captured lifecycle snapshot and return it for a matching SSE.
 export async function revertBookStatus(
   db: DbOrTx,
   book: { id: number },
@@ -99,25 +56,7 @@ export async function revertBookStatus(
   return revertStatus;
 }
 
-/**
- * Guarded revert for the manual replace workflow (#1857). Resolves the shared
- * `REVERT_FALLBACK_STATUS` fallback like {@link revertBookStatus}, but applies an
- * equality guard on `expectedStatus` (the status the replace workflow itself
- * owns — `'downloading'` for a client-stage tracked grab) so it lands ONLY while
- * the book is still in that state.
- *
- * Neither existing helper does all three things at once: `revertBookStatus`
- * resolves the fallback but transitions unconditionally (would clobber a late
- * `importing` promotion, stranding a live import — #1857 F61); `transitionBookStatus`
- * applies the equality guard and reports the miss but does NOT resolve the
- * fallback and supports only equality (not "any status but importing", which is
- * the wrong guard anyway). This co-located sibling composes both and returns
- * `landed` so the caller can suppress the `book_status_change` SSE on a miss
- * (F67) — the SSE must not announce a transition the guard skipped.
- *
- * Exported (like its siblings) so the orchestrator, in a different module, can
- * import it (F68).
- */
+// Manual replace must not clobber a late promotion or emit an SSE when its guard misses.
 export async function guardedRevertBookStatus(
   db: DbOrTx,
   book: { id: number },

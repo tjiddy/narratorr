@@ -83,7 +83,6 @@ describe('BookHero', () => {
     renderHero({}, <span data-testid="preview-slot">Preview</span>);
     const preview = screen.getByTestId('preview-slot');
     expect(preview).toBeInTheDocument();
-    // Verify it appears before the action buttons (Wanted badge)
     const statusBadge = screen.getByText('Wanted');
     expect(preview.compareDocumentPosition(statusBadge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
@@ -397,7 +396,6 @@ describe('BookHero', () => {
   describe('#324 — overflow menu for secondary actions', () => {
     it('primary action (Search Releases) renders as visible button outside overflow menu', () => {
       renderHero();
-      // Always visible without opening the menu
       expect(screen.getByText('Search Releases')).toBeInTheDocument();
     });
 
@@ -405,13 +403,11 @@ describe('BookHero', () => {
       const user = userEvent.setup();
       renderHero({ canMerge: true });
 
-      // Before opening menu, secondary items are not in the DOM
       expect(screen.queryByRole('menuitem', { name: /Edit/ })).not.toBeInTheDocument();
       expect(screen.queryByRole('menuitem', { name: /Rename/ })).not.toBeInTheDocument();
 
       await openMenu(user);
 
-      // After opening, they appear
       expect(screen.getByRole('menuitem', { name: /Edit/ })).toBeInTheDocument();
       expect(screen.getByRole('menuitem', { name: /Rename/ })).toBeInTheDocument();
       expect(screen.getByRole('menuitem', { name: /Re-tag/ })).toBeInTheDocument();
@@ -445,7 +441,6 @@ describe('BookHero', () => {
 
       await openMenu(user);
       const items = screen.getAllByRole('menuitem');
-      // First item should be focused initially
       expect(document.activeElement).toBe(items[0]);
 
       await user.keyboard('{ArrowDown}');
@@ -470,13 +465,11 @@ describe('BookHero', () => {
       renderHero({ onEditClick });
 
       await openMenu(user);
-      // Edit is the first menu item — press Enter to activate
       await user.keyboard('{Enter}');
       expect(onEditClick).toHaveBeenCalledTimes(1);
     });
   });
 
-  // #445 — Cover upload overlay
   describe('cover upload overlay', () => {
     describe('overlay visibility', () => {
       it('renders upload button on cover when book has path and onCoverFileSelect provided', () => {
@@ -495,9 +488,7 @@ describe('BookHero', () => {
         renderHero({ hasPath: true, onCoverFileSelect });
 
         const uploadBtn = screen.getByLabelText('Upload cover');
-        // The button should exist and be clickable
         await user.click(uploadBtn);
-        // Verify file input exists with correct accept attribute
         const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
         expect(fileInput).not.toBeNull();
         expect(fileInput.accept).toBe('image/jpeg,image/png,image/webp');
@@ -583,9 +574,7 @@ describe('BookHero', () => {
           onCoverCancel: vi.fn(),
         });
 
-        // Upload button should NOT be visible when preview is active
         expect(screen.queryByLabelText('Upload cover')).not.toBeInTheDocument();
-        // Confirm/cancel should be visible
         expect(screen.getByLabelText('Confirm cover')).toBeInTheDocument();
       });
     });
@@ -634,7 +623,6 @@ describe('BookHero', () => {
       const user = userEvent.setup();
       renderHero({ onRetryImportClick: vi.fn() });
 
-      // Open the overflow menu
       const moreBtn = screen.getByLabelText('More actions');
       await user.click(moreBtn);
 

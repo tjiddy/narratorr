@@ -22,10 +22,6 @@ function includesNearly(arr: number[], value: number): boolean {
   return arr.some(v => nearlyEqual(v, value));
 }
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 export interface ScoredCandidate {
   asin: string;
   title: string;
@@ -56,24 +52,15 @@ export interface CandidateContext {
   multipliers: WeightMultipliers;
 }
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 export const SIGNAL_WEIGHTS = { author: 40, series: 50, genre: 25, narrator: 20, diversity: 15 } as const;
 const MAX_STRENGTH_BOOKS = 5;
 const DIVERSITY_TARGET = 2;
 
-/** Broad Audible genre categories for diversity candidate sourcing. */
 export const DIVERSITY_GENRES = [
   'Mystery', 'Thriller', 'Science Fiction', 'Fantasy', 'Romance',
   'Horror', 'Biography', 'History', 'Business', 'Self-Help',
   'True Crime', 'Comedy', 'Health & Wellness', 'Philosophy', 'Travel',
 ] as const;
-
-// ---------------------------------------------------------------------------
-// Per-signal candidate queries
-// ---------------------------------------------------------------------------
 
 interface QueryDeps {
   metadataService: MetadataService;
@@ -99,12 +86,7 @@ export async function querySeriesCandidates(deps: QueryDeps, signals: LibrarySig
     try {
       const { books: results, warnings } = await deps.metadataService.searchBooksForDiscovery(gap.seriesName, { title: gap.seriesName, author: gap.authorName });
       ctx.warnings.push(...warnings);
-      // Membership is decided by the canonical primary-series-first matcher from
-      // series-refresh: `seriesPrimary` (when present) is the only acceptable
-      // membership signal — a non-matching primary cannot fall through to
-      // secondary `series[]` entries. Without `seriesPrimary`, scan `series[]`.
-      // Both branches use normalized + leading-article equivalence so
-      // `Stormlight Archive` cross-matches `The Stormlight Archive`. (#1099, #1078)
+      // A nonmatching primary never falls through to secondary series; leading articles are equivalent.
       const target = makeGapTarget(gap.seriesName);
       const filtered = target ? results.filter(b => {
         const matched = findMatchingSeriesRef(b, target);
@@ -175,10 +157,6 @@ export async function queryDiversityCandidates(deps: QueryDeps, signals: Library
   return candidates;
 }
 
-// ---------------------------------------------------------------------------
-// Filtering + scoring
-// ---------------------------------------------------------------------------
-
 export function filterAndScore(
   results: BookMetadata[], reason: SuggestionReason, contextFn: (b: BookMetadata) => string,
   strength: number, ctx: CandidateContext, map: Map<string, ScoredCandidate>, authorCap?: Map<string, number>,
@@ -231,8 +209,6 @@ function isTitleAuthorDuplicate(title: string, authorName: string, existing: Arr
 }
 
 export function toScoredCandidate(book: BookMetadata, reason: SuggestionReason, reasonContext: string, score: number): ScoredCandidate {
-  // `seriesPrimary` is the canonical primary-series ref (Audnexus-derived, #1088).
-  // Fall back to `series?.[0]` for books whose enrichment didn't populate it.
   const primary = pickPrimarySeries(book);
   return {
     asin: book.asin!, title: book.title, authorName: book.authors?.[0]?.name ?? 'Unknown',
@@ -244,13 +220,7 @@ export function toScoredCandidate(book: BookMetadata, reason: SuggestionReason, 
   };
 }
 
-/**
- * Series-gap bonus, using the same primary-first + normalized + leading-article
- * matcher as the admission gate so a candidate excluded at the gate cannot
- * earn a bonus via a secondary `series[]` entry, and a candidate admitted via
- * article-equivalence (`Stormlight Archive` ≡ `The Stormlight Archive`) still
- * earns its bonus. (#1099, #1097)
- */
+// Use the admission matcher so rejected secondary refs cannot earn a series-gap bonus.
 function seriesGapBonus(book: BookMetadata, signals: LibrarySignals): number {
   for (const gap of signals.seriesGaps) {
     const target = makeGapTarget(gap.seriesName);

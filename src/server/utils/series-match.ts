@@ -1,16 +1,6 @@
 import { normalizeSeriesName } from './series-normalize.js';
 import type { BookMetadata } from '@core/metadata/index.js';
 
-/**
- * Identity used to scope a same-series lookup. Prefer `asin` (Audible series
- * ASIN) when available — it's the strongest identifier since two series can
- * share a normalized name across providers. `normalizedName` is the
- * dedupe-friendly form computed by `normalizeSeriesName`. Either field can be
- * null; matching is best-effort.
- *
- * Used by `discovery-candidates` for cross-author series gap matching and (at
- * a lower frequency) by callers reasoning about provider-product series refs.
- */
 export interface TargetSeriesIdentity {
   asin: string | null;
   normalizedName: string | null;
@@ -22,12 +12,7 @@ export interface MatchedSeriesRef {
   position: number | null;
 }
 
-/**
- * Strip a leading `the ` so series names like `Stormlight Archive` and
- * `The Stormlight Archive` cross-match. Provider sources drop the leading
- * article inconsistently; a strict-equality compare on `normalizeSeriesName`
- * output misses real same-series matches.
- */
+// Providers inconsistently retain a leading "the" in series names.
 function looseNormalize(normalized: string): string {
   return normalized.startsWith('the ') ? normalized.slice(4) : normalized;
 }
@@ -41,24 +26,12 @@ function toMatchedRef(ref: { name?: string | undefined; asin?: string | undefine
   };
 }
 
-/**
- * Find the `series` ref on a provider product that belongs to the target
- * series. Returns the matched ref (with name/asin/position) or `null` when
- * the product is not a member of the target series. Provider series ASIN
- * match wins over normalized-name match; we never fall back to
- * `product.series[0]` — a multi-series book on Audible commonly lists a
- * broader universe (e.g. `The Cosmere`) before the actual target series, and
- * importing the universe ref would pollute results with wrong positions.
- */
+// Match ASIN before normalized name; never fall back to series[0], which may be a broader universe.
 export function findMatchingSeriesRef(
   product: BookMetadata,
   target: TargetSeriesIdentity,
 ): MatchedSeriesRef | null {
-  // When the candidate has an Audnexus-derived `seriesPrimary`, that is the
-  // canonical primary-series identity for that book and the match rule must
-  // pin to it — a non-matching primary means the candidate is at best a
-  // secondary / broader-universe member of the target series and must NOT
-  // fall through to the raw Audible `series[]` match.
+  // A nonmatching canonical seriesPrimary must not fall through to a secondary raw series.
   if (product.seriesPrimary) {
     if (target.asin && product.seriesPrimary.asin === target.asin) {
       return toMatchedRef(product.seriesPrimary);

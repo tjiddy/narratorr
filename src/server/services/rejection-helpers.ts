@@ -23,21 +23,14 @@ export interface BlacklistAndRetryRequest {
   log: FastifyBaseLogger;
   /** When true, bypass the redownloadFailed setting and always trigger retry search. */
   overrideRetry?: boolean | undefined;
-  /** Blacklist type — defaults to 'permanent' if omitted (existing behavior unchanged). */
+  /** Defaults to permanent. */
   blacklistType?: 'temporary' | 'permanent' | undefined;
 }
 
-/**
- * Shared blacklist + fire-and-forget re-search logic.
- * Used by QualityGateOrchestrator (reject) and BookRejectionService (wrong-release).
- *
- * File deletion is NOT included — callers handle their own deletion strategy
- * (QGO deletes download artifacts, wrong-release deletes library files).
- */
+/** Blacklist and optionally re-search; callers retain ownership of file deletion. */
 export async function blacklistAndRetrySearch(request: BlacklistAndRetryRequest): Promise<void> {
   const { identifiers, reason, book, blacklistService, retrySearchDeps, settingsService, log, overrideRetry, blacklistType } = request;
 
-  // Blacklist the release
   if ((identifiers.infoHash || identifiers.guid) && blacklistService) {
     try {
       await blacklistService.create({
@@ -56,7 +49,6 @@ export async function blacklistAndRetrySearch(request: BlacklistAndRetryRequest)
     log.info('Blacklist skipped — no infoHash or guid');
   }
 
-  // Fire-and-forget re-search
   if (!book || !retrySearchDeps) {
     return;
   }
@@ -64,8 +56,7 @@ export async function blacklistAndRetrySearch(request: BlacklistAndRetryRequest)
   const deps = retrySearchDeps;
   const bookId = book.id;
 
-  // #396 — overrideRetry bypasses the settings lookup entirely so a settings
-  // failure cannot suppress a user-requested retry (e.g. wrong-release).
+  // User-requested retries must not depend on a settings read.
   if (overrideRetry) {
     log.info({ bookId }, 'Triggering re-search after reject');
     retrySearch(bookId, deps).catch((error: unknown) => {
@@ -74,7 +65,6 @@ export async function blacklistAndRetrySearch(request: BlacklistAndRetryRequest)
     return;
   }
 
-  // Non-override path: gate on redownloadFailed setting
   if (!settingsService) return;
   settingsService.get('import').then((importSettings) => {
     if (importSettings.redownloadFailed) {

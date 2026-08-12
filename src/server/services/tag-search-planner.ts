@@ -13,11 +13,6 @@ export type AttemptSource =
   | 'strip-leading-series'
   | 'strip-colon-suffix';
 
-/**
- * Where a resolved match came from, for the narrator-cap observability log
- * (#1652): a tag-pass `AttemptSource` (incl. the ASIN kill-shot's `'asin-tag'`)
- * plus the two filename-pass outcomes. Colocated with `AttemptSource`.
- */
 export type MatchSource = AttemptSource | 'filename-single' | 'filename-duration-resolved';
 
 export interface TagSearchAttempt {
@@ -28,22 +23,11 @@ export interface TagSearchAttempt {
   maxConfidence: 'high' | 'medium';
 }
 
-/** Output of `runTagSearch` — ranked candidates plus the winning attempt for confidence-cap propagation. */
 export interface TagSearchOutcome {
   scored: { meta: BookMetadata; score: number }[];
   attempt: TagSearchAttempt;
 }
 
-/**
- * Plan an ordered sequence of tag-search attempts. The first attempt is the
- * cleaned tag title (existing #984 behavior); subsequent attempts strip
- * common annotation noise that over-specifies Audible's `title=` search.
- *
- * Attempts are deduplicated by lowercased+trimmed title; identical titles
- * (e.g. `tagQuery.title === albumCandidate`) collapse to a single entry.
- *
- * Capped at MAX_TAG_SEARCH_ATTEMPTS to bound provider load on wide tag noise.
- */
 export function planTagSearchAttempts(
   audioResult: AudioScanResult,
   tagQuery: TagQuery,
@@ -90,19 +74,8 @@ export function planTagSearchAttempts(
 }
 
 /**
- * Build the album-derived candidate title. The cleanup order is load-bearing:
- *
- * 1. Strip a trailing dash-series-keyword annotation (`- <series-keyword> ..., Book N`)
- *    while `, Book N` is still present — that suffix is the safety gate. Without
- *    it, legitimate `- Special Edition, Book 1` from `The Hobbit - Special
- *    Edition, Book 1` would risk being stripped.
- * 2. Run `cleanTagTitle` for standard cleanup (bracket strip, edition-paren-aware
- *    narrator strip, residual `, Book N` removal).
- *
- * `cleanTagTitle` strips trailing `, Book N` (TAG_TITLE_SERIES_MARKER_REGEX),
- * so the dash-series-keyword strip MUST run first. Reversing the order causes
- * `Imagine Me - Shatter Me Series, Book 6` → `Imagine Me - Shatter Me Series`
- * instead of `Imagine Me`.
+ * Strip dash-series annotations before cleanTagTitle removes the `Book N` safety gate;
+ * reversing that order leaves the series suffix behind and can over-strip editions.
  */
 function deriveAlbumCandidate(audioResult: AudioScanResult): string | null {
   const album = audioResult.tagAlbum?.trim();

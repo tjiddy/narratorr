@@ -2,22 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { useDirtyFormsState } from '@/hooks/dirty-forms';
 
-// Guards navigation away from a settings page while any tracked form holds
-// unsaved edits. Mounted once by SettingsLayout — because every tracked form
-// renders under `/settings/*`, a document-level capture listener mounted here
-// sees every reachable dirty-navigation click (including out-of-layout chrome
-// like the global header, sidebar, logo, and health indicator).
-//
-// Mechanism: a capture-phase `click` listener on `document` fires before React
-// Router's `#root`-delegated handler, so preventDefault()+stopPropagation()
-// beats the Link's SPA navigation. On Discard we *replay* the captured click so
-// the untouched Router pipeline preserves replace/state/scroll/basename
-// semantics — we never reconstruct the destination by hand.
-//
-// NOTE: only anchor/area activation is intercepted. Back/forward (POP),
-// programmatic navigate() (auth-expiry redirect), and non-link nav affordances
-// bypass this guard by design — every such hole degrades to today's behavior
-// (silent draft loss), never worse.
+// Mounted once by SettingsLayout, document capture intercepts anchor/area exits before
+// React Router, including global chrome. Discard replays the original click so Router
+// preserves replace/state/scroll/basename semantics. POP, programmatic, and non-link
+// navigation intentionally remain unguarded.
 
 interface CapturedTarget {
   node: HTMLAnchorElement | HTMLAreaElement;
@@ -38,11 +26,9 @@ function findAnchor(event: MouseEvent): HTMLAnchorElement | HTMLAreaElement | nu
   return null;
 }
 
-// Mirror React Router's link-eligibility semantics: let the click through
-// (return true) when this is not an in-app SPA navigation we should guard.
+// Match React Router eligibility; true means bypass this guard.
 function shouldLetClickThrough(event: MouseEvent, anchor: HTMLAnchorElement | HTMLAreaElement): boolean {
   if (event.defaultPrevented || !event.cancelable) return true;
-  // Modified click / non-left button → browser handles it (new tab, etc.).
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
     return true;
   }
@@ -57,7 +43,7 @@ function shouldLetClickThrough(event: MouseEvent, anchor: HTMLAnchorElement | HT
     return true;
   }
   if (url.origin !== window.location.origin) return true;
-  // Same-path click (both include basename) is a no-op navigation — not guarded.
+  // Both paths include the basename, so equality is a navigation no-op.
   if (url.pathname === window.location.pathname) return true;
   return false;
 }
@@ -77,24 +63,18 @@ export function UnsavedChangesGuard() {
 
   const [pendingTarget, setPendingTarget] = useState<CapturedTarget | null>(null);
 
-  // Save success (or a revert to clean) while the modal is open → nothing is
-  // dirty/pending anymore; drop the captured target so the modal closes and the
-  // user stays on the page. Adjusting state during render (not in an effect) is
-  // React's blessed pattern for reacting to a changed input, and self-limits: the
-  // re-render sees pendingTarget === null and the branch no longer fires.
+  // Save/revert can clear every blocker while open. React's guarded derive-state
+  // pattern closes the modal without an effect.
   if (pendingTarget !== null && !isBlocking) {
     setPendingTarget(null);
   }
 
-  // Two independent one-shot flags (see AC5). `bypassNextClick` governs only the
-  // SPA click-interception path; `suppressNextBeforeunload` governs only the
-  // native document-unload prompt. A single shared flag is unsound: the click
-  // handler consumes it during propagation, so it is already cleared by the time
-  // a document navigation's `beforeunload` runs.
+  // Click replay and beforeunload need separate one-shot flags: propagation consumes
+  // the click flag before a document navigation fires beforeunload.
   const bypassNextClick = useRef(false);
   const suppressNextBeforeunload = useRef(false);
 
-  // Latest blocking state for the imperative listeners, synced in commit phase.
+  // Imperative listeners need the latest committed blocking state.
   const isBlockingRef = useRef(isBlocking);
   useEffect(() => {
     isBlockingRef.current = isBlocking;
@@ -102,7 +82,7 @@ export function UnsavedChangesGuard() {
 
   useEffect(() => {
     function handleClick(event: MouseEvent) {
-      // Replayed click from Discard — let this one pass to the Router pipeline.
+      // Let the Discard replay pass through to Router.
       if (bypassNextClick.current) {
         bypassNextClick.current = false;
         return;
@@ -128,8 +108,7 @@ export function UnsavedChangesGuard() {
   useEffect(() => {
     function handleBeforeunload(event: BeforeUnloadEvent) {
       if (suppressNextBeforeunload.current) {
-        // A Discard-confirmed document navigation already resolved intent — do
-        // not double-prompt. Consume the flag so a later genuine reload prompts.
+        // Discard already confirmed this navigation; suppress exactly one prompt.
         suppressNextBeforeunload.current = false;
         return;
       }
@@ -150,11 +129,8 @@ export function UnsavedChangesGuard() {
     setPendingTarget(null);
     if (!captured) return;
 
-    // Captured-target validity contract: the node must still be connected and
-    // every eligibility-critical attribute unchanged since interception. A stale
-    // or mutated node → safe-cancel (clear both flags, stay), never a blind
-    // replay that could navigate natively or leave a flag armed to swallow a
-    // later genuine click/reload.
+    // Replay only the connected, unchanged node. Any href/target/download mutation
+    // safely cancels and clears both one-shot flags.
     const { node } = captured;
     const stillValid =
       node.isConnected &&
@@ -167,16 +143,8 @@ export function UnsavedChangesGuard() {
       return;
     }
 
-    // Replay the captured click through the live Router/native pipeline.
-    // Suppression must be armed BEFORE the dispatch: Chromium runs a link's
-    // activation behavior — including firing `beforeunload` for a document
-    // navigation — synchronously inside dispatchEvent(), so arming afterward is
-    // too late and the user gets the double prompt AC5 forbids. Arm first, then
-    // distinguish SPA replay from document navigation by the replay's outcome:
-    // React Router calls preventDefault() (no unload will occur) — disarm so a
-    // later genuine reload still prompts; a plain-anchor/reloadDocument
-    // navigation leaves defaultPrevented === false and its beforeunload has
-    // either already consumed the flag (sync) or will (async).
+    // Arm before dispatch because Chromium may fire beforeunload synchronously during
+    // native activation. Router prevents default, so only plain anchors retain suppression.
     bypassNextClick.current = true;
     suppressNextBeforeunload.current = true;
     const event = new MouseEvent('click', { bubbles: true, cancelable: true });

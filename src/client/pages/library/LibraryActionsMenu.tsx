@@ -16,7 +16,7 @@ import {
 import { ToolbarDropdown } from '@/components/ToolbarDropdown';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { BulkRenameModal } from '@/components/library/BulkRenameModal';
-import { api, type BulkOpType } from '@/lib/api';
+import { api, type BulkOpType, type BulkJobFailure } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { useBulkOperation } from '@/hooks/useBulkOperation';
 
@@ -26,6 +26,7 @@ interface BulkProgress {
   completed: number;
   total: number;
   failures: number;
+  failureDetails: BulkJobFailure[];
 }
 
 const ITEM_CLASS =
@@ -107,7 +108,6 @@ interface ActionMenuItemsProps {
   onRemoveMissing: () => void;
 }
 
-/** The grouped menu items — extracted to bound the main component's length. */
 function ActionMenuItems(props: ActionMenuItemsProps) {
   const { isRunning, jobType, progress, anyBulkBusy } = props;
   return (
@@ -191,7 +191,6 @@ interface RovingMenu {
 
 const MENUITEM_QUERY = '[role="menuitem"]:not([disabled])';
 
-/** Open/focus state + arrow-key roving focus for the dropdown, mirroring the prior OverflowMenu. */
 function useRovingMenu(): RovingMenu {
   const [open, setOpen] = useState(false);
   const [focusIndex, setFocusIndex] = useState(0);
@@ -227,7 +226,40 @@ function useRovingMenu(): RovingMenu {
   return { open, setOpen, triggerRef, menuRef, close, handleKeyDown };
 }
 
-/** Rename/retag/write-sidecars confirmations — kept separate to bound the menu's complexity. */
+/** Failure details remain available after completion, when diagnosis matters most. */
+function BulkFailureDisclosure({ failures, failureDetails }: { failures: number; failureDetails: BulkJobFailure[] }) {
+  const [expanded, setExpanded] = useState(false);
+  // Failure count is uncapped; the server retains only a capped detail list.
+  const undisclosed = failures - failureDetails.length;
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded(v => !v)}
+        className="flex items-center gap-1 text-xs text-destructive hover:underline focus-ring rounded"
+      >
+        <span>{failures} failure{failures !== 1 ? 's' : ''}</span>
+        <ChevronDownIcon className={`w-3 h-3 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
+      </button>
+      {/* Match ToolbarDropdown's z-30 tier or its portal will cover this panel. */}
+      {expanded && (
+        <ul className="absolute right-0 top-full mt-1 z-30 max-h-64 w-80 overflow-y-auto glass-card rounded-xl border border-border shadow-lg p-2 space-y-1 animate-fade-in">
+          {failureDetails.map(detail => (
+            <li key={detail.bookId} className="text-xs text-muted-foreground break-words">
+              {detail.title} (book {detail.bookId}): {detail.error}
+            </li>
+          ))}
+          {undisclosed > 0 && (
+            <li className="text-xs text-muted-foreground/70 italic">…and {undisclosed} more</li>
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function BulkActionModals({ pendingOp, retagCount, onStartRename, onConfirm, onCancel }: {
   pendingOp: PendingOp;
   retagCount: number | null;
@@ -275,7 +307,6 @@ export interface LibraryActionsMenuProps {
   isSearchingAllWanted: boolean;
   onRescan: () => void;
   isRescanning: boolean;
-  /** Gate for the sidecar action — present only when tagging.writeOpf is enabled. */
   writeOpf: boolean;
 }
 
@@ -296,14 +327,12 @@ export function LibraryActionsMenu({
   const [isLoadingCount, setIsLoadingCount] = useState(false);
   const anyBulkBusy = isRunning || isLoadingCount;
 
-  // Run a non-navigation action: close the menu, refocus the trigger, then act.
   function runAction(fn: () => void) {
     close();
     fn();
   }
 
-  // Retag pre-fetches a count for its count-only confirm; the trigger shows a
-  // busy state while the count loads so there's no silent gap before the modal.
+  // Expose the count prefetch gap as a busy state before opening confirmation.
   async function handleRetag() {
     close();
     setIsLoadingCount(true);
@@ -340,9 +369,7 @@ export function LibraryActionsMenu({
   return (
     <div className="relative flex items-center gap-2">
       {progress.failures > 0 && (
-        <span className="text-xs text-destructive">
-          {progress.failures} failure{progress.failures !== 1 ? 's' : ''}
-        </span>
+        <BulkFailureDisclosure failures={progress.failures} failureDetails={progress.failureDetails} />
       )}
       <button
         ref={triggerRef}

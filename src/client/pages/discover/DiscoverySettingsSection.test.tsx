@@ -125,7 +125,6 @@ describe('DiscoverySettingsSection', () => {
     await userEvent.type(intervalInput, '0');
     await userEvent.click(screen.getByRole('button', { name: /save/i }));
 
-    // Form should not submit with invalid value
     await waitFor(() => {
       expect(mockApi.updateSettings).not.toHaveBeenCalled();
     });
@@ -178,29 +177,23 @@ describe('DiscoverySettingsSection', () => {
       expect(screen.getByLabelText(/enable discovery/i)).toBeInTheDocument();
     });
 
-    // Make the form dirty
     await userEvent.click(screen.getByLabelText(/enable discovery/i));
     expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
 
-    // Submit
     await userEvent.click(screen.getByRole('button', { name: /save/i }));
 
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith('Discovery settings saved');
     });
 
-    // Settings cache must be invalidated so other consumers refetch
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['settings'] });
 
-    // Save button should disappear (form is no longer dirty after reset)
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
     });
 
     invalidateSpy.mockRestore();
   });
-
-  // --- #408: Expiry settings fields ---
 
   describe('expiryDays field', () => {
     it('renders expiry days input with default value', async () => {
@@ -262,9 +255,8 @@ describe('DiscoverySettingsSection', () => {
     });
 
     const checkbox = screen.getByLabelText(/enable discovery/i);
-    // Checkbox must be visually hidden (sr-only) — not a raw visible checkbox
     expect(checkbox).toHaveClass('sr-only');
-    // Visual slider track div must be rendered immediately after the hidden checkbox
+    // ToggleSwitch places its visual track immediately after the hidden checkbox.
     const sliderTrack = checkbox.nextElementSibling as HTMLElement | null;
     expect(sliderTrack).toBeInTheDocument();
     expect(sliderTrack!.tagName).toBe('DIV');
@@ -316,20 +308,16 @@ describe('DiscoverySettingsSection', () => {
         expect(screen.getByLabelText(label)).toBeInTheDocument();
       });
 
-      // Enable discovery to show all fields
       await user.click(screen.getByLabelText(/enable discovery/i));
 
       const input = screen.getByLabelText(label);
 
-      // Should start with normal border
       expect(input.className).toContain('border-border');
       expect(input.className).not.toContain('border-destructive');
 
-      // Clear field to make it invalid, then submit
       await user.clear(input);
       await user.click(screen.getByRole('button', { name: /save/i }));
 
-      // Should switch to destructive border
       await waitFor(() => {
         expect(input.className).toContain('border-destructive');
       });

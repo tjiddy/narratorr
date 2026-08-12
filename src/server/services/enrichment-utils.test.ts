@@ -102,8 +102,7 @@ describe('enrichBookFromAudio', () => {
     );
   });
 
-  // Zero-duration skip-write guard: an all-rejected scan yields totalDuration 0 and must NOT
-  // clobber the stored audioDuration; other technical fields still refresh.
+  // Zero is an all-rejected scan sentinel, not a duration to persist.
   it('omits audioDuration (but writes other technical fields) when totalDuration is 0', async () => {
     vi.mocked(scanAudioDirectory).mockResolvedValue({
       codec: 'mp3',
@@ -130,9 +129,7 @@ describe('enrichBookFromAudio', () => {
     expect(result.enriched).toBe(true);
     const setArg = mockDb.update.mock.results[0]!.value.set.mock.calls[0]![0];
     expect(setArg).not.toHaveProperty('audioDuration');
-    // The fill-empty `duration` also stays unwritten because totalDuration is 0.
     expect(setArg).not.toHaveProperty('duration');
-    // Other technical fields still refresh.
     expect(setArg).toEqual(expect.objectContaining({ audioCodec: 'mp3', audioTotalSize: 500_000_000 }));
     expect(log.warn).toHaveBeenCalled();
   });
@@ -207,7 +204,6 @@ describe('enrichBookFromAudio', () => {
     );
 
     expect(mockBookService.update).toHaveBeenCalledWith(1, { narrators: ['Tim Gerard Reynolds'] });
-    // narrator NOT in db.update (goes through junction table instead)
     const setCall = mockDb.update.mock.results[0]!.value.set;
     expect(setCall).toHaveBeenCalledWith(expect.not.objectContaining({ narrator: expect.anything() }));
   });
@@ -317,7 +313,6 @@ describe('enrichBookFromAudio', () => {
       onDebug: expect.any(Function),
     });
 
-    // onWarn forwards to log.warn(payload, msg); onDebug forwards to log.debug(payload, msg).
     const options = vi.mocked(scanAudioDirectory).mock.calls[0]![1]!;
     options.onWarn!('warn-msg', { warnPayload: 1 });
     expect(log.warn).toHaveBeenCalledWith({ warnPayload: 1 }, 'warn-msg');
@@ -469,7 +464,6 @@ describe('enrichment-utils — narrator junction writes (#71)', () => {
       hasCoverArt: false,
     });
 
-    // No bookService — should not throw
     await expect(
       enrichBookFromAudio(5, '/books/test', { narrators: null, duration: null, coverUrl: null }, inject<Db>(mockDb), log),
     ).resolves.toEqual({ enriched: true });
@@ -547,6 +541,74 @@ describe('enrichBookFromAudio narrator splitting (issue #79)', () => {
 
   it('null/missing narrator tag → no narrator entities created; existing junctions unchanged', async () => {
     await callEnrich(undefined);
+    expect(mockBookService.update).not.toHaveBeenCalled();
+  });
+});
+
+// Gate tag fill on provenance, not array emptiness: auto-matched provider narrators arrive nonempty.
+describe('enrichBookFromAudio — narratorSource gate (#2158 AC8)', () => {
+  let mockDb: { update: ReturnType<typeof vi.fn> };
+  let log: FastifyBaseLogger;
+  let mockBookService: { update: ReturnType<typeof vi.fn> };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDb = {
+      update: vi.fn().mockReturnValue({
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) }),
+      }),
+    };
+    log = inject<FastifyBaseLogger>({
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      fatal: vi.fn(), trace: vi.fn(), child: vi.fn().mockReturnThis(), silent: vi.fn(), level: 'info',
+    });
+    mockBookService = { update: vi.fn().mockResolvedValue(null) };
+    vi.mocked(scanAudioDirectory).mockResolvedValue({
+      codec: 'mp3', bitrate: 128000, sampleRate: 44100, channels: 2,
+      bitrateMode: 'cbr' as const, fileFormat: 'MPEG', fileCount: 1,
+      totalSize: 1000, totalDuration: 100, hasCoverArt: false,
+      tagNarrator: 'Tag Narrator',
+    });
+  });
+
+  const run = (book: Parameters<typeof enrichBookFromAudio>[2]) =>
+    enrichBookFromAudio(5, '/books/test', book, inject<Db>(mockDb), log, inject<BookService>(mockBookService));
+
+  const PROVIDER_NARRATORS = [{ name: 'Provider Narrator' }];
+
+  it.each([
+    ['provider', true],
+    ['none', true],
+    ['curated', false],
+  ] as const)('narratorSource=%s with NON-EMPTY narrators → tag fill fires: %s', async (narratorSource, fires) => {
+    await run({ narrators: PROVIDER_NARRATORS, duration: null, coverUrl: null, narratorSource });
+
+    if (fires) expect(mockBookService.update).toHaveBeenCalledWith(5, { narrators: ['Tag Narrator'] });
+    else expect(mockBookService.update).not.toHaveBeenCalled();
+  });
+
+  it('narratorSource=provider is the row that reds on a revert to the narrators-empty gate', async () => {
+    await run({ narrators: PROVIDER_NARRATORS, duration: null, coverUrl: null, narratorSource: 'provider' });
+
+    expect(mockBookService.update).toHaveBeenCalledWith(5, { narrators: ['Tag Narrator'] });
+  });
+
+  it('an ABSENT narratorSource keeps today\'s semantics — non-empty narrators suppress the fill', async () => {
+    await run({ narrators: PROVIDER_NARRATORS, duration: null, coverUrl: null });
+
+    expect(mockBookService.update).not.toHaveBeenCalled();
+  });
+
+  it('an ABSENT narratorSource still fills when the supplied narrators are empty', async () => {
+    await run({ narrators: [], duration: null, coverUrl: null });
+
+    expect(mockBookService.update).toHaveBeenCalledWith(5, { narrators: ['Tag Narrator'] });
+  });
+
+  it('curated suppresses the fill even when the supplied narrators are EMPTY (the OPF arm)', async () => {
+    // Curated describes provenance, independent of whether the array is empty.
+    await run({ narrators: null, duration: null, coverUrl: null, narratorSource: 'curated' });
+
     expect(mockBookService.update).not.toHaveBeenCalled();
   });
 });
@@ -633,7 +695,6 @@ describe('enrichBookFromAudio — remote cover download integration (#369)', () 
       inject<Db>(mockDb), log,
     );
 
-    // Embedded cover was saved, update.coverUrl was set → no remote download
     expect(downloadRemoteCover).not.toHaveBeenCalled();
   });
 
@@ -661,7 +722,7 @@ describe('enrichBookFromAudio — remote cover download integration (#369)', () 
 
     expect(result.enriched).toBe(true);
 
-    // Wait for fire-and-forget .catch() to execute
+    // Flush the fire-and-forget rejection handler.
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect((log.warn as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
       expect.objectContaining({ bookId: 42 }),

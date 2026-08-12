@@ -176,7 +176,6 @@ describe('ImportSettingsSection', () => {
       expect(screen.getByLabelText('Minimum free space')).toHaveValue(5);
     });
 
-    // Change a value to dirty the form so Save button appears
     const input = screen.getByLabelText('Minimum free space');
     await user.tripleClick(input);
     await user.keyboard('10');
@@ -199,7 +198,6 @@ describe('ImportSettingsSection', () => {
       expect(screen.getByLabelText('Minimum free space')).toHaveValue(5);
     });
 
-    // Change a value to dirty the form so Save button appears
     const input = screen.getByLabelText('Minimum free space');
     await user.tripleClick(input);
     await user.keyboard('10');
@@ -347,26 +345,22 @@ describe('ImportSettingsSection', () => {
         expect(screen.getByLabelText('Minimum seed time')).not.toBeDisabled();
       });
 
-      // Enter invalid value
       const input = screen.getByLabelText('Minimum seed time');
       await user.tripleClick(input);
       await user.keyboard('-1');
 
-      // Toggle delete off — field becomes disabled
       await user.click(screen.getByLabelText('Delete after import'));
 
       await waitFor(() => {
         expect(screen.getByLabelText('Minimum seed time')).toBeDisabled();
       });
 
-      // Try to save — should not call updateSettings (validation blocks it)
       await user.click(screen.getByRole('button', { name: /save/i }));
 
       await waitFor(() => {
         expect(mockApi.updateSettings).not.toHaveBeenCalled();
       });
 
-      // Validation error should still be visible even though the field is disabled
       expect(screen.getByText(/Too small/i)).toBeInTheDocument();
     });
 
@@ -383,19 +377,16 @@ describe('ImportSettingsSection', () => {
         expect(screen.getByLabelText('Minimum seed time')).not.toBeDisabled();
       });
 
-      // Edit minSeedTime
       const input = screen.getByLabelText('Minimum seed time');
       await user.tripleClick(input);
       await user.keyboard('120');
 
-      // Toggle delete off — seed time becomes disabled
       await user.click(screen.getByLabelText('Delete after import'));
 
       await waitFor(() => {
         expect(screen.getByLabelText('Minimum seed time')).toBeDisabled();
       });
 
-      // Save — should include the edited minSeedTime value
       await user.click(screen.getByRole('button', { name: /save/i }));
 
       await waitFor(() => {
@@ -425,7 +416,6 @@ describe('ImportSettingsSection', () => {
     });
   });
 
-  // #318 — Minimum Seed Ratio field
   describe('seed ratio field rendering', () => {
     it('renders Minimum Seed Ratio field below Minimum Seed Time', async () => {
       renderWithProviders(<ImportSettingsSection />);
@@ -477,7 +467,6 @@ describe('ImportSettingsSection', () => {
       await user.click(screen.getByRole('button', { name: /save/i }));
 
       await waitFor(() => {
-        // Validation should prevent the API call
         expect(mockApi.updateSettings).not.toHaveBeenCalled();
       });
     });

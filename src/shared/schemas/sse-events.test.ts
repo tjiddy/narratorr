@@ -42,9 +42,6 @@ describe('bookStatusSchema widening', () => {
 });
 
 describe('SSE event schemas', () => {
-  // The single membership pin for the event union (#2142 deduped the count-only twin).
-  // merge_progress / merge_queued / merge_queue_updated were retired in #2142 —
-  // merge_state is the sole live channel for non-terminal merge state.
   it('defines exactly the 18 event types', () => {
     const types = sseEventTypeSchema.options;
     expect(types).toEqual([
@@ -181,10 +178,6 @@ describe('TOAST_EVENT_CONFIG', () => {
   });
 });
 
-// ============================================================================
-// #257 — Merge observability: new SSE payload schemas
-// ============================================================================
-
 describe('#257 merge observability — SSE payload schemas', () => {
   describe('merge_started payload', () => {
     it('accepts valid { book_id, book_title } payload', () => {
@@ -233,13 +226,7 @@ describe('#257 merge observability — SSE payload schemas', () => {
   });
 });
 
-// ============================================================================
-// #392 — Search progress SSE event schemas
-// ============================================================================
-
 describe('#392 search progress — SSE event schemas', () => {
-  // The exhaustive ordered pin lives in 'SSE event schemas' above (#2142 dropped the
-  // count-only duplicate here — the two had to be edited in lockstep on every union change).
   it('includes the search event types', () => {
     const types = sseEventTypeSchema.options;
     expect(types).toContain('search_started');
@@ -337,7 +324,6 @@ describe('#392 search progress — SSE event schemas', () => {
       expect(() => searchCompletePayload.parse({ book_id: 1, total_results: 0, outcome: 'invalid' })).toThrow();
     });
 
-    // #1157 — optional book_title / release_title / error_message populated on grab_error
     it('accepts grab_error payload with book_title, release_title, and error_message', () => {
       const valid = {
         book_id: 1,
@@ -367,17 +353,11 @@ describe('#392 search progress — SSE event schemas', () => {
       }
     });
 
-    // #1157 — search_complete invalidates eventHistory so a new grab_failed row
-    // appears on the Activity page without a manual refresh.
     it('search_complete invalidates eventHistory', () => {
       expect(CACHE_INVALIDATION_MATRIX.search_complete).toEqual({ eventHistory: 'invalidate' });
     });
   });
 });
-
-// ============================================================================
-// #637 — Import progress instrumentation SSE event schemas
-// ============================================================================
 
 describe('#637 import progress — SSE event schemas', () => {
   describe('import_phase_change payload', () => {
@@ -421,7 +401,6 @@ describe('#637 import progress — SSE event schemas', () => {
       expect(() => importFailedPayload.parse({ job_id: 1, book_id: 2, book_title: 'Test', phase: 'copying' })).toThrow();
     });
 
-    // #1736 — the forced-import-refused discriminator rides the existing import_failed channel.
     it('parses a forced-import-refused payload with a real existingBookId', () => {
       const valid = {
         job_id: 1, book_id: 2, book_title: 'Test Book', phase: 'copying',
@@ -504,10 +483,6 @@ describe('#637 import progress — SSE event schemas', () => {
   });
 });
 
-// ============================================================================
-// #707 — Nullable book_id / download_id in import event payloads
-// ============================================================================
-
 describe('#707 nullable book_id / download_id in import event payloads', () => {
   it('importPhaseChangePayload accepts null book_id', () => {
     const valid = { job_id: 1, book_id: null, book_title: 'Test', from: 'queued', to: 'analyzing' };
@@ -540,10 +515,6 @@ describe('#707 nullable book_id / download_id in import event payloads', () => {
   });
 });
 
-// ============================================================================
-// #2129 — merge_state: the full-state merge snapshot
-// ============================================================================
-
 describe('#2129 merge_state snapshot payload', () => {
   const active = (over: Record<string, unknown> = {}) => ({
     book_id: 42, book_title: 'The Way of Kings', phase: 'processing', ...over,
@@ -570,8 +541,6 @@ describe('#2129 merge_state snapshot payload', () => {
     for (const phase of ['starting', 'staging', 'processing', 'verifying', 'committing']) {
       expect(mergeStatePayload.parse({ active: [active({ phase })], queued: [] }).active[0]!.phase).toBe(phase);
     }
-    // A terminal merge has already left the snapshot — a frame carrying one back would
-    // overwrite the terminal card the client just installed.
     for (const phase of ['complete', 'failed', 'cancelled', 'queued']) {
       expect(() => mergeStatePayload.parse({ active: [active({ phase })], queued: [] })).toThrow();
     }

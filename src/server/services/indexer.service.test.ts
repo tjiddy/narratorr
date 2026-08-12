@@ -12,17 +12,8 @@ import { initializeKey, _resetKey, isEncrypted } from '../utils/secret-codec.js'
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 const mockIndexer = createMockDbIndexer();
 
-/**
- * Spin up a real in-memory libsql DB with the `indexers` table CREATEd from
- * its drizzle schema definition. Used to prove SQL WHERE-predicate behavior
- * for the #958 Prowlarr-compat filtering helpers — mockDbChain doesn't
- * evaluate the where() expression, so a regression in the predicate would
- * pass mocked tests.
- *
- * Schema kept inline so a column-name drift in src/db/schema.ts surfaces here
- * (the rows we insert below would fail to bind), instead of silently breaking
- * the predicate proof.
- */
+/** Real SQLite proves WHERE behavior that `mockDbChain` ignores; the inline schema also exposes
+ * column-name drift when fixtures fail to bind. */
 async function loadProwlarrPredicateDb() {
   const client = createClient({ url: ':memory:' });
   const db = drizzle(client);
@@ -83,11 +74,8 @@ describe('IndexerService', () => {
     });
   });
 
-  // #1404 — decryptRow threads the injected service logger into decryptFields so a
-  // corrupt/wrong-key secret surfaces a diagnostic. This asserts the warn reaches
-  // THIS caller's injected logger (would fail if `this.log` were dropped from the call).
   describe('#1404 decrypt-failure diagnostic threading', () => {
-    const CORRUPT = '$ENC$not-valid-base64!!'; // $ENC$-prefixed, fails decrypt → passthrough
+    const CORRUPT = '$ENC$not-valid-base64!!'; // `$ENC$`-prefixed, but decrypt fails and preserves passthrough.
 
     it('getById threads this.log: corrupt apiKey warns with entity/failedFields, passthrough preserved', async () => {
       const log = createMockLogger();
@@ -102,7 +90,6 @@ describe('IndexerService', () => {
         { entity: 'indexer', failedFields: ['apiKey'] },
         expect.stringContaining('secret.key'),
       );
-      // Passthrough preserved (#1357) — corrupt blob returned unchanged.
       expect((result!.settings as Record<string, unknown>).apiKey).toBe(CORRUPT);
     });
   });
@@ -135,15 +122,12 @@ describe('IndexerService', () => {
     });
 
     it('clears adapter cache on update', async () => {
-      // First, populate the cache by calling getAdapter
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
       const adapter1 = await service.getAdapter(mockIndexer);
 
-      // Update should clear the cache
       db.update.mockReturnValue(mockDbChain([mockIndexer]));
       await service.update(1, { name: 'Changed' });
 
-      // Next getAdapter should create a new adapter (not return cached)
       const adapter2 = await service.getAdapter(mockIndexer);
       expect(adapter2).not.toBe(adapter1);
     });
@@ -165,7 +149,6 @@ describe('IndexerService', () => {
         settings: { apiKey: encryptedApiKey, apiUrl: encryptedApiUrl, hostname: 'old-host', flareSolverrUrl: encryptedFlareSolverrUrl },
       };
 
-      // Sentinel lookup returns existing row
       db.select.mockReturnValue(mockDbChain([existingRow]));
       const updateChain = mockDbChain([existingRow]);
       db.update.mockReturnValue(updateChain);
@@ -176,13 +159,11 @@ describe('IndexerService', () => {
 
       const setArg = (updateChain as { set: ReturnType<typeof vi.fn> }).set.mock.calls[0]![0] as { settings: Record<string, unknown> };
       expect(setArg.settings.hostname).toBe('new-host');
-      // Secret fields must be exactly the stored ciphertext, not re-encrypted sentinels
       expect(setArg.settings.apiKey).toBe(encryptedApiKey);
       expect(setArg.settings.apiUrl).toBe(encryptedApiUrl);
       expect(setArg.settings.flareSolverrUrl).toBe(encryptedFlareSolverrUrl);
     });
 
-    // #844 — entity-aware allowlist on resolveSentinelFields
     it('rejects sentinel on a non-secret field rather than silently substituting it', async () => {
       const existingRow = {
         ...mockIndexer,
@@ -191,8 +172,6 @@ describe('IndexerService', () => {
       db.select.mockReturnValue(mockDbChain([existingRow]));
       db.update.mockReturnValue(mockDbChain([existingRow]));
 
-      // hostname is NOT in the indexer secret allowlist — must throw, not be
-      // silently overwritten with the persisted value.
       await expect(
         service.update(1, {
           settings: { hostname: '********', apiKey: 'still-real' },
@@ -274,7 +253,6 @@ describe('IndexerService', () => {
     });
 
     it('#1180 throws a Zod-flavored error naming the missing field when persisted settings are malformed', async () => {
-      // Valid type 'abb', but settings omit the required `hostname` — a drifted/hand-edited row.
       const badIndexer = createMockDbIndexer({ settings: { pageLimit: 2 } });
 
       await expect(service.getAdapter(badIndexer)).rejects.toThrow(/hostname/);
@@ -393,7 +371,6 @@ describe('IndexerService', () => {
       });
 
       expect(result.success).toBe(true);
-      // Verify the adapter received the resolved (real) mamId, not the sentinel
       const fakeRow = createSpy.mock.calls[0]![0] as { settings: Record<string, unknown> };
       expect(fakeRow.settings.mamId).toBe('real-mam-id');
     });
@@ -432,10 +409,8 @@ describe('IndexerService', () => {
       });
 
       expect(result.success).toBe(true);
-      // Without id, sentinel passes through as-is (no resolution)
       const fakeRow = createSpy.mock.calls[0]![0] as { settings: Record<string, unknown> };
       expect(fakeRow.settings.mamId).toBe('********');
-      // getById should not have been called
       expect(db.select).not.toHaveBeenCalled();
     });
 
@@ -598,15 +573,12 @@ describe('IndexerService', () => {
 
       await proxyService.getAdapter(noProxyIndexer);
 
-      // createAdapter is called with the proxyUrl from settings, but internally
-      // it checks useProxy and passes undefined to the factory
+      // The service passes global proxy config inward; `useProxy` controls what reaches the factory.
       expect(createSpy).toHaveBeenCalledWith(noProxyIndexer, 'socks5://proxy:1080');
-      // Verify the adapter was created without proxy by checking the factory wasn't given proxyUrl
-      // We need to check the actual adapter creation — spy on INDEXER_ADAPTER_FACTORIES
       const { INDEXER_ADAPTER_FACTORIES } = await import('@core/index.js');
       const factorySpy = vi.spyOn(INDEXER_ADAPTER_FACTORIES, 'abb');
 
-      // Clear cache and create again
+      // Clear cache so creation runs again after installing the factory spy.
       proxyService.clearAdapterCache();
       await proxyService.getAdapter(noProxyIndexer);
 
@@ -669,7 +641,6 @@ describe('IndexerService', () => {
       });
 
       expect(result.success).toBe(true);
-      // testConfig calls getProxyUrl then passes it to createAdapter
       expect(createSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           settings: expect.objectContaining({ useProxy: true }),
@@ -711,17 +682,7 @@ describe('IndexerService', () => {
       });
     });
 
-    // #958 — filtered helpers backing the Prowlarr-compat GET surface. The
-    // chained where() filters source = 'prowlarr' so manual rows (source: null)
-    // and rows from other origins never reach the response.
-    //
-    // These suites are split across two backings:
-    //   - mockDbChain — ergonomic for shape/decryption assertions, but does NOT
-    //     evaluate the WHERE expression. A helper that omitted the source
-    //     predicate would still satisfy a mock-only test.
-    //   - real in-memory libsql + Drizzle (loadProwlarrPredicateDb) — actually
-    //     applies the SQL WHERE. This is what proves the predicate excludes a
-    //     persisted manual (source: null) row, satisfying the F1 contract.
+    // Mock-backed cases prove shape/decryption; real SQLite cases below prove `source = 'prowlarr'`.
     describe('getAllProwlarrManaged', () => {
       it('decrypts settings on returned rows (matches getAll behavior)', async () => {
         const { encrypt } = await import('../utils/secret-codec.js');
@@ -765,12 +726,6 @@ describe('IndexerService', () => {
       });
     });
 
-    // #958 F1 — predicate proof against a real SQL engine. mockDbChain ignores
-    // the where() expression, so a helper that drops `eq(source, 'prowlarr')`
-    // would still satisfy mocked tests. These tests run the helpers against an
-    // in-memory libsql DB seeded with both a manual (source: null) and a
-    // prowlarr row; the SQLite engine evaluates the WHERE clause for real, so
-    // any regression in the predicate fails the assertion.
     describe('Prowlarr-managed helpers — real DB predicate proof (#958 F1)', () => {
       type TestDb = Awaited<ReturnType<typeof loadProwlarrPredicateDb>>['db'];
       let realDb: TestDb;
@@ -816,9 +771,6 @@ describe('IndexerService', () => {
 
         const result = await realService.getAllProwlarrManaged();
 
-        // The SQL engine evaluated `WHERE source = 'prowlarr'` — only the
-        // Prowlarr row comes back. If the helper dropped the predicate we'd
-        // get both rows here.
         expect(result).toHaveLength(1);
         expect(result[0]!.name).toBe('Prowlarr Tracker');
         expect(result[0]!.source).toBe('prowlarr');
@@ -832,8 +784,6 @@ describe('IndexerService', () => {
             settings: { apiUrl: 'http://x/', apiKey: 'k' },
             source: 'prowlarr', sourceIndexerId: 1,
           },
-          // A row with a non-null but non-'prowlarr' source must also be
-          // excluded — proves the predicate is `eq(...)`, not just IS NOT NULL.
           {
             name: 'Sonarr Synced', type: 'torznab', enabled: true, priority: 50,
             settings: { apiUrl: 'http://x/', apiKey: 'k' },
@@ -865,9 +815,6 @@ describe('IndexerService', () => {
 
         const result = await realService.getByIdProwlarrManaged(manualId);
 
-        // The id exists in the table — but the WHERE predicate filters it out
-        // because source !== 'prowlarr'. If the predicate were missing, this
-        // call would return the manual row.
         expect(result).toBeNull();
       });
 
@@ -898,7 +845,6 @@ describe('IndexerService', () => {
 
     describe('createOrUpsertProwlarr', () => {
       it('inserts new row when no existing prowlarr-sourced row matches sourceIndexerId', async () => {
-        // findByProwlarrSource returns nothing
         db.select.mockReturnValue(mockDbChain([]));
         const newRow = createMockDbIndexer({ id: 5, source: 'prowlarr', sourceIndexerId: 10 });
         db.insert.mockReturnValue(mockDbChain([newRow]));
@@ -946,13 +892,12 @@ describe('IndexerService', () => {
         await service.createOrUpsertProwlarr({
           name: 'New Name',
           type: 'torznab',
-          enabled: true, // This should NOT be written on upsert
-          priority: 99,  // This should NOT be written on upsert
+          enabled: true,
+          priority: 99,
           settings: { apiUrl: 'http://prowlarr/10/', apiKey: 'key' },
           sourceIndexerId: 10,
         });
 
-        // Verify update was called and .set() payload excludes priority and enabled
         expect(db.update).toHaveBeenCalled();
         const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0];
         expect(setPayload).not.toHaveProperty('priority');
@@ -989,20 +934,15 @@ describe('IndexerService', () => {
         });
 
         const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-        // Prowlarr-managed secret settings are encrypted (apiUrl + apiKey, #742)
         expect(isEncrypted(setPayload.settings.apiUrl)).toBe(true);
         expect(isEncrypted(setPayload.settings.apiKey)).toBe(true);
-        // Local-only settings keys are preserved from existing row (secret fields encrypted)
         expect(isEncrypted(setPayload.settings.flareSolverrUrl)).toBe(true);
         expect(setPayload.settings.useProxy).toBe(true);
         expect(setPayload.settings.proxyUrl).toBe('socks5://proxy:1080');
       });
 
       it('strips Readarr echo-only keys from a dirty existing row on upsert (#1198 layer 3)', async () => {
-        // A row persisted by the pre-fix translation path carries echo-only keys
-        // (categories/minimumSeeders/seedCriteria.*) in its stored settings. The
-        // merge must NOT carry them forward — otherwise the strict Torznab/Newznab
-        // adapter schema rejects the row on later construction.
+        // Echo-only keys from older rows would fail strict adapter parsing if merged forward.
         const existing = createMockDbIndexer({
           id: 3,
           source: 'prowlarr',
@@ -1025,7 +965,6 @@ describe('IndexerService', () => {
           type: 'torznab',
           enabled: true,
           priority: 50,
-          // Incoming payload is already sanitized by the route translation boundary.
           settings: { apiUrl: 'http://new/', apiKey: 'newkey' },
           sourceIndexerId: 10,
         });
@@ -1034,7 +973,6 @@ describe('IndexerService', () => {
         for (const key of ['categories', 'minimumSeeders', 'seedCriteria.seedRatio', 'seedCriteria.seedTime']) {
           expect(setPayload.settings).not.toHaveProperty(key);
         }
-        // Adapter-accepted keys survive the merge (secret fields encrypted, #742).
         expect(isEncrypted(setPayload.settings.apiUrl)).toBe(true);
         expect(isEncrypted(setPayload.settings.apiKey)).toBe(true);
       });
@@ -1054,7 +992,6 @@ describe('IndexerService', () => {
 
         expect(result.upserted).toBe(false);
         expect(db.insert).toHaveBeenCalled();
-        // Should NOT call select (no lookup when sourceIndexerId is null)
         expect(db.select).not.toHaveBeenCalled();
       });
 
@@ -1078,10 +1015,6 @@ describe('IndexerService', () => {
     });
 
     describe('sourceIndexerId extraction', () => {
-      // These test the extractSourceIndexerId utility exported from prowlarr-compat
-      // but we test the integration through createOrUpsertProwlarr calls above.
-      // Unit tests for the extraction function are in prowlarr-compat.test.ts.
-
       it('extracts numeric id from baseUrl like http://prowlarr:9696/1/', async () => {
         const { extractSourceIndexerId } = await import('../routes/prowlarr-compat.js');
         expect(extractSourceIndexerId('http://prowlarr:9696/1/')).toBe(1);
@@ -1170,7 +1103,7 @@ describe('IndexerService', () => {
       const allowlist = await realService.getLanAllowlist();
 
       expect(allowlist.hostPort.has('192.168.0.22:9696')).toBe(true);
-      // Default port + lowercase normalization
+      // URL normalization supplies the default port and lowercases the hostname.
       expect(allowlist.hostPort.has('prowlarr.lan:80')).toBe(true);
       expect(allowlist.hostname.has('192.168.0.22')).toBe(true);
       expect(allowlist.hostname.has('prowlarr.lan')).toBe(true);
@@ -1197,7 +1130,6 @@ describe('IndexerService', () => {
 
       expect(allowlist.hostPort.size).toBe(0);
       expect(allowlist.hostname.size).toBe(0);
-      // Explicit: must not contain an empty-string key
       expect(allowlist.hostPort.has('')).toBe(false);
       expect(allowlist.hostname.has('')).toBe(false);
     });

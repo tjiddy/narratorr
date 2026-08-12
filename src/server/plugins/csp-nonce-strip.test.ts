@@ -43,14 +43,11 @@ describe('cspNonceStripPlugin', () => {
     it('only the nonce token inside style-src is removed — all other directives unchanged', async () => {
       const res = await app.inject({ method: 'GET', url: '/test' });
       const csp = res.headers['content-security-policy'] as string;
-      // All other directives must be intact
       expect(csp).toContain("default-src 'self'");
       expect(csp).toContain("font-src 'self' https://fonts.gstatic.com");
       expect(csp).toContain("img-src 'self' data: https: blob:");
       expect(csp).toContain("connect-src 'self'");
-      // style-src present but without nonce
       expect(csp).toContain("https://fonts.googleapis.com");
-      // script-src nonce still present
       const scriptSegment = csp.split(';').find((s) => s.trim().startsWith('script-src'));
       expect(scriptSegment).toMatch(/'nonce-[a-f0-9]+'/);
     });
@@ -58,7 +55,6 @@ describe('cspNonceStripPlugin', () => {
     it('reply.cspNonce.script is non-empty and readable in the route handler before onSend fires', async () => {
       const res = await app.inject({ method: 'GET', url: '/test' });
       const body = res.json();
-      // Route handler read reply.cspNonce.script before onSend — must be non-empty hex
       expect(body.nonce).toMatch(/^[a-f0-9]{32,}$/);
     });
 
@@ -66,7 +62,6 @@ describe('cspNonceStripPlugin', () => {
       const res = await app.inject({ method: 'GET', url: '/test' });
       const body = res.json();
       const csp = res.headers['content-security-policy'] as string;
-      // The nonce in the route-handler body must match the script-src nonce in the sent header
       const scriptSegment = csp.split(';').find((s) => s.trim().startsWith('script-src'))!;
       const nonceMatch = scriptSegment.match(/'nonce-([a-f0-9]+)'/);
       expect(nonceMatch).not.toBeNull();

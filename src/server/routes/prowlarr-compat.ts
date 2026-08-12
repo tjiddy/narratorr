@@ -7,30 +7,16 @@ import { maskFields, isSentinel } from '../utils/secret-codec.js';
 import { getVersion } from '../utils/version.js';
 import { READARR_ECHO_ONLY_FIELDS } from '../utils/readarr-echo-fields.js';
 
-// ── Compat surface paths (single source of truth) ──
-
 /**
- * The Prowlarr/Readarr compat-shim path surface — the documented contract
- * *exception* under `/api/v1/*` that impersonates Readarr (NOT native v1, see
- * `src/shared/schemas/v1/common.ts`). Both the route registrations below and the
- * auth plugin's envelope discriminator (`isProwlarrCompatPath`) derive from this
- * one place, so the two cannot drift: adding a compat route updates the predicate
- * automatically. `systemStatus` is exact; every `indexer*` route shares the
- * `indexerPrefix`.
+ * Readarr-compatible paths are the v1 contract exception. Route registration and auth-envelope
+ * classification share this definition so additions cannot drift between them.
  */
 export const PROWLARR_COMPAT_PATHS = {
   systemStatus: '/api/v1/system/status',
   indexerPrefix: '/api/v1/indexer',
 } as const;
 
-/**
- * Is `routePath` a Prowlarr/Readarr compat-shim path (vs a native v1 route)?
- * `urlBase` is the active URL_BASE (`''` when unset) so this classifies
- * correctly under `URL_BASE=/narratorr` — it is never a hardcoded `/api/`
- * literal. Used by the auth plugin to keep compat auth failures on the legacy
- * bare-string `{ error: 'Invalid API key' }` while native v1 auth failures get
- * the `{ error: { code, message } }` envelope.
- */
+/** Honors URL_BASE while distinguishing legacy bare auth errors from native v1 envelopes. */
 export function isProwlarrCompatPath(routePath: string, urlBase: string): boolean {
   return (
     routePath === `${urlBase}${PROWLARR_COMPAT_PATHS.systemStatus}` ||
@@ -38,16 +24,12 @@ export function isProwlarrCompatPath(routePath: string, urlBase: string): boolea
   );
 }
 
-// ── Types ──
-
 interface ReadarrField {
   name: string;
   value: unknown;
   type: string;
   advanced?: boolean;
 }
-
-// ── Request body schema (Readarr-compatible echo surface) ──
 
 const readarrFieldSchema = z.object({
   name: z.string().trim().min(1),
@@ -63,33 +45,24 @@ const readarrFieldSchema = z.object({
 });
 
 const readarrBodySchema = z.object({
-  // Identification / echo fields
   id: z.number().int().optional(),
   name: z.string().optional(),
   implementation: z.string().trim().min(1),
   implementationName: z.string().optional(),
   configContract: z.string().optional(),
   infoLink: z.string().optional(),
-  // Flags
   enableRss: z.boolean().optional(),
   enableAutomaticSearch: z.boolean().optional(),
   enableInteractiveSearch: z.boolean().optional(),
   supportsRss: z.boolean().optional(),
   supportsSearch: z.boolean().optional(),
-  // Other Readarr surface
   protocol: z.string().optional(),
   priority: z.number().int().min(0).max(100).optional(),
   downloadClientId: z.number().int().optional(),
   tags: z.array(z.number().int()).optional(),
   fields: z.array(readarrFieldSchema),
-  // NOT .strict(): this is a compatibility shim impersonating Readarr's API, so
-  // it must be liberal in what it accepts. Prowlarr sends top-level echo-only
-  // keys (`categories`, `minimumSeeders`, `seedCriteria.*`) that narratorr never
-  // consumes. Zod's default `.strip()` silently drops unknown top-level keys
-  // before any handler code runs (no mass-assignment vector — handlers read only
-  // named fields), where `.strict()` would 400 and break Prowlarr indexer sync.
-  // Do NOT allowlist unanticipated Readarr fields here — that is whack-a-mole
-  // (see prowlarr-compat.test.ts "compat regression" tests).
+  // Keep Zod's default strip behavior: Prowlarr sends unknown echo fields and strict parsing breaks sync.
+  // Handlers read only named fields, so accepting future Readarr fields creates no mass assignment path.
 });
 
 type ReadarrBody = z.infer<typeof readarrBodySchema>;
@@ -113,8 +86,6 @@ interface ReadarrIndexer {
   fields: ReadarrField[];
 }
 
-// ── Field defaults ──
-
 const FIELD_DEFAULTS: Record<string, unknown> = {
   apiPath: '/api',
   categories: [3030],
@@ -122,8 +93,6 @@ const FIELD_DEFAULTS: Record<string, unknown> = {
   'seedCriteria.seedRatio': null,
   'seedCriteria.seedTime': null,
 };
-
-// ── Implementation → protocol/contract mapping ──
 
 const IMPL_MAP: Record<string, { protocol: string; configContract: string; type: IndexerType }> = {
   Torznab: { protocol: 'torrent', configContract: 'TorznabSettings', type: 'torznab' },
@@ -135,9 +104,7 @@ const TYPE_TO_IMPL: Record<string, string> = {
   newznab: 'Newznab',
 };
 
-// ── Translation utilities ──
-
-/** Extract sourceIndexerId from the last numeric path segment of baseUrl (e.g., http://prowlarr:9696/1/ → 1) */
+/** Extract sourceIndexerId from the last numeric baseUrl segment. */
 export function extractSourceIndexerId(baseUrl: string): number | null {
   let pathname: string;
   try {
@@ -149,16 +116,13 @@ export function extractSourceIndexerId(baseUrl: string): number | null {
   return matches.length ? parseInt(matches[matches.length - 1]![1]!, 10) : null;
 }
 
-/** Convert Readarr Fields[] to Narratorr internal settings */
 export function fromReadarrFields(fields: ReadonlyArray<{ name: string; value?: unknown }>): Record<string, unknown> {
   const settings: Record<string, unknown> = {};
   for (const field of fields) {
     if (field.name === 'baseUrl') {
       settings.apiUrl = field.value;
     } else if (field.name === 'apiPath' || READARR_ECHO_ONLY_FIELDS.has(field.name)) {
-      // Echo-only: not stored, not used at runtime. These would otherwise reach
-      // the strict Torznab/Newznab adapter-settings schema and throw on
-      // construction.
+      // Echo-only fields must not reach the strict adapter-settings schema.
       continue;
     } else {
       settings[field.name] = field.value;
@@ -167,18 +131,11 @@ export function fromReadarrFields(fields: ReadonlyArray<{ name: string; value?: 
   return settings;
 }
 
-/** Convert Narratorr internal settings + type to Readarr Fields[].
- *  Secret fields (apiKey, mamId, flareSolverrUrl) are masked with the sentinel
- *  before emission so plaintext credentials never leave the server. The standard
- *  CRUD path applies the same masking via secretEntity in registerCrudRoutes;
- *  this function preserves that invariant for the Prowlarr-compat surface.
- *  Sentinel passthrough on PUT/POST is handled by IndexerService.update via
- *  resolveAndEncryptSettings. */
+/** Mask secrets before compat output; IndexerService.update resolves sentinel values on write. */
 export function toReadarrFields(settings: Record<string, unknown>): ReadarrField[] {
   const masked = maskFields('indexer', { ...settings });
   const fields: ReadarrField[] = [];
 
-  // baseUrl ↔ apiUrl mapping
   fields.push({ name: 'baseUrl', value: masked.apiUrl ?? '', type: 'textbox', advanced: false });
   fields.push({ name: 'apiPath', value: '/api', type: 'textbox', advanced: true });
   fields.push({ name: 'apiKey', value: masked.apiKey ?? '', type: 'textbox', advanced: false });
@@ -187,9 +144,8 @@ export function toReadarrFields(settings: Record<string, unknown>): ReadarrField
   fields.push({ name: 'seedCriteria.seedRatio', value: masked['seedCriteria.seedRatio'] ?? FIELD_DEFAULTS['seedCriteria.seedRatio'], type: 'number', advanced: true });
   fields.push({ name: 'seedCriteria.seedTime', value: masked['seedCriteria.seedTime'] ?? FIELD_DEFAULTS['seedCriteria.seedTime'], type: 'number', advanced: true });
 
-  // Echo back any unknown fields stored in settings
   const knownKeys = new Set(['apiUrl', 'apiKey', 'categories', 'minimumSeeders', 'seedCriteria.seedRatio', 'seedCriteria.seedTime',
-    // Internal-only keys not echoed as fields
+    // Never expose adapter-only keys.
     'hostname', 'pageLimit', 'flareSolverrUrl', 'useProxy', 'proxyUrl']);
   for (const [key, value] of Object.entries(masked)) {
     if (!knownKeys.has(key)) {
@@ -200,7 +156,6 @@ export function toReadarrFields(settings: Record<string, unknown>): ReadarrField
   return fields;
 }
 
-/** Convert a DB IndexerRow to the Readarr-compatible response shape */
 function toReadarrIndexer(row: IndexerRow): ReadarrIndexer {
   const impl = TYPE_TO_IMPL[row.type] ?? row.type;
   const mapping = IMPL_MAP[impl];
@@ -226,15 +181,8 @@ function toReadarrIndexer(row: IndexerRow): ReadarrIndexer {
 }
 
 /**
- * Domain validation for create/update bodies, run after Zod parsing inside the
- * route handler. Mirrors the legacy `validateReadarrBody` contract — returns
- * `{ message }` via the route handler instead of the global validation envelope.
- *
- * Why a string check (not just truthy): readarrFieldSchema.value is polymorphic
- * (string | number | boolean | null | (string|number)[]) for compat with
- * arbitrary Readarr fields. A non-string `baseUrl.value` would otherwise reach
- * `extractSourceIndexerId` (`pathname.matchAll` on a non-string throws TypeError)
- * and the Torznab/Newznab adapters require `apiKey: string`.
+ * Preserve the legacy { message } domain-error contract. Field values are polymorphic, so URL
+ * and adapter inputs require string checks before reaching APIs that assume strings.
  */
 function validateReadarrDomain(body: ReadarrBody): string | null {
   if (!IMPL_MAP[body.implementation]) {
@@ -254,14 +202,8 @@ function validateReadarrDomain(body: ReadarrBody): string | null {
   return null;
 }
 
-// ── Package version (shared util) ──
-
-// Track app start time
 const appStartTime = new Date().toISOString();
 
-// ── Helpers ──
-
-/** Parse a Readarr request body, returning settings with defaults applied */
 function parseReadarrBody(body: ReadarrBody) {
   const impl = body.implementation;
   const mapping = IMPL_MAP[impl]!;
@@ -269,11 +211,7 @@ function parseReadarrBody(body: ReadarrBody) {
   const baseUrl = (settings.apiUrl as string) ?? '';
   const sourceIndexerId = extractSourceIndexerId(baseUrl);
 
-  // Note: Readarr echo-only fields (categories/minimumSeeders/seedCriteria.*)
-  // are intentionally NOT injected into settings here — fromReadarrFields strips
-  // them, and they must stay out of the service-facing settings so the strict
-  // Torznab/Newznab adapter-settings schema accepts the shape. FIELD_DEFAULTS is
-  // still used for the echo direction (toReadarrFields / makeSchemaTemplate).
+  // Echo-only fields stay out of strict service settings; defaults apply only when echoing responses.
   return { impl, mapping, settings, sourceIndexerId };
 }
 
@@ -296,8 +234,6 @@ function makeSchemaTemplate(impl: string) {
     ],
   };
 }
-
-// ── Routes ──
 
 function registerSystemRoutes(app: FastifyInstance) {
   app.get(PROWLARR_COMPAT_PATHS.systemStatus, async () => ({
@@ -367,12 +303,7 @@ function registerIndexerRoutes(app: FastifyInstance, indexerService: IndexerServ
 
       const { mapping, settings, sourceIndexerId: derivedSourceIndexerId } = parseReadarrBody(body);
 
-      // Source guard (#958): PUT keys on row id, so a known manual-row id could
-      // be flipped to source: 'prowlarr' by the unconditional `source` write
-      // below. Resolve the existing Prowlarr-managed row up front; manual rows
-      // and non-existent ids both fall through to 404. The same lookup also
-      // satisfies the sentinel-`apiUrl` `sourceIndexerId` preservation branch
-      // (#742), so we never need a second DB read.
+      // Filtered lookup keeps manual rows opaque and also preserves sourceIndexerId for sentinel apiUrl.
       const existing = await indexerService.getByIdProwlarrManaged(id);
       if (!existing) return reply.status(404).send({ message: 'Indexer not found' });
 
@@ -400,9 +331,7 @@ function registerIndexerRoutes(app: FastifyInstance, indexerService: IndexerServ
   app.delete<{ Params: { id: string } }>(`${indexerBase}/:id`, async (request, reply) => {
     const id = parseInt(request.params.id, 10);
     if (isNaN(id)) return reply.status(404).send({ message: 'Indexer not found' });
-    // Source guard (#958): manual rows must be opaque to the Prowlarr-compat
-    // surface. Probe via the filtered helper so a known manual-row id returns
-    // 404 instead of falling through to the unconditional `delete()`.
+    // Filtered lookup keeps manual rows opaque instead of deleting a known manual id.
     const existing = await indexerService.getByIdProwlarrManaged(id);
     if (!existing) return reply.status(404).send({ message: 'Indexer not found' });
     const deleted = await indexerService.delete(id);

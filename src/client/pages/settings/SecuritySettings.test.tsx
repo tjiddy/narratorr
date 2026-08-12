@@ -75,21 +75,18 @@ describe('SecuritySettings', () => {
       expect(screen.getByText('Authentication Mode')).toBeInTheDocument();
     });
 
-    // Forms and Basic radios should be disabled since hasUser=false
     await waitFor(() => {
       const formsRadio = screen.getByLabelText('Forms (Login Page)');
       const basicRadio = screen.getByLabelText('Basic (Browser Prompt)');
       expect(formsRadio).toBeDisabled();
       expect(basicRadio).toBeDisabled();
 
-      // None should still be enabled
       const noneRadio = screen.getByLabelText('None (No Authentication)');
       expect(noneRadio).not.toBeDisabled();
     });
   });
 
   it('mode change to "none" shows confirmation warning', async () => {
-    // Start with forms mode active + has user
     (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...mockConfig,
       mode: 'forms',
@@ -107,11 +104,9 @@ describe('SecuritySettings', () => {
       expect(screen.getByText('Authentication Mode')).toBeInTheDocument();
     });
 
-    // Click the "none" radio button
     const noneRadio = screen.getByLabelText('None (No Authentication)');
     await user.click(noneRadio);
 
-    // ConfirmModal should appear with title and action button
     await waitFor(() => {
       expect(screen.getByRole('dialog')).toBeInTheDocument();
       expect(screen.getByText('Disable authentication?')).toBeInTheDocument();
@@ -126,11 +121,9 @@ describe('SecuritySettings', () => {
       expect(screen.getByText('test-api-key-12345')).toBeInTheDocument();
     });
 
-    // API key is displayed in a monospace code block
     const codeBlock = screen.getByText('test-api-key-12345');
     expect(codeBlock.tagName).toBe('CODE');
 
-    // Copy button exists
     expect(screen.getByTitle('Copy to clipboard')).toBeInTheDocument();
   });
 
@@ -143,20 +136,16 @@ describe('SecuritySettings', () => {
       expect(screen.getByText('API Key')).toBeInTheDocument();
     });
 
-    // Clear call count after initial load so we can assert refetch separately
     (api.getAuthConfig as ReturnType<typeof vi.fn>).mockClear();
     (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, apiKey: 'new-key-67890' });
 
-    // Click regenerate button
     const regenButton = screen.getByRole('button', { name: /regenerate api key/i });
     await user.click(regenButton);
 
-    // Confirmation should appear
     await waitFor(() => {
       expect(screen.getByText(/regenerating will invalidate/i)).toBeInTheDocument();
     });
 
-    // Confirm regeneration
     const confirmButton = screen.getByRole('button', { name: /confirm regenerate/i });
     await user.click(confirmButton);
 
@@ -164,18 +153,15 @@ describe('SecuritySettings', () => {
       expect(api.authRegenerateApiKey).toHaveBeenCalled();
     });
 
-    // Confirmation dialog should close after success
     await waitFor(() => {
       expect(screen.queryByText(/regenerating will invalidate/i)).not.toBeInTheDocument();
     });
 
-    // Success toast and auth.config refetch triggered by queryKey invalidation
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith('API key regenerated');
       expect(api.getAuthConfig).toHaveBeenCalled();
     });
 
-    // Refetched config renders the new key
     await waitFor(() => {
       expect(screen.getByText('new-key-67890')).toBeInTheDocument();
     });
@@ -212,7 +198,6 @@ describe('SecuritySettings', () => {
       expect(screen.getByText('Credentials')).toBeInTheDocument();
     });
 
-    // Should show create form since hasUser=false
     await user.type(screen.getByLabelText('Username'), 'admin');
     await user.type(screen.getByLabelText('Password'), 'password1234');
     await user.type(screen.getByLabelText('Confirm Password'), 'password1234');
@@ -224,7 +209,6 @@ describe('SecuritySettings', () => {
   });
 
   it('change password form requires current password', async () => {
-    // User exists — show change password form
     (api.getAuthAdminStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...mockStatus,
       hasUser: true,
@@ -238,7 +222,6 @@ describe('SecuritySettings', () => {
       expect(screen.getByText('Credentials')).toBeInTheDocument();
     });
 
-    // Should show username field pre-populated, plus password fields
     await waitFor(() => {
       expect(screen.getByLabelText('Username')).toHaveValue('admin');
       expect(screen.getByLabelText('Current Password')).toBeInTheDocument();
@@ -250,7 +233,6 @@ describe('SecuritySettings', () => {
     await user.type(screen.getByLabelText('Confirm New Password'), 'newpassword1');
     await user.click(screen.getByRole('button', { name: /change password/i }));
 
-    // Username unchanged → third arg is undefined
     await waitFor(() => {
       expect(api.authChangePassword).toHaveBeenCalledWith('oldpass', 'newpassword1', undefined);
     });
@@ -294,7 +276,6 @@ describe('SecuritySettings', () => {
       expect(api.authSetup).toHaveBeenCalled();
     });
 
-    // Fields should be cleared after success
     await waitFor(() => {
       expect(screen.getByLabelText('Username')).toHaveValue('');
       expect(screen.getByLabelText('Password')).toHaveValue('');
@@ -340,7 +321,6 @@ describe('SecuritySettings', () => {
       expect(screen.getByText('Credentials')).toBeInTheDocument();
     });
 
-    // Clear and change username
     const usernameField = screen.getByLabelText('Username');
     await user.clear(usernameField);
     await user.type(usernameField, 'newadmin');
@@ -363,10 +343,8 @@ describe('SecuritySettings', () => {
       expect(screen.getByText('Credentials')).toBeInTheDocument();
     });
 
-    // Clear call counts after initial data load
     (api.getAuthAdminStatus as ReturnType<typeof vi.fn>).mockClear();
     (api.getAuthConfig as ReturnType<typeof vi.fn>).mockClear();
-    // Re-apply resolved values for refetch after invalidation
     (api.getAuthAdminStatus as ReturnType<typeof vi.fn>).mockResolvedValue(mockStatus);
     (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue(mockConfig);
 
@@ -379,7 +357,6 @@ describe('SecuritySettings', () => {
       expect(toast.success).toHaveBeenCalledWith('Credentials created');
     });
 
-    // Auth status should be refetched due to query invalidation
     await waitFor(() => {
       expect(api.getAuthAdminStatus).toHaveBeenCalled();
     });
@@ -415,7 +392,7 @@ describe('SecuritySettings', () => {
 
     it('copies via navigator.clipboard.writeText when available → success toast', async () => {
       const writeText = vi.fn().mockResolvedValue(undefined);
-      // Must set clipboard AFTER userEvent.setup() — userEvent attaches its own clipboard stub on setup()
+      // userEvent.setup() replaces navigator.clipboard, so install this mock afterward.
       const user = userEvent.setup();
       Object.defineProperty(navigator, 'clipboard', {
         get: () => ({ writeText }),
@@ -438,7 +415,6 @@ describe('SecuritySettings', () => {
 
     it('falls back to execCommand when navigator.clipboard is undefined → success toast', async () => {
       const user = userEvent.setup();
-      // Make clipboard unavailable to trigger fallback path
       Object.defineProperty(navigator, 'clipboard', {
         get: () => undefined,
         configurable: true,
@@ -524,8 +500,7 @@ describe('SecuritySettings', () => {
   });
 
   it('envBypass from query wires into CredentialsSection — Remove Credentials visible, then hidden after deletion', async () => {
-    // Start: bypassActive=false (no local bypass), envBypass=true (AUTH_BYPASS env var).
-    // Button must be visible — proves SecuritySettings passes envBypass, not bypassActive, to CredentialsSection.
+    // Keep bypassActive false to prove the button is gated by envBypass.
     (api.getAuthAdminStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...mockStatus,
       hasUser: true,
@@ -538,12 +513,10 @@ describe('SecuritySettings', () => {
     const user = userEvent.setup();
     renderWithProviders(<SecuritySettings />);
 
-    // Remove Credentials button visible when envBypass=true and hasUser=true
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /remove credentials/i })).toBeInTheDocument();
     });
 
-    // Resolve the refetch after deletion to: hasUser=false, envBypass=false
     (api.getAuthAdminStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...mockStatus,
       hasUser: false,
@@ -553,7 +526,6 @@ describe('SecuritySettings', () => {
 
     await user.click(screen.getByRole('button', { name: /remove credentials/i }));
 
-    // After deletion + refetch: setup form shown, Remove Credentials gone
     await waitFor(() => {
       expect(api.authDeleteCredentials).toHaveBeenCalled();
     });
@@ -573,7 +545,6 @@ describe('SecuritySettings', () => {
 
       await waitFor(() => expect(screen.getByText('Authentication Mode')).toBeInTheDocument());
 
-      // Clear call counts after initial load so we can assert refetch separately
       (api.getAuthConfig as ReturnType<typeof vi.fn>).mockClear();
       (api.getAuthAdminStatus as ReturnType<typeof vi.fn>).mockClear();
       (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, mode: 'none' });
@@ -587,17 +558,14 @@ describe('SecuritySettings', () => {
 
       await waitFor(() => expect(api.updateAuthConfig).toHaveBeenCalledWith({ mode: 'none' }));
       await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Authentication mode updated'));
-      // Both auth queries should be invalidated (refetched)
       await waitFor(() => expect(api.getAuthConfig).toHaveBeenCalled());
       await waitFor(() => expect(api.getAuthAdminStatus).toHaveBeenCalled());
-      // onSuccess callback clears the confirmation dialog
       await waitFor(() => {
         expect(screen.queryByRole('button', { name: /disable auth/i })).not.toBeInTheDocument();
       });
     });
 
     it('switch to non-none mode fires mutation directly without confirmation dialog', async () => {
-      // Start from none, hasUser=true (basic/forms enabled)
       (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, mode: 'none' });
       (api.getAuthAdminStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockStatus, mode: 'none', hasUser: true });
       (api.updateAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ mode: 'basic', apiKey: 'test-api-key-12345', localBypass: false });
@@ -614,7 +582,6 @@ describe('SecuritySettings', () => {
       const basicRadio = screen.getByLabelText('Basic (Browser Prompt)');
       await user.click(basicRadio);
 
-      // No confirmation dialog for non-none switch
       expect(screen.queryByText(/are you sure you want to disable authentication/i)).not.toBeInTheDocument();
 
       await waitFor(() => expect(api.updateAuthConfig).toHaveBeenCalledWith({ mode: 'basic' }));
@@ -653,17 +620,14 @@ describe('SecuritySettings', () => {
       await user.click(screen.getByRole('button', { name: /disable auth/i }));
 
       await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Custom error'));
-      // Modal stays open on error so user can retry (#512)
       expect(screen.getByRole('dialog')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /disable auth/i })).toBeInTheDocument();
 
-      // Retry: remock to success, click confirm again without re-selecting radio
       (api.updateAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ mode: 'none' });
       await user.click(screen.getByRole('button', { name: /disable auth/i }));
 
       await waitFor(() => expect(api.updateAuthConfig).toHaveBeenCalledTimes(2));
       expect(api.updateAuthConfig).toHaveBeenLastCalledWith({ mode: 'none' });
-      // Modal closes on successful retry
       await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     });
   });
@@ -676,7 +640,6 @@ describe('SecuritySettings', () => {
 
       await waitFor(() => expect(screen.getByRole('checkbox', { name: /enable local bypass/i })).toBeInTheDocument());
 
-      // Clear call counts after initial load
       (api.getAuthConfig as ReturnType<typeof vi.fn>).mockClear();
       (api.getAuthAdminStatus as ReturnType<typeof vi.fn>).mockClear();
       (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, localBypass: true });
@@ -685,7 +648,6 @@ describe('SecuritySettings', () => {
       await user.click(screen.getByRole('checkbox', { name: /enable local bypass/i }));
 
       await waitFor(() => expect(api.updateAuthConfig).toHaveBeenCalledWith({ localBypass: true }));
-      // Both auth queries should be invalidated (refetched) on success
       await waitFor(() => expect(api.getAuthConfig).toHaveBeenCalled());
       await waitFor(() => expect(api.getAuthAdminStatus).toHaveBeenCalled());
     });
@@ -696,7 +658,6 @@ describe('SecuritySettings', () => {
       renderWithProviders(<SecuritySettings />);
 
       await waitFor(() => expect(screen.getByRole('checkbox', { name: /enable local bypass/i })).not.toBeChecked());
-      // Update mock so the refetch triggered by onSuccess returns localBypass: true
       (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, localBypass: true });
       await user.click(screen.getByRole('checkbox', { name: /enable local bypass/i }));
 
@@ -711,7 +672,6 @@ describe('SecuritySettings', () => {
       renderWithProviders(<SecuritySettings />);
 
       await waitFor(() => expect(screen.getByRole('checkbox', { name: /enable local bypass/i })).toBeChecked());
-      // Update mock so the refetch triggered by onSuccess returns localBypass: false
       (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, localBypass: false });
       await user.click(screen.getByRole('checkbox', { name: /enable local bypass/i }));
 
@@ -756,10 +716,8 @@ describe('SecuritySettings', () => {
       expect(screen.getByText('Credentials')).toBeInTheDocument();
     });
 
-    // Clear call counts after initial data load
     (api.getAuthAdminStatus as ReturnType<typeof vi.fn>).mockClear();
     (api.getAuthConfig as ReturnType<typeof vi.fn>).mockClear();
-    // Re-apply resolved values for refetch after invalidation
     (api.getAuthAdminStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...mockStatus,
       hasUser: true,
@@ -776,13 +734,11 @@ describe('SecuritySettings', () => {
       expect(toast.success).toHaveBeenCalledWith('Credentials updated');
     });
 
-    // Password fields should be cleared after success
     await waitFor(() => {
       expect(screen.getByLabelText('Current Password')).toHaveValue('');
       expect(screen.getByLabelText('New Password')).toHaveValue('');
     });
 
-    // Auth status should be refetched due to query invalidation
     await waitFor(() => {
       expect(api.getAuthAdminStatus).toHaveBeenCalled();
     });
@@ -861,7 +817,7 @@ describe('SecuritySettings', () => {
     it('confirm button is disabled and shows pending label while mutation is in flight', async () => {
       (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, mode: 'forms' });
       (api.getAuthAdminStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockStatus, mode: 'forms', hasUser: true });
-      // Never-resolving promise keeps mutation pending
+      // Keep the mutation pending.
       (api.updateAuthConfig as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
       const user = userEvent.setup();
       renderWithProviders(<SecuritySettings />);
@@ -940,13 +896,12 @@ describe('SecuritySettings', () => {
       await user.click(screen.getByRole('button', { name: /confirm regenerate/i }));
 
       await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to regenerate API key'));
-      // Modal stays open for retry
       expect(screen.getByRole('dialog')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /confirm regenerate/i })).toBeInTheDocument();
     });
 
     it('confirm button is disabled and shows pending label while regeneration is in flight', async () => {
-      // Never-resolving promise keeps mutation pending
+      // Keep the mutation pending.
       (api.authRegenerateApiKey as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
       const user = userEvent.setup();
       renderWithProviders(<SecuritySettings />);

@@ -52,9 +52,7 @@ describe('enrichUsenetLanguages', () => {
   beforeEach(() => {
     logger = createMockLogger();
     mockFetchWithSsrfRedirect.mockReset();
-    // The enrichment cache is a process-wide singleton; clear it so each test
-    // starts cold (otherwise a release re-fetched in a later test is served
-    // from a prior test's entry, and the fetch assertion fails) (#1315).
+    // The process-wide cache must start cold for fetch-count assertions.
     enrichmentCache.clear();
   });
 
@@ -584,7 +582,6 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      // Group says german, NZB name says dutch — group wins
       expect(results[0]!.language).toBe('german');
     });
 
@@ -689,13 +686,11 @@ describe('enrichUsenetLanguages', () => {
       await enrichUsenetLanguages(results, logger);
 
       expect(mockCreateSsrfSafeDispatcher).toHaveBeenCalledTimes(1);
-      // No allowlist supplied — dispatcher receives no hostname allowlist arg
       expect(mockCreateSsrfSafeDispatcher).toHaveBeenCalledWith(undefined);
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledWith(
         'http://nzb.test/1',
         expect.objectContaining({ dispatcher: mockDispatcher, timeoutMs: 5000 }),
       );
-      // And no lanAllowlist option is forwarded when none was supplied
       const fetchOpts = mockFetchWithSsrfRedirect.mock.calls[0]![1] as Record<string, unknown>;
       expect(fetchOpts.lanAllowlist).toBeUndefined();
       expect(mockDispatcher.close).toHaveBeenCalledTimes(1);
@@ -715,8 +710,6 @@ describe('enrichUsenetLanguages', () => {
     });
 
     it('redirect to HTML auth-proxy login page returns no-languages without throwing', async () => {
-      // Helper now follows the 302 instead of throwing — the response body is
-      // an HTML login page. Parser fails to extract groups, no language set.
       mockFetchWithSsrfRedirect.mockResolvedValueOnce(
         new Response('<html><body>Login</body></html>', {
           status: 200,
@@ -753,12 +746,10 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      // Phase-1 input log
       expect(logger.debug).toHaveBeenCalledWith(
         expect.objectContaining({ title: 'Test Book', protocol: 'usenet', hasNewsgroup: false, hasDownloadUrl: true }),
         'Enrichment phase-1 input',
       );
-      // Phase-2 fetch + parse
       expect(logger.debug).toHaveBeenCalledWith(
         expect.objectContaining({ title: 'Test Book', url: expect.any(String) }),
         'Phase-2: fetching NZB',
@@ -767,12 +758,10 @@ describe('enrichUsenetLanguages', () => {
         expect.objectContaining({ title: 'Test Book', groupCount: 2 }),
         'Phase-2: NZB parsed',
       );
-      // Per-pattern detection attempt with explicit signal naming
       expect(logger.debug).toHaveBeenCalledWith(
         expect.objectContaining({ title: 'Test Book', signal: 'newsgroup-token', testedAgainst: expect.any(String) }),
         'Detection attempt',
       );
-      // Final outcome
       expect(logger.debug).toHaveBeenCalledWith(
         expect.objectContaining({ title: 'Test Book', finalLanguage: 'german', source: 'newsgroup' }),
         'Phase-2: enrichment complete',
@@ -796,12 +785,10 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      // The newsgroup-token attempt against alt.binaries.audiobooks must log matched: null
       expect(logger.debug).toHaveBeenCalledWith(
         expect.objectContaining({ signal: 'newsgroup-token', testedAgainst: 'alt.binaries.audiobooks', matched: null }),
         'Detection attempt',
       );
-      // The nzb-name-pattern fallback must also log
       expect(logger.debug).toHaveBeenCalledWith(
         expect.objectContaining({ signal: 'nzb-name-pattern' }),
         'Detection attempt',
@@ -855,9 +842,7 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger, allowlist);
 
-      // Dispatcher receives the hostname-only set (defense-in-depth at socket time)
       expect(mockCreateSsrfSafeDispatcher).toHaveBeenCalledWith(allowlist.hostname);
-      // Redirect helper receives the host:port set (authoritative pre-flight)
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledWith(
         'http://192.168.0.22:9696/api?t=get',
         expect.objectContaining({ dispatcher: mockDispatcher, timeoutMs: 5000, lanAllowlist: allowlist.hostPort }),
@@ -867,8 +852,6 @@ describe('enrichUsenetLanguages', () => {
     });
 
     it('with allowlist supplied, the previously-refused private-IP fetch now succeeds (regression complement to #904 refusal test)', async () => {
-      // Before #1149: a LAN-IP fetch through fetchWithSsrfRedirect threw the
-      // SSRF refusal. With the allowlist forwarded, the same hop succeeds.
       const nzbXml = `<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
         <file poster="t" date="1" subject="t">
           <groups><group>alt.binaries.audiobooks</group></groups>
@@ -887,7 +870,6 @@ describe('enrichUsenetLanguages', () => {
       });
 
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1);
-      // No throw, no title fallback — primary signal path completed
       expect(results[0]!.nzbName ?? null).not.toBeNull();
     });
 
@@ -909,12 +891,9 @@ describe('enrichUsenetLanguages', () => {
         hostname: new Set<string>(),
       });
 
-      // Empty allowlist must not degrade to permissive — dispatcher and redirect
-      // helper still receive the (empty) sets, and the helper still refuses.
       expect(mockCreateSsrfSafeDispatcher).toHaveBeenCalledWith(new Set<string>());
       const fetchOpts = mockFetchWithSsrfRedirect.mock.calls[0]![1] as Record<string, unknown>;
       expect(fetchOpts.lanAllowlist).toEqual(new Set<string>());
-      // Title fallback picks up the German marker (#1148 safety net)
       expect(results[0]!.language).toBe('german');
     });
   });
@@ -944,7 +923,6 @@ describe('enrichUsenetLanguages', () => {
 
       expect(results[0]!.language).toBe('german');
       expect(results[0]!.nzbName).toBe('Fairy.Tale.part01.rar');
-      // Debug trace records source: 'title' so the path is observable
       expect(logger.debug).toHaveBeenCalledWith(
         expect.objectContaining({
           title: 'Stephen King – Fairy Tale (Ungekrzt)',
@@ -953,7 +931,6 @@ describe('enrichUsenetLanguages', () => {
         }),
         'Phase-2: enrichment complete',
       );
-      // Per-pattern detection-attempt log emitted for the title signal
       expect(logger.debug).toHaveBeenCalledWith(
         expect.objectContaining({
           signal: 'title-pattern',
@@ -965,8 +942,6 @@ describe('enrichUsenetLanguages', () => {
     });
 
     it('Phase-2: nzbName wins over a detectable conflicting title (priority preservation)', async () => {
-      // nzbName matches german (Hörbuch), title matches dutch (Luisterboek).
-      // The earlier signal (nzbName) must win; the title fallback must NOT run.
       const nzbXml = `<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
         <head><meta type="name">Stephen King-Hörbuch-Pack.rar</meta></head>
         <file poster="t" date="1" subject="Stephen King-Hörbuch-Pack.rar">
@@ -997,7 +972,6 @@ describe('enrichUsenetLanguages', () => {
         }),
         'Phase-2: enrichment complete',
       );
-      // The title-pattern detection attempt must NOT have been emitted
       const titleAttempts = (logger.debug as ReturnType<typeof vi.fn>).mock.calls.filter(
         ([fields]) => (fields as Record<string, unknown>)?.signal === 'title-pattern',
       );
@@ -1005,8 +979,6 @@ describe('enrichUsenetLanguages', () => {
     });
 
     it('Phase-2: title fallback still runs when downloadUrl is present and newsgroup is generic — no Phase-1 short-circuit on title', async () => {
-      // Generic newsgroup falls through to the NZB fetch (per #533 wiring); the
-      // fetch is required to populate nzbName for downstream filterMultiPartUsenet.
       const nzbXml = `<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
         <head><meta type="name">Fairy.Tale.part01.rar</meta></head>
         <file poster="t" date="1" subject="Fairy.Tale.part01.rar">
@@ -1028,9 +1000,9 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1); // fetch still happened
-      expect(results[0]!.nzbName).toBe('Fairy.Tale.part01.rar'); // nzbName populated
-      expect(results[0]!.language).toBe('german'); // language from title fallback
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1);
+      expect(results[0]!.nzbName).toBe('Fairy.Tale.part01.rar');
+      expect(results[0]!.language).toBe('german');
     });
 
     it('Phase-1 (no-fetch): detects german from result.title when downloadUrl is absent and newsgroup is generic', async () => {
@@ -1183,14 +1155,10 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger);
 
-      // Pre-set language wins; Phase-1 short-circuits before fetch anyway, but
-      // the contract is the same: never overwrite.
       expect(results[0]!.language).toBe('spanish');
     });
 
     it('languagesDetected counter is bumped when fetch-failure title fallback succeeds', async () => {
-      // Two results: one fails fetch with a German title (fallback hits),
-      // one fails fetch with a no-marker title (fallback misses).
       mockFetchWithSsrfRedirect.mockRejectedValue(new Error('network down'));
 
       const results = [
@@ -1261,15 +1229,11 @@ describe('enrichUsenetLanguages', () => {
 
   describe('User-Agent (#1315)', () => {
     afterEach(() => {
-      // Restore GIT_TAG so the env stub never leaks into other suites.
       vi.unstubAllEnvs();
     });
 
     it('sends User-Agent: Narratorr/<version> on the enrichment NZB fetch', async () => {
-      // Pin GIT_TAG so the assertion is deterministic regardless of the runner's
-      // ambient env AND so deleting getUserAgent()'s tagged-version branch makes
-      // this fail. The unset/unknown fallbacks are covered in
-      // src/shared/user-agent.test.ts.
+      // Pin the tagged-version branch; user-agent tests cover unset and unknown values.
       vi.stubEnv('GIT_TAG', 'v9.9.9');
       mockFetchWithSsrfRedirect.mockResolvedValueOnce(
         new Response(germanNzbXml(), { status: 200 }),
@@ -1298,12 +1262,10 @@ describe('enrichUsenetLanguages', () => {
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1);
       expect(pass1[0]!.language).toBe('german');
       expect(pass2[0]!.language).toBe('german');
-      // Second pass: nothing fetched, all served from cache.
       expect(logger.info).toHaveBeenLastCalledWith(
         expect.objectContaining({ usenetResults: 1, nzbFetched: 0 }),
         'Usenet language detection complete',
       );
-      // Distinct cache-hit debug signal so the audit trail stays replayable.
       expect(logger.debug).toHaveBeenCalledWith(
         expect.objectContaining({ signal: 'cache-hit', outcome: 'resolved', language: 'german' }),
         'Phase-2: served from enrichment cache',
@@ -1311,7 +1273,6 @@ describe('enrichUsenetLanguages', () => {
     });
 
     it('caches an unresolved (successful fetch, no signal) result and does not re-fetch it', async () => {
-      // German-free NZB with no language anywhere — successful fetch, unresolved.
       mockFetchWithSsrfRedirect.mockResolvedValue(
         new Response(plainNzbXml(), { status: 200 }),
       );
@@ -1359,7 +1320,6 @@ describe('enrichUsenetLanguages', () => {
       const pass2 = [make()];
       await enrichUsenetLanguages(pass2, logger);
 
-      // Within the failure TTL the failed fetch is not retried.
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1);
       expect(pass1[0]!.language).toBe('german');
       expect(pass2[0]!.language).toBe('german');
@@ -1390,7 +1350,6 @@ describe('enrichUsenetLanguages', () => {
     it('keys under downloadUrl when guid is absent; a release with neither guid nor url is never cached', async () => {
       mockFetchWithSsrfRedirect.mockResolvedValue(new Response(germanNzbXml(), { status: 200 }));
 
-      // guid absent, downloadUrl present → cached under downloadUrl.
       const make = () => makeResult({ protocol: 'usenet', downloadUrl: 'http://nzb.test/keyfallback' });
       await enrichUsenetLanguages([make()], logger);
       const pass2 = [make()];
@@ -1398,7 +1357,6 @@ describe('enrichUsenetLanguages', () => {
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1);
       expect(pass2[0]!.language).toBe('german');
 
-      // Neither guid nor downloadUrl → not cacheable, and never fetched (no URL). No crash.
       const { downloadUrl: _omit, ...noKey } = makeResult({ protocol: 'usenet', title: 'No Key Book' });
       const noKeyResults: SearchResult[] = [noKey];
       await expect(enrichUsenetLanguages(noKeyResults, logger)).resolves.toBeUndefined();
@@ -1419,12 +1377,10 @@ describe('enrichUsenetLanguages', () => {
       const make = () => makeResult({ protocol: 'usenet', guid: 'guid-ttl', downloadUrl: 'http://nzb.test/ttl' });
 
       await enrichUsenetLanguages([make()], logger);
-      // Just under 24h — still cached.
       vi.advanceTimersByTime(23 * 60 * 60 * 1000);
       await enrichUsenetLanguages([make()], logger);
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1);
 
-      // Past 24h — re-fetch.
       vi.advanceTimersByTime(2 * 60 * 60 * 1000);
       await enrichUsenetLanguages([make()], logger);
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(2);
@@ -1442,11 +1398,9 @@ describe('enrichUsenetLanguages', () => {
       await enrichUsenetLanguages([failer(), ok()], logger);
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(2);
 
-      // Just over the 1h failure TTL, still well within the 24h success TTL.
       vi.advanceTimersByTime(61 * 60 * 1000);
       await enrichUsenetLanguages([failer(), ok()], logger);
 
-      // Only the failed guid is re-fetched; the resolved guid stays cached.
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(3);
       const fetchedUrls = mockFetchWithSsrfRedirect.mock.calls.map((c) => c[0]);
       expect(fetchedUrls.filter((u) => u === 'http://nzb.test/fail')).toHaveLength(2);
@@ -1454,9 +1408,7 @@ describe('enrichUsenetLanguages', () => {
     });
 
     it('evicts oldest entries past the size cap so the cache does not grow unbounded', async () => {
-      // Fresh Response per call — a single shared one-shot Response's body is
-      // consumable once, so calls 2..N would throw `Body is unusable` and take
-      // the fetch-failed path instead of the resolved success branch (#1330).
+      // Return a fresh Response; bodies are one-shot.
       mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(germanNzbXml(), { status: 200 }));
       const results: SearchResult[] = Array.from({ length: 5001 }, (_, i) =>
         makeResult({ protocol: 'usenet', guid: `cap-${i}`, downloadUrl: `http://nzb.test/cap-${i}` }),
@@ -1465,15 +1417,13 @@ describe('enrichUsenetLanguages', () => {
       await enrichUsenetLanguages(results, logger);
 
       expect(enrichmentCache.size).toBeLessThanOrEqual(5000);
-      // A surviving (newest-inserted) entry resolved a live body — proving every
-      // candidate hit the success branch, not the fetch-failed fallback.
       expect(enrichmentCache.get('test:cap-5000')?.outcome).toBe('resolved');
     });
   });
 
   describe('Phase-2 fetch cap (#1315)', () => {
     function usenetCandidates(): SearchResult[] {
-      // 12 with distinct matchScores 1..12 + 1 with matchScore omitted (ranks lowest).
+      // Missing matchScore must rank below scores 1–12.
       const scored = Array.from({ length: 12 }, (_, i) =>
         makeResult({ protocol: 'usenet', guid: `cap-${i}`, downloadUrl: `http://nzb.test/cap-${i}`, matchScore: i + 1 }),
       );
@@ -1482,16 +1432,14 @@ describe('enrichUsenetLanguages', () => {
     }
 
     it('fetches only the top-N cache-miss candidates by ranking tuple and logs the skipped count', async () => {
-      // Fresh Response per call — a single Response's body is consumable once.
+      // Return a fresh Response; bodies are one-shot.
       mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(germanNzbXml(), { status: 200 }));
       const results = usenetCandidates();
 
       await enrichUsenetLanguages(results, logger, undefined, { maxPhase2Fetches: 10 });
 
-      // 13 candidates, cap 10 → exactly 10 fetches.
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(10);
-      // Top-10 matchScores are 3..12 → those fetched (german); 1, 2, and the
-      // no-score candidate are skipped (no language, no crash).
+      // Scores 3–12 are the top ten; missing score ranks last.
       const byGuid = new Map(results.map((r) => [r.guid, r]));
       for (let i = 2; i < 12; i++) expect(byGuid.get(`cap-${i}`)!.language).toBe('german');
       expect(byGuid.get('cap-0')!.language).toBeUndefined();
@@ -1505,17 +1453,13 @@ describe('enrichUsenetLanguages', () => {
     });
 
     it('uncapped (option omitted) fetches every cache-miss candidate', async () => {
-      // Fresh Response per call so every candidate consumes a live body and
-      // resolves a language — a single shared one-shot Response would force
-      // calls 2..N down the fetch-failed path (`Body is unusable`) (#1330).
+      // Return a fresh Response; bodies are one-shot.
       mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(germanNzbXml(), { status: 200 }));
       const results = usenetCandidates();
 
       await enrichUsenetLanguages(results, logger);
 
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(13);
-      // Success branch: every candidate resolved german, and its cache entry is
-      // `resolved` (not `fetch-failed`).
       for (const r of results) expect(r.language).toBe('german');
       expect(enrichmentCache.get(`test:${results[0]!.guid}`)?.outcome).toBe('resolved');
     });
@@ -1541,8 +1485,6 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(usenetCandidates(5), logger, undefined, { maxPhase2Fetches: -2 });
 
-      // Without the clamp, `ranked.slice(0, -2)` would keep (and fetch) 3 of the
-      // 5 candidates — the inverse of a cap. The clamp pins it to zero.
       expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
     });
 
@@ -1568,9 +1510,7 @@ describe('enrichUsenetLanguages', () => {
   });
 
   describe('Phase-2 cap-skipped free title check (#1326)', () => {
-    // Fetched candidates return a plain (no-language) NZB so the only language
-    // that can surface is the title-based one on the cap-skipped tail — this
-    // isolates the #1326 behavior from the post-fetch detection cascade.
+    // Plain fetched NZBs isolate title detection on the cap-skipped tail.
     function plainFetch(): void {
       mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(plainNzbXml(), { status: 200 }));
     }
@@ -1587,9 +1527,7 @@ describe('enrichUsenetLanguages', () => {
 
     it('detects a German title on a cap-skipped candidate without fetching its NZB', async () => {
       plainFetch();
-      // 13 candidates, matchScore 1..13. Cap 10 → top-10 (matchScore 4..13)
-      // fetched; matchScore 1,2,3 skipped. The German marker sits on matchScore 1,
-      // squarely in the ranked dropped tail.
+      // Put the German marker on the lowest-ranked candidate.
       const german = capMiss(1, { guid: 'cap-german', downloadUrl: 'http://nzb.test/cap-german', title: 'Der Hobbit (Ungekürzt)' });
       const rest = Array.from({ length: 12 }, (_, i) => capMiss(i + 2));
       const results = [german, ...rest];
@@ -1597,12 +1535,9 @@ describe('enrichUsenetLanguages', () => {
       await enrichUsenetLanguages(results, logger, undefined, { maxPhase2Fetches: 10 });
 
       expect(german.language).toBe('german');
-      // Its NZB was never fetched — zero Phase-2 cost for the skipped candidate.
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(10);
       const fetchedUrls = mockFetchWithSsrfRedirect.mock.calls.map((c) => c[0]);
       expect(fetchedUrls).not.toContain('http://nzb.test/cap-german');
-      // languagesDetected counts the one cap-skipped German transition (fetched
-      // candidates resolve to no language via the plain NZB).
       expect(logger.info).toHaveBeenCalledWith(
         expect.objectContaining({ nzbFetched: 10, languagesDetected: 1 }),
         'Usenet language detection complete',
@@ -1611,10 +1546,7 @@ describe('enrichUsenetLanguages', () => {
 
     it('walks the ranked dropped tail, not insertion order', async () => {
       plainFetch();
-      // German marker candidate is FIRST by insertion order but lowest by
-      // matchScore — so it lands in the ranked dropped tail. An insertion-order
-      // (`misses.slice(cap)`) implementation would fetch it and leave it
-      // undefined; the ranked split skips and title-detects it.
+      // Insert the lowest-ranked German candidate first to distinguish ranking from insertion order.
       const german = capMiss(1, { guid: 'cap-german', downloadUrl: 'http://nzb.test/cap-german', title: 'Der Hobbit (Ungekürzt)' });
       const rest = Array.from({ length: 12 }, (_, i) => capMiss(i + 2));
       const results = [german, ...rest];
@@ -1637,7 +1569,6 @@ describe('enrichUsenetLanguages', () => {
       expect(noMarker.language).toBeUndefined();
       const fetchedUrls = mockFetchWithSsrfRedirect.mock.calls.map((c) => c[0]);
       expect(fetchedUrls).not.toContain('http://nzb.test/cap-plain');
-      // No transition → languagesDetected stays at 0 (fetched candidates are plain).
       expect(logger.info).toHaveBeenCalledWith(
         expect.objectContaining({ nzbFetched: 10, languagesDetected: 0 }),
         'Usenet language detection complete',
@@ -1652,13 +1583,8 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages(results, logger, undefined, { maxPhase2Fetches: 10 });
 
-      // No cache entry was written for the cap-skipped candidate — title-only is
-      // not a terminal outcome and must not suppress the real NZB fetch. Key is
-      // namespaced by indexer now (#1328): default makeResult indexer is 'test'.
       expect(enrichmentCache.get('test:cap-german')).toBeUndefined();
 
-      // Behavioral proof: a second, uncapped run fetches the previously-skipped
-      // NZB (its key was never cached as a hit).
       mockFetchWithSsrfRedirect.mockClear();
       const second = [makeResult({ protocol: 'usenet', guid: 'cap-german', downloadUrl: 'http://nzb.test/cap-german', title: 'Der Hobbit (Ungekürzt)' })];
       await enrichUsenetLanguages(second, logger);
@@ -1678,7 +1604,6 @@ describe('enrichUsenetLanguages', () => {
         expect.objectContaining({ title: 'Der Hobbit (Ungekürzt)', signal: 'title-cap-skipped', matched: 'german' }),
         expect.any(String),
       );
-      // The signal string is grep-distinct from the fetch-path signals.
       const signals = (logger.debug as ReturnType<typeof vi.fn>).mock.calls
         .map((c) => (c[0] as { signal?: string }).signal)
         .filter(Boolean);
@@ -1697,7 +1622,6 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages([a, b], logger);
 
-      // Distinct namespaced keys → both fetched, both cached separately.
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(2);
       expect(enrichmentCache.get('alpha:shared-123')).toBeDefined();
       expect(enrichmentCache.get('beta:shared-123')).toBeDefined();
@@ -1710,7 +1634,6 @@ describe('enrichUsenetLanguages', () => {
       await enrichUsenetLanguages([r], logger);
 
       expect(enrichmentCache.get('77:g-77')).toBeDefined();
-      // The name-based key is NOT used when the numeric indexerId is stamped.
       expect(enrichmentCache.get('alpha:g-77')).toBeUndefined();
     });
 
@@ -1720,7 +1643,6 @@ describe('enrichUsenetLanguages', () => {
       await enrichUsenetLanguages([makeResult({ protocol: 'usenet', guid: 'dup', indexer: 'alpha', downloadUrl: 'http://nzb.test/a' })], logger);
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1);
 
-      // Different indexer, same guid → cache MISS, fetches independently.
       await enrichUsenetLanguages([makeResult({ protocol: 'usenet', guid: 'dup', indexer: 'beta', downloadUrl: 'http://nzb.test/b' })], logger);
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(2);
     });
@@ -1754,7 +1676,6 @@ describe('enrichUsenetLanguages', () => {
 
       await enrichUsenetLanguages([a, b], logger);
 
-      // Distinct downloadUrls → distinct keys → two fetches, no collapse onto one poison key.
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(2);
       expect(enrichmentCache.size).toBe(2);
     });
@@ -1773,10 +1694,8 @@ describe('enrichUsenetLanguages', () => {
       expect(dupB.language).toBe('german');
       expect(dupA.nzbName).toBe('Der.Pack.part01.rar');
       expect(dupB.nzbName).toBe('Der.Pack.part01.rar');
-      // Exactly one cache entry under the shared key.
       expect(enrichmentCache.size).toBe(1);
       expect(enrichmentCache.get('alpha:dup')).toBeDefined();
-      // The duplicate is enriched from the representative, not separately fetched.
       expect(logger.debug).toHaveBeenCalledWith(
         expect.objectContaining({ signal: 'within-run-dup', language: 'german' }),
         expect.any(String),
@@ -1793,10 +1712,8 @@ describe('enrichUsenetLanguages', () => {
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1);
       expect(dupA.language).toBeUndefined();
       expect(dupB.language).toBeUndefined();
-      // Internal discriminant observed through cache state, not a SearchResult field.
       expect(enrichmentCache.size).toBe(1);
 
-      // Second uncapped run: the fetch-failed entry is a HIT within its 1h TTL → no re-fetch.
       mockFetchWithSsrfRedirect.mockClear();
       await enrichUsenetLanguages([makeResult({ protocol: 'usenet', guid: 'dupf', indexer: 'alpha', downloadUrl: 'http://nzb.test/dupf', title: 'Plain English A' })], logger);
       expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
@@ -1813,7 +1730,6 @@ describe('enrichUsenetLanguages', () => {
       expect(dupA.language).toBeUndefined();
       expect(dupB.language).toBeUndefined();
 
-      // Second uncapped run does NOT re-fetch — the unresolved outcome is a cached hit.
       mockFetchWithSsrfRedirect.mockClear();
       await enrichUsenetLanguages([makeResult({ protocol: 'usenet', guid: 'dupu', indexer: 'alpha', downloadUrl: 'http://nzb.test/dupu', title: 'Plain A' })], logger);
       expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
@@ -1821,39 +1737,31 @@ describe('enrichUsenetLanguages', () => {
 
     it('cap-straddle: a duplicate key consumes one cap slot and both duplicates get the representative enrichment', async () => {
       mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(germanNzbXml(), { status: 200 }));
-      // The duplicate pair outranks the lone `other`; cap 1 admits a single key.
+      // The duplicate pair outranks other; cap 1 admits one key.
       const dupA = makeResult({ protocol: 'usenet', guid: 'dup', indexer: 'alpha', downloadUrl: 'http://nzb.test/dup', title: 'Plain A', matchScore: 5 });
       const dupB = makeResult({ protocol: 'usenet', guid: 'dup', indexer: 'alpha', downloadUrl: 'http://nzb.test/dup', title: 'Plain B', matchScore: 5 });
       const other = makeResult({ protocol: 'usenet', guid: 'other', indexer: 'alpha', downloadUrl: 'http://nzb.test/other', title: 'Plain Other', matchScore: 1 });
 
       await enrichUsenetLanguages([dupA, dupB, other], logger, undefined, { maxPhase2Fetches: 1 });
 
-      // One distinct key takes the single cap slot → one fetch, both duplicates enriched.
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1);
       expect(dupA.language).toBe('german');
-      // Grouping-before-cap: dupB is NOT stranded in the cap-skipped title-only tail.
       expect(dupB.language).toBe('german');
-      // The genuinely-other, lower-ranked release is the one cap-skipped (no title marker).
       expect(other.language).toBeUndefined();
     });
 
     it('fetches the highest-ranked (comparePhase2) group member as the representative, not insertion order', async () => {
-      // Distinguish WHICH duplicate is fetched: same guid → same group, but the
-      // lower-ranked member is inserted FIRST and the higher-ranked member carries
-      // a different downloadUrl. A `group[0]` representative would fetch '/low';
-      // the comparePhase2 representative fetches '/high'.
+      // Insert low first with distinct URLs so a group[0] representative fails.
       mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(germanNzbXml(), { status: 200 }));
       const low = makeResult({ protocol: 'usenet', guid: 'dup', indexer: 'alpha', downloadUrl: 'http://nzb.test/low', matchScore: 1, title: 'Low' });
       const high = makeResult({ protocol: 'usenet', guid: 'dup', indexer: 'alpha', downloadUrl: 'http://nzb.test/high', matchScore: 9, title: 'High' });
 
       await enrichUsenetLanguages([low, high], logger);
 
-      // One fetch, and it is the higher-ranked representative's URL — pins ranking.
       expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(1);
       const fetchedUrls = mockFetchWithSsrfRedirect.mock.calls.map((c) => c[0]);
       expect(fetchedUrls).toEqual(['http://nzb.test/high']);
       expect(fetchedUrls).not.toContain('http://nzb.test/low');
-      // Both duplicates carry the representative's enrichment regardless of which was fetched.
       expect(low.language).toBe('german');
       expect(high.language).toBe('german');
     });
@@ -1863,13 +1771,11 @@ describe('enrichUsenetLanguages', () => {
     it('the completion log reports cacheHits and capSkipped', async () => {
       mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(germanNzbXml(), { status: 200 }));
 
-      // Warm the cache for one release.
       await enrichUsenetLanguages(
         [makeResult({ protocol: 'usenet', guid: 'warm', indexer: 'alpha', downloadUrl: 'http://nzb.test/warm' })],
         logger,
       );
 
-      // Run with one cache hit (warm) and two fresh candidates under cap 1 → one cap-skip.
       const run = [
         makeResult({ protocol: 'usenet', guid: 'warm', indexer: 'alpha', downloadUrl: 'http://nzb.test/warm' }),
         makeResult({ protocol: 'usenet', guid: 'fresh1', indexer: 'alpha', downloadUrl: 'http://nzb.test/fresh1', matchScore: 5, title: 'Plain One' }),
@@ -1884,9 +1790,6 @@ describe('enrichUsenetLanguages', () => {
     });
 
     it('counts an unresolved cache hit in cacheHits even though it sets no language', async () => {
-      // A successful fetch with no language signal is cached as `unresolved` — a
-      // HIT that applies no language. `cacheHits` (total hits) must count it even
-      // though `hitsDetected`/`languagesDetected` (language-setting hits) do not.
       mockFetchWithSsrfRedirect.mockResolvedValue(new Response(plainNzbXml(), { status: 200 }));
       const make = () => makeResult({ protocol: 'usenet', guid: 'u-hit', indexer: 'alpha', downloadUrl: 'http://nzb.test/u-hit', title: 'Plain English Audiobook' });
 
@@ -1901,8 +1804,6 @@ describe('enrichUsenetLanguages', () => {
     });
 
     it('counts a fetch-failed cache hit in cacheHits without incrementing languagesDetected', async () => {
-      // A fetch-failed entry with no title fallback is also a HIT within its TTL —
-      // it sets no language, so it counts toward `cacheHits` but not `languagesDetected`.
       mockFetchWithSsrfRedirect.mockResolvedValue(new Response('err', { status: 500 }));
       const make = () => makeResult({ protocol: 'usenet', guid: 'f-hit', indexer: 'alpha', downloadUrl: 'http://nzb.test/f-hit', title: 'Stephen King - The Stand (2012) MP3' });
 

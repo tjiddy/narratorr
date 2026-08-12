@@ -201,8 +201,6 @@ describe('createDownloadClientFormSchema', () => {
     });
   });
 
-  // ===== #263 — pathMappings in create schema =====
-
   describe('createDownloadClientSchema pathMappings', () => {
     it('accepts body with valid pathMappings array', () => {
       const result = createDownloadClientSchema.safeParse({
@@ -251,8 +249,6 @@ describe('createDownloadClientFormSchema', () => {
     });
   });
 
-  // ===== #263 — downloadRoot removed from form schema =====
-
   describe('settings.downloadRoot removed', () => {
     it('form schema no longer includes downloadRoot field', () => {
       const result = createDownloadClientFormSchema.safeParse({
@@ -261,7 +257,6 @@ describe('createDownloadClientFormSchema', () => {
       });
       expect(result.success).toBe(true);
       if (result.success) {
-        // downloadRoot is stripped by the schema (not in the shape)
         expect(result.data.settings).not.toHaveProperty('downloadRoot');
       }
     });
@@ -438,7 +433,6 @@ describe('createDownloadClientFormSchema — settings trim (#284)', () => {
   });
 });
 
-// #557 — Typed adapter settings schemas (discriminated unions)
 describe('createDownloadClientSchema — typed settings validation', () => {
   const base = { name: 'Test', enabled: true, priority: 50 };
 

@@ -109,7 +109,6 @@ describe('NZBGetClient', () => {
         category: 'audiobooks',
       });
 
-      // Category is params[2]
       expect(capturedBody!.params[2]).toBe('audiobooks');
     });
 
@@ -124,7 +123,6 @@ describe('NZBGetClient', () => {
 
       await client.addDownload(nzbUrl('https://indexer.test/nzb'), { paused: true });
 
-      // Priority is params[3]: -1 = paused
       expect(capturedBody!.params[3]).toBe(-1);
     });
 
@@ -226,13 +224,13 @@ describe('NZBGetClient', () => {
 
       const items = await client.getAllDownloads('audiobooks');
 
-      expect(items).toHaveLength(2); // activeGroup + historyItem (both audiobooks)
+      expect(items).toHaveLength(2);
       expect(items.every((i) => i.id !== '999')).toBe(true);
     });
   });
 
   describe('savePath/name derivation from DestDir', () => {
-    // `path.join()` uses '\' on Windows; normalize to POSIX before comparing to literals.
+    // Normalize path.join output before comparing cross-platform literals.
     const normPath = (s: string): string => s.split('\\').join('/');
 
     it('history item: savePath is the parent and join round-trips to DestDir', async () => {
@@ -737,14 +735,12 @@ describe('NZBGetClient', () => {
 
       const item = await client.getDownload('123');
       expect(item).not.toBeNull();
-      // DownloadTimeSec = 0 → speedMbps calc skipped → eta = undefined
       expect(item!.eta).toBeUndefined();
     });
 
     it('computes downloadSpeed from DownloadedSizeMB / DownloadTimeSec (MiB/s → bytes/s)', async () => {
       server.use(
         rpcHandler({
-          // 10 MiB in 5s = 2 MiB/s = 2 * 1048576 bytes/s
           listgroups: () => [{ ...activeGroup, DownloadedSizeMB: 10, DownloadTimeSec: 5 }],
           history: () => [],
         }),
@@ -775,7 +771,6 @@ describe('NZBGetClient', () => {
       );
 
       const item = await client.getDownload('123');
-      // No downloaded bytes yet — rate is unknown, not 0 (which would mean "actively stalled").
       expect(item!.downloadSpeed).toBeUndefined();
     });
 
@@ -891,7 +886,6 @@ describe('NZBGetClient', () => {
       );
 
       const item = await client.getDownload('123');
-      // speedMbps = 100/100 = 1, eta = 100/1 = 100
       expect(item!.eta).toBe(100);
     });
   });
@@ -1188,7 +1182,6 @@ describe('NZBGetClient', () => {
       expect(item!.status).toBe('completed');
     });
 
-    // #1778 — post-proc fields are nullish; a null must parse and behave like absence.
     it('does not degrade when ParStatus/UnpackStatus/MoveStatus/ScriptStatus are null', async () => {
       server.use(
         rpcHandler({

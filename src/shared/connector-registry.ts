@@ -5,19 +5,14 @@ import { extractHostname } from './registry-utils.js';
 export const CONNECTOR_TYPES = ['audiobookshelf', 'plex'] as const;
 export type ConnectorType = typeof CONNECTOR_TYPES[number];
 
-/** Control kind a connector settings field renders as in the per-type form. */
 export type ConnectorFieldType = 'text' | 'password' | 'select' | 'path-mappings' | 'toggle';
 
-/**
- * Declarative connector settings field. The per-type form renders inputs in
- * declared order (choosing the control by `type`), and the field-error router
- * maps a `Record<string,string>` error key to the input whose `key` matches.
- */
+// Declaration order controls rendering; key also addresses fieldErrors.
 export interface ConnectorSettingsField {
-  key: string;          // settings key — also the fieldErrors Record key
-  label: string;        // input label
+  key: string;
+  label: string;
   type: ConnectorFieldType;
-  secret?: boolean;     // informational; SECRET_FIELDS still governs server-side masking
+  secret?: boolean;     // Display metadata only; SECRET_FIELDS controls masking.
   placeholder?: string;
 }
 

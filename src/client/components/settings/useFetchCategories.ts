@@ -33,9 +33,7 @@ export function useFetchCategories({ clientId, isDirty, getValues }: UseFetchCat
           enabled: formData.enabled,
           priority: formData.priority,
           settings: formData.settings,
-          // Forward the editing client's id so the route can resolve any masked
-          // secret (e.g. apiKey/password) against the persisted record. Omit
-          // for create-mode so the route validates as plaintext-only.
+          // Editing forwards id so masked secrets resolve against persisted values; create mode stays plaintext-only.
           ...(clientId !== undefined ? { id: clientId } : {}),
         });
       }

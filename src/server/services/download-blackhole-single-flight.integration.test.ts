@@ -8,16 +8,10 @@ import type { DownloadClientService } from './download-client.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 
-// #1857 F24 — AC5's "exactly ONE client-add and ONE inserted winner row" for an
-// immediate-terminal Blackhole winner, proven at the REAL seams: this test does NOT
-// mock the DownloadService.grab boundary. It runs two identical concurrent confirmed
-// replaces through the REAL DownloadService + DownloadOrchestrator and counts the
-// adapter `addDownload` (client-add / handoff) and `db.insert` (row-insert) seams. If
-// single-flight coalescing broke, both operations would run → two adds + two inserts.
+// Exercise real service/orchestrator seams; broken coalescing doubles adapter add and DB insert.
 
 const MAGNET = 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d&dn=BH';
 
-/** The terminal Blackhole winner row getById returns after the handoff insert. */
 const winnerRow = {
   id: 1, publicId: 'dl_bh', bookId: 5, indexerId: null, downloadClientId: 1,
   title: 'BH Release', protocol: 'torrent' as const, infoHash: 'aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
@@ -35,9 +29,8 @@ describe('Blackhole single-flight real-seam counts (#1857 F24/AC5)', () => {
 
   beforeEach(() => {
     db = createMockDb();
-    // Insert seam — counted; returns the winner id so grab() can re-read it.
+    // Insert returns the winner id for grab's re-read.
     db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
-    // Unguarded book-status write (transitionBookStatus) — resolves.
     db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
     // Select order for ONE coalesced workflow run + two getById re-reads:
     //  1 workflow gather rows, 2 gather jobs, 3 book-status capture,
@@ -69,13 +62,11 @@ describe('Blackhole single-flight real-seam counts (#1857 F24/AC5)', () => {
 
     const [d1, d2] = await Promise.all([orch.grabInternal(params), orch.grabInternal(params)]);
 
-    // Both waiters resolve to the SAME terminal handoff winner.
     expect(d1.id).toBe(1);
     expect(d2.id).toBe(1);
     expect(d1.externalId).toBeNull(); // Blackhole handoff (terminal)
 
-    // The load-bearing AC5 counts, measured at the REAL seams (not a mocked grab()):
-    expect(addDownload).toHaveBeenCalledTimes(1); // exactly one client-add / handoff
-    expect(db.insert).toHaveBeenCalledTimes(1);   // exactly one inserted winner row
+    expect(addDownload).toHaveBeenCalledTimes(1);
+    expect(db.insert).toHaveBeenCalledTimes(1);
   });
 });

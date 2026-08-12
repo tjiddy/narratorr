@@ -82,7 +82,7 @@ export function FixSeriesModal({ bookId, currentSeriesName, onClose }: FixSeries
 
   return (
     <Modal onClose={onClose} className="w-full max-w-lg flex flex-col max-h-[85vh]">
-      {/* Participates in the Modal's height-capped flex column — see BookMetadataModal. */}
+      {/* Must join Modal's height-capped flex column so the body scrolls. */}
       <div role="dialog" aria-modal="true" aria-labelledby="fix-series-modal-title" tabIndex={-1} className="flex flex-col min-h-0 flex-1">
         <div className="px-6 pt-5 pb-4 flex items-center justify-between shrink-0">
           <h2 id="fix-series-modal-title" className="font-display text-lg font-semibold tracking-tight">

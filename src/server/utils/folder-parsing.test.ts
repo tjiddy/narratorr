@@ -101,8 +101,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       });
 
       it('does not strip non-audio extensions (.txt is not in AUDIO_EXTENSIONS)', () => {
-        // Title still flows through cleanName afterwards (which normalises dots to
-        // spaces); the assertion is that the .txt suffix is NOT removed before parsing.
+        // cleanName changes dots to spaces; this only guards extension stripping.
         const result = parseFolderStructure(['Book.txt']);
         expect(result.title).not.toBe('Book');
       });
@@ -151,8 +150,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
 
       it('Author/2001 (single number, not multi-segment) keeps original parsing', () => {
         const result = parseFolderStructure(['Author', '2001']);
-        // Single 4-digit year — guard's {1,2} requires at least one separator,
-        // so '2001' alone doesn't trigger; falls through to bare-year strip.
         expect(result.title).toBe('2001');
       });
 
@@ -194,12 +191,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       expect(result).toEqual({ title: 'Project Hail Mary', author: 'Andy Weir', series: null });
     });
 
-    // Issue #977: the old "Title (Author)" / "Title [Author]" heuristic produced
-    // wrong-direction parses on the much-more-common Title(Series) / Title[MediaTag]
-    // shapes. Path 1 is now strictly conservative — the parens content is stripped
-    // by NARRATOR_PAREN_REGEX (parens) or bracketTagStrip (brackets), and author
-    // falls through to null. A future Path 2 (heuristic candidate-generator with
-    // metadata validation) will recover legitimate Title(Author) cases.
     it('"Title (Author)" no longer parses as title+author — parens content is stripped, author=null', () => {
       const result = parseFolderStructure(['Dune (Frank Herbert)']);
       expect(result).toEqual({ title: 'Dune', author: null, series: null });
@@ -520,7 +511,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         expect(result.author).toBe('Brandon Sanderson');
         expect(result.title).toBe('The Way of Kings - The Stormlight Archive 1');
         expect(result.series).toBeNull();
-        // Critical: author must NOT be 'GA' (the previous wrong-direction parse)
         expect(result.author).not.toBe('GA');
       });
 
@@ -538,11 +528,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       });
 
       it('The Hobbit (J.R.R. Tolkien) → title-only with parens content kept (deliberate regression: Path 2 will recover via metadata)', () => {
-        // Path 1 regression: previously author='J.R.R. Tolkien'. Now author=null
-        // and the parens content survives because normalizeFolderName converts
-        // 'J.R.R.' dots to spaces, producing 'J R R Tolkien' (4 tokens) which
-        // exceeds NARRATOR_PAREN_REGEX's 1-3 word limit. Path 2 (metadata-driven
-        // candidate generation) will recover the legitimate Title(Author) case.
+        // Dot normalization makes this four tokens, outside the 1–3-word narrator rule.
         const result = parseFolderStructure(['The Hobbit (J.R.R. Tolkien)']);
         expect(result.author).toBeNull();
         expect(result.series).toBeNull();
@@ -775,7 +761,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         });
 
         it('year inside a series-shaped paren is not a position — … (Some Series 2020)', () => {
-          // No Book/Vol/# marker → series paren regex never fires; 2020 is not treated as a position.
           const result = parseFolderStructure(["Academ's Fury by Jim Butcher (Some Series 2020)"]);
           expect(result.series).toBeNull();
           expect(result.seriesPosition).toBeUndefined();
@@ -855,8 +840,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
 
       describe('disc + series interaction (parseTitledDiscFolder unaffected)', () => {
         it('disc paren is split off by parseTitledDiscFolder, leaving a series-paren title that parses to series', () => {
-          // Discovery strips the trailing "(Disc N)" via parseTitledDiscFolder; the residual
-          // title still carries the series paren, which parseFolderStructure then extracts.
+          // Discovery removes only "(Disc N)"; parsing then extracts the remaining series paren.
           const disc = parseTitledDiscFolder("Academ's Fury by Jim Butcher (Codex Alera Book 2) (Disc 1)");
           expect(disc).toEqual({ title: "Academ's Fury by Jim Butcher (Codex Alera Book 2)", discNumber: 1 });
 
@@ -941,8 +925,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
 
       describe('paren strip feeds the paren-free remainder through the existing 2-part chain (F1)', () => {
         it('cleaned — Series - 2 - Title (Series Book 2): SERIES_NUMBER_TITLE resolves the stripped remainder', () => {
-          // Without feed-through the title would keep "Codex Alera - 2 - Academ's Fury"; the chain
-          // must run on the paren-free remainder so SERIES_NUMBER_TITLE_REGEX resolves the real title.
           expect(parseFolderStructure(['Author', "Codex Alera - 2 - Academ's Fury (Codex Alera Book 2)"])).toEqual({
             title: "Academ's Fury", author: 'Author', series: 'Codex Alera', seriesPosition: 2,
           });
@@ -1098,9 +1080,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
 
       it('regex-miss fallback (NOT undefined-branch coverage) — Foundation / Foundation ABC_Title', () => {
         const result = parseFolderStructure(['Foundation', 'Foundation ABC_Title']);
-        // SERIES_PREFIX_POSITION_REGEX cannot match (`ABC` is neither decimal nor IVX);
-        // helper returns null at the regex check before parseRomanOrArabicPosition.
-        // Falls through to 2-part default; cleanName normalizes `_` to space.
         expect(result.author).toBe('Foundation');
         expect(result.title).toBe('Foundation ABC Title');
         expect(result.series).toBeNull();
@@ -1270,7 +1249,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
     });
 
     it('does not strip narrator paren if content is codec tag', () => {
-      // MP3 is a codec tag — should be handled by normalize step, not narrator step
       const result = cleanName('Title (MP3)');
       expect(result).toBe('Title');
     });
@@ -1311,14 +1289,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       expect(cleanName('Some Title []')).toBe('Some Title');
     });
 
-    // End-to-end cleanName preservation for codec/bitrate/year tag forms. NOTE:
-    // these do NOT all exercise bracketTagStrip with a populated inner — `[M4B]`
-    // is codec-stripped to `[]` by `normalize`, and that empty `[]` is then removed
-    // by `bracketTagStrip`'s own leading global `\[[^\]]*\]` strip (NOT the later
-    // `emptyBracketStrip` step, which never sees it); `[2021]` is consumed by the
-    // earlier `yearBracketStrip` step. Only `[64k]` reaches the bracketTagStrip
-    // unwrap/delete logic with a populated inner. The dedicated step-output
-    // assertion for bracketTagStrip lives in the #1331 trace test below.
+    // These tags leave through different pipeline steps; bracketTagStrip is isolated below.
     it('strips [M4B] codec tag, leaving the bare title', () => {
       expect(cleanName('Title [M4B]')).toBe('Title');
     });
@@ -1331,9 +1302,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       expect(cleanName('Title [2021]')).toBe('Title');
     });
 
-    // Issue #1316 — bracketTagStrip deleted whole-title brackets, collapsing
-    // "Author - [Title]" to a title-less "Author -" and poisoning metadata search.
-    // The fix unwraps (keeps inner text) when stripping would leave no title.
     describe('whole-title bracket unwrap (issue #1316)', () => {
       it('unwraps a whole-title bracket instead of deleting it (en-dash variant)', () => {
         const parsed = parseFolderStructure(['Dennis E. Taylor - [Bobiverse 03 All These Worlds – 3]']);
@@ -1349,9 +1317,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         expect(parsed.title).toMatch(/^[^[\]]*$/);
       });
 
-      // Proves the fix lives in the bracketTagStrip step itself, not the
-      // end-of-pipeline non-empty fallback: the step output is the unwrapped,
-      // bracket-free string rather than an empty (or bracket-wrapped) value.
       it('bracketTagStrip step output is the unwrapped, bracket-free string', () => {
         const trace = cleanNameWithTrace('Dennis E. Taylor - [Bobiverse 03 All These Worlds – 3]');
         const step = trace.steps.find((s) => s.name === 'bracketTagStrip');
@@ -1362,24 +1327,11 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       });
     });
 
-    // Issue #1331 — the #1316 whole-title-bracket unwrap false-fired on
-    // `Title - [Multi Word Tag]` shapes: codec-stripped `[MP3 64k]` inners were
-    // unwrapped (leaking `64k` into the title and, via P10, fabricating series
-    // metadata), and genuine multi-token release tags (`[Dramatized Adaptation]`,
-    // `[64k 22khz]`) leaked their text into titles. The fix restores the
-    // pre-#1316, fuzzy-matchable, tag-free titles while preserving the #1316
-    // Bobiverse unwrap win.
+    // Delete release-tag brackets, but unwrap genuine title brackets.
     describe('release-tag false-fire on "Title - [Multi Word Tag]" (issue #1331, refined by #1332)', () => {
-      // #1332 supersedes two #1331 scope decisions while preserving its core win
-      // (no release-tag text leaks into the title): (1) the dangling trailing ` -`
-      // is now stripped, and (2) when the tag is the ENTIRE subtitle of a
-      // `<series> NN - [tag]` shape, the real series + position are extracted with
-      // an empty title — the structure that #1331 left as `Series NN -`/series=null
-      // is now resolved cleanly instead of being treated as fabrication risk.
       it('deletes codec-stripped [MP3 64k], extracting the real series + position with empty title', () => {
         const parsed = parseFolderStructure(['J.K. Rowling - Harry Potter 1 - [MP3 64k]']);
         expect(parsed.title).not.toContain('64k');
-        // #1332: the tag is the whole subtitle → series/position survive, title empty.
         expect(parsed.title).toBe('');
         expect(parsed.series).toBe('Harry Potter');
         expect(parsed.seriesPosition).toBe(1);
@@ -1388,7 +1340,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       it('deletes codec-stripped [M4B 64k] without leaking 64k (no number → no series, dangling dash stripped)', () => {
         const parsed = parseFolderStructure(['Brandon Sanderson - The Way of Kings - [M4B 64k]']);
         expect(parsed.title).not.toContain('64k');
-        // No `<series> NN -` structure here, so no series; #1332 strips the dangling dash.
         expect(parsed.title).toBe('The Way of Kings');
         expect(parsed.series).toBeNull();
       });
@@ -1402,7 +1353,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       it('denylists the [64k 22khz] tag, extracting the real series + position with empty title', () => {
         const parsed = parseFolderStructure(['Author - Series 03 - [64k 22khz]']);
         expect(parsed.title).not.toMatch(/64k|22khz/);
-        // #1332: tag is the whole subtitle of `Series 03 - [tag]` → series/position survive.
         expect(parsed.series).toBe('Series');
         expect(parsed.seriesPosition).toBe(3);
       });
@@ -1421,8 +1371,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       });
 
       it('deletes a leading/trailing-space inner [ 64k ] (trim before tag test, dangling dash stripped)', () => {
-        // The inner trims to the single token `64k`, classified as a release tag and
-        // deleted; #1332 then strips the dangling trailing dash.
         expect(cleanName('Title - [ 64k ]')).not.toContain('64k');
         expect(cleanName('Title - [ 64k ]')).toBe('Title');
       });
@@ -1450,23 +1398,14 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       });
 
       it('bracketTagStrip step (not an earlier step) deletes a populated single-token tag', () => {
-        // `[64k]` survives normalize (not a codec) and yearBracketStrip (not a
-        // 4-digit year), so bracketTagStrip is the step that removes it. Mirrors
-        // the trace-lookup pattern in the #1316 step-output test above.
         const trace = cleanNameWithTrace('Title [64k]');
         const idx = trace.steps.findIndex((s) => s.name === 'bracketTagStrip');
         expect(idx).toBeGreaterThan(0);
-        // The tag still present going IN, gone coming OUT of bracketTagStrip.
         expect(trace.steps[idx - 1]!.output).toContain('[64k]');
         expect(trace.steps[idx]!.output).toBe('Title');
       });
     });
 
-    // Issue #1332 — close the remaining #1316 collapse class. The #1316/#1331
-    // fixes left single-word whole-title brackets (`[Dune]`) collapsing, the
-    // tag-first `cleanTagTitle` path round-tripping bracket-wrapped titles, and the
-    // series-position routes leaking raw tag junk as the title (no shared guard).
-    // This block pins the closed cases on BOTH the folder-parse and tag-first paths.
     describe('close the remaining #1316 collapse class (issue #1332)', () => {
       describe('single-word whole-title brackets unwrap (no word-count gate)', () => {
         it.each([
@@ -1597,36 +1536,35 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
 
       describe('exported predicates', () => {
         it.each([
-          ['44', false], // lone bare numeric is a title fragment, not a tag
+          ['44', false],
           ['22', false],
           ['1984', false],
           ['64k', true],
-          ['64 kbps', true], // spaced unit
-          ['44.1khz', true], // joined decimal sample rate
-          ['64k 44 1khz', true], // dot-split sample rate halves
-          ['64k, 22khz', true], // comma punctuation between tokens
-          ['MP3 - 64k', true], // dash separator token
-          ['Dune', false], // real one-word title
+          ['64 kbps', true],
+          ['44.1khz', true],
+          ['64k 44 1khz', true],
+          ['64k, 22khz', true],
+          ['MP3 - 64k', true],
+          ['Dune', false],
         ])('isReleaseTagInner(%j) === %s', (inner, expected) => {
           expect(isReleaseTagInner(inner)).toBe(expected);
         });
 
         it.each([
-          ['[Graphic Audio]', true], // single group
-          ['[Graphic Audio] [64k 22khz]', true], // multi-group, all tags
-          ['[Dune]', false], // real title inner
-          ['[64k] [Real Title]', false], // mixed real + tag
-          ['Wool - [Graphic Audio]', false], // non-bracket text present
+          ['[Graphic Audio]', true],
+          ['[Graphic Audio] [64k 22khz]', true],
+          ['[Dune]', false],
+          ['[64k] [Real Title]', false],
+          ['Wool - [Graphic Audio]', false],
         ])('isPureReleaseTagBracket(%j) === %s', (segment, expected) => {
           expect(isPureReleaseTagBracket(segment)).toBe(expected);
         });
       });
 
-      // Characterization (#1273 convention): pin CURRENT output for degenerate
-      // bracket forms — known-wrong is allowed, the lock just detects drift.
+      // Drift guards for current behavior, including known bugs.
       describe('degenerate bracket forms — characterization (known-wrong allowed)', () => {
         it('nested [[Title]] — FIXME: known-wrong, inner-bracket residue survives', () => {
-          // The greedy `[^\]]*` strip consumes `[[Title]` and leaves a stray `]`.
+          // Greedy stripping leaves the unmatched closing bracket.
           expect(cleanName('[[Title]]')).toBe(']');
         });
 
@@ -1682,9 +1620,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
 
     it('each step reflects the actual transformation applied', () => {
       const trace = cleanNameWithTrace('01 - Title, Book 01');
-      // leadingNumeric strips "01 - "
       expect(trace.steps[0]!.output).toBe('Title, Book 01');
-      // seriesMarker strips ", Book 01" (end-of-string match)
       expect(trace.steps[1]!.output).toBe('Title');
       expect(trace.result).toBe('Title');
     });
@@ -1700,7 +1636,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
 
     it('no-op steps show same input/output', () => {
       const trace = cleanNameWithTrace('Clean Title');
-      // leadingNumeric is a no-op for "Clean Title"
       expect(trace.steps[0]!.output).toBe('Clean Title');
     });
 
@@ -1793,14 +1728,10 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
 
     it('returns raw "Author - Title" from regex capture groups', () => {
       const result = parseFolderStructureRaw(['Andy Weir - Project Hail Mary']);
-      // Dash regex: /^(.+?)\s*-\s*(.+)$/ — group 2 captures everything after "- "
       expect(result.author).toBe('Andy Weir');
       expect(result.title).toBe('Project Hail Mary');
     });
 
-    // Issue #977: parens-as-author heuristic was removed from parseSingleFolderRaw
-    // too. With no dash/by/series-NN match, these fall through to title-only with
-    // the raw string preserved (raw must stay raw — no bracket stripping either).
     it('returns raw "Title (Author)" as title-only (parens heuristic removed)', () => {
       const result = parseFolderStructureRaw(['Dune (Frank Herbert)']);
       expect(result.title).toBe('Dune (Frank Herbert)');
@@ -1815,7 +1746,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
 
     it('returns raw "Title by Author" without cleaning', () => {
       const result = parseFolderStructureRaw(['Project Hail Mary by Andy Weir']);
-      // parseSingleFolderRaw trims the by-match groups (same as cleaned parser guard logic)
       expect(result.title).toBe('Project Hail Mary');
       expect(result.author).toBe('Andy Weir');
     });
@@ -1828,7 +1758,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
 
     it('skips dash pattern when left is numeric (same as cleaned parser)', () => {
       const result = parseFolderStructureRaw(['01 - The Way of Kings']);
-      // Numeric left skips dash match, falls through to "just a title"
       expect(result.title).toBe('01 - The Way of Kings');
       expect(result.author).toBeNull();
     });
@@ -1941,10 +1870,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       it('raw P4 first-dash guard: Author - Discworld, Book 16 - Soul Music does NOT match P4 (would have set series=`Author - Discworld`)', () => {
         const result = parseFolderStructureRaw(['Author - Discworld, Book 16 - Soul Music']);
         expect(result.author).toBe('Author');
-        // P4 would have produced series=`Author - Discworld` and author=null. Confirm guard rejected.
         expect(result.series).not.toBe('Author - Discworld');
-        // The dash heuristic + raw P10-postprocess produces a downstream parse;
-        // the load-bearing assertion here is that the author is "Author" and P4 did not preempt.
       });
 
       it('raw P9: Liu, Cixin - Three Body 01 - Title (raw) → swapped author, raw P10-postprocess fires', () => {
@@ -2083,9 +2009,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
     describe('P4 first-dash guard (issue #980 review F2)', () => {
       it('cleaned: "Author - Discworld, Book 16 - Soul Music" does NOT match P4 (would have set series=`Author - Discworld`)', () => {
         const result = parseFolderStructure(['Author - Discworld, Book 16 - Soul Music']);
-        // P4 without the guard would have returned series=`Author - Discworld`,
-        // author=null, seriesPosition=16. With the guard it falls through to the
-        // dash heuristic, which resolves author='Author'.
         expect(result.author).toBe('Author');
         expect(result.series).not.toBe('Author - Discworld');
       });
@@ -2111,7 +2034,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       for (const parts of cases) {
         const raw = parseFolderStructureRaw(parts);
         const cleaned = parseFolderStructure(parts);
-        // Raw and cleaned must agree on which fields are null vs non-null
+        // Raw and cleaned must agree on field presence.
         expect(raw.title !== null).toBe(cleaned.title !== null);
         expect((raw.author !== null)).toBe((cleaned.author !== null));
         expect((raw.series !== null)).toBe((cleaned.series !== null));
@@ -2181,7 +2104,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       it('parseFolderStructureRaw returns ASIN in raw output with ASIN-stripped title', () => {
         const result = parseFolderStructureRaw(['Title MP3 [B0D18DYG5C]']);
         expect(result.asin).toBe('B0D18DYG5C');
-        // Raw title is ASIN-stripped but NOT cleaned (MP3 remains)
         expect(result.title).toBe('Title MP3');
       });
 
@@ -2198,8 +2120,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       it('does not match [Author Name] as ASIN — bracket content is stripped, author=null (issue #977)', () => {
         const result = parseFolderStructure(['Dune [Frank Herbert]']);
         expect(result.asin).toBeUndefined();
-        // Issue #977: bracket-as-author heuristic was removed; bracketTagStrip
-        // step in cleanName removes the brackets, leaving title-only output.
         expect(result.author).toBeNull();
         expect(result.title).toBe('Dune');
       });
@@ -2229,9 +2149,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       it('folder name is ONLY the ASIN bracket — title collapses to empty (ASIN extracted, no bracket leak)', () => {
         const result = parseFolderStructure(['[B0D18DYG5C]']);
         expect(result.asin).toBe('B0D18DYG5C');
-        // #1332: the ASIN is captured in `asin`; the whole-input ASIN bracket is a
-        // pure release tag, so the shared collapse guard yields an empty title
-        // rather than leaking the raw `[B0D18DYG5C]` into the metadata search.
         expect(result.title).toBe('');
       });
 
@@ -2256,7 +2173,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       it('ASIN-only segment in 2-part path — title collapses to empty (no bracket leak)', () => {
         const result = parseFolderStructure(['Author', '[B0D18DYG5C]']);
         expect(result.asin).toBe('B0D18DYG5C');
-        // #1332: ASIN bracket is a pure release tag → empty title, not raw leak.
         expect(result.title).toBe('');
         expect(result.author).toBe('Author');
       });
@@ -2264,7 +2180,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       it('ASIN-only segment in 3+-part path — title collapses to empty (no bracket leak)', () => {
         const result = parseFolderStructure(['Author', 'Series', '[B0D18DYG5C]']);
         expect(result.asin).toBe('B0D18DYG5C');
-        // #1332: ASIN bracket is a pure release tag → empty title, not raw leak.
         expect(result.title).toBe('');
         expect(result.author).toBe('Author');
         expect(result.series).toBe('Series');
@@ -2284,9 +2199,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
 
   describe('extraction integrity', () => {
     it('parseFolderStructure returns identical results after extraction', () => {
-      // Same test cases from library-scan.service.test.ts. The 'Title (Author)'
-      // case was updated for issue #977: parens-as-author heuristic removed, so
-      // parens content is stripped by NARRATOR_PAREN_REGEX with author=null.
       const cases: [string[], { title: string; author: string | null; series: string | null }][] = [
         [['Author', 'Title'], { title: 'Title', author: 'Author', series: null }],
         [['Author', 'Series', 'Title'], { title: 'Title', author: 'Author', series: 'Series' }],
@@ -2300,9 +2212,8 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
     });
 
     it('cleanName transformation order is preserved', () => {
-      // Series markers before dedup
+      // Series markers must be removed before title deduplication.
       expect(cleanName('Title, Book 01 – Title')).toBe('Title');
-      // Leading numeric before everything
       expect(cleanName('01 - Title')).toBe('Title');
     });
 
@@ -2456,7 +2367,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
     });
 
     it('falls back to original on whitespace-only input (intermediate result empties)', () => {
-      // Bracket-strip + trim drops whitespace-only to ''; series-marker no-op; `result || s` returns the original.
       expect(cleanTagTitle('   ')).toBe('   ');
     });
 
@@ -2532,27 +2442,10 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
     });
   });
 
-  // Issue #1273 — characterization regression suite seeded with real folder names
-  // captured during the 1.0 import UAT (2026-06-08, organized-library + messy-torrent
-  // live scans validated in-container with ffprobe + scan-debug).
-  //
-  // PURPOSE: lock the CURRENT output of parseFolderStructure / parseFolderStructureRaw
-  // for these real-world names so any future parser drift fails CI and forces a
-  // deliberate human decision. These are NOT assertions of correct behavior — every
-  // `expected` object below was captured by RUNNING the parser, not hand-authored.
-  // Rows whose current parse is visibly wrong carry a `// FIXME: known-wrong` note so
-  // the lock does not silently bless the bug (AC3).
-  //
-  // EXCLUSIONS (AC4): Golden Son / Iron Gold names are owned by #1271 and the
-  // 1776 / Slaughterhouse-Five disc sets by #1272 — kept out of this suite so those
-  // fix issues own their own fixtures and the two efforts don't collide.
+  // Captured from 1.0 import UAT: these lock current behavior, not correctness.
+  // Known-wrong rows are labeled; fixtures owned by #1271/#1272 stay in their suites.
   describe('characterization regression suite (1.0 UAT, 2026-06-08)', () => {
-    // Flat single-file novels — the filename IS the only path segment; the `.m4b`
-    // extension is stripped before parsing.
-    // FIXME: known-wrong author — the leading "Reacher NN.00" series-marker is
-    // misread as the author (cleaned collapses the dot to a space, raw preserves it).
-    // The title extraction ("Killing Floor", etc.) is correct and is the value worth
-    // guarding; the author quirk is pinned only to detect drift.
+    // FIXME: Reacher NN.00 is misread as author; the titles are the behavior worth pinning.
     const flatSingleFile = [
       {
         name: 'Reacher 04.00-Killing Floor.m4b',
@@ -2580,26 +2473,20 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       },
     ];
 
-    // Author / Series / Title + numbered, single-segment "Author - ..." shape.
     const authorSeriesNumbered = [
-      // Correct author; title retains the embedded "Hyperion 04" series marker.
       {
         name: 'Dan Simmons - Hyperion 04 The Rise of Endymion',
         parts: ['Dan Simmons - Hyperion 04 The Rise of Endymion'],
         cleaned: { title: 'Hyperion 04 The Rise of Endymion', author: 'Dan Simmons', series: null },
-        raw: null, // raw output identical to cleaned
+        raw: null,
       },
-      // Correct author; title retains the "DF05 -" Dresden Files abbreviation marker.
       {
         name: 'Jim Butcher - DF05 - Death Masks',
         parts: ['Jim Butcher - DF05 - Death Masks'],
         cleaned: { title: 'DF05 - Death Masks', author: 'Jim Butcher', series: null },
         raw: null,
       },
-      // FIXME: known-wrong — "Robin Hobb" (the author) is misread as the series and
-      // author comes back null; the real series ("Farseer") is dropped with the
-      // stripped parenthetical. seriesPosition 1 is correct. Cleaned strips
-      // "(Farseer) (Unabridged)"; raw retains them in the title.
+      // FIXME: author is misread as series; the parenthetical series is dropped.
       {
         name: 'Robin Hobb - 01 - Assassins Apprentice (Farseer) (Unabridged)',
         parts: ['Robin Hobb - 01 - Assassins Apprentice (Farseer) (Unabridged)'],
@@ -2611,8 +2498,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
           seriesPosition: 1,
         },
       },
-      // author comes back null (separate Author - NN - Title (Series, Book N) limitation,
-      // see #1276 out-of-scope); the trailing comma on the series is now stripped.
+      // FIXME: author is lost; the trailing series comma is intentionally stripped (#1276).
       {
         name: 'Michael Chatfield - 07 - Sixth Realm Part 2 (The Ten Realms, Book 7)',
         parts: ['Michael Chatfield - 07 - Sixth Realm Part 2 (The Ten Realms, Book 7)'],
@@ -2621,18 +2507,14 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       },
     ];
 
-    // Single-segment / by-Author shapes.
     const singleSegment = [
-      // Correct — clean "Author - Title" split.
       {
         name: 'Travis Baldree - Legends and Lattes',
         parts: ['Travis Baldree - Legends and Lattes'],
         cleaned: { title: 'Legends and Lattes', author: 'Travis Baldree', series: null },
         raw: null,
       },
-      // FIXME: known-wrong — a multi-space gap (not a dash) is not recognized as an
-      // author/title separator, so author stays null and the whole string becomes the
-      // title. Cleaned collapses the triple space; raw preserves it.
+      // FIXME: a multi-space gap is not an author/title separator.
       {
         name: 'Christopher Moore   Fool',
         parts: ['Christopher Moore   Fool'],
@@ -2641,9 +2523,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       },
     ];
 
-    // Whole-title-bracket names (#1316). Cleaned now unwraps the bracket to a
-    // usable title; raw still preserves the literal brackets (identity transform,
-    // no cleaning step runs), so both rows are raw-divergent.
+    // Cleaned unwraps whole-title brackets; raw preserves them.
     const wholeTitleBracket = [
       {
         name: 'Dennis E. Taylor - [Bobiverse 03 All These Worlds – 3]',
@@ -2665,8 +2545,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       expect(parseFolderStructure(parts)).toEqual(cleaned);
     });
 
-    // Only the rows whose raw output actually diverges from cleaned get a raw lock,
-    // to keep the table readable (AC2 / AC6).
+    // null means raw matches cleaned; only divergent rows need a second assertion.
     const rawDivergent = allSeeds.filter((s) => s.raw !== null);
 
     it.each(rawDivergent)('parseFolderStructureRaw pins raw output — $name', ({ parts, raw }) => {
@@ -2674,38 +2553,27 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
     });
   });
 
-  // Issue #1271 — strip the inline "Book N of [the] <Series> Series/Saga" descriptor and
-  // fix the Title-first author/title ordering it produces. Direct follow-up to #1267, which
-  // coalesced the multi-part Red Rising books but left the coalesced name unmatchable.
   describe('"Book N of [the] <Series> Series/Saga" descriptor strip + ordering (issue #1271)', () => {
-    // AC1 — middle descriptor: `Title - <descriptor> - Author`. The real author is the
-    // TRAILING segment; a naive middle-strip + first-dash heuristic would invert to
-    // { title: 'Pierce Brown', author: 'Golden Son' }, so this also guards the structural branch.
+    // The trailing segment is the author; first-dash parsing would invert title and author.
     it('AC1 — Golden Son - Book II of the Red Rising Series - Pierce Brown (middle descriptor)', () => {
       const result = parseFolderStructure(['Golden Son - Book II of the Red Rising Series - Pierce Brown']);
       expect(result.title).toBe('Golden Son');
       expect(result.author).toBe('Pierce Brown');
-      // Ordering-regression guard: pin the structural branch, not the inverted naive-strip output.
       expect(result.author).not.toBe('Golden Son');
-      // No descriptor residue in the resolved title (AC3).
       expect(result.title).not.toMatch(/\bBook\b|\bof the\b|\bSeries\b/i);
-      // Bonus series capture.
       expect(result.series).toBe('Red Rising');
       expect(result.seriesPosition).toBe(2);
     });
 
-    // AC2 — trailing descriptor: `Author - Title - <descriptor>`. Author already correct;
-    // stripping the trailing descriptor leaves `Author - Title` for the existing heuristic.
     it('AC2 — Pierce Brown - Iron Gold - Book IV of The Red Rising Saga (trailing descriptor)', () => {
       const result = parseFolderStructure(['Pierce Brown - Iron Gold - Book IV of The Red Rising Saga']);
       expect(result.title).toBe('Iron Gold');
       expect(result.author).toBe('Pierce Brown');
-      expect(result.title).not.toMatch(/\bSaga\b/i); // AC3 — no descriptor residue
+      expect(result.title).not.toMatch(/\bSaga\b/i);
       expect(result.series).toBe('Red Rising');
       expect(result.seriesPosition).toBe(4);
     });
 
-    // AC3 — bare "Book N of <Series> Saga" (no "the") confirms the optional `the` is handled.
     it('AC3 — bare "of" form (no "the") — Dawn - Book III of Foundation Saga - Isaac Asimov', () => {
       const result = parseFolderStructure(['Dawn - Book III of Foundation Saga - Isaac Asimov']);
       expect(result.title).toBe('Dawn');
@@ -2714,8 +2582,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       expect(result.seriesPosition).toBe(3);
     });
 
-    // AC4 — negative twin: the keyword "Saga" inside a real title survives because there is
-    // no leading `Book N of ...` anchor.
     it('AC4 — over-strip guard: "Saga" in a real title survives — Brian Aldiss - The Saga of Pliocene Exile', () => {
       const result = parseFolderStructure(['Brian Aldiss - The Saga of Pliocene Exile']);
       expect(result.title).toBe('The Saga of Pliocene Exile');
@@ -2724,7 +2590,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       expect(result.seriesPosition).toBeUndefined();
     });
 
-    // AC4 (second guard) — "Chronicles" inside a legitimate title never triggers the strip.
     it('AC4 — over-strip guard: "Chronicles" in a real title survives — Roger Zelazny - The Chronicles of Amber', () => {
       const result = parseFolderStructure(['Roger Zelazny - The Chronicles of Amber']);
       expect(result.title).toBe('The Chronicles of Amber');
@@ -2732,7 +2597,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       expect(result.series).toBeNull();
     });
 
-    // AC6 — degenerate descriptor-only name must not blank the title; falls back to the original.
     it('AC6 — degenerate "Book 1 of the Series" falls back to a non-empty title', () => {
       const result = parseFolderStructure(['Book 1 of the Series']);
       expect(result.title).toBeTruthy();
@@ -2740,13 +2604,11 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       expect(result.author).toBeNull();
     });
 
-    // AC5 — raw parity twins: parseFolderStructureRaw must produce the SAME structure as the
-    // cleaned parser, including the middle-descriptor ordering guard.
     describe('raw parity (parseFolderStructureRaw)', () => {
       it('AC5 — raw twin of AC1 (middle descriptor, with ordering guard)', () => {
         const result = parseFolderStructureRaw(['Golden Son - Book II of the Red Rising Series - Pierce Brown']);
         expect(result).toEqual({ title: 'Golden Son', author: 'Pierce Brown', series: 'Red Rising', seriesPosition: 2 });
-        expect(result.author).not.toBe('Golden Son'); // structural branch verified in the raw path too
+        expect(result.author).not.toBe('Golden Son');
       });
 
       it('AC5 — raw twin of AC2 (trailing descriptor)', () => {
@@ -2763,11 +2625,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
     });
   });
 
-  // Issue #2145 — narratorr's own Detailed folder format renders a series position into the
-  // leaf directory (`{author}/{series}/{seriesPosition:00? - }{title}`), but the 3+-part parser
-  // branch stripped that prefix as noise without capturing it. These tests pin the additive
-  // capture: cross-segment agreement first (most-specific-first), then the bare `NN - Title`
-  // leaf, both scoped to paths that actually carry a series folder.
+  // In 3+ parts, prefer cross-segment agreement before the bare numeric leaf prefix.
   describe('leading-position leaf capture on 3+-part paths (issue #2145)', () => {
     describe('the reported round-trip losses (Problem table)', () => {
       it('row 1 — Detailed preset leaf `01 - The Way of Kings` yields position 1', () => {
@@ -2797,17 +2655,15 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       });
     });
 
-    // AC2/AC3 — the capture covers exactly the prefix shapes `leadingNumeric` strips today, so
-    // nothing silently discarded before this change stays discarded. Em-dash is deliberately absent
-    // (out of parity with `leadingNumeric`). Zero-padding and decimals parse numerically.
+    // Mirrors leadingNumeric: hyphen/en dash, zero padding, and decimals; not em dash.
     describe('position prefix shapes (AC2/AC3)', () => {
       it.each([
         ['01 - T', 1],
         ['1 - T', 1],
         ['12 - T', 12],
         ['2.5 - T', 2.5],
-        ['2.5 – T', 2.5], // decimal + en-dash (F7)
-        ['01 – T', 1], // integer + en-dash
+        ['2.5 – T', 2.5],
+        ['01 – T', 1],
         ['01. - T', 1],
         ['01.- T', 1],
         ['01. T', 1],
@@ -2824,8 +2680,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       });
     });
 
-    // AC4 — position 0 is what `{seriesPosition:00? - }` renders for a prequel. A truthiness
-    // emission guard drops it; assert the KEY's presence, not just the value.
+    // Assert key presence because truthiness guards can drop zero.
     it('AC4 — position 0 survives as a real key, not undefined', () => {
       const result = parseFolderStructure(['A', 'S', '00 - Prequel']);
       expect(result.seriesPosition).toBe(0);
@@ -2833,7 +2688,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       expect(result.title).toBe('Prequel');
     });
 
-    // AC5 — the capture is gated on the LEXICAL remainder, not the transformed title.
+    // Gate on the lexical remainder; real text may clean to empty.
     describe('degenerate leaves (AC5)', () => {
       it.each(['03 - ', '03 -'])('lexically empty remainder %j → no capture, behaves exactly as today', (leaf) => {
         const result = parseFolderStructure(['A', 'S', leaf]);
@@ -2841,9 +2696,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         expect(result.title).toBe('03 -');
       });
 
-      // Companion to the 1-part / 2-part collapse-guard pins above ("series-position route inherits
-      // the shared collapse guard") — the 3+-part branch inherits the same rule rather than minting
-      // a second one: a remainder that is real text but CLEANS to empty still captures its position.
       it('transform-empty remainder captures the position and emits the empty title (clean)', () => {
         expect(parseFolderStructure(['Author', 'Series', '03 - [Graphic Audio]'])).toEqual({
           title: '', author: 'Author', series: 'Series', seriesPosition: 3,
@@ -2868,7 +2720,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         const result = parseFolderStructure([
           'Brandon Sanderson', 'The Stormlight Archive', 'The Stormlight Archive 01 - The Way of Kings',
         ]);
-        expect(result.author).toBe('Brandon Sanderson'); // helper returns author: null by design
+        expect(result.author).toBe('Brandon Sanderson');
         expect(result.series).toBe('The Stormlight Archive');
         expect(result.seriesPosition).toBe(1);
       });
@@ -2881,9 +2733,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         });
       });
 
-      // AC8 — most-specific-first. This row DISCRIMINATES the ordering: the bare-prefix arm would
-      // happily read `123` as the position and leave `Series 01 - Title` as the title, so it must
-      // only be reached after cross-segment agreement declines.
+      // Agreement must run first; bare-prefix parsing would consume 123.
       it('AC8 — a numeric-and-dash series prefix is resolved by agreement, not pre-empted by the bare arm', () => {
         expect(parseFolderStructure(['A', '123 - Series', '123 - Series 01 - Title'])).toEqual({
           title: 'Title', author: 'A', series: 'Series', seriesPosition: 1,
@@ -2902,12 +2752,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         expect(result).toEqual({ title: 'Unrelated Prefix 3 - Title', author: 'Author', series: 'Series' });
       });
 
-      // AC9b — CHARACTERIZATION ONLY (#1273 convention): this expected object was captured by
-      // RUNNING the parser, not hand-authored, and is NOT asserted as correct behavior. Wiring the
-      // helper in (AC7) means it now also SEES multi-dash filename leaves from split single-file
-      // discoveries; per AC9a this issue makes no claim about which of those it accepts. The row
-      // exists purely as a drift signal at stock naming settings — do NOT extend it into a
-      // separator / namingCase / stopword matrix.
+      // Characterization only: do not generalize this split-file fixture across naming settings.
       it('AC9b — multi-dash filename leaf at stock settings (current output, not asserted-correct)', () => {
         expect(parseFolderStructure([
           'Brandon Sanderson',
@@ -2948,10 +2793,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       });
     });
 
-    // AC12 — the Plex preset renders a YEAR into this exact prefix slot of this exact 3-part shape
-    // (`{author}/{series?/}{year? - }{title}`), so a BARE 4-DIGIT INTEGER inside the repository's
-    // existing 1900–2099 window is not read as a position. Every row also asserts the title: that
-    // is what proves the window changed only position emission, never the title.
+    // Plex emits a year in this slot, so bare 1900–2099 integers are not positions.
     describe('AC12 — the 1900–2099 year window applies to the bare-prefix arm only', () => {
       it.each([
         ['1899 - Title', 1899, 'Title'],
@@ -2960,9 +2802,9 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         ['2099 - Title', undefined, 'Title'],
         ['2100 - Title', 2100, 'Title'],
         ['1000 - Title', 1000, 'Title'],
-        ['1984.5 - Title', 1984.5, 'Title'], // a decimal is unambiguously not a year
-        ['12345 - Title', 12345, 'Title'], // five digits is not year-shaped (F8)
-        ['01984 - Title', 1984, 'Title'], // a leading-zero five-digit literal is not year-shaped (F8)
+        ['1984.5 - Title', 1984.5, 'Title'],
+        ['12345 - Title', 12345, 'Title'],
+        ['01984 - Title', 1984, 'Title'],
       ])('leaf %s → position %s, title %s', (leaf, position, title) => {
         const result = parseFolderStructure(['Author', 'Series', leaf]);
         expect(result.seriesPosition).toBe(position);
@@ -2995,9 +2837,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         });
       });
 
-      // Split single-file discoveries put the audio FILENAME in folderParts (book-discovery's
-      // makeFolderEntry), so a bare `NN - Title.m4b` leaf is in scope and falls out of the existing
-      // preprocessing order with no new code.
+      // Split single-file discoveries pass the audio filename as the leaf.
       it('AC15 — a split single-file discovery leaf captures its position', () => {
         expect(parseFolderStructure(['Brandon Sanderson', 'The Stormlight Archive', '01 - The Way of Kings.m4b'])).toEqual({
           title: 'The Way of Kings', author: 'Brandon Sanderson', series: 'The Stormlight Archive', seriesPosition: 1,
@@ -3005,8 +2845,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       });
     });
 
-    // AC16 — clean and raw share ONE helper, so they must not drift. Raw differs only in the
-    // transform (`identity`): the position is removed from the raw title too.
     describe('raw parity (parseFolderStructureRaw)', () => {
       it('raw: bare leaf capture', () => {
         expect(parseFolderStructureRaw(['Author', 'Series', '03 - Title'])).toEqual({
@@ -3047,10 +2885,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
       });
     });
 
-    // AC19 — the property this issue exists to restore: a path RENDERED by the folder template
-    // parses back to the same four fields. It carries exactly two stated conditions, both named in
-    // the test titles rather than left implicit: a series must be present (AC10), and the position
-    // must be outside the 1900–2099 integer year window (AC12).
     describe('AC19 — round trip through the Detailed folder template', () => {
       const FOLDER_FORMAT = '{author}/{series}/{seriesPosition:00? - }{title}';
       const roundTrip = (author: string, series: string, seriesPosition: number, title: string) =>
@@ -3073,9 +2907,6 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         });
       });
 
-      // The documented exception, asserted as such: these render fine and parse back with the
-      // correct title, but deliberately WITHOUT a position — the Plex preset renders a year into
-      // the identical slot of the identical shape.
       it.each([1900, 1984, 2099])(
         'a bare integer position inside the 1900–2099 year window round-trips its title but NOT its position (%s)',
         (position) => {
@@ -3091,10 +2922,7 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         expect(parseFolderStructure(rendered.split('/')).seriesPosition).toBeUndefined();
       });
 
-      // #2152 AC13 — "in the series, unnumbered" survives the round trip. A durable
-      // position clear NULLs the column, the token omits, and re-importing the
-      // resulting folder yields the series with NO position — so the clear is not
-      // faithfully undone by the (now position-capturing, #2145) parser.
+      // A cleared position must remain absent after re-import (#2152).
       it('a cleared position renders no token and re-imports as a series with no position', () => {
         const rendered = renderTemplate(FOLDER_FORMAT, {
           author: 'Frank Herbert', series: 'Dune', seriesPosition: undefined, title: 'Hunters of Dune',

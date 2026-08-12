@@ -19,10 +19,7 @@ vi.mock('@core/utils/book-discovery.js', () => ({
   discoverBooks: vi.fn().mockResolvedValue([]),
 }));
 
-// Mock the audio-scanner boundary so the REAL discoverBooks (delegated to in the F3
-// cross-boundary ordering test) does not drag music-metadata into this suite. Leaf-folder
-// classification never calls readAlbumTag, so the stub is never invoked — it only keeps
-// the transitive module load light.
+// The real-discovery ordering test needs discovery but not its heavy music-metadata dependency; leaf classification never calls this stub.
 vi.mock('@core/utils/audio-scanner.js', () => ({
   readAlbumTag: vi.fn(),
 }));
@@ -45,10 +42,6 @@ vi.mock('../utils/import-helpers.js', () => ({
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { discoverBooks } from '@core/utils/book-discovery.js';
 import { access, readdir, stat } from 'node:fs/promises';
-
-// ============================================================================
-// parseFolderStructure (pure function tests)
-// ============================================================================
 
 describe('parseFolderStructure', () => {
   it('parses Author/Title structure', () => {
@@ -78,8 +71,6 @@ describe('parseFolderStructure', () => {
     });
   });
 
-  // Issue #977: parens/bracket-as-author heuristic removed; both cases now fall
-  // through to title-only with parens/brackets content stripped by cleanName.
   it('"Title (Author)" single folder → title-only (parens stripped, author=null)', () => {
     const result = parseFolderStructure(['Dune (Frank Herbert)']);
     expect(result).toEqual({
@@ -134,9 +125,6 @@ describe('parseFolderStructure', () => {
     });
   });
 
-  // #2145 — these three 3-part leaves used to have their decimal prefix stripped as noise; the
-  // position is now captured instead of discarded. Asserted as exact objects (not loosened to
-  // toMatchObject) so the newly emitted value stays pinned.
   it('captures decimal series position prefix with hyphen (6.5 - Title)', () => {
     const result = parseFolderStructure(['Tahereh Mafi', 'Shatter Me', '6.5 - Believe Me']);
     expect(result).toEqual({
@@ -213,7 +201,6 @@ describe('parseFolderStructure', () => {
   });
 
   it('handles empty string title from folder name', () => {
-    // After cleanName strips everything, we still get something
     const result = parseFolderStructure(['']);
     expect(result.title).toBe('');
     expect(result.author).toBeNull();
@@ -232,15 +219,7 @@ describe('parseFolderStructure', () => {
   });
 });
 
-// ============================================================================
-// LibraryScanService (mocked DB/FS)
-// ============================================================================
-
-/**
- * A Node-shaped filesystem error. The reachability classifier (#1955) keys off
- * `.code`, never the message, so a bare `new Error('ENOENT')` reads as
- * *undetermined* and silently inverts any missing/restored assertion built on it.
- */
+// Reachability classifies Node's `.code`, not message text; bare `Error('ENOENT')` is undetermined (#1955).
 function fsError(code: string): Error {
   return Object.assign(new Error(code), { code });
 }
@@ -261,8 +240,7 @@ function createMockLogger() {
 
 describe('LibraryScanService', () => {
   let service: LibraryScanService;
-  // Hybrid mock: createMockDb() for scanDirectory pre-fetch (select.mockReturnValueOnce),
-  // plus direct chain methods for other tests that use mockDb.where/limit/set directly.
+  // Hybrid supports queued scan prefetches and direct chain methods used by rescan tests.
   let mockDb: ReturnType<typeof createMockDb> & Record<string, ReturnType<typeof vi.fn>>;
   let mockBookService: {
     findDuplicate: ReturnType<typeof vi.fn>;
@@ -284,17 +262,14 @@ describe('LibraryScanService', () => {
     vi.clearAllMocks();
     vi.mocked(enrichBookFromAudio).mockResolvedValue({ enriched: true });
     const db = createMockDb();
-    // Add direct chain methods for backward compatibility with non-scanDirectory tests
     const chainMethods: Record<string, ReturnType<typeof vi.fn>> = {
       from: vi.fn().mockReturnThis(),
       where: vi.fn().mockReturnThis(),
       limit: vi.fn().mockResolvedValue([]),
       set: vi.fn().mockReturnThis(),
-      // The guarded `transitionBookStatus` book write ends in `.returning()`; a non-empty
-      // result means the precondition matched so the rescan counters increment.
+      // A non-empty guarded `.returning()` result means the transition committed and counters increment.
       returning: vi.fn().mockResolvedValue([{ id: 1 }]),
     };
-    // select/update calls return the chain by default
     db.select.mockReturnValue(chainMethods as never);
     db.update.mockReturnValue(chainMethods as never);
     mockDb = Object.assign(db, chainMethods);
@@ -341,12 +316,7 @@ describe('LibraryScanService', () => {
     );
   });
 
-  // ============================================================================
-  // scanDirectory
-  // ============================================================================
-
   describe('scanDirectory', () => {
-    /** Helper: set up pre-fetch mocks for scanDirectory */
     function mockPreFetch(paths: string[], titleAuthors: Array<{ title: string; slug: string }>) {
       mockDb.select
         .mockReturnValueOnce(mockDbChain(paths.map((p) => ({ path: p }))))
@@ -393,9 +363,6 @@ describe('LibraryScanService', () => {
     });
 
     it('handles single-file discoveries: parses Author/Filename.m4b and folder-book together (#982)', async () => {
-      // Mixed-content shape from production: standalone .m4b at library root alongside folder books.
-      // discoverBooks emits the file path directly; the service must parse the filename
-      // (extension stripped) and produce a usable DiscoveredBook row.
       vi.mocked(discoverBooks).mockResolvedValue([
         {
           path: '/audiobooks/Doctor Sleep.m4b',
@@ -423,7 +390,6 @@ describe('LibraryScanService', () => {
       expect(result.discoveries).toHaveLength(3);
       const byPath = Object.fromEntries(result.discoveries.map(d => [d.path, d]));
 
-      // Single-file with no author info → title-only (extension stripped)
       expect(byPath['/audiobooks/Doctor Sleep.m4b']).toMatchObject({
         path: '/audiobooks/Doctor Sleep.m4b',
         parsedTitle: 'Doctor Sleep',
@@ -433,14 +399,12 @@ describe('LibraryScanService', () => {
         isDuplicate: false,
       });
 
-      // Single-file in "Author - Title.m4b" form parses through the same dash heuristic as folders
       expect(byPath['/audiobooks/Brandon Sanderson - The Way of Kings.m4b']).toMatchObject({
         parsedTitle: 'The Way of Kings',
         parsedAuthor: 'Brandon Sanderson',
         fileCount: 1,
       });
 
-      // Folder book is unaffected
       expect(byPath['/audiobooks/The Stand by Stephen King']).toMatchObject({
         parsedTitle: 'The Stand',
         parsedAuthor: 'Stephen King',
@@ -457,7 +421,6 @@ describe('LibraryScanService', () => {
           totalSize: 100,
         },
       ]);
-      // Pre-fetch returns path match
       mockPreFetch(['/audiobooks/Existing'], []);
 
       const result = await service.scanDirectory('/audiobooks');
@@ -476,7 +439,6 @@ describe('LibraryScanService', () => {
           totalSize: 200,
         },
       ]);
-      // No path match, but title+author slug match
       mockPreFetch([], [{ title: 'Title', slug: 'author' }]);
 
       const result = await service.scanDirectory('/audiobooks');
@@ -499,7 +461,6 @@ describe('LibraryScanService', () => {
 
       const result = await service.scanDirectory('/audiobooks');
 
-      // Empty string is falsy, so title+author check should be skipped
       expect(result.discoveries).toHaveLength(1);
     });
 
@@ -510,7 +471,6 @@ describe('LibraryScanService', () => {
         { path: '/audiobooks/Author/TitleDup', folderParts: ['Author', 'TitleDup'], audioFileCount: 3, totalSize: 300 },
         { path: '/audiobooks/New/Book2', folderParts: ['New', 'Book2'], audioFileCount: 4, totalSize: 400 },
       ]);
-      // PathDup exists by path, TitleDup exists by title+author
       mockPreFetch(
         ['/audiobooks/PathDup'],
         [{ title: 'TitleDup', slug: 'author' }],
@@ -518,9 +478,6 @@ describe('LibraryScanService', () => {
 
       const result = await service.scanDirectory('/audiobooks');
 
-      // All 4 folders appear in discoveries. Only the PATH duplicate is a hard
-      // duplicate now; the title+author match (TitleDup) flows through as a
-      // non-duplicate review-hint candidate (#1711 F6).
       expect(result.discoveries).toHaveLength(4);
       const nonDups = result.discoveries.filter((d) => !d.isDuplicate);
       expect(nonDups.map((d) => d.parsedTitle).sort()).toEqual(['Book1', 'Book2', 'TitleDup']);
@@ -528,7 +485,6 @@ describe('LibraryScanService', () => {
       expect(result.totalFolders).toBe(4);
     });
 
-    // N+1 elimination tests (issue #356)
     describe('pre-fetch optimization', () => {
       it('pre-fetches all book paths and title+author slugs before the folder loop', async () => {
         vi.mocked(discoverBooks).mockResolvedValue([
@@ -539,7 +495,6 @@ describe('LibraryScanService', () => {
 
         await service.scanDirectory('/audiobooks');
 
-        // db.select should be called exactly twice (paths + title/author), NOT per folder
         expect(mockDb.select).toHaveBeenCalledTimes(2);
       });
 
@@ -577,11 +532,7 @@ describe('LibraryScanService', () => {
       });
     });
 
-    // =========================================================================
-    // #114 — duplicate rows returned with isDuplicate flag (not filtered out)
-    // =========================================================================
     describe('isDuplicate flag on discoveries', () => {
-      /** Pre-fetch with id fields for existingBookId population */
       function mockPreFetchWithIds(
         pathRows: Array<{ id: number; path: string }>,
         titleAuthorRows: Array<{ id: number; title: string; slug: string }>,
@@ -640,7 +591,6 @@ describe('LibraryScanService', () => {
         vi.mocked(discoverBooks).mockResolvedValue([
           { path: '/audiobooks/Author/Harry Potter And The Chamber Of Secrets', folderParts: ['Author', 'Harry Potter And The Chamber Of Secrets'], audioFileCount: 2, totalSize: 200 },
         ]);
-        // DB has lowercase title, folder has title-case — should still match
         mockPreFetchWithIds([], [{ id: 9, title: 'Harry Potter and the Chamber of Secrets', slug: 'author' }]);
 
         const result = await service.scanDirectory('/audiobooks');
@@ -660,7 +610,6 @@ describe('LibraryScanService', () => {
 
         const result = await service.scanDirectory('/audiobooks');
 
-        // Neither folder is hard-flagged — both flow through to the match/confirm ladder.
         expect(result.discoveries.filter(d => d.isDuplicate)).toHaveLength(0);
         expect(result.discoveries[0]!.reviewReason).toBeUndefined();
         expect(result.discoveries[1]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
@@ -700,7 +649,6 @@ describe('LibraryScanService', () => {
         const book2 = result.discoveries.find((d) => d.parsedTitle === 'Book2');
         expect(pathDup?.isDuplicate).toBe(true);
         expect(pathDup?.existingBookId).toBe(10);
-        // title+author match is no longer a hard duplicate (#1711 F6) — review hint only.
         expect(titleDup?.isDuplicate).toBe(false);
         expect(titleDup?.existingBookId).toBe(20);
         expect(titleDup?.reviewReason).toBeDefined();
@@ -778,8 +726,6 @@ describe('LibraryScanService', () => {
         expect(result.discoveries[0]).not.toHaveProperty('parsedSeriesPosition');
       });
 
-      // #2145 — the Detailed preset's own 3-level output (`Author/Series/NN - Title`) now reaches
-      // discovery with its position intact. No new plumbing: #1042 already built the spread.
       it('emits parsedSeriesPosition for a Detailed-preset leaf (Author/Series/NN - Title)', async () => {
         vi.mocked(discoverBooks).mockResolvedValue([
           {
@@ -813,7 +759,6 @@ describe('LibraryScanService', () => {
 
   describe('rescanLibrary', () => {
     beforeEach(() => {
-      // Default: access succeeds (library root exists)
       vi.mocked(access).mockResolvedValue(undefined);
     });
 
@@ -846,9 +791,7 @@ describe('LibraryScanService', () => {
     });
 
     it('does not clobber an in-flight import: guarded missing-write no-ops when the row is no longer imported', async () => {
-      // Scan read the row as 'imported', but a concurrent import flipped it to 'importing'
-      // before the guarded write — the `expected: { status: 'imported' }` predicate matches
-      // no row, so `.returning()` is empty and the scan must NOT count it as missing.
+      // Empty `.returning()` models a concurrent status change defeating the guarded transition.
       (mockDb as Record<string, ReturnType<typeof vi.fn>>).where!.mockResolvedValueOnce([
         { id: 1, path: '/library/Author/Book', status: 'imported' },
       ]);
@@ -932,7 +875,6 @@ describe('LibraryScanService', () => {
     it('throws when scan is already in progress', async () => {
       (mockDb as Record<string, ReturnType<typeof vi.fn>>).where!.mockResolvedValueOnce([]);
 
-      // Lock is set synchronously, so second call throws before any async work
       const first = service.rescanLibrary();
       await expect(service.rescanLibrary()).rejects.toThrow('Scan already in progress');
       await first;
@@ -956,7 +898,6 @@ describe('LibraryScanService', () => {
       expect(result).toEqual({ scanned: 0, missing: 0, restored: 0 });
     });
 
-    // ── #1491 connector refresh hook ───────────────────────────────────────
     it('enqueues a connector refresh with exact item payload for a restored row', async () => {
       (mockDb as Record<string, ReturnType<typeof vi.fn>>).where!.mockResolvedValueOnce([
         { id: 2, path: '/library/Author/Book', status: 'missing', title: 'The Restored Book' },
@@ -997,8 +938,7 @@ describe('LibraryScanService', () => {
     });
 
     it('throws when library path is not accessible', async () => {
-      // The ROOT check is deliberately not errno-classified — any failure aborts
-      // the whole sweep, so a codeless rejection is still a LibraryPathError.
+      // The root check is not errno-classified: any failure aborts the sweep, including a codeless rejection.
       vi.mocked(access).mockRejectedValueOnce(new Error('ENOENT'));
 
       await expect(service.rescanLibrary()).rejects.toThrow('Library path is not accessible');
@@ -1031,18 +971,11 @@ describe('LibraryScanService', () => {
       expect(result).toEqual({ scanned: 3, missing: 1, restored: 1 });
     });
 
-    // ── #1955 transient filesystem errors ──────────────────────────────────
-    // A failed `access()` is not proof the book is gone. Only ENOENT/ENOTDIR
-    // flip a row; every other errno leaves the persisted status alone.
+    // Only ENOENT/ENOTDIR prove absence; all other probe failures preserve persisted status (#1955).
     describe('transient filesystem errors', () => {
       const BOOK = '/library/Author/Book';
 
-      /**
-       * Path-keyed `access` stub: the library root always resolves, each book path
-       * resolves or throws per `perPath`. Deliberately NOT a `mockRejectedValueOnce`
-       * queue — this suite's `beforeEach(vi.clearAllMocks)` does not drain Once
-       * queues, so an unconsumed queue leaks into the next test.
-       */
+      // Use path-keyed outcomes: `vi.clearAllMocks` does not drain unconsumed once-queues between tests.
       function mockAccess(perPath: Record<string, unknown>) {
         vi.mocked(access).mockImplementation(async (target) => {
           const outcome = perPath[String(target)];
@@ -1057,7 +990,6 @@ describe('LibraryScanService', () => {
 
       const dbUpdate = () => (mockDb as Record<string, ReturnType<typeof vi.fn>>).update!;
 
-      /** The `[payload, message]` pairs recorded on one level of the mocked logger. */
       function logCalls(level: 'debug' | 'warn'): Array<[Record<string, unknown>, string]> {
         const fn = log[level] as unknown as ReturnType<typeof vi.fn>;
         return fn.mock.calls as Array<[Record<string, unknown>, string]>;
@@ -1126,8 +1058,7 @@ describe('LibraryScanService', () => {
       });
 
       it('does not count a restore whose guarded write misses', async () => {
-        // Reachable row read as 'missing', but the guard matched nothing (a
-        // concurrent writer moved it) — no count, no info line, no connector work.
+        // A concurrent status change makes the guarded restore miss, so no side effects count.
         mockRows([{ id: 2, path: BOOK, status: 'missing', title: 'Book' }]);
         mockAccess({});
         (mockDb as Record<string, ReturnType<typeof vi.fn>>).returning!.mockResolvedValueOnce([]);
@@ -1155,7 +1086,6 @@ describe('LibraryScanService', () => {
 
         expect(result).toEqual({ scanned: 3, missing: 0, restored: 0 });
         expect(dbUpdate()).not.toHaveBeenCalled();
-        // One debug record per unreachable row — not one per sweep, not just the first.
         const unreachableDebug = logCalls('debug').filter(([, msg]) => msg.includes('unreachable'));
         expect(unreachableDebug).toHaveLength(3);
         expect(unreachableDebug.map(([payload]) => payload)).toEqual([
@@ -1339,7 +1269,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
       totalSize: 100,
     }]);
     mockDb.select
-      .mockReturnValueOnce(mockDbChain([]))  // no path matches
+      .mockReturnValueOnce(mockDbChain([]))
       .mockReturnValueOnce(mockDbChain([{ id: 99, title: 'Title', slug: 'author' }]));
 
     const result = await service.scanDirectory('/audiobooks');
@@ -1356,7 +1286,6 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
       audioFileCount: 1,
       totalSize: 50,
     }]);
-    // Pre-fetch returns a null path row — should be filtered out
     mockDb.select
       .mockReturnValueOnce(mockDbChain([{ path: null }]))
       .mockReturnValueOnce(mockDbChain([]));
@@ -1375,7 +1304,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
       totalSize: 200,
     }]);
     mockDb.select
-      .mockReturnValueOnce(mockDbChain([]))  // no path matches
+      .mockReturnValueOnce(mockDbChain([]))
       .mockReturnValueOnce(mockDbChain([{ id: 42, title: 'The Heroes', slug: 'joe-abercrombie' }]));
 
     const result = await service.scanDirectory('/audiobooks');
@@ -1432,8 +1361,6 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
 
       const result = await service.scanDirectory('/audiobooks');
 
-      // A title+author match is no longer a hard slug duplicate; it carries the
-      // existing discovery reviewReason (not overwritten by the scan hint).
       expect(result.discoveries[0]!.isDuplicate).toBe(false);
       expect(result.discoveries[0]!.reviewReason).toBe(REVIEW_REASON);
     });
@@ -1447,8 +1374,6 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
 
       const result = await service.scanDirectory('/audiobooks');
 
-      // No hard flag; the upstream reviewReason wins over SCAN_WITHIN_SCAN_REVIEW_HINT
-      // via the `reviewReason ?? hint` fallback (mirrors branch 3).
       expect(result.discoveries[1]!.isDuplicate).toBe(false);
       expect(result.discoveries[1]).not.toHaveProperty('duplicateReason');
       expect(result.discoveries[1]!.reviewReason).toBe(REVIEW_REASON);
@@ -1469,7 +1394,6 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
     });
   });
 
-  // ── #229 Observability — elapsed time ───────────────────────────────────
   describe('logging improvements (#229)', () => {
     it('library scan completion log includes elapsedMs field', async () => {
       const mockLog = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), child: vi.fn(), silent: vi.fn() };
@@ -1504,7 +1428,7 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
   });
 
   describe('cleanName() normalization enhancements', () => {
-    // cleanName is internal — test via parseFolderStructure single-folder path
+    // Exercise private `cleanName` through `parseFolderStructure`.
     it('converts underscores to spaces', () => {
       const result = parseFolderStructure(['Ernest_Cline']);
       expect(result.title).toBe('Ernest Cline');
@@ -1563,7 +1487,6 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
     });
 
     it('does not strip codec tag embedded in word (MP3Player)', () => {
-      // MP3Player has no word boundary before "MP3" — it's part of the word
       expect(parseFolderStructure(['Title MP3Player']).title).toBe('Title MP3Player');
     });
 
@@ -1588,7 +1511,6 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
     });
 
     it('falls back to original when normalization yields empty string', () => {
-      // "MP3 FLAC" → codec stripping removes everything → fall back to "MP3 FLAC"
       expect(parseFolderStructure(['MP3 FLAC']).title).toBe('MP3 FLAC');
     });
 
@@ -1918,7 +1840,6 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
       });
 
       it('strips numbering prefixes from extracted title but preserves legitimate numeric titles', () => {
-        // Numbering prefix stripped
         const withPrefix = parseFolderStructure(['Series – 01 – 02. The Second Book']);
         expect(withPrefix).toEqual({
           title: 'The Second Book',
@@ -1927,7 +1848,6 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
           seriesPosition: 1,
         });
 
-        // Legitimate numeric title preserved
         const withNumeric = parseFolderStructure(['Sci-Fi Classics – 01 – 2001 A Space Odyssey']);
         expect(withNumeric.title).toBe('2001 A Space Odyssey');
       });
@@ -1944,10 +1864,6 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
   });
 
 });
-
-// ============================================================================
-// Within-scan duplicate detection (#342)
-// ============================================================================
 
 describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
   let service: LibraryScanService;
@@ -1995,19 +1911,13 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       const result = await service.scanDirectory('/audiobooks');
 
       expect(result.discoveries).toHaveLength(2);
-      // No hard flag — the recording ladder decides identity at confirm time.
       expect(result.discoveries[1]!.isDuplicate).toBe(false);
       expect(result.discoveries[1]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
       expect(result.discoveries[1]).not.toHaveProperty('duplicateReason');
     });
 
     it('clean-slate pair with DIFFERENT bracketed folder ASINs, same title+author → both normal candidates; second carries the within-scan hint (#1925 F3, motivating case)', async () => {
-      // The motivating scenario from the issue: two editions of one title (Jim Dale vs Full-Cast)
-      // distinguished ONLY by their bracketed folder ASIN — which is parsed but intentionally NOT
-      // threaded to the match job. With an EMPTY library the ASIN is never decisive (branch 2 needs
-      // an incumbent), so both folders take the normal-candidate branch-4 path; the recording ladder
-      // (not scan-time title-pairing) decides identity later.
-      // Precondition: the parser extracts DISTINCT ASINs yet the SAME title — so the ASIN is the sole discriminator.
+      // Folder ASINs do not reach the match job, so clean-slate editions separate only in the recording ladder.
       const parsedA = parseFolderStructure(['J.K. Rowling', 'Harry Potter and the Goblet of Fire [B0JIMDALE1]']);
       const parsedB = parseFolderStructure(['J.K. Rowling', 'Harry Potter and the Goblet of Fire (Full-Cast Edition) [B0F14PB6WN]']);
       expect(parsedA.asin).toBe('B0JIMDALE1');
@@ -2018,7 +1928,7 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
         { path: '/audiobooks/J.K. Rowling/04 - Goblet (Jim Dale)', folderParts: ['J.K. Rowling', 'Harry Potter and the Goblet of Fire [B0JIMDALE1]'], audioFileCount: 3, totalSize: 100 },
         { path: '/audiobooks/J.K. Rowling/Goblet (Full-Cast) [B0F14PB6WN]', folderParts: ['J.K. Rowling', 'Harry Potter and the Goblet of Fire (Full-Cast Edition) [B0F14PB6WN]'], audioFileCount: 3, totalSize: 100 },
       ]);
-      mockPreFetch([], []); // clean-slate: empty DB
+      mockPreFetch([], []);
 
       const result = await service.scanDirectory('/audiobooks');
 
@@ -2026,7 +1936,6 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       expect(result.discoveries[0]).not.toHaveProperty('reviewReason');
       expect(result.discoveries[1]!.isDuplicate).toBe(false);
       expect(result.discoveries[1]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
-      // Neither carries the removed duplicate fields — both flow through to the match/confirm ladder.
       for (const d of result.discoveries) {
         expect(d).not.toHaveProperty('duplicateReason');
         expect(d).not.toHaveProperty('duplicateFirstPath');
@@ -2083,7 +1992,6 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
 
       const result = await service.scanDirectory('/audiobooks');
 
-      // None hard-flagged; all flow through to the match/confirm ladder.
       expect(result.discoveries.every(d => !d.isDuplicate)).toBe(true);
       expect(result.discoveries[0]).not.toHaveProperty('reviewReason');
       expect(result.discoveries[1]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
@@ -2128,7 +2036,6 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
 
       const result = await service.scanDirectory('/audiobooks');
 
-      // No author → no title+author shape → no collision → no within-scan hint on the second.
       expect(result.discoveries[0]!.isDuplicate).toBe(false);
       expect(result.discoveries[1]!.isDuplicate).toBe(false);
       expect(result.discoveries[1]).not.toHaveProperty('reviewReason');
@@ -2191,28 +2098,19 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
 
       const result = await service.scanDirectory('/audiobooks');
 
-      // First: DB path dup (still a hard duplicate)
       expect(result.discoveries[0]!.duplicateReason).toBe('path');
-      // Second: DB title+author match → review-hint candidate, NOT a hard duplicate (#1711 F6).
       expect(result.discoveries[1]!.isDuplicate).toBe(false);
       expect(result.discoveries[1]!.existingBookId).toBe(42);
       expect(result.discoveries[1]!.reviewReason).toBe(SCAN_RECORDING_REVIEW_HINT);
-      // Third: matches DB BookB (id 42) AND the registered sibling (discovery[1]). Branch 3
-      // precedes branch 4, so it MUST carry the existing-library hint + existingBookId — NOT the
-      // within-scan hint. Asserting both distinguishes branch 3 from branch 4 (which would drop
-      // existingBookId and substitute SCAN_WITHIN_SCAN_REVIEW_HINT) — the vacuity F2 flagged.
+      // Discovery 3 matches both DB and sibling; branch 3 must retain the incumbent id/hint.
       expect(result.discoveries[2]!.isDuplicate).toBe(false);
       expect(result.discoveries[2]!.existingBookId).toBe(42);
       expect(result.discoveries[2]!.reviewReason).toBe(SCAN_RECORDING_REVIEW_HINT);
       expect(result.discoveries[2]!.reviewReason).not.toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
-      // Fourth: new discovery
       expect(result.discoveries[3]!.isDuplicate).toBe(false);
     });
 
     it('branch-3-over-branch-4 precedence: a folder matching an existing library book AND a sibling scan row gets the existing-library hint + existingBookId, NOT the within-scan hint (#1925 F2)', async () => {
-      // Two same-title+author folders where the DB already owns that title. The FIRST folder
-      // already matches the DB (branch 3). The SECOND matches BOTH the DB row AND the registered
-      // first sibling — branch 3 must win over branch 4.
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
         { path: '/audiobooks/Copy/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
@@ -2223,7 +2121,6 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
 
       const result = await service.scanDirectory('/audiobooks');
 
-      // The second folder takes branch-3 treatment, not the within-scan hint.
       expect(result.discoveries[1]!.isDuplicate).toBe(false);
       expect(result.discoveries[1]!.existingBookId).toBe(77);
       expect(result.discoveries[1]!.reviewReason).toBe(SCAN_RECORDING_REVIEW_HINT);
@@ -2235,18 +2132,13 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
         { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
         { path: '/audiobooks/Copy/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
       ]);
-      // First folder matches DB by path; DB has no slug match for title+author
       mockDb.select
         .mockReturnValueOnce(mockDbChain([{ path: '/audiobooks/Author/Title' }]))
         .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.scanDirectory('/audiobooks');
 
-      // First: DB path dup — and now (#1891) every authored row registers regardless of
-      // which branch emitted it, so the path-dup row IS added to the within-scan bucket.
       expect(result.discoveries[0]!.duplicateReason).toBe('path');
-      // Second: not in DB by path/title, but pairwise-matches the registered first row →
-      // a normal candidate carrying the within-scan hint (proving the path-dup row registered).
       expect(result.discoveries[1]!.isDuplicate).toBe(false);
       expect(result.discoveries[1]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
     });
@@ -2254,10 +2146,7 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
 
   describe('pairwise non-transitive title matching (#1891)', () => {
     it('non-transitive chain: a hinted within-scan row still registers, so a later row matches IT not the first (branch 4)', async () => {
-      // Series: A (row1, normal) — Series (row2, within-scan collision of row1) — Series: B
-      // (row3). row3 ≁ row1 (distinct subtitles) but ~ row2 (bare bridges). row3 gets the
-      // hint ONLY because row2 registered — row1 alone does not match row3 — so the hint on
-      // row3 proves the within-scan-hinted row2 registered into the bucket.
+      // `Series: A` ≁ `Series: B`, but bare `Series` bridges both; row 3's hint proves hinted row 2 registered.
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Author/SeriesA', folderParts: ['Author', 'Series: A'], audioFileCount: 3, totalSize: 100 },
         { path: '/audiobooks/Author/Series', folderParts: ['Author', 'Series'], audioFileCount: 3, totalSize: 100 },
@@ -2269,13 +2158,12 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
 
       expect(result.discoveries[0]!.isDuplicate).toBe(false);
       expect(result.discoveries[0]).not.toHaveProperty('reviewReason');
-      expect(result.discoveries[1]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT); // matched row1
-      expect(result.discoveries[2]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT); // matched row2 (proves it registered)
+      expect(result.discoveries[1]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
+      expect(result.discoveries[2]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
     });
 
     it('existing-library review-hint row registers, so a non-transitive later row is a within-scan collision of it (branch 3)', async () => {
-      // DB owns "Series: A". row1 bare "Series" bridges to it → existing-title hint
-      // AND registers. row2 "Series: B" ≁ DB "Series: A" but ~ row1 "Series".
+      // Bare `Series` bridges the DB's `Series: A` and later `Series: B`, proving existing-library hinted rows register.
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Author/Series', folderParts: ['Author', 'Series'], audioFileCount: 3, totalSize: 100 },
         { path: '/audiobooks/Author/SeriesB', folderParts: ['Author', 'Series: B'], audioFileCount: 3, totalSize: 100 },
@@ -2296,21 +2184,20 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
         { path: '/audiobooks/Author/SeriesAsin', folderParts: ['Author', 'Series [B01ABC0001]'], audioFileCount: 3, totalSize: 100 },
         { path: '/audiobooks/Author/Series', folderParts: ['Author', 'Series'], audioFileCount: 3, totalSize: 100 },
       ]);
-      // Existing ASIN row (no title/slug so it only populates the ASIN map, not the bucket).
+      // Null title/slug puts the incumbent only in the ASIN map, not the title bucket.
       mockDb.select
         .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([{ id: 90, title: null, slug: null, asin: 'B01ABC0001' }]));
 
       const result = await service.scanDirectory('/audiobooks');
 
-      expect(result.discoveries[0]!.duplicateReason).toBe('slug'); // decisive ASIN
+      expect(result.discoveries[0]!.duplicateReason).toBe('slug');
       expect(result.discoveries[1]!.isDuplicate).toBe(false);
       expect(result.discoveries[1]!.reviewReason).toBe(SCAN_WITHIN_SCAN_REVIEW_HINT);
     });
 
     it('retrieval invariant: existing "Dune (Edition: Deluxe)" and scanned "Dune" share the colonBase bucket', async () => {
-      // The bucket is keyed on colonBase ("dune"), NOT the stale colon-first artifact
-      // ("dune (edition"), so the fullNormalized-arm match still resolves.
+      // `colonBase` retrieval avoids the stale colon-first key `dune (edition`.
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Frank Herbert/Dune', folderParts: ['Frank Herbert', 'Dune'], audioFileCount: 3, totalSize: 100 },
       ]);
@@ -2364,11 +2251,7 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Author/Series', folderParts: ['Author', 'Series'], audioFileCount: 3, totalSize: 100 },
       ]);
-      // The lowest-id representative is produced by the query's `.orderBy(books.id)`, NOT
-      // by in-app sorting — the mock returns rows verbatim, so the value assertion alone
-      // would still pass if the production `orderBy` were deleted. Capture the
-      // title+author query chain and assert the ordering contract directly, so removing
-      // `.orderBy(books.id)` fails this test (F1).
+      // The mock preserves input order, so the value alone cannot prove production orders by id; assert the query chain too (F1).
       const titleAuthorChain = mockDbChain([
         { id: 75, title: 'Series', slug: 'author' },
         { id: 80, title: 'Series: A', slug: 'author' },
@@ -2384,16 +2267,7 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
     });
 
     it('within-scan retrieval invariant across differing PARSED inputs, driven by the shape API not the parser (F7)', async () => {
-      // F7: the earlier "Dune (Edition: Deluxe)" fixture was vacuous — parseFolderStructure
-      // strips the parenthetical BEFORE buildTitleShape, so both rows reached the bucket as
-      // identical "Dune". Use a suffix the parser DEMONSTRABLY PRESERVES (a space-form
-      // " Book 1" series marker with no comma) but that buildTitleShape's fixpoint core
-      // collapses. The two rows therefore reach withinScanBucket with DIFFERING parsed
-      // titles ("Dune Book 1" vs "Dune") that share colonBase "dune"; the match is the
-      // shape API's doing, so reverting the marker/fixpoint shape behavior fails this test.
-      //
-      // Precondition (asserted): the parser preserves the marker so the shape API — not the
-      // parser — is what collapses it.
+      // The old parenthetical fixture collapsed during parsing; this one collapses only in the shape API (F7).
       expect(parseFolderStructure(['Frank Herbert', 'Dune Book 1']).title).toBe('Dune Book 1');
       expect(buildTitleShape('Dune Book 1').fullNormalized).toBe('dune');
 
@@ -2411,10 +2285,7 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
     });
 
     it('within-scan retrieval invariant across a colon-bearing preserved suffix ("Saga, Book 1: Deluxe" → "Saga") (F7)', async () => {
-      // A mixed colon+marker title the parser preserves verbatim; buildTitleShape derives
-      // colonBase "saga" by re-normalizing the pre-colon prefix (stripping ", Book 1"). The
-      // later bare "Saga" shares that colonBase and bridges via the one-sided colonBase arm.
-      // Reverting the prefix re-normalization moves the first row to a different bucket.
+      // Parser preserves the mixed suffix; shape construction must renormalize the pre-colon prefix to `saga` for retrieval (F7).
       expect(parseFolderStructure(['Author', 'Saga, Book 1: Deluxe']).title).toBe('Saga, Book 1: Deluxe');
       expect(buildTitleShape('Saga, Book 1: Deluxe').colonBase).toBe('saga');
 
@@ -2432,9 +2303,6 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
     });
 
     it('path match outranks a simultaneous decisive-ASIN AND title+author collision (F5)', async () => {
-      // The folder matches an existing path AND carries a decisive ASIN AND a title+author
-      // hit. Path precedence must win — if the path branch moved below the extracted
-      // lower-priority branches, this would emit 'slug' or a review hint instead.
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Author/Conflict', folderParts: ['Author', 'Conflict [B0DEC00001]'], audioFileCount: 3, totalSize: 100 },
       ]);
@@ -2453,10 +2321,6 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
     });
 
     it('decisive ASIN outranks a simultaneous title+author review hint (F6)', async () => {
-      // No path match; the folder's ASIN is decisive AND its title+author also hits an
-      // incumbent. Decisive ASIN must win with the HARD `duplicateReason: 'slug'`
-      // (isDuplicate true) — if the title branch moved ahead, this would be a soft review
-      // hint (isDuplicate false, no duplicateReason).
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Author/AsinWins', folderParts: ['Author', 'Conflict [B0DEC00002]'], audioFileCount: 3, totalSize: 100 },
       ]);
@@ -2474,19 +2338,9 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       expect(result.discoveries[0]!.existingBookId).toBe(200);
     });
 
-    // skipIf(win32): the fixture requires a literal backslash INSIDE a folder name
-    // (`/root/a\b`) to construct the fold-collision pair — on Windows `\` IS the path
-    // separator, so the fixture is platform-unconstructible (path.join inside the real
-    // discoverBooks re-keys every mocked entry and the collision premise dissolves).
-    // The comparator itself stays covered cross-platform by path-order.test.ts.
+    // Windows cannot represent a literal backslash inside the folder name; comparator coverage remains in `path-order.test.ts`.
     it.skipIf(process.platform === 'win32')('sorted discovery makes the within-scan hint placement stable across readdir permutations, through the REAL discoverBooks (F3)', async () => {
-      // Cross-boundary regression: delegate the mocked discoverBooks to the ACTUAL
-      // implementation so its `results.sort(comparePosixPath)` runs in-path. A
-      // folded-key collision pair — nested `/root/a/b` and one literal folder `/root/a\b`
-      // (both parse to author "a" / title "b", so the second is a within-scan collision of the
-      // first) — is served in two readdir permutations. Because discoverBooks sorts, the
-      // hint lands on the SAME folder across both; deleting the sort makes it
-      // readdir-order dependent and fails this test.
+      // Delegate to real discovery so its sort stabilizes a folded-key collision across opposite readdir orders; deleting the sort makes hint placement vary.
       const actual = await vi.importActual<typeof import('@core/utils/book-discovery.js')>(
         '@core/utils/book-discovery.js',
       );
@@ -2530,9 +2384,7 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       const permA = await runScan([nested, literal]);
       const permB = await runScan([literal, nested]);
 
-      // '/' (0x2f) sorts before '\\' (0x5c), so `/root/a/b` is always first → the plain
-      // candidate (no hint); `/root/a\b` is always the within-scan collision carrying the
-      // hint — in BOTH runs.
+      // `/` sorts before `\`, so the nested path is always plain and the literal-backslash path hinted.
       for (const perm of [permA, permB]) {
         expect(perm.get('/root/a/b')!.isDuplicate).toBe(false);
         expect(perm.get('/root/a/b')).not.toHaveProperty('reviewReason');
@@ -2552,7 +2404,6 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       const result1 = await service.scanDirectory('/audiobooks');
       expect(result1.discoveries[0]!.isDuplicate).toBe(false);
 
-      // Second scan with same folder — should also be non-duplicate (not carried over from first scan)
       mockPreFetch([], []);
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 3, totalSize: 100 },
@@ -2564,8 +2415,7 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
   });
 
   describe('cleanName enhancements (issue #426)', () => {
-    // cleanName() is private — test via parseFolderStructure with 2-part paths
-    // where parts[1] (title) goes through cleanName() directly
+    // Exercise private `cleanName` through the title side of a two-part path.
 
     describe('narrator parenthetical stripping', () => {
       it('strips trailing "(Jeff Hays)" from title', () => {
@@ -2622,7 +2472,6 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
 
       it('does not strip when title would be empty', () => {
         const result = parseFolderStructure(['Author', ', Book 01']);
-        // Should fall back or preserve — not produce empty title
         expect(result.title.length).toBeGreaterThan(0);
       });
     });
@@ -2658,7 +2507,6 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       });
 
       it('does not deduplicate non-duplicate segments', () => {
-        // In 2-part paths, parts[1] is title — dash is NOT parsed as author separator
         const result = parseFolderStructure(['Author', 'The Way of Kings – Brandon Sanderson']);
         expect(result.title).toBe('The Way of Kings – Brandon Sanderson');
         expect(result.author).toBe('Author');
@@ -2667,8 +2515,6 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
 
     describe('combined parenthetical edge cases', () => {
       it('"BookTitle (Disc 01) (Jeff Hays)" — disc paren survives, narrator stripped', () => {
-        // When disc detection doesn't match (disc not at end), cleanName gets the full string
-        // Narrator paren is at end so it gets stripped; (Disc 01) survives as non-narrator content
         const result = parseFolderStructure(['Author', 'BookTitle (Disc 01) (Jeff Hays)']);
         expect(result.title).toBe('BookTitle (Disc 01)');
       });

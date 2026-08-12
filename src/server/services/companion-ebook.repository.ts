@@ -9,32 +9,16 @@ import {
 import type { CompanionEbookRow } from './types.js';
 
 /**
- * Observation repository over `companion_ebooks` (#1958, plan §2). Module-level functions
- * taking the executor first — the `book-create.ts` / `download-record.ts` convention, not a
- * class. No DI wiring and no `services/index.ts` export: 1.2b has no runtime consumer yet
- * (1.2c wires it).
- *
- * **The executor is `DbOrTx`, not `Db`, and that is a downstream requirement.** #1959's
- * conditional writes are keyed on a `(bookId, path, status, fingerprint)` snapshot, so the
- * precondition read and the companion upsert must land in ONE transaction to be atomic. A
- * `Db`-typed parameter rejects the handle `db.transaction(async (tx) => ...)` supplies,
- * leaving #1959 to either duplicate this SQL or write outside its own precondition. Same
- * distinction the project already draws for `transitionBookStatus` and `replaceSeriesLink`.
+ * Accept `DbOrTx` so snapshot preconditions and observation writes can remain in one atomic
+ * transaction.
  */
 
-// The `IN (...)` list is the only bound-parameter set in the batch statement, so 480 leaves
-// ample headroom under the in-repo 998 convention ceiling (sqlite-in-clause-bind-limit).
+// Leave headroom below SQLite's 998-bind convention ceiling.
 const BOOK_ID_CHUNK_SIZE = 480;
 
 /**
- * Map a validated observation onto the eleven columns. Every column the variant does not
- * carry is written as `null` HERE — the caller has no way to half-set a row. `selectedFilename`
- * is derived from `selected`, so the DB's `selected_filename = filename` equality is
- * structurally unfalsifiable.
- *
- * Built inside a function body, never as a module-level constant: a top-level dereference of
- * `companionEbooks.*` is evaluated at import time and crashes any suite that partial-mocks
- * `db/schema` (drizzle-schema-toplevel-deref-breaks-partial-mocks).
+ * Fill omitted columns with null and derive `selectedFilename`. Keep schema dereferences inside
+ * the function because partial `db/schema` mocks cannot survive top-level access.
  */
 function toColumnValues(bookId: number, observation: CompanionEbookObservation) {
   const base = {
@@ -49,7 +33,6 @@ function toColumnValues(bookId: number, observation: CompanionEbookObservation) 
   };
 
   if (observation.status === 'none') {
-    // `none` carries no candidateCount — it is always zero.
     return { ...base, status: 'none' as const, candidateCount: 0 };
   }
   if (observation.status === 'ambiguous') {
@@ -74,11 +57,7 @@ export async function findCompanionEbook(x: DbOrTx, bookId: number): Promise<Com
   return (rows[0] as CompanionEbookRow | undefined) ?? null;
 }
 
-/**
- * Batch lookup: one query per chunk, never one per book. An empty input returns an empty
- * `Map` **without** issuing a query (`chunkArray([])` yields no chunks). Absent book ids are
- * simply missing keys, never `null` values.
- */
+/** Missing ids are omitted; empty input performs no query. */
 export async function findCompanionEbooksByBookIds(
   x: DbOrTx,
   bookIds: number[],
@@ -93,17 +72,7 @@ export async function findCompanionEbooksByBookIds(
   return byBookId;
 }
 
-/**
- * Insert-or-update the single observation row for a book. Parses unconditionally, so no
- * invalid value can be driven through this function to reach a DB CHECK — the eight
- * constraints stay the last backstop and are covered from raw SQL in #1957's suite.
- *
- * Invalid observations originate from the reconciler (#1959), never from a request body, so
- * the `ZodError` is the correct programmer-error signal and needs no domain error class or
- * route mapping.
- *
- * `updatedAt` is always written; `createdAt` is written on insert only and never rewritten.
- */
+/** Validate programmer-owned observations; preserve `createdAt` while refreshing `updatedAt`. */
 export async function upsertCompanionEbook(
   x: DbOrTx,
   bookId: number,

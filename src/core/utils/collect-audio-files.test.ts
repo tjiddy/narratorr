@@ -137,7 +137,7 @@ describe('collectAudioFilePaths', () => {
       const result = await collectAudioFilePaths('/dir', { recursive: true, skipHidden: true });
 
       expect(result).toEqual([join('/dir', 'visible', 'track.mp3')]);
-      expect(mockReaddir).toHaveBeenCalledTimes(2); // root + visible only
+      expect(mockReaddir).toHaveBeenCalledTimes(2);
     });
 
     it('includes hidden entries when skipHidden is false (default)', async () => {
@@ -169,8 +169,7 @@ describe('collectAudioFilePaths', () => {
     });
   });
 
-  // #1852 AC2: dot-FILES are never collected, regardless of skipHidden (which gates only
-  // directory recursion). Independent of the dot-DIRECTORY skip above.
+  // skipHidden gates directory recursion; dotfiles are always excluded.
   describe('hidden file skipping (#1852)', () => {
     it('excludes a born-hidden temp file but keeps the real file (non-recursive)', async () => {
       mockReaddir.mockResolvedValueOnce([
@@ -186,8 +185,8 @@ describe('collectAudioFilePaths', () => {
       mockReaddir
         .mockResolvedValueOnce([makeDirent('.merge-tmp', false, true)] as never)
         .mockResolvedValueOnce([
-          makeDirent('track.mp3', true, false),   // visible file inside the dot-dir → still collected under default
-          makeDirent('.stray.tmp.mp3', true, false), // dot-file → dropped by the file-level rule
+          makeDirent('track.mp3', true, false),
+          makeDirent('.stray.tmp.mp3', true, false),
         ] as never);
 
       const result = await collectAudioFilePaths('/dir', { recursive: true });
@@ -203,7 +202,7 @@ describe('collectAudioFilePaths', () => {
       mockReaddir.mockResolvedValueOnce([
         makeDirent('a.xyz', true, false),
         makeDirent('.a.xyz', true, false),
-        makeDirent('b.mp3', true, false), // not in the custom set → excluded
+        makeDirent('b.mp3', true, false),
       ] as never);
 
       const result = await collectAudioFilePaths('/dir', { extensions: new Set(['.xyz']) });
@@ -211,7 +210,7 @@ describe('collectAudioFilePaths', () => {
     });
 
     it('identity root (F38): a hidden dir passed as the root still yields its visible children', async () => {
-      // The root basename is never self-filtered — only DISCOVERED children are.
+      // Filtering applies to discovered children, never the identity root.
       mockReaddir.mockResolvedValueOnce([
         makeDirent('track.mp3', true, false),
         makeDirent('.half.tmp.mp3', true, false),
@@ -261,7 +260,6 @@ describe('collectSortedAudioFiles', () => {
 
       const result = await collectSortedAudioFiles('/dir', { sort: 'lexicographic' });
 
-      // Lexicographic: "track10" < "track2" because '1' < '2'
       expect(result).toEqual([
         join('/dir', 'track1.mp3'),
         join('/dir', 'track10.mp3'),
@@ -280,7 +278,6 @@ describe('collectSortedAudioFiles', () => {
 
       const result = await collectSortedAudioFiles('/dir', { sort: 'locale' });
 
-      // Locale without numeric: "track10" < "track2" because '1' < '2'
       expect(result).toEqual([
         join('/dir', 'track1.mp3'),
         join('/dir', 'track10.mp3'),
@@ -414,7 +411,6 @@ describe('compareAudioNames', () => {
     ];
     const sorted = [...shuffled].sort(compareAudioNames);
     expect([...sorted].sort(compareAudioNames)).toEqual(sorted);
-    // antisymmetry spot-checks: cmp(a,b) === -cmp(b,a)
     const sign = (n: number) => Math.sign(n);
     const pairs: [string, string][] = [
       ['X.mp3', 'X (2).mp3'],
@@ -443,7 +439,6 @@ describe('disambiguateStems', () => {
   });
 
   it('numbers every colliding stem including the first, single-digit width for 2–3 files', () => {
-    // padWidth(3) === 1 — no leading zeros (mirrors planFileRenames paths.test.ts:411-425).
     expect(disambiguateStems(['A - B', 'A - B', 'A - B'])).toEqual([
       'A - B (1)', 'A - B (2)', 'A - B (3)',
     ]);
@@ -468,14 +463,11 @@ describe('disambiguateStems', () => {
   });
 
   it('assigns ordinals in the caller-provided order (play order, not lexicographic)', () => {
-    // Caller sorts with compareAudioNames first: Track1, Track2, Track10.
     const ordered = ['Track1.mp3', 'Track2.mp3', 'Track10.mp3'].sort(compareAudioNames);
-    // Render collapses all to the same book-only stem; the ordinal follows play order.
     const stems = ordered.map(() => 'Author - Title');
     expect(disambiguateStems(stems)).toEqual([
       'Author - Title (1)', 'Author - Title (2)', 'Author - Title (3)',
     ]);
-    // Sanity: the sort put Track2 before Track10 (numeric), so ordinal 2 maps to Track2.
     expect(ordered).toEqual(['Track1.mp3', 'Track2.mp3', 'Track10.mp3']);
   });
 });

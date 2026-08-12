@@ -3,10 +3,6 @@ import type { DownloadClientService } from '../services/download-client.service.
 import type { RemotePathMappingService } from '../services/remote-path-mapping.service.js';
 import { applyPathMapping } from '@core/utils/path-mapping.js';
 
-/**
- * Resolve the full save path for a download by querying the download client adapter.
- * Joins savePath + name from the adapter response and applies remote path mapping.
- */
 export async function resolveSavePath(
   download: { id: number; downloadClientId: number | null; externalId: string | null },
   downloadClientService: DownloadClientService,

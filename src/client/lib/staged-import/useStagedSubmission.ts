@@ -16,16 +16,7 @@ import { STAGED_COPY, putFailedWithCounts, type StagedBannerKey } from './messag
 import { buildStagedOutcomeToast, isCleanCompletion, type LocalExclusions } from './outcome.js';
 import { acceptedItemPaths } from '@/lib/import-outcome.js';
 
-/**
- * Staged-import submit + poll orchestrator (#1902). Wires the built staged modules —
- * classify → preflight → digest/UUID → create/PUT/finalize (`runSubmit`) → summary
- * poll → one-time terminal detail (`createPollController`) → count-driven
- * outcome/navigation/deselect — plus the source-scoped best-effort outbox hint and
- * mount `by-client` reconciliation. Both import page hooks call `submit()` (fresh
- * import AND held re-confirm) and read the returned lifecycle state; all the transport
- * error dispositions, single-flight polling, and outbox transitions live here so the
- * page hooks stay thin.
- */
+// Orchestrates preflight, durable submission, polling, recovery, and terminal UI policy.
 
 export interface StagedProgress {
   current: number;
@@ -37,45 +28,23 @@ export interface UseStagedSubmissionParams {
   source: SubmissionSource;
   /** The page's word for an accepted item — "registered" / "queued for import". */
   acceptedVerb: string;
-  /** In-session clean completion → navigate away (the page passes `() => navigate('/library')`). */
   onCleanNavigate: () => void;
-  /**
-   * Deselect the accepted rows in place. Called in two cases: (1) a partial (server or
-   * local) outcome, with the item-derived accepted set (`acceptedItemPaths ∩ submitted`);
-   * (2) a clean completion when `shouldStayOnClean` snapshotted true (#1895), with the
-   * frozen submitted survivor paths (`submittedPathsRef` — the complete accepted set for a
-   * clean outcome, robust to an aggregates-only pruned terminal detail where `items` is
-   * undefined). The param is a `ReadonlySet` so the frozen ref passes without a copy; both
-   * production callers consume it only via `.has(...)`.
-   */
+  /** Deselect accepted paths for in-session partial outcomes or clean runs that stay on-page. */
   onDeselectAccepted: (acceptedPaths: ReadonlySet<string>) => void;
-  /** Surface held rows for re-confirm; `mode` is the confirm-attempt snapshot. */
   captureHeld: (items: HeldReviewItem[], mode: ImportMode | undefined) => void;
   clearHeld: () => void;
-  /**
-   * Snapshotted (per-run, after preflight) to decide the CLEAN-completion terminal policy
-   * (#1895). When it returns true at submit time, a clean completion stays on the page and
-   * deselects the accepted rows in place instead of calling `onCleanNavigate`. Library
-   * Import passes `() => paused`; Manual Import and non-paused flows omit it (navigate as
-   * before). Read once at the accepted run's submit — a later value change (e.g. a Resume
-   * clearing `paused` mid-processing) does not retroactively alter the in-flight run.
-   */
+  /** Snapshotted after preflight; true keeps clean completion on-page and deselects submitted rows. */
   shouldStayOnClean?: () => boolean;
 }
 
 export interface UseStagedSubmission {
-  /** Run the full staged pipeline over the selected rows (or held re-confirm rows). */
   submit: (items: ImportConfirmItem[], mode: ImportMode | undefined) => void;
-  /** True from submit start through the terminal detail projection (button-disabling). */
   isPending: boolean;
-  /** Upload/registration progress → "Registering X of Y…". */
   chunkProgress: StagedProgress | null;
-  /** Pinned recoverable/error/preflight copy, or null. */
   banner: string | null;
   dismissBanner: () => void;
 }
 
-/** Map a detail-DTO held row to the shared `HeldReviewItem` shape (path/title survive nulling). */
 function toHeldReviewItem(row: Extract<StagedItemResultDto, { disposition: 'held' }>): HeldReviewItem {
   return {
     path: row.path,
@@ -94,27 +63,17 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
   const [chunkProgress, setChunkProgress] = useState<StagedProgress | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
 
-  // Per-submission scratch that must survive re-renders without re-triggering effects.
   const abortRef = useRef<AbortController | null>(null);
   const mountAbortRef = useRef<AbortController | null>(null);
   const pollRef = useRef<PollController | null>(null);
   const localExclusionsRef = useRef<LocalExclusions>({ invalid: 0, oversize: 0 });
   const modeRef = useRef<ImportMode | undefined>(undefined);
   const chunkCountRef = useRef(1);
-  // The frozen in-session submitted paths (F4/F48): deselection is scoped to THIS session's
-  // submitted rows, never a recovered receipt, and never applied to a remount projection.
+  // Recovered receipts must never deselect a remounted page's current selection.
   const submittedPathsRef = useRef<ReadonlySet<string>>(new Set());
-  // The accepted run's clean-completion terminal policy (#1895 F7/F8), snapshotted at the
-  // SAME post-preflight epoch boundary where `submittedPathsRef` is frozen — never at the
-  // top of `submit` before preflight. A later submit that fails preflight returns without
-  // bumping the epoch or touching this, so it cannot clobber the active run's policy; and
-  // because `projectOutcome` runs only for the current epoch, the value read at terminal is
-  // exactly the one captured at THIS run's submit (a mid-processing Resume flip is ignored).
+  // Failed preflight and later pause changes cannot alter an accepted run's terminal policy.
   const stayOnCleanRef = useRef(false);
-  // Monotonic run epoch (F19). Every submit bumps it; the digest continuation, the transport
-  // chain, and every poll/state callback are gated on "am I still the current epoch?" so a
-  // superseded run (or one whose component unmounted mid-digest) can never publish state,
-  // start a poll, or stop the newer run's poll.
+  // Every async callback checks this epoch; newer submits supersede old work.
   const runEpochRef = useRef(0);
 
   const invalidateReportReads = useCallback(() => {
@@ -126,10 +85,7 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
     pollRef.current = null;
   }, []);
 
-  // ── Clean/partial terminal selection policy (extracted to keep `projectOutcome` under the
-  //    complexity budget). Clean: stay+deselect the frozen submitted paths when this run
-  //    snapshotted "stay" (#1895), else navigate. Partial: deselect the item-derived accepted
-  //    set ∩ frozen submitted (today's behavior). ──
+  // Clean "stay" deselects the frozen run; partial deselects accepted items from that run.
   const applyTerminalSelection = useCallback(
     (clean: boolean, items: readonly StagedItemResultDto[] | undefined) => {
       if (clean) {
@@ -144,19 +100,16 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
     [onCleanNavigate, onDeselectAccepted],
   );
 
-  // ── Terminal detail projection → count-driven outcome / navigation / deselect ──
   const projectOutcome = useCallback(
     (detail: SubmissionResponse, recovered: boolean, clientSubmissionId: string) => {
       setIsPending(false);
       setChunkProgress(null);
-      // A completion recovered on remount has no surviving in-session summary (F29).
+      // Remount recovery has no surviving in-session exclusion counts.
       const local: LocalExclusions = recovered ? { invalid: 0, oversize: 0 } : localExclusionsRef.current;
       const agg = detail.aggregates;
       const items = !detail.detailsPruned && 'items' in detail && detail.items ? detail.items : undefined;
 
-      // Held rows: capture into the LIVE re-confirm panel only in-session — a completion
-      // recovered on remount keeps held detail read-only (F5/F66), because the captured mode
-      // is gone and cross-reload re-confirm is unsupported. The warning toast still informs.
+      // Recovered held rows stay read-only because their confirmation mode did not survive reload.
       if (items) {
         const held = items.filter((i): i is Extract<StagedItemResultDto, { disposition: 'held' }> => i.disposition === 'held');
         if (held.length > 0) {
@@ -167,24 +120,19 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
         }
       }
 
-      // Skip clause names the reason/incumbent title while the detail survives (F9).
       const skippedRows = items
         ?.filter((i): i is Extract<StagedItemResultDto, { disposition: 'skipped' }> => i.disposition === 'skipped')
         .map((i) => ({ reason: i.reason, ...(i.existingTitle !== undefined ? { existingTitle: i.existingTitle } : {}) }));
       const outcome = buildStagedOutcomeToast(agg, local, acceptedVerb, skippedRows);
       if (outcome) toast[outcome.severity](outcome.message);
 
-      // The accepted rows changed the library — refresh books + the #1894 report reads.
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       invalidateReportReads();
 
-      // Guarded evict: a newer submit may already own the single slot (F1).
+      // Client ID prevents evicting a newer outbox slot.
       evictOutbox(source, clientSubmissionId);
 
-      // A recovered projection NEVER navigates and NEVER mutates the current selection (F4):
-      // the displayed rows may differ after a remount, so deselection is scoped strictly to THIS
-      // session's frozen submitted paths. Otherwise apply the clean/partial selection policy —
-      // clean stays+deselects when this run snapshotted "stay" (#1895), else navigates.
+      // Recovery never navigates or deselects because this page may show another session's rows.
       if (recovered) return;
       applyTerminalSelection(isCleanCompletion(agg, local), items);
     },
@@ -193,7 +141,7 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
 
   const startPoll = useCallback(
     (submissionId: number, recovered: boolean, clientSubmissionId: string, epoch: number) => {
-      // Ignore a start request from a superseded run — it must not stop the newer poll (F19).
+      // A stale start request must not stop the current run's poll.
       if (epoch !== runEpochRef.current) return;
       const isCurrent = () => epoch === runEpochRef.current;
       stopPoll();
@@ -224,25 +172,22 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
     [projectOutcome, source, stopPoll],
   );
 
-  // ── In-session by-client recovery (F2) ────────────────────────────────────────
-  // A finalize whose response is lost / exhausts retries may still have landed, so probe
-  // by-client and rejoin the poll rather than waiting for a future remount.
+  // A lost finalize response may have landed; rejoin by client ID before allowing retry.
   const recoverInSessionByClient = useCallback(
     async (clientSubmissionId: string, signal: AbortSignal, epoch: number) => {
       const result = await reconcileByClient({ api, clientSubmissionId, signal });
-      // Discard the recovery of a superseded/aborted run (F19) — no poll rejoin, no state.
       if (signal.aborted || epoch !== runEpochRef.current) return;
       switch (result.action) {
         case 'rejoin':
-          startPoll(result.submissionId, false, clientSubmissionId, epoch); // in-session: outcome/navigation still apply
+          startPoll(result.submissionId, false, clientSubmissionId, epoch);
           return;
-        case 'evict': // receiving (finalize never landed) / never-landed → safe re-run
+        case 'evict':
           setIsPending(false);
           evictOutbox(source, clientSubmissionId);
           return;
         case 'lookup-failed':
           setIsPending(false);
-          setBanner(STAGED_COPY.createUnreachable); // hint retained → later remount re-probes
+          setBanner(STAGED_COPY.createUnreachable); // Keep the hint for mount recovery.
           return;
         case 'aborted':
           return;
@@ -251,32 +196,29 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
     [source, startPoll],
   );
 
-  // ── SubmitError disposition → banner + outbox transition (F1 guarded, F7 distinct copy) ──
   const handleSubmitError = useCallback(
     (error: SubmitError, clientSubmissionId: string) => {
       setIsPending(false);
       setChunkProgress(null);
       switch (error.disposition) {
         case 'aborted':
-          return; // unmount/navigation — surface nothing
+          return;
         case 'create-unreachable':
-          setBanner(STAGED_COPY.createUnreachable); // hint retained → next mount probes by-client
+          setBanner(STAGED_COPY.createUnreachable); // Keep the hint for mount recovery.
           return;
         case 'digest-conflict':
-          setBanner(STAGED_COPY.digestConflict); // durable header left recoverable; fresh UUID on retry
+          setBanner(STAGED_COPY.digestConflict); // Keep the recoverable header; retry uses a fresh UUID.
           return;
         case 'put-failed':
-          // Permanent PUT (400/409/413): NOT connectivity — the upload stopped, nothing imported.
-          // Leave the `receiving` hint for the next mount's receiving/404 reconcile arm.
-          // Pinned #1902 copy with received accounting when the flow provided counts.
+          // Permanent upload rejection; keep the receiving hint for mount reconciliation.
           setBanner(error.counts ? putFailedWithCounts(error.counts.received, error.counts.total) : STAGED_COPY.putFailed);
           return;
         case 'create-invalid':
-          setBanner(STAGED_COPY.createInvalid); // validation failure → evict, nothing landed
+          setBanner(STAGED_COPY.createInvalid);
           evictOutbox(source, clientSubmissionId);
           return;
         case 'finalize-failed':
-          setBanner(STAGED_COPY.finalizeFailed); // 409 gaps/digest-mismatch → cannot complete, evict
+          setBanner(STAGED_COPY.finalizeFailed);
           evictOutbox(source, clientSubmissionId);
           return;
         case 'finalize-invariant':
@@ -284,10 +226,10 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
           evictOutbox(source, clientSubmissionId);
           return;
         case 'finalize-missing':
-          evictOutbox(source, clientSubmissionId); // never landed — safe re-run, no error banner
+          evictOutbox(source, clientSubmissionId); // Never landed; safe to retry without a banner.
           return;
         case 'finalize-unreachable':
-          return; // handled by the in-session by-client recovery path (F2)
+          return; // Handled by in-session recovery.
       }
     },
     [source],
@@ -295,8 +237,7 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
 
   const runPipeline = useCallback(
     async (survivorItems: Parameters<typeof runSubmit>[0]['items'], clientSubmissionId: string, payloadDigest: string, mode: ImportMode | undefined, epoch: number, abort: AbortController) => {
-      // "Am I still the run the hook is committed to?" — false once a newer submit bumps the
-      // epoch, or the component unmounts (which aborts this controller) (F19).
+      // Newer submits and unmounts revoke this run's right to publish.
       const isCurrent = () => epoch === runEpochRef.current && !abort.signal.aborted;
       const outboxRecord: OutboxRecord = {
         version: 1,
@@ -326,15 +267,13 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
             if (isCurrent()) invalidateReportReads();
           },
         });
-        if (!isCurrent()) return; // superseded/unmounted mid-flight → do not publish or start a poll
+        if (!isCurrent()) return;
         markOutboxFinalized(source, submissionId, clientSubmissionId);
         startPoll(submissionId, false, clientSubmissionId, epoch);
       } catch (error: unknown) {
-        // A superseded or aborted run surfaces nothing — the newer run (or unmount) owns state.
         if (!isCurrent()) return;
         if (error instanceof SubmitError) {
-          // A finalize that exhausted retries / lost its response may already have landed —
-          // probe by-client in-session and rejoin, rather than parking until a remount (F2).
+          // Finalize may have landed despite the transport error.
           if (error.disposition === 'finalize-unreachable') {
             await recoverInSessionByClient(clientSubmissionId, abort.signal, epoch);
             return;
@@ -359,7 +298,7 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
 
       const gate = preflightSubmission(classified.survivors);
       if (gate.kind !== 'ok') {
-        // No UUID / hint / create; rows stay selected. Only the first tripped gate's copy shows.
+        // Preflight failures create no UUID, outbox hint, or request.
         if (gate.kind === 'zero-survivors') {
           const parts: string[] = [];
           if (classified.invalidCount > 0) parts.push(`${classified.invalidCount} couldn’t be prepared — check their details`);
@@ -373,15 +312,12 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
         return;
       }
 
-      // Supersede any prior run BEFORE starting this one (F19): abort its in-flight
-      // create/PUT/finalize (or pending digest), stop its poll, and abort a mount lookup, so
-      // none of their late callbacks can publish state or take over poll ownership.
+      // Revoke the previous submit, poll, and mount lookup before claiming a new epoch.
       abortRef.current?.abort();
       stopPoll();
       mountAbortRef.current?.abort();
       const epoch = ++runEpochRef.current;
-      // Create the controller NOW, before the async digest — so an unmount during digest aborts
-      // it and the continuation below bails out instead of starting the network chain (F19).
+      // Create before digest so unmount can cancel its continuation.
       const abort = new AbortController();
       abortRef.current = abort;
 
@@ -389,11 +325,7 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
       setChunkProgress(null);
       chunkCountRef.current = 1;
       const items$ = classified.survivors;
-      // Freeze the submitted paths NOW (F4): deselection later is scoped to this exact set.
       submittedPathsRef.current = new Set(items$.map((i) => i.path));
-      // Snapshot the clean-completion terminal policy for THIS run at the same boundary (#1895
-      // F8): captured here — after preflight, alongside the epoch bump — so a later submit that
-      // fails preflight cannot overwrite it, and a mid-processing `paused` flip cannot either.
       stayOnCleanRef.current = shouldStayOnClean ? shouldStayOnClean() : false;
       const digestInput = { source, ...(source === 'manual' && mode !== undefined ? { mode } : {}), items: [...items$] };
       let clientSubmissionId: string;
@@ -405,7 +337,6 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
         return;
       }
       void computeSubmissionDigest(digestInput).then((payloadDigest) => {
-        // Superseded by a newer submit, or unmounted, while the digest was computing → bail (F19).
         if (abort.signal.aborted || epoch !== runEpochRef.current) return;
         return runPipeline(items$, clientSubmissionId, payloadDigest, mode, epoch, abort);
       });
@@ -415,40 +346,36 @@ export function useStagedSubmission(params: UseStagedSubmissionParams): UseStage
 
   const dismissBanner = useCallback(() => setBanner(null), []);
 
-  // ── Mount reconciliation via the source-scoped outbox hint (by-client) ────────
+  // Recover a source-scoped outbox hint on mount.
   useEffect(() => {
     const record = readOutbox(source);
     if (!record) return;
     const recordClientId = record.clientSubmissionId;
-    // The mount recovery is itself an epoch'd run so a subsequent submit supersedes it (F19).
     const epoch = ++runEpochRef.current;
     const abort = new AbortController();
     mountAbortRef.current = abort;
     void (async () => {
       const result = await reconcileByClient({ api, clientSubmissionId: recordClientId, signal: abort.signal });
-      // A submit that started mid-lookup aborts this controller (F1) and bumps the epoch (F19);
-      // its late result must not rejoin the old poll or evict the newer hint.
       if (abort.signal.aborted || epoch !== runEpochRef.current) return;
       switch (result.action) {
         case 'rejoin':
           startPoll(result.submissionId, true, recordClientId, epoch);
           break;
         case 'evict':
-          evictOutbox(source, recordClientId); // only if the slot still holds this hint
+          evictOutbox(source, recordClientId); // Only if the slot still holds this hint.
           break;
         case 'lookup-failed':
-          setBanner(STAGED_COPY.createUnreachable); // pointer retained
+          setBanner(STAGED_COPY.createUnreachable); // Keep the recovery pointer.
           break;
         case 'aborted':
           break;
       }
     })();
     return () => abort.abort();
-    // Run once per source on mount; deliberately not re-run on startPoll identity.
+    // Mount once per source; startPoll identity must not restart recovery.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source]);
 
-  // Abort any in-flight submit/lookup + stop polling on unmount.
   useEffect(() => {
     return () => {
       abortRef.current?.abort();

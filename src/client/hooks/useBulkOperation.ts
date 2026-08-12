@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
-import { api, type BulkOpType, type BulkJobStatus } from '@/lib/api';
+import { api, type BulkOpType, type BulkJobStatus, type BulkJobFailure } from '@/lib/api';
 import { getErrorMessage } from '@/lib/error-message.js';
 
 const POLL_INTERVAL = 2000;
@@ -9,6 +9,8 @@ interface BulkProgress {
   completed: number;
   total: number;
   failures: number;
+  /** Server-capped named failures; `failures` may exceed this array's length. */
+  failureDetails: BulkJobFailure[];
 }
 
 interface UseBulkOperationReturn {
@@ -18,13 +20,9 @@ interface UseBulkOperationReturn {
   startJob: (type: BulkOpType) => Promise<void>;
 }
 
-const IDLE_PROGRESS: BulkProgress = Object.freeze({ completed: 0, total: 0, failures: 0 });
+const IDLE_PROGRESS: BulkProgress = Object.freeze({ completed: 0, total: 0, failures: 0, failureDetails: [] });
 
-/**
- * Job type → its start endpoint. Keyed on the union (not a ternary chain with a default arm), so
- * every type routes BY NAME and a newly-added `BulkOpType` is a compile error here rather than
- * silently inheriting whichever call the old chain fell through to (#2056).
- */
+/** Exhaustive so a new `BulkOpType` cannot silently fall through to the wrong endpoint (#2056). */
 const START_FNS: Record<BulkOpType, () => Promise<{ jobId: string }>> = {
   rename: () => api.startBulkRename(),
   retag: () => api.startBulkRetag(),
@@ -46,7 +44,12 @@ export function useBulkOperation(): UseBulkOperationReturn {
   }, []);
 
   const applyJobStatus = useCallback((status: BulkJobStatus) => {
-    setProgress({ completed: status.completed, total: status.total, failures: status.failures });
+    setProgress({
+      completed: status.completed,
+      total: status.total,
+      failures: status.failures,
+      failureDetails: status.failureDetails,
+    });
     if (status.status === 'completed') {
       stopPolling();
       setIsRunning(false);
@@ -62,14 +65,13 @@ export function useBulkOperation(): UseBulkOperationReturn {
         applyJobStatus(status);
       } catch (error: unknown) {
         if (error instanceof Error && (error as { status?: number }).status === 404) {
-          // Server restarted or job expired — reset to idle silently
+          // A missing job usually means the server restarted or it expired; reset silently.
           stopPolling();
           setIsRunning(false);
           setJobType(null);
           setProgress(IDLE_PROGRESS);
           jobIdRef.current = null;
         } else {
-          // Unexpected error (500, network failure, etc.) — reset to idle with toast
           stopPolling();
           setIsRunning(false);
           setJobType(null);
@@ -81,7 +83,6 @@ export function useBulkOperation(): UseBulkOperationReturn {
     }, POLL_INTERVAL);
   }, [stopPolling, applyJobStatus]);
 
-  // On mount: check for an active job and resume polling if found
   useEffect(() => {
     let cancelled = false;
     api.getActiveBulkJob().then((activeJob) => {
@@ -89,14 +90,19 @@ export function useBulkOperation(): UseBulkOperationReturn {
       jobIdRef.current = activeJob.jobId;
       setIsRunning(true);
       setJobType(activeJob.type);
-      setProgress({ completed: activeJob.completed, total: activeJob.total, failures: activeJob.failures });
+      setProgress({
+        completed: activeJob.completed,
+        total: activeJob.total,
+        failures: activeJob.failures,
+        failureDetails: activeJob.failureDetails,
+      });
       startPolling(activeJob.jobId);
     }).catch(() => {});
 
     return () => { cancelled = true; };
   }, [startPolling]);
 
-  // Cleanup on unmount — stop interval but do NOT cancel the server-side job
+  // Unmount stops local polling, not the server-side job.
   useEffect(() => {
     return () => {
       stopPolling();

@@ -14,10 +14,6 @@ export { namingSeparatorValues, namingCaseValues, type NamingSeparator, type Nam
 export const FOLDER_FORMAT_ALLOWED_TOKENS = [...FOLDER_ALLOWED_TOKENS];
 export const FILE_FORMAT_ALLOWED_TOKENS = [...FILE_ALLOWED_TOKENS];
 
-/**
- * Extract disambiguated token names from a template string.
- * Shares the suffix-first precedence logic with validateTokens/parseTemplate.
- */
 function extractTokenNames(val: string, allowedTokens: ReadonlySet<string>): string[] {
   const tokenPattern = new RegExp(TOKEN_PATTERN_SOURCE, 'g');
   const names: string[] = [];
@@ -37,7 +33,6 @@ function extractTokenNames(val: string, allowedTokens: ReadonlySet<string>): str
   return names;
 }
 
-/** All known tokens for disambiguation (superset — used by hasTitle/hasAuthor). */
 const ALL_TOKENS = new Set<string>([...FILE_ALLOWED_TOKENS]);
 
 export function hasTitle(val: string): boolean {
@@ -55,12 +50,10 @@ export function validateTokens(val: string, allowed: readonly string[]): boolean
   const tokenPattern = new RegExp(TOKEN_PATTERN_SOURCE, 'g');
   let match: RegExpExecArray | null;
   while ((match = tokenPattern.exec(val)) !== null) {
-    // Groups: (1) optional prefix, (2) token candidate, (3) pad spec, (4) optional suffix
     const candidatePrefix = match[1];
     const candidateName = match[2]!;
 
-    // Suffix-first disambiguation: if candidate prefix contains a known token name,
-    // the real token is that word (suffix syntax). Otherwise, candidateName is the token (prefix syntax).
+    // In suffix syntax, the actual token is the first known word in candidatePrefix.
     let tokenName = candidateName;
     if (candidatePrefix) {
       const firstWordMatch = candidatePrefix.match(/\w+/);
@@ -75,10 +68,8 @@ export function validateTokens(val: string, allowed: readonly string[]): boolean
 }
 
 export const FOLDER_TITLE_MSG = 'Template must include {title} or {titleSort}';
-/** Derived from FOLDER_ALLOWED_TOKENS so the copy can never drift from the allow-list (#1712). */
 export const FOLDER_TOKEN_MSG = `Unknown token in template. Allowed: ${FOLDER_ALLOWED_TOKENS.map((t) => `{${t}}`).join(', ')}`;
 export const FILE_TITLE_MSG = FOLDER_TITLE_MSG;
-/** Derived from FILE_ALLOWED_TOKENS so the copy can never drift from the allow-list (#1712). */
 export const FILE_TOKEN_MSG = `Unknown token in template. Allowed: ${FILE_ALLOWED_TOKENS.map((t) => `{${t}}`).join(', ')}`;
 export const AUTHOR_ADVISORY_MSG = 'Consider including {author} for better organization';
 

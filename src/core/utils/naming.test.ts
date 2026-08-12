@@ -34,8 +34,6 @@ describe('sanitizePath', () => {
       expect(sanitizePath('The Way of Kings.import-bak')).toBe('The Way of Kings');
       expect(sanitizePath('Draft.import-tmp')).toBe('Draft');
       expect(sanitizePath('X.import-commit-pending')).toBe('X');
-      // #1911: the active born-hidden scratch suffixes are reserved too, so no metadata-derived
-      // final folder can ever end in one (same #1341 mechanism as the legacy pair).
       expect(sanitizePath('Royal Assassin.import-staging')).toBe('Royal Assassin');
       expect(sanitizePath('Royal Assassin.import-backup')).toBe('Royal Assassin');
     });
@@ -57,21 +55,17 @@ describe('sanitizePath', () => {
     });
 
     it('does not emit a reserved suffix created by the 255-char truncation (#1341 F1)', () => {
-      // The raw title ends in `x` (no reserved suffix), but its first 255 sanitized chars end
-      // exactly in `.import-bak` — truncation would re-create the suffix unless reservation
-      // runs as the final pass. 244 + '.import-bak'(11) = 255, then a trailing 'x' overflows.
+      // The raw title is safe, but truncation creates a 255-character `.import-bak` ending.
       const truncatesToSuffix = `${'A'.repeat(244)}.import-bak` + 'x';
       const result = sanitizePath(truncatesToSuffix);
       expect(result.endsWith('.import-bak')).toBe(false);
       expect(result).toBe('A'.repeat(244));
-      // And the marker suffix (longest, 22 chars) at the truncation boundary.
       const markerBoundary = `${'B'.repeat(233)}.import-commit-pending` + 'y';
       expect(sanitizePath(markerBoundary).endsWith('.import-commit-pending')).toBe(false);
     });
   });
 
   it('collapses spaces left by stripped characters', () => {
-    // Colon removal leaves double space: "Author: Name" → "Author  Name" → "Author Name"
     expect(sanitizePath('Author: Name')).toBe('Author Name');
   });
 
@@ -113,7 +107,6 @@ describe('renderTemplate', () => {
 
   it('filters out empty path segments from missing tokens', () => {
     const result = renderTemplate('{author}/{series}/{title}', { author: 'Author', title: 'Book' });
-    // series is undefined, so that segment should be gone
     expect(result).toBe('Author/Book');
   });
 
@@ -134,7 +127,6 @@ describe('renderTemplate', () => {
         title: 'Book',
         series: 'My Series',
       });
-      // series present → "My Series - ", year missing → "", title → "Book"
       expect(result).toBe('Author/My Series - Book');
     });
   });
@@ -202,8 +194,7 @@ describe('renderTemplate', () => {
     });
   });
 
-  // #1712 — the {edition} token renders the stored edition_label. Drive through the
-  // real renderTemplate/stripEmptyWrappers path (not a unit on the renderer internals).
+  // Exercise the public render/empty-wrapper path rather than renderer internals.
   describe('{edition} token (#1712)', () => {
     it('renders the label when the token input is a non-empty string', () => {
       const result = renderTemplate('{title} ({edition})', { title: 'Dark Matter', edition: 'Full Cast' });
@@ -213,7 +204,6 @@ describe('renderTemplate', () => {
     it('renders empty and strips the empty `( )` wrapper when the input is null', () => {
       const result = renderTemplate('{title} ({edition})', { title: 'Dark Matter', edition: null });
       expect(result).toBe('Dark Matter');
-      // No leftover separators/brackets from the stripped empty token.
       expect(result).not.toContain('(');
       expect(result).not.toContain(')');
     });
@@ -327,7 +317,6 @@ describe('renderFilename', () => {
       author: 'Author',
       title: 'Book',
     });
-    // Slashes are illegal chars and get stripped
     expect(result).not.toContain('/');
   });
 
@@ -390,8 +379,6 @@ describe('renderFilename', () => {
 
   describe('{edition} stays transformed in FILE templates (#1739, F8)', () => {
     it('applies namingSeparator/namingCase to {edition} (verbatim bypass is folder-only)', () => {
-      // renderFilename does NOT pass the folder verbatim-token set, so the edition token keeps
-      // being styled by the naming options exactly as before this fix.
       const result = renderFilename('{title} ({edition})', { title: 'Dark Matter', edition: 'Full Cast' }, { separator: 'period', case: 'upper' });
       expect(result).toBe('DARK.MATTER (FULL.CAST)');
     });
@@ -433,7 +420,6 @@ describe('sanitizeEditionDiscriminator (#1739)', () => {
   it('does not retain a reserved import-sibling suffix', () => {
     expect(sanitizeEditionDiscriminator('Full Cast.import-bak')).toBe('Full Cast');
     expect(sanitizeEditionDiscriminator('.import-tmp')).toBeNull();
-    // #1911: active scratch suffixes reserved on the edition discriminator too.
     expect(sanitizeEditionDiscriminator('Full Cast.import-staging')).toBe('Full Cast');
     expect(sanitizeEditionDiscriminator('.import-backup')).toBeNull();
   });
@@ -454,9 +440,7 @@ describe('composeEditionSuffixLeaf (#1739)', () => {
     expect(composeEditionSuffixLeaf('Book', 'Full Cast').endsWith('.import-bak')).toBe(false);
   });
 
-  // #1774 — the settings "Multiple editions" preview row composes its suffix-branch leaf as
-  // `composeEditionSuffixLeaf(baseLeaf, sanitizeEditionDiscriminator(label))`. Pin that exact
-  // composition here (real core) so the preview can never diverge from the production suffix branch.
+  // Settings preview uses this exact pair; pin core composition so it cannot drift from production.
   it('parity: composing a sanitized "Full Cast" onto the sample leaf matches the preview row (#1774)', () => {
     const discriminator = sanitizeEditionDiscriminator('Full Cast');
     expect(discriminator).toBe('Full Cast');
@@ -464,12 +448,10 @@ describe('composeEditionSuffixLeaf (#1739)', () => {
   });
 
   it('keeps a non-empty discriminator visible when discriminator + wrapper exceed the cap, sacrificing the base first (F1)', () => {
-    // A pathologically long discriminator behind a long base: base-first truncation must drop the
-    // base ENTIRELY and keep the discriminator non-empty, never bury it behind 255 chars of base.
     const leaf = composeEditionSuffixLeaf('B'.repeat(PATH_SEGMENT_LIMIT), 'D'.repeat(PATH_SEGMENT_LIMIT));
     expect(leaf.length).toBeLessThanOrEqual(PATH_SEGMENT_LIMIT);
-    expect(leaf).toContain('D');           // discriminator survives, non-empty
-    expect(leaf).not.toContain('B');        // base sacrificed first
+    expect(leaf).toContain('D');
+    expect(leaf).not.toContain('B');
     expect(leaf.startsWith('(')).toBe(true);
   });
 });
@@ -524,7 +506,6 @@ describe('toLastFirst', () => {
   });
 
   it('handles multiple narrators with commas (comma-separated list)', () => {
-    // "Michael Kramer, Kate Reading" — commas indicate separate people
     expect(toLastFirst('Michael Kramer, Kate Reading')).toBe('Kramer, Michael & Reading, Kate');
   });
 });
@@ -648,7 +629,7 @@ describe('renderTemplate with separator/case options', () => {
     });
 
     it('long token value truncated at 255 after transforms', () => {
-      const longName = 'A B '.repeat(100).trim(); // lots of spaces
+      const longName = 'A B '.repeat(100).trim();
       const result = renderTemplate('{author}', { author: longName }, { separator: 'period' });
       expect(result.length).toBeLessThanOrEqual(255);
       expect(result).toContain('.');
@@ -657,7 +638,6 @@ describe('renderTemplate with separator/case options', () => {
 
   describe('conditional blocks with transforms', () => {
     it('case transform applies to token value but not conditional suffix text', () => {
-      // {narrator? read by } — narrator value uppercased, "read by" literal stays
       const result = renderTemplate('{author} - {narrator? read by }{title}',
         { author: 'John Smith', narrator: 'Jane Doe', title: 'My Book' },
         { case: 'upper' });
@@ -716,7 +696,7 @@ describe('renderTemplate — comma-space separator edge cases', () => {
   });
 
   it('collapses all comma-spaces in multi-comma value with dash separator', () => {
-    // Note: trailing "." stripped by sanitizePath (removes trailing dots)
+    // sanitizePath removes the trailing period after transforms.
     const result = renderTemplate('{author}', { author: 'Last, First, Jr.', title: 'Book' }, { separator: 'dash' });
     expect(result).toBe('Last,First,Jr');
   });
@@ -805,7 +785,7 @@ describe('prefix conditional syntax — renderFilename', () => {
     });
 
     it('renders prefix with series via renderTemplate: {title}{ - ?series}', () => {
-      // renderTemplate trims segments, so leading space in " - Stormlight" is trimmed
+      // Folder rendering trims the segment's leading conditional-prefix space.
       const result = renderTemplate('{author}/{title}{ - ?series}', { author: 'Author', title: 'The Way of Kings', series: 'Stormlight' });
       expect(result).toBe('Author/The Way of Kings - Stormlight');
     });
@@ -855,7 +835,6 @@ describe('prefix conditional syntax — renderFilename', () => {
 
   describe('disambiguation — suffix-first precedence', () => {
     it('{author?title} parses as token=author, suffix="title" (both are known tokens)', () => {
-      // "author" is a known token → suffix syntax: token=author, suffix="title"
       const result = renderFilename('{author?title}', { author: 'Sanderson', title: 'Book' });
       expect(result).toBe('Sandersontitle');
     });
@@ -925,7 +904,6 @@ describe('parseTemplate — prefix conditional syntax', () => {
   });
 
   it('{unknownPrefix?title} — parsed as prefix syntax, valid', () => {
-    // "unknownPrefix" is not a known token, "title" is → prefix syntax
     const result = parseTemplate('{unknownPrefix?title}', FOLDER_ALLOWED_TOKENS);
     expect(result.tokens).toContain('title');
     expect(result.errors).toEqual([]);
@@ -937,7 +915,6 @@ describe('parseTemplate — prefix conditional syntax', () => {
   });
 
   it('{title?unknownSuffix} — suffix syntax, valid', () => {
-    // "title" is a known token → suffix syntax, "unknownSuffix" is just text
     const result = parseTemplate('{title?unknownSuffix}', FOLDER_ALLOWED_TOKENS);
     expect(result.tokens).toContain('title');
     expect(result.errors).toEqual([]);

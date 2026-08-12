@@ -69,10 +69,9 @@ describe('AddBookPopover', () => {
 
     await user.click(screen.getByRole('button', { name: /add/i }));
 
-    // Wait for settings query to resolve and sync checkboxes
     await waitFor(() => {
       const checkboxes = screen.getAllByRole('checkbox');
-      expect(checkboxes[0]).toBeChecked(); // searchImmediately = true
+      expect(checkboxes[0]).toBeChecked();
       expect(checkboxes).toHaveLength(1);
     });
   });
@@ -84,12 +83,10 @@ describe('AddBookPopover', () => {
 
     await user.click(screen.getByRole('button', { name: /add/i }));
 
-    // Wait for settings to sync defaults
     await waitFor(() => {
       expect(screen.getAllByRole('checkbox')[0]).toBeChecked();
     });
 
-    // Uncheck searchImmediately
     await user.click(screen.getAllByRole('checkbox')[0]!);
 
     await user.click(screen.getByRole('button', { name: /add to library/i }));
@@ -134,7 +131,6 @@ describe('AddBookPopover', () => {
 
     await user.click(screen.getByRole('button', { name: /add/i }));
 
-    // With no settings, checkbox stays at initial false
     await waitFor(() => {
       const checkboxes = screen.getAllByRole('checkbox');
       expect(checkboxes[0]).not.toBeChecked();
@@ -142,7 +138,6 @@ describe('AddBookPopover', () => {
   });
 
   it('syncs defaults when settings resolve after popover is already open', async () => {
-    // Simulate slow settings fetch — resolve after popover opens
     let resolveSettings!: (value: typeof defaultSettings) => void;
     vi.mocked(api.getSettings).mockReturnValue(new Promise((res) => { resolveSettings = res; }));
 
@@ -150,24 +145,19 @@ describe('AddBookPopover', () => {
     const onAdd = vi.fn();
     renderPopover({ onAdd });
 
-    // Open popover before settings resolve
     await user.click(screen.getByRole('button', { name: /add/i }));
 
-    // Checkbox should be unchecked (settings not yet loaded)
     await waitFor(() => {
       const checkboxes = screen.getAllByRole('checkbox');
       expect(checkboxes[0]).not.toBeChecked();
     });
 
-    // Now resolve settings
     resolveSettings(defaultSettings);
 
-    // Checkbox should sync to settings defaults
     await waitFor(() => {
       expect(screen.getAllByRole('checkbox')[0]).toBeChecked();
     });
 
-    // Submit should use synced values
     await user.click(screen.getByRole('button', { name: /add to library/i }));
     await waitFor(() => {
       expect(onAdd).toHaveBeenCalledWith({ searchImmediately: true });
@@ -179,28 +169,25 @@ describe('AddBookPopover', () => {
     const onAdd = vi.fn();
     renderPopover({ onAdd });
 
-    // Open, uncheck, add
     await user.click(screen.getByRole('button', { name: /add/i }));
     await waitFor(() => {
       expect(screen.getAllByRole('checkbox')[0]).toBeChecked();
     });
-    await user.click(screen.getAllByRole('checkbox')[0]!); // uncheck searchImmediately
+    await user.click(screen.getAllByRole('checkbox')[0]!);
     await user.click(screen.getByRole('button', { name: /add to library/i }));
 
     await waitFor(() => {
       expect(onAdd).toHaveBeenCalledWith({ searchImmediately: false });
     });
 
-    // Re-open — should reset to defaults
     await user.click(screen.getByRole('button', { name: /add/i }));
     await waitFor(() => {
-      expect(screen.getAllByRole('checkbox')[0]).toBeChecked(); // back to true
+      expect(screen.getAllByRole('checkbox')[0]).toBeChecked();
     });
   });
 
   describe('portal behavior', () => {
 
-    // Helper to get the trigger button (not "Add to Library")
     function getTriggerButton() {
       return screen.getByRole('button', { name: /^add book$/i });
     }
@@ -211,11 +198,8 @@ describe('AddBookPopover', () => {
 
       await user.click(getTriggerButton());
 
-      // Panel should NOT be inside the component's own container
       expect(container.querySelector('[data-popover-portal]')).toBeNull();
-      // Panel should be in document.body
       expect(document.body.querySelector('[data-popover-portal]')).not.toBeNull();
-      // Content should still be accessible
       expect(screen.getByText('Search immediately')).toBeInTheDocument();
     });
 
@@ -226,7 +210,6 @@ describe('AddBookPopover', () => {
       await user.click(getTriggerButton());
       expect(document.body.querySelector('[data-popover-portal]')).not.toBeNull();
 
-      // Close by clicking Add to Library
       await user.click(screen.getByRole('button', { name: /add to library/i }));
       expect(document.body.querySelector('[data-popover-portal]')).toBeNull();
     });
@@ -237,15 +220,12 @@ describe('AddBookPopover', () => {
 
       await user.click(getTriggerButton());
 
-      // Wait for settings to load
       await waitFor(() => {
         expect(screen.getAllByRole('checkbox')[0]).toBeChecked();
       });
 
-      // Click a checkbox inside the portaled panel
       await user.click(screen.getAllByRole('checkbox')[0]!);
 
-      // Popover should still be open
       expect(screen.getByText('Search immediately')).toBeInTheDocument();
     });
 
@@ -256,7 +236,6 @@ describe('AddBookPopover', () => {
       await user.click(getTriggerButton());
       expect(screen.getByText('Search immediately')).toBeInTheDocument();
 
-      // Click on document.body (outside both trigger and panel)
       await user.click(document.body);
 
       expect(screen.queryByText('Search immediately')).not.toBeInTheDocument();
@@ -266,11 +245,9 @@ describe('AddBookPopover', () => {
       const user = userEvent.setup();
       renderPopover();
 
-      // Open
       await user.click(getTriggerButton());
       expect(screen.getByText('Search immediately')).toBeInTheDocument();
 
-      // Click trigger again to close
       await user.click(getTriggerButton());
       expect(screen.queryByText('Search immediately')).not.toBeInTheDocument();
     });
@@ -280,7 +257,6 @@ describe('AddBookPopover', () => {
       renderPopover();
 
       const trigger = getTriggerButton();
-      // Mock a known trigger rect (unclamped — trigger.right > PANEL_WIDTH)
       vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
         top: 100, bottom: 140, left: 300, right: 400, width: 100, height: 40, x: 300, y: 100, toJSON: () => ({}),
       });
@@ -289,10 +265,8 @@ describe('AddBookPopover', () => {
       const portal = document.body.querySelector('[data-popover-portal]') as HTMLElement;
       expect(portal).not.toBeNull();
 
-      // top = bottom + 8 (mt-2 gap)
       expect(portal.style.top).toBe('148px');
-      // left = right - PANEL_WIDTH (right-aligned)
-      expect(portal.style.left).toBe('144px'); // 400 - 256
+      expect(portal.style.left).toBe('144px');
     });
 
     it('repositions popover to exact coordinates on scroll', async () => {
@@ -304,8 +278,6 @@ describe('AddBookPopover', () => {
       const portal = document.body.querySelector('[data-popover-portal]') as HTMLElement;
       expect(portal).not.toBeNull();
 
-      // Mock getBoundingClientRect to return new position after scroll
-      // right=500 > PANEL_WIDTH=256, so no clamping needed
       vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
         top: 200, bottom: 240, left: 400, right: 500, width: 100, height: 40, x: 400, y: 200, toJSON: () => ({}),
       });
@@ -313,10 +285,8 @@ describe('AddBookPopover', () => {
       window.dispatchEvent(new Event('scroll'));
 
       await waitFor(() => {
-        // top = bottom + 8
         expect(portal.style.top).toBe('248px');
-        // left = right - PANEL_WIDTH (right-aligned)
-        expect(portal.style.left).toBe('244px'); // 500 - 256
+        expect(portal.style.left).toBe('244px');
       });
     });
 
@@ -329,7 +299,6 @@ describe('AddBookPopover', () => {
       const portal = document.body.querySelector('[data-popover-portal]') as HTMLElement;
       expect(portal).not.toBeNull();
 
-      // Mock getBoundingClientRect to return new position after resize
       vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
         top: 300, bottom: 340, left: 500, right: 600, width: 100, height: 40, x: 500, y: 300, toJSON: () => ({}),
       });
@@ -337,10 +306,8 @@ describe('AddBookPopover', () => {
       window.dispatchEvent(new Event('resize'));
 
       await waitFor(() => {
-        // top = bottom + 8
         expect(portal.style.top).toBe('348px');
-        // left = right - PANEL_WIDTH (right-aligned)
-        expect(portal.style.left).toBe('344px'); // 600 - 256
+        expect(portal.style.left).toBe('344px');
       });
     });
 
@@ -352,16 +319,13 @@ describe('AddBookPopover', () => {
       vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
         top: 100, bottom: 140, left: 700, right: 800, width: 100, height: 40, x: 700, y: 100, toJSON: () => ({}),
       });
-      // Set viewport width narrow — maxLeft = 400 - 256 = 144
       Object.defineProperty(window, 'innerWidth', { value: 400, writable: true });
 
       await user.click(trigger);
       const portal = document.body.querySelector('[data-popover-portal]') as HTMLElement;
       expect(portal).not.toBeNull();
 
-      // top = bottom + 8
       expect(portal.style.top).toBe('148px');
-      // left = Math.max(0, Math.min(800 - 256, 400 - 256)) = Math.max(0, Math.min(544, 144)) = 144
       expect(portal.style.left).toBe('144px');
     });
 
@@ -374,6 +338,56 @@ describe('AddBookPopover', () => {
 
       unmount();
       expect(document.body.querySelector('[data-popover-portal]')).toBeNull();
+    });
+  });
+
+  describe('optional label props (#2200)', () => {
+    function renderWithLabels(props: { triggerLabel?: string; triggerAriaLabel?: string; confirmLabel?: string }) {
+      const queryClient = createQueryClient();
+      return render(
+        <QueryClientProvider client={queryClient}>
+          <AddBookPopover onAdd={vi.fn()} isPending={false} {...props} />
+        </QueryClientProvider>,
+      );
+    }
+
+    it('keeps Add / "Add book" / "Add to Library" when the props are omitted, for the existing callers', async () => {
+      const user = userEvent.setup();
+      renderPopover();
+
+      const trigger = screen.getByRole('button', { name: 'Add book' });
+      expect(trigger).toHaveTextContent('Add');
+
+      await user.click(trigger);
+      expect(await screen.findByRole('button', { name: 'Add to Library' })).toBeInTheDocument();
+    });
+
+    it('renders the supplied trigger text, aria-label and confirm label', async () => {
+      const user = userEvent.setup();
+      renderWithLabels({ triggerLabel: 'Add All (567)', triggerAriaLabel: 'Add all books in series', confirmLabel: 'Add 567 books' });
+
+      const trigger = screen.getByRole('button', { name: 'Add all books in series' });
+      expect(trigger).toHaveTextContent('Add All (567)');
+
+      await user.click(trigger);
+      expect(await screen.findByRole('button', { name: 'Add 567 books' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Add to Library' })).not.toBeInTheDocument();
+    });
+
+    it('confirms with the derived searchImmediately even under a custom confirm label', async () => {
+      const user = userEvent.setup();
+      const onAdd = vi.fn();
+      const queryClient = createQueryClient();
+      render(
+        <QueryClientProvider client={queryClient}>
+          <AddBookPopover onAdd={onAdd} isPending={false} triggerAriaLabel="Add all books in series" confirmLabel="Add 2 books" />
+        </QueryClientProvider>,
+      );
+
+      await user.click(screen.getByRole('button', { name: 'Add all books in series' }));
+      await user.click(await screen.findByRole('button', { name: 'Add 2 books' }));
+
+      expect(onAdd).toHaveBeenCalledWith({ searchImmediately: true });
     });
   });
 

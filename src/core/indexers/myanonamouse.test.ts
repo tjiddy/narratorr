@@ -3,10 +3,7 @@ import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import type * as NetworkServiceModule from '../utils/network-service.js';
 
-// Route fetchWithOptionalDispatcher through globalThis.fetch in tests so
-// MSW handlers and `vi.spyOn(globalThis, 'fetch')` continue to intercept
-// the proxy path. Call-site contract is asserted in
-// myanonamouse.dispatcher-routing.test.ts.
+// Keep MSW/fetch spies on this path; the dedicated routing test covers dispatchers.
 vi.mock('../utils/network-service.js', async (importActual) => {
   const actual = await importActual<typeof NetworkServiceModule>();
   return {
@@ -454,9 +451,6 @@ describe('MyAnonamouseIndexer', () => {
     });
 
     it('throws IndexerError when MAM returns neither data nor error field', async () => {
-      // Behavior change from #743: a response with no `data` and no `error`
-      // is malformed (HTML interstitial, rate-limit page, shape change) and
-      // must fail at the boundary instead of silently returning [].
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
           return HttpResponse.json({});
@@ -708,7 +702,6 @@ describe('MyAnonamouseIndexer', () => {
     });
 
     it('MAM result with string size and nonzero bookDuration produces valid numeric quality value', async () => {
-      // Verifies the full chain: string size → bytes → calculateQuality produces a number, not NaN
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
           return HttpResponse.json({ data: [makeResult({ size: '881.8 MiB' })] });
@@ -720,8 +713,7 @@ describe('MyAnonamouseIndexer', () => {
       const sizeBytes = results[0]!.size;
       expect(typeof sizeBytes).toBe('number');
       expect(Number.isNaN(sizeBytes)).toBe(false);
-      // Simulate quality calculation as SearchReleasesModal does with bookDuration
-      const bookDurationSeconds = 3600; // 1 hour
+      const bookDurationSeconds = 3600;
       const mbPerHour = sizeBytes !== undefined ? (sizeBytes / 1024 / 1024) / (bookDurationSeconds / 3600) : NaN;
       expect(Number.isNaN(mbPerHour)).toBe(false);
       expect(mbPerHour).toBeGreaterThan(0);
@@ -779,7 +771,6 @@ describe('MyAnonamouseIndexer', () => {
 
       expect(results.length).toBe(1);
       expect(results[0]!.title).toBe('The Way of Kings');
-      // Verify the search fetch was called with a dispatcher (proxy agent)
       expect(fetchSpy).toHaveBeenCalledTimes(1);
       const callArgs = fetchSpy.mock.calls[0];
       expect((callArgs![1] as Record<string, unknown>).dispatcher).toBeDefined();
@@ -877,7 +868,6 @@ describe('MyAnonamouseIndexer', () => {
     });
 
     it('search returns empty results for non-proxy errors', async () => {
-      // Non-proxied indexer: network errors propagate as plain errors (not ProxyError)
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
           return HttpResponse.error();
@@ -885,8 +875,46 @@ describe('MyAnonamouseIndexer', () => {
       );
 
       await expect(indexer.search('test')).rejects.toThrow();
-      // Verify it's NOT a ProxyError — just a regular error
       await expect(indexer.search('test')).rejects.not.toThrow(ProxyError);
+    });
+  });
+
+  describe('search — container format passthrough', () => {
+    it('maps filetype into SearchResult.format', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ filetype: 'm4b' })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const { results } = await indexer.search('test');
+      expect(results[0]!.format).toBe('m4b');
+    });
+
+    it('lowercases and trims what MAM sent', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ filetype: ' M4B ' })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const { results } = await indexer.search('test');
+      expect(results[0]!.format).toBe('m4b');
+    });
+
+    it('leaves format undefined when filetype is absent or blank', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult(), makeResult({ filetype: '   ' })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const { results } = await indexer.search('test');
+      expect(results[0]!.format).toBeUndefined();
+      expect(results[1]!.format).toBeUndefined();
     });
   });
 
@@ -940,10 +968,7 @@ describe('MyAnonamouseIndexer', () => {
     });
 
     it("MAM result with lang_code '1' survives default languages: ['english'] filter (#668)", async () => {
-      // Interaction guard: the user-visible regression in #668 was that a MAM result
-      // originating as `lang_code: '1'` was dropped by the default `metadataSettings.languages:
-      // ['english']` filter. Chain the adapter's parse path into `filterByLanguage` — the same
-      // predicate the search pipeline uses — so a regression at either layer fails this test.
+      // Exercise the adapter-to-filter boundary that previously dropped MAM language code 1.
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
           return HttpResponse.json({
@@ -1049,7 +1074,6 @@ describe('MyAnonamouseIndexer', () => {
       );
       await noLangIndexer.search('test');
       const url = new URL(capturedUrl);
-      // No browse_lang params should be present
       const allParams = Array.from(url.searchParams.keys());
       const browseLangParams = allParams.filter(k => k.startsWith('tor[browse_lang]'));
       expect(browseLangParams).toHaveLength(0);
@@ -1501,16 +1525,13 @@ describe('MyAnonamouseIndexer', () => {
     });
 
     it('mutates adapter isVip — subsequent search() uses effectiveSearchType "all" after VIP refresh', async () => {
-      // Start with isVip undefined (legacy), so effectiveSearchType would be the saved searchType
       const legacyIdx = new MyAnonamouseIndexer({ mamId: 'test-mam-id', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 'active' });
-      // refreshStatus returns VIP
       server.use(
         http.get(`${MAM_BASE}/jsonLoad.php`, () => {
           return HttpResponse.json({ username: 'testuser', classname: 'VIP' });
         }),
       );
       await legacyIdx.refreshStatus!();
-      // Now search should use 'all' (VIP) not 'active' (legacy)
       let capturedUrl = '';
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
@@ -1524,14 +1545,12 @@ describe('MyAnonamouseIndexer', () => {
 
     it('mutates adapter isVip (downgrade) — subsequent search() uses "nVIP" after downgrade from VIP', async () => {
       const vipIdx = new MyAnonamouseIndexer({ mamId: 'test-mam-id', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 'active', isVip: true });
-      // refreshStatus returns Power User (downgrade from VIP)
       server.use(
         http.get(`${MAM_BASE}/jsonLoad.php`, () => {
           return HttpResponse.json({ username: 'testuser', classname: 'Power User' });
         }),
       );
       await vipIdx.refreshStatus!();
-      // Now search should use 'nVIP' not 'all'
       let capturedUrl = '';
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
@@ -1547,12 +1566,11 @@ describe('MyAnonamouseIndexer', () => {
       const vipIdx = new MyAnonamouseIndexer({ mamId: 'test-mam-id', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 'active', isVip: true });
       server.use(
         http.get(`${MAM_BASE}/jsonLoad.php`, () => {
-          return HttpResponse.json({ username: 'testuser' }); // no classname
+          return HttpResponse.json({ username: 'testuser' });
         }),
       );
       const result = await vipIdx.refreshStatus!();
       expect(result).toBeNull();
-      // isVip should still be true (not mutated)
       let capturedUrl = '';
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
@@ -1573,7 +1591,6 @@ describe('MyAnonamouseIndexer', () => {
       );
       const result = await vipIdx.refreshStatus!();
       expect(result).toBeNull();
-      // isVip should still be true
       let capturedUrl = '';
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
@@ -1637,8 +1654,8 @@ describe('MyAnonamouseIndexer', () => {
 
       await indexer.search('test', { languages: ['english', 'french'] });
       const params = new URL(capturedUrl).searchParams;
-      expect(params.get('tor[browse_lang][0]')).toBe('1'); // English = 1
-      expect(params.get('tor[browse_lang][1]')).toBe('36'); // French = 36
+      expect(params.get('tor[browse_lang][0]')).toBe('1');
+      expect(params.get('tor[browse_lang][1]')).toBe('36');
     });
 
     it('skips languages not in MAM_LANGUAGES mapping', async () => {
@@ -1653,8 +1670,8 @@ describe('MyAnonamouseIndexer', () => {
 
       await indexer.search('test', { languages: ['english', 'hindi'] });
       const params = new URL(capturedUrl).searchParams;
-      expect(params.get('tor[browse_lang][0]')).toBe('1'); // English mapped
-      expect(params.get('tor[browse_lang][1]')).toBeNull(); // Hindi not in MAM_LANGUAGES
+      expect(params.get('tor[browse_lang][0]')).toBe('1');
+      expect(params.get('tor[browse_lang][1]')).toBeNull();
     });
 
     it('sends no browse_lang params when languages array is empty', async () => {
@@ -1669,7 +1686,6 @@ describe('MyAnonamouseIndexer', () => {
 
       await indexer.search('test', { languages: [] });
       const params = new URL(capturedUrl).searchParams;
-      // No browse_lang params at all
       const langKeys = [...params.keys()].filter(k => k.includes('browse_lang'));
       expect(langKeys).toHaveLength(0);
     });
@@ -1686,7 +1702,7 @@ describe('MyAnonamouseIndexer', () => {
 
       await indexer.search('test', { languages: ['spanish'] });
       const params = new URL(capturedUrl).searchParams;
-      expect(params.get('tor[browse_lang][0]')).toBe('4'); // Spanish = 4
+      expect(params.get('tor[browse_lang][0]')).toBe('4');
       const langKeys = [...params.keys()].filter(k => k.includes('browse_lang'));
       expect(langKeys).toHaveLength(1);
     });
@@ -1779,8 +1795,6 @@ describe('MyAnonamouseIndexer', () => {
       expect(results[0]!.title).toBe('The Way of Kings');
     });
 
-    // #954 — MAM emits boolean flag fields as 0/1 integers on the wire.
-    // Schema must accept numeric 0/1, boolean true/false, null, and missing.
     describe.each(['free', 'fl_vip', 'vip', 'personal_freeleech'] as const)(
       '#954 — numeric/boolean coercion for %s',
       (field) => {
@@ -1826,7 +1840,6 @@ describe('MyAnonamouseIndexer', () => {
       });
     }
 
-    /** Capture the download.php fetch URL while serving valid torrent bytes. */
     function stubCapturingTorrentDownload(s: ReturnType<typeof useMswServer>, base = MAM_BASE) {
       const captured: { url: string } = { url: '' };
       s.use(
@@ -1840,7 +1853,6 @@ describe('MyAnonamouseIndexer', () => {
       return captured;
     }
 
-    /** Fail the grab if either deleted purchase endpoint is hit. */
     function failOnPurchaseEndpoints(s: ReturnType<typeof useMswServer>) {
       const hits = { jsonLoad: false, bonusBuy: false };
       s.use(
@@ -1858,7 +1870,6 @@ describe('MyAnonamouseIndexer', () => {
 
       expect(result.wedgeRequested).toBe(true);
       expect(captured.url).toContain('/tor/download.php?tid=12345');
-      // Bare &fl flag (no =1)
       expect(captured.url).toMatch(/[?&]fl(?:&|$)/);
       expect(captured.url).not.toContain('fl=1');
       expect(result.downloadUrl).toMatch(/^data:application\/x-bittorrent;base64,/);

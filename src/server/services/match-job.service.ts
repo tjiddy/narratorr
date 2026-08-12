@@ -14,20 +14,18 @@ import { diceCoefficient } from '@core/utils/similarity.js';
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { applyAttemptCap, applyLibraryDuplicate, applyNarratorCap, deriveTagQuery, isDurationVerified, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, resolveSingleResultConfidence, runAsinKillShot, tagPassPredicatesPass, TITLE_SIMILARITY_FLOOR, type DurationConfidenceResult, type NarratorCapContext, type TagQuery } from './match-job.helpers.js';
+import { applyAttemptCap, applyLibraryDuplicate, applyNarratorCap, deriveTagQuery, isDurationVerified, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, resolveSingleResultConfidence, runAsinKillShot, tagPassPredicatesPass, TITLE_SIMILARITY_FLOOR, type ChapterRuntimeSeconds, type DurationConfidenceResult, type NarratorCapContext, type TagQuery } from './match-job.helpers.js';
 import { planTagSearchAttempts, type TagSearchAttempt, type TagSearchOutcome } from './tag-search-planner.js';
 import { corroborateDurationVerdict, type CorroboratedDuration } from './chapter-corroboration.js';
 
 
-// Data contracts live in match-job.types.ts (#1864 file-size cap); re-exported so the
-// public surface (`import { type MatchCandidate } from './match-job.service.js'`) is unchanged.
+// Preserve public type imports after the contracts moved to match-job.types.ts.
 export type { Confidence, MatchCandidate, MatchResult, MatchJobStatus } from './match-job.types.js';
 
 const MAX_CONCURRENCY = 5;
-const TTL_MS = 10 * 60 * 1000; // 10 minutes after completion
+const TTL_MS = 10 * 60 * 1000; // Ten minutes after terminal state.
 
-// `capConfidence`/`applyAttemptCap` moved to match-job.helpers.ts (#1662, file-size cap);
-// re-exported so the public surface (capConfidence is asserted in tests) is unchanged.
+// Preserve the public capConfidence export after its move to match-job.helpers.ts.
 export { capConfidence } from './match-job.helpers.js';
 
 export class MatchJobService {
@@ -60,16 +58,11 @@ export class MatchJobService {
   cancelJob(jobId: string): boolean {
     const job = this.jobs.get(jobId);
     if (!job) return false;
-    // `cancel()` returns true ONLY when it performed the matching→`cancelled`
-    // transition; a job that already reached a terminal state returns false —
-    // nothing was cancelled (#1864 F11). The route/client boolean contract is
-    // unchanged; only this terminal/missing→false semantics is new.
     const cancelled = job.cancel();
     if (cancelled) this.log.info({ jobId }, 'Match job cancelled');
     return cancelled;
   }
 
-  /** Clean up expired jobs (called internally on TTL) */
   private removeJob(jobId: string): void {
     this.jobs.delete(jobId);
     this.log.debug({ jobId }, 'Match job expired and removed');
@@ -82,12 +75,7 @@ export class MatchJobService {
 
 class MatchJob {
   private results: MatchResult[] = [];
-  /**
-   * Single write-once terminal field — first terminal event wins, immutable
-   * thereafter (#1864 §6a). Replaces the old derived `cancelled`/`done` flags so
-   * a late completion can never overwrite a `failed`, a `cancelled` is never
-   * re-reported, and cleanup is scheduled exactly once. `null` === still matching.
-   */
+  // First terminal event wins, preventing late overwrites and duplicate cleanup scheduling.
   private terminal: 'completed' | 'failed' | 'cancelled' | null = null;
   private error?: string;
   private startMs = Date.now();
@@ -122,13 +110,7 @@ class MatchJob {
     };
   }
 
-  /**
-   * Set the terminal state exactly once (§6a). Every event after the first
-   * terminal is a no-op — so completion-then-cancel stays `completed`,
-   * cancel-then-completion stays `cancelled`, failure-then-completion stays
-   * `failed`. Returns true only when THIS call performed the transition; the
-   * transition that first sets the terminal owns the single TTL cleanup schedule.
-   */
+  // The winning transition alone owns the TTL cleanup schedule.
   private terminalize(state: 'completed' | 'failed' | 'cancelled', error?: string): boolean {
     if (this.terminal) return false;
     this.terminal = state;
@@ -137,16 +119,12 @@ class MatchJob {
     return true;
   }
 
-  /** True only on the matching→`cancelled` transition; false when already terminal (#1864 F11). */
   cancel(): boolean {
     return this.terminalize('cancelled');
   }
 
   start(): void {
-    // `run()` terminalizes a top-level crash itself (see below), then resolves — so this
-    // completion is unconditionally attempted and is first-terminal-wins: it no-ops when a
-    // crash already set `failed`, or a cancel already set `cancelled` (§6a). The `.catch`
-    // is a defensive backstop for a truly-unexpected `run()` rejection (never expected).
+    // run handles known crashes; unconditional completion no-ops after failure/cancel, and catch is a rejection backstop.
     this.run()
       .then(() => { this.terminalize('completed'); })
       .catch((error: unknown) => {
@@ -160,11 +138,7 @@ class MatchJob {
     try {
       await Promise.allSettled(promises);
     } catch (error: unknown) {
-      // A top-level orchestration crash (remote in practice — `allSettled` + the per-book
-      // catch contain per-book failures) terminalizes the job `failed` HERE so a client
-      // never polls a stuck `matching` job forever (#1864 §6). Retaining partial results.
-      // Resolving afterward lets `start()`'s completion fire as a proven-no-op — the real
-      // failure→completion precedence path the §6a matrix asserts (F7).
+      // Retain partial results but terminalize an orchestration crash so polling cannot stick at matching.
       this.log.error({ error: serializeError(error), jobId: this.id }, 'Match job failed unexpectedly');
       this.terminalize('failed', getErrorMessage(error));
       return;
@@ -196,14 +170,11 @@ class MatchJob {
 
   // eslint-disable-next-line complexity -- audio-scan + tag-pass + filename-pass + scoring branches with conditional-spread on MatchResult
   async matchSingleBook(book: MatchCandidate): Promise<MatchResult> {
-    // Raw scanner seconds (#1929) threaded onto EVERY assembled result regardless of
-    // confidence (incl. 'none'/title-floor/error exits) so the client can re-evaluate a
-    // medium re-pick. Declared outside the try so the catch's error result honors it too.
+    // Preserve raw scan seconds on every exit, including none, title-floor, and error results.
     let scannedSeconds: number | undefined;
     const withScanned = (result: MatchResult): MatchResult =>
       scannedSeconds && scannedSeconds > 0 ? { ...result, scannedSeconds } : result;
     try {
-      // Scan audio files for duration (used for runtime disambiguation) AND tag fields
       let duration: number | undefined;
       let audioResult: AudioScanResult | null = null;
       try {
@@ -215,7 +186,7 @@ class MatchJob {
           onDebug: (msg, payload) => this.log.debug(payload, msg),
         });
         if (audioResult && audioResult.totalDuration > 0) {
-          // Convert seconds → minutes to match Audible's runtime_length_min
+          // Audible runtimes are minutes; retain raw seconds separately for comparisons.
           duration = Math.round(audioResult.totalDuration / 60);
           scannedSeconds = audioResult.totalDuration;
           this.log.debug({ path: book.path, duration: `${duration}min` }, 'Audio duration scanned');
@@ -224,19 +195,14 @@ class MatchJob {
         this.log.debug({ error: serializeError(error), path: book.path }, 'Audio scan failed — proceeding without duration');
       }
 
-      // Every high-producing branch sets these and funnels through the single
-      // `applyNarratorCap` call at the resolved-match exit below (#1650/#1652);
-      // the non-high early returns ('none'/title-floor/catch) bypass the cap.
+      // High-producing paths converge on one narrator-cap exit; early non-high returns bypass it.
       let resolved: MatchResult, capCtx: NarratorCapContext;
 
-      // Pass 1 — tag-derived search (#984). Fires when both tagTitle and tagAuthor
-      // are populated. Bypasses searchWithSwapRetryTrace (no swap-on-zero) because
-      // tag.title and tag.albumartist are structurally distinct fields.
+      // Tag title and albumartist are structurally distinct, so this pass never swaps them on zero results.
       const tagMatch = await this.tryTagDerivedMatch(book, audioResult);
       if (tagMatch) {
         ({ result: resolved, ctx: capCtx } = tagMatch);
       } else {
-        // Pass 2 — filename-derived search via swap-retry wrapper (existing path).
         this.log.debug({ path: book.path, title: book.title, author: book.author, duration }, 'Searching metadata for book');
         const trace = await searchWithSwapRetryTrace({
           searchFn: (q, opts) => this.metadataService.searchBooks(q, opts),
@@ -253,23 +219,17 @@ class MatchJob {
 
         this.log.debug({ path: book.path, resultCount: trace.results.length, swapRetry: trace.swapRetry }, 'Search returned results');
 
-        // When swap retry fired and author is present, use swapped context for ranking and similarity
         const context: MatchCandidate = trace.swapRetry && book.author
           ? { ...book, title: book.author, author: book.title }
           : book;
 
-        // Fetch full detail for all results to get ASIN/duration
         const detailed = await this.fetchDetails(trace.results);
 
-        // Score, re-rank, and apply the position → duration → year tiebreakers.
-        // The scanned seconds (#1882) disambiguate sibling editions on a score
-        // tie; the folder scan can be absent, so this is genuinely optional.
+        // Preserve position → duration → year tiebreakers; raw seconds disambiguate tied editions when available.
         const scored = rankResults(detailed, context, audioResult?.totalDuration);
         const topScored = scored[0];
         if (!topScored) {
-          // §6.1 — fetchDetails breaks on cancellation, so detailed (and thus
-          // scored) can be empty even when trace.results was non-empty. Return
-          // a clean 'none' result instead of crashing on topScored.meta.title.
+          // Cancellation can leave scored empty after non-empty search results; return none instead of reading topScored.
           this.log.debug(
             { path: book.path, cancelled: this.isCancelled, resultCount: trace.results.length },
             'No scored results after ranking — cancelled mid-flight or all filtered',
@@ -277,7 +237,6 @@ class MatchJob {
           return withScanned({ path: book.path, confidence: 'none', bestMatch: null, alternatives: [] });
         }
 
-        // Title similarity floor: below 50% → confidence 'none'
         const titleSimilarity = context.title && topScored.meta.title
           ? diceCoefficient(topScored.meta.title, context.title)
           : 0;
@@ -296,29 +255,21 @@ class MatchJob {
 
         const scanned = audioResult?.totalDuration;
         if (scored.length === 1) {
-          // #1821 — corroborate the single result against the scanned runtime: a
-          // grossly-off duration demotes high → medium (Review); a MISSING runtime
-          // stays high (absent data does not demote). `durationVerified` is derived
-          // independently (a missing-runtime single is high-but-unverified, NOT
-          // disproven) — never inferred from the resolved confidence.
-          // Unrounded scanned seconds (#1850) — the tolerance check compares
-          // full-precision seconds (the minute-rounded `duration` is logging only).
-          const { verdict, chapterSeconds } = await this.corroborateDuration(
+          // A mismatch demotes; missing runtime stays high but unverified. Compare unrounded seconds.
+          const { verdict, chapterRuntimes } = await this.corroborateDuration(
             book, topScored.meta,
             resolveSingleResultConfidence(topScored.meta, scanned),
-            cs => resolveSingleResultConfidence(topScored.meta, scanned, cs),
+            refs => resolveSingleResultConfidence(topScored.meta, scanned, refs),
           );
           resolved = { path: book.path, bestMatch: topScored.meta, alternatives: [], ...verdict };
-          capCtx = { log: this.log, matchSource: 'filename-single', durationVerified: isDurationVerified(topScored.meta, scanned, chapterSeconds) };
+          // Verify against the same full/trimmed references that produced the promoted verdict.
+          capCtx = { log: this.log, matchSource: 'filename-single', durationVerified: isDurationVerified(topScored.meta, scanned, chapterRuntimes) };
         } else {
-          // Multiple results — the winner was already chosen by `rankResults`
-          // (text score, with duration only breaking a score tie, #1882); this
-          // step reads confidence off that top candidate's runtime agreement.
-          // Unrounded seconds (#1850); `duration` (minutes) below is logging only.
+          // Ranking already chose the winner; runtime agreement now determines its confidence.
           const { verdict } = await this.corroborateDuration(
             book, topScored.meta,
             resolveConfidenceFromDuration(scored, scanned),
-            cs => resolveConfidenceFromDuration(scored, scanned, cs),
+            refs => resolveConfidenceFromDuration(scored, scanned, refs),
           );
           const { confidence, reason, reasonKind } = verdict;
           this.log.debug(
@@ -341,17 +292,14 @@ class MatchJob {
             ...(reason !== undefined && { reason }),
             ...(reasonKind !== undefined && { reasonKind }),
           };
-          // `resolveConfidenceFromDuration` returning 'high' IS the duration corroboration.
+          // Here, high is possible only through duration corroboration.
           capCtx = { log: this.log, matchSource: 'filename-duration-resolved', durationVerified: confidence === 'high' };
         }
       }
 
-      // Single cap chokepoint (#1650/#1652) — every high-producing branch above
-      // funnels here; non-high outcomes returned early and never reach it.
       const capped = applyNarratorCap(resolved, audioResult, capCtx);
 
-      // Post-match library-duplicate pass (#1662) — keyed off the MATCHED metadata,
-      // so a no-author filename that resolves to an owned book is flagged at review.
+      // Detect library duplicates from resolved metadata, not the filename candidate.
       return withScanned(await applyLibraryDuplicate(capped, this.bookService, this.log));
     } catch (error: unknown) {
       this.log.warn({ error: serializeError(error), path: book.path, title: book.title }, 'Match failed for book');
@@ -365,18 +313,12 @@ class MatchJob {
     }
   }
 
-  /**
-   * Lazy chapter-runtime corroboration of a would-be duration mismatch (#1942).
-   * Thin delegator — the trigger rule, the cache/single-flight, and the throttled
-   * Audnexus bridge all live in `chapter-corroboration.ts` / `MetadataService`.
-   * Runs BEFORE `applyNarratorCap` so the narrator wrong-edition guard evaluates
-   * against the corroborated verdict.
-   */
+  // Corroborate before the narrator wrong-edition cap; caching and throttling live downstream.
   private corroborateDuration(
     book: MatchCandidate,
     meta: BookMetadata,
     verdict: DurationConfidenceResult,
-    recheck: (chapterSeconds: number) => DurationConfidenceResult,
+    recheck: (chapterRuntimes: ChapterRuntimeSeconds) => DurationConfidenceResult,
   ): Promise<CorroboratedDuration> {
     return corroborateDurationVerdict({
       verdict,
@@ -388,21 +330,14 @@ class MatchJob {
     });
   }
 
-  // Pass 1 — tag-derived match (#984, #1036). Returns null on any failure
-  // (no tags, zero results across all attempts, floor fail, predicate fail,
-  // unexpected throw); caller falls through to filename-derived. Bypasses
-  // searchWithSwapRetryTrace — tag.title and tag.albumartist are structurally
-  // distinct, no swap-on-zero needed. On success returns the resolved result
-  // plus the winning attempt's `source` and the genuine duration-corroboration
-  // flag, both threaded out to the single narrator-cap call (#1652).
+  // Any tag-path miss returns null so the caller falls through to filename matching.
   private async tryTagDerivedMatch(
     book: MatchCandidate,
     audioResult: AudioScanResult | null,
   ): Promise<{ result: MatchResult; ctx: NarratorCapContext } | null> {
     const tagQuery = deriveTagQuery(audioResult);
     if (!tagQuery || !audioResult) return null;
-    // Unrounded scanned seconds (#1850) — the confidence helpers compare in
-    // seconds against the provider's `runtimeLengthMin × 60`, not minutes.
+    // Confidence helpers compare raw seconds against provider minutes × 60.
     const scannedSeconds = audioResult.totalDuration;
     this.log.debug({ path: book.path, tagTitle: tagQuery.title, tagAuthor: tagQuery.author }, 'Tag-derived metadata search');
     const outcome = await this.runTagSearch(book, audioResult, tagQuery);
@@ -412,25 +347,15 @@ class MatchJob {
     const top = scored[0]!;
 
     const single = scored.length === 1;
-    // #1821 — corroborate the single tag-result (incl. the ASIN kill-shot) against
-    // the scanned runtime. The raw value still flows through the attempt `cap()`
-    // below: a mismatch → raw `medium` survives (durationVerified false, so
-    // capBypassedByDuration false); a missing runtime → raw `high`, clamped to
-    // `medium` by a `maxConfidence: 'medium'` attempt exactly as before.
-    const resolveVerdict = (chapterSeconds?: number): DurationConfidenceResult => single
-      ? resolveSingleResultConfidence(top.meta, scannedSeconds, chapterSeconds)
-      : resolveConfidenceFromDuration(scored, scannedSeconds, chapterSeconds);
-    // #1942 — a would-be duration mismatch gets one lazy second opinion from the
-    // edition's chapter table BEFORE the attempt cap and the narrator cap see it.
-    const { verdict, chapterSeconds } = await this.corroborateDuration(book, top.meta, resolveVerdict(), resolveVerdict);
+    // Resolve duration before the attempt cap: mismatches stay medium; missing runtime may still be capped.
+    const resolveVerdict = (chapterRuntimes?: ChapterRuntimeSeconds): DurationConfidenceResult => single
+      ? resolveSingleResultConfidence(top.meta, scannedSeconds, chapterRuntimes)
+      : resolveConfidenceFromDuration(scored, scannedSeconds, chapterRuntimes);
+    // Give a would-be mismatch one lazy chapter-table check before either cap.
+    const { verdict, chapterRuntimes } = await this.corroborateDuration(book, top.meta, resolveVerdict(), resolveVerdict);
 
-    // #1652 (F6) — genuine runtime corroboration of the chosen edition for EVERY
-    // tag source (the `/import-uat` signal logged by the cap). Distinct from
-    // `capBypassedByDuration`, which is gated on `maxConfidence === 'medium'` and
-    // only governs the strip-attempt cap bypass — an exact/ASIN attempt
-    // (`maxConfidence: 'high'`) can be durationVerified while capBypassed is false.
-    const durationVerified = isDurationVerified(top.meta, scannedSeconds, chapterSeconds);
-    // #1266 — when the scanned runtime verifies the top candidate, bypass the strip `medium` cap and keep `high`.
+    // durationVerified feeds narrator capping; capBypassedByDuration only bypasses medium attempt caps.
+    const durationVerified = isDurationVerified(top.meta, scannedSeconds, chapterRuntimes);
     const capBypassedByDuration = attempt.maxConfidence === 'medium' && durationVerified;
     const cap = (raw: Confidence, reason: string | undefined, reasonKind: MatchReasonKind | undefined): { confidence: Confidence; reason?: string; reasonKind?: MatchReasonKind } =>
       capBypassedByDuration ? { confidence: 'high' } : applyAttemptCap(raw, attempt.maxConfidence, reason, reasonKind);
@@ -440,11 +365,7 @@ class MatchJob {
     return { result, ctx: { log: this.log, matchSource: attempt.source, durationVerified } };
   }
 
-  /**
-   * Tag-pass search. Runs an ASIN kill-shot when available, otherwise loops
-   * planner attempts (search → fetchDetails → rank → predicate). Returns the
-   * first attempt that passes predicates; null when all attempts exhaust.
-   */
+  // Try the ASIN kill-shot, then each planned search → detail → rank → predicate attempt.
   private async runTagSearch(
     book: MatchCandidate,
     audioResult: AudioScanResult,
@@ -457,9 +378,7 @@ class MatchJob {
 
     const attempts = planTagSearchAttempts(audioResult, tagQuery);
     for (const attempt of attempts) {
-      // Thread the scanned seconds (#1882) so the edition tiebreaker reaches
-      // `rankResultsCleaned`. The tag path always owns a non-null scan, so this
-      // is `0` (no signal → no-op) rather than absent when the scan found none.
+      // A non-null tag scan uses 0 as no-signal while preserving the edition-tiebreaker API.
       const outcome = await this.tryAttempt(book, tagQuery, attempt, audioResult.totalDuration);
       if (outcome) return outcome;
     }
@@ -470,7 +389,6 @@ class MatchJob {
     return null;
   }
 
-  /** One planner attempt: search → fetchDetails → rank → predicate. Returns outcome or null. */
   private async tryAttempt(
     book: MatchCandidate,
     tagQuery: TagQuery,
@@ -499,11 +417,8 @@ class MatchJob {
     const detailed = await this.fetchDetails(candidates);
     if (detailed.length === 0) return null;
 
-    // Re-thread the wanted series position (#1849) — the attempt loop rebuilds
-    // TagQuery from `attempt`, so without this the position never reaches
-    // `rankResultsCleaned` on the real tag path. `!== undefined` so position 0 survives.
+    // Rebuild the attempt query without dropping series position 0.
     const attemptQuery: TagQuery = { title: attempt.title, author: attempt.author, ...(tagQuery.year ? { year: tagQuery.year } : {}), ...(tagQuery.seriesPosition !== undefined && { seriesPosition: tagQuery.seriesPosition }) };
-    // Thread scanned seconds (#1882) so the edition tiebreaker sees the runtime.
     const scored = rankResultsCleaned(detailed, attemptQuery, scannedSeconds);
     const top = scored[0];
     if (!top) return null;

@@ -10,10 +10,6 @@ export class QualityGateServiceError extends Error {
   }
 }
 
-/**
- * Canonical reason JSON for every quality gate decision.
- * Derived from the shared `qualityGateReasonSchema` (single source of the shape).
- */
 export type QualityDecisionReason = QualityGateReason;
 
 export const NULL_REASON: QualityDecisionReason = {

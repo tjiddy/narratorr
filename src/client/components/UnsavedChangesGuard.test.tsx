@@ -7,7 +7,6 @@ import { Link, MemoryRouter, Routes, Route, useLocation, useNavigate } from 'rea
 import { UnsavedChangesGuard } from './UnsavedChangesGuard';
 import { useTrackedForm, _resetForTesting } from '@/hooks/dirty-forms';
 
-// A minimal tracked "card" whose dirty/pending/label is controllable.
 function TrackedCard({
   dirty = true,
   pending = false,
@@ -82,7 +81,6 @@ describe('UnsavedChangesGuard', () => {
     await user.click(screen.getByRole('link', { name: 'Indexers' }));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText(/Merge & Convert/)).toBeInTheDocument();
-    // Navigation did not happen.
     expect(currentPath()).toBe('/settings');
   });
 
@@ -105,7 +103,6 @@ describe('UnsavedChangesGuard', () => {
     await user.click(screen.getByRole('link', { name: 'Indexers' }));
     expect(screen.getByText(/Housekeeping, Logging/)).toBeInTheDocument();
 
-    // Clean Logging while the modal is open → the name drops out.
     await user.click(screen.getByRole('button', { name: 'clean-logging' }));
     expect(screen.getByText(/Housekeeping/)).toBeInTheDocument();
     expect(screen.queryByText(/Logging/)).toBeNull();
@@ -180,7 +177,6 @@ describe('UnsavedChangesGuard', () => {
       // Prevent jsdom "Not implemented: navigation" noise for plain anchors.
       link.addEventListener('click', (e) => e.preventDefault());
       await user.click(link);
-      // No modal → the guard let it through.
       return screen.queryByRole('dialog');
     }
 
@@ -234,9 +230,7 @@ describe('UnsavedChangesGuard', () => {
     });
 
     it('does not intercept a same-path click', async () => {
-      // The same-path check compares the anchor's resolved pathname to
-      // window.location.pathname (jsdom default "/"). A link resolving to "/"
-      // is therefore a same-path no-op and must not be intercepted.
+      // jsdom defaults window.location to "/", making this the same-path case.
       const user = userEvent.setup();
       renderGuard(
         <>
@@ -263,10 +257,8 @@ describe('UnsavedChangesGuard', () => {
       expect(screen.getByRole('dialog')).toBeInTheDocument();
     });
 
-    // Each of the remaining eligibility operands (F4) is independently removable
-    // from shouldLetClickThrough without failing the meta-only coverage above, so
-    // every one gets a dedicated pass-through assertion. Synthetic dispatch gives
-    // precise control of button/modifier/cancelable that userEvent can't express.
+    // Isolate each eligibility operand with synthetic events; userEvent cannot
+    // precisely control button and cancelable.
     function renderEligibleLink(): HTMLAnchorElement {
       renderGuard(
         <>
@@ -277,9 +269,7 @@ describe('UnsavedChangesGuard', () => {
       return screen.getByRole('link', { name: 'Indexers' });
     }
 
-    // A control assertion guards against vacuity: with the SAME harness, a plain
-    // eligible left click IS intercepted, so a "no dialog" result below can only
-    // mean the operand caused pass-through.
+    // Prove this harness intercepts an otherwise eligible click.
     it('control: a plain eligible click on this harness IS intercepted', () => {
       const link = renderEligibleLink();
       fireEvent(link, new MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -316,8 +306,7 @@ describe('UnsavedChangesGuard', () => {
 
     it('does not intercept an already-defaultPrevented click', () => {
       const link = renderEligibleLink();
-      // A capture listener on `window` fires before the guard's document-capture
-      // listener, so the guard sees the event already defaultPrevented.
+      // Window capture runs before the guard's document-capture listener.
       const pre = (e: Event) => e.preventDefault();
       window.addEventListener('click', pre, { capture: true });
       try {
@@ -336,8 +325,6 @@ describe('UnsavedChangesGuard', () => {
         reachedBubble = true;
       });
       fireEvent(link, new MouseEvent('click', { bubbles: true, cancelable: false }));
-      // Guard let it through (no modal) and did not stopPropagation — the bubble
-      // listener on the anchor still fired.
       expect(screen.queryByRole('dialog')).toBeNull();
       expect(reachedBubble).toBe(true);
     });
@@ -361,14 +348,11 @@ describe('UnsavedChangesGuard', () => {
       }
       renderGuard(<Harness />);
       await user.click(screen.getByRole('link', { name: 'Vanishing' }));
-      // Simulate the polling surface unmounting the captured node.
       await user.click(screen.getByRole('button', { name: 'hide' }));
       await user.click(screen.getByRole('button', { name: 'Discard changes' }));
-      // Safe-cancel: stayed on the page, draft intact.
       expect(currentPath()).toBe('/settings');
       expect(screen.queryByRole('dialog')).toBeNull();
 
-      // Both one-shot flags cleared: a subsequent genuine dirty click still guards.
       await user.click(screen.getByRole('link', { name: 'Library' }));
       expect(screen.getByRole('dialog')).toBeInTheDocument();
       expect(currentPath()).toBe('/settings');
@@ -384,7 +368,6 @@ describe('UnsavedChangesGuard', () => {
       );
       const link = screen.getByRole('link', { name: 'Mutant' });
       await user.click(link);
-      // Mutate the captured node's href between interception and Discard.
       link.setAttribute('href', '/settings/indexers?edit=99');
       await user.click(screen.getByRole('button', { name: 'Discard changes' }));
       expect(currentPath()).toBe('/settings');
@@ -402,7 +385,6 @@ describe('UnsavedChangesGuard', () => {
       await user.click(link);
       link.setAttribute('download', '');
       await user.click(screen.getByRole('button', { name: 'Discard changes' }));
-      // download presence changed → not replayed, stayed put.
       expect(currentPath()).toBe('/settings');
     });
 
@@ -417,13 +399,11 @@ describe('UnsavedChangesGuard', () => {
       const link = screen.getByRole('link', { name: 'Retargeted' });
       await user.click(link);
 
-      // Watch for a replay: any click on the captured node AFTER interception
-      // proves the guard re-fired it. A safe-cancel must not replay.
+      // Any later click on this node proves a replay occurred.
       let replayed = false;
       link.addEventListener('click', () => {
         replayed = true;
       });
-      // Mutate target between interception and Discard (was eligible _self default).
       link.setAttribute('target', '_blank');
       await user.click(screen.getByRole('button', { name: 'Discard changes' }));
 
@@ -431,9 +411,6 @@ describe('UnsavedChangesGuard', () => {
       expect(currentPath()).toBe('/settings');
       expect(screen.queryByRole('dialog')).toBeNull();
 
-      // One-shot flags cleared: a subsequent genuine dirty click still guards.
-      // (Deleting the `target` equality check would replay the _blank anchor and
-      // trip `replayed`, and could leave bypassNextClick armed.)
     });
   });
 
@@ -450,8 +427,6 @@ describe('UnsavedChangesGuard', () => {
       );
       const area = document.querySelector('area')!;
       fireEvent(area, new MouseEvent('click', { bubbles: true, cancelable: true }));
-      // The HTMLAreaElement branch of findAnchor must intercept — removing it
-      // leaves no dialog.
       expect(screen.getByRole('dialog')).toBeInTheDocument();
     });
 
@@ -482,14 +457,11 @@ describe('UnsavedChangesGuard', () => {
       );
       expect(screen.getByRole('dialog')).toBeInTheDocument();
 
-      // Disconnect the captured area, then Discard → safe-cancel (isConnected false).
       await user.click(screen.getByRole('button', { name: 'hide-area' }));
       await user.click(screen.getByRole('button', { name: 'Discard changes' }));
       expect(screen.queryByRole('dialog')).toBeNull();
       expect(currentPath()).toBe('/settings');
 
-      // Flags cleared: a subsequent dirty link still guards, and a dirty
-      // beforeunload still prompts.
       await user.click(screen.getByRole('link', { name: 'Library' }));
       expect(screen.getByRole('dialog')).toBeInTheDocument();
       await user.click(screen.getByRole('button', { name: 'Stay on page' }));
@@ -542,8 +514,6 @@ describe('UnsavedChangesGuard', () => {
         </>,
       );
       await user.click(screen.getByRole('link', { name: 'Indexers' }));
-      // Pending-only must still block (removing `|| anyPending` from isBlocking
-      // would leave no dialog to find).
       expect(screen.getByRole('dialog')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Discard changes' })).toBeDisabled();
       expect(currentPath()).toBe('/settings');
@@ -562,8 +532,7 @@ describe('UnsavedChangesGuard', () => {
     it('re-enables Discard (draft intact, no navigation) when a pending save fails (F8)', async () => {
       const user = userEvent.setup();
       function Harness() {
-        // Dirty stays true throughout; pending flips true→false as the save
-        // settles (a failure leaves the form dirty).
+        // A failed save clears pending but leaves the form dirty.
         const [pending, setPending] = useState(true);
         return (
           <>
@@ -580,10 +549,8 @@ describe('UnsavedChangesGuard', () => {
       expect(screen.getByRole('dialog')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Discard changes' })).toBeDisabled();
 
-      // Save fails: pending clears but the draft is still dirty.
       await user.click(screen.getByRole('button', { name: 'fail-save' }));
 
-      // Modal stays open, Discard re-enables, and nothing navigated.
       expect(screen.getByRole('dialog')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Discard changes' })).toBeEnabled();
       expect(currentPath()).toBe('/settings');
@@ -591,8 +558,7 @@ describe('UnsavedChangesGuard', () => {
   });
 
   describe('beforeunload + suppression flag', () => {
-    // Card is a persistent sibling (not routed away) so it stays dirty across a
-    // Discard navigation, letting us probe the flag decision afterward.
+    // Keep the card mounted across navigation so later probes remain blocked.
     function renderPersistent(ui: React.ReactNode, { dirty = true } = {}) {
       return render(
         <MemoryRouter initialEntries={['/settings']}>
@@ -618,8 +584,7 @@ describe('UnsavedChangesGuard', () => {
       renderPersistent(<Link to="/settings/indexers">Indexers</Link>);
       await user.click(screen.getByRole('link', { name: 'Indexers' }));
       await user.click(screen.getByRole('button', { name: 'Discard changes' }));
-      // The replayed SPA click was preventDefault'd by Router → nothing to
-      // suppress → the next beforeunload still prompts.
+      // Router preventDefault'd the replayed SPA click, so the next beforeunload still prompts.
       expect(dispatchBeforeunload()).toBe(true);
     });
 
@@ -629,10 +594,8 @@ describe('UnsavedChangesGuard', () => {
       await user.click(screen.getByRole('link', { name: 'Plain' }));
       expect(screen.getByRole('dialog')).toBeInTheDocument();
       await user.click(screen.getByRole('button', { name: 'Discard changes' }));
-      // The replayed plain-anchor click was NOT preventDefault'd (document
-      // navigation) → suppression armed → this beforeunload is swallowed once.
+      // Plain-anchor replay arms exactly one native unload suppression.
       expect(dispatchBeforeunload()).toBe(false);
-      // ...and cleared, so a later genuine dirty reload still prompts.
       expect(dispatchBeforeunload()).toBe(true);
     });
 
@@ -652,20 +615,16 @@ describe('UnsavedChangesGuard', () => {
       }
       renderPersistent(<Harness />);
 
-      // 1. Arm suppression via a plain-anchor (document-nav) Discard. Do NOT
-      //    dispatch beforeunload afterwards, so the flag stays armed.
+      // Arm suppression through a plain-anchor Discard without firing beforeunload.
       await user.click(screen.getByRole('link', { name: 'Plain' }));
       await user.click(screen.getByRole('button', { name: 'Discard changes' }));
 
-      // 2. Intercept the SPA Link, unmount it, then Discard → stale safe-cancel,
-      //    which must clear the armed suppression flag.
+      // A stale SPA replay must then clear that armed suppression.
       await user.click(screen.getByRole('link', { name: 'Vanishing' }));
       await user.click(screen.getByRole('button', { name: 'hide' }));
       await user.click(screen.getByRole('button', { name: 'Discard changes' }));
 
-      // 3. Because the stale branch cleared suppression, the next dirty
-      //    beforeunload still prompts. If the stale-branch reset of
-      //    suppressNextBeforeunload were removed, this would be swallowed (false).
+      // The next dirty beforeunload must still prompt.
       expect(dispatchBeforeunload()).toBe(true);
     });
   });
@@ -711,12 +670,11 @@ describe('UnsavedChangesGuard', () => {
     await user.click(screen.getByRole('link', { name: 'Go' }));
     await user.click(screen.getByRole('button', { name: 'Discard changes' }));
 
-    // State survives the replay (a reconstructed navigate(href) would drop it).
+    // Replaying the click preserves state that navigate(href) would drop.
     expect(screen.getByTestId('state').textContent).toBe(JSON.stringify({ from: 'guard' }));
     expect(currentPath()).toBe('/settings/indexers');
 
-    // replace: the /settings entry was replaced, so going back lands on /start,
-    // not /settings (a push would have kept /settings on the stack).
+    // replace removes /settings from the back stack.
     await user.click(screen.getByRole('button', { name: 'back' }));
     expect(currentPath()).toBe('/start');
   });
@@ -734,12 +692,10 @@ describe('UnsavedChangesGuard', () => {
       </>,
     );
 
-    // Save click submits the form; the guard (anchor-only) never intercepts.
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(onSubmit).toHaveBeenCalledTimes(1);
 
-    // Enter in a field submits; still no interception.
     await user.type(screen.getByLabelText('field'), '{Enter}');
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(onSubmit).toHaveBeenCalledTimes(2);
@@ -758,8 +714,6 @@ describe('UnsavedChangesGuard', () => {
 
     const stay = screen.getByRole('button', { name: 'Stay on page' });
     const discard = screen.getByRole('button', { name: 'Discard changes' });
-    // Guard wires cancelVariant="primary" / confirmVariant="secondary"; swapping
-    // or dropping either prop changes these classes.
     expect(stay).toHaveClass('bg-primary', 'text-primary-foreground');
     expect(discard).not.toHaveClass('bg-destructive');
     expect(discard).toHaveClass('border', 'border-border');
@@ -800,7 +754,6 @@ describe('UnsavedChangesGuard', () => {
         </StrictMode>,
       );
       await user.click(screen.getByRole('link', { name: 'Indexers' }));
-      // Exactly one dialog even under StrictMode double-mount.
       expect(screen.getAllByRole('dialog')).toHaveLength(1);
     });
   });

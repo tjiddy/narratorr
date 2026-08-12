@@ -101,7 +101,6 @@ describe('RemotePathMappingsSubsection', () => {
       expect(toast.success).toHaveBeenCalledWith('Path mapping added');
     });
 
-    // onSuccess callback closes the add form
     await waitFor(() => {
       expect(screen.queryByLabelText('Remote Path')).not.toBeInTheDocument();
     });
@@ -156,7 +155,6 @@ describe('RemotePathMappingsSubsection', () => {
       expect(toast.success).toHaveBeenCalledWith('Path mapping updated');
     });
 
-    // onSuccess callback closes the edit form and returns to display mode
     await waitFor(() => {
       expect(screen.queryByLabelText('Remote Path')).not.toBeInTheDocument();
       expect(screen.getByText('Edit')).toBeInTheDocument();

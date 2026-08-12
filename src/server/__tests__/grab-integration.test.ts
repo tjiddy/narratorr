@@ -61,7 +61,6 @@ describe('Grab flow integration', () => {
     db = createMockDb();
     log = createMockLogger();
 
-    // DB returns the qbittorrent client for all select queries (getFirstEnabledForProtocol + getById)
     db.select.mockReturnValue(mockDbChain([mockClientRow]));
 
     clientService = new DownloadClientService(inject<Db>(db), inject<FastifyBaseLogger>(log));
@@ -71,7 +70,6 @@ describe('Grab flow integration', () => {
   it('grabs a magnet URI, extracts the correct hash, and calls the adapter via MSW', async () => {
     mswServer.use(loginHandler(), addTorrentHandler());
 
-    // insert returns download record, then select returns download+book for getById
     db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
     const downloadRecord = {
       id: 1,
@@ -92,13 +90,11 @@ describe('Grab flow integration', () => {
       addedAt: new Date(),
       completedAt: null,
     };
-    // After insert, getById is called — need to set select to return the download+book join
-    // The first select call is for getFirstEnabledForProtocol, second for getById in clientService,
-    // third for getById in downloadService. Use mockReturnValue to handle all.
+    // Select order: getFirstEnabledForProtocol, client getById, then download getById.
     db.select
-      .mockReturnValueOnce(mockDbChain([mockClientRow]))   // getFirstEnabledForProtocol
-      .mockReturnValueOnce(mockDbChain([mockClientRow]))   // getAdapter → getById
-      .mockReturnValueOnce(mockDbChain([{ download: downloadRecord, book: null }])); // getById after insert
+      .mockReturnValueOnce(mockDbChain([mockClientRow]))
+      .mockReturnValueOnce(mockDbChain([mockClientRow]))
+      .mockReturnValueOnce(mockDbChain([{ download: downloadRecord, book: null }]));
 
     const result = await downloadService.grab({
       downloadUrl: MAGNET_URI,
@@ -114,8 +110,8 @@ describe('Grab flow integration', () => {
     mswServer.use(loginHandler(), addTorrent500Handler());
 
     db.select
-      .mockReturnValueOnce(mockDbChain([mockClientRow]))   // getFirstEnabledForProtocol
-      .mockReturnValueOnce(mockDbChain([mockClientRow]));   // getAdapter → getById
+      .mockReturnValueOnce(mockDbChain([mockClientRow]))
+      .mockReturnValueOnce(mockDbChain([mockClientRow]));
 
     await expect(
       downloadService.grab({

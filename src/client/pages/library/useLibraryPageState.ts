@@ -35,7 +35,7 @@ function applyViewModeChange(
     filters.actions.setSortDirection('desc');
   }
   setViewMode(mode);
-  try { localStorage.setItem(VIEW_STORAGE_KEY, mode); } catch { /* noop */ }
+  try { localStorage.setItem(VIEW_STORAGE_KEY, mode); } catch { /* Best-effort persistence. */ }
   if (mode === 'grid') bulk.clearSelection();
 }
 
@@ -78,8 +78,7 @@ export function useLibraryPageState() {
   const books = useMemo(() => libraryResponse?.data ?? [], [libraryResponse]);
   const totalBooks = libraryResponse?.total ?? 0;
 
-  // Settled-gated grid key: holds old sort params during placeholderData phase,
-  // updates only when the sorted response settles.
+  // Hold the old grid key until placeholder data is replaced, then remount for the settled sort.
   const currentSortKey = `${filters.state.sortField}-${filters.state.sortDirection}`;
   const [settledGridKey, setSettledGridKey] = useState(currentSortKey);
   if (!isPlaceholderData && settledGridKey !== currentSortKey) {
@@ -185,12 +184,10 @@ export function useLibraryPageState() {
     deleteConfirm,
     showRemoveMissingModal,
     showSearchAllWantedModal,
-    // Mutations
     rescanMutation,
     deleteMutation,
     deleteMissingMutation,
     searchAllWantedMutation,
-    // Callbacks
     handleViewModeChange,
     handleCardMenuToggle,
     handleCardClick,

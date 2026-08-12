@@ -10,14 +10,7 @@ export const searchSettingsSchema = z.object({
   searchPriority: searchPrioritySchema.default('accuracy'),
 });
 
-// Page form schema for SearchSettingsSection — a cross-category UI merge of the
-// `search` category plus `quality.protocolPreference` and the `rss` category,
-// with renamed keys (searchEnabled/rssEnabled, searchIntervalMinutes/rssIntervalMinutes)
-// to disambiguate the two enabled/interval pairs surfaced on one page. Relocated
-// from the page module (was a local const) so registry.test.ts can guard it
-// against silent category-field drift (#1388, #1350). The z.object shape — and
-// thus form behavior — is unchanged; this is NOT a refactor onto the registered
-// category schemas via .extend().
+// Page-only merge of search, protocol preference, and RSS; renamed fields disambiguate duplicates.
 export const searchFormSchema = z.object({
   searchEnabled: z.boolean(),
   searchIntervalMinutes: z.number().int().min(5).max(1440),

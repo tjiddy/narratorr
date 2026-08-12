@@ -8,7 +8,7 @@ vi.mock('node:fs/promises', () => ({
   constants: { R_OK: 4 },
 }));
 
-// Import after mock registration so the route picks up the mock
+// Import after mock registration.
 import { readdir, access } from 'node:fs/promises';
 
 const mockReaddir = readdir as Mock;
@@ -35,7 +35,7 @@ describe('filesystem routes', () => {
     resetMockServices(services);
     mockReaddir.mockReset();
     mockAccess.mockReset();
-    mockAccess.mockResolvedValue(undefined); // default: all dirs readable
+    mockAccess.mockResolvedValue(undefined);
   });
 
   describe('GET /api/filesystem/browse', () => {
@@ -155,9 +155,9 @@ describe('filesystem routes', () => {
         makeDirent('also-readable', true),
       ]);
       mockAccess
-        .mockResolvedValueOnce(undefined) // readable: ok
-        .mockRejectedValueOnce(Object.assign(new Error('EACCES'), { code: 'EACCES' })) // forbidden: denied
-        .mockResolvedValueOnce(undefined); // also-readable: ok
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(Object.assign(new Error('EACCES'), { code: 'EACCES' }))
+        .mockResolvedValueOnce(undefined);
 
       const res = await app.inject({
         method: 'GET',

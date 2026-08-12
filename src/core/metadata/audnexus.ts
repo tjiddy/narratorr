@@ -2,8 +2,8 @@ import { z } from 'zod';
 import { BookMetadataSchema, AuthorMetadataSchema } from './schemas.js';
 import { MetadataError, RateLimitError, TransientError } from './errors.js';
 import { normalizeGenres } from './genres.js';
-// All three 429 arms (chapters, book, author) route through the shared normalizer —
-// no path may hand the service a window it cannot honor. See retry-after.ts (#1944).
+import { computeTrimmedChapterRuntime } from './chapter-trim.js';
+// Every 429 path uses the shared normalizer so provider backoff receives a valid window.
 import { parseRetryAfterMs } from './retry-after.js';
 import { AUDNEXUS_TIMEOUT_MS } from '../utils/constants.js';
 import { fetchWithTimeout } from '../utils/network-service.js';
@@ -23,8 +23,7 @@ export interface AudnexusConfig {
 const BASE_URL = 'https://api.audnex.us';
 const REQUEST_TIMEOUT_MS = AUDNEXUS_TIMEOUT_MS;
 
-// Raw-response schemas at the wrapper layer — fail at the boundary on HTML
-// interstitials, rate-limit pages, or shape changes instead of mid-mapping.
+// Reject HTML interstitials and upstream shape drift at the response boundary.
 const audnexusSeriesRefSchema = z.object({
   name: z.string().nullish(),
   position: z.string().nullish(),
@@ -51,18 +50,23 @@ const audnexusBookSchema = z.object({
 }).passthrough();
 
 /**
- * Chapter-endpoint raw schema (#1942). Only the top-level fields matter — the
- * endpoint publishes its own `runtimeLengthMs`, so the chapter entries are never
- * summed client-side and stay `z.unknown()`. `runtimeLengthMs`/`isAccurate` are
- * `.nullish()` (external-API convention) so a GENUINE record with a null trust
- * field still validates and settles as a definitive trust-fail; the identity +
- * shape predicate below — not these two fields — is what proves authority.
+ * Malformed entries stop trimming but must not invalidate an authoritative chapter record;
+ * `.catch({})` prevents a transient re-request loop.
+ */
+const audnexusChapterEntrySchema = z.object({
+  title: z.string().nullish(),
+  lengthMs: z.number().nullish(),
+}).passthrough().catch({});
+
+/**
+ * Published runtime stays primary; entries derive only the trimmed alternative. Nullable trust
+ * fields still parse because identity and record shape establish authority below.
  */
 const audnexusChaptersSchema = z.object({
   asin: z.string().nullish(),
   runtimeLengthMs: z.number().nullish(),
   isAccurate: z.boolean().nullish(),
-  chapters: z.array(z.unknown()).nullish(),
+  chapters: z.array(audnexusChapterEntrySchema).nullish(),
 }).passthrough();
 
 const audnexusAuthorSchema = z.object({
@@ -105,10 +109,7 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
     }
   }
 
-  /**
-   * Typed lookup that never throws — every failure becomes a discriminated kind.
-   * See `MetadataSearchProvider.getBookDetailed` for the wrapper-contract.
-   */
+  /** Never throws; every lookup failure becomes a discriminated outcome. */
   async getBookDetailed(id: string): Promise<ProviderLookupResult> {
     const raw = await this.fetchJsonDetailed(
       `/books/${encodeURIComponent(id)}?region=${this.region}`,
@@ -127,21 +128,8 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
   }
 
   /**
-   * Edition chapter-runtime lookup (#1942) — `GET /books/{asin}/chapters`, region
-   * forwarded exactly as the book/author lookups do (the endpoint defaults to `us`,
-   * so a bare path would silently answer with US chapters for a non-US edition).
-   *
-   * Deliberately does NOT reuse `fetchJsonDetailed`: that helper collapses three
-   * distinctions this feature's cache depends on (see {@link ChapterRuntimeOutcome}).
-   *   - It maps every non-OK status to `not_found`, which would settle a temporary
-   *     401/403/408 as a permanent "no runtime" for the service lifetime.
-   *   - It branches on `response.ok`, true for all of 200–299, so a null-body
-   *     202/204 would enter the record parser.
-   *   - It folds every `response.json()` rejection into `transient_failure`, which
-   *     conflates a body-stream abort (the exchange never completed) with a
-   *     completed-but-unparseable body.
-   *
-   * Never throws; owns no cache and no throttle.
+   * Region-scoped chapter lookup with cache-safe outcomes: only documented 400/404 are absent,
+   * only exact 200 parses, and pre-header or body-stream failures remain transient. Never throws.
    */
   async getChapterRuntime(id: string): Promise<ChapterRuntimeOutcome> {
     let response: Response;
@@ -152,23 +140,21 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
         REQUEST_TIMEOUT_MS,
       );
     } catch (error: unknown) {
-      // Pre-header rejection — network/DNS/TLS/timeout, and the 3xx redirect that
-      // `fetchWithTimeout` throws rather than returning.
+      // Network, timeout, TLS, DNS, and rejected redirects fail before headers.
       return { kind: 'transient_failure', message: getErrorMessage(error) };
     }
 
     if (response.status === 429) {
       return { kind: 'rate_limited', retryAfterMs: parseRetryAfterMs(response.headers.get('Retry-After')) };
     }
-    // The ONLY statuses Audnexus documents as "this ASIN is absent/invalid".
+    // Only these statuses document an absent or invalid ASIN.
     if (response.status === 400 || response.status === 404) return { kind: 'not_found' };
-    // Exact-200 gate, not `response.ok`.
+    // Require exact 200; response.ok also accepts other successful 2xx statuses.
     if (response.status !== 200) {
       return { kind: 'transient_failure', message: `HTTP ${response.status} ${response.statusText}` };
     }
 
-    // Split at the body boundary: `fetchWithTimeout` returns the Response with its
-    // timeout signal still attached, so the stream can reject AFTER headers.
+    // The timeout signal remains attached, so the body stream can fail after headers.
     let body: string;
     try {
       body = await response.text();
@@ -258,24 +244,9 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Mapping helpers
-// ---------------------------------------------------------------------------
-
 /**
- * The authority predicate (#1942, F18/F20). A fully-read 200 is NOT an
- * authoritative statement about an edition just because its bytes arrived — this
- * boundary routinely sees HTML interstitials, rate-limit pages, and upstream shape
- * changes. A body is the requested edition's COMPLETE chapter record only when
- * BOTH hold:
- *
- *  1. **Identity** — `asin` strictly equals the requested ASIN, and
- *  2. **Shape** — a `chapters` array is present.
- *
- * The AND is load-bearing. An OR would admit a wrong-`asin` chapter record (another
- * edition, whose runtime could falsely clear a genuine mismatch) and an ASIN-only
- * error envelope (`{ asin, message: 'temporarily unavailable' }`, which would settle
- * as a permanent trust-fail). Both are `invalid_record` → transient → never cached.
+ * Authority requires both the requested ASIN and a chapter array. Either alone can admit a
+ * wrong edition or error envelope, so failures stay transient `invalid_record` outcomes.
  */
 function classifyChapterBody(body: string, requestedAsin: string): ChapterRuntimeOutcome {
   if (body.trim().length === 0) return { kind: 'invalid_record', reason: 'empty-body' };
@@ -292,7 +263,15 @@ function classifyChapterBody(body: string, requestedAsin: string): ChapterRuntim
   if (parsed.data.asin !== requestedAsin) return { kind: 'invalid_record', reason: 'asin-mismatch' };
   if (!Array.isArray(parsed.data.chapters)) return { kind: 'invalid_record', reason: 'missing-chapters' };
 
-  return { kind: 'ok', runtimeLengthMs: parsed.data.runtimeLengthMs, isAccurate: parsed.data.isAccurate };
+  // Transport computes both runtimes; the service decides whether either is trustworthy.
+  const trim = computeTrimmedChapterRuntime(parsed.data.chapters, parsed.data.runtimeLengthMs);
+  return {
+    kind: 'ok',
+    runtimeLengthMs: parsed.data.runtimeLengthMs,
+    isAccurate: parsed.data.isAccurate,
+    trimmedRuntimeMs: trim.trimmedRuntimeMs,
+    trimmedChapterCount: trim.trimmedChapterCount,
+  };
 }
 
 function mapAuthor(d: AudnexusAuthorDetail): Record<string, unknown> {

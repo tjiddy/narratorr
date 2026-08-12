@@ -4,11 +4,7 @@ import type { EventBroadcasterService } from '../services/event-broadcaster.serv
 import { serializeError } from './serialize-error.js';
 
 
-/**
- * Fire-and-forget SSE emit with error swallowing.
- * Null/undefined broadcaster is a silent no-op.
- * Errors are caught and logged at debug level (SSE failures are infrastructure noise).
- */
+// SSE failures are infrastructure noise and must never disturb the caller.
 export function safeEmit<T extends SSEEventType>(
   broadcaster: EventBroadcasterService | null | undefined,
   event: T,

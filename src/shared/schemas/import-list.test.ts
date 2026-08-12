@@ -65,7 +65,6 @@ describe('createImportListFormSchema — trim behavior', () => {
   });
 });
 
-// #557 — Typed adapter settings schemas (discriminated unions)
 describe('createImportListSchema — typed settings validation', () => {
   const base = { name: 'Test' };
 
@@ -167,7 +166,6 @@ describe('previewImportListSchema — typed settings validation', () => {
   });
 });
 
-// #732 — Hardcover shelfId numeric tightening (parameterize GraphQL injection fix)
 describe('hardcoverSettingsSchema — numeric shelfId (#732)', () => {
   it('rejects non-numeric shelfId', () => {
     const result = hardcoverSettingsSchema.safeParse({ apiKey: 'k', listType: 'shelf', shelfId: 'not-a-number' });
@@ -222,7 +220,6 @@ describe('hardcoverSettingsSchema — numeric shelfId (#732)', () => {
   });
 });
 
-// #1879 — Hardcover custom list (listType 'custom' + listUrl + importMax)
 describe('hardcoverSettingsSchema — custom list (#1879)', () => {
   const CUSTOM_URL = 'https://hardcover.app/@LisaRae/lists/2025-year-in-books';
 

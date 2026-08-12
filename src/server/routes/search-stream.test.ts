@@ -146,7 +146,6 @@ describe('searchStreamRoutes', () => {
     });
 
     it('streams search-start event with session ID and indexer list', async () => {
-      // Configure mock to simulate indexer list via searchAllStreaming
       indexerService.searchAllStreaming = vi.fn().mockImplementation(
         async (_q: string, _o: unknown, _c: Map<number, AbortController>, _cb: unknown) => [],
       );
@@ -154,7 +153,6 @@ describe('searchStreamRoutes', () => {
       const { reply, request, write } = createMockReplyAndRequest();
       await streamHandler!(request, reply);
 
-      // search-start is written before searchAllStreaming is called
       const searchStartCall = write.mock.calls.find(
         (call: unknown[]) => typeof call[0] === 'string' && (call[0] as string).includes('event: search-start'),
       );
@@ -218,7 +216,6 @@ describe('searchStreamRoutes', () => {
       const { reply, request, onClose } = createMockReplyAndRequest();
       await streamHandler!(request, reply);
 
-      // Verify onClose was registered to handle client disconnects
       expect(onClose).toHaveBeenCalledWith('close', expect.any(Function));
     });
 
@@ -340,19 +337,16 @@ describe('searchStreamRoutes', () => {
 
   describe('client disconnect cleanup', () => {
     it('invokes close callback which removes session and aborts pending controllers during search', async () => {
-      // Make searchAllStreaming hang so the close handler fires mid-search
       let resolveSearch: (v: never[]) => void;
       indexerService.searchAllStreaming = vi.fn().mockImplementation(
         () => new Promise<never[]>((resolve) => { resolveSearch = resolve; }),
       );
 
       const { reply, request, onClose } = createMockReplyAndRequest();
-      // Start handler (it will await the hanging search)
       const handlerPromise = streamHandler!(request, reply);
-      // Flush microtask queue so the handler reaches the await on searchAllStreaming
+      // Flush microtasks until the handler awaits searchAllStreaming.
       await new Promise(resolve => setTimeout(resolve, 0));
 
-      // Extract session ID from the search-start event that was already written
       const writeCall = (reply.raw.write as ReturnType<typeof vi.fn>).mock.calls.find(
         (call: unknown[]) => typeof call[0] === 'string' && (call[0] as string).includes('event: search-start'),
       );
@@ -360,31 +354,24 @@ describe('searchStreamRoutes', () => {
       const data = JSON.parse(dataLine!.replace('data: ', ''));
       const sid = data.sessionId as string;
 
-      // Session exists while search is in-flight
       expect(sessionManager.get(sid)).toBeDefined();
       const session = sessionManager.get(sid)!;
 
-      // Simulate client disconnect (fires before search completes)
       const closeHandler = onClose.mock.calls[0]![1] as () => void;
       closeHandler();
 
-      // Session removed and controllers aborted by the close callback
       expect(sessionManager.get(sid)).toBeUndefined();
       for (const [, controller] of session.controllers) {
         expect(controller.signal.aborted).toBe(true);
       }
 
-      // Let the search resolve so the handler completes cleanly
       resolveSearch!([] as never[]);
       await handlerPromise;
     });
   });
 
-  // #1799 — keep the stream warm with named `hb` heartbeat frames while the search is in flight
-  // so a slow indexer doesn't idle the connection into a reverse-proxy cut.
   describe('in-flight heartbeat', () => {
-    // Fake only the interval timers so real setTimeout(0) can still flush the
-    // microtask queue between the handler's awaits (vitest-faketimers-react-query).
+    // Interval-only fakes preserve real setTimeout(0) for flushing handler awaits.
     beforeEach(() => {
       vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     });
@@ -405,7 +392,6 @@ describe('searchStreamRoutes', () => {
       return { resolve: () => resolve([] as never[]), reject: (e: unknown) => reject(e) };
     }
 
-    // Real setTimeout(0) — flushes pending microtasks so the handler reaches its await.
     const flush = () => new Promise((r) => setTimeout(r, 0));
 
     it('emits `hb` heartbeat frames on the shared cadence while searchAllStreaming is in flight, then stops on completion', async () => {
@@ -422,7 +408,6 @@ describe('searchStreamRoutes', () => {
       await handlerPromise;
       expect(reply.raw.end).toHaveBeenCalled();
 
-      // No further heartbeats after the finally cleared the timer.
       const after = hbCount(write);
       vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 3);
       expect(hbCount(write)).toBe(after);
@@ -474,10 +459,9 @@ describe('searchStreamRoutes', () => {
       const handlerPromise = streamHandler!(request, reply);
       await flush();
 
-      // A throw inside the setInterval callback would have no caller and crash the process.
+      // An uncaught interval callback has no caller to absorb its failure.
       expect(() => vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS)).not.toThrow();
 
-      // The guard stopped the timer after the first failure — no repeated attempts.
       const attempts = hbCount(write);
       expect(attempts).toBe(1);
       vi.advanceTimersByTime(HEARTBEAT_INTERVAL_MS * 3);
@@ -513,10 +497,7 @@ vi.mock('../config.js', () => ({
 describe('searchStreamRoutes — app.inject() integration', () => {
   let postProcessSpy: MockInstance;
 
-  // #1453 — the SSE/cancel routes are no longer API-key-reachable. Streams
-  // authenticate via a short-lived stream token (`?token=`); the cancel route
-  // (a plain POST) authenticates via the ambient non-key chain (here, a forms
-  // session cookie).
+  // Streams use query tokens; cancellation uses the ambient session-cookie chain.
   const VALID_STREAM_TOKEN = 'valid-stream-token';
   const VALID_COOKIE = 'valid-cookie';
 
@@ -589,7 +570,6 @@ describe('searchStreamRoutes — app.inject() integration', () => {
     );
     await app.ready();
 
-    // Create a session so cancel has something to target
     const session = sessionMgr.create([{ id: 1, name: 'Test' }]);
 
     const res = await app.inject({
@@ -604,9 +584,7 @@ describe('searchStreamRoutes — app.inject() integration', () => {
   });
 
   it('successful GET with a valid stream token and zero indexers returns SSE stream with empty results', async () => {
-    // app.inject() hangs on hijacked SSE responses (per fastify-sse-hijack-testing learning),
-    // so use fetchSseEvents() to test the full Fastify stack over real HTTP. Auth is via
-    // the #1453 stream token (`?token=`), not the API key.
+    // Fastify inject hangs on hijacked SSE responses; exercise this route over real HTTP.
     const authService = createMockAuthService(true);
     const zeroIndexerSearchService = {
       ...createMockIndexerSearchService(),
@@ -633,19 +611,16 @@ describe('searchStreamRoutes — app.inject() integration', () => {
     try {
       const { status, headers, events } = await fetchSseEvents(app, `/api/search/stream?q=test&token=${VALID_STREAM_TOKEN}`);
 
-      // Auth accepted — 200 with SSE headers
       expect(status).toBe(200);
       expect(headers.get('content-type')).toBe('text/event-stream');
       expect(headers.get('cache-control')).toBe('no-cache');
 
-      // Should contain search-start with empty indexer list
       const startEvent = events.find(e => e.event === 'search-start');
       expect(startEvent).toBeDefined();
       const startData = startEvent!.data as { sessionId: string; indexers: unknown[] };
       expect(startData.sessionId).toBeDefined();
       expect(startData.indexers).toEqual([]);
 
-      // Should contain search-complete with empty SearchResponse
       const completeEvent = events.find(e => e.event === 'search-complete');
       expect(completeEvent).toBeDefined();
       const completeData = completeEvent!.data as Record<string, unknown>;
@@ -686,7 +661,6 @@ describe('searchStreamRoutes — app.inject() integration', () => {
     await app.close();
   });
 
-  // #1453 — cancel route (a plain POST, not hijacked) is fully inject-testable.
   describe('cancel route auth matrix (#1453)', () => {
     async function buildCancelApp() {
       const authService = createMockAuthService(true);
@@ -803,17 +777,12 @@ describe('searchStreamRoutes — unmocked postProcessSearchResults', () => {
   });
 });
 
-// ============================================================================
-// #2104 — progressive query relaxation on the interactive surface
-// ============================================================================
-
 describe('GET /api/search/stream — query ladder (#2104)', () => {
   const VALID_STREAM_TOKEN = 'valid-stream-token';
   const BOOK_TITLE = 'The Churn: An Expanse Novella';
   const AUTHOR = 'James S. A. Corey';
   const CANONICAL_Q = 'The Churn An Expanse Novella James S A Corey';
 
-  /** Every rung the ladder builds for this book, in order. */
   const RUNGS = [
     CANONICAL_Q,
     'the churn James S A Corey',
@@ -853,11 +822,7 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
     return app;
   }
 
-  /**
-   * Streaming search whose per-indexer answer depends on the transport query.
-   * `onComplete` is what increments the ladder's `succeeded` count, so a rung
-   * that reports completions with zero results is a GENUINE zero and advances.
-   */
+  // Completion callbacks distinguish a genuine zero-result rung from a total outage.
   function serviceAnswering(hitQuery: string | null, resultCount = 2) {
     const controllerMaps: Array<Map<number, AbortController>> = [];
     const service = {
@@ -886,15 +851,12 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
 
   let postProcessSpy: MockInstance;
   beforeEach(() => {
-    // Echo the winning rung's results through, so `search-complete` carries the
-    // ladder's output rather than a fixed empty payload.
+    // Preserve the winning rung's results through post-processing.
     postProcessSpy = vi.spyOn(searchPipeline, 'postProcessSearchResults')
       .mockImplementation(async (results) => ({ results, durationUnknown: false, unsupportedResults: { count: 0, titles: [] } }));
   });
   afterEach(() => postProcessSpy.mockRestore());
 
-  // AC24 — rung 1 is the query the user asked for, so there is nothing to tell
-  // them. The key must be ABSENT, not present-and-undefined.
   it('omits relaxedQuery entirely when rung 1 produced the hits (AC24)', async () => {
     const { service } = serviceAnswering(CANONICAL_Q);
     const app = await buildApp(service);
@@ -909,7 +871,6 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
     }
   });
 
-  // AC24 — a relaxed winning rung is disclosed verbatim.
   it('sets relaxedQuery to the winning rung query when rungs 2+ produced the hits (AC24)', async () => {
     const { service } = serviceAnswering(RUNGS[3]!);
     const app = await buildApp(service);
@@ -924,11 +885,7 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
     }
   });
 
-  // AC24 / F1 — a ladder that RAN a relaxed rung is not a ladder that MATCHED on
-  // one. `runQueryLadder` reports the last rung it attempted, so exhaustion and a
-  // later-rung outage both surface an index > 0 with an empty result set. Keying
-  // disclosure on the index alone would make the search box adopt a query that
-  // produced nothing (the box adoption is relaxedQuery's only consumer since d1555ec3).
+  // An attempted relaxed rung is not a match; disclosure also requires post-processed hits.
   it('omits relaxedQuery when the ladder exhausts every rung at zero (AC24, F1)', async () => {
     const { service } = serviceAnswering(null);
     const app = await buildApp(service);
@@ -936,7 +893,6 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
       const { events } = await fetchSseEvents(app, url({ q: CANONICAL_Q, title: BOOK_TITLE, author: AUTHOR }));
       const complete = events.find((e) => e.event === 'search-complete')!;
 
-      // The ladder really did reach a relaxed rung — this is not a rung-1 case.
       expect(queriesOf(service)).toEqual(RUNGS);
       expect((complete.data as { results: unknown[] }).results).toEqual([]);
       expect(complete.data as Record<string, unknown>).not.toHaveProperty('relaxedQuery');
@@ -945,9 +901,6 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
     }
   });
 
-  // AC24 / F1 — the outage arm. A later rung where NO indexer answered aborts the
-  // ladder, returning that rung with an empty set; it produced nothing, so there
-  // is nothing to disclose.
   it('omits relaxedQuery when a later rung aborts on a total indexer outage (AC24, F1)', async () => {
     let call = 0;
     const service = {
@@ -958,7 +911,7 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
           onError: (id: number, name: string, error: string, ms: number) => void;
         }) => {
           call++;
-          // Rung 1 answers a genuine zero; rung 2 finds every indexer down.
+          // First a genuine zero, then a total outage.
           if (call === 1) cb.onComplete(1, 'AudioBookBay', 0, 10);
           else cb.onError(1, 'AudioBookBay', 'ECONNREFUSED', 10);
           return [];
@@ -971,7 +924,6 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
       const { events } = await fetchSseEvents(app, url({ q: CANONICAL_Q, title: BOOK_TITLE, author: AUTHOR }));
       const complete = events.find((e) => e.event === 'search-complete')!;
 
-      // Aborted at rung 2 — an index > 0, so an index-only condition would fire.
       expect(queriesOf(service)).toEqual(RUNGS.slice(0, 2));
       expect((complete.data as { results: unknown[] }).results).toEqual([]);
       expect(complete.data as Record<string, unknown>).not.toHaveProperty('relaxedQuery');
@@ -980,10 +932,7 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
     }
   });
 
-  // AC24 / F1 — the third arm the index-only condition also got wrong: a relaxed
-  // rung DID return releases, but the existing blacklist/quality/language gates
-  // removed all of them. The notice sits above the result list and explains it,
-  // so with nothing listed it explains nothing and contradicts "No releases found".
+  // A relaxed rung filtered to nothing has nothing to disclose.
   it('omits relaxedQuery when a relaxed rung hit but the gates filtered every result (AC24, F1)', async () => {
     const { service } = serviceAnswering(RUNGS[3]!);
     postProcessSpy.mockImplementation(async () => ({
@@ -1005,10 +954,7 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
     }
   });
 
-  // #2133 AC11 — discovery applies NO corroboration floor, and must not start.
-  // The modal is correct today: it lists the franchise siblings and lets a
-  // person make the call. The very rung whose auto-grab #2133 now HOLDS still
-  // surfaces every one of them here, with no hold and no held event.
+  // Interactive discovery intentionally has no auto-grab corroboration floor.
   it('still surfaces the franchise siblings the auto path now holds (#2133 AC11)', async () => {
     const FRANCHISE_TITLE = 'Star Wars: The High Republic: Haunted Starlight';
     const FRANCHISE_Q = 'Star Wars The High Republic Haunted Starlight George Mann';
@@ -1044,11 +990,6 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
     }
   });
 
-  // #2138 AC9 — the reported UAT symptom, fully fixed on THIS surface. Before
-  // the tail exemption every rung ANDed a franchise token, so a release named
-  // plainly was unreachable and the modal showed 25 siblings and nothing else.
-  // Discovery applies no corroboration floor (#2133 AC11), so the release is
-  // listed for a manual grab: no hold, no held event.
   it('surfaces a franchise-dropping release found at the tail rung (#2138 AC9)', async () => {
     const FRANCHISE_TITLE = 'Star Wars: The High Republic: Haunted Starlight';
     const FRANCHISE_Q = 'Star Wars The High Republic Haunted Starlight George Mann';
@@ -1072,8 +1013,6 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
       const { events } = await fetchSseEvents(app, url({ q: FRANCHISE_Q, title: FRANCHISE_TITLE, author: 'George Mann' }));
       const complete = events.find((e) => e.event === 'search-complete')!;
 
-      // Rungs 0-4 of AC1 — the tail rung is the deepest of the author-ON arm, so
-      // it is reached only after every more specific rung answered a real zero.
       expect(queriesOf(service)).toEqual([
         FRANCHISE_Q,
         'star wars the high republic George Mann',
@@ -1089,8 +1028,7 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
     }
   });
 
-  // AC26 — per-indexer counts need NO buffering: the client replaces its entry
-  // by `indexerId`, so the LAST frame per indexer is the winning rung's.
+  // The client replaces counts by indexerId, so the last frame must describe the winning rung.
   it('leaves the winning rung as the last indexer-complete frame per indexer (AC26)', async () => {
     const { service } = serviceAnswering(RUNGS[3]!, 7);
     const app = await buildApp(service);
@@ -1109,9 +1047,7 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
     }
   });
 
-  // AC27 — sticky cancellation. `SearchSessionManager` keeps one controller map
-  // for the session; the route hands the SAME map to every rung, which is what
-  // lets `searchAllStreaming`'s pre-adapter guard skip a cancelled indexer.
+  // Reusing the controller map preserves aborted indexers across rungs.
   it('passes one sticky controller map to every rung, so a cancelled indexer is not re-queried (AC27)', async () => {
     const cancelledFrames: number[] = [];
     const queriedIndexers: number[][] = [];
@@ -1124,8 +1060,7 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
         }) => {
           const queried: number[] = [];
           for (const [id, controller] of controllers) {
-            // Stand-in for the real pre-adapter abort guard: already-cancelled
-            // indexers are skipped with NO callback at all.
+            // Mirror the real pre-adapter guard, including its lack of callback.
             if (controller.signal.aborted) continue;
             queried.push(id);
             if (id === 1) {
@@ -1148,19 +1083,16 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
         cancelledFrames.push((e.data as { indexerId: number }).indexerId);
       }
 
-      // Indexer 1 is queried on rung 1 and never again.
       expect(queriedIndexers[0]).toEqual([1, 2]);
       expect(queriedIndexers.slice(1).every((ids) => ids.every((id) => id !== 1))).toBe(true);
-      // COUNTERFACTUAL: build a fresh controller map per rung and indexer 1 is
-      // re-queried on every rung, emitting a duplicate frame each time.
+      // Fresh maps would emit one cancellation frame per rung.
       expect(cancelledFrames).toEqual([1]);
     } finally {
       await app.close();
     }
   });
 
-  // AC38 — with no canonical title there is nothing to relax, and inventing one
-  // from the free-text `q` would relax a string the user typed.
+  // Free-text `q` is user input, not a canonical title to relax.
   it('runs rung 1 only when the optional title param is absent (AC38)', async () => {
     const { service } = serviceAnswering(null);
     const app = await buildApp(service);
@@ -1172,9 +1104,7 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
     }
   });
 
-  // D13 — the pre-SSE empty-clean guard is deliberately PRESERVED. The user
-  // explicitly typed that query; silently searching for the canonical title
-  // instead is worse than telling them their input is unusable.
+  // An unusable explicit query must not silently fall back to the canonical title.
   it('still returns 400 for a punctuation-only q even when a usable canonical title is present (D13)', async () => {
     const { service } = serviceAnswering(null);
     const app = await buildApp(service);
@@ -1189,18 +1119,13 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
     }
   });
 
-  // D13 — an EDITED query is rung 1 verbatim; only the relaxed rungs come from
-  // the canonical title.
   it('uses the user-edited q verbatim as rung 1 while relaxing the canonical title (D13)', async () => {
     const { service } = serviceAnswering(null);
     const app = await buildApp(service);
     try {
       await fetchSseEvents(app, url({ q: 'churn expanse', title: BOOK_TITLE, author: AUTHOR }));
 
-      // The canonical `full` variant no longer collapses onto rung 1 (the
-      // edited query is a different search), so it takes its own rung — the
-      // surprising case is bounded to "user edited, got zero, saw canonical
-      // relaxations".
+      // The canonical full query remains a candidate because edited rung 1 is distinct.
       expect(queriesOf(service)).toEqual([
         'churn expanse',
         'the churn an expanse novella James S A Corey',

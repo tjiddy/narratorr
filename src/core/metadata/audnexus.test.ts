@@ -78,7 +78,6 @@ describe('AudnexusProvider', () => {
     it('throws MetadataError on malformed response that violates the raw schema', async () => {
       server.use(
         http.get('https://api.audnex.us/books/:asin', () => {
-          // runtimeLengthMin must be a number; supplying a string violates audnexusBookSchema.
           return HttpResponse.json({ asin: 'B0030DL4GK', runtimeLengthMin: 'oops' });
         }),
       );
@@ -108,7 +107,6 @@ describe('AudnexusProvider', () => {
             title: 'Narrator-less Book',
             authors: [{ name: 'Author' }],
             runtimeLengthMin: 300,
-            // no narrators field at all
           });
         }),
       );
@@ -146,7 +144,6 @@ describe('AudnexusProvider', () => {
             title: 'Partial Data',
             authors: [{ name: 'Author' }],
             narrators: [{ name: 'Jim Dale' }],
-            // no runtimeLengthMin
           });
         }),
       );
@@ -164,7 +161,6 @@ describe('AudnexusProvider', () => {
             asin: 'B_NOSERIES',
             title: 'Standalone',
             authors: [{ name: 'Author' }],
-            // no seriesPrimary or seriesSecondary
           });
         }),
       );
@@ -247,7 +243,6 @@ describe('AudnexusProvider', () => {
 
       const book = await provider.getBook('B000TEST');
       expect(book).not.toBeNull();
-      // parseFloat('prologue') = NaN, || undefined → undefined
       expect(book!.series![0]!.position).toBeUndefined();
     });
 
@@ -543,17 +538,6 @@ describe('AudnexusProvider', () => {
     });
   });
 
-  /**
-   * #1944 — both uncached helpers (`fetchJson` for the author path, `fetchJsonDetailed`
-   * for the book path) used to interpret `Retry-After` with an inline
-   * `parseInt(header, 10) * 1000`, which yields `NaN` for the HTTP-date form RFC 9110
-   * equally permits. A `NaN` window is FALSY at the service's `isRateLimited` gate, so
-   * the backoff never engages and a rate-limited Audnexus keeps getting hammered.
-   *
-   * Both arms now route through the same `parseRetryAfterMs` the chapters path uses.
-   * A fix to one helper does not exercise the other, so the whole matrix runs against
-   * every public surface that can surface a 429.
-   */
   describe('429 retry-window normalization across both helper paths (#1944)', () => {
     function response429(header?: string) {
       return new HttpResponse(null, {
@@ -562,7 +546,6 @@ describe('AudnexusProvider', () => {
       });
     }
 
-    /** `getBook` → `fetchJsonDetailed`, projected back out as a thrown `RateLimitError`. */
     async function bookWindow(header?: string): Promise<number> {
       server.use(http.get('https://api.audnex.us/books/:asin', () => response429(header)));
       const error = await provider.getBook('B0030DL4GK').catch((e: unknown) => e);
@@ -570,7 +553,6 @@ describe('AudnexusProvider', () => {
       return (error as RateLimitError).retryAfterMs;
     }
 
-    /** `getBookDetailed` → `fetchJsonDetailed`, as the typed `rate_limited` outcome. */
     async function bookDetailedWindow(header?: string): Promise<number> {
       server.use(http.get('https://api.audnex.us/books/:asin', () => response429(header)));
       const result = await provider.getBookDetailed('B0030DL4GK');
@@ -578,7 +560,6 @@ describe('AudnexusProvider', () => {
       return (result as Extract<typeof result, { kind: 'rate_limited' }>).retryAfterMs;
     }
 
-    /** `getAuthor` → `fetchJson`, the throwing helper. */
     async function authorWindow(header?: string): Promise<number> {
       server.use(http.get('https://api.audnex.us/authors/:asin', () => response429(header)));
       const error = await provider.getAuthor('B001H6UJO8').catch((e: unknown) => e);
@@ -593,11 +574,7 @@ describe('AudnexusProvider', () => {
     ];
 
     describe.each(SURFACES)('%s', (_surface, windowFor) => {
-      // The clock is frozen (Date only — `toFake: ['Date']` leaves MSW's and
-      // `AbortSignal.timeout`'s real timers alone) so the HTTP-date arm asserts an
-      // EXACT window instead of a range: production reads `Date.now()` at a different
-      // instant than the test builds the header, and an ambient-clock range assertion
-      // cannot distinguish a correct window from a lucky one.
+      // Fake only Date; MSW and AbortSignal.timeout need real timers.
       describe('HTTP-date arm, frozen clock', () => {
         const NOW = Date.parse('2026-07-25T12:00:00.000Z');
 
@@ -626,14 +603,9 @@ describe('AudnexusProvider', () => {
         ['non-numeric', 'not-a-number'],
         ['prose', 'later'],
         ['negative', '-30'],
-        // Deliberate divergence from `parseInt`, which tolerated trailing garbage and
-        // read this as 120000. `parseRetryAfterMs` requires an all-digit token or a
-        // parseable date — the stricter reading is the intended one, not a regression.
+        // Unlike parseInt, the shared parser rejects trailing garbage.
         ['trailing-garbage', '120abc'],
-        // The finiteness guard applies to the PRODUCT, not the operand: `1e306` in
-        // digits is a finite Number that overflows to `Infinity` only after `× 1000`,
-        // and `Date.now() + Infinity` is a deadline that never expires — the arm that
-        // would otherwise pin the backoff gate open for the life of the process.
+        // The operand is finite, but multiplying it by 1,000 overflows to Infinity.
         ['all-digit overflow after ×1000', `1${'0'.repeat(306)}`],
       ])('Retry-After %s → the finite 60000ms default', async (_label, header) => {
         const retryAfterMs = await windowFor(header);
@@ -650,8 +622,6 @@ describe('AudnexusProvider', () => {
       });
 
       it('every Retry-After form yields a window MetadataService can honor (finite, non-negative)', async () => {
-        // The contract the provider-wide backoff gate depends on, asserted across the
-        // whole input space in one place.
         const now = Date.now();
         const headers = [
           undefined,
@@ -955,15 +925,10 @@ describe('AudnexusProvider', () => {
     });
   });
 
-  // #1942 — chapter-runtime adapter. The Audnexus chapter table is a strictly
-  // more authoritative runtime than the `runtimeLengthMin` scalar; this thin,
-  // never-throw lookup is the corroborating second source. Definitive outcomes
-  // (`ok` on the requested edition's complete record, `not_found` on a documented
-  // 400/404) are the ONLY kinds the service may cache — everything else is transient.
+  // Only definitive requested-edition outcomes are cacheable; all other failures stay transient.
   describe('getChapterRuntime — chapter-runtime adapter (#1942)', () => {
     const FABLEHAVEN = 'B00CXXEX8W';
 
-    /** Live-verified Fablehaven Book 1 chapter record (2026-07-25). */
     function chapterRecord(overrides: Record<string, unknown> = {}): Record<string, unknown> {
       return {
         asin: FABLEHAVEN,
@@ -990,6 +955,27 @@ describe('AudnexusProvider', () => {
         if (result.kind === 'ok') {
           expect(result.runtimeLengthMs).toBe(33219490);
           expect(result.isAccurate).toBe(true);
+          expect(result.trimmedRuntimeMs).toBe(33219490);
+          expect(result.trimmedChapterCount).toBe(0);
+        }
+      });
+
+      it('#2168 — a trailing promotional run is removed and counted on the ok outcome', async () => {
+        server.use(chaptersHandler(() => HttpResponse.json(chapterRecord({
+          runtimeLengthMs: 86_400_000,
+          chapters: [
+            { title: 'Chapter 1', startOffsetMs: 0, lengthMs: 85_134_000 },
+            { title: 'End Credits', startOffsetMs: 85_134_000, lengthMs: 1_266_000 },
+          ],
+        }))));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+
+        expect(result.kind).toBe('ok');
+        if (result.kind === 'ok') {
+          expect(result.runtimeLengthMs).toBe(86_400_000);
+          expect(result.trimmedRuntimeMs).toBe(85_134_000);
+          expect(result.trimmedChapterCount).toBe(1);
         }
       });
 
@@ -1019,6 +1005,31 @@ describe('AudnexusProvider', () => {
 
         const result = await provider.getChapterRuntime(FABLEHAVEN);
         expect(result.kind).toBe('ok');
+        if (result.kind === 'ok') {
+          expect(result.trimmedRuntimeMs).toBe(33219490);
+          expect(result.trimmedChapterCount).toBe(0);
+        }
+      });
+
+      it.each([
+        ['an entry with no title', [{ startOffsetMs: 0, lengthMs: 21000 }]],
+        ['an entry with lengthMs null', [{ title: 'Chapter 1', lengthMs: null }]],
+        ['an entry with lengthMs a string', [{ title: 'Chapter 1', lengthMs: 'oops' }]],
+        ['an entry that is a bare string', ['Chapter 1']],
+        ['an entry that is a bare number', [42]],
+        ['an entry carrying extra unknown fields', [{ title: 'Chapter 1', lengthMs: 21000, brandNew: { nested: true } }]],
+        ['a mix of malformed and well-formed entries', [{ title: 'Chapter 1', lengthMs: 21000 }, null, { title: 'End Credits', lengthMs: 'oops' }]],
+      ])('%s still parses as ok — a malformed entry degrades the trim, never the record', async (_label, chapters) => {
+        server.use(chaptersHandler(() => HttpResponse.json(chapterRecord({ chapters }))));
+
+        const result = await provider.getChapterRuntime(FABLEHAVEN);
+
+        expect(result.kind).toBe('ok');
+        if (result.kind === 'ok') {
+          expect(result.runtimeLengthMs).toBe(33219490);
+          expect(result.trimmedChapterCount).toBe(0);
+          expect(result.trimmedRuntimeMs).toBe(33219490);
+        }
       });
 
       it.each([400, 404])('documented HTTP %i → not_found', async (status) => {
@@ -1156,11 +1167,6 @@ describe('AudnexusProvider', () => {
     });
 
     describe('429 retry-window normalization (F16)', () => {
-      /**
-       * Read the `retryAfterMs` off a 429 chapters response, asserting the
-       * discriminant first so a mis-classified outcome fails loudly here rather
-       * than silently skipping the window assertion.
-       */
       async function retryAfterMsFor(header?: string): Promise<number> {
         server.use(chaptersHandler(() => new HttpResponse(null, {
           status: 429,
@@ -1176,11 +1182,7 @@ describe('AudnexusProvider', () => {
         expect(await retryAfterMsFor('30')).toBe(30_000);
       });
 
-      // The clock is frozen (Date only — `toFake: ['Date']` leaves MSW's and
-      // `AbortSignal.timeout`'s real timers alone) so the HTTP-date arm asserts an
-      // EXACT window instead of a range: production reads `Date.now()` at a
-      // different instant than the test builds the header, and an ambient-clock
-      // range assertion cannot distinguish a correct window from a lucky one.
+      // Fake only Date; MSW and AbortSignal.timeout need real timers.
       describe('HTTP-date arm, frozen clock', () => {
         const NOW = Date.parse('2026-07-25T12:00:00.000Z');
 
@@ -1218,11 +1220,7 @@ describe('AudnexusProvider', () => {
         expect(await retryAfterMsFor('0')).toBe(0);
       });
 
-      // F1 — the finiteness guard must apply to the PRODUCT, not the operand.
-      // `1e306` is a finite Number written in all digits, so an operand-side
-      // `Number.isFinite` check passes it straight through and `× 1000` overflows
-      // to Infinity. `setRateLimited(Date.now() + Infinity)` is then a deadline
-      // that never expires, permanently suppressing every Audnexus lookup.
+      // The operand is finite, but multiplying it by 1,000 overflows to Infinity.
       it.each([
         ['overflows only after ×1000 (1e306 in digits)', `1${'0'.repeat(306)}`],
         ['overflows on parse alone (1e400 in digits)', `1${'0'.repeat(400)}`],
@@ -1234,8 +1232,6 @@ describe('AudnexusProvider', () => {
       });
 
       it('every Retry-After form yields a window MetadataService can honor (finite, non-negative)', async () => {
-        // The contract the provider-wide backoff gate depends on, asserted across
-        // the whole input space in one place.
         const headers = [undefined, '', '0', '30', '-30', 'not-a-number', `1${'0'.repeat(306)}`];
         for (const header of headers) {
           const retryAfterMs = await retryAfterMsFor(header);

@@ -7,42 +7,26 @@ import { readAlbumTag } from './audio-scanner.js';
 import { parseEmbeddedDiscMarker, normalizeStem, discGroupGuardsPass, type EmbeddedDiscMarker } from './disc-marker.js';
 import { comparePosixPath } from './path-order.js';
 
-// Re-exported so existing importers (import-helpers.ts, tests) keep a single entry point.
 export { parseEmbeddedDiscMarker, normalizeStem, discGroupGuardsPass, type EmbeddedDiscMarker } from './disc-marker.js';
 
-/** Minimal logger interface — matches Pino/Fastify logger shape */
 export interface DiscoveryLogger {
   debug(obj: Record<string, unknown>, msg: string): void;
 }
 
-/**
- * Disc folder naming pattern — matches Audiobookshelf's convention.
- * Matches: CD1, CD 1, Disc 1, Disc1, Disk 03, DISC 004, etc.
- * Does NOT match: "01 - Harry Potter", "Part 1", book titles, etc.
- */
+/** Matches bare Audiobookshelf disc folders, but not Part 1 or titled folders. */
 export const DISC_FOLDER_PATTERN = /^(cd|dis[ck]|d)\s*\d{1,3}$/i;
 
-/**
- * Titled-disc pattern — matches torrent naming conventions where the book title
- * precedes a parenthetical disc indicator:
- *   "BookTitle (Disc 01)", "BookTitle (Disk 3)", "BookTitle (1 of 5)"
- *
- * Returns the extracted title and disc number, or null if no match.
- * Bare disc folders ("Disc 01", "CD1") return null — use DISC_FOLDER_PATTERN for those.
- */
+/** Parses titled disc folders; bare disc folders belong to DISC_FOLDER_PATTERN. */
 export function parseTitledDiscFolder(name: string): { title: string; discNumber: number } | null {
   if (!name) return null;
 
-  // Pattern 1: "Title (Disc NN)", "Title (Disk NN)", or "Title (D NN)"
   const discMatch = name.match(/^(.+?)\s*\((d|dis[ck])\s*(\d{1,3})\)$/i);
   if (discMatch) {
     const title = discMatch[1]!.trim();
-    // Bare disc folders like "Disc 01" would have empty title — reject
     if (!title) return null;
     return { title, discNumber: parseInt(discMatch[3]!, 10) };
   }
 
-  // Pattern 2: "Title (N of M)"
   const nOfMMatch = name.match(/^(.+?)\s*\((\d{1,3})\s+of\s+\d{1,3}\)$/i);
   if (nOfMMatch) {
     const title = nOfMMatch[1]!.trim();
@@ -58,33 +42,18 @@ export interface DiscoverBooksOptions {
 }
 
 export interface DiscoveredFolder {
-  /** Absolute path to the book folder */
   path: string;
-  /** Path segments from root (e.g. ['Author', 'Series', 'Book']) */
   folderParts: string[];
-  /** Number of audio files found */
   audioFileCount: number;
-  /** Total size of audio files in bytes */
   totalSize: number;
-  /**
-   * Set when discovery absorbed bonus-shaped content into a parent row (e.g.
-   * a top-level chapter book that swept up an `Excerpt-...` subdir). Surfaces
-   * to the import UI as a tooltip so the user is informed *before* import
-   * that a heuristic flagged the absorption as worth a second look.
-   */
+  /** Why the import UI should flag content absorbed into this row. */
   reviewReason?: string;
 }
 
 /**
- * Walk a root directory and discover audiobook folders.
- *
- * Disc folder merging: if a parent directory has 2+ immediate children
- * that each contain audio files (and no audio of its own), those children
- * are merged into a single book entry using the parent path.
- *
- * Results are sorted by `comparePosixPath` before returning (#1891) so callers inherit
- * a deterministic order — the non-transitive duplicate predicate makes dispositions
- * order-dependent.
+ * Discovers audiobook folders, merging two or more immediate disc children under
+ * their audio-less parent. Stable path ordering is required because duplicate
+ * classification is non-transitive and therefore order-dependent.
  */
 export async function discoverBooks(rootPath: string, options?: DiscoverBooksOptions): Promise<DiscoveredFolder[]> {
   const results: DiscoveredFolder[] = [];
@@ -114,12 +83,6 @@ async function scanDir(dirPath: string): Promise<DirInfo> {
 
   for (const entry of entries) {
     if (isHiddenName(entry.name)) continue;
-    // Exclude stranded import siblings (#1341): a `Title.import-bak` / `.import-tmp` /
-    // `.import-commit-pending` entry does NOT begin with a dot, so it slips past the
-    // leading-dot skip above and would otherwise be walked as a normal directory (or, for
-    // a marker file, ignored only because it lacks an audio extension). Drop any entry —
-    // directory or file — ending in a reserved suffix before recursion/candidate collection
-    // so a preserved-by-design backup never surfaces as a phantom importable book.
     if (IMPORT_SIBLING_SUFFIXES.some((suffix) => entry.name.endsWith(suffix))) continue;
     const fullPath = join(dirPath, entry.name);
 
@@ -128,7 +91,7 @@ async function scanDir(dirPath: string): Promise<DirInfo> {
         const s = await stat(fullPath);
         info.audioFiles.push({ path: fullPath, size: s.size });
       } catch {
-        // skip unreadable files
+        // An unreadable entry must not abort discovery.
       }
     } else if (entry.isDirectory()) {
       const child = await scanDir(fullPath);
@@ -149,7 +112,6 @@ async function walkDirectory(
   await collectBooks(info, rootPath, results, log);
 }
 
-/** Identify disc-pattern children and verify titled-disc folders share the same title. */
 function findMergeableDiscChildren(audioChildren: DirInfo[]): { discChildren: DirInfo[]; allSameTitle: boolean } {
   const discChildren = audioChildren.filter(c => {
     const folderName = c.path.split(/[\\/]/).pop() ?? '';
@@ -160,7 +122,7 @@ function findMergeableDiscChildren(audioChildren: DirInfo[]): { discChildren: Di
     return { discChildren, allSameTitle: true };
   }
 
-  // For titled-disc folders, verify all share the same title prefix before merging
+  // Bare disc names do not vote on title compatibility.
   const titles = new Set<string>();
   for (const c of discChildren) {
     const folderName = c.path.split(/[\\/]/).pop() ?? '';
@@ -168,7 +130,6 @@ function findMergeableDiscChildren(audioChildren: DirInfo[]): { discChildren: Di
     if (parsed) {
       titles.add(parsed.title.toLowerCase());
     }
-    // Bare disc folders (no title) are compatible with any single title group
   }
   return { discChildren, allSameTitle: titles.size <= 1 };
 }
@@ -182,8 +143,6 @@ async function collectBooks(
   const hasOwnAudio = info.audioFiles.length > 0;
   const audioChildren = info.children.filter(c => countAudioFilesDeep(c) > 0);
 
-  // Pre-evaluate disc-merge eligibility — used to decide whether loose files in
-  // a mixed-content folder are bonus tracks (skip) or standalone books (emit).
   const immediateAudioChildren = info.children.filter(c => c.audioFiles.length > 0);
   const { discChildren, allSameTitle } = findMergeableDiscChildren(immediateAudioChildren);
   const willDiscMerge = isDiscMergeable(discChildren, immediateAudioChildren, allSameTitle);
@@ -206,8 +165,6 @@ async function collectBooks(
     return;
   }
 
-  // Sibling-stem coalescing: per-disc usenet folder sets share a common stem with the
-  // disc marker embedded in a longer release string (e.g. "… 1776 Disc 1 of 10 - yEnc …").
   if (await coalesceEmbeddedDiscGroups(info, audioChildren, rootPath, results, log)) return;
 
   for (const child of audioChildren) {
@@ -267,7 +224,7 @@ async function handleMixedContentLooseAudio(
   log?: DiscoveryLogger,
 ): Promise<{ absorbedChildren: boolean }> {
   if (willDiscMerge) {
-    // Multi-disc book; loose files are bonus tracks. Skip and fall through to disc-merge.
+    // In a multidisc folder, loose files are bonus tracks owned by the merge.
     log?.debug(
       { path: info.path, skippedFiles: info.audioFiles.map(f => f.path) },
       'Skipping loose bonus audio in disc-merge folder',
@@ -275,11 +232,7 @@ async function handleMixedContentLooseAudio(
     return { absorbedChildren: false };
   }
 
-  // Mixed-content absorption requires STRONG evidence the loose files are a
-  // single chapter-encoded book. The leaf classifier's merge bias (count caps,
-  // size heuristics, subset-duplicate signals) is correct for leaf folders
-  // where false-merges produce 1 row to fix, but catastrophic here where a
-  // false-merge triggers recursive absorption of the entire subtree (#1048).
+  // Leaf heuristics are too permissive here: a false positive swallows the subtree.
   if (info.audioFiles.length >= 2) {
     const strongEvidence = hasStrongChapterSetEvidence(info.audioFiles);
     log?.debug(
@@ -300,7 +253,6 @@ async function handleMixedContentLooseAudio(
     }
   }
 
-  // Mixed library: each loose file is its own single-file book.
   for (const file of info.audioFiles) {
     const fileInfo: DirInfo = { path: file.path, audioFiles: [file], children: [] };
     results.push(makeFolderEntry(fileInfo, rootPath, [file]));
@@ -327,40 +279,24 @@ async function mergeDiscChildren(
   results.push(makeFolderEntry(info, rootPath, mergedAudioFiles, { reviewReason }));
 }
 
-/** Folder name (final path segment) of a scanned directory — separator-agnostic. */
 function folderNameOf(info: DirInfo): string {
   return info.path.split(/[\\/]/).pop() ?? '';
 }
 
 interface EmbeddedDiscGroup {
-  /** Raw common stem of the lowest-disc member, used to synthesize folderParts. */
   stem: string;
-  /** Member disc folders, ordered by parsed disc number ascending. */
   members: DirInfo[];
-  /**
-   * Agreed `of M` total parsed from the members' markers, when present. The consistency
-   * guard (`discGroupGuardsPass`) guarantees every member agrees on this value, so it is
-   * taken from the lowest-disc member's marker. Undefined when no member carried `of M`.
-   */
+  /** Agreed explicit `of M` total, or undefined when none is supplied. */
   total?: number;
 }
 
-/**
- * Group sibling audio folders that carry an embedded disc marker by their common stem.
- *
- * A group is collapsible only when ≥2 members share an identical normalized stem AND the
- * shared `discGroupGuardsPass` consistency (`of M` totals agree) + all-or-nothing (every
- * stem-sharing sibling carries a marker) guards hold. Bare-token names (empty stem) are
- * excluded so the DISC_FOLDER_PATTERN path is untouched. Import-time reconstruction replays
- * the same `discGroupGuardsPass` guards so both sides coalesce identical sets.
- */
+/** Uses import reconstruction's guards so persisted anchors resolve to the same group. */
 function findEmbeddedDiscGroups(audioChildren: DirInfo[]): EmbeddedDiscGroup[] {
   const siblingNames = audioChildren.map(folderNameOf);
   const byStem = new Map<string, { info: DirInfo; marker: EmbeddedDiscMarker }[]>();
   for (const child of audioChildren) {
     const name = folderNameOf(child);
-    // Bare tokens (DISC_FOLDER_PATTERN) and parenthesized titled-disc folders are owned by
-    // the existing merge paths — the embedded path is strictly for markers in longer strings.
+    // Bare and parenthesized disc names belong to existing merge paths.
     if (DISC_FOLDER_PATTERN.test(name) || parseTitledDiscFolder(name) !== null) continue;
     const marker = parseEmbeddedDiscMarker(name);
     if (!marker || !marker.stem) continue;
@@ -377,10 +313,7 @@ function findEmbeddedDiscGroups(audioChildren: DirInfo[]): EmbeddedDiscGroup[] {
 
     const sorted = members.slice().sort((a, b) => a.marker.discNumber - b.marker.discNumber);
     const group: EmbeddedDiscGroup = { stem: sorted[0]!.marker.stem, members: sorted.map(m => m.info) };
-    // The agreed total can live on ANY member — the consistency guard filters out members that
-    // omit `of M` before checking agreement, so a group like `Disc 1`, `Disc 2 of 10` coalesces
-    // with a known total even though the lowest-disc member carries none. Take the first explicit
-    // total (the guard guarantees all explicit totals agree).
+    // Use the first explicit total; guards ensure all supplied totals agree.
     const explicitTotal = sorted.find(m => m.marker.total !== undefined)?.marker.total;
     if (explicitTotal !== undefined) group.total = explicitTotal;
     groups.push(group);
@@ -389,15 +322,8 @@ function findEmbeddedDiscGroups(audioChildren: DirInfo[]): EmbeddedDiscGroup[] {
 }
 
 /**
- * Synthesize folderParts from a coalesced group's cleaned common stem. Strips a leading
- * 4-digit year token and a leading release-category run (Fiction / Non Fiction / Nonfiction)
- * so the dash parser resolves the author rather than the yEnc release prefix.
- *
- * The leading-year strip fires ONLY when the year is immediately followed by the
- * release-category run — the two strips are tied together so a real year-title stem
- * (`2001 A Space Odyssey`) keeps its leading token instead of degrading to `A Space Odyssey`
- * (#1280). yEnc prefixes are always `<year> <Fiction|Non Fiction> …`, so requiring the
- * category lookahead preserves the strip for real release prefixes while protecting titles.
+ * Builds folder parts after removing a yEnc `<year> <category>` prefix. The year is
+ * stripped only with the category lookahead so `2001 A Space Odyssey` retains it.
  */
 function synthesizeStemParts(stem: string): string[] {
   const cleaned = stem
@@ -407,10 +333,6 @@ function synthesizeStemParts(stem: string): string[] {
   return [cleaned || stem];
 }
 
-/**
- * Coalesce every embedded-disc sibling group under `info`, then recurse into the remaining
- * (non-grouped) children. Returns true when at least one group was found and handled.
- */
 async function coalesceEmbeddedDiscGroups(
   info: DirInfo,
   audioChildren: DirInfo[],
@@ -434,17 +356,15 @@ async function coalesceEmbeddedDiscGroups(
   return true;
 }
 
-/** Coalesce an embedded-disc group into a single discovery row (AC2 contract). */
 async function mergeEmbeddedDiscGroup(
   group: EmbeddedDiscGroup,
   results: DiscoveredFolder[],
   log?: DiscoveryLogger,
 ): Promise<void> {
-  const anchor = group.members[0]!; // lowest-disc member — stable path identity + reconstruction anchor
+  const anchor = group.members[0]!; // Lowest disc is the stable path and reconstruction anchor.
   const mergedAudioFiles = group.members.flatMap(m => collectAllAudioFiles(m));
 
-  // detectBonusContent over a synthetic parent so the member discs read as descendants,
-  // mirroring the bare-token merge's review-reason flow.
+  // A synthetic parent makes member discs descendants for the shared bonus heuristic.
   const parentPath = anchor.path.split(/[\\/]/).slice(0, -1).join('/');
   const synthetic: DirInfo = { path: parentPath, audioFiles: [], children: group.members };
   const bonusReason = await detectBonusContent(synthetic, mergedAudioFiles);
@@ -504,10 +424,8 @@ function makeFolderEntry(
 const BONUS_REVIEW_REASON = 'Additional non-book content possibly merged';
 
 /**
- * Incomplete-disc-set warning message for a coalesced group, or undefined when the set is
- * complete / its expected total is unknown. A set is incomplete only when the agreed `of M`
- * total is a known positive number AND the coalesced member count is strictly less than it —
- * over-complete sets (count > M, e.g. duplicate discs) never produce an `N of M` string.
+ * Warns only when a known positive total exceeds member count. Unknown, complete,
+ * or over-complete sets do not claim an `N of M` gap.
  */
 function incompleteDiscSetMessage(memberCount: number, total: number | undefined): string | undefined {
   if (total === undefined || !Number.isFinite(total) || total <= 0) return undefined;
@@ -515,12 +433,6 @@ function incompleteDiscSetMessage(memberCount: number, total: number | undefined
   return `Incomplete disc set: ${memberCount} of ${total} discs`;
 }
 
-/**
- * Compose the two display-only review-reason signals for a coalesced disc group into the
- * single `reviewReason` slot. When both are present, the incomplete-set message comes first,
- * then the bonus message, joined by `"; "`; when only one is present, that single message;
- * when neither, undefined (caller leaves `reviewReason` unset).
- */
 export function composeReviewReason(incomplete?: string, bonus?: string): string | undefined {
   const parts = [incomplete, bonus].filter((p): p is string => !!p);
   return parts.length > 0 ? parts.join('; ') : undefined;
@@ -528,16 +440,9 @@ export function composeReviewReason(incomplete?: string, bonus?: string): string
 const BONUS_SUBDIR_RE = /excerpt|bonus|behind[\s_-]*the[\s_-]*scenes|sample|preview|extra/i;
 
 /**
- * Heuristic: was the absorbed subdirectory likely bonus / non-book content?
- *
- * Returns a review-reason string when ANY of these signals fires; undefined
- * otherwise. Tag-read failures inside `readAlbumTag` already swallow errors
- * and return undefined, so a missing-album signal never throws.
- *
- * 1. Subdirectory name matches a bonus/excerpt/sample/extra pattern.
- * 2. Top-level audio's normalized album differs from any absorbed-descendant
- *    audio's normalized album. Missing/empty album on either side is treated
- *    as "no album signal" rather than mismatch (AC14).
+ * Flags absorbed content when its directory name looks like bonus material or its
+ * normalized album differs from top-level audio. Missing tags and tag-read failures
+ * provide no signal rather than throwing.
  */
 async function detectBonusContent(
   info: DirInfo,
@@ -575,20 +480,13 @@ async function readFirstAlbum(files: { path: string }[]): Promise<string | undef
 }
 
 /**
- * Normalize an album value for cross-group comparison. Strips the publisher
- * suffixes that normally indicate "same album, different volume/disc" so
- * "Stormlight (1 of 5)" and "Stormlight (3 of 5)" collapse to one canonical
- * form. Anything left that differs is a real distinct-album signal.
+ * Removes publisher disc/volume suffixes before album comparison so `(1 of 5)`
+ * and `(3 of 5)` share one canonical value.
  */
 export function normalizeAlbumForComparison(album: string): string {
   let s = album.trim();
-  // "(N of M)" suffix
   s = s.replace(/\s*\(\s*\d+\s+of\s+\d+\s*\)\s*$/i, '');
-  // Parenthesized disc/cd/d/part suffix: "(Disc 2)", "(CD 03)", "(D1)", "(Part 1)"
   s = s.replace(/\s*\(\s*(?:dis[ck]|cd|d|part|pt)[-_.\s]*\d+\s*\)\s*$/i, '');
-  // Trailing "Disc N" / "CD N" / "D N" / "Part N" / "Pt N" with optional separators
-  // around BOTH the keyword (Album-Part) AND the digit run (Part-01).
   s = s.replace(/\s*[-_,]?\s*(?:dis[ck]|cd|d|part|pt)[-_.\s]*\d+\s*$/i, '');
-  // Collapse remaining punctuation/whitespace runs and lowercase
   return s.replace(/[\s\W_]+/g, ' ').trim().toLowerCase();
 }

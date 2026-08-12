@@ -6,14 +6,8 @@ import type { TestResult } from '@/lib/api';
 interface UseConnectionTestOptions<TFormData> {
   testById: (id: number) => Promise<TestResult>;
   testByConfig: (data: TFormData) => Promise<TestResult>;
-  /** Query key to invalidate after a successful test-by-ID (e.g., ['indexers']) */
   invalidateOnSuccess?: string[];
-  /**
-   * When set, handleFormTest merges `{ id: entityId }` into the payload before
-   * calling testByConfig so the server can resolve sentinel placeholders for
-   * masked secret fields against the persisted row. Omit for create flows or
-   * for adapters whose test endpoint does not accept an id (e.g. import lists).
-   */
+  /** Adds the persisted id so config tests can resolve masked-secret sentinels. */
   entityId?: number | undefined;
 }
 

@@ -46,7 +46,6 @@ describe('PathInput', () => {
       const icon = document.querySelector('[data-testid="path-input-icon"]');
       expect(icon).not.toBeNull();
       expect(icon).not.toHaveFocus();
-      // clicking the icon must not open the modal
       await userEvent.click(icon!);
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
@@ -154,7 +153,6 @@ describe('PathInput', () => {
       await userEvent.click(await screen.findByRole('button', { name: 'Select' }));
 
       expect(onChange).toHaveBeenCalledWith('/');
-      // registration.onChange receives a synthetic event with name+value so RHF can look up the field by name
       expect(registration.onChange).toHaveBeenCalledWith(
         expect.objectContaining({ target: expect.objectContaining({ name: 'path', value: '/' }) }),
       );

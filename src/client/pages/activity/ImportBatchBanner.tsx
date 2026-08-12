@@ -7,7 +7,7 @@ const COOLDOWN_MS = 5_000;
 
 export interface ImportBatchBannerProps {
   jobs: ImportJobWithBook[];
-  /** Current timestamp — passed from parent to keep render pure */
+  /** Parent-supplied timestamp keeps cooldown filtering pure. */
   now: number;
 }
 

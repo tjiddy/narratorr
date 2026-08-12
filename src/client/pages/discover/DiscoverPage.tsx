@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api, ApiError, type SuggestionRow, type CreateBookPayload } from '@/lib/api';
+import { api, readAddBookConflict, formatReviewConflictMessage, type SuggestionRow, type CreateBookPayload } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { useBookStats } from '@/hooks/useLibrary';
@@ -21,7 +21,6 @@ const FILTER_OPTIONS: { value: ReasonFilter; label: string }[] = [
   ...SUGGESTION_REASONS.map((r) => ({ value: r as ReasonFilter, label: SUGGESTION_REASON_REGISTRY[r].label })),
 ];
 
-/** Build a CreateBookPayload from a suggestion row (inline, not via mapBookMetadataToPayload). */
 function suggestionToPayload(
   s: SuggestionRow,
   overrides: { searchImmediately: boolean },
@@ -53,7 +52,7 @@ function useDiscoverMutations(setAddedMap: React.Dispatch<React.SetStateAction<M
     });
     queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     queryClient.invalidateQueries({ queryKey: queryKeys.bookStats() });
-    // Fire-and-forget: mark suggestion as added in backend
+    // Backend bookkeeping is best-effort; optimistic added state must survive failure.
     api.markDiscoverSuggestionAdded(suggestionId).catch(() => {});
   };
 
@@ -65,12 +64,17 @@ function useDiscoverMutations(setAddedMap: React.Dispatch<React.SetStateAction<M
       toast.success('Added to library');
     },
     onError: (error: Error, { suggestion }) => {
-      if (error instanceof ApiError && error.status === 409) {
-        // 409 body is the existing book row (see src/server/routes/books.ts:141)
-        const existingId = error.body !== null && typeof error.body === 'object' && 'id' in error.body && typeof (error.body as { id: unknown }).id === 'number'
-          ? (error.body as { id: number }).id
-          : null;
-        markAdded(suggestion.id, existingId);
+      const details = readAddBookConflict(error);
+      if (details) {
+        // Review is tested FIRST and ownership is the fallthrough: a null discriminator degrading
+        // into the review arm would silently drop a real ownership claim. `review` is the resolver
+        // abstaining; marking added would write an ownership claim the server never made, and the
+        // durable mark cannot be undone from this card.
+        if (details.conflict === 'review') {
+          toast.info(formatReviewConflictMessage(details.incumbentTitle));
+          return;
+        }
+        markAdded(suggestion.id, details.incumbentId);
         toast.info('Already in library');
       } else {
         toast.error(`Failed to add book: ${getErrorMessage(error)}`);
@@ -127,7 +131,6 @@ export function DiscoverPage() {
     ? Object.values(stats.counts).reduce((sum, n) => sum + n, 0)
     : undefined;
 
-  // Client-side language and reject-word filtering
   const configuredLanguages = useMemo(() => settings?.metadata?.languages ?? [], [settings]);
   const rejectWords = useMemo(() => parseWordList(settings?.quality?.rejectWords ?? ''), [settings]);
 
@@ -263,7 +266,6 @@ function DiscoverHeader({
         )}
       </div>
 
-      {/* Filter Chips */}
       <div className="flex flex-wrap gap-2">
         {FILTER_OPTIONS.map((opt) => (
           <button

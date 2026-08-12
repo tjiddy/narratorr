@@ -1,10 +1,4 @@
-/**
- * Build the "kept N non-audio files" disclosure suffix for a delete toast (#1589). narratorr's
- * managed-file delete preserves foreign files (e-books, PDFs, subtitles, user images) co-located
- * with the audiobook; this surfaces which were left behind so the deletion isn't silently partial.
- *
- * Returns an empty string when nothing was preserved (caller shows the plain success copy).
- */
+/** Describes foreign files preserved by managed-audio deletion; empty when none remain. */
 const MAX_NAMES = 3;
 
 export function describeKeptFiles(preservedForeign: string[] | undefined): string {

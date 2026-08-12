@@ -33,7 +33,7 @@ describe('withBookAdmissionLock (#1857 AC5/AC17)', () => {
 
     await Promise.resolve();
     await Promise.resolve();
-    expect(order).toEqual(['A:start']); // B queued behind A, not started
+    expect(order).toEqual(['A:start']);
 
     releaseA();
     await Promise.all([a, b]);
@@ -49,7 +49,7 @@ describe('withBookAdmissionLock (#1857 AC5/AC17)', () => {
     });
     const b = withBookAdmissionLock(2, async () => { order.push('B'); });
 
-    await b; // B completes without waiting on A's still-open section
+    await b;
     expect(order).toContain('B');
     releaseA();
     await a;
@@ -71,7 +71,7 @@ describe('singleFlightReplace (#1857 AC5)', () => {
     const p1 = singleFlightReplace('k', op);
     const p2 = singleFlightReplace('k', op);
     await Promise.resolve();
-    expect(calls).toBe(1); // p2 joined p1's in-flight promise
+    expect(calls).toBe(1);
 
     release(99);
     const [r1, r2] = await Promise.all([p1, p2]);

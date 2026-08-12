@@ -7,16 +7,7 @@ import { createDb, runMigrations, type Db } from './index.js';
 import { books, importSubmissions, importSubmissionItems } from './schema.js';
 import { generatePublicId } from '../server/utils/public-id.js';
 
-// Real-DB coverage for the #1893 staged-import FK delete actions. libSQL enables
-// PRAGMA foreign_keys by default (libsql-foreign-keys-on-by-default), so every
-// onDelete clause is enforced. This suite also proves the staged-import FK delete
-// actions survive migrate-from-scratch against the flattened `0000_baseline`.
-//
-// (It used to say "proves the 0001 migration runs from scratch". That numbering has
-// not survived two flattenings: the staged-import DDL was collapsed into
-// 0000_baseline, a 0001_companion_ebooks briefly existed, and it was folded into the
-// baseline too. Name the guarantee, not the migration index — the index is not stable
-// pre-1.0.)
+// Real migrated libSQL pins the flattened baseline's FK actions and indexes.
 
 describe('import-staging schema — FK delete actions (DB-backed, #1893)', () => {
   let dir: string;
@@ -115,9 +106,6 @@ describe('import-staging schema — FK delete actions (DB-backed, #1893)', () =>
     ).rejects.toThrow();
   });
 
-  // #1894 — the two additive newest-order indexes must survive migrate-from-scratch
-  // with the correct ordered columns (this repo's failure mode is a SQL file omitted
-  // from _journal.json that ordinary service tests miss).
   it('creates both newest-order indexes on import_submissions with correct ordered columns (F77)', async () => {
     async function indexColumns(indexName: string): Promise<string[]> {
       const res = await db.run(sql`SELECT name FROM pragma_index_info(${indexName}) ORDER BY seqno`);

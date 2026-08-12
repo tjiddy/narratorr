@@ -20,9 +20,7 @@ vi.mock('sonner', () => ({
   },
 }));
 
-// Preserve the real runtime exports (notably `ApiError`) and override only `api`. Replacing
-// the barrel wholesale would drop ApiError (vimock-barrel-replace-drops-named-exports).
-// The staged submit + poll pipeline (#1902) replaces the direct confirm.
+// Keep real exports such as ApiError; replacing the barrel would silently drop them.
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   api: {
@@ -39,9 +37,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   },
 }));
 
-// Deterministic engine clock (#1864 F12): the MatchEngine's poll timer is routed through
-// `@/hooks/match-timer`; mocking it lets us advance polling without sleeping on real time
-// (globally faking setTimeout would deadlock Query — vitest-faketimers-react-query).
+// Mock the match timer directly; global fake timers deadlock React Query.
 vi.mock('@/hooks/match-timer', async () => {
   const { createMatchTimerMock } = await import('@/__tests__/match-timer-mock');
   return createMatchTimerMock();
@@ -55,38 +51,32 @@ import { wireStagedComplete, acceptedRow, heldRow, skippedRow, failedRow, summar
 import { __resetOutboxCache, readOutbox, putOutbox } from '@/lib/staged-import/outbox';
 import { STAGED_COPY, putFailedWithCounts } from '@/lib/staged-import/messages';
 import { PREFLIGHT_COPY } from '@/lib/staged-import/preflight';
-import { FABLEHAVEN, FABLEHAVEN_BEST, FABLEHAVEN_ALTERNATIVES, fablehavenMismatch, fablehavenEdit, deferred } from '@/lib/__tests__/repick-fixtures';
+import { FABLEHAVEN, FABLEHAVEN_BEST, FABLEHAVEN_ALTERNATIVES, FABLEHAVEN_TRIMMED_RESPONSE, fablehavenMismatch, fablehavenEdit, deferred } from '@/lib/__tests__/repick-fixtures';
 
-/** A wrapper whose QueryClient is spied so tests can observe invalidation timing (F8). */
 function createSpyWrapper() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
   const wrapper = ({ children }: { children: React.ReactNode }) => createElement(QueryClientProvider, { client: queryClient }, children);
   return { wrapper, invalidateSpy };
 }
-/** The first segment of each invalidated query key, e.g. 'books' / 'importSubmissions'. */
 const invalidatedRoots = (spy: ReturnType<typeof vi.spyOn>): string[] =>
   spy.mock.calls.map((c: unknown[]) => ((c[0] as { queryKey?: unknown[] }).queryKey?.[0]) as string);
 
-/** Adapter so the staged fixtures can drive the mocked `api` staged methods. */
 const stagedMocks: StagedMockFns = {
   create: vi.mocked(api.createImportSubmission), put: vi.mocked(api.putImportSubmissionItems),
   finalize: vi.mocked(api.finalizeImportSubmission), get: vi.mocked(api.getImportSubmission),
   byClient: vi.mocked(api.getImportSubmissionByClientId),
 };
-/** A staged item as sent on the wire (loose shape for assertion convenience). */
 type SubmittedItem = Record<string, unknown> & { metadata?: Record<string, unknown> };
-/** The staged items actually PUT to the server, flattened across chunks. */
 const submittedItems = (): SubmittedItem[] =>
   vi.mocked(api.putImportSubmissionItems).mock.calls.flatMap(c => (c[1] as { items: { ordinal: number; item: SubmittedItem }[] }).items.map(r => r.item));
 
 const engineClock = matchTimer as unknown as MatchTimerMock;
-/** Advance the engine by one poll interval (fires the single pending poll/retry). */
 async function tickPoll(): Promise<void> {
   await act(async () => { engineClock.__flushNext(); });
 }
 
-// Reset the deterministic clock before every test (clearAllMocks doesn't touch its closure state).
+// clearAllMocks does not reset the timer mock's closure state.
 beforeEach(() => { engineClock.__reset(); });
 
 function createWrapper() {
@@ -167,7 +157,6 @@ const MATCH_METADATA: BookMetadata = {
 describe('useManualImport', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Default: match job starts but no results yet
     vi.mocked(api.startMatchJob).mockResolvedValue({ jobId: 'job-123' });
     vi.mocked(api.getMatchJob).mockResolvedValue({
       id: 'job-123',
@@ -177,10 +166,7 @@ describe('useManualImport', () => {
       results: [],
     });
     vi.mocked(api.cancelMatchJob).mockResolvedValue(undefined as never);
-    // Staged pipeline (#1902): reset the source-scoped outbox hint and wire a clean
-    // create→PUT→finalize→poll(complete)→detail chain for manual (mode copy). The poll's
-    // first tick fires immediately, so a `complete` summary resolves via microtasks — no
-    // fake timers needed. Tests that assert other outcomes re-wire.
+    // Default to a complete staged pipeline; failure tests override individual calls.
     localStorage.clear();
     __resetOutboxCache();
     wireStagedComplete(stagedMocks, { source: 'manual', mode: 'copy', items: [acceptedRow(0, '/audiobooks/Book A', 'Book A'), acceptedRow(1, '/audiobooks/Book B', 'Book B')] });
@@ -247,7 +233,7 @@ describe('useManualImport', () => {
       expect(result.current.state.scanError).toBeTruthy();
     });
 
-    expect(result.current.state.step).toBe('path'); // stays on path step
+    expect(result.current.state.step).toBe('path');
   });
 
   it('goes to review step when all discoveries are duplicates (users can force-import)', async () => {
@@ -284,7 +270,6 @@ describe('useManualImport', () => {
     });
     expect(result.current.state.rows).toHaveLength(1);
     expect(result.current.state.rows[0]!.book.isDuplicate).toBe(true);
-    // No match job started when all books are duplicates — empty candidates list guard
     expect(vi.mocked(api.startMatchJob)).not.toHaveBeenCalled();
   });
 
@@ -424,14 +409,12 @@ describe('useManualImport', () => {
     await act(async () => { result.current.actions.handleScan(); });
     await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-    // All selected → deselect all
     act(() => {
       result.current.actions.handleToggleAll();
     });
     expect(result.current.counts.allSelected).toBe(false);
     expect(result.current.counts.selectedCount).toBe(0);
 
-    // All deselected → select all
     act(() => {
       result.current.actions.handleToggleAll();
     });
@@ -447,7 +430,6 @@ describe('useManualImport', () => {
     await act(async () => { result.current.actions.handleScan(); });
     await waitFor(() => { expect(result.current.state.rows).toHaveLength(3); });
 
-    // Select all rows including duplicates
     act(() => { result.current.actions.handleToggleAll(); });
     expect(result.current.counts.allSelected).toBe(true);
     expect(result.current.counts.selectedCount).toBe(3);
@@ -459,7 +441,6 @@ describe('useManualImport', () => {
     const dupItems = books.filter(b =>
       SCAN_RESULT_WITH_DUPLICATES.discoveries.find(d => d.path === b.path && d.isDuplicate),
     );
-    // All selected duplicate rows must have forceImport: true
     expect(dupItems).toHaveLength(2);
     expect(dupItems.every(b => b.forceImport === true)).toBe(true);
   });
@@ -511,8 +492,6 @@ describe('useManualImport', () => {
     const items = submittedItems();
     const mode = (vi.mocked(api.createImportSubmission).mock.calls[0]![0] as { mode?: string }).mode;
     expect(items).toHaveLength(2);
-    // Payload is built by the shared toConfirmItem builder (#1765): optional fields
-    // carry through and a non-duplicate row omits forceImport (force=false).
     expect(items[0]!.path).toBe('/audiobooks/Book A');
     expect(items[0]!.title).toBe('Book A');
     expect(items[0]!.authorName).toBe('Author A');
@@ -542,14 +521,10 @@ describe('useManualImport', () => {
 
     await waitFor(() => { expect(api.createImportSubmission).toHaveBeenCalled(); });
 
-    // Held items populate recoverable state and are surfaced via a warning toast...
     await waitFor(() => { expect(result.current.state.heldReview).toHaveLength(1); });
     expect(result.current.state.heldReview[0]!.path).toBe('/audiobooks/Book A');
     expect(toast.warning).toHaveBeenCalledWith('1 held for recording review');
-    // ...a held outcome is no longer a green success (#1822): the accepted item queued
-    // but the batch is not fully clean, so no green toast fires...
     expect(toast.success).not.toHaveBeenCalled();
-    // ...and the user is NOT navigated away (the old dead-end behavior).
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 
@@ -569,7 +544,6 @@ describe('useManualImport', () => {
     await act(async () => { result.current.actions.handleImport(); });
     await waitFor(() => { expect(result.current.state.heldReview).toHaveLength(1); });
 
-    // Re-confirm creates a FRESH staged submission carrying force + the snapshot mode.
     vi.mocked(api.putImportSubmissionItems).mockClear();
     vi.mocked(api.createImportSubmission).mockClear();
     wireStagedComplete(stagedMocks, { source: 'manual', mode: 'move', items: [acceptedRow(0, '/audiobooks/Book A', 'Book A')] });
@@ -580,7 +554,6 @@ describe('useManualImport', () => {
     expect(items).toEqual(
       expect.arrayContaining([expect.objectContaining({ path: '/audiobooks/Book A', forceImport: true })]),
     );
-    // Items carry no per-item mode key — mode is on the create body.
     expect(items[0]).not.toHaveProperty('mode');
     expect((vi.mocked(api.createImportSubmission).mock.calls[0]![0] as { mode?: string }).mode).toBe('move');
   });
@@ -597,19 +570,16 @@ describe('useManualImport', () => {
     await act(async () => { result.current.actions.handleScan(); });
     await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-    // Import with mode 'move', receive held rows...
     act(() => { result.current.state.setMode('move'); });
     await act(async () => { result.current.actions.handleImport(); });
     await waitFor(() => { expect(result.current.state.heldReview).toHaveLength(1); });
 
-    // ...then flip the still-editable selector to 'copy' and re-confirm.
     vi.mocked(api.createImportSubmission).mockClear();
     wireStagedComplete(stagedMocks, { source: 'manual', mode: 'move', items: [acceptedRow(0, '/audiobooks/Book A', 'Book A')] });
     act(() => { result.current.state.setMode('copy'); });
     await act(async () => { result.current.actions.handleReconfirmHeld(); });
 
     await waitFor(() => { expect(api.createImportSubmission).toHaveBeenCalled(); });
-    // The snapshot wins: re-confirm still uses 'move', not the live 'copy' selector.
     expect((vi.mocked(api.createImportSubmission).mock.calls[0]![0] as { mode?: string }).mode).toBe('move');
   });
 
@@ -628,7 +598,6 @@ describe('useManualImport', () => {
     await act(async () => { result.current.actions.handleImport(); });
     await waitFor(() => { expect(result.current.state.heldReview).toHaveLength(1); });
 
-    // The fresh (empty) heldReview from a clean re-confirm clears the panel.
     wireStagedComplete(stagedMocks, { source: 'manual', mode: 'copy', items: [acceptedRow(0, '/audiobooks/Book A', 'Book A')] });
     await act(async () => { result.current.actions.handleReconfirmHeld(); });
 
@@ -723,8 +692,6 @@ describe('useManualImport', () => {
     await act(async () => { result.current.actions.handleImport(); });
     await waitFor(() => { expect(api.createImportSubmission).toHaveBeenCalled(); });
 
-    // Held is surfaced via its panel/warning AND the failure is still shown — not
-    // swallowed by an early return.
     await waitFor(() => { expect(result.current.state.heldReview).toHaveLength(1); });
     expect(toast.warning).toHaveBeenCalledWith('1 held for recording review');
     expect(toast.error).toHaveBeenCalledWith('1 failed');
@@ -742,7 +709,6 @@ describe('useManualImport', () => {
     act(() => { result.current.state.setScanPath('/audiobooks'); });
     await act(async () => { result.current.actions.handleScan(); });
     await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
-    // Both rows start selected (non-duplicate).
     expect(result.current.counts.selectedCount).toBe(2);
 
     await act(async () => { result.current.actions.handleImport(); });
@@ -750,14 +716,11 @@ describe('useManualImport', () => {
 
     expect(toast.warning).toHaveBeenCalledWith('1 queued for import · 1 already in your library');
     expect(mockNavigate).not.toHaveBeenCalled();
-    // The accepted row (Book A) is deselected so a re-submit can't re-send it; the
-    // skipped row (Book B) is left as-is.
     await waitFor(() => expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/Book A')?.selected).toBe(false));
   });
 
   it('a create failure surfaces a recoverable banner and does not navigate (F9)', async () => {
     vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
-    // A non-retryable typed 4xx fails fast (no backoff) and surfaces its banner.
     vi.mocked(api.createImportSubmission).mockRejectedValue(new ApiError(400, { error: 'invalid-body' }));
 
     const { result } = renderHook(() => useManualImport(), {
@@ -805,23 +768,19 @@ describe('useManualImport', () => {
     await act(async () => { result.current.actions.handleScan(); });
     await waitFor(() => { expect(result.current.state.rows).toHaveLength(1); });
 
-    // A metadata author name over the 512-char bound is a pure `too_big` exclusion → oversize.
     const oversizeMeta = { title: 'Book A', authors: [{ name: 'x'.repeat(513) }] } as unknown as BookMetadata;
     act(() => { result.current.actions.handleEdit(0, { title: 'Book A', author: 'Author A', series: '', metadata: oversizeMeta }); });
 
     await act(async () => { result.current.actions.handleImport(); });
 
     await waitFor(() => expect(result.current.state.banner).toMatch(/too large/i));
-    // No submission leaves the client, and nothing navigates.
     expect(api.createImportSubmission).not.toHaveBeenCalled();
     expect(mockNavigate).not.toHaveBeenCalled();
-    // The oversize row stays selected (fail-open — nothing landed).
     expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/Book A')?.selected).toBe(true);
   });
 
-  // ── Zero-survivor category mixes through the submit hook (F14/F39) ────────────
-  const INVALID_META = { title: 'X', authors: [{ name: 'A' }], bogusUnknownKey: 1 } as unknown as BookMetadata; // unknown key → invalid
-  const OVERSIZE_META = { title: 'X', authors: [{ name: 'x'.repeat(513) }] } as unknown as BookMetadata; // too_big → oversize
+  const INVALID_META = { title: 'X', authors: [{ name: 'A' }], bogusUnknownKey: 1 } as unknown as BookMetadata;
+  const OVERSIZE_META = { title: 'X', authors: [{ name: 'x'.repeat(513) }] } as unknown as BookMetadata;
 
   async function scanTwo() {
     vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
@@ -840,11 +799,11 @@ describe('useManualImport', () => {
     await act(async () => { result.current.actions.handleImport(); });
 
     await waitFor(() => expect(result.current.state.banner).toMatch(/couldn.t be prepared/i));
-    expect(result.current.state.banner).toContain('2'); // truthful invalid count
+    expect(result.current.state.banner).toContain('2');
     expect(api.createImportSubmission).not.toHaveBeenCalled();
     expect(api.putImportSubmissionItems).not.toHaveBeenCalled();
-    expect(readOutbox('manual')).toBeNull(); // no hint stored
-    expect(result.current.state.rows.every(r => r.selected)).toBe(true); // selection unchanged
+    expect(readOutbox('manual')).toBeNull();
+    expect(result.current.state.rows.every(r => r.selected)).toBe(true);
   });
 
   it('mixed invalid + oversize with no valid row: no create/hint, BOTH counts truthful, selection unchanged (F14/F39)', async () => {
@@ -855,13 +814,12 @@ describe('useManualImport', () => {
     await act(async () => { result.current.actions.handleImport(); });
 
     await waitFor(() => expect(result.current.state.banner).toMatch(/couldn.t be prepared/i));
-    expect(result.current.state.banner).toMatch(/too large/i); // both categories named
+    expect(result.current.state.banner).toMatch(/too large/i);
     expect(api.createImportSubmission).not.toHaveBeenCalled();
     expect(readOutbox('manual')).toBeNull();
     expect(result.current.state.rows.every(r => r.selected)).toBe(true);
   });
 
-  // ── Cache invalidation timing (F8) ────────────────────────────────────────────
   it('a clean completion invalidates books AND import-report reads, with books BEFORE navigation (F8)', async () => {
     const { wrapper, invalidateSpy } = createSpyWrapper();
     vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
@@ -877,7 +835,6 @@ describe('useManualImport', () => {
     const roots = invalidatedRoots(invalidateSpy);
     expect(roots).toContain('books');
     expect(roots).toContain('importSubmissions');
-    // books() invalidation runs before the /library navigation so the list isn't stale.
     const booksIdx = invalidateSpy.mock.calls.findIndex((c) => (c[0] as { queryKey?: unknown[] }).queryKey?.[0] === 'books');
     expect(invalidateSpy.mock.invocationCallOrder[booksIdx]!).toBeLessThan(mockNavigate.mock.invocationCallOrder[0]!);
   });
@@ -900,7 +857,6 @@ describe('useManualImport', () => {
   it('create invalidates import-report reads but NOT books until a successful terminal detail (F8)', async () => {
     const { wrapper, invalidateSpy } = createSpyWrapper();
     vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
-    // create/PUT/finalize resolve, then the poll stays processing (no terminal detail yet).
     vi.mocked(api.createImportSubmission).mockResolvedValue(summaryResponse({ id: 3, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 2 }));
     vi.mocked(api.putImportSubmissionItems).mockResolvedValue(summaryResponse({ id: 3, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 2 }));
     vi.mocked(api.finalizeImportSubmission).mockResolvedValue(summaryResponse({ id: 3, source: 'manual', mode: 'copy', status: 'processing', expectedCount: 2 }));
@@ -913,7 +869,7 @@ describe('useManualImport', () => {
     await act(async () => { result.current.actions.handleImport(); });
     await waitFor(() => expect(invalidatedRoots(invalidateSpy)).toContain('importSubmissions'));
 
-    expect(invalidatedRoots(invalidateSpy)).not.toContain('books'); // no terminal detail → no books refresh
+    expect(invalidatedRoots(invalidateSpy)).not.toContain('books');
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 
@@ -930,18 +886,18 @@ describe('useManualImport', () => {
     await act(async () => { result.current.actions.handleImport(); });
     await waitFor(() => expect(result.current.state.banner).toBeTruthy());
 
-    expect(invalidatedRoots(invalidateSpy)).not.toContain('books'); // upload failure ⇒ no books refresh
+    expect(invalidatedRoots(invalidateSpy)).not.toContain('books');
   });
 
   it('a summary-poll exhaustion does NOT invalidate books (F8/F21)', async () => {
-    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0); // deterministic 0-delay poll backoff
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
     try {
       const { wrapper, invalidateSpy } = createSpyWrapper();
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       vi.mocked(api.createImportSubmission).mockResolvedValue(summaryResponse({ id: 21, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 2 }));
       vi.mocked(api.putImportSubmissionItems).mockResolvedValue(summaryResponse({ id: 21, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 2 }));
       vi.mocked(api.finalizeImportSubmission).mockResolvedValue(summaryResponse({ id: 21, source: 'manual', mode: 'copy', status: 'processing', expectedCount: 2 }));
-      vi.mocked(api.getImportSubmission).mockRejectedValue(new ApiError(503, { error: 'x' })); // summary poll never recovers
+      vi.mocked(api.getImportSubmission).mockRejectedValue(new ApiError(503, { error: 'x' }));
       const { result } = renderHook(() => useManualImport(), { wrapper });
       act(() => { result.current.state.setScanPath('/audiobooks'); });
       await act(async () => { result.current.actions.handleScan(); });
@@ -950,21 +906,20 @@ describe('useManualImport', () => {
       await act(async () => { result.current.actions.handleImport(); });
       await waitFor(() => expect(result.current.state.banner).toBe(STAGED_COPY.pollLostContact));
 
-      expect(invalidatedRoots(invalidateSpy)).not.toContain('books'); // poll failure ⇒ no books refresh
+      expect(invalidatedRoots(invalidateSpy)).not.toContain('books');
     } finally {
       randomSpy.mockRestore();
     }
   });
 
   it('a terminal-detail exhaustion does NOT invalidate books (F8/F21)', async () => {
-    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0); // deterministic 0-delay detail backoff
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
     try {
       const { wrapper, invalidateSpy } = createSpyWrapper();
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       vi.mocked(api.createImportSubmission).mockResolvedValue(summaryResponse({ id: 22, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 2 }));
       vi.mocked(api.putImportSubmissionItems).mockResolvedValue(summaryResponse({ id: 22, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 2 }));
       vi.mocked(api.finalizeImportSubmission).mockResolvedValue(summaryResponse({ id: 22, source: 'manual', mode: 'copy', status: 'processing', expectedCount: 2 }));
-      // Summary reads complete, but the one-time detail fetch (includeItems=true) never recovers.
       vi.mocked(api.getImportSubmission).mockImplementation((_id: number, incl?: boolean) =>
         (incl ? Promise.reject(new ApiError(503, { error: 'x' })) : Promise.resolve(summaryResponse({ id: 22, source: 'manual', mode: 'copy', status: 'complete', expectedCount: 2 }))) as never);
       const { result } = renderHook(() => useManualImport(), { wrapper });
@@ -975,24 +930,22 @@ describe('useManualImport', () => {
       await act(async () => { result.current.actions.handleImport(); });
       await waitFor(() => expect(result.current.state.banner).toBe(STAGED_COPY.detailLoadFailed));
 
-      expect(invalidatedRoots(invalidateSpy)).not.toContain('books'); // failed detail projection ⇒ no books refresh
+      expect(invalidatedRoots(invalidateSpy)).not.toContain('books');
     } finally {
       randomSpy.mockRestore();
     }
   });
 
-  // ── Distinct permanent-failure dispositions (F7) ──────────────────────────────
   it('a permanent PUT failure shows the pinned "X of Y received" copy and RETAINS the hint (F7, #1902 AC)', async () => {
     const result = await scanTwo();
     vi.mocked(api.putImportSubmissionItems).mockRejectedValue(new ApiError(409, { error: 'submission-not-receiving' }));
     await act(async () => { result.current.actions.handleImport(); });
 
-    // First chunk died → zero fully-landed chunks of the 2-item submission.
     await waitFor(() => expect(result.current.state.banner).toBe(putFailedWithCounts(0, 2)));
     expect(result.current.state.banner).toBe('0 of 2 received — nothing was imported; reopen to try again');
-    expect(result.current.state.banner).not.toBe(STAGED_COPY.createUnreachable); // NOT connectivity copy
+    expect(result.current.state.banner).not.toBe(STAGED_COPY.createUnreachable);
     expect(api.finalizeImportSubmission).not.toHaveBeenCalled();
-    expect(readOutbox('manual')).not.toBeNull(); // receiving hint left for reconcile
+    expect(readOutbox('manual')).not.toBeNull();
   });
 
   it('an invalid-body create shows the validation copy and EVICTS the hint (F7)', async () => {
@@ -1015,7 +968,6 @@ describe('useManualImport', () => {
     expect(readOutbox('manual')).toBeNull();
   });
 
-  // ── Recovered-on-remount projections are read-only / non-navigating (F4/F5) ───
   const RECOVER_UUID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
   const RECOVER_DIGEST = 'b'.repeat(64);
 
@@ -1030,7 +982,7 @@ describe('useManualImport', () => {
     const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
 
     await waitFor(() => expect(toast.warning).toHaveBeenCalledWith('1 held for recording review'));
-    expect(result.current.state.heldReview).toHaveLength(0); // NOT captured into the live actionable panel
+    expect(result.current.state.heldReview).toHaveLength(0);
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 
@@ -1044,44 +996,33 @@ describe('useManualImport', () => {
 
     const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
 
-    // A clean IN-SESSION completion would navigate; a recovered one must NOT (it only surfaces).
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith('1 book queued for import'));
     expect(mockNavigate).not.toHaveBeenCalled();
-    expect(result.current.state.step).not.toBe('review'); // stayed on its recovered mount, no scan
+    expect(result.current.state.step).not.toBe('review');
   });
 
-  // ── Post-prune-safe outcome projection (F6/F29) ───────────────────────────────
   it('a mixed completion pruned before detail stays count-driven non-green with held actions unavailable (F6/F29)', async () => {
     const result = await scanTwo();
-    // A pruned record's detail fetch carries NO items; severity must fall back to COUNTS:
-    // accepted+held+skipped+failed with failed>0 ⇒ error (never green), and the actionable
-    // held panel is not populated because the per-row detail is gone.
     const agg = { accepted: 1, held: 1, skipped: 1, failed: 1 };
     const pruned = summaryResponse({ id: 11, source: 'manual', mode: 'copy', status: 'complete', expectedCount: 4, aggregates: agg, detailsPruned: true, processedCount: 4 });
     vi.mocked(api.createImportSubmission).mockResolvedValue(summaryResponse({ id: 11, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 4 }));
     vi.mocked(api.putImportSubmissionItems).mockResolvedValue(summaryResponse({ id: 11, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 4 }));
     vi.mocked(api.finalizeImportSubmission).mockResolvedValue(summaryResponse({ id: 11, source: 'manual', mode: 'copy', status: 'processing', expectedCount: 4 }));
-    vi.mocked(api.getImportSubmission).mockResolvedValue(pruned); // both summary + detail arms → pruned summary
+    vi.mocked(api.getImportSubmission).mockResolvedValue(pruned);
 
     await act(async () => { result.current.actions.handleImport(); });
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalled()); // failed>0 ⇒ error severity
-    expect(toast.success).not.toHaveBeenCalled(); // never a false green post-prune
-    expect(result.current.state.heldReview).toHaveLength(0); // detail pruned ⇒ no live held actions
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(result.current.state.heldReview).toHaveLength(0);
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 
-  // ── Finalize exhaustion recovers in-session via by-client (F2) ────────────────
   it('finalize exhaustion probes by-client in-session and rejoins the poll to surface completion (F2)', async () => {
-    // Pin the jitter source to 0 so the shared retry backoff is deterministic and 0-delay here
-    // (the numeric retry contract itself is unit-tested in retry.test.ts) — this test isolates
-    // the recovery TRANSITION without ambient randomness or wall-clock waits (F22).
+    // Zero jitter isolates the recovery transition from retry timing.
     const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
     try {
       const result = await scanTwo();
-      // create/PUT resolve; finalize 5xx EXHAUSTS → finalize-unreachable. The header actually
-      // landed, so the in-session by-client probe finds it complete and the rejoined poll surfaces
-      // the outcome — rather than parking behind a banner until a future remount.
       const agg = { accepted: 2, held: 0, skipped: 0, failed: 0 };
       vi.mocked(api.createImportSubmission).mockResolvedValue(summaryResponse({ id: 9, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 2 }));
       vi.mocked(api.putImportSubmissionItems).mockResolvedValue(summaryResponse({ id: 9, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 2 }));
@@ -1094,8 +1035,6 @@ describe('useManualImport', () => {
 
       await act(async () => { result.current.actions.handleImport(); });
 
-      // The by-client probe is the in-session recovery (not a passive banner); the rejoined
-      // poll then reaches the clean completion and navigates.
       await waitFor(() => expect(api.getImportSubmissionByClientId).toHaveBeenCalled());
       await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/library'));
     } finally {
@@ -1103,10 +1042,7 @@ describe('useManualImport', () => {
     }
   });
 
-  // ── Cumulative byte-budget refusal through the submit hook (F13) ───────────────
   it('a cumulative byte-budget overflow is refused pre-create — no create/hint, rows stay selected (F13/F30)', async () => {
-    // Each item is a valid survivor just under the per-item ceiling; together they exceed the
-    // 64 MiB cumulative cap, so the byte-budget gate refuses the whole batch before any create.
     const perItem = 920_000; // < MAX_SINGLE_ITEM_BYTES (900 KiB) → survives classification
     const count = 74; // 74 × 920,000 ≈ 68 MiB > 64 MiB cap
     const discoveries = Array.from({ length: count }, (_, i) => ({
@@ -1114,14 +1050,10 @@ describe('useManualImport', () => {
       fileCount: 1, totalSize: 1, isDuplicate: false,
     }));
     vi.mocked(api.scanDirectory).mockResolvedValue({ discoveries, totalFolders: count } as unknown as ScanResult);
-    // Leave the match job in the default 'matching' state (never flushed) so the rows stay
-    // selected/pending — this test is about the byte gate, not match-driven deselection.
-
     const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
     act(() => { result.current.state.setScanPath('/audiobooks'); });
     await act(async () => { result.current.actions.handleScan(); });
     await waitFor(() => { expect(result.current.state.rows).toHaveLength(count); });
-    // Force every row selected (Select-all when not all-selected) so the whole batch is submitted.
     if (!result.current.state.rows.every(r => r.selected)) {
       act(() => { result.current.actions.handleToggleAll(); });
     }
@@ -1132,8 +1064,8 @@ describe('useManualImport', () => {
     await waitFor(() => expect(result.current.state.banner).toBe(PREFLIGHT_COPY.byteBudget));
     expect(api.createImportSubmission).not.toHaveBeenCalled();
     expect(api.putImportSubmissionItems).not.toHaveBeenCalled();
-    expect(readOutbox('manual')).toBeNull(); // no hint stored
-    expect(result.current.state.rows.every(r => r.selected)).toBe(true); // selection unchanged
+    expect(readOutbox('manual')).toBeNull();
+    expect(result.current.state.rows.every(r => r.selected)).toBe(true);
   }, 20_000);
 
   it('handleBack from review resets to path step', async () => {
@@ -1203,7 +1135,6 @@ describe('useManualImport', () => {
           series: '',
           metadata: { title: 'Book A', authors: [{ name: 'Author A' }], narrators: ['Jim Dale'] },
         });
-        // deselect row 1 to simplify assertion
         result.current.actions.handleToggle(1);
       });
 
@@ -1249,7 +1180,6 @@ describe('useManualImport', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      // First edit: set metadata with narrators
       act(() => {
         result.current.actions.handleEdit(0, {
           title: 'Book A',
@@ -1259,7 +1189,6 @@ describe('useManualImport', () => {
         });
       });
 
-      // Second edit: change only the title, keep same metadata
       act(() => {
         const prevMetadata = result.current.state.rows[0]!.edited.metadata;
         result.current.actions.handleEdit(0, {
@@ -1323,8 +1252,6 @@ describe('useManualImport', () => {
       expect(items[0]!.seriesPosition).toBe(2.5);
     });
 
-    // #1849 — the parsed series position (including 0) must reach the match-start
-    // candidate so the server-side position tiebreaker can run.
     it('threads parsedSeriesPosition (including 0) into the match candidate', async () => {
       vi.mocked(api.scanDirectory).mockResolvedValue({
         discoveries: [
@@ -1562,7 +1489,6 @@ describe('useManualImport', () => {
         await act(async () => { result.current.actions.handleScan(); });
         await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-        // Advance past the 2000ms poll interval so the first poll fires
         await tickPoll();
 
         expect(result.current.state.rows[0]!.edited.metadata?.narrators).toEqual(['Stephen Fry']);
@@ -1593,13 +1519,10 @@ describe('useManualImport', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      // Advance past the 2000ms poll interval so match results arrive
       await tickPoll();
 
-      // Row 0 is high confidence and selected → ready count = 1
       expect(result.current.counts.readyCount).toBe(1);
 
-      // Deselect the matched row → ready count drops to 0
       act(() => { result.current.actions.handleToggle(0); });
       expect(result.current.counts.readyCount).toBe(0);
     } finally {
@@ -1618,14 +1541,12 @@ describe('useManualImport', () => {
     await act(async () => { result.current.actions.handleScan(); });
     await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-    // Before any match results, all are pending
     expect(result.current.counts.pendingCount).toBe(2);
     expect(result.current.counts.noMatchCount).toBe(0);
     expect(result.current.counts.readyCount).toBe(0);
     expect(result.current.counts.reviewCount).toBe(0);
   });
 
-  // #1102 — selectedPendingCount: scoped to selected rows (not global)
   describe('selectedPendingCount (#1102)', () => {
     it('only counts selected rows still awaiting a match', async () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
@@ -1635,11 +1556,9 @@ describe('useManualImport', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      // Both rows pending and selected by default
       expect(result.current.counts.pendingCount).toBe(2);
       expect(result.current.counts.selectedPendingCount).toBe(2);
 
-      // Deselect one row → global pending unchanged, selected pending drops
       act(() => { result.current.actions.handleToggle(0); });
       expect(result.current.counts.pendingCount).toBe(2);
       expect(result.current.counts.selectedPendingCount).toBe(1);
@@ -1653,18 +1572,13 @@ describe('useManualImport', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(3); });
 
-      // Manually select a duplicate row that has no matchResult — it must NOT
-      // be counted in selectedPendingCount (mirrors pendingCount's exclusion).
       act(() => { result.current.actions.handleToggle(1); });
       expect(result.current.state.rows[1]!.selected).toBe(true);
       expect(result.current.state.rows[1]!.book.isDuplicate).toBe(true);
-      expect(result.current.counts.selectedPendingCount).toBe(1); // only the non-dup at index 0
+      expect(result.current.counts.selectedPendingCount).toBe(1);
     });
   });
 
-  // ===========================================================================
-  // #114 — duplicate row behavior
-  // ===========================================================================
   describe('duplicate rows (isDuplicate: true)', () => {
     it('duplicate rows initialize with selected: false', async () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT_WITH_DUPLICATES);
@@ -1704,7 +1618,6 @@ describe('useManualImport', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(3); });
 
-      // Manually select the first duplicate row (index 1)
       act(() => { result.current.actions.handleToggle(1); });
 
       await act(async () => { result.current.actions.handleImport(); });
@@ -1723,7 +1636,6 @@ describe('useManualImport', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(3); });
 
-      // Only the non-duplicate row (index 0) is selected by default
       await act(async () => { result.current.actions.handleImport(); });
       await waitFor(() => { expect(vi.mocked(api.createImportSubmission)).toHaveBeenCalled(); });
 
@@ -1735,7 +1647,6 @@ describe('useManualImport', () => {
     it('duplicate rows do not auto-select when match result arrives', async () => {
       try {
         vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT_WITH_DUPLICATES);
-        // Match job returns a result for the path of a duplicate row (edge case)
         vi.mocked(api.getMatchJob).mockResolvedValue({
           id: 'job-123',
           status: 'completed',
@@ -1907,7 +1818,6 @@ describe('match merge — boundary values (#185)', () => {
 
       await tickPoll();
 
-      // Existing edited state preserved (not overwritten by null bestMatch)
       expect(result.current.state.rows[0]!.edited.title).toBe('Book A');
       expect(result.current.state.rows[0]!.edited.author).toBe('Author A');
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('none');
@@ -1936,7 +1846,6 @@ describe('match merge — boundary values (#185)', () => {
 
       await tickPoll();
 
-      // Title from bestMatch, author falls back to original parsed value
       expect(result.current.state.rows[0]!.edited.title).toBe('Official Title');
       expect(result.current.state.rows[0]!.edited.author).toBe('Author A');
     } finally {
@@ -1962,12 +1871,10 @@ describe('match merge — boundary values (#185)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      // Row starts selected
       expect(result.current.state.rows[0]!.selected).toBe(true);
 
       await tickPoll();
 
-      // After match merge with confidence=none, row is auto-unchecked
       expect(result.current.state.rows[0]!.selected).toBe(false);
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('none');
     } finally {
@@ -1976,8 +1883,6 @@ describe('match merge — boundary values (#185)', () => {
   });
 
   it('confidence=medium (Review) auto-unchecks the row (selected → false)', async () => {
-    // Medium-confidence rows must default to unchecked so a human reviews the
-    // match before importing — only 'high' stays checked (#1318).
     try {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       vi.mocked(api.getMatchJob).mockResolvedValue({
@@ -1995,18 +1900,13 @@ describe('match merge — boundary values (#185)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      // Row starts selected
       expect(result.current.state.rows[0]!.selected).toBe(true);
 
       await tickPoll();
 
-      // After match merge with confidence=medium, row is auto-unchecked
       expect(result.current.state.rows[0]!.selected).toBe(false);
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
 
-      // Count parity with the library twin: the medium row lands in reviewCount
-      // and is excluded from selectedCount (the second, un-matched row stays
-      // selected, so selectedCount is 1, not 0).
       expect(result.current.counts.reviewCount).toBe(1);
       expect(result.current.counts.selectedCount).toBe(1);
     } finally {
@@ -2014,8 +1914,6 @@ describe('match merge — boundary values (#185)', () => {
     }
   });
 
-  // #1929 — re-picking the same duration-mismatch edition on the manual surface must
-  // NOT turn the row green; it re-checks the picked edition against the scanned runtime.
   it('re-picking the same out-of-band edition on a duration-mismatch row keeps it in Review (#1929)', async () => {
     try {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
@@ -2024,11 +1922,11 @@ describe('match merge — boundary values (#185)', () => {
         results: [{
           path: '/audiobooks/Book A',
           confidence: 'medium',
-          bestMatch: { title: 'Official Title', authors: [{ name: 'Author A' }], duration: 898 }, // 14h58m
+          bestMatch: { title: 'Official Title', authors: [{ name: 'Author A' }], duration: 898 },
           alternatives: [],
           reason: 'Duration mismatch — scanned 14h 53m vs expected 14h 58m',
           reasonKind: 'duration-mismatch',
-          scannedSeconds: 53580, // 14h53m — Δ300s, out of band
+          scannedSeconds: 53580,
         }],
       });
 
@@ -2039,7 +1937,7 @@ describe('match merge — boundary values (#185)', () => {
       await tickPoll();
       await waitFor(() => { expect(result.current.state.rows[0]!.matchResult?.reasonKind).toBe('duration-mismatch'); });
 
-      // BookEditModal spreads the pick into a fresh object — same edition, new reference.
+      // The modal returns a fresh metadata object even when the same edition is selected.
       act(() => {
         result.current.actions.handleEdit(0, {
           title: 'Official Title', author: 'Author A', series: '',
@@ -2060,7 +1958,6 @@ describe('match merge — boundary values (#185)', () => {
   it('high confidence does NOT re-select a row the user had deselected (#1318 parity)', async () => {
     try {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
-      // Job still matching while the user toggles the row off.
       vi.mocked(api.getMatchJob).mockResolvedValue({ id: 'job-123', status: 'matching', matched: 0, total: 1, results: [] });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
@@ -2068,7 +1965,6 @@ describe('match merge — boundary values (#185)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      // Deselect row 0 via the bare checkbox before results arrive.
       act(() => { result.current.actions.handleToggle(0); });
       expect(result.current.state.rows[0]!.selected).toBe(false);
 
@@ -2079,7 +1975,6 @@ describe('match merge — boundary values (#185)', () => {
 
       await tickPoll();
 
-      // High preserves the prior selection — a deselected row stays deselected.
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('high');
       expect(result.current.state.rows[0]!.selected).toBe(false);
     } finally {
@@ -2090,7 +1985,6 @@ describe('match merge — boundary values (#185)', () => {
   it('edit-during-matching preserves selection: a user-FIXED row stays checked when a later medium match merges (#1374)', async () => {
     try {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
-      // Job still matching when the user fixes the row.
       vi.mocked(api.getMatchJob).mockResolvedValue({ id: 'job-123', status: 'matching', matched: 0, total: 1, results: [] });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
@@ -2098,7 +1992,6 @@ describe('match merge — boundary values (#185)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      // User commits a fix via the edit modal — sets userEdited + auto-checks.
       act(() => {
         result.current.actions.handleEdit(0, {
           title: 'Corrected', author: 'Author A', series: '',
@@ -2108,7 +2001,6 @@ describe('match merge — boundary values (#185)', () => {
       expect(result.current.state.rows[0]!.userEdited).toBe(true);
       expect(result.current.state.rows[0]!.selected).toBe(true);
 
-      // The in-flight job (searched on the scan-time title) returns a medium result.
       vi.mocked(api.getMatchJob).mockResolvedValue({
         id: 'job-123', status: 'completed', matched: 1, total: 1,
         results: [{ path: '/audiobooks/Book A', confidence: 'medium', bestMatch: { title: 'Official', authors: [{ name: 'Author A' }] }, alternatives: [] }],
@@ -2116,7 +2008,6 @@ describe('match merge — boundary values (#185)', () => {
 
       await tickPoll();
 
-      // userEdited row keeps its selection despite the medium merge.
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
       expect(result.current.state.rows[0]!.selected).toBe(true);
       expect(result.current.state.rows[0]!.userEdited).toBe(true);
@@ -2135,8 +2026,6 @@ describe('match merge — boundary values (#185)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      // User corrects fields manually WITHOUT picking a provider result, so the
-      // edit modal saves metadata: undefined (BookEditModal.handleSave).
       act(() => {
         result.current.actions.handleEdit(0, {
           title: 'My Correction', author: 'My Author', series: '',
@@ -2145,7 +2034,6 @@ describe('match merge — boundary values (#185)', () => {
       expect(result.current.state.rows[0]!.userEdited).toBe(true);
       expect(result.current.state.rows[0]!.edited.metadata).toBeUndefined();
 
-      // A later best-match result merges in.
       vi.mocked(api.getMatchJob).mockResolvedValue({
         id: 'job-123', status: 'completed', matched: 1, total: 1,
         results: [{ path: '/audiobooks/Book A', confidence: 'high', bestMatch: { title: 'Provider Title', authors: [{ name: 'Provider Author' }] }, alternatives: [] }],
@@ -2153,8 +2041,7 @@ describe('match merge — boundary values (#185)', () => {
 
       await tickPoll();
 
-      // The user's manual correction survives — userEdited gates auto-populate,
-      // not edited.metadata alone.
+      // userEdited, not metadata presence, guards auto-population.
       expect(result.current.state.rows[0]!.edited.title).toBe('My Correction');
       expect(result.current.state.rows[0]!.edited.author).toBe('My Author');
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('high');
@@ -2173,7 +2060,6 @@ describe('match merge — boundary values (#185)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      // Bare toggle off then on — must NOT set userEdited.
       act(() => { result.current.actions.handleToggle(0); });
       act(() => { result.current.actions.handleToggle(0); });
       expect(result.current.state.rows[0]!.selected).toBe(true);
@@ -2195,8 +2081,6 @@ describe('match merge — boundary values (#185)', () => {
   });
 
   it('autoCheck re-checks a medium row deselected by the merge when metadata is supplied via edit', async () => {
-    // A merge deselects the medium row; supplying metadata through the edit flow
-    // is explicit user intent, so the row re-checks (#1318 / #185 autoCheck).
     try {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       vi.mocked(api.getMatchJob).mockResolvedValue({
@@ -2216,10 +2100,8 @@ describe('match merge — boundary values (#185)', () => {
 
       await tickPoll();
 
-      // Merge deselected the medium row
       expect(result.current.state.rows[0]!.selected).toBe(false);
 
-      // Supplying metadata via the edit flow re-checks the row
       act(() => {
         result.current.actions.handleEdit(0, {
           title: 'Book A', author: 'Author A', series: '',
@@ -2252,11 +2134,9 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
     await act(async () => { result.current.actions.handleScan(); });
     await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-    // Deselect row 0 first
     act(() => { result.current.actions.handleToggle(0); });
     expect(result.current.state.rows[0]!.selected).toBe(false);
 
-    // Edit with metadata → should auto-select
     act(() => {
       result.current.actions.handleEdit(0, {
         title: 'Book A', author: 'Author A', series: '',
@@ -2297,7 +2177,6 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
 
     expect(result.current.state.rows[0]!.selected).toBe(true);
 
-    // Edit without metadata (metadata undefined) → should remain selected
     act(() => {
       result.current.actions.handleEdit(0, {
         title: 'Book A', author: 'Author A', series: '',
@@ -2328,7 +2207,6 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       await tickPoll();
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('none');
 
-      // Edit with metadata → confidence upgrades from 'none' to 'medium'
       act(() => {
         result.current.actions.handleEdit(0, {
           title: 'Book A', author: 'Author A', series: '',
@@ -2342,7 +2220,6 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
     }
   });
 
-  // ── #335 Manual match override: medium → high ──────────────────────────
   it('row with matchResult confidence=medium and NEW provider metadata → confidence upgrades to high', async () => {
     try {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
@@ -2364,7 +2241,6 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       await tickPoll();
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
 
-      // Edit with a DIFFERENT metadata object (user explicitly re-selected) → upgrades to high
       const newMetadata = { ...MATCH_METADATA, asin: 'B002NEWPICK' };
       act(() => {
         result.current.actions.handleEdit(0, {
@@ -2400,7 +2276,6 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       await tickPoll();
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
 
-      // Save with the SAME metadata reference (user opened modal and clicked Save without re-selecting)
       const preloadedMetadata = result.current.state.rows[0]!.edited.metadata;
       act(() => {
         result.current.actions.handleEdit(0, {
@@ -2409,7 +2284,6 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
         });
       });
 
-      // Should NOT upgrade — no explicit provider re-selection
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
     } finally {
       vi.useRealTimers();
@@ -2437,7 +2311,7 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       await tickPoll();
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
 
-      // Simulate explicit click on the current match — applyMetadata spreads to new reference
+      // applyMetadata creates a new reference for an explicit pick.
       act(() => {
         result.current.actions.handleEdit(0, {
           title: 'Book A', author: 'Author A', series: '',
@@ -2472,7 +2346,6 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       await tickPoll();
       expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('high');
 
-      // Edit with provider metadata → confidence stays 'high'
       act(() => {
         result.current.actions.handleEdit(0, {
           title: 'Book A', author: 'Author A', series: '',
@@ -2494,7 +2367,6 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
     await act(async () => { result.current.actions.handleScan(); });
     await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-    // No match results have arrived → matchResult is undefined
     expect(result.current.state.rows[0]!.matchResult).toBeUndefined();
 
     act(() => {
@@ -2504,7 +2376,6 @@ describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
       });
     });
 
-    // No crash; matchResult stays undefined (no confidence upgrade without existing matchResult)
     expect(result.current.state.rows[0]!.matchResult).toBeUndefined();
     expect(result.current.state.rows[0]!.selected).toBe(true);
   });
@@ -2573,7 +2444,6 @@ describe('grouped return shape (REACT-1 refactor)', () => {
     });
   });
 
-  // ── #415 Match confidence reason passthrough ────────────────────────
   describe('confidence reason lifecycle (#415)', () => {
     it('mergeMatchResults preserves reason field from MatchResult onto ImportRow', async () => {
       try {
@@ -2626,7 +2496,6 @@ describe('grouped return shape (REACT-1 refactor)', () => {
         expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('medium');
         expect(result.current.state.rows[0]!.matchResult?.reason).toBeDefined();
 
-        // Edit with NEW metadata → upgrades to high, reason must be cleared
         const newMetadata = { ...MATCH_METADATA, asin: 'B002NEWPICK' };
         act(() => {
           result.current.actions.handleEdit(0, {
@@ -2663,7 +2532,6 @@ describe('grouped return shape (REACT-1 refactor)', () => {
         await tickPoll();
         expect(result.current.state.rows[0]!.matchResult?.confidence).toBe('none');
 
-        // Edit with metadata → upgrades to medium, but no system reason
         act(() => {
           result.current.actions.handleEdit(0, {
             title: 'Book A', author: 'Author A', series: '',
@@ -2679,13 +2547,8 @@ describe('grouped return shape (REACT-1 refactor)', () => {
     });
   });
 
-  // #1864 — manual import previously dropped match failures silently (:27 destructure
-  // omitted the recovery contract). It now surfaces the paused state with inline recovery.
   describe('match-phase recovery (#1864)', () => {
-    // These tests sequence poll responses with `*Once()`. The file's `clearAllMocks`
-    // beforeEach does NOT drain those queues (vitest-clearallmocks-once-queue), so a
-    // prior test's leftover queued response would be consumed by our first poll. Reset
-    // the job mocks fully here before each test re-establishes its own sequence.
+    // clearAllMocks preserves queued mockResolvedValueOnce values; reset sequence mocks here.
     beforeEach(() => {
       vi.mocked(api.getMatchJob).mockReset().mockResolvedValue({ id: 'job-123', status: 'matching', total: 0, matched: 0, results: [] });
       vi.mocked(api.startMatchJob).mockReset().mockResolvedValue({ jobId: 'job-123' });
@@ -2718,10 +2581,9 @@ describe('grouped return shape (REACT-1 refactor)', () => {
       act(() => { result.current.state.setScanPath('/audiobooks'); });
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
-      await tickPoll(); // fire poll1 → Book A completed/matched
+      await tickPoll();
       await waitFor(() => expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/Book A')?.matchResult?.confidence).toBe('high'));
 
-      // Edit Book A to genuinely-different values, including position 0 (regression-pinned).
       act(() => {
         result.current.actions.handleEdit(0, { title: 'Edited A', author: 'Edited Author', series: 'Fablehaven', seriesPosition: 0 });
       });
@@ -2729,11 +2591,8 @@ describe('grouped return shape (REACT-1 refactor)', () => {
       vi.mocked(api.startMatchJob).mockClear();
       act(() => { result.current.actions.handleRestartMatch(); });
 
-      // Restart clears the stale match to pending immediately (row-match clear).
       expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/Book A')?.matchResult).toBeUndefined();
 
-      // The Restart candidate payload reflects the CURRENT edited row values, not the
-      // original parsed fields — asserting the exact shape (replacing row.edited would fail this).
       await waitFor(() => expect(api.startMatchJob).toHaveBeenCalled());
       const candidates = vi.mocked(api.startMatchJob).mock.calls[0]![0];
       const editedA = candidates.find(c => c.path === '/audiobooks/Book A');
@@ -2744,7 +2603,7 @@ describe('grouped return shape (REACT-1 refactor)', () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       vi.mocked(api.getMatchJob).mockReset();
       vi.mocked(api.getMatchJob)
-        .mockRejectedValueOnce(new Error('blip')) // first poll fails → backoff → recovering
+        .mockRejectedValueOnce(new Error('blip'))
         .mockResolvedValue({ id: 'job-123', status: 'matching', total: 2, matched: 0, results: [] });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
@@ -2752,7 +2611,7 @@ describe('grouped return shape (REACT-1 refactor)', () => {
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      await tickPoll(); // poll1 rejects (transport) → bounded backoff → recovering
+      await tickPoll();
       expect(result.current.state.recovering).toBe(true);
     });
 
@@ -2762,32 +2621,26 @@ describe('grouped return shape (REACT-1 refactor)', () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
       vi.mocked(api.getMatchJob)
         .mockResolvedValueOnce({ id: 'job-123', status: 'matching', total: 2, matched: 1, results: [a] })
-        .mockRejectedValueOnce(new ApiError(400, { error: 'bad' })) // pause request-rejected, id retained
-        .mockResolvedValueOnce({ id: 'job-123', status: 'completed', total: 2, matched: 2, results: [a, b] }); // resume-entry probe
+        .mockRejectedValueOnce(new ApiError(400, { error: 'bad' }))
+        .mockResolvedValueOnce({ id: 'job-123', status: 'completed', total: 2, matched: 2, results: [a, b] });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
       act(() => { result.current.state.setScanPath('/audiobooks'); });
       await act(async () => { result.current.actions.handleScan(); });
       await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
-      await tickPoll(); // poll1: matching with [Book A] partial → Book A matched
+      await tickPoll();
       await waitFor(() => expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/Book A')?.matchResult?.confidence).toBe('high'));
-      await tickPoll(); // poll2: other-4xx → pause request-rejected (id retained)
+      await tickPoll();
       expect(result.current.state.paused).toBe(true);
 
-      // Resume-entry probe (fires getMatchJob immediately, no timer) → completed [a, b].
       await act(async () => { result.current.actions.handleResumeMatch(); });
       await waitFor(() => expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/Book B')?.matchResult?.confidence).toBe('high'));
-      // Book A's match is preserved across the resume.
       expect(result.current.state.rows.find(r => r.book.path === '/audiobooks/Book A')?.matchResult?.confidence).toBe('high');
       expect(result.current.state.paused).toBe(false);
     });
   });
 
-  // #1925 AC10 / F5: Manual Import consumes the SAME shared scan result as Library Import. A
-  // former within-scan title collision now arrives as a normal candidate (isDuplicate: false)
-  // carrying a display-only review hint, so on this surface it must ALSO become default-selected,
-  // match-eligible, and submit WITHOUT forceImport — flowing through the confirm-time ladder.
   describe('former within-scan rows on the Manual Import surface (#1925 AC10)', () => {
     const SCAN_WITH_FORMER_WITHIN_SCAN: ScanResult = {
       discoveries: [
@@ -2809,10 +2662,9 @@ describe('grouped return shape (REACT-1 refactor)', () => {
 
       const wsRow = result.current.state.rows.find(r => r.book.path === '/audiobooks/Copy/Author/Book');
       const dbRow = result.current.state.rows.find(r => r.book.path === '/audiobooks/DbDup/Book');
-      expect(wsRow?.selected).toBe(true);   // selected: !isDuplicate
-      expect(dbRow?.selected).toBe(false);  // DB duplicate stays unchecked
+      expect(wsRow?.selected).toBe(true);
+      expect(dbRow?.selected).toBe(false);
 
-      // Match candidates derive off `!book.isDuplicate` → include the former within-scan row, exclude the DB dup.
       await waitFor(() => { expect(vi.mocked(api.startMatchJob)).toHaveBeenCalled(); });
       const candidatePaths = (vi.mocked(api.startMatchJob).mock.calls[0]![0] as Array<{ path: string }>).map(c => c.path);
       expect(candidatePaths).toContain('/audiobooks/Author/Book');
@@ -2843,9 +2695,7 @@ describe('grouped return shape (REACT-1 refactor)', () => {
   });
 });
 
-// #2055 — the manual surface shares the re-pick corroboration module with Library Import,
-// so the same contracts are pinned here. Divergence between the twin hooks is the recurring
-// drift class (#1374); these are deliberately the same cases as the library suite's.
+// Keep this suite in parity with Library Import; both hooks share the corroboration contract.
 describe('#2055 re-pick corroborates against the chapter runtime (manual surface)', () => {
   const PATH = '/audiobooks/Book A';
   const PATH2 = '/audiobooks/Book B';
@@ -2888,7 +2738,6 @@ describe('#2055 re-pick corroborates against the chapter runtime (manual surface
 
   const corroborateMock = () => vi.mocked(api.corroborateImportDuration);
 
-  // Test 9 — the issue's reproduction on the manual surface.
   it('promotes the row to Matched when the chapter table corroborates the scanned file', async () => {
     const gate = deferred<{ corroborated: boolean; chapterSeconds?: number }>();
     corroborateMock().mockReturnValue(gate.promise);
@@ -2906,12 +2755,27 @@ describe('#2055 re-pick corroborates against the chapter runtime (manual surface
     expect(matchAt(result)?.reason).toBeUndefined();
     expect(matchAt(result)?.reasonKind).toBeUndefined();
     expect(matchAt(result)?.scannedSeconds).toBe(FABLEHAVEN.scannedSeconds);
-    // B7 (F3) — suppress-only: the selection evidence survives the patch unchanged.
     expect(matchAt(result)?.bestMatch).toEqual(FABLEHAVEN_BEST);
     expect(matchAt(result)?.alternatives).toEqual(FABLEHAVEN_ALTERNATIVES);
   });
 
-  // Test 10 — the canonical ASIN is the trimmed one on BOTH sides of the round trip.
+  it('promotes the row when the server suppressed via the TRIMMED chapter sum', async () => {
+    const gate = deferred<typeof FABLEHAVEN_TRIMMED_RESPONSE>();
+    corroborateMock().mockReturnValue(gate.promise);
+    const { result } = await seed();
+
+    act(() => { result.current.actions.handleEdit(0, fablehavenEdit()); });
+    expect(matchAt(result)?.confidence).toBe('medium');
+
+    gate.resolve(FABLEHAVEN_TRIMMED_RESPONSE);
+    await waitFor(() => { expect(matchAt(result)?.confidence).toBe('high'); });
+
+    expect(matchAt(result)?.reason).toBeUndefined();
+    expect(matchAt(result)?.reasonKind).toBeUndefined();
+    expect(matchAt(result)?.bestMatch).toEqual(FABLEHAVEN_BEST);
+    expect(matchAt(result)?.alternatives).toEqual(FABLEHAVEN_ALTERNATIVES);
+  });
+
   it('sends the TRIMMED ASIN and still promotes the row when it resolves', async () => {
     const gate = deferred<{ corroborated: boolean; chapterSeconds?: number }>();
     corroborateMock().mockReturnValue(gate.promise);
@@ -2925,7 +2789,6 @@ describe('#2055 re-pick corroborates against the chapter runtime (manual surface
     await waitFor(() => { expect(matchAt(result)?.confidence).toBe('high'); });
   });
 
-  // Test 11 + F5 — an out-of-band chapter table changes nothing, and says nothing.
   it('leaves the sync verdict untouched when the chapter table also disagrees', async () => {
     corroborateMock().mockResolvedValue({ corroborated: false, chapterSeconds: FABLEHAVEN.outOfBandChapterSeconds });
     const { result } = await seed();
@@ -2940,7 +2803,6 @@ describe('#2055 re-pick corroborates against the chapter runtime (manual surface
 
     expect(matchAt(result)?.confidence).toBe('medium');
     expect(matchAt(result)?.reasonKind).toBe('duration-mismatch');
-    // 40000s renders as `11h 6m`; the user must never be shown that number here.
     expect(matchAt(result)?.reason).toBe(FABLEHAVEN.scalarReason);
     expect(matchAt(result)?.reason).not.toContain('11h 6m');
     expect(toast.success).not.toHaveBeenCalled();
@@ -2949,7 +2811,6 @@ describe('#2055 re-pick corroborates against the chapter runtime (manual surface
     expect(result.current.state.banner).toEqual(bannerBefore);
   });
 
-  // Test 12 + F5 — transport failures are the same silent outcome.
   it.each([
     ['a network failure', new Error('network down')],
     ['a non-2xx ApiError', new ApiError(503, { error: 'unavailable' })],
@@ -2975,8 +2836,6 @@ describe('#2055 re-pick corroborates against the chapter runtime (manual surface
     expect(result.current.state.banner).toEqual(bannerBefore);
   });
 
-  // Test 13 — B3: a request fired from inside a `setRows` updater goes out twice under
-  // React 19 StrictMode, which double-invokes updater functions.
   it('issues exactly one request per qualifying re-pick under StrictMode', async () => {
     const inner = createWrapper();
     const strictWrapper = ({ children }: { children: React.ReactNode }) =>
@@ -2998,7 +2857,6 @@ describe('#2055 re-pick corroborates against the chapter runtime (manual surface
     expect(corroborateMock()).toHaveBeenCalledTimes(1);
   });
 
-  // Test 14 — the non-qualifying re-picks issue ZERO requests, at the hook level.
   it.each([
     ['an in-band re-pick the sync path already cleared', () => fablehavenEdit({ duration: 553 })],
     ['a picked edition with no runtime (missing-duration)', () => fablehavenEdit({ duration: undefined })],
@@ -3022,7 +2880,6 @@ describe('#2055 re-pick corroborates against the chapter runtime (manual surface
     expect(corroborateMock()).not.toHaveBeenCalled();
   });
 
-  // Test 15 — a held response for a superseded edition must not resurrect its verdict.
   it('drops a held response after the user re-picks a DIFFERENT edition', async () => {
     const first = deferred<{ corroborated: boolean; chapterSeconds?: number }>();
     const second = deferred<{ corroborated: boolean; chapterSeconds?: number }>();
@@ -3042,10 +2899,7 @@ describe('#2055 re-pick corroborates against the chapter runtime (manual surface
     expect(matchAt(result)?.reasonKind).toBe('duration-mismatch');
   });
 
-  // Test 16 — the blocking case for B8's generation token. Every FIELD check passes here:
-  // Restart clears only `matchResult`, and `mergeMatchIntoRow` preserves `edited` for a
-  // `userEdited` row, so the fresh match reproduces path + ASIN + scannedSeconds +
-  // `duration-mismatch`. Only the stamp can reject the held response.
+  // Restart can reproduce every evidence field, so only the generation stamp rejects this response.
   it('drops a held response across a Restart that reproduces the same evidence fingerprint', async () => {
     const held = deferred<{ corroborated: boolean; chapterSeconds?: number }>();
     corroborateMock().mockReturnValue(held.promise);
@@ -3062,7 +2916,6 @@ describe('#2055 re-pick corroborates against the chapter runtime (manual surface
     await tickPoll();
     await waitFor(() => { expect(matchAt(result)?.reasonKind).toBe('duration-mismatch'); });
 
-    // Precondition: the fingerprint really is identical, so only the stamp differs.
     expect(result.current.state.rows[0]!.edited.metadata?.asin).toBe(FABLEHAVEN.asin);
     expect(matchAt(result)?.scannedSeconds).toBe(FABLEHAVEN.scannedSeconds);
 
@@ -3073,9 +2926,7 @@ describe('#2055 re-pick corroborates against the chapter runtime (manual surface
     expect(matchAt(result)?.reasonKind).toBe('duration-mismatch');
   });
 
-  // Test 17 — a settle after unmount is harmless because the handler carries NO
-  // lifecycle-local side effect. Row state is unobservable after unmount, so the toast
-  // mock is the observation point that can actually fail.
+  // Row state is unobservable after unmount; toasts expose lifecycle-local side effects.
   it('settles after unmount without emitting any lifecycle-local side effect', async () => {
     const held = deferred<{ corroborated: boolean; chapterSeconds?: number }>();
     corroborateMock().mockReturnValue(held.promise);
@@ -3095,9 +2946,7 @@ describe('#2055 re-pick corroborates against the chapter runtime (manual surface
     expect(toast.warning).not.toHaveBeenCalled();
   });
 
-  // F4 — resolving one row's corroboration must not touch any other row. At the hook level
-  // the sibling row is rejected by its own (older) generation stamp; the `row.book.path`
-  // half of the guard is pinned directly in `repick-corroboration.test.ts`.
+  // The path half of this guard is covered in repick-corroboration.test.ts.
   it('patches only the row whose corroboration resolved', async () => {
     corroborateMock().mockResolvedValue({ corroborated: true, chapterSeconds: FABLEHAVEN.chapterSeconds });
     const { result } = await seed([fablehavenMismatch(PATH), fablehavenMismatch(PATH2)]);
@@ -3108,5 +2957,22 @@ describe('#2055 re-pick corroborates against the chapter runtime (manual surface
     await waitFor(() => { expect(matchAt(result)?.confidence).toBe('high'); });
 
     expect(result.current.state.rows[1]).toBe(otherBefore);
+  });
+
+  // Selection changes must not advance the generation or reject a still-valid corroboration.
+  it('keeps a held response live across an unrelated selection toggle', async () => {
+    const held = deferred<{ corroborated: boolean; chapterSeconds?: number }>();
+    corroborateMock().mockReturnValue(held.promise);
+    const { result } = await seed();
+
+    act(() => { result.current.actions.handleEdit(0, fablehavenEdit()); });
+    expect(corroborateMock()).toHaveBeenCalledTimes(1);
+
+    const selectedBefore = result.current.state.rows[0]!.selected;
+    act(() => { result.current.actions.handleToggle(0); });
+    expect(result.current.state.rows[0]!.selected).toBe(!selectedBefore);
+
+    held.resolve({ corroborated: true, chapterSeconds: FABLEHAVEN.chapterSeconds });
+    await waitFor(() => { expect(matchAt(result)?.confidence).toBe('high'); });
   });
 });

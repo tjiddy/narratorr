@@ -2,8 +2,6 @@ import { describe, expect, it } from 'vitest';
 import type { SearchResult } from '../indexers/types.js';
 import { filterByLanguage, filterMultiPartUsenet, matchesLanguageFilter } from './filters.js';
 
-// --- helpers ---
-
 function makeUsenetResult(overrides: Partial<SearchResult> = {}): SearchResult {
   return {
     title: 'Some Audiobook',
@@ -21,8 +19,6 @@ function makeTorrentResult(overrides: Partial<SearchResult> = {}): SearchResult 
     ...overrides,
   };
 }
-
-// --- matchesLanguageFilter ---
 
 describe('matchesLanguageFilter', () => {
   it('returns true when language is undefined (unknown → pass through)', () => {
@@ -45,8 +41,6 @@ describe('matchesLanguageFilter', () => {
     expect(matchesLanguageFilter('german', ['english', 'french'])).toBe(false);
   });
 });
-
-// --- filterByLanguage ---
 
 describe('filterByLanguage', () => {
   it('returns all items as kept when allowedLanguages is empty (no filter)', () => {
@@ -96,8 +90,6 @@ describe('filterByLanguage', () => {
     expect(result.passedUndetermined).toEqual([{ language: undefined, id: 3 }]);
   });
 });
-
-// --- filterMultiPartUsenet ---
 
 describe('filterMultiPartUsenet', () => {
   describe('positive filtering', () => {
@@ -187,7 +179,6 @@ describe('filterMultiPartUsenet', () => {
         rawTitle: 'Book "3" of "10"',
       })];
       const { filtered } = filterMultiPartUsenet(results);
-      // nzbName has no multi-part marker → passes through even though rawTitle does
       expect(filtered).toEqual(results);
     });
   });
@@ -197,8 +188,7 @@ describe('filterMultiPartUsenet', () => {
       const results = [
         makeUsenetResult({ title: 'Clean Title' }),
         makeUsenetResult({ nzbName: 'hp02.Harry Potter "28" of "30" yEnc', title: 'HP' }),
-        // Bare unquoted "08 of 30" with no series-position word before the number
-        // still rejects (the tightening only skips book/vol/volume/#-prefixed forms).
+        // Bare "08 of 30" still rejects; only book/vol/volume/# prefixes suppress it.
         makeUsenetResult({ rawTitle: 'hp02.The Chamber of Secrets 08 of 30', title: 'HP2' }),
       ];
       const { rejectedTitles } = filterMultiPartUsenet(results);

@@ -1,5 +1,4 @@
-// Does not use useSettingsForm: uses setQueryData for optimistic cache update
-// and resetField for single-field reset, which don't fit the hook's full-form reset model.
+// Needs per-field reset and optimistic cache updates, unlike useSettingsForm's full-form model.
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
@@ -23,7 +22,6 @@ const libraryPathSchema = z.object({
 
 type LibraryPathFormData = z.infer<typeof libraryPathSchema>;
 
-// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
 const CARD_LABEL = 'Library';
 
 export function LibrarySettingsSection() {
@@ -83,8 +81,7 @@ export function LibrarySettingsSection() {
   // eslint-disable-next-line react-hooks/incompatible-library -- watch() is the standard RHF API; Compiler skip is expected
   const pathValue = watch('path');
 
-  // Register with the unsaved-changes guard. An edited-but-unsaved path (blur-save
-  // skips empty/unchanged values) stays dirty, reproducing the exact bug this fixes.
+  // Empty or unchanged blur saves are skipped, so those edits remain guarded.
   useTrackedForm({ isDirty, isPending: pathSaveMutation.isPending, label: CARD_LABEL });
 
   return (

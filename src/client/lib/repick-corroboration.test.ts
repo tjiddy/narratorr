@@ -1,11 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { needsChapterCorroboration, applyCorroboration, type CorroborationTarget } from './repick-corroboration';
+import { needsChapterCorroboration, applyCorroboration, stampRow, type CorroborationTarget } from './repick-corroboration';
 import type { MatchResult, BookMetadata } from '@/lib/api';
 import type { ImportRow } from '@/components/manual-import';
 
-// The live Fablehaven case, canonical values already pinned in-repo: the scanner's RAW
-// unrounded runtime, the chapter-table total (Δ 0.02s — inside the band), and the provider
-// scalar of 539 minutes (Δ 879.47s — outside it).
+// Live case: raw scan and chapter total differ by 0.02s; the provider scalar differs by 879.47s.
 const ASIN = 'B00CXXEX8W';
 const SCANNED = 33219.47;
 const PATH = '/audiobooks/Brandon Mull/Fablehaven';
@@ -20,13 +18,7 @@ const mismatchRow: MatchResult = {
   scannedSeconds: SCANNED,
 };
 
-/**
- * A row the match job flagged `missing-duration` — the SCAN side has a positive runtime, the
- * best match has none (`MatchReasonKind`: "duration evidence is incomplete on ONE side").
- * Re-picking an edition that DOES carry a runtime re-evaluates this row, and when that
- * runtime is out of band it lands on the very same outcome (4) a `duration-mismatch` row
- * does — so it is equally entitled to the chapter-table second opinion.
- */
+/** A picked scalar turns this `missing-duration` row into the same qualifying medium mismatch. */
 const missingDurationRow: MatchResult = {
   path: PATH,
   confidence: 'medium',
@@ -37,7 +29,7 @@ const missingDurationRow: MatchResult = {
   scannedSeconds: SCANNED,
 };
 
-/** The picked edition: the provider scalar (539 min = 32340s) is out of band vs SCANNED. */
+/** The picked provider scalar is out of band with `SCANNED`. */
 const picked = (over: Partial<BookMetadata> = {}): BookMetadata => ({
   title: 'Fablehaven', authors: [{ name: 'Brandon Mull' }], duration: 539, asin: ASIN, ...over,
 });
@@ -48,10 +40,7 @@ describe('needsChapterCorroboration (#2055)', () => {
       .toEqual({ asin: ASIN, scannedSeconds: SCANNED });
   });
 
-  // The predicate keys on the outcome of the re-evaluation, NOT on the row's ORIGINAL
-  // reason kind. A `missing-duration` row whose re-pick supplies the runtime that was
-  // missing lands on outcome (4) too, and it must dispatch — gating on the incoming
-  // `reasonKind` instead would leave every other case in this file green.
+  // Eligibility follows the re-evaluated outcome, not the original reason kind.
   it('requests corroboration when an original missing-duration row re-evaluates out of band', () => {
     expect(needsChapterCorroboration(missingDurationRow, picked(), undefined))
       .toEqual({ asin: ASIN, scannedSeconds: SCANNED });
@@ -68,7 +57,7 @@ describe('needsChapterCorroboration (#2055)', () => {
   });
 
   it('makes no request for an IN-BAND re-pick — the sync path already cleared it to high', () => {
-    // 553 min = 33180s, Δ 39.47s from the scan: inside the 240s band.
+    // 553 minutes is 39.47 seconds from the scan, inside the 240-second band.
     expect(needsChapterCorroboration(mismatchRow, picked({ duration: 553 }), undefined)).toBeUndefined();
   });
 
@@ -184,5 +173,57 @@ describe('applyCorroboration staleness guard (#2055 B8)', () => {
     const result = applyCorroboration([other, liveRow], target);
     expect(result[0]).toBe(other);
     expect(result[1]!.matchResult?.confidence).toBe('high');
+  });
+});
+
+describe('stampRow (#2060)', () => {
+  const unstamped: ImportRow = {
+    book: { path: PATH, parsedTitle: 'Fablehaven', parsedAuthor: 'Brandon Mull', parsedSeries: null, fileCount: 1, totalSize: 1, isDuplicate: false },
+    selected: true,
+    userEdited: false,
+    edited: { title: 'Fablehaven', author: 'Brandon Mull', series: '' },
+  };
+
+  it('returns a copy carrying the given generation, leaving the argument untouched', () => {
+    const stamped = stampRow(unstamped, 5);
+
+    expect(stamped).toEqual({ ...unstamped, matchGeneration: 5 });
+    expect(stamped).not.toBe(unstamped);
+    expect(unstamped).not.toHaveProperty('matchGeneration');
+  });
+
+  it('carries an already-installed matchResult through untouched — it neither inspects nor derives it', () => {
+    const withMatch: ImportRow = { ...unstamped, matchResult: mismatchRow };
+
+    const stamped = stampRow(withMatch, 5);
+
+    expect(stamped.matchResult).toBe(mismatchRow);
+    expect(stamped.matchGeneration).toBe(5);
+  });
+
+  // `matchGeneration` must follow `...row` or an older stamp wins.
+  it('overwrites an older stamp already on the row', () => {
+    expect(stampRow({ ...unstamped, matchGeneration: 3 }, 9).matchGeneration).toBe(9);
+  });
+
+  // Typecheck requires each directive to fail solely because these fields are readonly.
+  // Mutable structural aliases can evade readonly; the custom lint rule enforces that wider invariant.
+  it('rejects every direct write to matchResult / matchGeneration, and still allows construction', () => {
+    const row: ImportRow = stampRow(unstamped, 1);
+    const next: MatchResult = mismatchRow;
+    const g = 2;
+
+    // @ts-expect-error -- TS2540: matchResult is readonly
+    row.matchResult = next;
+    // @ts-expect-error -- TS2540: readonly holds through a literal-key element access
+    row['matchGeneration'] = g;
+    // @ts-expect-error -- TS2704: a readonly property cannot be deleted
+    delete row.matchResult;
+    // @ts-expect-error -- TS2540: compound assignment is still an assignment
+    row.matchResult ??= next;
+
+    const ok: ImportRow = { ...row, matchResult: next, matchGeneration: g };
+    expect(ok.matchResult).toBe(next);
+    expect(ok.matchGeneration).toBe(g);
   });
 });

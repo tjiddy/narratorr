@@ -33,22 +33,12 @@ import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js
 import { serializeError } from '../utils/serialize-error.js';
 
 
-/**
- * Clamp a runtime concurrency value to a safe semaphore size (>= 1, integer).
- * setMax() performs no validation, so a NaN/0/negative/fractional value read
- * from settings must be coerced here — `Math.max(1, NaN)` is `NaN`, which would
- * poison the semaphore. Unreachable via the Zod-validated path today, but the
- * clamp's whole job is defense against an unvalidated read.
- */
+/** Coerce unvalidated settings to an integer >=1; setMax accepts invalid values and Math.max(1, NaN) is NaN. */
 export function clampConcurrency(value: number | undefined): number {
   return Number.isInteger(value) && (value as number) >= 1 ? (value as number) : 1;
 }
 
-/**
- * Provenance of a merge request. A narrow subset of the canonical {@link EventSource} union
- * (derived from it, not a redeclared widened type), so merge events record whether the merge
- * was user-initiated (the manual Merge button) or unattended (auto-merge after a download lands).
- */
+/** Canonical event provenance for user-initiated versus unattended merges. */
 export type MergeOrigin = Extract<EventSource, 'manual' | 'auto'>;
 
 export interface MergeResult {
@@ -59,8 +49,7 @@ export interface MergeResult {
   enrichmentWarning?: string;
 }
 
-// Re-exported from its own module so the eligibility gates can throw it without a cycle; every
-// existing `import { MergeError } from './merge.service.js'` keeps working.
+// Preserve the public import while eligibility throws from a cycle-free module.
 export { MergeError } from './merge-eligibility.js';
 
 export interface MergeAcknowledgement {
@@ -77,14 +66,9 @@ export class MergeService {
   private readonly semaphore = new Semaphore(1);
   private abortControllers = new Map<number, AbortController>();
   private currentPhase = new Map<number, MergePhase>();
-  // Per-bookId merge provenance. Set in enqueueMerge (only after pre-flight succeeds, so a
-  // rejected enqueue leaves no stale entry) and read by the three event emitters, which take
-  // only a bookId. Its lifecycle mirrors `inProgress`/queue membership exactly: cleared in the
-  // immediate-start finally, the startQueuedMerge finally, and the queued-cancel splice path.
+  // Per-book provenance follows queue/inProgress lifetime and is installed only after preflight succeeds.
   private origins = new Map<number, MergeOrigin>();
-  // The `merge_state` snapshot domain (#2129) — deliberately NOT one of the maps above: it is
-  // deleted BEFORE the terminal event is emitted, whereas those are cleared after. See
-  // MergeStateBroadcaster's header for the full lifecycle.
+  // merge_state clears before terminal emit; the maps above clear afterward (#2129).
   private mergeState: MergeStateBroadcaster;
 
   constructor(
@@ -95,41 +79,24 @@ export class MergeService {
     private eventHistory?: EventHistoryService,
     private eventBroadcaster?: EventBroadcasterService,
     private connectorService?: ConnectorService,
-    // Optional and TRAILING (#2078) so every existing construction site keeps compiling. That
-    // also means dropping the argument in the composition root compiles and leaves this suite
-    // green — `routes/index.test.ts` carries the same-instance assertion that catches it.
+    // Trailing optional preserves constructors; routes/index.test.ts catches omitted composition-root wiring (#2078).
     private taggingService?: TaggingService,
   ) {
     this.mergeState = new MergeStateBroadcaster(log, eventBroadcaster);
   }
 
-  /** Resolve the recorded provenance for a book, defaulting to 'manual' on a lookup miss. */
   private originFor(bookId: number): MergeOrigin {
     return this.origins.get(bookId) ?? 'manual';
   }
 
-  /**
-   * Current merge state (#2129). Synchronous and in-memory by contract: the SSE route calls it
-   * on the same tick it registers a client, so an `await` here would open a window for a newer
-   * state change to be overwritten by this now-stale greeting.
-   */
+  /** Synchronous by contract: awaiting the SSE greeting could let stale state overwrite a newer frame (#2129). */
   getMergeStateSnapshot(): MergeStateSnapshot {
     return this.mergeState.snapshot();
   }
 
   /**
-   * Record the authoritative `merge_started` row and emit its SSE twin.
-   *
-   * The history insert is **awaited** (#2099 D2): boot recovery detects an interrupted merge
-   * purely from the event log, so a merge whose start row never committed while its staging
-   * dir survived would be an orphan no later pass could ever find. A rejection therefore
-   * aborts the merge through `executeMerge`'s catch, before `stagingOwned` is set — see the
-   * `stagingOwned` gate there.
-   *
-   * The insert is *invoked* before the SSE emit (unchanged call order) but the `await` sits
-   * after it, so `safeEmit` still runs synchronously ahead of the suspension point and live
-   * Activity/book-page behavior is identical. Terminal writes (`merged` / `merge_failed`)
-   * stay best-effort/fire-and-forget — only the start row is load-bearing for recovery.
+   * Await the start row because boot recovery discovers surviving staging only from history (#2099 D2).
+   * Invoke it before SSE but await afterward, keeping live emit synchronous; terminal rows remain best-effort.
    */
   private async emitMergeStarted(bookId: number, bookTitle: string): Promise<void> {
     const recorded = this.eventHistory?.create({ bookId, bookTitle, eventType: 'merge_started', source: this.originFor(bookId) });
@@ -143,11 +110,7 @@ export class MergeService {
     safeEmit(this.eventBroadcaster, 'merge_failed', { book_id: bookId, book_title: bookTitle, error, reason }, this.log);
   }
 
-  /**
-   * Record the in-flight phase and move the `merge_state` snapshot — since #2142 retired the
-   * incremental `merge_progress` event, the snapshot broadcast this triggers is the ONLY live
-   * progress channel. `currentPhase` additionally feeds `cancelMerge`'s committing check.
-   */
+  /** Snapshot broadcasts are the only live progress channel; currentPhase also gates cancellation (#2142). */
   private updateMergeProgress(bookId: number, phase: MergePhase, percentage?: number): void {
     this.currentPhase.set(bookId, phase);
     this.mergeState.updateProgress(bookId, phase, percentage);
@@ -162,52 +125,32 @@ export class MergeService {
     }, this.log);
   }
 
-  /**
-   * Public API: validate and enqueue a merge. Returns acknowledgement immediately.
-   * `origin` records provenance ('manual' for the Merge button, 'auto' for auto-merge after a
-   * download lands); it defaults to 'manual' so the existing merge route stays unchanged.
-   */
   async enqueueMerge(bookId: number, origin: MergeOrigin = 'manual'): Promise<MergeAcknowledgement> {
-    // Synchronous duplicate check — no await gap between check and mark prevents concurrent races
+    // Keep duplicate check and mark synchronous; no await gap prevents same-book races.
     if (this.inProgress.has(bookId)) throw new MergeError('Merge already in progress for this book', 'ALREADY_IN_PROGRESS');
     if (this.queue.includes(bookId)) throw new MergeError('Merge already queued for this book', 'ALREADY_QUEUED');
 
-    // Mark in-progress immediately to block concurrent same-book requests during async validation.
-    // The settings read + setMax live INSIDE this try so a rejecting read cleans up inProgress
-    // rather than stranding the book in inProgress (every later attempt would 409 until restart).
+    // Mark before async validation; keeping the settings read inside try prevents permanent 409s on rejection.
     this.inProgress.add(bookId);
     let bookTitle: string;
     try {
-      // validateBookForMerge already reads get('processing') for the ffmpeg check — reuse its
-      // return value to size the semaphore, avoiding a duplicate (rejection-prone) read. It
-      // also hands back the title of the book it loaded, which seeds the snapshot below.
+      // Reuse validation's processing read and title; another settings read can reject and another book read would suspend.
       const validated = await validateBookForMerge(this.bookService, this.settingsService, bookId);
       bookTitle = validated.title;
-      // Refresh the concurrency limit before the start-vs-queue decision. setMax() does not wake
-      // already-queued waiters; FIFO ordering is preserved by the enqueue-time drain below (promote
-      // front-of-queue first) and the release-path drain in processNext(). Clamp defensively — a
-      // NaN/0 read would poison setMax (Math.max(1, NaN) is NaN).
+      // Refresh before admission; setMax does not wake waiters, so both enqueue and release paths drain FIFO.
       this.semaphore.setMax(clampConcurrency(validated.processing?.maxConcurrentProcessing));
     } catch (error: unknown) {
-      this.inProgress.delete(bookId); // Clean up on validation / settings-read failure
+      this.inProgress.delete(bookId);
       throw error;
     }
 
-    // Record provenance ONLY after the pre-flight try block succeeds. Storing it here (rather than
-    // before the await) means the validation `catch` above has nothing to clean up, so a
-    // rejected-at-enqueue merge (NOT_FOUND / NO_PATH / NO_STATUS / FFMPEG_NOT_CONFIGURED /
-    // NO_TOP_LEVEL_FILES / settings-read failure) leaves no stale origin for a later merge to inherit.
+    // Install provenance after preflight so a rejected enqueue cannot leak origin into a later merge.
     this.origins.set(bookId, origin);
 
-    // Start the new request immediately ONLY when nothing is queued ahead of it and a
-    // slot is free. tryAcquire() is short-circuited away when the queue is non-empty so
-    // the new request never grabs a freed slot ahead of older queued work. The release
-    // token travels with the merge that holds the slot (#1984) — each running merge owns
-    // exactly one, and its finally is the only place it is spent.
+    // Never acquire ahead of queued work. Each running merge owns exactly one release token, spent only in finally (#1984).
     const releaseSlot = this.queue.length === 0 ? this.semaphore.tryAcquire() : null;
     if (releaseSlot) {
-      // Admission (#2129): the book has a slot, so it enters the snapshot at `starting` — the
-      // same phase `merge_started` puts in the client store — and one frame goes out.
+      // Slot admission enters active(starting) in one snapshot frame (#2129).
       this.mergeState.enterActive(bookId, bookTitle);
       this.executeMerge(bookId)
         .catch((error: unknown) => {
@@ -216,36 +159,27 @@ export class MergeService {
         .finally(() => {
           this.inProgress.delete(bookId);
           this.origins.delete(bookId);
-          this.mergeState.clearResidue(bookId); // backstop for the exits that emit no terminal event
-          this.processNext(releaseSlot); // Release this merge's slot, then re-drain
+          this.mergeState.clearResidue(bookId); // Backstop for exits without a terminal event.
+          this.processNext(releaseSlot);
         });
       return { status: 'started', bookId };
     }
 
-    // No immediate slot — append the new book to the tail of the queue.
     this.inProgress.delete(bookId);
     this.queue.push(bookId);
-    // Title from the pre-flight read (#2129): the snapshot must be installable without another
-    // book read, both because the queued entry is the ONLY title source a late-joining client
-    // has for this book and because the read is a suspension point the queue mutation above
-    // must not be separated from.
+    // Capture title without another suspension; queued state is a late joiner's only title source (#2129).
     this.mergeState.enterQueued(bookId, bookTitle);
 
-    // Drain from the FRONT of the queue while slots are free (e.g. after a capacity raise).
-    // Promoting front-first guarantees older queued jobs win freed slots before the newer
-    // request just appended to the tail.
+    // A capacity raise can free slots here; drain front-first to preserve FIFO.
     this.drainQueue();
 
-    // Re-check reality before acknowledging: drainQueue may have promoted this very book if the
-    // settings read raised capacity by ≥2. The pre-drain `position` would then be a stale lie.
-    // Report the live state — started if promoted, else the current index.
+    // drainQueue may promote this book after a capacity raise; acknowledge live state, not a stale position.
     if (!this.queue.includes(bookId)) {
       return { status: 'started', bookId };
     }
     return { status: 'queued', bookId, position: this.queue.indexOf(bookId) + 1 };
   }
 
-  /** Promote queued jobs from the front while free slots can be acquired. */
   private drainQueue(): void {
     for (;;) {
       if (this.queue.length === 0) return;
@@ -256,27 +190,16 @@ export class MergeService {
     }
   }
 
-  /**
-   * Drain step after a merge finishes: release the held slot, then re-drain through the
-   * capacity-checked promotion path. Both calls are synchronous (single-threaded), so there
-   * is no release/re-acquire interleave window — the old slot-pass pattern existed only to
-   * guard a gap that cannot occur here, and it bypassed capacity entirely (a SHRINK never
-   * took effect while a backlog existed because the slot was handed forward without
-   * consulting max). Releasing first lets drainQueue's tryAcquire honor the current max.
-   */
+  /** Release then reacquire synchronously; passing the old slot forward bypassed max and defeated capacity shrink. */
   private processNext(releaseSlot: SemaphoreRelease): void {
     releaseSlot();
     this.drainQueue();
   }
 
-  /** Run a queued merge that already holds a semaphore slot (its token, minted by drainQueue's tryAcquire). */
   private startQueuedMerge(bookId: number, releaseSlot: SemaphoreRelease): void {
     this.inProgress.add(bookId);
 
-    // Promotion (#2129) — queued → active(`starting`) is ONE snapshot transition and therefore
-    // ONE frame: the book never appears in both lists, and never in neither. The title carries
-    // over from the queued entry (captured at enqueue), so no book read is needed here either;
-    // the remaining queued books' new positions are implicit in that same frame's FIFO order.
+    // Promote queued→active(starting) atomically; carry the captured title and remaining FIFO positions in one frame (#2129).
     this.mergeState.enterActive(bookId, this.mergeState.titleFor(bookId));
 
     this.executeWithRevalidation(bookId)
@@ -286,29 +209,18 @@ export class MergeService {
       .finally(() => {
         this.inProgress.delete(bookId);
         this.origins.delete(bookId);
-        this.mergeState.clearResidue(bookId); // backstop for the exits that emit no terminal event
-        this.processNext(releaseSlot); // Release this merge's slot, then re-drain
+        this.mergeState.clearResidue(bookId); // Backstop for exits without a terminal event.
+        this.processNext(releaseSlot);
       });
   }
 
-  /**
-   * Re-validate a queued merge before executing. On dequeue-time failure, emit merge_failed and skip.
-   *
-   * The two phases are caught separately so that exactly ONE handler owns the terminal event for
-   * any given failure. The revalidation gate owns its own rejections — the merge never started, so
-   * nothing else has reported it. Everything `executeMerge` throws is already terminal-reported by
-   * its own catch (which emits `merge_complete`/`merge_failed` and clears the snapshot before
-   * rethrowing), including the `MergeError` its post-recovery merge-minimum guard raises; a second
-   * emission here would send a duplicate failure toast and write a duplicate event-history row.
-   * Rethrown failures are therefore only logged, exactly like the non-`MergeError` ones.
-   */
+  /** Revalidation owns pre-execution terminal events; executeMerge reports before rethrow, so this layer must only log. */
   private async executeWithRevalidation(bookId: number): Promise<void> {
     try {
       await validateDequeueTime(this.bookService, bookId);
     } catch (error: unknown) {
       if (error instanceof MergeError) {
-        // Title from the snapshot the promotion installed, so the terminal sequence below stays
-        // await-free (the book is always in `active` here — `startQueuedMerge` put it there).
+        // Use the promoted snapshot title to keep terminal sequencing await-free.
         const bookTitle = this.mergeState.titleFor(bookId);
         this.mergeState.finishTerminal(bookId, () => this.emitMergeFailed(bookId, bookTitle, error.message));
       } else {
@@ -324,31 +236,20 @@ export class MergeService {
     }
   }
 
-  /** Execute a merge for a book that already has an acquired semaphore slot. Returns MergeResult. */
   private async executeMerge(bookId: number): Promise<MergeResult> {
     const controller = new AbortController();
     this.abortControllers.set(bookId, controller);
 
-    // Does THIS execution own `stagingDir`? Flipped true immediately before `runStaging`, whose
-    // first two statements are the staging `rm` + `mkdir` — from that point the path belongs to
-    // this merge and the catch may delete it. Before that point the path is deterministic but
-    // *unclaimed*, and may still hold a prior crash's orphan awaiting boot recovery (#2099 D2):
-    // deleting it there would downgrade a `pre-commit` recovery candidate to `no-staging` and
-    // silently forfeit its automatic re-queue.
+    // Before runStaging's rm+mkdir, this deterministic path may be a crash orphan needed by boot recovery; delete only after ownership (#2099 D2).
     let stagingOwned = false;
     let stagingDir: string | undefined;
 
-    // Assigned inside the try: a REJECTED read (transport error) must route through the catch —
-    // merge_failed + the finally's controller/phase cleanup — not bypass both, leak the
-    // AbortController entry, and leave the chip to vanish silently via the backstop.
+    // Assign inside try so a rejected read still emits failure and clears controller/phase state.
     let book: Awaited<ReturnType<BookService['getById']>> = null;
 
     try {
       book = await this.bookService.getById(bookId);
-      // Pre-flight guards, thrown as MergeError (#2142) so the catch below reports them through
-      // the SAME `merge_failed` terminal the queued path's revalidation uses. Previously these
-      // returned a success-shaped MergeResult with no terminal event — the operator watched the
-      // chip appear and silently vanish, with `clearResidue` as the only cleanup.
+      // Throw guards through the common merge_failed path; success-shaped returns made the client chip vanish silently (#2142).
       if (!book || !book.path) throw new MergeError('Book not found', 'NOT_FOUND');
       const bookPath = book.path;
 
@@ -358,47 +259,29 @@ export class MergeService {
 
       const librarySettings = await this.settingsService.get('library');
 
-      // Born-hidden staging dir (AC11): `.<book>.merge-tmp` — dot-led basename so its populated
-      // multi-GB audio is invisible to ABS/scanners for the whole merge, yet stays a sibling on the
-      // same filesystem (atomic finalize rename preserved). Its owner still enumerates it by identity.
+      // Dot-hide staging from scanners while keeping it a same-filesystem sibling for atomic rename (AC11).
       stagingDir = dotPrefixBasename(bookPath + '.merge-tmp');
 
-      // The authoritative start row lands FIRST, before any filesystem mutation this execution
-      // owns (#2099 D2). A rejected insert routes straight to the catch → `merge_failed`, with
-      // `stagingOwned` still false, so the staging path is left exactly as it was found.
+      // Commit the recovery row before owning or mutating staging (#2099 D2).
       await this.emitMergeStarted(bookId, book.title);
 
-      // Converge any interrupted commit-pending marker at bookPath BEFORE any staging
-      // work (#1418). A killed import can leave bookPath with an armed marker + populated
-      // `.import-bak`; without recovery, the merge output lands inside an armed path and a
-      // later import/boot recovery silently reverts the merge by restoring `.import-bak`.
-      // Recovery runs inside the try so a failure (BackupRecoveryError / MarkerPathConflictError
-      // / raw stat error) routes to the catch → merge_failed + `.merge-tmp` cleanup, before
-      // any ffmpeg work. It costs no staging work on failure.
+      // Recover an armed import marker before staging, or later boot recovery can restore .import-bak over merged output (#1418).
       await recoverInterruptedCommit(bookPath, librarySettings.path, this.log);
 
-      // Read the top-level audio set AFTER recovery — recovery can restore a different
-      // original set into bookPath, and this list feeds both runStaging (what gets merged)
-      // and commitMerge's originals-deletion. Reading it before recovery would stage/delete
-      // a stale file list.
+      // Recovery can replace the source set; list afterward so staging and deletion use the same converged files.
       const topLevelAudioFiles = await listTopLevelAudioFiles(bookPath);
 
-      // Re-validate the merge minimum on the CONVERGED folder (F9): recovery can shrink a
-      // previously-valid queued merge below two top-level audio files, and processAudioFiles
-      // won't merge a single-file candidate even with mergeBehavior 'always'. Abort before
-      // runStaging/commitMerge — the throw routes to the catch → merge_failed + cleanup.
-      // Shared with the eligibility gates (#2142) so this mid-execution failure can never
-      // drift from the enqueue-time refusal.
+      // Recovery may shrink a valid queue entry below the shared merge minimum; reject before staging/commit (#2062/#2142 F9).
       requireMergeMinimum(topLevelAudioFiles);
 
       this.updateMergeProgress(bookId, 'staging');
-      stagingOwned = true; // runStaging's first act is `rm` + `mkdir` on stagingDir — it is ours now
+      stagingOwned = true; // runStaging claims the path with rm+mkdir.
       const { stagedOutput, warnings: processingWarnings } = await this.runStaging(
         stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, { ...processingSettings, ffmpegPath },
         bookId, librarySettings.fileFormat, toNamingOptions(librarySettings), controller.signal,
       );
 
-      // Check abort signal before committing (cooperative cancel during verifying)
+      // Check the abort signal before committing; cancellation during verification is cooperative.
       if (controller.signal.aborted) {
         throw new Error('Cancelled by user');
       }
@@ -406,10 +289,7 @@ export class MergeService {
       this.updateMergeProgress(bookId, 'committing');
       const outputPath = await this.commitMerge(stagingDir, stagedOutput, bookPath, topLevelAudioFiles, bookId, book);
 
-      // Layer 2 (#2078): re-tag the merged output from canonical DB state. It has to run AFTER
-      // commitMerge — `retagBook` resolves the directory from `book.path` itself, which holds
-      // the un-merged source parts until the commit lands (and the staging dir never receives
-      // `cover.jpg`, so it is not a candidate at all).
+      // Retag after commit: canonical book.path still contains unmerged parts before then, and staging lacks cover art (#2078).
       const taggingWarnings = await retagMergedOutput({
         db: this.db, settingsService: this.settingsService, log: this.log,
         taggingService: this.taggingService, connectorService: this.connectorService,
@@ -424,28 +304,23 @@ export class MergeService {
       }
 
       this.log.info({ bookId, outputPath, filesReplaced: topLevelAudioFiles.length }, 'Book merged');
-      // Fold the processing notices into the operator-visible completion message — the
-      // existing `message` string, so the merge_complete event contract stays untouched.
+      // Reuse the existing message field for warnings without changing the merge_complete contract.
       const mergedSummary = `Merged ${topLevelAudioFiles.length} files into ${basename(stagedOutput)}`;
       const allWarnings = [...processingWarnings, ...taggingWarnings];
       const message = allWarnings.length > 0
         ? `${mergedSummary} (${allWarnings.join('; ')})`
         : mergedSummary;
-      // Const capture: `book` is a `let` (assigned in this try), so the closure would re-widen
-      // it to nullable — the narrowed title is taken here, in straight-line code.
+      // Capture before the closure so TypeScript retains the non-null narrowing.
       const completedTitle = book.title;
       this.mergeState.finishTerminal(bookId, () => this.emitMergeComplete(bookId, completedTitle, message, enrichmentWarning));
       return { bookId, outputFile: outputPath, filesReplaced: topLevelAudioFiles.length, message, ...(enrichmentWarning !== undefined && { enrichmentWarning }) };
     } catch (error: unknown) {
       const errorMessage = getErrorMessage(error);
       const reason: MergeFailedReason = controller.signal.aborted ? 'cancelled' : 'error';
-      // The vanished-book guard leaves no row to name — fall back to the snapshot title captured
-      // at admission (both entry paths install it before executeMerge runs).
+      // A vanished row falls back to the title captured in the admission snapshot.
       const bookTitle = book?.title ?? this.mergeState.titleFor(bookId);
       this.mergeState.finishTerminal(bookId, () => this.emitMergeFailed(bookId, bookTitle, errorMessage, reason));
-      // Only clean what this execution claimed. An abort before `runStaging` (rejected start
-      // insert, `recoverInterruptedCommit` failure, the post-recovery `< 2 files` guard) leaves
-      // the path untouched — including a prior crash's orphan, which boot recovery still needs.
+      // Preserve unclaimed crash residue; only this execution's staging may be removed.
       if (stagingOwned && stagingDir !== undefined) {
         try { await rm(stagingDir, { recursive: true, force: true }); } catch { /* best-effort */ }
       }
@@ -456,13 +331,7 @@ export class MergeService {
     }
   }
 
-  /**
-   * Surface the encode-strategy notices (and cover-art degradations) at warn on BOTH outcomes.
-   *
-   * The stderr deduplicator logs at debug, which the shipped default log level hides, and a run
-   * that adjusted a bitrate and then failed for an unrelated reason must still report the
-   * adjustment — which is why the failure variant carries `warnings` too.
-   */
+  /** Warn on processing notices for both outcomes; deduplicated stderr is debug-only and failures can still carry adjustments. */
   private reportProcessingWarnings(bookId: number, result: ProcessingResult): string[] {
     const warnings = result.warnings ?? [];
     for (const warning of warnings) {
@@ -471,11 +340,6 @@ export class MergeService {
     return warnings;
   }
 
-  /**
-   * Steps 1-5: copy to staging, process, verify. Returns the staged output filename (extension
-   * follows outputFormat) plus the processing warnings, which the caller folds into the
-   * operator-visible completion message.
-   */
   private async runStaging(
     stagingDir: string,
     book: RenameableBook & { path: string; authors?: Array<{ name: string }> | null; audioBitrate?: number | null },
@@ -486,11 +350,7 @@ export class MergeService {
     namingOptions: NamingOptions,
     signal?: AbortSignal,
   ): Promise<{ stagedOutput: string; warnings: string[] }> {
-    // Reset the deterministic staging dir to empty before copying (Change 4 / F25). A prior kill
-    // can leave stale (non-dot) audio inside this exact path; the owning merge reopens it by
-    // identity and would otherwise fold that residue into the result. A failure to empty it throws
-    // here → routed by executeMerge's catch to `merge_failed` (ordinary failure path, no new error).
-    // It only ever touches this merge's OWN staging dir, never one another active op could own.
+    // Ownership is established; clear crash residue or it could be folded into the output (F25).
     await rm(stagingDir, { recursive: true, force: true });
     await mkdir(stagingDir, { recursive: true });
 
@@ -502,7 +362,6 @@ export class MergeService {
     const sourceBitrateKbps = toSourceBitrateKbps(book.audioBitrate);
     const targetBitrateKbps = processingSettings.keepOriginalBitrate ? undefined : processingSettings.bitrate;
 
-    // Build stderr deduplicator for logging
     const stderrDedup = createStderrDeduplicator(this.log);
 
     this.updateMergeProgress(bookId, 'processing');
@@ -513,16 +372,10 @@ export class MergeService {
       outputFormat,
       ...(targetBitrateKbps !== undefined && { bitrate: targetBitrateKbps }),
       ...(sourceBitrateKbps !== undefined && { sourceBitrateKbps }),
-      // Manual Merge and auto-merge always merge by design (decision (a)): merging is the whole
-      // point of this path, so anything short of 'always' would make it silently do nothing. This
-      // is the only production caller of the core `mergeBehavior` parameter (#2056).
-      mergeBehavior: 'always',
     }, {
       author: authorName,
       title: book.title,
-      // Thread the library fileFormat + book-level tokens so a merged filename matches the
-      // rest of the library. Empty fileFormat (legacy/fixture) omits it → `${author} - ${title}`
-      // fallback; the settings form rejects an empty value, so this is non-empty in normal use.
+      // Legacy empty fileFormat omits template context and falls back to `${author} - ${title}`.
       ...buildNamingContext(book, authorName || null, fileFormat, namingOptions),
     }, {
       onProgress: (_phase, percentage) => {
@@ -561,7 +414,6 @@ export class MergeService {
     return { stagedOutput, warnings };
   }
 
-  /** Step 7: move the staged output to book.path, update DB size, delete originals, clean staging. */
   private async commitMerge(
     stagingDir: string,
     stagedOutput: string,
@@ -573,25 +425,20 @@ export class MergeService {
     const outputPath = join(bookPath, stagedOutput);
     await rename(join(stagingDir, stagedOutput), outputPath);
 
-    // Update DB immediately after the first irreversible step (rename).
-    // If this fails, the merged M4B is still valid at outputPath; originals remain untouched.
+    // Update DB after rename but before deleting originals; a DB failure leaves both valid copies.
     const fileStats = await stat(outputPath);
     await this.db.update(books).set({ size: fileStats.size, updatedAt: new Date() }).where(eq(books.id, bookId));
 
     for (const file of originalsToDelete) {
-      if (file === stagedOutput) continue; // skip: this is the output file we just moved in
+      if (file === stagedOutput) continue;
       try {
         await unlink(join(bookPath, file));
       } catch {
-        // Best-effort: file may have already been removed
+        // Best-effort; a prior cleanup may already have removed it.
       }
     }
 
-    // The originals are now deleted — the irreversible media-visible swap is done. Fire the
-    // connector refresh HERE, before the staging `rm` below, so a throw in `rm` (the only step
-    // that can fail after this point — the DB update already ran above) can't suppress it: ABS/Plex
-    // still reference the now-deleted originals and need a rescan. A merge that fails at/before the
-    // DB size update fires nothing (the originals are still intact at that point).
+    // Refresh after deleting originals but before staging cleanup; cleanup failure must not suppress the now-required rescan.
     enqueueBookRefresh(this.connectorService, this.log, 'merge', {
       bookId, title: book.title, authorName: book.authors?.[0]?.name ?? null, libraryPath: bookPath,
     });
@@ -601,28 +448,21 @@ export class MergeService {
     return outputPath;
   }
 
-  /** Cancel a queued or in-progress merge. Returns status for the route to map to HTTP codes. */
   async cancelMerge(bookId: number): Promise<CancelResult> {
-    // Check queue first
     const queueIdx = this.queue.indexOf(bookId);
     if (queueIdx !== -1) {
       this.queue.splice(queueIdx, 1);
-      // Title from the snapshot the enqueue installed (#2129) — no book read, so the terminal
-      // sequence below stays await-free.
+      // Use the enqueue snapshot title to keep terminal sequencing await-free (#2129).
       const bookTitle = this.mergeState.titleFor(bookId);
-      // Emit BEFORE clearing the origin so the cancelled event carries the enqueued provenance,
-      // then clean up (this item never entered `inProgress`, so this is its only cleanup site).
-      // Same three-step terminal order as a running merge: drop the state, emit, broadcast —
-      // and that cleared snapshot already carries the remaining queue's new FIFO positions.
+      // Finish before clearing origin so cancellation retains provenance and broadcasts updated FIFO positions.
       this.mergeState.finishTerminal(bookId, () => this.emitMergeFailed(bookId, bookTitle, 'Cancelled by user', 'cancelled'));
       this.origins.delete(bookId);
       return { status: 'cancelled' };
     }
 
-    // Check in-progress
     const phase = this.currentPhase.get(bookId);
     if (!phase) {
-      // Also check if the controller exists (merge may be between inProgress.add and first emitMergeProgress)
+      // Controller exists before the first phase update, leaving a cancellation race window.
       const controller = this.abortControllers.get(bookId);
       if (controller) {
         controller.abort();
@@ -635,7 +475,6 @@ export class MergeService {
       return { status: 'committing' };
     }
 
-    // Cancel the in-progress merge by aborting its controller
     const controller = this.abortControllers.get(bookId);
     if (!controller) {
       return { status: 'not-found' };

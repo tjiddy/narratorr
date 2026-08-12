@@ -16,8 +16,7 @@ import { NotificationsSettings } from './NotificationsSettings';
 import type { Mock } from 'vitest';
 
 vi.mock('@/lib/api', async (importOriginal) => ({
-  // Preserve the real ApiError export — useCrudSettings references it at runtime
-  // (#1404) when surfacing server error messages on mutation rejection.
+  // useCrudSettings needs the real ApiError export at runtime.
   ...(await importOriginal<typeof import('@/lib/api')>()),
   api: {
     getNotifiers: vi.fn(),
@@ -91,7 +90,7 @@ describe('NotificationsSettings', () => {
 
     await user.click(screen.getByText('Add Notifier').closest('button')!);
     await user.type(screen.getByPlaceholderText('My Webhook'), 'New Discord');
-    // Default type is webhook — switch to discord. Multiple selects exist (type + method), target by name.
+    // Multiple selects exist; target the notifier type by name.
     const typeSelect = document.querySelector('select[name="type"]') as HTMLSelectElement;
     await user.selectOptions(typeSelect, 'discord');
     await user.type(screen.getByPlaceholderText('https://discord.com/api/webhooks/...'), 'https://discord.com/api/webhooks/999');
@@ -223,7 +222,6 @@ describe('NotificationsSettings', () => {
 
       await user.click(screen.getByText('Add Notifier').closest('button')!);
 
-      // Form should be in a modal portal (modal-backdrop exists)
       expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
     });
 
@@ -261,7 +259,6 @@ describe('NotificationsSettings', () => {
       await waitForListLoad('My Discord');
 
       await user.click(screen.getByText('Add Notifier').closest('button')!);
-      // Fill required fields to submit
       await user.type(screen.getByPlaceholderText('My Webhook'), 'Test');
       await user.type(screen.getByPlaceholderText('https://example.com/webhook'), 'https://example.com');
       await user.click(screen.getByText('Add Notifier', { selector: 'button[type="submit"]' }));
@@ -270,7 +267,6 @@ describe('NotificationsSettings', () => {
         expect(api.createNotifier).toHaveBeenCalled();
       });
 
-      // Escape should NOT close modal while pending
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
       expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
     });

@@ -8,37 +8,30 @@ import {
   submissionQuerySchema,
   submissionListQuerySchema,
   submissionAttentionQuerySchema,
+  submissionBulkDeleteQuerySchema,
   clientSubmissionIdSchema,
   SUBMISSION_ERROR_CODES,
 } from '@core/import-staging/schemas.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { idParamSchema } from '@shared/schemas/common.js';
 
-/** Positive-integer :id path param — the canonical shared contract (F46, DRY-2/ZOD-2). */
 const submissionIdParamSchema = idParamSchema;
 
 const byClientParamSchema = z.object({ clientSubmissionId: clientSubmissionIdSchema });
 
-/** Per-route headroom: a single staged item can approach ~900 KiB + envelope. */
-const PUT_BODY_LIMIT = 4 * 1024 * 1024; // 4 MiB
+// One staged item can approach 900 KiB; leave room for envelope overhead.
+const PUT_BODY_LIMIT = 4 * 1024 * 1024;
 
-/** Map a thrown SubmissionError → its typed HTTP status + named code (+ gaps). */
 function sendSubmissionError(reply: FastifyReply, err: SubmissionError): FastifyReply {
   return reply.status(err.httpStatus).send({ error: err.code, message: err.message, ...(err.gaps ? { gaps: err.gaps } : {}) });
 }
 
-/**
- * Staged import submission routes (#1893). Inert upload → finalize → server-owned
- * processing, plus the query-selected durable-record GETs. All bodies/queries are
- * validated with the strict core schemas; schema failures return a typed 400.
- */
+/** Register staged upload, processing, and durable-report endpoints. */
 export async function importSubmissionsRoutes(
   app: FastifyInstance,
   staging: ImportStagingService,
   report: ImportSubmissionReportService,
 ): Promise<void> {
-  // Paginated durable-record list (#1894) — newest-first, summary rows. Also backs
-  // the last-import panel's "latest" read via `limit=1` + `source`.
   app.get('/api/import/submissions', async (request, reply) => {
     const parsed = submissionListQuerySchema.safeParse(request.query);
     if (!parsed.success) return reply.status(400).send({ error: 'invalid-query', message: parsed.error.message });
@@ -51,8 +44,7 @@ export async function importSubmissionsRoutes(
     }
   });
 
-  // Server-authoritative attention read (#1894) — the single newest attention-worthy
-  // submission in scope + a `watch` flag driving the client's poll cadence. Always JSON.
+  // Always return JSON; watch controls the client's polling cadence.
   app.get('/api/import/submissions/attention', async (request, reply) => {
     const parsed = submissionAttentionQuerySchema.safeParse(request.query);
     if (!parsed.success) return reply.status(400).send({ error: 'invalid-query', message: parsed.error.message });
@@ -65,7 +57,6 @@ export async function importSubmissionsRoutes(
     }
   });
 
-  // Create-or-return by clientSubmissionId.
   app.post('/api/import/submissions', async (request, reply) => {
     const parsed = createSubmissionBodySchema.safeParse(request.body);
     if (!parsed.success) return reply.status(400).send({ error: 'invalid-body', message: parsed.error.message });
@@ -79,7 +70,6 @@ export async function importSubmissionsRoutes(
     }
   });
 
-  // Chunked inert upload.
   app.put('/api/import/submissions/:id/items', { bodyLimit: PUT_BODY_LIMIT }, async (request, reply) => {
     const idResult = submissionIdParamSchema.safeParse(request.params);
     if (!idResult.success) return reply.status(400).send({ error: 'invalid-id', message: 'Invalid submission id' });
@@ -95,7 +85,6 @@ export async function importSubmissionsRoutes(
     }
   });
 
-  // Finalize (idempotent).
   app.post('/api/import/submissions/:id/finalize', async (request, reply) => {
     const idResult = submissionIdParamSchema.safeParse(request.params);
     if (!idResult.success) return reply.status(400).send({ error: 'invalid-id', message: 'Invalid submission id' });
@@ -109,9 +98,7 @@ export async function importSubmissionsRoutes(
     }
   });
 
-  // Query-selected durable record by id. Delegation split (F87): the detail arm
-  // (`includeItems=true`) goes to the report service's projection (no `itemPayload`,
-  // accepted `item` omitted); the summary arm stays on the staging full-row loader.
+  // Detail uses the report projection to exclude itemPayload and accepted item bodies.
   app.get('/api/import/submissions/:id', async (request, reply) => {
     const idResult = submissionIdParamSchema.safeParse(request.params);
     if (!idResult.success) return reply.status(400).send({ error: 'invalid-id', message: 'Invalid submission id' });
@@ -129,21 +116,32 @@ export async function importSubmissionsRoutes(
     }
   });
 
-  // Discard a still-'receiving' submission (#1894) — atomic on the write lane.
   app.delete('/api/import/submissions/:id', async (request, reply) => {
     const idResult = submissionIdParamSchema.safeParse(request.params);
     if (!idResult.success) return reply.status(400).send({ error: 'invalid-id', message: 'Invalid submission id' });
     try {
-      const result = await staging.discardReceiving(idResult.data.id);
+      const result = await staging.deleteSubmission(idResult.data.id);
       return await reply.status(200).send(result);
     } catch (error: unknown) {
       if (error instanceof SubmissionError) return sendSubmissionError(reply, error);
-      request.log.error({ error: serializeError(error), submissionId: idResult.data.id }, 'Staged import discard failed');
+      request.log.error({ error: serializeError(error), submissionId: idResult.data.id }, 'Staged import delete failed');
       throw error;
     }
   });
 
-  // Query-selected durable record by clientSubmissionId (by-client recovery lookup).
+  // The eligibility predicate is server-owned, so the clear accepts no parameters at all.
+  app.delete('/api/import/submissions', async (request, reply) => {
+    const parsed = submissionBulkDeleteQuerySchema.safeParse(request.query);
+    if (!parsed.success) return reply.status(400).send({ error: 'invalid-query', message: parsed.error.message });
+    try {
+      const result = await staging.deleteCleanCompleted();
+      return await reply.status(200).send(result);
+    } catch (error: unknown) {
+      request.log.error({ error: serializeError(error) }, 'Staged import bulk clear failed');
+      throw error;
+    }
+  });
+
   app.get('/api/import/submissions/by-client/:clientSubmissionId', async (request, reply) => {
     const paramResult = byClientParamSchema.safeParse(request.params);
     if (!paramResult.success) return reply.status(400).send({ error: 'invalid-client-id', message: 'Invalid clientSubmissionId' });

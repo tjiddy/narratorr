@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { serializeError } from './serialize-error.js';
+import { serializeError, redactUrlsInText } from './serialize-error.js';
 
 describe('serializeError', () => {
   describe('Error instances', () => {
@@ -84,14 +84,12 @@ describe('serializeError', () => {
     });
 
     it('serializes cause chain at exactly the depth cap', () => {
-      // Build a chain of exactly 5 levels (depth cap)
       let err: Error = new Error('level 0');
       for (let i = 1; i < 5; i++) {
         err = new Error(`level ${i}`, { cause: err });
       }
       const result = serializeError(err);
 
-      // Walk the chain — should have all 5 levels
       let current = result;
       for (let i = 4; i >= 1; i--) {
         expect(current.message).toBe(`level ${i}`);
@@ -102,14 +100,12 @@ describe('serializeError', () => {
     });
 
     it('truncates cause chain exceeding depth cap without crash', () => {
-      // Build a chain of 10 levels — should be truncated at 5
       let err: Error = new Error('level 0');
       for (let i = 1; i < 10; i++) {
         err = new Error(`level ${i}`, { cause: err });
       }
       const result = serializeError(err);
 
-      // Count depth
       let depth = 0;
       let current: typeof result | undefined = result;
       while (current) {
@@ -128,7 +124,6 @@ describe('serializeError', () => {
 
       expect(result.message).toBe('circular');
       expect(result.type).toBe('Error');
-      // Should not have infinite cause chain
       expect(result.cause).toBeUndefined();
     });
 
@@ -140,7 +135,6 @@ describe('serializeError', () => {
       const result = serializeError(a);
       expect(result.message).toBe('A');
       expect(result.cause!.message).toBe('B');
-      // The cycle should be broken
       expect(result.cause!.cause).toBeUndefined();
     });
   });
@@ -241,12 +235,57 @@ describe('serializeError', () => {
       expect(result.message).not.toContain('passkey');
     });
 
+    it('strips secret-shaped query params from a URL embedded in err.code', () => {
+      const err = Object.assign(new Error('request failed'), {
+        code: 'connect ECONNREFUSED https://mam.test/tor/js/loadSearch.php?mam_id=SECRETID',
+      });
+      const result = serializeError(err);
+      expect(result.code).toContain('https://mam.test/tor/js/loadSearch.php');
+      expect(result.code).not.toContain('SECRETID');
+      expect(result.code).not.toContain('mam_id');
+    });
+
+    it('redacts a URL-bearing .code on a nested cause', () => {
+      const cause = Object.assign(new Error('upstream'), {
+        code: 'FETCH https://example.com/api?apikey=secret123',
+      });
+      const result = serializeError(new Error('wrapped', { cause }));
+      expect(result.cause?.code).toContain('https://example.com/api');
+      expect(result.cause?.code).not.toContain('secret123');
+    });
+
+    it('leaves a symbolic .code untouched', () => {
+      const err = Object.assign(new Error('missing'), { code: 'ENOENT' });
+      expect(serializeError(err).code).toBe('ENOENT');
+    });
+
     it('preserves prose around the URL after redaction', () => {
       const err = new Error('Newznab API failed at https://nzbgeek.info/api?apikey=ABC&q=x — retry later');
       const result = serializeError(err);
       expect(result.message).toMatch(/^Newznab API failed at https:\/\/nzbgeek\.info\/api/);
       expect(result.message).toContain('— retry later');
       expect(result.message).not.toContain('ABC');
+    });
+  });
+
+  describe('redactUrlsInText (exported string-level redactor)', () => {
+    it('redacts a secret-bearing URL in a bare string', () => {
+      const redacted = redactUrlsInText('EACCES: failed at https://example.com/api?apikey=secret123');
+      expect(redacted).toBe('EACCES: failed at https://example.com/api');
+    });
+
+    it('collapses a magnet URI in a bare string', () => {
+      const infoHash = 'b'.repeat(40);
+      expect(redactUrlsInText(`magnet:?xt=urn:btih:${infoHash}&tr=x`)).toBe(`magnet:[${infoHash}]`);
+    });
+
+    it('returns a string with no URL unchanged', () => {
+      expect(redactUrlsInText('ENOENT: no such file or directory')).toBe('ENOENT: no such file or directory');
+    });
+
+    it('is idempotent — redacting an already-redacted string is a no-op', () => {
+      const once = redactUrlsInText('failed at https://example.com/api?apikey=secret123');
+      expect(redactUrlsInText(once)).toBe(once);
     });
   });
 

@@ -11,11 +11,7 @@ const previewTokenPayloadSchema = z.object({
 
 export type PreviewTokenPayload = z.infer<typeof previewTokenPayloadSchema>;
 
-// 4 hours: long enough to outlast a large library-import review session. Sorting
-// hundreds of discoveries routinely ran past the old 30-minute window, after
-// which previewing a row 403s and the only recovery was a rescan that discards
-// in-progress review/selection state. The route is auth-gated and the token is a
-// per-file path *scope* (not the auth boundary), so a longer window is low-risk.
+// Four hours covers long import reviews; this token scopes a file but does not authenticate.
 const TOKEN_TTL_MS = 4 * 60 * 60 * 1000;
 
 /** Derive a purpose-specific signing key so preview tokens don't reuse the raw encryption key. */
@@ -44,9 +40,7 @@ export function verifyPreviewToken(token: string): PreviewTokenPayload | null {
   const [body, sig] = parts as [string, string];
   if (!body || !sig) return null;
 
-  // SHA-256 both signatures to a fixed length (32 bytes) BEFORE timingSafeEqual —
-  // matches existing pattern in src/server/services/auth.service.ts:283-287 and :328-332.
-  // An early raw-length-mismatch return would leak signature length via timing.
+  // Hash to equal lengths before timingSafeEqual; an early length check leaks timing.
   const expected = sign(body);
   const sigHash = createHash('sha256').update(sig).digest();
   const expectedHash = createHash('sha256').update(expected).digest();

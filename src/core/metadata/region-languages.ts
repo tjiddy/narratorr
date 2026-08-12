@@ -1,4 +1,4 @@
-/** Primary language for each Audible region — used to filter candidates by language. */
+/** Primary language used to prefer Audible results for each region. */
 export const REGION_LANGUAGES: Record<string, string> = {
   us: 'english',
   ca: 'english',

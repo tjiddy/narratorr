@@ -11,6 +11,7 @@ import { serializeError } from '../utils/serialize-error.js';
 import { HardcoverClient } from '@core/metadata/hardcover.js';
 import { mapHardcoverError } from '../utils/hardcover-error.js';
 import { resolveFfmpegPath, probeFfmpeg } from '@core/utils/audio-processor.js';
+import { resolveMutagenDetection, probeMutagen } from '@core/utils/mutagen-resolver.js';
 import { triggerCompanionSweep, type CompanionSweepTrigger } from '../services/companion-ebook-trigger.js';
 import {
   snapshotCompanionSettings,
@@ -66,13 +67,11 @@ export async function settingsRoutes(
   healthCheckService?: HealthCheckService,
   companionEbook?: CompanionSweepTrigger,
 ) {
-  // GET /api/settings
   app.get('/api/settings', async () => {
     const all = await settingsService.getAll();
     return maskSettingsResponse(all);
   });
 
-  // PUT /api/settings
   app.put<{ Body: UpdateSettingsInput }>(
     '/api/settings',
     {
@@ -83,15 +82,11 @@ export async function settingsRoutes(
     async (request) => {
       const data = request.body;
 
-      // Snapshot current network settings before update to detect actual changes
       const previousNetwork = data.network && indexerService
         ? await settingsService.get('network')
         : undefined;
 
-      // #1960 AC25–AC25d — the same snapshot-and-compare shape, for the companion sweep.
-      // `finally`-shaped because `SettingsService.update` writes categories one at a time
-      // with no transaction: a request can durably persist `library.path` or
-      // `companionEpub.enabled` and then reject on a later category.
+      // Updates are nontransactional; a later category can fail after companion settings persist.
       const companionBefore = await snapshotCompanionSettings(settingsService, data);
       const sweep = (): void => triggerCompanionSweep(
         companionEbook, request.log, 'Companion ebook sweep failed after settings update',
@@ -101,23 +96,18 @@ export async function settingsRoutes(
       try {
         result = await settingsService.update(data);
       } catch (error: unknown) {
-        // The recovery read is itself guarded per-arm; whatever it decides, the ORIGINAL
-        // settings error is what propagates — same status, same body.
+        // Recovery must not replace the original settings error.
         if (await recoverCompanionSettingsChange(settingsService, companionBefore, request.log)) sweep();
         throw error;
       }
       if (companionSettingsChangeFired(companionBefore, result)) sweep();
 
-      // Apply log level change at runtime
       if (data.general?.logLevel) {
         app.log.level = data.general.logLevel;
         app.log.info({ level: data.general.logLevel }, 'Log level changed');
       }
 
-      // Clear indexer adapter cache only when network settings actually changed
-      // so proxy URL changes take effect on next request.
-      // Normalize sentinel values before comparison — '********' means "unchanged",
-      // so replace sentinels with the previous values to avoid false positives.
+      // Normalize masked secrets so unchanged credentials do not clear the adapter cache.
       if (previousNetwork && indexerService && data.network) {
         const normalized = { ...data.network } as Record<string, unknown>;
         const prev = previousNetwork as Record<string, unknown>;
@@ -138,14 +128,7 @@ export async function settingsRoutes(
     }
   );
 
-  // GET /api/settings/ffmpeg-status — auto-detected ffmpeg (the editable path field was
-  // removed in favor of auto-detection + the FFMPEG_PATH override). Powers the Audio Tools
-  // status row and the ffmpeg-gated Post Processing toggles.
-  //
-  // NOTE (deliberate divergence): this route runs a fresh probe (path exists AND runs),
-  // while the service gates (merge/tagging/bulk) check only resolveFfmpegPath() truthiness.
-  // Intentional — ffmpeg does not appear/disappear at runtime inside the container, so the
-  // richer status here is display-only and the cheaper gate is enough for admission.
+  // Display status probes the binary; service gates only resolve its stable container path.
   app.get('/api/settings/ffmpeg-status', async (request) => {
     const path = await resolveFfmpegPath();
     if (!path) return { detected: false };
@@ -158,7 +141,20 @@ export async function settingsRoutes(
     }
   });
 
-  // POST /api/settings/test-proxy
+  // Tag embedding gates on mutagen, not ffmpeg — the two rows in Post Processing now report
+  // different binaries, which is the intended end state (#2210 D5/D8).
+  app.get('/api/settings/mutagen-status', async (request) => {
+    const detection = await resolveMutagenDetection();
+    if (!detection) return { detected: false };
+    try {
+      const version = await probeMutagen(detection.python);
+      return { detected: true, version, path: detection.python };
+    } catch (error: unknown) {
+      request.log.warn({ error: serializeError(error) }, 'mutagen detected but failed to probe');
+      return { detected: false };
+    }
+  });
+
   app.post<{ Body: z.infer<typeof testProxySchema> }>(
     '/api/settings/test-proxy',
     {
@@ -190,7 +186,6 @@ export async function settingsRoutes(
     }
   );
 
-  // POST /api/settings/metadata/hardcover/test
   app.post<{ Body: z.infer<typeof testHardcoverSchema> }>(
     '/api/settings/metadata/hardcover/test',
     {

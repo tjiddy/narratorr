@@ -7,10 +7,8 @@ import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { logLevelSchema, DEFAULT_SETTINGS, generalFormSchema, type AppSettings } from '@shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
-// Housekeeping and Logging write disjoint slices of the `general` category, so each is its own
-// card with its own dirty-gated Save — no page-spanning form. The backend patches category
-// subsets ({ ...existing, ...partial }), so saving one slice never clobbers the other. The
-// per-form schemas are picked from the shared generalFormSchema so bounds can't drift.
+// These cards own disjoint general slices and submit independently; the backend patch-merges them.
+// Pick validators from the shared schema so bounds stay aligned.
 const housekeepingSchema = generalFormSchema.pick({ housekeepingRetentionDays: true });
 const loggingSchema = generalFormSchema.pick({ logLevel: true });
 type HousekeepingFormData = z.infer<typeof housekeepingSchema>;
@@ -28,9 +26,6 @@ function SaveButton({ pending }: { pending: boolean }) {
   );
 }
 
-// Single source of truth for each card name: shared by the guard label and the
-// SettingsSection title. Both General cards share a successMessage, so the label
-// (not the toast text) is the reliable card name.
 const HOUSEKEEPING_CARD_LABEL = 'Housekeeping';
 const LOGGING_CARD_LABEL = 'Logging';
 

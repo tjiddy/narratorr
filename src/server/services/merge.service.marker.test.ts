@@ -19,15 +19,9 @@ import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 
 /**
- * #1418 — `executeMerge` is a mid-uptime writer that must converge a stranded
- * `.import-commit-pending` marker on `bookPath` BEFORE writing the merged output, or a
- * later import/boot recovery silently reverts the merge by restoring `.import-bak`. These
- * tests run the REAL recovery sequence over a real tmpdir (the marker machinery
- * short-circuits to "marker present" under mocked fs, #1391); only the ffmpeg engine and
- * enrichment are stubbed.
+ * Run real marker recovery on a temp filesystem before merge; otherwise later recovery could
+ * restore a backup over committed output. Only the audio engine and enrichment are stubbed.
  */
-
-// Only the audio engine + enrichment are mocked — fs and the recovery sequence are real.
 vi.mock('@core/utils/audio-processor.js', () => ({ processAudioFiles: vi.fn(), resolveFfmpegPath: () => Promise.resolve('/usr/bin/ffmpeg') }));
 vi.mock('@core/utils/audio-scanner.js', () => ({ scanAudioDirectory: vi.fn() }));
 vi.mock('./enrichment-utils.js', () => ({ enrichBookFromAudio: vi.fn() }));
@@ -40,21 +34,7 @@ const OUTPUT = 'The Way of Kings.m4b';
 
 const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
 
-/**
- * Deterministically wait for the fire-and-forget background merge to reach a terminal
- * state instead of guessing with a fixed sleep. `enqueueMerge` returns immediately while
- * `executeMerge` runs on the event loop; the service signals completion through the injected
- * broadcaster `emit` — `merge_complete` on success, `merge_failed` on failure. Awaiting that
- * signal guarantees the background work has finished before assertions and before `afterEach`
- * removes `libraryRoot`.
- *
- * Note: `merge_complete` is emitted only AFTER `commitMerge` returns, i.e. after its
- * `rm(<bookPath>.merge-tmp)` cleanup — so the success-path wait is post-cleanup (this is what
- * the original 50 ms sleep was racing). On the failure path `merge_failed` is emitted just
- * before the catch-block `rm(stagingDir)`, but the recovery-failure test fails during
- * preflight before any staging dir exists, so there is no `.merge-tmp` for `afterEach` to race.
- * Real timers stay in use — `vi.waitFor` and the awaited fs promises both need the real loop.
- */
+/** Wait on terminal SSE instead of racing fire-and-forget execution with a fixed sleep. */
 async function waitForMergeSettled(emit: Mock): Promise<void> {
   await vi.waitFor(
     () => expect(emit).toHaveBeenCalledWith(expect.stringMatching(/^merge_(complete|failed)$/), expect.anything()),
@@ -87,8 +67,7 @@ describe('MergeService marker convergence (#1418, real tmpdir)', () => {
     log = inject<FastifyBaseLogger>(createMockLogger());
     emit = vi.fn();
 
-    // Engine stub: write a fake merged output into the staging dir so the post-process
-    // readdir discovers it (real ffmpeg is unavailable in tests).
+    // Produce a staged output without ffmpeg.
     (processAudioFiles as Mock).mockImplementation(async (stagingDir: string) => {
       await writeFile(join(stagingDir, OUTPUT), Buffer.alloc(500, 9));
       return { success: true };
@@ -116,7 +95,7 @@ describe('MergeService marker convergence (#1418, real tmpdir)', () => {
     );
   }
 
-  /** Arrange a live marker (file) + populated .import-bak beside bookPath. */
+  /** Create a legacy marker and populated backup beside bookPath. */
   async function armMarker(originals: string[]): Promise<void> {
     await mkdir(`${bookPath}.import-bak`, { recursive: true });
     for (const name of originals) await writeFile(join(`${bookPath}.import-bak`, name), Buffer.alloc(150, 3));
@@ -137,8 +116,6 @@ describe('MergeService marker convergence (#1418, real tmpdir)', () => {
   });
 
   it('live marker recovered → merge output is committed and a later sweep cannot revert it', async () => {
-    // bookPath currently holds 2 audio files (passes pre-enqueue validation); a killed import
-    // left an armed marker + a populated .import-bak beside it.
     await mkdir(bookPath, { recursive: true });
     await writeFile(join(bookPath, '01.mp3'), Buffer.alloc(300, 1));
     await writeFile(join(bookPath, '02.mp3'), Buffer.alloc(300, 2));
@@ -147,12 +124,9 @@ describe('MergeService marker convergence (#1418, real tmpdir)', () => {
     await buildService().enqueueMerge(42);
     await waitForMergeSettled(emit);
 
-    // Marker + backup were consumed before the output was written.
     expect(await pathExists(`${bookPath}.import-commit-pending`)).toBe(false);
     expect(await pathExists(`${bookPath}.import-bak`)).toBe(false);
-    // Only the merged output remains — all originals (incl. the recovery-restored one) deleted.
     expect(await listFiles(bookPath)).toEqual([OUTPUT]);
-    // No marker survives, so a subsequent import/boot recovery cannot revert the merge.
     expect(await findCommitPendingMarkers(libraryRoot)).toEqual([]);
     expect(emit).toHaveBeenCalledWith('merge_complete', expect.objectContaining({ book_id: 42, success: true }));
   });
@@ -161,7 +135,6 @@ describe('MergeService marker convergence (#1418, real tmpdir)', () => {
     await mkdir(bookPath, { recursive: true });
     await writeFile(join(bookPath, '01.mp3'), Buffer.alloc(300, 1));
     await writeFile(join(bookPath, '02.mp3'), Buffer.alloc(300, 2));
-    // Arm the ACTIVE born-hidden backup convention (#1911) + the un-dotted marker.
     const activeBackup = deriveImportSiblings(bookPath).backupPath;
     await mkdir(activeBackup, { recursive: true });
     await writeFile(join(activeBackup, 'orig.mp3'), Buffer.alloc(150, 3));
@@ -178,9 +151,7 @@ describe('MergeService marker convergence (#1418, real tmpdir)', () => {
   });
 
   it('F8: staging + originals-deletion operate on the post-recovery file set', async () => {
-    // bookPath has 2 current files; recovery restores a THIRD original (orig.mp3) that did not
-    // exist pre-recovery. Because the merge re-reads bookPath after recovery, orig.mp3 must be
-    // staged and then deleted as an original — leaving only the merged output.
+    // Recovery adds orig.mp3; merge must re-read inputs afterward and consume it.
     await mkdir(bookPath, { recursive: true });
     await writeFile(join(bookPath, '01.mp3'), Buffer.alloc(300, 1));
     await writeFile(join(bookPath, '02.mp3'), Buffer.alloc(300, 2));
@@ -189,7 +160,6 @@ describe('MergeService marker convergence (#1418, real tmpdir)', () => {
     await buildService().enqueueMerge(42);
     await waitForMergeSettled(emit);
 
-    // The recovery-restored original was merged in and deleted, not left behind as a stale file.
     expect(await listFiles(bookPath)).toEqual([OUTPUT]);
     expect(await pathExists(join(bookPath, 'orig.mp3'))).toBe(false);
   });
@@ -199,13 +169,11 @@ describe('MergeService marker convergence (#1418, real tmpdir)', () => {
     await writeFile(join(bookPath, '01.mp3'), Buffer.alloc(300, 1));
     await writeFile(join(bookPath, '02.mp3'), Buffer.alloc(300, 2));
     await mkdir(`${bookPath}.import-bak`, { recursive: true });
-    // A directory occupies the marker path → MarkerPathConflictError from the preflight.
     await mkdir(`${bookPath}.import-commit-pending`, { recursive: true });
 
     await buildService().enqueueMerge(42);
     await waitForMergeSettled(emit);
 
-    // No ffmpeg work ran; no output committed; the originals + collision are untouched.
     expect(processAudioFiles).not.toHaveBeenCalled();
     expect(await listFiles(bookPath)).toEqual(['01.mp3', '02.mp3']);
     expect(await pathExists(`${bookPath}.import-bak`)).toBe(true);

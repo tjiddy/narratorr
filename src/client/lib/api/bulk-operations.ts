@@ -1,15 +1,10 @@
 import { fetchApi } from './client.js';
 
-export type BulkOpType = 'rename' | 'retag' | 'write_metadata_sidecars';
+// Re-export shared wire types for existing consumers; export-from alone creates no
+// local binding for the signatures below, so the import remains required.
+import type { BulkJobStatus } from '@shared/bulk-operation-types.js';
 
-export interface BulkJobStatus {
-  jobId: string;
-  type: BulkOpType;
-  status: 'running' | 'completed';
-  completed: number;
-  total: number;
-  failures: number;
-}
+export type { BulkOpType, BulkJobFailure, BulkJobStatus } from '@shared/bulk-operation-types.js';
 
 export interface BulkRenamePreviewItem {
   bookId: number;

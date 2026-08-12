@@ -10,6 +10,10 @@ interface AddBookPopoverProps {
   onAdd: (overrides: { searchImmediately: boolean }) => void;
   isPending: boolean;
   variant?: 'primary' | 'compact';
+  /** Defaults preserve the single-book callers; the batch caller names its count instead. */
+  triggerLabel?: string;
+  triggerAriaLabel?: string;
+  confirmLabel?: string;
 }
 
 const TRIGGER_CLASSES = {
@@ -25,21 +29,27 @@ const TRIGGER_CLASSES = {
     transition-colors duration-200 focus-ring`,
 } as const;
 
-const PANEL_WIDTH = 256; // w-64 = 16rem = 256px
+const PANEL_WIDTH = 256; // Must match w-64.
 
 function computePosition(triggerRect: DOMRect) {
-  const top = triggerRect.bottom + 8; // mt-2 equivalent
+  const top = triggerRect.bottom + 8; // Match an mt-2 gap.
   const right = triggerRect.right;
-  // Right-align: panel's right edge matches trigger's right edge
+  // Right-align the panel, clamped to the viewport.
   let left = right - PANEL_WIDTH;
-  // Clamp to viewport so panel doesn't overflow off-screen
   const maxLeft = window.innerWidth - PANEL_WIDTH;
   left = Math.min(left, maxLeft);
   left = Math.max(left, 0);
   return { top, left };
 }
 
-export function AddBookPopover({ onAdd, isPending, variant = 'primary' }: AddBookPopoverProps) {
+export function AddBookPopover({
+  onAdd,
+  isPending,
+  variant = 'primary',
+  triggerLabel = 'Add',
+  triggerAriaLabel = 'Add book',
+  confirmLabel = 'Add to Library',
+}: AddBookPopoverProps) {
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -52,11 +62,10 @@ export function AddBookPopover({ onAdd, isPending, variant = 'primary' }: AddBoo
 
   const qualityDefaults = settings?.quality;
 
-  // Track user overrides separately from defaults.
-  // null = user hasn't touched it yet, use the default from settings.
+  // null means untouched, allowing late settings to supply the default without
+  // overwriting a user choice.
   const [searchOverride, setSearchOverride] = useState<boolean | null>(null);
 
-  // Resolved values: user override wins, then settings default, then false
   const searchImmediately = searchOverride ?? qualityDefaults?.searchImmediately ?? false;
 
   const updatePosition = useCallback(() => {
@@ -68,9 +77,7 @@ export function AddBookPopover({ onAdd, isPending, variant = 'primary' }: AddBoo
   const toggleOpen = () => {
     const next = !isOpen;
     if (next) {
-      // Reset overrides so fresh open picks up current settings defaults
       setSearchOverride(null);
-      // Compute initial position before opening
       if (triggerRef.current) {
         setPosition(computePosition(triggerRef.current.getBoundingClientRect()));
       }
@@ -78,10 +85,9 @@ export function AddBookPopover({ onAdd, isPending, variant = 'primary' }: AddBoo
     setIsOpen(next);
   };
 
-  // Close on outside click — dual-ref: close only when click is outside BOTH trigger and panel
+  // The portaled panel and its trigger both count as inside.
   useClickOutside([triggerRef, panelRef], () => setIsOpen(false), isOpen);
 
-  // Reposition on scroll/resize while open
   useEffect(() => {
     if (!isOpen) return;
     window.addEventListener('scroll', updatePosition, true);
@@ -99,7 +105,7 @@ export function AddBookPopover({ onAdd, isPending, variant = 'primary' }: AddBoo
         type="button"
         onClick={toggleOpen}
         disabled={isPending}
-        aria-label="Add book"
+        aria-label={triggerAriaLabel}
         className={TRIGGER_CLASSES[variant]}
       >
         {isPending ? (
@@ -110,7 +116,7 @@ export function AddBookPopover({ onAdd, isPending, variant = 'primary' }: AddBoo
         ) : (
           <>
             <PlusIcon className={variant === 'compact' ? 'w-3 h-3' : 'w-4 h-4'} />
-            <span className={variant === 'compact' ? '' : 'hidden sm:inline'}>Add</span>
+            <span className={variant === 'compact' ? '' : 'hidden sm:inline'}>{triggerLabel}</span>
           </>
         )}
       </button>
@@ -143,7 +149,7 @@ export function AddBookPopover({ onAdd, isPending, variant = 'primary' }: AddBoo
               className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-primary text-primary-foreground font-medium rounded-lg hover:opacity-90 disabled:opacity-50 transition-all text-sm"
             >
               <PlusIcon className="w-3.5 h-3.5" />
-              Add to Library
+              {confirmLabel}
             </button>
           </div>
         </div>,

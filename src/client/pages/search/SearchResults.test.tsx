@@ -60,7 +60,6 @@ describe('SearchResults', () => {
       searchTerm: 'searching',
       results: undefined,
     });
-    // Should not show empty state while loading
     expect(screen.queryByText('Start your search')).not.toBeInTheDocument();
     expect(screen.queryByText(/No results/)).not.toBeInTheDocument();
   });
@@ -83,13 +82,10 @@ describe('SearchResults', () => {
     };
     renderResults({ searchTerm: 'fantasy', results });
 
-    // Books tab shown by default — book title visible
     expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
 
-    // Click Authors tab
     await user.click(screen.getByText('Authors', { exact: false }));
 
-    // Author content now visible, book content hidden
     expect(screen.getByText('Brandon Sanderson')).toBeInTheDocument();
   });
 
@@ -173,7 +169,6 @@ describe('SearchResults', () => {
       renderResults({ searchTerm: 'fantasy', results: resultsWithBoth });
       const tabs = screen.getAllByRole('tab');
 
-      // Switch to Authors first
       await user.click(tabs[1]!);
       tabs[1]!.focus();
       await user.keyboard('{ArrowLeft}');
@@ -190,7 +185,6 @@ describe('SearchResults', () => {
       renderResults({ searchTerm: 'fantasy', results: resultsWithBoth });
       const tabs = screen.getAllByRole('tab');
 
-      // Right on last (Authors) → wraps to first (Books)
       await user.click(tabs[1]!);
       tabs[1]!.focus();
       await user.keyboard('{ArrowRight}');
@@ -198,7 +192,6 @@ describe('SearchResults', () => {
       expect(document.activeElement).toBe(tabs[0]);
       expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'tab-books');
 
-      // Left on first (Books) → wraps to last (Authors)
       tabs[0]!.focus();
       await user.keyboard('{ArrowLeft}');
       expect(tabs[1]).toHaveAttribute('aria-selected', 'true');
@@ -267,11 +260,6 @@ describe('SearchResults', () => {
     });
   });
 
-  // #1916 — ownership on the search page must come from the unpaginated identifiers
-  // endpoint, not from the 120-row-capped `/api/books` page. This used to also assert
-  // `api.getBooks` was never called; #1951 deleted that wrapper once it had no callers
-  // left, so the capped endpoint is no longer reachable from the client at all and the
-  // guard is now structural (see the comment on `booksApi` in lib/api/books.ts).
   describe('#1916 ownership source', () => {
     const results = { books: [createMockBookMetadata()], authors: [] };
 
@@ -292,13 +280,11 @@ describe('SearchResults', () => {
 
       renderResults({ searchTerm: 'fantasy', results: { books: [book], authors: [] } });
 
-      // The card only reaches the linked In-Library state if it received the array.
       const link = await screen.findByRole('link', { name: /view this book in your library/i });
       expect(link).toHaveAttribute('href', '/books/77');
     });
 
-    // F2 — loading/failure is deliberately fail-open: ownership is a hint, and
-    // the server's 409-with-incumbent verdict is the real duplicate backstop.
+    // Ownership is only a hint; the server's 409 verdict is the duplicate backstop.
     it('falls open to the Add control while identifiers are still loading', () => {
       vi.mocked(api.getBookIdentifiers).mockReturnValue(new Promise(() => {}));
       renderResults({ searchTerm: 'fantasy', results });
@@ -311,11 +297,7 @@ describe('SearchResults', () => {
       vi.mocked(api.getBookIdentifiers).mockRejectedValue(new Error('Network error'));
       const { queryClient } = renderResults({ searchTerm: 'fantasy', results });
 
-      // Waiting on the mock's invocation would resolve while the query is still
-      // pending, so the assertions below would only re-prove the loading case
-      // above. Wait for TanStack Query to publish the SETTLED error state —
-      // `status: 'error'` with no fetch in flight — so a regression that hides
-      // Add once the query fails is actually caught.
+      // Wait for TanStack's settled error state so this does not merely re-test loading.
       await waitFor(() => {
         const state = queryClient.getQueryState(queryKeys.bookIdentifiers());
         expect(state?.status).toBe('error');

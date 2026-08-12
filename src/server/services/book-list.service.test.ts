@@ -7,9 +7,7 @@ import type { Db } from '@db/index.js';
 import { books } from '@db/schema.js';
 import { BOOK_STATUSES, LIBRARY_FILTER_BUCKETS, type LibraryFilterBucket, type BookStatus } from '@shared/schemas/book.js';
 
-// Serialize a Drizzle SQL expression to a raw SQL string + bound params so the
-// bucket-expansion predicate can be asserted against real SQL, not mock calls
-// (mirrors blacklist.service.test.ts).
+// Compile Drizzle predicates so bucket expansion is asserted against SQL rather than mock totals.
 const dialect = new SQLiteSyncDialect();
 function compileWhere(expr: unknown): { sql: string; params: unknown[] } {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -122,12 +120,10 @@ describe('BookListService', () => {
 
       await service.getAll(undefined, undefined, { slim: true });
 
-      // Second db.select call is the data query (first is count)
       const selectArg = db.select.mock.calls[1]![0];
       const bookColumns = selectArg.book;
       expect(bookColumns).not.toHaveProperty('description');
       expect(bookColumns).not.toHaveProperty('genres');
-      // Retained columns
       expect(bookColumns).toHaveProperty('title');
       expect(bookColumns).toHaveProperty('audioDuration');
       expect(bookColumns).toHaveProperty('updatedAt');
@@ -272,7 +268,6 @@ describe('BookListService', () => {
       expect(args).toHaveLength(2);
     });
 
-    // #365 — search excludes narrator names but retains title/series/genres/author
     it('search filter excludes narrator subquery but retains series_name, genres, and author subquery', async () => {
       const countChain = mockDbChain([{ value: 1 }]);
       const dataChain = mockDbChain([{ book: mockBook, importListName: null, primaryAuthorName: null }]);
@@ -295,9 +290,7 @@ describe('BookListService', () => {
         }
         return false;
       }
-      // Narrator subquery removed
       expect(containsSubstring(whereArg, 'book_narrators')).toBe(false);
-      // Retained clauses still present
       expect(containsSubstring(whereArg, 'series_name')).toBe(true);
       expect(containsSubstring(whereArg, 'genres')).toBe(true);
       expect(containsSubstring(whereArg, 'book_authors')).toBe(true);
@@ -385,14 +378,8 @@ describe('BookListService', () => {
     });
   });
 
-  // #1447 (S2d / F1) — pin the actual SQL `buildListWhere` generates for each
-  // library bucket. The earlier getAll('downloading') tests only assert mocked
-  // totals, so they'd still pass if the bucket branch regressed to
-  // `eq(books.status, status)`. Compiling the captured predicate and asserting it
-  // is an `IN (...)` over the bucket's exact member statuses catches that
-  // regression directly (an `eq` would drop the second member and emit `= ?`).
+  // Mock totals cannot expose a bucket regression to eq(); pin the generated IN predicate and members (#1447).
   describe('buildListWhere bucket expansion — generated SQL (#1447 / F1)', () => {
-    /** Capture the WHERE clause `getAllForLibrary` passes to the count query. */
     async function captureLibraryWhere(bucket: LibraryFilterBucket) {
       const countChain = mockDbChain([{ value: 0 }]);
       const rowsChain = mockDbChain([]);
@@ -413,11 +400,8 @@ describe('BookListService', () => {
       it(`expands bucket "${bucket}" to an IN over exactly [${members.join(', ')}]`, async () => {
         const { sql, params } = await captureLibraryWhere(bucket);
 
-        // IN-expansion, not an `eq` — a regression to `eq(books.status, status)`
-        // would emit `"status" = ?` and fail this assertion.
         expect(sql.toLowerCase()).toContain('"status" in (');
         expect(sql.toLowerCase()).not.toContain('"status" = ');
-        // Bound params are exactly the canonical member statuses of the bucket.
         expect(params).toEqual(members);
       });
     }
@@ -429,13 +413,8 @@ describe('BookListService', () => {
     });
   });
 
-  // #1449 (S3 / F1) — the native `/api/v1` boundary needs EXACT canonical-status
-  // semantics, not the library bucket expansion. The additive `exactStatus` option
-  // on getAll() forces `eq(books.status, status)` and skips BUCKET_EXPANSION, so a
-  // canonical `downloading`/`imported` filters to that exact state instead of
-  // silently widening to the bucket. Default (omitted/false) keeps legacy behavior.
+  // exactStatus bypasses legacy bucket expansion for native v1 canonical-status filters (#1449).
   describe('getAll exactStatus option — exact canonical match (#1449)', () => {
-    /** Capture the WHERE clause `getAll` passes to its count query. */
     async function captureGetAllWhere(status: BookStatus, exactStatus: boolean) {
       const countChain = mockDbChain([{ value: 0 }]);
       const rowsChain = mockDbChain([]);
@@ -470,7 +449,6 @@ describe('BookListService', () => {
   });
 
   describe('series sort position tiebreaker (#266)', () => {
-    /** Extract the trailing direction string from a Drizzle SQL clause's queryChunks. */
     function getClauseDirection(clause: { queryChunks?: unknown[] }): string | null {
       const chunks = clause.queryChunks;
       if (!Array.isArray(chunks)) return null;
@@ -480,7 +458,6 @@ describe('BookListService', () => {
       return null;
     }
 
-    /** Check if a Drizzle SQL clause's queryChunks contain a given substring (handles circular refs). */
     function clauseContains(clause: { queryChunks?: unknown[] }, substring: string): boolean {
       function walk(val: unknown): boolean {
         if (typeof val === 'string') return val.includes(substring);
@@ -502,11 +479,9 @@ describe('BookListService', () => {
       await service.getAll(undefined, undefined, { sortField: 'series', sortDirection: 'asc' });
       const args = (dataChain.orderBy as Mock).mock.calls[0];
       expect(args).toHaveLength(5);
-      // Clause 3 (index 2): position null-flag is conditional on seriesName
+      // Clauses 3–5: position null-flag, ascending seriesPosition, direction-matched id.
       expect(clauseContains(args![2], 'series_name')).toBe(true);
-      // Clause 4 (index 3): seriesPosition is always ascending
       expect(getClauseDirection(args![3])).toBe('asc');
-      // Clause 5 (index 4): id tiebreaker matches sort direction (asc)
       expect(getClauseDirection(args![4])).toBe('asc');
     });
 
@@ -519,24 +494,14 @@ describe('BookListService', () => {
       await service.getAll(undefined, undefined, { sortField: 'series', sortDirection: 'desc' });
       const args = (dataChain.orderBy as Mock).mock.calls[0];
       expect(args).toHaveLength(5);
-      // Clause 3 (index 2): position null-flag is conditional on seriesName
       expect(clauseContains(args![2], 'series_name')).toBe(true);
-      // Clause 4 (index 3): seriesPosition is always ascending even for desc sort
       expect(getClauseDirection(args![3])).toBe('asc');
-      // Clause 5 (index 4): id tiebreaker matches sort direction (desc)
       expect(getClauseDirection(args![4])).toBe('desc');
     });
   });
 
-  // #1814 — the flat quality-sort SQL must express the same unit contract as
-  // resolveBookQualityInputs (src/core/utils/quality.ts): audioDuration is
-  // already seconds, but the fallback `duration` column is MINUTES and must be
-  // ×60 before it divides bytes. Pre-fix the divisor was
-  // `COALESCE(audio_duration, duration)` (raw minutes → 60×-inflated MB/hr for
-  // unprobed rows). The mocked DB does not ORDER BY, so we pin the *generated*
-  // SQL, not returned row order (see Implementation Notes on the spec).
+  // Flat SQL must match resolveBookQualityInputs: duration fallback is minutes ×60, and mocked DBs never execute ORDER BY (#1814).
   describe('quality sort unit contract — generated SQL (#1814)', () => {
-    /** Compile a captured orderBy clause to a normalized (lowercased, unquoted) SQL string. */
     function normalizedClauseSql(clause: unknown): string {
       return compileWhere(clause).sql.toLowerCase().replace(/"/g, '');
     }
@@ -548,50 +513,33 @@ describe('BookListService', () => {
         .mockReturnValueOnce(dataChain);
       await service.getAll(undefined, undefined, { sortField: 'quality', sortDirection: 'asc' });
       const args = (dataChain.orderBy as Mock).mock.calls[0]!;
-      // args[0] = null/zero-bucket guard, args[1] = ratio direction clause, args[2] = id tiebreaker.
+      // args: null/zero guard, ratio sort, id tiebreaker.
       return { guard: normalizedClauseSql(args[0]), ratio: normalizedClauseSql(args[1]) };
     }
 
     it('ratio divisor converts the minutes fallback to seconds (duration * 60)', async () => {
       const { ratio } = await captureQualityOrderBy();
-      // Full helper parity: prefer audio_duration when > 0, else duration (minutes) × 60.
       expect(ratio).toContain('case when books.audio_duration > 0');
       expect(ratio).toContain('books.duration * 60');
-      // The raw-minutes divisor (#1797/#1814 defect) is gone.
       expect(ratio).not.toContain('coalesce');
     });
 
     it('ratio numerator uses positive-value size precedence with the ELSE size fallback (audio_total_size > 0 else size)', async () => {
-      // F1 (spec review + PR review): full parity must pin size-zero semantics AND
-      // the `ELSE size` fallback, matching resolveBookQualityInputs (audioTotalSize
-      // when > 0, else size). Assert the WHOLE CASE expression — asserting only the
-      // `WHEN ... > 0` prefix would still pass if `ELSE books.size` were deleted or
-      // changed to a null/zero literal, silently mis-sorting fully-unprobed rows.
       const { ratio } = await captureQualityOrderBy();
       expect(ratio).toContain('case when books.audio_total_size > 0 then books.audio_total_size else books.size end');
     });
 
     it('null/zero bucket guard mirrors the same seconds-converted unit contract', async () => {
       const { guard } = await captureQualityOrderBy();
-      // The guard must use the same size/duration expressions as the divisor so
-      // the flat SQL and resolveBookQualityInputs agree on which rows are "unknown".
-      // Assert the full CASE expressions (not just the `WHEN ... > 0` prefixes) so
-      // deleting either `ELSE` fallback fails the test.
       expect(guard).toContain('case when books.audio_duration > 0 then books.audio_duration else books.duration * 60 end');
       expect(guard).toContain('case when books.audio_total_size > 0 then books.audio_total_size else books.size end');
       expect(guard).not.toContain('coalesce');
     });
 
     it('audio_duration = 0 falls back to duration * 60 in SQL (zero-semantics parity)', async () => {
-      // resolveBookQualityInputs treats audioDuration=0 as absent and falls back
-      // to duration*60. The pre-fix `COALESCE(audio_duration, duration) = 0` guard
-      // instead routed such rows to the unknown bucket. The `WHEN audio_duration > 0`
-      // form closes that divergence: a 0 value takes the ELSE (duration * 60) branch.
+      // audioDuration=0 is absent to the helper, so SQL must use duration*60 instead of COALESCE's unknown bucket.
       const { guard, ratio } = await captureQualityOrderBy();
       expect(ratio).toContain('when books.audio_duration > 0 then books.audio_duration else books.duration * 60');
-      // The old `COALESCE(audio_duration, duration) = 0` equality bucket (which
-      // wrongly caught valid audioDuration=0/duration>0 rows) is gone; the guard
-      // now uses the same parity expression and a `<= 0` check on the fallback.
       expect(guard).not.toContain('coalesce');
       expect(guard).toContain('else books.duration * 60 end) <= 0');
     });
@@ -616,7 +564,6 @@ describe('BookListService', () => {
       expect(result.total).toBe(1);
       expect(result.data).toHaveLength(1);
       const row = result.data[0]!;
-      // Required DTO keys present
       const expectedKeys = new Set([
         'id', 'title', 'coverUrl', 'status', 'seriesName', 'seriesPosition',
         'authors', 'narrators',
@@ -625,12 +572,9 @@ describe('BookListService', () => {
         'createdAt', 'updatedAt',
       ]);
       for (const k of expectedKeys) expect(row).toHaveProperty(k);
-      // #1712 — editionLabel is selected + hydrated onto the slim DTO.
       expect(row.editionLabel).toBe('Full Cast');
-      // Trimmed keys absent
       const trimmedKeys = ['audioCodec', 'audioBitrate', 'audioSampleRate', 'audioChannels', 'audioBitrateMode', 'topLevelAudioFileCount', 'isbn', 'asin', 'description', 'publishedDate', 'enrichmentStatus', 'importListId', 'importListName', 'genres'];
       for (const k of trimmedKeys) expect(row).not.toHaveProperty(k);
-      // Author/narrator entries are name-only
       expect(row.authors).toEqual([{ name: 'Brandon Sanderson' }]);
       expect(row.narrators).toEqual([{ name: 'Michael Kramer' }]);
     });
@@ -692,7 +636,6 @@ describe('BookListService', () => {
           lastGrabGuid: null, lastGrabInfoHash: null,
           createdAt: new Date(), updatedAt: new Date(),
         }]))
-        // Return authors in shuffled order — service must sort by position
         .mockReturnValueOnce(mockDbChain([
           { bookId: 1, name: 'Second Author', position: 1 },
           { bookId: 1, name: 'Primary Author', position: 0 },
@@ -796,11 +739,9 @@ describe('BookListService', () => {
 
       const selectArg = db.select.mock.calls[1]![0];
       const keys = Object.keys(selectArg);
-      // Required slim columns
       for (const k of ['id', 'title', 'coverUrl', 'status', 'seriesName', 'seriesPosition', 'audioTotalSize', 'size', 'audioFileFormat', 'audioDuration', 'duration', 'path', 'audioFileCount', 'lastGrabGuid', 'lastGrabInfoHash', 'createdAt', 'updatedAt']) {
         expect(keys).toContain(k);
       }
-      // Trimmed columns
       for (const k of ['description', 'genres', 'audioCodec', 'audioBitrate', 'audioSampleRate', 'audioChannels', 'audioBitrateMode', 'topLevelAudioFileCount', 'isbn', 'asin', 'enrichmentStatus', 'importListId', 'publishedDate']) {
         expect(keys).not.toContain(k);
       }
@@ -955,8 +896,7 @@ describe('BookListService', () => {
     });
 
     it('quality sort with audioDuration=0 falls back to duration field', async () => {
-      // Book 1: 360 MB / (600 min → 36000 sec) ≈ 10 MB/hr (low quality)
-      // Book 2: 100 MB / 3600 sec ≈ 28 MB/hr (higher quality)
+      // 360 MB/600 min ≈10 MB/hr; 100 MB/3600 sec ≈28 MB/hr.
       db.select
         .mockReturnValueOnce(mockDbChain([
           makeRow({ id: 1, seriesName: null, audioTotalSize: 360 * 1024 * 1024, audioDuration: 0, duration: 600 }),
@@ -974,14 +914,7 @@ describe('BookListService', () => {
     });
 
     it('quality sort: fully unprobed row (size + minutes duration, no audioDuration) sorts by seconds-converted MB/hr (#1814)', async () => {
-      // The collapse path orders rows in JS via resolveBookQualityInputs, so row
-      // order is meaningful here (unlike the mocked flat path). Book 1 is fully
-      // unprobed — only `size` and the minutes-backed `duration`, no audioTotalSize
-      // or audioDuration — with a genuinely LOWER MB/hr; it must land below the
-      // probed Book 2. If the minutes→seconds ×60 conversion were dropped, Book 1's
-      // MB/hr would inflate 60× and it would wrongly sort above Book 2.
-      // Book 1: 360 MB / (600 min → 36000 s) ≈ 10 MB/hr (low)
-      // Book 2: 100 MB / 3600 s ≈ 28 MB/hr (higher)
+      // Collapse sorts in JS; this pins minutes→seconds conversion at ~10 MB/hr versus the probed row's ~28 (#1814).
       db.select
         .mockReturnValueOnce(mockDbChain([
           makeRow({ id: 1, seriesName: null, size: 360 * 1024 * 1024, duration: 600 }),
@@ -999,11 +932,7 @@ describe('BookListService', () => {
     });
 
     it('no-position quality fallback picks representative using resolveBookQualityInputs semantics', async () => {
-      // Book 1: audioDuration=0 but duration=600 → resolveBookQualityInputs falls back to 36000s → low quality
-      // Book 2: audioDuration=3600 → 3600s → higher quality
-      // DB ORDER BY would treat audioDuration=0 as COALESCE(0, duration)=0 → invalid, so SQL puts it last.
-      // But resolveBookQualityInputs treats 0 as falsy → falls back to duration*60=36000 → valid.
-      // With asc quality sort, book 1 (lower quality) should be representative.
+      // audioDuration=0 falls back to duration*60, making Book 1 the lower-quality representative.
       db.select
         .mockReturnValueOnce(mockDbChain([
           makeRow({ id: 2, seriesName: 'S', seriesPosition: null, audioTotalSize: 100 * 1024 * 1024, audioDuration: 3600 }),
@@ -1050,8 +979,6 @@ describe('BookListService', () => {
       expect(result[1]).toEqual({ id: 2, asin: null, title: 'Book Two', authorName: null });
     });
 
-    // #1916 — the search page links its "In Library" badge at `entry.id`, so the
-    // projection itself (not just the mocked row shape) has to carry `books.id`.
     it('projects books.id so the identity source can link to the owned book (#1916)', async () => {
       db.select.mockReturnValueOnce(mockDbChain([]));
 
@@ -1108,8 +1035,8 @@ describe('BookListService', () => {
 
       const stats = await service.getStats();
       expect(stats.counts.wanted).toBe(5);
-      expect(stats.counts.downloading).toBe(3); // searching + downloading
-      expect(stats.counts.imported).toBe(11); // importing + imported
+      expect(stats.counts.downloading).toBe(3);
+      expect(stats.counts.imported).toBe(11);
       expect(stats.counts.failed).toBe(3);
       expect(stats.counts.missing).toBe(2);
       expect(stats.authors).toEqual(['Author A', 'Author B']);
@@ -1154,7 +1081,6 @@ describe('BookListService', () => {
         .mockReturnValueOnce(mockDbChain([]));
 
       const stats = await service.getStats();
-      // The SQL WHERE clause filters null and empty — we just verify the result shape
       expect(stats.series).toEqual(['Valid Series']);
     });
 
@@ -1184,11 +1110,9 @@ describe('BookListService', () => {
       expect(typeof stats.narrators[0]).toBe('string');
     });
 
-    // #1447 (S2d) — counts are derived from LIBRARY_FILTER_BUCKETS, so every
-    // canonical status contributes to exactly one bucket and the per-bucket sums
-    // are driven by the map rather than hardcoded pairs.
+    // Derive counts from LIBRARY_FILTER_BUCKETS so each canonical status contributes exactly once (#1447).
     it('returns one entry per LIBRARY_FILTER_BUCKETS key, each summing its canonical states', async () => {
-      // Distinct per-status counts so a mis-summed bucket is detectable.
+      // Distinct per-status counts expose incorrect bucket membership.
       const perStatus: Record<string, number> = {
         wanted: 5, searching: 1, downloading: 2, importing: 3, imported: 10, failed: 4, missing: 2,
       };
@@ -1202,16 +1126,13 @@ describe('BookListService', () => {
 
       const stats = await service.getStats();
 
-      // Exactly the bucket keys, nothing else.
       expect(Object.keys(stats.counts).sort()).toEqual(Object.keys(LIBRARY_FILTER_BUCKETS).sort());
 
-      // Each bucket equals the sum of its canonical member states.
       for (const bucket of Object.keys(LIBRARY_FILTER_BUCKETS) as LibraryFilterBucket[]) {
         const expected = LIBRARY_FILTER_BUCKETS[bucket].reduce((sum, s) => sum + perStatus[s]!, 0);
         expect(stats.counts[bucket]).toBe(expected);
       }
 
-      // No status is silently uncounted: the bucket totals sum to the grand total.
       const grandTotal = Object.values(perStatus).reduce((a, b) => a + b, 0);
       const bucketTotal = Object.values(stats.counts).reduce((a, b) => a + b, 0);
       expect(bucketTotal).toBe(grandTotal);
@@ -1222,30 +1143,27 @@ describe('BookListService', () => {
 describe('BookListService — many-to-many authors/narrators stats and sorting (#71)', () => {
   describe('getStats() junction aggregation', () => {
     it('narrator stats list contains individual names, not comma-joined blobs', async () => {
-      // Setup: 3 books with distinct narrators → narrator stats returns individual names
       const db = createMockDb();
       const service = new BookListService(inject<Db>(db));
       db.select
-        .mockReturnValueOnce(mockDbChain([]))  // status counts
-        .mockReturnValueOnce(mockDbChain([]))  // author names
-        .mockReturnValueOnce(mockDbChain([]))  // series
-        .mockReturnValueOnce(mockDbChain([{ name: 'Michael Kramer' }, { name: 'Kate Reading' }]));  // distinct narrators from junction
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([{ name: 'Michael Kramer' }, { name: 'Kate Reading' }]));
 
       const stats = await service.getStats();
       expect(stats.narrators).toEqual(['Michael Kramer', 'Kate Reading']);
-      // Not comma-joined like 'Michael Kramer, Kate Reading'
       expect(stats.narrators).not.toContain('Michael Kramer, Kate Reading');
     });
 
     it('two books sharing one narrator → narrator name appears once in stats list', async () => {
-      // db returns just one narrator despite multiple books sharing it (GROUP BY deduplicates)
       const db = createMockDb();
       const service = new BookListService(inject<Db>(db));
       db.select
-        .mockReturnValueOnce(mockDbChain([]))  // status counts
-        .mockReturnValueOnce(mockDbChain([]))  // author names
-        .mockReturnValueOnce(mockDbChain([]))  // series
-        .mockReturnValueOnce(mockDbChain([{ name: 'Tim Gerard Reynolds' }]));  // one entry despite 2 books
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([{ name: 'Tim Gerard Reynolds' }]));
 
       const stats = await service.getStats();
       expect(stats.narrators).toHaveLength(1);
@@ -1265,7 +1183,7 @@ describe('BookListService — many-to-many authors/narrators stats and sorting (
       await service.getAll(undefined, undefined, { sortField: 'narrator', sortDirection: 'asc' });
       expect(dataChain.orderBy).toHaveBeenCalledTimes(1);
       const args = (dataChain.orderBy as Mock).mock.calls[0];
-      expect(args!.length).toBeGreaterThanOrEqual(3);  // null-sort + name-sort + id-sort
+      expect(args!.length).toBeGreaterThanOrEqual(3);
     });
 
     it('sort by author uses position=0 entry (first author by metadata order)', async () => {
@@ -1279,7 +1197,7 @@ describe('BookListService — many-to-many authors/narrators stats and sorting (
       await service.getAll(undefined, undefined, { sortField: 'author', sortDirection: 'asc' });
       expect(dataChain.orderBy).toHaveBeenCalledTimes(1);
       const args = (dataChain.orderBy as Mock).mock.calls[0];
-      expect(args!.length).toBeGreaterThanOrEqual(3);  // null-sort + name-sort + id-sort
+      expect(args!.length).toBeGreaterThanOrEqual(3);
     });
   });
 });
@@ -1329,16 +1247,7 @@ describe('getIdentifiers() — authorSlug field (#133)', () => {
   });
 });
 
-// ─── #2069 AC16: the raw tombstone column must not reach GET /api/books ───
-//
-// `getAll` spreads whole `books` rows into its result and casts to
-// `BookWithAuthor`. That declared type omits the column, but the cast is erased at
-// runtime — the strip has to happen in the service, and only a seeded row can prove
-// it did. The download/activity assertions exercise DIFFERENT builders and cannot
-// fail if this list-specific strip is removed.
-//
-// Counterfactual: drop the `stripClearedFields` call at `book-list.service.ts` and
-// every case below goes red.
+// getAll spreads runtime rows, so its erased BookWithAuthor cast cannot prevent userClearedFields leaks (#2069).
 describe('BookListService — user_cleared_fields is projected out (#2069 AC16)', () => {
   let db: ReturnType<typeof createMockDb>;
   let service: BookListService;
@@ -1363,9 +1272,7 @@ describe('BookListService — user_cleared_fields is projected out (#2069 AC16)'
 
     const { data } = await service.getAll();
 
-    // Key PRESENCE, not value — an implementation that copies `undefined` through
-    // serializes nothing but must not pass by accident, and one that copies the raw
-    // string must fail.
+    // Assert key presence, not value, so an undefined copy cannot pass accidentally.
     expect('userClearedFields' in data[0]!).toBe(false);
   });
 

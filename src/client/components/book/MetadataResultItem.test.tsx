@@ -126,7 +126,6 @@ describe('MetadataResultItem', () => {
       expect(screen.queryByText(/Stormlight/)).not.toBeInTheDocument();
     });
 
-    // #1097 — display prefers seriesPrimary over series[0]
     it('renders seriesPrimary instead of series[0] when both are present (#1097)', () => {
       renderItem({
         meta: createMockBookMetadata({
@@ -207,7 +206,7 @@ describe('MetadataResultItem', () => {
         showLibraryBadge: true,
         libraryBooks: [{ id: 1, asin: 'B003P2WO5E', title: 'The Way of Kings', authorName: 'Brandon Sanderson', authorSlug: 'brandon-sanderson' }],
       });
-      // CheckCircleIcon is a direct child of the button (not nested inside the metadata div)
+      // The badge is the button's only direct SVG child.
       const button = screen.getByRole('button');
       const directChildSvgs = button.querySelectorAll(':scope > svg');
       expect(directChildSvgs).toHaveLength(1);
@@ -218,7 +217,6 @@ describe('MetadataResultItem', () => {
         meta: createMockBookMetadata({ asin: 'B003P2WO5E' }),
         libraryBooks: [{ id: 1, asin: 'B003P2WO5E', title: 'The Way of Kings', authorName: 'Brandon Sanderson', authorSlug: 'brandon-sanderson' }],
       });
-      // Only the cover placeholder and metadata text — no trailing CheckCircle icon
       const button = screen.getByRole('button');
       const svgs = button.querySelectorAll(':scope > svg');
       expect(svgs).toHaveLength(0);

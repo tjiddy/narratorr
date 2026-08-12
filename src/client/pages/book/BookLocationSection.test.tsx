@@ -55,7 +55,7 @@ describe('BookLocationSection', () => {
   it('copies via navigator.clipboard.writeText when available → success toast', async () => {
     const path = '/library/book/story.m4b';
     const writeText = vi.fn().mockResolvedValue(undefined);
-    // Must set clipboard AFTER userEvent.setup() — userEvent attaches its own clipboard stub on setup()
+    // userEvent.setup installs a clipboard stub, so override clipboard afterward.
     const user = userEvent.setup();
     Object.defineProperty(navigator, 'clipboard', {
       get: () => ({ writeText }),

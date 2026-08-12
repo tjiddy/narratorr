@@ -8,7 +8,7 @@ import { buildBookCreatePayload } from './enrichment-orchestration.helpers.js';
 import type { ProductionType } from '@shared/schemas/book.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
 import { eq } from 'drizzle-orm';
-import { authors, books } from '@db/schema.js';
+import { authors, books, series, seriesMembers } from '@db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db, DbOrTx } from '@db/index.js';
 import type { MetadataService } from './metadata.service.js';
@@ -20,11 +20,9 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     rm: vi.fn(),
     rmdir: vi.fn(),
     readdir: vi.fn(),
-    // Default to the real stat so non-delete code paths are unaffected; the deleteBookFiles
-    // suite overrides this per-test to drive the managed-file helper (#1589).
+    // Preserve real stat outside deleteBookFiles; that suite overrides it (#1589).
     stat: vi.fn((...args: unknown[]) => (actual.stat as (...a: unknown[]) => unknown)(...args)),
-    // #1598: deleteManagedBookFiles classifies the top-level bookPath via `lstat` (not `stat`) so a
-    // symlinked source is never followed. Default to real lstat; the deleteBookFiles suite overrides it.
+    // lstat is deliberate: managed deletion must never follow a symlinked source (#1598).
     lstat: vi.fn((...args: unknown[]) => (actual.lstat as (...a: unknown[]) => unknown)(...args)),
     writeFile: vi.fn(),
     rename: vi.fn(),
@@ -39,11 +37,7 @@ const mockAuthor = createMockDbAuthor();
 const mockBook = createMockDbBook();
 const mockNarrator = { id: 1, name: 'Michael Kramer', slug: 'michael-kramer', createdAt: new Date('2024-01-01T00:00:00Z') };
 
-/** Setup db.select to return the three-query pattern for getById:
- *  1st call: book + importListName
- *  2nd call: bookAuthors + authors
- *  3rd call: bookNarrators + narrators
- */
+/** getById selects the book, authors, then narrators. */
 function setupGetById(db: ReturnType<typeof createMockDb>, opts?: {
   noNarrators?: boolean;
   importListName?: string | null;
@@ -102,16 +96,13 @@ describe('BookService', () => {
         .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.getById(1);
-      // Authors should be in position order: 0 first
       expect(result!.authors[0]!.name).toBe('Brandon Sanderson');
       expect(result!.authors[1]!.name).toBe('Second Author');
     });
   });
 
   describe('findLibraryStatusByAsins', () => {
-    // #1961 — `companionEnabled` is a REQUIRED caller-supplied option (BookService
-    // takes no SettingsService). Disabled is the base case: no companion query is
-    // issued at all, so the mocked `db.select` is consumed by the books select only.
+    // BookService has no SettingsService; disabled must consume only the books select (#1961).
     const disabled = { companionEnabled: false };
 
     it('returns a Map keyed by UPPERCASED asin with { bookId: publicId, status, companionEbook } values', async () => {
@@ -122,16 +113,10 @@ describe('BookService', () => {
       const map = await service.findLibraryStatusByAsins(['B00ASIN'], disabled);
 
       expect(map.get('B00ASIN')).toEqual({ bookId: 'bk_abc123', status: 'imported', companionEbook: null });
-      // bookId is the bk_ publicId, NOT the internal numeric id.
       expect(map.get('B00ASIN')!.bookId).toMatch(/^bk_/);
     });
 
-    // Map-SHAPE only: proves the returned map is keyed by the UPPERCASED asin even
-    // when the row's stored asin is lowercase (the `.toUpperCase()` in the method).
-    // It does NOT prove the SQL predicate is case-insensitive — a mock returns its
-    // preloaded row regardless of the WHERE clause. The case-insensitive `lower(asin)`
-    // PREDICATE is proven behaviorally in the DB-backed
-    // `book.service.find-library-status.integration.test.ts` (#1537 PR-review F1).
+    // This mock proves map-key normalization only; the DB-backed integration test proves lower(asin) (#1537).
     it('keys the map by the UPPERCASED asin even when the stored row is lowercase', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, bookId: 'bk_drift', status: 'imported', asin: 'b00asin' },
@@ -173,9 +158,7 @@ describe('BookService', () => {
       expect(map.get('B00BBB')).toEqual({ bookId: 'bk_b', status: 'downloading', companionEbook: null });
     });
 
-    // #1961 — the companion annotation. The DB-backed exposure/chunking proof
-    // lives in `book.service.find-library-status.integration.test.ts`; these pin
-    // the query posture and that the value comes through the shared mapper.
+    // DB-backed exposure/chunking lives in the integration test; these pin query posture and mapping (#1961).
     describe('companion ebooks (#1961)', () => {
       it('maps an available observation on an imported book through toCompanionEbookV1', async () => {
         db.select
@@ -223,9 +206,7 @@ describe('BookService', () => {
         expect(Object.keys(map.get('B00ASIN')!)).toContain('companionEbook');
       });
 
-      // The nested producer's sizeBytes boundaries (F7). The DB cannot seed
-      // `available` + null size (ck_companion_ebooks_file_present rejects it), so
-      // the typed-but-unreachable case is only provable through a mock.
+      // The DB constraint rejects available + null size, so only a mock can cover the typed unreachable case.
       it('round-trips sizeBytes: 0 as 0, and maps a null sizeBytes to null (AC 27/28)', async () => {
         db.select
           .mockReturnValueOnce(mockDbChain([{ id: 7, bookId: 'bk_zero', status: 'imported', asin: 'B00ZERO' }]))
@@ -265,11 +246,7 @@ describe('BookService', () => {
         .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }, { author: author2, position: 1 }]))
         .mockReturnValueOnce(mockDbChain([]));
 
-      // Real insert order: book row first (runResolvedInsert), then syncAuthors
-      // interleaves find-or-create with the junction row per author. The previous
-      // ordering made `findOrCreateAuthor` fall into its unique-violation retry and
-      // silently mis-align every later mock, which left `getById` reading the
-      // authors result as its book row.
+      // Order is book, then per-author find/create + junction; mock drift feeds getById the wrong row.
       db.insert
         .mockReturnValueOnce(mockDbChain([{ id: 1 }]))     // insert book
         .mockReturnValueOnce(mockDbChain([]))              // insert bookAuthors (author 0)
@@ -281,31 +258,27 @@ describe('BookService', () => {
         authors: [{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }, { name: 'Second Author' }],
       });
 
-      // bookAuthors inserts: one for each author
       const insertCalls = db.insert.mock.calls;
-      // bookAuthors inserts should have been called with position 0 and 1
-      expect(insertCalls.length).toBeGreaterThanOrEqual(3); // book insert + at least 2 junction inserts
+      expect(insertCalls.length).toBeGreaterThanOrEqual(3);
     });
 
     it('finds existing author by slug on create, does not insert duplicate', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([mockAuthor]))    // author found
+        .mockReturnValueOnce(mockDbChain([mockAuthor]))
         .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
         .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
         .mockReturnValueOnce(mockDbChain([]));
 
       db.insert
-        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))    // book insert
-        .mockReturnValueOnce(mockDbChain([]));             // bookAuthors insert
+        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))
+        .mockReturnValueOnce(mockDbChain([]));
 
       await service.create({
         title: 'The Way of Kings',
         authors: [{ name: 'Brandon Sanderson' }],
       });
 
-      // No author insert — found existing
       const insertCalls = db.insert.mock.calls;
-      // Should be: book insert + bookAuthors insert (no author insert)
       expect(insertCalls.length).toBe(2);
     });
 
@@ -359,10 +332,9 @@ describe('BookService', () => {
     });
 
     it('deduplicates authors with identical slugs within a single create payload', async () => {
-      // Both authors normalize to same slug → only one findOrCreate and one bookAuthors row
       db.select
         .mockReturnValueOnce(mockDbChain([mockAuthor]))  // author found (first)
-        // second lookup skipped due to dedup
+        // Duplicate lookup is skipped; this next select belongs to getById.
         .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
         .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
         .mockReturnValueOnce(mockDbChain([]));
@@ -373,10 +345,9 @@ describe('BookService', () => {
 
       await service.create({
         title: 'Test',
-        authors: [{ name: 'Brandon Sanderson' }, { name: 'Brandon Sanderson' }],  // duplicate
+        authors: [{ name: 'Brandon Sanderson' }, { name: 'Brandon Sanderson' }],
       });
 
-      // author lookup (1) + getById (3 selects: book, authors, narrators) = 4
       expect(db.select).toHaveBeenCalledTimes(4);
     });
 
@@ -384,7 +355,7 @@ describe('BookService', () => {
       db.select
         .mockReturnValueOnce(mockDbChain([mockAuthor]))    // author found
         .mockReturnValueOnce(mockDbChain([mockNarrator]))  // narrator found (first lookup)
-        // second narrator skipped due to dedup
+        // Duplicate lookup is skipped; this next select belongs to getById.
         .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
         .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
         .mockReturnValueOnce(mockDbChain([{ narrator: mockNarrator, position: 0 }]));
@@ -396,10 +367,9 @@ describe('BookService', () => {
       await service.create({
         title: 'Test',
         authors: [{ name: 'Brandon Sanderson' }],
-        narrators: ['Michael Kramer', 'Michael Kramer'],  // duplicate
+        narrators: ['Michael Kramer', 'Michael Kramer'],
       });
 
-      // Only one bookNarrators insert (not two) despite two narrator entries in payload
       expect(db.insert).toHaveBeenCalledTimes(3);
     });
 
@@ -408,7 +378,7 @@ describe('BookService', () => {
       db.delete.mockReturnValue(mockDbChain([]));
       db.select
         .mockReturnValueOnce(mockDbChain([mockNarrator]))  // narrator found (first lookup only)
-        // second narrator skipped due to dedup
+        // Duplicate lookup is skipped; this next select belongs to getById.
         .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
         .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
         .mockReturnValueOnce(mockDbChain([{ narrator: mockNarrator, position: 0 }]));
@@ -417,14 +387,11 @@ describe('BookService', () => {
 
       await service.update(1, { narrators: ['Michael Kramer', 'Michael Kramer'] });
 
-      // Only one bookNarrators insert (not two) despite two narrator entries in payload
       expect(db.insert).toHaveBeenCalledTimes(1);
     });
   });
 
-  // #1710 F2 — the full buildBookCreatePayload -> create -> books insert contract.
-  // Asserting the payload alone (enrichment-orchestration.helpers.test.ts) would not
-  // catch create() dropping productionType from .values(); these assert the insert.
+  // Payload-only tests cannot catch create() dropping productionType before the insert (#1710).
   describe('create() persists productionType into the books insert (#1710)', () => {
     function setupCreateMocks() {
       db.select
@@ -467,10 +434,7 @@ describe('BookService', () => {
       );
     });
 
-    // #1710 F3 — the write-boundary productionTypeSchema.parse() guards against a
-    // runtime-invalid value crossing the TS boundary (SQLite text-enums emit no DB
-    // CHECK). If the parse were replaced with a bare `data.productionType ?? 'unknown'`
-    // forward, this test fails: create() must reject and never submit the insert row.
+    // SQLite text enums have no CHECK; parse must reject runtime-invalid values before insert (#1710).
     it('rejects an invalid productionType before the books insert', async () => {
       const bookInsertChain = setupCreateMocks();
 
@@ -485,10 +449,7 @@ describe('BookService', () => {
     });
   });
 
-  // #1727 — parity with create()'s write-boundary productionTypeSchema.parse().
-  // update() must validate a present productionType before the transaction (SQLite
-  // text-enums emit no DB CHECK), but — unlike create() — must NOT default-fill an
-  // absent key to 'unknown': a partial update leaves the existing value untouched.
+  // Unlike create(), update validates a present productionType but must not default an absent key (#1727).
   describe('update() validates productionType at the write boundary (#1727)', () => {
     it('rejects an invalid productionType before the books update', async () => {
       const updateChain = mockDbChain([{ id: 1 }]);
@@ -500,7 +461,7 @@ describe('BookService', () => {
         productionType: 'not-a-real-type' as ProductionType,
       })).rejects.toThrow();
 
-      // Parse fires outside the transaction, so neither the tx nor the .set() runs.
+      // Parse runs before the transaction.
       expect(db.transaction).not.toHaveBeenCalled();
       expect(updateChain.set).not.toHaveBeenCalled();
     });
@@ -524,7 +485,6 @@ describe('BookService', () => {
 
       await service.update(1, { title: 'New Title' });
 
-      // Absent key → existing value preserved; no 'unknown' default-fill (≠ create()).
       const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
       expect(setArg).not.toHaveProperty('productionType');
     });
@@ -545,8 +505,8 @@ describe('BookService', () => {
 
       await service.update(1, { narrators: ['Michael Kramer'] });
 
-      expect(db.delete).toHaveBeenCalled();  // old bookNarrators deleted
-      expect(db.insert).toHaveBeenCalled();  // new bookNarrators inserted
+      expect(db.delete).toHaveBeenCalled();
+      expect(db.insert).toHaveBeenCalled();
     });
 
     it('clears all narrator junction rows when narrators: [] is passed', async () => {
@@ -556,8 +516,8 @@ describe('BookService', () => {
 
       await service.update(1, { narrators: [] });
 
-      expect(db.delete).toHaveBeenCalled();  // bookNarrators deleted
-      expect(db.insert).not.toHaveBeenCalled();  // no re-insert
+      expect(db.delete).toHaveBeenCalled();
+      expect(db.insert).not.toHaveBeenCalled();
     });
 
     it('leaves author junction rows unchanged when authors is omitted from update', async () => {
@@ -566,7 +526,6 @@ describe('BookService', () => {
 
       await service.update(1, { title: 'New Title' });
 
-      // No delete or insert for bookAuthors
       expect(db.delete).not.toHaveBeenCalled();
     });
 
@@ -646,7 +605,7 @@ describe('BookService', () => {
 
       const result = await service.create({ title: 'Unknown Book', authors: [] });
 
-      expect(result.title).toBe('The Way of Kings'); // from mock
+      expect(result.title).toBe('The Way of Kings');
     });
 
     it('writes importListId to books.import_list_id when supplied (#1101)', async () => {
@@ -758,11 +717,7 @@ describe('BookService', () => {
       });
 
       expect(result.title).toBe('The Way of Kings');
-      // F2 — the extracted `buildNewBookValues` mapping must carry EVERY migrated
-      // scalar/default (not just series fields) to the books insert; deleting any
-      // one assignment from the builder would leave this red. #1716 — series
-      // metadata no longer carries seriesAsin/seriesProvider, but scalar
-      // name/position still reach the insert and drive the series-link upsert.
+      // Pins every migrated scalar; series name/position still drive link upsert after provider IDs moved (#1716).
       expect(bookInsertChain.values).toHaveBeenCalledWith(
         expect.objectContaining({
           title: 'The Way of Kings',
@@ -819,6 +774,70 @@ describe('BookService', () => {
     });
   });
 
+  // A provider blank ('   ') passed every bare truthiness guard and reached books.series_name (#2224).
+  describe('create — an unusable provider series name never reaches the insert', () => {
+    /** The shared blank ladder: `undefined` plus every schema-reachable whitespace-only string. */
+    const UNUSABLE: Array<[label: string, value: string | undefined]> = [
+      ['undefined', undefined],
+      ['empty string', ''],
+      ['spaces', '   '],
+      ['tab + newline', '\t\n'],
+      ['non-breaking space', '\u00A0'],
+    ];
+
+    function runCreate(seriesName: string | undefined, seriesPosition?: number) {
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.insert.mockReturnValue(insertChain);
+      return {
+        insertChain,
+        done: service.create({ title: 'Leviathan Wakes', authors: [], seriesName, seriesPosition }),
+      };
+    }
+
+    const insertedTables = () => db.insert.mock.calls.map(([table]) => table);
+
+    it.each(UNUSABLE)('%s: neither seriesName nor seriesPosition reaches the insert payload', async (_label, value) => {
+      const { insertChain, done } = runCreate(value, 3);
+      await done;
+
+      const values = insertChain.values.mock.calls[0]![0] as Record<string, unknown>;
+      // Key absence, not falsiness: a present-undefined key would satisfy objectContaining (#2243).
+      expect(values).not.toHaveProperty('seriesName');
+      expect(values).not.toHaveProperty('seriesPosition');
+    });
+
+    it.each(UNUSABLE)('%s: no series row and no member row are seeded', async (_label, value) => {
+      const { done } = runCreate(value, 3);
+      await done;
+
+      expect(insertedTables()).toEqual([books]);
+    });
+
+    it('a usable name still seeds the series link (the negative cases are not vacuous)', async () => {
+      const { done } = runCreate('The Expanse', 3);
+      await done;
+
+      expect(insertedTables()).toEqual([books, series, seriesMembers]);
+    });
+
+    it('a padded-but-usable name is persisted verbatim, alongside its position', async () => {
+      const { insertChain, done } = runCreate('  The Expanse  ', 3);
+      await done;
+
+      const values = insertChain.values.mock.calls[0]![0] as Record<string, unknown>;
+      expect(values).toHaveProperty('seriesName', '  The Expanse  ');
+      expect(values).toHaveProperty('seriesPosition', 3);
+    });
+
+    it('a position with no name at all stays an orphan that is never written', async () => {
+      const { insertChain, done } = runCreate(undefined, 3);
+      await done;
+
+      const values = insertChain.values.mock.calls[0]![0] as Record<string, unknown>;
+      expect(values).not.toHaveProperty('seriesPosition');
+    });
+  });
+
   describe('create with metadataService', () => {
     let serviceWithMeta: BookService;
     let mockMetadata: { getBook: ReturnType<typeof vi.fn> };
@@ -840,9 +859,7 @@ describe('BookService', () => {
       await serviceWithMeta.create({ title: 'Test', authors: [], providerId: 'hc-123' });
 
       expect(mockMetadata.getBook).toHaveBeenCalledWith('hc-123');
-      // F1 — the provider ASIN must cross the wrapper→primitive boundary and reach
-      // the insert (canonicalized). Dropping `enrichedAsin = detail.asin` or the
-      // `asin` field from the resolved payload would leave this red.
+      // Pins the provider ASIN across the wrapper → primitive → canonicalized insert boundary.
       expect(insertChain.values).toHaveBeenCalledWith(
         expect.objectContaining({ asin: 'B_ENRICHED' }),
       );
@@ -860,8 +877,7 @@ describe('BookService', () => {
 
       await svc.create({ title: 'Test', authors: [], providerId: 'hc-123' });
 
-      // The whole point of this breadcrumb is to record the ASIN the row was
-      // added with; reading `data.asin` here logs `undefined` on the enrich path.
+      // This breadcrumb must record the resolved ASIN the row was added with, including null (#1898).
       expect(infoLog.info).toHaveBeenCalledWith(
         expect.objectContaining({ asin: 'B_ENRICHED' }),
         'Book added to library',
@@ -893,13 +909,11 @@ describe('BookService', () => {
 
       const result = await svc.create({ title: 'No ASIN Book', authors: [], providerId: 'hc-999' });
 
-      expect(result.title).toBe('The Way of Kings'); // from mock
+      expect(result.title).toBe('The Way of Kings');
       expect(mockMetadata.getBook).toHaveBeenCalledWith('hc-999');
-      // F3 — full null-parity contract: null persisted, no enrichment-success log.
       expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: null }));
       const infoMock = infoLog.info as Mock;
       expect(infoMock.mock.calls.some((c) => c[1] === 'Enriched book with ASIN from provider')).toBe(false);
-      // #1898/AC4 — the success line reports the persisted absence explicitly.
       expect(infoLog.info).toHaveBeenCalledWith(
         expect.objectContaining({ asin: null }),
         'Book added to library',
@@ -916,7 +930,7 @@ describe('BookService', () => {
 
       const result = await serviceWithMeta.create({ title: 'Error Book', authors: [], providerId: 'hc-bad' });
 
-      expect(result.title).toBe('The Way of Kings'); // still creates
+      expect(result.title).toBe('The Way of Kings');
     });
 
     it('logs the exact "ASIN enrichment failed" warn with { error, providerId } and persists null asin (AC4/F8)', async () => {
@@ -938,7 +952,6 @@ describe('BookService', () => {
         'ASIN enrichment failed',
       );
       expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: null }));
-      // #1898/AC4 — a swallowed provider failure still logs the persisted null.
       expect(warnLog.info).toHaveBeenCalledWith(
         expect.objectContaining({ asin: null }),
         'Book added to library',
@@ -948,7 +961,7 @@ describe('BookService', () => {
     it('inserts null asin when getBook resolves metadata with an ABSENT asin, and emits no enrichment-success log (AC4/F9)', async () => {
       const infoLog = createMockLogger();
       const svc = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(infoLog), inject<MetadataService>(mockMetadata));
-      mockMetadata.getBook.mockResolvedValueOnce({ title: 'Book', authors: [] }); // no `asin` key at all
+      mockMetadata.getBook.mockResolvedValueOnce({ title: 'Book', authors: [] });
       db.select
         .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, asin: null }, importListName: null }]))
         .mockReturnValueOnce(mockDbChain([]))
@@ -962,16 +975,13 @@ describe('BookService', () => {
       expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: null }));
       const infoMock = infoLog.info as Mock;
       expect(infoMock.mock.calls.some((c) => c[1] === 'Enriched book with ASIN from provider')).toBe(false);
-      // #1898/AC4 — an ASIN-less provider detail logs the persisted null.
       expect(infoLog.info).toHaveBeenCalledWith(
         expect.objectContaining({ asin: null }),
         'Book added to library',
       );
     });
 
-    // #1893 — the extracted `resolveCreateInput` primitive that the staged-import
-    // runner calls BEFORE opening its per-item transaction. It performs the ONLY
-    // provider I/O and returns a providerId-free resolved input.
+    // Staged import calls this sole provider-I/O boundary before its per-item transaction (#1893).
     describe('resolveCreateInput (#1893 pre-transaction enrichment)', () => {
       it('carries the provider ASIN and drops providerId (positive)', async () => {
         mockMetadata.getBook.mockResolvedValueOnce({ title: 'Book', authors: [], asin: 'B_ENRICHED' });
@@ -1014,10 +1024,8 @@ describe('BookService', () => {
       await svc.create({ title: 'Empty ASIN Book', authors: [], providerId: 'hc-empty' });
 
       expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: null }));
-      // F3 — the empty-string boundary must not emit the enrichment-success log.
       const infoMock = infoLog.info as Mock;
       expect(infoMock.mock.calls.some((c) => c[1] === 'Enriched book with ASIN from provider')).toBe(false);
-      // #1898/AC4 — an empty provider ASIN logs the persisted null, not `''`.
       expect(infoLog.info).toHaveBeenCalledWith(
         expect.objectContaining({ asin: null }),
         'Book added to library',
@@ -1025,8 +1033,7 @@ describe('BookService', () => {
     });
   });
 
-  // The tx-scoped insert primitive (#1892). Zero provider I/O, no post-commit
-  // side effects, optional outer transaction, numeric-id return.
+  // This tx-scoped primitive has no provider I/O or post-commit side effects (#1892).
   describe('createResolved (tx-scoped primitive #1892)', () => {
     let metaLog: ReturnType<typeof createMockLogger>;
     let mockMetadata: { getBook: ReturnType<typeof vi.fn> };
@@ -1054,8 +1061,7 @@ describe('BookService', () => {
 
       await primitiveSvc.createResolved({ title: 'Self Managed', authors: [] });
 
-      // The omitted-tx branch must wrap the multi-table write in one transaction;
-      // replacing it with `runResolvedInsert(this.db, ...)` would drop this to 0.
+      // The omitted-tx branch must wrap the multi-table write atomically.
       expect(db.transaction).toHaveBeenCalledTimes(1);
     });
 
@@ -1071,8 +1077,7 @@ describe('BookService', () => {
     });
 
     it('runs every write on a supplied tx and never opens db.transaction (AC5)', async () => {
-      // Guard the tx-mock termini so the insert is BOTH awaitable AND exposes
-      // .returning() (guarded-transition-needs-returning-in-tx-mocks).
+      // This tx mock must be both awaitable and expose .returning().
       const txInsert = mockDbChain([{ id: 55 }]);
       const tx = {
         insert: vi.fn().mockReturnValue(txInsert),
@@ -1088,7 +1093,6 @@ describe('BookService', () => {
       expect(id).toBe(55);
       expect(db.transaction).not.toHaveBeenCalled();
       expect(db.insert).not.toHaveBeenCalled();
-      // book insert + author find-or-create + bookAuthors junction all on tx
       expect(tx.insert).toHaveBeenCalled();
       expect(tx.delete).toHaveBeenCalled();
     });
@@ -1101,7 +1105,6 @@ describe('BookService', () => {
 
       const infoMock = metaLog.info as Mock;
       expect(infoMock.mock.calls.some((c) => c[1] === 'Book added to library')).toBe(false);
-      // The only insert is the book row — no unmatched_genres telemetry write.
       expect(db.insert).toHaveBeenCalledTimes(1);
     });
   });
@@ -1124,8 +1127,6 @@ describe('BookService', () => {
 
       await new Promise((r) => setTimeout(r, 50));
 
-      // author insert skipped (found), book insert, bookAuthors, unmatched genre upsert
-      // The exact count depends on whether author was found or not
       expect(db.insert).toHaveBeenCalled();
     });
 
@@ -1198,10 +1199,7 @@ describe('BookService', () => {
   });
 
   describe('deleteBookFiles', () => {
-    // #1589: deleteBookFiles now deletes only MANAGED files (audio + cover sidecar) via the shared
-    // helper, preserves foreign files, returns a {deletedManaged, preservedForeign, failedManaged}
-    // summary, and still runs cleanEmptyParents. readdir is driven by `withFileTypes`: the helper
-    // sweep reads dirents; cleanEmptyParents reads a plain name list.
+    // Managed sweep reads Dirents; parent cleanup reads names, and foreign files survive (#1589).
     const dirent = (name: string, isDir = false) =>
       ({ name, isFile: () => !isDir, isDirectory: () => isDir });
     const baseName = (p: string) => p.split(/[\\/]/).pop();
@@ -1212,8 +1210,7 @@ describe('BookService', () => {
       vi.mocked(readdir).mockReset();
       vi.mocked(stat).mockReset();
       vi.mocked(stat).mockResolvedValue({ isDirectory: () => true, isFile: () => false } as never);
-      // #1598: the helper now classifies the top-level bookPath via `lstat`. A non-symlink directory
-      // keeps these tests on the directory-sweep path (the symlink branch is covered in delete-managed-files.test.ts).
+      // Keep these on directory sweep; symlink behavior lives in delete-managed-files.test.ts (#1598).
       vi.mocked(lstat).mockReset();
       vi.mocked(lstat).mockResolvedValue({ isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false } as never);
       vi.mocked(rm).mockResolvedValue(undefined);
@@ -1241,7 +1238,6 @@ describe('BookService', () => {
 
       await service.deleteBookFiles('/audiobooks/Author/Book', '/audiobooks');
 
-      // Helper rmdirs the emptied book folder; cleanEmptyParents rmdirs the now-empty Author folder.
       expect(rmdir).toHaveBeenCalledWith(expect.stringContaining('Book'));
       expect(rmdir).toHaveBeenCalledWith(expect.stringContaining('Author'));
     });
@@ -1253,7 +1249,6 @@ describe('BookService', () => {
       await service.deleteBookFiles('/audiobooks/Author/Book', '/audiobooks');
 
       expect(rm).toHaveBeenCalledWith(expect.stringContaining('ch1.mp3'), { force: true });
-      // The non-empty Author parent is never removed (the emptied Book folder itself may be).
       expect(rmdir).not.toHaveBeenCalledWith('/audiobooks/Author');
     });
 
@@ -1354,7 +1349,6 @@ describe('BookService', () => {
 
   describe('create edge cases', () => {
     it('throws when book insert fails', async () => {
-      // Book insert is first; author find-or-create happens in syncAuthors after
       db.insert
         .mockImplementationOnce(() => { throw new Error('UNIQUE constraint failed: books.asin'); });
 
@@ -1368,7 +1362,6 @@ describe('BookService', () => {
     });
 
     it('handles concurrent author creation race condition', async () => {
-      // New order: book insert first, then syncAuthors (delete + find/create + insert junction)
       const raceChain = mockDbChain(undefined, { error: new Error('UNIQUE constraint failed') });
 
       db.insert
@@ -1392,7 +1385,6 @@ describe('BookService', () => {
     });
 
     it('throws when author race retry also fails to find author', async () => {
-      // Book insert succeeds; author insert in syncAuthors fails with race
       db.insert
         .mockReturnValueOnce(mockDbChain([{ id: 1 }]));  // book insert succeeds
 
@@ -1412,7 +1404,6 @@ describe('BookService', () => {
     });
 
     it('rolls back transaction when author sync fails — no compensating delete needed', async () => {
-      // Book insert succeeds, then syncAuthors fails immediately (no author found, no retry)
       db.insert
         .mockReturnValueOnce(mockDbChain([{ id: 42 }]));  // book insert succeeds
 
@@ -1427,7 +1418,6 @@ describe('BookService', () => {
         service.create({ title: 'Orphan Book', authors: [{ name: 'Ghost Author' }] }),
       ).rejects.toThrow();
 
-      // Transaction handles rollback — no manual compensating delete of books table
       expect(db.transaction).toHaveBeenCalledTimes(1);
     });
   });
@@ -1462,25 +1452,24 @@ describe('BookService.syncAuthors / syncNarrators', () => {
   });
 
   it('syncAuthors deduplicates by slug — two authors with same slug produce one junction row', async () => {
-    db.select.mockReturnValue(mockDbChain([{ id: 1 }]));  // author found
+    db.select.mockReturnValue(mockDbChain([{ id: 1 }]));
     db.delete.mockReturnValue(mockDbChain([]));
     db.insert.mockReturnValue(mockDbChain([]));
 
     await service.syncAuthors(inject<DbOrTx>(db), 10, [{ name: 'Brandon Sanderson' }, { name: 'Brandon Sanderson' }]);
 
-    // 1 delete (clear junctions) + 1 bookAuthors insert (not 2)
     expect(db.insert).toHaveBeenCalledTimes(1);
   });
 
   it('syncNarrators replaces all narrator junctions with new list', async () => {
-    db.select.mockReturnValue(mockDbChain([{ id: 5 }]));  // narrator found
+    db.select.mockReturnValue(mockDbChain([{ id: 5 }]));
     db.delete.mockReturnValue(mockDbChain([]));
     db.insert.mockReturnValue(mockDbChain([]));
 
     await service.syncNarrators(inject<DbOrTx>(db), 10, ['Kate Reading', 'Michael Kramer']);
 
     expect(db.delete).toHaveBeenCalledTimes(1);
-    expect(db.insert).toHaveBeenCalledTimes(2);  // 2 bookNarrators rows
+    expect(db.insert).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -1495,10 +1484,9 @@ describe('BookService — transaction atomicity (#214)', () => {
 
   describe('create() transaction wrapping', () => {
     it('wraps insert + syncAuthors + syncNarrators in db.transaction()', async () => {
-      // book insert + author lookup (found) + junction insert
       db.insert.mockReturnValueOnce(mockDbChain([{ id: 1 }]));
       db.select
-        .mockReturnValueOnce(mockDbChain([mockAuthor]))  // findOrCreateAuthor: found
+        .mockReturnValueOnce(mockDbChain([mockAuthor]))
         .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
         .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
         .mockReturnValueOnce(mockDbChain([]));
@@ -1510,7 +1498,7 @@ describe('BookService — transaction atomicity (#214)', () => {
     });
 
     it('rolls back book row when syncAuthors throws', async () => {
-      db.insert.mockReturnValueOnce(mockDbChain([{ id: 1 }]));  // book insert
+      db.insert.mockReturnValueOnce(mockDbChain([{ id: 1 }]));
       db.select
         .mockReturnValueOnce(mockDbChain([]))   // findOrCreateAuthor: not found
         .mockReturnValueOnce(mockDbChain([]));   // retry: still not found
@@ -1522,12 +1510,10 @@ describe('BookService — transaction atomicity (#214)', () => {
         service.create({ title: 'Test', authors: [{ name: 'Ghost' }] }),
       ).rejects.toThrow('Failed to find or create author');
 
-      // Transaction was called — Drizzle auto-rolls back on thrown error
       expect(db.transaction).toHaveBeenCalledTimes(1);
     });
 
     it('rolls back book row and author junctions when syncNarrators throws', async () => {
-      // book insert succeeds, syncAuthors succeeds, syncNarrators fails
       db.insert
         .mockReturnValueOnce(mockDbChain([{ id: 1 }]))   // book insert
         .mockReturnValueOnce(mockDbChain([]));             // bookAuthors junction
@@ -1564,15 +1550,14 @@ describe('BookService — transaction atomicity (#214)', () => {
         service.create({ title: 'Test', authors: [{ name: 'Ghost' }] }),
       ).rejects.toThrow();
 
-      // No delete call on books table — compensating delete is removed
       expect(db.delete).not.toHaveBeenCalledWith(books);
     });
 
     it('happy path: book + authors + narrators all committed inside transaction', async () => {
-      db.insert.mockReturnValueOnce(mockDbChain([{ id: 1 }]));  // book
+      db.insert.mockReturnValueOnce(mockDbChain([{ id: 1 }]));
       db.select
-        .mockReturnValueOnce(mockDbChain([mockAuthor]))   // findOrCreateAuthor
-        .mockReturnValueOnce(mockDbChain([mockNarrator]))  // findOrCreateNarrator
+        .mockReturnValueOnce(mockDbChain([mockAuthor]))
+        .mockReturnValueOnce(mockDbChain([mockNarrator]))
         .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
         .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
         .mockReturnValueOnce(mockDbChain([{ narrator: mockNarrator, position: 0 }]));
@@ -1585,17 +1570,16 @@ describe('BookService — transaction atomicity (#214)', () => {
 
       expect(result.title).toBe('The Way of Kings');
       expect(db.transaction).toHaveBeenCalledTimes(1);
-      // insert: book + bookAuthors junction + bookNarrators junction
       expect(db.insert).toHaveBeenCalledTimes(3);
     });
   });
 
   describe('update() transaction wrapping', () => {
     it('wraps update + syncNarrators + syncAuthors in db.transaction()', async () => {
-      db.update.mockReturnValueOnce(mockDbChain([{ id: 1 }]));  // book update returns row
+      db.update.mockReturnValueOnce(mockDbChain([{ id: 1 }]));
       db.select
-        .mockReturnValueOnce(mockDbChain([mockNarrator]))  // findOrCreateNarrator
-        .mockReturnValueOnce(mockDbChain([mockAuthor]))    // findOrCreateAuthor
+        .mockReturnValueOnce(mockDbChain([mockNarrator]))
+        .mockReturnValueOnce(mockDbChain([mockAuthor]))
         .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
         .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
         .mockReturnValueOnce(mockDbChain([]));
@@ -1648,19 +1632,19 @@ describe('BookService — transaction atomicity (#214)', () => {
     });
 
     it('returns null without transaction when book ID does not match', async () => {
-      db.update.mockReturnValueOnce(mockDbChain([]));  // no rows returned
+      db.update.mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.update(999, { title: 'Nope' });
 
       expect(result).toBeNull();
-      // Transaction is still called (wraps the update), but returns false early
+      // The transaction wraps the update before its early false return.
       expect(db.transaction).toHaveBeenCalledTimes(1);
     });
 
     it('happy path: book metadata + junctions updated inside transaction', async () => {
       db.update.mockReturnValueOnce(mockDbChain([{ id: 1 }]));
       db.select
-        .mockReturnValueOnce(mockDbChain([mockAuthor]))    // findOrCreateAuthor
+        .mockReturnValueOnce(mockDbChain([mockAuthor]))
         .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
         .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
         .mockReturnValueOnce(mockDbChain([]));
@@ -1678,21 +1662,19 @@ describe('BookService — transaction atomicity (#214)', () => {
   describe('syncAuthors/syncNarrators tx parameter', () => {
     it('syncAuthors uses tx for delete and insert operations, not this.db', async () => {
       const tx = createMockDb();
-      tx.select.mockReturnValue(mockDbChain([{ id: 1 }]));  // author found
+      tx.select.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson' }]);
 
-      // tx.delete called (clear junctions), tx.insert called (junction row)
       expect(tx.delete).toHaveBeenCalledTimes(1);
       expect(tx.insert).toHaveBeenCalledTimes(1);
-      // Original db should NOT have been used for these operations
       expect(db.delete).not.toHaveBeenCalled();
       expect(db.insert).not.toHaveBeenCalled();
     });
 
     it('syncNarrators uses tx for delete and insert operations, not this.db', async () => {
       const tx = createMockDb();
-      tx.select.mockReturnValue(mockDbChain([{ id: 5 }]));  // narrator found
+      tx.select.mockReturnValue(mockDbChain([{ id: 5 }]));
 
       await service.syncNarrators(inject<DbOrTx>(tx), 10, ['Michael Kramer']);
 
@@ -1711,7 +1693,6 @@ describe('BookService — transaction atomicity (#214)', () => {
 
       await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'New Author' }]);
 
-      // tx.select for lookup, tx.insert for author creation + junction
       expect(tx.select).toHaveBeenCalledTimes(1);
       expect(tx.insert).toHaveBeenCalledTimes(2);
       expect(db.select).not.toHaveBeenCalled();
@@ -1734,25 +1715,22 @@ describe('BookService — transaction atomicity (#214)', () => {
     });
   });
 
-  // ── #437 Author ASIN backfill ────────────────────────────────────────────
   describe('findOrCreateAuthor ASIN backfill (#437)', () => {
     it('backfills null ASIN on existing author when caller provides one', async () => {
       const tx = createMockDb();
       const existingAuthor = createMockDbAuthor({ id: 5, asin: null });
-      tx.select.mockReturnValueOnce(mockDbChain([existingAuthor])); // found existing
-      tx.update.mockReturnValueOnce(mockDbChain([]));               // ASIN update
-      tx.delete.mockReturnValueOnce(mockDbChain([]));               // junction delete
-      tx.insert.mockReturnValueOnce(mockDbChain([]));               // junction insert
+      tx.select.mockReturnValueOnce(mockDbChain([existingAuthor]));
+      tx.update.mockReturnValueOnce(mockDbChain([]));
+      tx.delete.mockReturnValueOnce(mockDbChain([]));
+      tx.insert.mockReturnValueOnce(mockDbChain([]));
 
       await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }]);
 
-      // Assert update targets the correct author row
       expect(tx.update).toHaveBeenCalledTimes(1);
       const updateChain = tx.update.mock.results[0]!.value;
       expect(updateChain.set).toHaveBeenCalledWith({ asin: 'B001IGFHW6' });
       expect(updateChain.where).toHaveBeenCalledWith(eq(authors.id, 5));
 
-      // Assert junction insert uses the existing author ID (not a new one)
       const junctionChain = tx.insert.mock.results[0]!.value;
       expect(junctionChain.values).toHaveBeenCalledWith({ bookId: 10, authorId: 5, position: 0 });
     });
@@ -1760,9 +1738,9 @@ describe('BookService — transaction atomicity (#214)', () => {
     it('does not overwrite existing non-null ASIN (first-write-wins)', async () => {
       const tx = createMockDb();
       const existingAuthor = createMockDbAuthor({ id: 5, asin: 'B_OLD' });
-      tx.select.mockReturnValueOnce(mockDbChain([existingAuthor])); // found existing with ASIN
-      tx.delete.mockReturnValueOnce(mockDbChain([]));               // junction delete
-      tx.insert.mockReturnValueOnce(mockDbChain([]));               // junction insert
+      tx.select.mockReturnValueOnce(mockDbChain([existingAuthor]));
+      tx.delete.mockReturnValueOnce(mockDbChain([]));
+      tx.insert.mockReturnValueOnce(mockDbChain([]));
 
       await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson', asin: 'B_NEW' }]);
 
@@ -1772,9 +1750,9 @@ describe('BookService — transaction atomicity (#214)', () => {
     it('does not update when caller provides no ASIN (undefined)', async () => {
       const tx = createMockDb();
       const existingAuthor = createMockDbAuthor({ id: 5, asin: null });
-      tx.select.mockReturnValueOnce(mockDbChain([existingAuthor])); // found existing
-      tx.delete.mockReturnValueOnce(mockDbChain([]));               // junction delete
-      tx.insert.mockReturnValueOnce(mockDbChain([]));               // junction insert
+      tx.select.mockReturnValueOnce(mockDbChain([existingAuthor]));
+      tx.delete.mockReturnValueOnce(mockDbChain([]));
+      tx.insert.mockReturnValueOnce(mockDbChain([]));
 
       await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson' }]);
 
@@ -1784,9 +1762,9 @@ describe('BookService — transaction atomicity (#214)', () => {
     it('does not update when caller provides empty string ASIN', async () => {
       const tx = createMockDb();
       const existingAuthor = createMockDbAuthor({ id: 5, asin: null });
-      tx.select.mockReturnValueOnce(mockDbChain([existingAuthor])); // found existing
-      tx.delete.mockReturnValueOnce(mockDbChain([]));               // junction delete
-      tx.insert.mockReturnValueOnce(mockDbChain([]));               // junction insert
+      tx.select.mockReturnValueOnce(mockDbChain([existingAuthor]));
+      tx.delete.mockReturnValueOnce(mockDbChain([]));
+      tx.insert.mockReturnValueOnce(mockDbChain([]));
 
       await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson', asin: '' }]);
 
@@ -1807,13 +1785,11 @@ describe('BookService — transaction atomicity (#214)', () => {
 
       await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }]);
 
-      // Assert update targets the correct author row
       expect(tx.update).toHaveBeenCalledTimes(1);
       const updateChain = tx.update.mock.results[0]!.value;
       expect(updateChain.set).toHaveBeenCalledWith({ asin: 'B001IGFHW6' });
       expect(updateChain.where).toHaveBeenCalledWith(eq(authors.id, 5));
 
-      // Assert junction insert uses the retried author ID
       const junctionChain = tx.insert.mock.results[1]!.value;  // [0] is the failed author insert
       expect(junctionChain.values).toHaveBeenCalledWith({ bookId: 10, authorId: 5, position: 0 });
     });
@@ -1851,7 +1827,6 @@ describe('BookService — transaction atomicity (#214)', () => {
     });
   });
 
-  // ── #229 Observability — CRUD log enrichment ────────────────────────────
   describe('logging improvements (#229)', () => {
     it('create log includes { authors, asin }', async () => {
       const log = createMockLogger();
@@ -1859,7 +1834,7 @@ describe('BookService — transaction atomicity (#214)', () => {
 
       db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.select
-        .mockReturnValueOnce(mockDbChain([mockAuthor]))    // findOrCreateAuthor
+        .mockReturnValueOnce(mockDbChain([mockAuthor]))
         .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, asin: 'B003P2WO5E' }, importListName: null }]))
         .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
         .mockReturnValueOnce(mockDbChain([]));
@@ -1889,8 +1864,7 @@ describe('BookService — transaction atomicity (#214)', () => {
 
       await svc.create({ title: 'The Way of Kings', authors: [], asin: 'b003p2wo5e' });
 
-      // Asserting the pair in one test is what pins log-equals-persisted rather
-      // than log-happens-to-be-uppercase.
+      // Pairing both assertions pins log-equals-persisted, not merely uppercase logging.
       expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: 'B003P2WO5E' }));
       expect(log.info).toHaveBeenCalledWith(
         expect.objectContaining({ asin: 'B003P2WO5E' }),
@@ -1911,8 +1885,7 @@ describe('BookService — transaction atomicity (#214)', () => {
 
       await svc.create({ title: 'Blank ASIN', authors: [], asin: '   ' });
 
-      // The falsy/coercion trap: `'   '` is truthy, so a raw passthrough would
-      // log whitespace against a row that stored null.
+      // `'   '` is truthy; raw passthrough would log whitespace against a stored null.
       expect(insertChain.values).toHaveBeenCalledWith(expect.objectContaining({ asin: null }));
       expect(log.info).toHaveBeenCalledWith(
         expect.objectContaining({ asin: null }),
@@ -1953,17 +1926,15 @@ describe('BookService — transaction atomicity (#214)', () => {
 
   describe('update() genre telemetry', () => {
     it('calls trackUnmatchedGenres fire-and-forget when genres are provided in update payload', async () => {
-      // update succeeds
       db.update.mockReturnValue(mockDbChain([mockBook]));
       setupGetById(db);
 
-      // trackUnmatchedGenres will call db.insert for unmatched genres
       const insertChain = mockDbChain([{ id: 1 }]);
       db.insert.mockReturnValue(insertChain);
 
       await service.update(1, { genres: ['Weird Western'] });
 
-      // Wait for fire-and-forget to settle
+      // Let fire-and-forget telemetry settle.
       await new Promise((r) => setTimeout(r, 50));
 
       expect(insertChain.onConflictDoUpdate).toHaveBeenCalled();
@@ -1973,8 +1944,7 @@ describe('BookService — transaction atomicity (#214)', () => {
       db.update.mockReturnValue(mockDbChain([mockBook]));
       setupGetById(db);
 
-      // 'Sci-Fi' is a synonym-map key — normalization maps it to
-      // 'Science Fiction', so nothing should reach the unmatched table.
+      // `Sci-Fi` normalizes to `Science Fiction`, so it is not unmatched.
       await service.update(1, { genres: ['Sci-Fi'] });
 
       await new Promise((r) => setTimeout(r, 50));
@@ -1990,7 +1960,6 @@ describe('BookService — transaction atomicity (#214)', () => {
 
       await new Promise((r) => setTimeout(r, 50));
 
-      // db.insert should not be called (no unmatched genre tracking)
       expect(db.insert).not.toHaveBeenCalled();
     });
 
@@ -1998,10 +1967,8 @@ describe('BookService — transaction atomicity (#214)', () => {
       db.update.mockReturnValue(mockDbChain([mockBook]));
       setupGetById(db);
 
-      // Make insert (used by trackUnmatchedGenres) throw
       db.insert.mockReturnValue(mockDbChain(undefined, { error: new Error('DB write failed') }));
 
-      // Should NOT throw — fire-and-forget catches the error
       const result = await service.update(1, { genres: ['Weird Western'] });
       expect(result).not.toBeNull();
 
@@ -2009,25 +1976,21 @@ describe('BookService — transaction atomicity (#214)', () => {
     });
   });
 
-  // #445 — uploadCover
   describe('uploadCover', () => {
     const testBuffer = Buffer.from('fake-image-data');
 
     function setupUploadMocks(bookPath: string | null) {
       const bookWithPath = createMockDbBook({ path: bookPath, coverUrl: null });
-      // getById for initial check (3 selects)
+      // Initial getById: book, authors, narrators.
       db.select
         .mockReturnValueOnce(mockDbChain([{ book: bookWithPath, importListName: null }]))
         .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
         .mockReturnValueOnce(mockDbChain([]));
-      // writeFile + rename succeed
       (writeFile as Mock).mockResolvedValue(undefined);
       (rename as Mock).mockResolvedValue(undefined);
-      // readdir for stale cleanup
       (readdir as Mock).mockResolvedValue([]);
-      // DB update
       db.update.mockReturnValue(mockDbChain([bookWithPath]));
-      // getById for return value (3 selects)
+      // getById for return value: book, authors, narrators.
       const updatedBook = createMockDbBook({ path: bookPath, coverUrl: `/api/books/1/cover` });
       db.select
         .mockReturnValueOnce(mockDbChain([{ book: updatedBook, importListName: null }]))
@@ -2057,7 +2020,6 @@ describe('BookService — transaction atomicity (#214)', () => {
 
       await service.uploadCover(1, testBuffer, 'image/png');
 
-      // Should unlink cover.jpg (stale) but not cover.png (target)
       expect(unlink).toHaveBeenCalledWith(expect.stringContaining('cover.jpg'));
       expect(unlink).not.toHaveBeenCalledWith(expect.stringContaining('cover.png'));
     });
@@ -2074,9 +2036,7 @@ describe('BookService — transaction atomicity (#214)', () => {
       }));
     });
 
-    // #1721 — a transient post-write reload failure must not drop the route's connector refresh.
-    // uploadCover falls back to the pre-write `book` so it always resolves { book, coverOutcome }
-    // (never throws on a reload miss) and the coverOutcome stays 'written' (the cover.* file committed).
+    // A committed cover must still trigger connector refresh if the post-write reload fails (#1721).
     it("falls back to the pre-write book and keeps coverOutcome 'written' when the post-write reload fails", async () => {
       vi.mocked(writeFile).mockReset();
       vi.mocked(rename).mockReset();
@@ -2106,7 +2066,6 @@ describe('BookService — transaction atomicity (#214)', () => {
       expect(err).toBeInstanceOf(CoverUploadError);
       expect((err as CoverUploadError).code).toBe('NO_PATH');
 
-      // No filesystem ops should have occurred
       expect(writeFile).not.toHaveBeenCalled();
     });
 
@@ -2131,13 +2090,10 @@ describe('BookService — transaction atomicity (#214)', () => {
 
       await expect(service.uploadCover(1, testBuffer, 'image/jpeg')).rejects.toThrow('EACCES');
 
-      // Temp file should have been written
       expect(writeFile).toHaveBeenCalled();
-      // Temp file should have been cleaned up
       expect(unlink).toHaveBeenCalledWith(expect.stringContaining('.cover-upload-'));
     });
 
-    // #477 — cover-upload edge cases
     it('still succeeds when readdir rejects (ENOENT) — .catch(() => []) fallback exercised', async () => {
       vi.mocked(readdir).mockReset();
       vi.mocked(rename).mockReset();
@@ -2148,9 +2104,7 @@ describe('BookService — transaction atomicity (#214)', () => {
 
       await service.uploadCover(1, testBuffer, 'image/jpeg');
 
-      // Upload still succeeded — DB was updated
       expect(db.update).toHaveBeenCalled();
-      // No stale cleanup was attempted (readdir returned empty via .catch)
       expect(unlink).not.toHaveBeenCalled();
     });
 
@@ -2163,12 +2117,9 @@ describe('BookService — transaction atomicity (#214)', () => {
       vi.mocked(readdir).mockResolvedValue(['cover.jpg', 'cover.png'] as unknown as Awaited<ReturnType<typeof readdir>>);
       vi.mocked(unlink).mockRejectedValue(new Error('EACCES: permission denied'));
 
-      // Upload PNG — should try to unlink stale JPG but swallow the error
       await service.uploadCover(1, testBuffer, 'image/png');
 
-      // Upload still succeeded — DB was updated
       expect(db.update).toHaveBeenCalled();
-      // Stale cleanup was attempted for the JPG
       expect(unlink).toHaveBeenCalledWith(expect.stringContaining('cover.jpg'));
     });
   });

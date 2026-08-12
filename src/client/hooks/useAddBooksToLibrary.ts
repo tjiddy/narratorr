@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api, type BookMetadata, type LibraryEntry } from '@/lib/api';
+import { api, readAddBookConflict, formatReviewConflictMessage, type BookMetadata, type LibraryEntry } from '@/lib/api';
 import { mapBookMetadataToPayload, isBookInLibrary } from '@/lib/helpers';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
@@ -39,6 +39,21 @@ export function useAddBooksToLibrary(libraryBooks?: LibraryEntry[], qualityDefau
         next.delete(key);
         return next;
       });
+      const details = readAddBookConflict(error);
+      if (details) {
+        // Review is tested FIRST and ownership is the fallthrough: a null discriminator degrading
+        // into the review arm would silently drop a real ownership claim. `review` is the server
+        // abstaining; claiming the key would strand the book behind an Add control it can never
+        // re-enable.
+        if (details.conflict === 'review') {
+          toast.info(formatReviewConflictMessage(details.incumbentTitle));
+          return;
+        }
+        setAddedAsins((prev) => new Set(prev).add(key));
+        toast.info('Already in library');
+        queryClient.invalidateQueries({ queryKey: queryKeys.books() });
+        return;
+      }
       toast.error(`Failed to add '${book.title}': ${getErrorMessage(error)}`);
     },
   });

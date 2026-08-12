@@ -13,49 +13,14 @@ import {
 import type { ZipArchiveEntry, ZipEntryRead } from './zip-source.js';
 
 /**
- * The optional reads for companion EPUBs (#1990, design §4) — metadata, the
- * table of contents, and the cover image.
- *
- * **An optional read never changes the status.** A book whose structure
- * validates is `available` even when its cover is oversize, its magic bytes are
- * wrong, its nav document is malformed, or its NCX entry carries corrupt deflate
- * bytes. Those yield `toc: null` / `cover: null`. `truncated` applies to the
- * *mandatory* reads, which 1.1d owns. Classification is identical at both kinds
- * of site — 1.1a's predicate, unchanged — and only the **disposition** differs:
- * the same `Z_DATA_ERROR` is `truncated` at the package document and
- * `{ status: 'available', cover: null }` at the cover. A readable book with one
- * damaged decorative resource is readable.
- *
- * **No path, no handle, no archive.** Nothing here accepts a filesystem path and
- * nothing here opens, closes, or re-opens anything; `validate.ts` owns the
- * lifecycle and calls these after its structural pipeline succeeds. The two
- * parameter interfaces below are declared *locally* and deliberately narrow —
- * `validate.ts`'s `EpubStructure` and `EpubInspectionBudget` stay module-private
- * to it, and exporting either would resurrect the rejected `EpubContext`
- * (#1990 Decision 2, #1989 Decision 1).
- *
- * **Discovery is by reference, never by filename** (#1990 Decision 6). The nav
- * document is not required to be `nav.xhtml`, the NCX is not required to be
- * `toc.ncx`, and the cover is never guessed from an entry name.
- *
- * **No image library, and no dimension cap** (#1990 Decision 1). Nothing in
- * Narratorr decodes the cover — it is streamed to a browser that has its own
- * bounded decoder — so a pixel-dimension bomb has no decoder here to attack. The
- * byte cap plus magic-byte sniffing closes the case that is actually reachable.
- * Do not add `sharp`, `image-size`, `probe-image-size`, `jimp`, or `canvas`, and
- * do not hand-roll a header parser.
+ * Extracts metadata, TOC, and cover from an already-validated EPUB. Optional read
+ * failures become null and never change `available`; discovery follows OPF references,
+ * never filenames. Covers are byte-capped and signature-sniffed but never decoded here.
  */
 
-/** A document 1.1b accepted, as this module consumes it. */
 type EpubDocument = Extract<EpubXmlResult, { kind: 'document' }>;
 
-/**
- * What the optional reads need from the **already-parsed** package document.
- *
- * Structural, not nominal: `validate.ts` assembles one of these at the call site
- * from its private structure. Nothing here re-reads or re-parses the OPF, and
- * nothing here re-derives a selection the package index already made.
- */
+/** Narrow projection of the already-parsed package document. */
 export interface EpubPackageView {
   readonly document: EpubDocument;
   /** The directory manifest `href`s resolve against (EPUB 3.3 §5.2). */
@@ -68,50 +33,21 @@ export interface EpubPackageView {
   readonly spine: EpubXmlElement | undefined;
 }
 
-/**
- * The archive capability: name lookup plus one budgeted read.
- *
- * `read` is the **optional** form of the caller's budget — charge-as-you-go,
- * pre-rejecting on the declared size, never rolled back. This module never sees
- * the remaining allowance and never needs to: every failure arm, whatever
- * produced it, disposes to `null`.
- */
+/** Optional reads charge as they go without rollback; non-throw failures dispose to null. */
 export interface EpubOptionalReader {
   entry(name: string): ZipArchiveEntry | undefined;
   read(entry: ZipArchiveEntry, ceiling: number): Promise<ZipEntryRead>;
 }
 
-// --- the one token predicate -------------------------------------------------
-
 /** XML whitespace (XML 1.0 §2.3) — the separator for every token-set attribute here. */
 const XML_WHITESPACE_RE = /[\t\n\f\r ]+/;
 
-/**
- * Whether a whitespace-separated attribute's token set contains `token`.
- *
- * Asked in exactly three places — `properties~=nav`, `properties~=cover-image`,
- * and `epub:type~=toc` — and answered once. Three hand-rolled
- * `.split(' ').includes(…)` sites is the DRY-3 defect, and it is also how
- * `properties="navigation"` accidentally starts matching `nav`: matching is
- * **exact token equality**, never a substring or prefix test. A leading or
- * repeated separator yields empty tokens, which match nothing.
- */
+/** Exact XML-whitespace token membership; never substring or prefix matching. */
 function hasToken(value: string | undefined, token: string): boolean {
   return value !== undefined && value.split(XML_WHITESPACE_RE).includes(token);
 }
 
-// --- reading a referenced manifest item --------------------------------------
-
-/**
- * Resolve a manifest item's `href`, find its entry, and read it under `ceiling`.
- *
- * Every way this can fail — no `href`, an `href` that is `remote` or `rejected`,
- * an entry absent from the archive, a pre-rejected or aborted or failed read —
- * lands on the same `null`, because every one of them disposes to a `null`
- * field. A filesystem error is the exception and never reaches here: 1.1a's
- * predicate routes it to `throw` and `readEntry` rethrows it, so I/O
- * indeterminacy is never converted into a confident `null`.
- */
+/** Resolves and budget-reads one item; reader-propagated I/O errors remain throws. */
 async function readItemBytes(
   view: EpubPackageView,
   reader: EpubOptionalReader,
@@ -128,18 +64,6 @@ async function readItemBytes(
   return read.kind === 'bytes' ? read.bytes : null;
 }
 
-/**
- * The same read, then a parse against `expectedRoot`.
- *
- * "Malformed" means exactly `parseEpubXml(...).kind === 'rejected'` and nothing
- * broader: bytes over `MAX_XML_BYTES`, a fatal decode failure, or a root that is
- * not exactly one element of the expected local name (`xml.ts:237-243`). Markup
- * cheerio silently repairs — unclosed tags, mismatched tags, an unterminated
- * attribute — is **not** a failure and yields whatever rows the repaired tree
- * produces. No second well-formedness mechanism is added here; that would put a
- * disagreeing parser inside the module whose security argument is that it does
- * nothing clever.
- */
 async function readItemXml(
   view: EpubPackageView,
   reader: EpubOptionalReader,
@@ -152,27 +76,12 @@ async function readItemXml(
   return document.kind === 'document' ? document : null;
 }
 
-// --- metadata ----------------------------------------------------------------
-
-/**
- * The **first** direct `metadata` child of the package root. Later `metadata`
- * siblings are ignored — the same parent the cover's tier-1 lookup uses, so the
- * two cannot disagree about which one is the package's own.
- */
+/** First direct metadata child, shared with cover discovery. */
 function metadataParent(document: EpubDocument): EpubXmlElement | undefined {
   return childrenByLocalName(document.$, document.root, 'metadata')[0];
 }
 
-/**
- * The first direct child of `parent` with this local name whose trimmed text is
- * non-empty.
- *
- * First-in-document-order, first-**non-empty**: `<dc:title></dc:title>
- * <dc:title>Real</dc:title>` yields `"Real"`, not `null`. A conforming book
- * routinely carries several `dc:creator` elements and `EpubMetadata` holds one
- * string, so multiple creators do not join, concatenate, or produce a list — the
- * first non-empty one is the author.
- */
+/** First non-empty direct child in document order; multiple values are not joined. */
 function firstNonEmptyField(
   $: CheerioAPI,
   parent: EpubXmlElement,
@@ -185,16 +94,7 @@ function firstNonEmptyField(
   return null;
 }
 
-/**
- * `title`, `author`, and `language` from the already-parsed package document.
- *
- * Not an optional read: it consumes no budget, performs no I/O, and has no
- * failure mode of its own — a missing element is `null`, not an error — so it is
- * present on every `available` result. Matching is by **local name** (so
- * `<dcterms:title>` is read) and scoped to direct children of `metadata`, never
- * a document-wide search: an unrelated subtree's `<title>` must not be mistaken
- * for the package's own (`xml.ts:155-160`).
- */
+/** Reads direct metadata children by local name; missing fields are null without I/O or budget use. */
 export function extractEpubMetadata(view: EpubPackageView): EpubMetadata {
   const parent = metadataParent(view.document);
   if (!parent) return { title: null, author: null, language: null };
@@ -206,22 +106,11 @@ export function extractEpubMetadata(view: EpubPackageView): EpubMetadata {
   };
 }
 
-// --- the shared table-of-contents traversal ----------------------------------
-
-/**
- * The two TOC dialects differ only in element names and label shape, so they are
- * one traversal parameterised by those, not two near-copies that can drift.
- */
+/** Parameterizes the shared EPUB 3 nav and EPUB 2 NCX traversal. */
 interface TocDialect {
-  /** The element whose direct children are rows — `li` for nav, `navPoint` for NCX. */
   readonly row: string;
-  /**
-   * The element whose direct `row` children are the next level down. EPUB 3 nests
-   * through an `<ol>`; NCX nests `navPoint` inside `navPoint` directly, so it
-   * returns the row itself.
-   */
+  /** EPUB 3 descends through ol; NCX descends through the navPoint itself. */
   container($: CheerioAPI, row: EpubXmlElement): EpubXmlElement | undefined;
-  /** The row's title, or `null` when it has no usable label. */
   label($: CheerioAPI, row: EpubXmlElement): string | null;
 }
 
@@ -231,21 +120,12 @@ function normalizeTitle(raw: string): string | null {
   return title === '' ? null : title;
 }
 
-/**
- * An EPUB 3 row's label: its first direct `a`, or failing that its first direct
- * `span`.
- *
- * Taking the label from a **direct child** of the `li` is what stops a parent row
- * swallowing its children's titles. In EPUB 3 the nested `<ol>` is a *sibling* of
- * the `<a>`, not a descendant of it, so the anchor's full descendant text is this
- * row's title alone. The `li`'s own text is never used.
- */
+/** Uses a direct a/span child so a parent row cannot swallow nested row titles. */
 function navRowLabel($: CheerioAPI, row: EpubXmlElement): string | null {
   const label = childrenByLocalName($, row, 'a')[0] ?? childrenByLocalName($, row, 'span')[0];
   return label ? normalizeTitle($(label).text()) : null;
 }
 
-/** An NCX row's label: the first direct `navLabel`'s first direct `text`. */
 function ncxRowLabel($: CheerioAPI, row: EpubXmlElement): string | null {
   const navLabel = childrenByLocalName($, row, 'navLabel')[0];
   if (!navLabel) return null;
@@ -265,29 +145,14 @@ const NCX_DIALECT: TocDialect = {
   label: ncxRowLabel,
 };
 
-/** One row still to visit, carrying the depth its structure gives it. */
 interface PendingRow {
   readonly element: EpubXmlElement;
   readonly depth: number;
 }
 
 /**
- * Flatten a TOC tree into rows, depth-first and pre-order in document order.
- *
- * `depth` is the nesting depth of the *container* holding the row, 0 at the
- * starting one. It is computed from document structure, so dropping a row never
- * shifts its children's depth — and a row with no usable label is dropped rather
- * than failing, with its nested container still traversed.
- *
- * **The visit cap bounds work, not just output.** At most `MAX_TOC_ENTRIES`
- * rows are *visited* and the walk then stops immediately, unvisited nodes
- * included. Every emitted row comes from a visited one, so this caps the output
- * too — but a cap counting only emitted rows would let a label-less chain nested
- * 100k deep run to the bottom. Reaching the cap is not an error.
- *
- * Iterative, with an explicit stack. Rows are pushed in reverse document order
- * so `pop()` yields document order, and a row's children go on top of its
- * remaining siblings, which is exactly pre-order.
+ * Iterative depth-first pre-order flattening. Depth follows structure even when a
+ * label-less row is omitted. The visit cap bounds work, not merely emitted rows.
  */
 function flattenToc(
   $: CheerioAPI,
@@ -312,34 +177,15 @@ function flattenToc(
   return entries;
 }
 
-/** Push `rows` so the first in document order is popped first. */
 function pushRows(stack: PendingRow[], rows: readonly EpubXmlElement[], depth: number): void {
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     stack.push({ element: rows[index]!, depth });
   }
 }
 
-// --- TOC discovery -----------------------------------------------------------
-
 /**
- * The first `nav` element in document order, anywhere below the `html` root,
- * whose `epub:type` token set contains `toc`.
- *
- * **The one descendant search in this module.** A navigation document is XHTML:
- * the `nav` sits under `body`, possibly inside intervening flow content, and is
- * never a direct child of `html` — so `childrenByLocalName($, htmlRoot, 'nav')`
- * matches nothing for a conforming book. Everything else, here and in the package
- * document, stays direct-child, because there the whole point is that an
- * unrelated subtree's element must not be mistaken for the one asked for.
- *
- * **Iterative, deliberately.** A `MAX_XML_BYTES` document can nest deeply enough
- * to exhaust the JavaScript stack, and unlike the traversal above this walk has
- * no visit cap to bound its depth — the whole document is in scope until a match
- * is found.
- *
- * `attrByLocalName` for `epub:type`, not `attrByExactName`: the EPUB spec defines
- * it *with* a prefix and an author may bind that prefix under a different name
- * (`xml.ts:203-213`).
+ * Iteratively finds the first descendant nav with a toc type token. Nav is the one
+ * intentional descendant search, and local-name attribute lookup permits rebound prefixes.
  */
 function findTocNav(document: EpubDocument): EpubXmlElement | null {
   const { $ } = document;
@@ -355,10 +201,6 @@ function findTocNav(document: EpubDocument): EpubXmlElement | null {
   return null;
 }
 
-/**
- * The EPUB 3 path: the chosen nav item's document, its `toc` `nav`, that `nav`'s
- * first direct `ol`, flattened.
- */
 async function readNavToc(
   view: EpubPackageView,
   reader: EpubOptionalReader,
@@ -373,15 +215,7 @@ async function readNavToc(
   return flattenToc(document.$, list, NAV_DIALECT);
 }
 
-/**
- * The EPUB 2 path: the first `<spine>`'s `toc` attribute names a manifest item
- * `id`, and that item's NCX supplies the first `navMap` in document order.
- *
- * An id declared by two manifest items resolves to `null` rather than to either
- * one (`validate.ts` maps a duplicated id to `null`), which is the same
- * first-in-document-order discipline as everywhere else, applied to a question
- * that has no first answer.
- */
+/** Resolves the spine toc id to an NCX; duplicated manifest ids resolve to null. */
 async function readNcxToc(
   view: EpubPackageView,
   reader: EpubOptionalReader,
@@ -399,18 +233,8 @@ async function readNcxToc(
 }
 
 /**
- * The table of contents, or `null`.
- *
- * **EPUB 3 is preferred, and there is no fallback between the two.** If a
- * `properties="nav"` manifest item exists it is the only path attempted; when it
- * turns out to be unusable at any step the result is `null` and the NCX is not
- * tried. "Preferred" is a selection rule, not a retry rule — and a fallback
- * would make the NCX read's pre-reject depend on how many bytes the *failed* nav
- * read had already charged, coupling two independent resources through the
- * shared budget.
- *
- * A traversal that emits zero rows yields `null` rather than `[]`, so `toc` is
- * either `null` or a non-empty array and the panel has one fewer state.
+ * EPUB 3 nav selection precludes NCX fallback, even when the selected nav is unusable;
+ * retrying would couple both resources through one charged budget. Empty output becomes null.
  */
 export async function extractEpubToc(
   view: EpubPackageView,
@@ -423,37 +247,21 @@ export async function extractEpubToc(
   return entries === null || entries.length === 0 ? null : entries;
 }
 
-// --- the cover ---------------------------------------------------------------
-
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const JPEG_SIGNATURE = Buffer.from([0xff, 0xd8, 0xff]);
 const GIF87A_SIGNATURE = Buffer.from('GIF87a', 'ascii');
 const GIF89A_SIGNATURE = Buffer.from('GIF89a', 'ascii');
 const RIFF_SIGNATURE = Buffer.from('RIFF', 'ascii');
 const WEBP_SIGNATURE = Buffer.from('WEBP', 'ascii');
-/** WebP's second marker sits after `RIFF` and the four-byte chunk size. */
+/** WebP's second marker follows RIFF and its four-byte chunk size. */
 const WEBP_MARKER_OFFSET = 8;
 
-/**
- * Whether `signature` appears at `offset`.
- *
- * `subarray` clamps and `equals` compares length first, so input shorter than
- * the signature it would match falls out here — a truncated four-byte PNG prefix
- * is never a partial match.
- */
+/** Full signature match; clamped short inputs cannot match partially. */
 function matchesAt(bytes: Buffer, signature: Buffer, offset: number): boolean {
   return bytes.subarray(offset, offset + signature.length).equals(signature);
 }
 
-/**
- * The media type the **bytes** say, never the one the manifest claims.
- *
- * Each signature is matched in full — a four-byte prefix is not a signature —
- * and anything else is `null`, SVG explicitly: a manifest declaring `image/png`
- * over SVG bytes yields no cover, and one declaring `image/svg+xml` over PNG
- * bytes yields `image/png`. The four literals are the ones already frozen in
- * `result.ts:47-50`; no fifth is minted here.
- */
+/** Uses full byte signatures rather than manifest claims; unsupported bytes, including SVG, return null. */
 function sniffMediaType(bytes: Buffer): EpubCover['mediaType'] | null {
   if (matchesAt(bytes, PNG_SIGNATURE, 0)) return 'image/png';
   if (matchesAt(bytes, JPEG_SIGNATURE, 0)) return 'image/jpeg';
@@ -467,23 +275,8 @@ function sniffMediaType(bytes: Buffer): EpubCover['mediaType'] | null {
 }
 
 /**
- * The manifest item the cover comes from, by **OPF metadata** and never by
- * filename guessing.
- *
- * Two exhaustively ordered tiers, with no fallback within or between them:
- *
- * 1. the **first** `<meta name="cover">` in document order among the direct
- *    children of the first `metadata` element, read through its `content`
- *    attribute;
- * 2. used **only when tier 1 declares nothing at all**, the **first** manifest
- *    `<item>` in document order whose `properties` token set contains
- *    `cover-image`.
- *
- * If tier 1 declares a cover, tier 2 is never consulted even when tier 1 turns
- * out to be unusable — a `content` naming no manifest item, or naming an id two
- * items declared, all yield no cover. A declared-but-broken cover is a defective
- * book, not a book with a second cover, and falling back would couple the two
- * tiers through the shared budget once bytes had been charged.
+ * Cover selection uses the first metadata declaration, otherwise the first cover-image
+ * manifest item. A declared but unusable tier-one cover never falls back to tier two.
  */
 function findCoverItem(view: EpubPackageView): EpubXmlElement | null {
   const { $ } = view.document;
@@ -502,13 +295,7 @@ function findCoverItem(view: EpubPackageView): EpubXmlElement | null {
   );
 }
 
-/**
- * The cover image, or `null`.
- *
- * Beyond the discovery failures above, `null` is also the answer for a read over
- * `MAX_EPUB_COVER_BYTES` — **a cap breach is never a truncated image** — and for
- * a read that failed or was skipped for budget reasons.
- */
+/** Oversize, failed, skipped, or unrecognized cover reads return null. */
 export async function extractEpubCover(
   view: EpubPackageView,
   reader: EpubOptionalReader,

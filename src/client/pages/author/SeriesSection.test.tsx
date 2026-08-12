@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SeriesSection } from './SeriesSection';
@@ -25,9 +26,11 @@ function renderSection(props: Partial<typeof defaultProps> & { books?: ReturnTyp
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const { books = [createMockBookMetadata()], libraryBooks, ...rest } = props;
   return render(
-    <QueryClientProvider client={queryClient}>
-      <SeriesSection {...defaultProps} {...rest} books={books} {...(libraryBooks !== undefined && { libraryBooks })} />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <SeriesSection {...defaultProps} {...rest} books={books} {...(libraryBooks !== undefined && { libraryBooks })} />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -95,17 +98,12 @@ describe('SeriesSection', () => {
     expect(screen.getByText('Book Two')).toBeInTheDocument();
   });
 
-  // #1907 consumer-audit lock: SeriesSection deliberately keeps COARSE ownership
-  // semantics — a title-identity (non-ASIN-equal) match still counts as "in
-  // library". This surface is intentionally NOT switched to the edition-aware
-  // branch that the Add-Book search card uses.
+  // Deliberately coarse: a title-identity match counts despite a different ASIN.
   it('treats a title-identity (different-ASIN) match as in-library (coarse semantics)', () => {
-    const book = createMockBookMetadata(); // asin B003P2WO5E
-    // Same title + author, DIFFERENT ASIN → title-identity, not exact-asin.
+    const book = createMockBookMetadata();
     const libraryBooks = [createMockBook({ asin: 'B00DIFFEDN' })];
     renderSection({ books: [book], libraryBooks });
-    // Per-row inLibrary badge shows, and the whole series counts as owned.
-    expect(screen.getByLabelText('In library')).toBeInTheDocument();
+    expect(screen.getByLabelText('View this book in your library')).toBeInTheDocument();
     expect(screen.queryByText(/Add All/)).not.toBeInTheDocument();
   });
 });

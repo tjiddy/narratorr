@@ -17,7 +17,7 @@ export interface ImportConfirmItem {
   coverUrl?: string;
   asin?: string;
   metadata?: BookMetadata;
-  /** When true, bypasses the server-side title+author safety-net duplicate check */
+  /** Bypasses the server's title-and-author duplicate safety check. */
   forceImport?: boolean;
 }
 
@@ -38,8 +38,7 @@ export interface MatchCandidate {
   path: string;
   title: string;
   author?: string;
-  /** Wanted series position parsed from the folder name (#1849), sent to the
-   * match-start endpoint so the ranker can break same-title series ties. */
+  /** Folder-derived position used to break same-title series ties. */
   seriesPosition?: number;
 }
 
@@ -50,40 +49,17 @@ export interface MatchResult {
   alternatives: BookMetadata[];
   error?: string;
   reason?: string;
-  /**
-   * Structured discriminator for the duration-confidence Review reason (#1929).
-   * Mirrors the server `MatchResult`. Paired with `reason` (never parsed from it);
-   * `upgradeMatchConfidence` branches on it to decide whether an explicit re-pick
-   * re-evaluates the duration evidence (`duration-mismatch`/`missing-duration`) or
-   * clears to high as today (`no-duration-data` / `undefined` legacy).
-   */
+  /** Structured duration-review reason; never derive it by parsing the display text. */
   reasonKind?: MatchReasonKind;
-  /**
-   * Raw unrounded scanner runtime in SECONDS (#1929). Mirrors the server
-   * `MatchResult`. Threaded onto every result the scanner gave a positive runtime,
-   * so `upgradeMatchConfidence` can re-check a picked edition's `duration * 60`
-   * against it on a medium re-pick. Absent when the scan found no positive runtime.
-   */
+  /** Raw positive scanner runtime in seconds, preserved unrounded for re-pick checks. */
   scannedSeconds?: number;
-  /**
-   * Post-match library-duplicate flags (#1662). Mirrors the server `MatchResult`.
-   * `mergeMatchIntoRow` propagates these onto `row.book` so the existing
-   * "Already in library" badge lights up and the row fails closed (deselected).
-   */
+  /** Post-match hard duplicate; merging propagates it and deselects the row. */
   isDuplicate?: boolean;
   existingBookId?: number;
   duplicateReason?: DuplicateReason;
-  /**
-   * Display-only recording-review warning (#1711). Mirrors the server `MatchResult`.
-   * `mergeMatchIntoRow` propagates this onto `row.book.reviewReason` so the import
-   * UI surfaces "possible different recording" without hard-skipping the row.
-   */
+  /** Display-only recording warning that does not hard-skip the row. */
   reviewReason?: string;
-  /**
-   * Recording-identity verdict for a library hit (#1712). Mirrors the server
-   * `MatchResult`. `mergeMatchIntoRow` propagates it onto `row.book.recordingVerdict`
-   * so `ImportCard` renders the three-way duplicate badge.
-   */
+  /** Library-hit recording verdict driving ImportCard's ownership badge. */
   recordingVerdict?: RecordingVerdict;
 }
 
@@ -93,8 +69,7 @@ export interface MatchJobStatus {
   total: number;
   matched: number;
   results: MatchResult[];
-  /** Present only on a terminal `'failed'` job (#1864). Mirrors the server
-   * `MatchJobStatus`. Never rendered raw — the recovery banner maps by reason. */
+  /** Failed jobs only; recovery UI maps this instead of rendering it raw. */
   error?: string;
 }
 
@@ -117,11 +92,7 @@ export const libraryScanApi = {
     fetchApi<{ cancelled: boolean }>(`/library/import/match/${jobId}`, {
       method: 'DELETE',
     }),
-  /**
-   * Chapter-runtime second opinion for a re-picked edition (#2055). A dumb transport:
-   * the caller owns ASIN normalization (`needsChapterCorroboration` trims; the server
-   * re-trims) and `scannedSeconds` is the raw unrounded scanner runtime in SECONDS.
-   */
+  /** Dumb transport: callers normalize ASIN; scanner seconds remain raw and unrounded. */
   corroborateImportDuration: (body: DurationCorroborationBody) =>
     fetchApi<DurationCorroborationResult>('/library/import/duration-corroboration', {
       method: 'POST',

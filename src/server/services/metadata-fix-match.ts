@@ -6,11 +6,7 @@ import type {
   ProviderLookupResult,
 } from '@core/index.js';
 
-/**
- * Outcome of `lookupForFixMatch`. Audible failure modes surface directly;
- * Audnexus failures are absorbed (the merged record falls back to Audible-
- * only fields) and never reach this union.
- */
+/** Preserve Audible outcomes; degrade Audnexus failures to Audible-only metadata. */
 export type FixMatchLookupResult =
   | { kind: 'ok'; book: BookMetadata }
   | { kind: 'not_found' }
@@ -18,12 +14,6 @@ export type FixMatchLookupResult =
   | { kind: 'invalid_record' }
   | { kind: 'transient_failure'; message: string };
 
-/**
- * Overlay Audnexus's richer-than-Audible fields onto Audible's canonical
- * record. Audnexus contributes `seriesPrimary`, `genres`, `isbn`, and (when
- * non-empty and richer than Audible's) `narrators`. Audible is authoritative
- * for all other fields.
- */
 export function mergeAudnexusOntoAudible(audible: BookMetadata, audnexus: BookMetadata): BookMetadata {
   const merged: BookMetadata = { ...audible };
   if (audnexus.seriesPrimary && !merged.seriesPrimary) merged.seriesPrimary = audnexus.seriesPrimary;
@@ -47,13 +37,7 @@ export interface FixMatchLookupDeps {
   setRateLimited: (provider: string, durationMs: number) => void;
 }
 
-/**
- * Fix Match canonical lookup. Audible is required; Audnexus is best-effort.
- * - Bypasses `withThrottle` so typed kinds survive (no fallback erasure).
- * - Manually acquires the throttle slot before each provider call.
- * - On `rate_limited` from either provider, mirrors the `withThrottle`
- *   backoff bookkeeping via `setRateLimited(...)`.
- */
+/** Apply throttling and rate-limit bookkeeping without collapsing typed provider outcomes. */
 export async function lookupForFixMatch(deps: FixMatchLookupDeps, asin: string): Promise<FixMatchLookupResult> {
   const { audible } = deps;
   if (!audible) return { kind: 'not_found' };

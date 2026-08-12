@@ -30,7 +30,6 @@ describe('ImportActivityCard', () => {
       const job = makeJob();
       renderWithProviders(<ImportActivityCard job={job} />);
 
-      // Analyzing is done — should show elapsed time
       expect(screen.getByText(/Analyzing/)).toBeInTheDocument();
       expect(screen.getByText(/1\.0s/)).toBeInTheDocument();
     });
@@ -39,7 +38,6 @@ describe('ImportActivityCard', () => {
       const job = makeJob();
       renderWithProviders(<ImportActivityCard job={job} />);
 
-      // Copying is current — should show label
       expect(screen.getByText(/Copying files/)).toBeInTheDocument();
     });
 
@@ -67,7 +65,6 @@ describe('ImportActivityCard', () => {
       const job = makeJob();
       renderWithProviders(<ImportActivityCard job={job} />);
 
-      // HeadphonesIcon renders as an SVG — check for the muted container
       expect(screen.queryByRole('img')).not.toBeInTheDocument();
     });
 
@@ -139,7 +136,6 @@ describe('ImportActivityCard', () => {
       renderWithProviders(<ImportActivityCard job={job} />);
 
       expect(screen.getByText(/Renaming files/)).toBeInTheDocument();
-      // No percentage shown without progress data
       expect(screen.queryByText(/%/)).not.toBeInTheDocument();
     });
 
@@ -160,8 +156,7 @@ describe('ImportActivityCard', () => {
     });
 
     it('does not render stale copy counters as file counts during copy→renaming transition', () => {
-      // Simulates the gap between import_phase_change('renaming') and first import_progress('renaming')
-      // where _byteCounter still holds copy byte values but _progressPhase is 'copying'
+      // import_phase_change('renaming') can precede import_progress('renaming') while _byteCounter still holds copy byte values.
       const job = makeJob({
         phase: 'renaming',
         phaseHistory: [
@@ -171,12 +166,11 @@ describe('ImportActivityCard', () => {
         ],
         _progress: 0.43,
         _byteCounter: { current: 12_000_000, total: 28_000_000 },
-        _progressPhase: 'copying', // stale — from previous phase
+        _progressPhase: 'copying',
       });
       renderWithProviders(<ImportActivityCard job={job} />);
 
       expect(screen.getByText(/Renaming files/)).toBeInTheDocument();
-      // Should NOT show stale copy byte counts as file counts
       expect(screen.queryByText(/12000000/)).not.toBeInTheDocument();
       expect(screen.queryByText(/28000000/)).not.toBeInTheDocument();
     });

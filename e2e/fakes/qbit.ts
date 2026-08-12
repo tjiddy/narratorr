@@ -5,21 +5,8 @@ import { join, resolve } from 'node:path';
 import { computeInfoHash } from './torrent.js';
 
 /**
- * Fake qBittorrent WebUI server. Implements the subset of endpoints
- * `src/core/download-clients/qbittorrent.ts` actually calls:
- *
- *   POST /api/v2/auth/login       — form-urlencoded; returns Set-Cookie: SID=...
- *   POST /api/v2/torrents/add     — multipart w/ `torrents` blob (savepath optional)
- *   GET  /api/v2/torrents/info    — JSON array of torrents, filter by ?hashes=
- *   GET  /api/v2/app/version      — plain-text version string (for `test()`)
- *
- * Completion semantics (CRITICAL — matches `mapState` in qbittorrent.ts):
- *   - `state: 'uploading'` + `content_path` INSIDE `save_path` → maps to 'seeding' (completed in monitor's vocabulary)
- *   - If `content_path` is outside `save_path`, `mapState` downgrades to 'downloading'
- *
- * Control endpoint (test-use only):
- *   POST /__control/complete  — { hash } flips state, stages the fixture, sets content_path
- *   POST /__control/reset     — clears all torrents
+ * Fake qBittorrent endpoints used by the client. Completion must report `uploading` with
+ * `content_path` inside `save_path`; `mapState` otherwise downgrades it to `downloading`.
  */
 
 const SID = 'e2e-test-sid';
@@ -46,18 +33,10 @@ export interface CreateQBitFakeOptions {
   port?: number;
   username?: string;
   password?: string;
-  /** Default save path the fake uses when `POST /torrents/add` omits `savepath`. */
   downloadsPath: string;
-  /** Absolute path to the audio fixture copied in during completion. */
   fixturePath: string;
-  /** Version string returned by `/api/v2/app/version`. Defaults to `4.6.0`. */
   version?: string;
-  /**
-   * Artificial latency (ms) injected into `POST /api/v2/torrents/add` before it
-   * returns `Ok.`. Defaults to 0 for unit tests. E2E specs should set a small
-   * non-zero value so the grab-button pending state becomes observable —
-   * otherwise the fake resolves the mutation before React can re-render.
-   */
+  /** Delays torrent adds so E2E can observe the pending UI before the mutation resolves. */
   addLatencyMs?: number;
 }
 
@@ -65,16 +44,11 @@ export interface QBitFakeHandle {
   server: FastifyInstance;
   url: string;
   close: () => Promise<void>;
-  /** Return all torrents the fake currently tracks. Test utility. */
   listTorrents: () => FakeTorrent[];
-  /** Programmatically complete a torrent (same effect as POST /__control/complete). */
   completeTorrent: (hash: string) => void;
-  /** Wipe all torrent state. */
   reset: () => void;
 }
 
-// Sanitize the torrent name for use as a directory — mirrors qBit's relaxed behavior
-// (it accepts most characters). For our fake we just replace path separators.
 function torrentNameFromBytes(bytes: Buffer): string {
   const marker = Buffer.from('4:name');
   const idx = bytes.indexOf(marker);
@@ -106,19 +80,17 @@ export async function createQBitFake(options: CreateQBitFakeOptions): Promise<QB
   const torrents = new Map<string, FakeTorrent>();
 
   const server = Fastify({ logger: process.env.E2E_FAKE_LOGS === '1' });
-  // Fastify 5 has no built-in form-urlencoded parser. The login endpoint uses
-  // that content type, so register a raw pass-through and parse in-handler.
+  // Fastify 5 lacks a form-urlencoded parser; preserve the raw login body for in-handler parsing.
   server.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_req, body, done) => {
     done(null, body);
   });
   await server.register(multipart);
 
-  // ── Auth gate ────────────────────────────────────────────────────────────
   server.addHook('preHandler', async (request, reply) => {
     if (
       request.url.startsWith('/__control/') ||
       request.url.startsWith('/api/v2/auth/login') ||
-      request.url.startsWith('/api/v2/app/version') // real qBit also allows unauth version
+      request.url.startsWith('/api/v2/app/version') // real qBit also exposes version without auth
     ) {
       return;
     }
@@ -129,7 +101,6 @@ export async function createQBitFake(options: CreateQBitFakeOptions): Promise<QB
     }
   });
 
-  // ── POST /api/v2/auth/login ──────────────────────────────────────────────
   server.post('/api/v2/auth/login', async (request, reply) => {
     const params = new URLSearchParams(typeof request.body === 'string' ? request.body : '');
     const u = params.get('username');
@@ -146,10 +117,8 @@ export async function createQBitFake(options: CreateQBitFakeOptions): Promise<QB
       .send('Ok.');
   });
 
-  // ── GET /api/v2/app/version ──────────────────────────────────────────────
   server.get('/api/v2/app/version', async () => version);
 
-  // ── POST /api/v2/torrents/add (multipart) ────────────────────────────────
   server.post('/api/v2/torrents/add', async (request, reply) => {
     let torrentBytes: Buffer | undefined;
     let savePath: string | undefined;
@@ -162,7 +131,7 @@ export async function createQBitFake(options: CreateQBitFakeOptions): Promise<QB
       } else if (part.type === 'field' && part.fieldname === 'savepath') {
         savePath = String(part.value);
       }
-      // Other fields (category, paused, etc.) are accepted and ignored.
+      // qBit accepts additional fields; this fake deliberately ignores them.
     }
 
     if (!torrentBytes) {
@@ -194,18 +163,13 @@ export async function createQBitFake(options: CreateQBitFakeOptions): Promise<QB
       completion_on: 0,
     });
 
-    // Optional artificial latency so spec-side tests can observe the grab
-    // button's pending state before the mutation resolves. A real qBit add is
-    // not instant either — this just makes the fake closer to reality.
     if (addLatencyMs > 0) {
       await new Promise((res) => setTimeout(res, addLatencyMs));
     }
 
-    // Real qBit returns plain text "Ok." on success.
     return reply.status(200).type('text/plain').send('Ok.');
   });
 
-  // ── GET /api/v2/torrents/info ────────────────────────────────────────────
   server.get('/api/v2/torrents/info', async (request) => {
     const hashesParam = (request.query as { hashes?: string }).hashes;
     if (!hashesParam) return Array.from(torrents.values());
@@ -214,9 +178,6 @@ export async function createQBitFake(options: CreateQBitFakeOptions): Promise<QB
     return Array.from(torrents.values()).filter((t) => wanted.has(t.hash.toLowerCase()));
   });
 
-  // ── POST /__control/complete ─────────────────────────────────────────────
-  // Stages the fixture at `<save_path>/<name>/silent.m4b`, flips state to
-  // 'uploading', sets content_path inside save_path (required by mapState).
   function completeTorrentInternal(hash: string): FakeTorrent | null {
     const t = torrents.get(hash);
     if (!t) return null;
@@ -246,8 +207,6 @@ export async function createQBitFake(options: CreateQBitFakeOptions): Promise<QB
     return { ok: true, torrent: result };
   });
 
-  // Convenience for single-torrent spec flows that don't want to track hashes —
-  // completes the most-recently-added torrent.
   server.post('/__control/complete-latest', async (_request, reply) => {
     const entries = Array.from(torrents.values());
     if (entries.length === 0) {

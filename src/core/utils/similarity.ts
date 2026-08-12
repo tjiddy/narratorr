@@ -1,75 +1,31 @@
-/**
- * Split a multi-value narrator string on `[,;&]` delimiters.
- * Trims each token and drops empties.
- */
 export function tokenizeNarrators(raw: string): string[] {
   if (!raw) return [];
   return raw.split(/[,;&]/).map((t) => t.trim()).filter((t) => t.length > 0);
 }
 
-/**
- * Leading role-prefix matcher (#1655): `Read by`, `Read By`, `Narrated by`,
- * `Narrator`, `Performed by`, `Voiced by`, `Voice`, with an optional trailing
- * `:` and surrounding whitespace. Case-insensitive. Longer alternatives precede
- * their prefixes (`narrated by` before `narrator`, `voiced by` before `voice`)
- * so the alternation never short-matches.
- */
 const ROLE_PREFIX_RE = /^(?:read by|narrated by|narrator|performed by|voiced by|voice)\b\s*:?\s*/i;
 
-/**
- * Strip a leading role prefix, but ONLY when a non-empty name remains after it
- * (#1655, 5A item 1 — non-destructive). `Narrated by Paul Boehmer` → name,
- * but a bare prefix-only token (`Narrator`, `Voice`, `Read by`) is left intact
- * so `normalizeNarrator` never collapses a placeholder to empty. The "this is a
- * placeholder, treat as no signal" call belongs to the comparison layer (5B),
- * not to this global string primitive.
- */
+// Preserve prefix-only values; placeholder semantics belong to signal comparison.
 function stripRolePrefix(s: string): string {
   const stripped = s.replace(ROLE_PREFIX_RE, '');
   return stripped.trim().length > 0 ? stripped : s;
 }
 
-/** Fold diacritics (#1655, 5A item 3): NFD-decompose then drop combining marks (`Thérèse` → `Therese`). */
 function foldDiacritics(s: string): string {
   return s.normalize('NFD').replace(/[\u0300-\u036f]/gu, '');
 }
 
 /**
- * Collapse runs of adjacent single-letter tokens (#1655, 5A item 4) so spaced
- * and unspaced initials converge (`r c bray` → `rc bray`). Only single-letter
- * runs join — real two-word names (`jo anna`) are untouched. Runs after
- * punctuation strip, when `R.C.`/`R. C.` have already lost their periods.
- *
- * ACCEPTED TRADE-OFF (#1657, do NOT "fix"): collapsing the initial run is
- * load-bearing — it's what lets `R. C. Bray` match `R.C. Bray` across the
- * corpus. The cost is that two genuinely different same-surname narrators whose
- * only difference is a middle initial (`R. C. Bray` vs `R. K. Bray`,
- * `P. J. Ochlan` vs `P. T. Ochlan`) cross the 0.8 threshold via the word-sorted
- * leg of `nameDice` and read as `'match'`. This collision is rare (same
- * first-initial + same surname + 1-char-different middle, two narrators of the
- * SAME edition) and is pinned by the over-reach guard tests in
- * `similarity.test.ts`. Removing or weakening this re-breaks the corpus; any
- * future tightening must be a conscious, test-visible decision.
+ * Collapsing single-letter runs makes `R. C.` match `R.C.`, but can conflate same-surname narrators
+ * differing only by a middle initial. Tests intentionally pin this trade-off.
  */
 function collapseInitials(s: string): string {
   return s.replace(/\b([a-z])\s+(?=[a-z]\b)/g, '$1');
 }
 
 /**
- * Normalize a single narrator name token for comparison.
- *
- * Order is load-bearing — do NOT reshuffle (#1655):
- *  1. Parenthetical strip + role-prefix strip run on the raw-ish string, before
- *     punctuation strip would fragment the prefix/parens.
- *  2. lowercase → punctuation strip (periods, quotes, hyphens; NOT
- *     commas/semicolons/ampersands, which are delimiters) → collapse whitespace.
- *  3. Diacritic fold + initials canonicalization run AFTER punctuation strip
- *     (the initials collapse needs the periods gone so `R.C.`/`R. C.` converge).
- *
- * These are pure string-cleaning transforms shared by every consumer
- * (library-import cap, tag-author dice, quality-gate set-membership). They never
- * empty a token — the placeholder/no-signal semantic lives in the comparison
- * layer's token builders (5B), not here.
+ * Order matters: strip parentheses and role prefixes before punctuation, then fold diacritics and
+ * collapse initials after periods are gone. Placeholder semantics are deliberately excluded.
  */
 export function normalizeNarrator(name: string): string {
   const deparened = name.replace(/\([^)]*\)/g, ' ').trim();
@@ -82,10 +38,7 @@ export function normalizeNarrator(name: string): string {
   return collapseInitials(foldDiacritics(punctStripped));
 }
 
-/**
- * Bigram-based Dice coefficient for fuzzy string matching.
- * Returns 0-1 where 1 = identical, 0 = no bigrams in common.
- */
+/** Bigram Dice coefficient in [0, 1]; inputs shorter than two characters score 0. */
 export function diceCoefficient(a: string, b: string): number {
   const s1 = a.toLowerCase().trim();
   const s2 = b.toLowerCase().trim();
@@ -112,34 +65,13 @@ export function diceCoefficient(a: string, b: string): number {
   return (2 * intersection) / (s1.length - 1 + s2.length - 1);
 }
 
-/**
- * Default dice threshold at or above which two narrator names are considered
- * the same person. Single source of truth — both the search-ranking narrator
- * tier and the library-import wrong-edition cap consume this (#1650).
- */
+/** Shared fuzzy-narrator threshold for search ranking and wrong-edition detection. */
 export const NARRATOR_MATCH_THRESHOLD = 0.8;
 
 /**
- * Placeholder narrator tokens (#1655, 5B): values that carry NO usable narrator
- * signal even though they normalize to a non-empty string. Literal, already in
- * `normalizeNarrator` output form. This denylist lives at the comparison layer
- * ONLY — dropping these from the signal token set collapses to the existing
- * empty-tokens → `'no-signal'` path, extending the #1652 "no signal ≠ mismatch"
- * principle from *empty* tags to *junk* tags. It is intentionally NOT in
- * `normalizeNarrator`: doing so would zero a legitimate `Author` author-dice in
- * tag-author scoring and silently change quality-gate set membership, neither of
- * which is in scope. The literal `narrator` token is the seam between the two
- * layers — 5A's role-prefix strip leaves a bare `Narrator` as the string
- * `'narrator'` (direct callers unchanged), and 5B drops that token here.
- *
- * SINGLE HOME for the narrator-placeholder vocabulary (#1657). The metadata
- * reject-word strip (`PSEUDO_NARRATORS` in `src/server/services/metadata.service.ts`)
- * is a deliberately NARROWER decision (a 3-value subset) that answers a
- * different question — "strip this fake narrator from the reject-word search
- * surface?" rather than "does this token carry usable fuzzy-match signal?". That
- * subset relationship is pinned by a named consistency test so the two paths
- * can never silently diverge. Exported so the test can reference this set; do
- * not fork a second copy of the full vocabulary.
+ * Normalized tokens treated as no narrator signal. Keep this comparison-only so author scoring and
+ * exact quality-gate membership remain unchanged. Metadata's `PSEUDO_NARRATORS` is intentionally a
+ * narrower subset, pinned by a consistency test.
  */
 export const NARRATOR_PLACEHOLDERS = new Set([
   'author',
@@ -152,33 +84,24 @@ export const NARRATOR_PLACEHOLDERS = new Set([
   'narrator',
 ]);
 
-/** A normalized token carries usable narrator signal when it is non-empty and not a placeholder. */
 function isSignalToken(normalized: string): boolean {
   return normalized.length > 0 && !NARRATOR_PLACEHOLDERS.has(normalized);
 }
 
-/** Usable file-narrator signal tokens: split on delimiters → normalize → drop empties and placeholders. */
 function fileNarratorTokens(raw: string | undefined): string[] {
   if (!raw) return [];
   return tokenizeNarrators(raw).map(normalizeNarrator).filter(isSignalToken);
 }
 
-/** Usable edition-narrator signal tokens: normalize each entry → drop empties and placeholders. */
 function editionNarratorTokens(narrators: string[] | undefined): string[] {
   return (narrators ?? []).map(normalizeNarrator).filter(isSignalToken);
 }
 
-/** Sort a name's whitespace-separated words so word order can't sink the dice score. */
 function sortNameWords(s: string): string {
   return s.split(' ').filter(Boolean).sort().join(' ');
 }
 
-/**
- * Order-insensitive dice (#1652): the max of the as-is compare and the
- * word-sorted compare. Lets `Stevenson, Juliet` match `Juliet Stevenson`
- * (a `Last, First` flip) without a phonetic/alias layer — `Mike`/`Michael`
- * still scores below threshold and stays a mismatch.
- */
+/** Uses the better direct or word-sorted Dice score; name-order flips match without alias expansion. */
 function nameDice(a: string, b: string): number {
   const direct = diceCoefficient(a, b);
   const sorted = diceCoefficient(sortNameWords(a), sortNameWords(b));
@@ -186,27 +109,8 @@ function nameDice(a: string, b: string): number {
 }
 
 /**
- * Three-state narrator comparison (#1650, #1652). The single source of truth
- * for BOTH "is there a usable narrator signal?" and "do the signals match?",
- * so the search-ranking narrator tier (`narratorsFuzzyMatch`), the match-job
- * edition cap (`narratorMismatchReason`), and any future consumer agree on one
- * definition. This lives in core because core production code cannot import
- * `src/server/**` (layer guard) — server helpers import this.
- *
- * - `'no-signal'` — either side normalizes to no usable tokens: an absent file
- *   tag, an empty edition list, punctuation-only entries like `'-'`/`'.'` that
- *   `normalizeNarrator` strips to empty (#1652), or placeholder tokens like
- *   `Multiple Readers`/`Author`/`narrator` that the token builders drop as junk
- *   (#1655, 5B). This is the fix for #1652: signal presence is judged AFTER
- *   normalization on both sides, so the helper and the primitive can no longer
- *   disagree about emptiness.
- * - `'match'` — set-overlap: a single pairwise hit at or above `threshold` is
- *   enough (multi-narrator / full-cast editions match when ANY file token lines
- *   up with ANY edition narrator).
- * - `'mismatch'` — both sides carry signal but nothing clears `threshold`.
- *
- * NOT modeled on `quality-gate.helpers.ts`, which is exact normalized set
- * membership — a different contract.
+ * Distinguishes absent or junk signal from a real mismatch. Any token pair at the shared threshold
+ * is a match; unlike the quality gate, this contract is fuzzy rather than exact set membership.
  */
 export type NarratorComparison = 'match' | 'mismatch' | 'no-signal';
 
@@ -219,9 +123,7 @@ export function compareNarratorSignals(
   const editionTokens = editionNarratorTokens(editionNarrators);
   if (fileTokens.length === 0 || editionTokens.length === 0) return 'no-signal';
 
-  // A combined whole-name candidate recovers `Last, First` names that the
-  // delimiter split fragments into single words (the comma is also a multi-
-  // narrator delimiter, so we can't stop splitting it — we re-join instead).
+  // Commas mean both `Last, First` and narrator separators; rejoining preserves a whole-name candidate.
   const fileCombined = sortNameWords(fileTokens.join(' '));
   let best = 0;
   for (const et of editionTokens) {
@@ -233,12 +135,7 @@ export function compareNarratorSignals(
   return best >= threshold ? 'match' : 'mismatch';
 }
 
-/**
- * Fuzzy narrator comparison: does the file's narrator tag name any of the
- * matched edition's narrators? Boolean façade over `compareNarratorSignals`
- * (`'match'` only) — both "no signal" and "mismatch" return `false`; callers
- * that must distinguish the two consult `compareNarratorSignals` directly.
- */
+/** Boolean facade over `compareNarratorSignals`; both no-signal and mismatch become false. */
 export function narratorsFuzzyMatch(
   fileNarratorRaw: string | undefined,
   editionNarrators: string[] | undefined,
@@ -247,13 +144,7 @@ export function narratorsFuzzyMatch(
   return compareNarratorSignals(fileNarratorRaw, editionNarrators, threshold) === 'match';
 }
 
-/**
- * Scores a search result against a search context (book title + author).
- * Returns 0-1 where 1 = perfect match.
- *
- * Weighting: title = 0.6, author = 0.4.
- * When author context is not provided, title gets full weight.
- */
+/** Scores title and author from 0–1; when either context is not provided, the other gets full weight. */
 export function scoreResult(
   result: { title?: string; author?: string },
   context: { title?: string; author?: string },
@@ -274,6 +165,5 @@ export function scoreResult(
     totalWeight += AUTHOR_WEIGHT;
   }
 
-  // When only title context is provided, normalize to full weight
   return totalWeight > 0 ? score / totalWeight : 0;
 }

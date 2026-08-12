@@ -6,10 +6,8 @@ import { importConfirmItemSchema, importModeSchema } from '@shared/schemas/libra
 import type { BookMetadata } from '@core/metadata/index.js';
 import type { ImportJobRow } from '../types.js';
 
-/** Row shape returned by querying the import_jobs table. */
 export type ImportJob = ImportJobRow;
 
-/** Context passed to every adapter's process() method. */
 export interface ImportAdapterContext {
   db: Db;
   log: FastifyBaseLogger;
@@ -19,29 +17,29 @@ export interface ImportAdapterContext {
   emitProgress(phase: ImportJobPhase, progress: number, byteCounter?: { current: number; total: number }): void;
 }
 
-/** Contract every import adapter must implement. */
 export interface ImportAdapter {
   readonly type: ImportJobType;
   process(job: ImportJob, ctx: ImportAdapterContext): Promise<void>;
 }
 
 /**
- * Persisted payload for manual import jobs.
- * Reuses `importConfirmItemSchema` for runtime shape and overrides the `metadata` field
- * with `z.custom<BookMetadata>().optional()` — a TYPE-only override (no extra runtime
- * validation, identical to z.unknown() at the safeParse boundary) so downstream callers
- * retain typed access to `metadata.narrators` etc. without `as` casts. Tightening
- * runtime validation of `metadata` is intentionally out of scope.
+ * Data provenance, not user intent: curated narrators suppress tag fill; unchanged provider or absent
+ * narrators permit it.
+ */
+export const narratorSourceSchema = z.enum(['curated', 'provider', 'none']);
+export type NarratorSource = z.infer<typeof narratorSourceSchema>;
+
+/**
+ * `metadata` gains TypeScript shape without tighter runtime validation. Declare runner-computed
+ * `narratorSource` here so adapter re-parse does not strip it, while public wire schemas and digests
+ * remain unchanged.
  */
 export const manualImportJobPayloadSchema = importConfirmItemSchema.extend({
   metadata: z.custom<BookMetadata>().optional(),
   mode: importModeSchema.optional(),
+  narratorSource: narratorSourceSchema.optional(),
 });
 
-/**
- * Persisted payload for auto import jobs.
- * Stores the download ID — the adapter hydrates the full context from the DB at processing time.
- */
 export const autoImportJobPayloadSchema = z.object({
   downloadId: z.number(),
 });

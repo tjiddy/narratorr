@@ -28,75 +28,32 @@ import {
 import { signReleaseId, verifyReleaseId } from '../../services/grab-token.js';
 import { V1NotFoundError, v1ErrorHandler } from './_helpers.js';
 
-// ============================================================================
-// Public API v1 — Action endpoints: search + grab (idempotent) (S6 — #1452)
-// ============================================================================
-//
-// The request-app write path is search-THEN-grab (NOT entity-POST). Both
-// endpoints map onto the existing internal `IndexerSearchService` +
-// `DownloadOrchestrator` services — no new download/grab core logic. The
-// load-bearing requirement is GRAB IDEMPOTENCY: a public client that retries on
-// a timeout (the response was lost, not the grab) must not produce a second
-// download. The internal grab path has only the per-book active-download guard,
-// which is neither release-level nor race-safe, so this layer adds an explicit
-// release-level dedup + an in-process keyed mutex (see below). The download
-// services are NOT modified.
+// V1 grab retries are release-idempotent: lookup and grab serialize by book and release identity.
 
 export interface V1ActionsRouteDeps {
   bookService: BookService;
   indexerSearchService: IndexerSearchService;
   downloadOrchestrator: DownloadOrchestrator;
   downloadService: DownloadService;
-  // Post-processing deps for the shared display filter chain (#1800). Note
-  // `indexerService` (the LAN allowlist for NZB-body fetches) is DISTINCT from
-  // `indexerSearchService` (the multi-indexer search fan-out) — both are needed.
+  // Search fan-out and NZB-fetch allowlisting are separate services despite their similar names.
   blacklistService: BlacklistService;
   settingsService: SettingsService;
   indexerService: IndexerService;
 }
 
-/** Build a v1 error envelope body (`{ error: { code, message } }`). */
 function envelope(code: string, message: string): { error: { code: string; message: string } } {
   return { error: { code, message } };
 }
 
-// ----------------------------------------------------------------------------
-// Idempotency — release identity, dedup lookup, in-process keyed mutex
-// ----------------------------------------------------------------------------
-
-/**
- * Canonical release identity for the dedup key, by the SAME precedence as the
- * matching predicate below: `guid` (scoped to `indexerId` when present) →
- * search-time `infoHash` (normalized lowercase) → raw `downloadUrl`. Combined
- * with the resolved `bookId` it forms the mutex key, so two retries of the same
- * release for the same book serialize against one critical section.
- */
+/** Keep identity precedence aligned with lookup: scoped GUID, normalized hash, then raw URL. */
 function canonicalReleaseIdentity(payload: ReleaseTokenPayload): string {
   if (payload.guid) return `guid:${payload.indexerId ?? ''}:${payload.guid}`;
   if (payload.infoHash) return `hash:${payload.infoHash.toLowerCase()}`;
   return `url:${payload.downloadUrl}`;
 }
 
-/**
- * Find an existing download for `bookId` that matches the decoded release token,
- * returning its rowid or `null`. Matches against the persisted `downloads`
- * columns in precedence order:
- *   1. `guid` (scoped to `indexerId` when the token carries one — strict equality,
- *      so a persisted null/different indexerId does NOT match) — primary,
- *      reliable: `guid` is stored verbatim from the grab params and is available
- *      at search time.
- *   2. search-time `infoHash` (normalized lowercase) vs stored `info_hash` —
- *      secondary. The stored hash is computed late from the resolved artifact, so
- *      it only matches once that row's grab reached artifact resolution; it is a
- *      supplement to, not a replacement for, the `guid` match.
- *   3. raw search-time `downloadUrl` vs stored `download_url` — last-resort
- *      fallback, only when neither `guid` nor `infoHash` is present. KNOWN
- *      DEGRADATION: the stored URL is the *effective* (adapter-rewritten) URL, so
- *      this can miss when the adapter rewrites it. Accepted because real indexer
- *      results carry a `guid` (the only current rewrite path, MAM, emits one), so
- *      this fallback never decides identity for a real public response — the
- *      same-release idempotency guarantee holds for reachable real results.
- */
+/** Hash may not persist until artifact resolution. Raw-URL fallback can miss adapter rewrites;
+ * reachable rewritten results currently carry a GUID. */
 async function findExistingDownloadId(db: Db, bookId: number, payload: ReleaseTokenPayload): Promise<number | null> {
   const rows = await db
     .select({ id: downloads.id, guid: downloads.guid, infoHash: downloads.infoHash, downloadUrl: downloads.downloadUrl, indexerId: downloads.indexerId })
@@ -104,10 +61,7 @@ async function findExistingDownloadId(db: Db, bookId: number, payload: ReleaseTo
     .where(eq(downloads.bookId, bookId));
 
   if (payload.guid) {
-    // Scope guid to indexerId when the token carries one: require strict
-    // equality, so a token with `{ guid, indexerId: 3 }` does NOT dedup against a
-    // persisted same-guid row whose indexerId is null or a different indexer. A
-    // token with no indexerId matches on guid alone.
+    // A token-supplied indexer must match strictly; an absent indexer leaves GUID unscoped.
     const match = rows.find(
       (r) => r.guid === payload.guid && (payload.indexerId === undefined || r.indexerId === payload.indexerId),
     );
@@ -128,21 +82,13 @@ async function findExistingDownloadId(db: Db, bookId: number, payload: ReleaseTo
   return null;
 }
 
-/**
- * In-process async keyed mutex. Serializes `lookup → (on miss) grab+insert →
- * return` per `(bookId, canonicalReleaseIdentity)` so concurrent identical grabs
- * resolve to exactly one download row: the loser awaits the winner, then its
- * post-lock lookup finds the just-inserted row. Sufficient and migration-free
- * BECAUSE narratorr runs as a single Node process (the documented single-user
- * self-hosted threat model). The tail stored per key never rejects, so a failing
- * critical section does not poison the next caller; the key is evicted once its
- * section settles and no successor has queued behind it.
- */
+/** Serialize lookup-to-grab per release; this relies on the documented single-process deployment.
+ * Store a non-rejecting tail so failures cannot poison successors, and evict only the latest tail. */
 const releaseLocks = new Map<string, Promise<unknown>>();
 
 async function withReleaseLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = releaseLocks.get(key) ?? Promise.resolve();
-  // Run our section after the predecessor settles (resolve OR reject).
+  // Run after the predecessor whether it fulfilled or rejected.
   const run = prev.then(() => fn(), () => fn());
   const tail = run.then(() => undefined, () => undefined);
   releaseLocks.set(key, tail);
@@ -152,7 +98,6 @@ async function withReleaseLock<T>(key: string, fn: () => Promise<T>): Promise<T>
   return run;
 }
 
-/** Reconstruct `GrabParams` from a decoded release token + resolved bookId. */
 function buildGrabParams(payload: ReleaseTokenPayload, bookId: number): GrabParams {
   return {
     downloadUrl: payload.downloadUrl,
@@ -168,19 +113,10 @@ function buildGrabParams(payload: ReleaseTokenPayload, bookId: number): GrabPara
   };
 }
 
-/**
- * Map the typed grab errors the route must shape itself into a v1 envelope.
- * `v1ErrorHandler` maps not-found/validation/generic only, so the route handles
- * `DuplicateDownloadError` (→ 409) and `DownloadClientError` subclasses
- * (→ 401/502/504) inline, mirroring the internal `/api/search/grab` mapping but
- * re-shaped to the v1 envelope. Fixed messages keep any client URL out of the
- * envelope. Returns `null` for errors it does not own (rethrown → 500 envelope).
- */
+/** Map typed grab failures to fixed, URL-free v1 messages; unknown errors go to `v1ErrorHandler`. */
 function mapGrabError(error: unknown, reply: FastifyReply): FastifyReply | null {
   if (error instanceof DuplicateDownloadError) {
-    // Code-aware, id-free message (#1861): `PIPELINE_ACTIVE` now also represents
-    // QG-completed rows and pending auto import jobs, so the old fixed "active
-    // download" prose would lie for that code.
+    // PIPELINE_ACTIVE may mean QG-completed work or a pending auto import, not only a download row.
     const message = error.code === 'ACTIVE_DOWNLOAD_EXISTS'
       ? 'Book already has an active download'
       : 'Book already has a download in the import pipeline';
@@ -198,21 +134,14 @@ function mapGrabError(error: unknown, reply: FastifyReply): FastifyReply | null 
   return null;
 }
 
-/**
- * Native public API v1 — action endpoints (search + grab). Registered inside an
- * ENCAPSULATED plugin so the v1-scoped `v1ErrorHandler` (v1 error envelope) does
- * not leak onto internal `/api/*` routes. API-key auth is inherited via the
- * global `/api/v*` `onRequest` hook. The opaque `releaseId` is carried in the
- * request BODY, never a path param (keeps it clear of Fastify's 100-char
- * `maxParamLength` cap; learning `fastify-max-param-length-100-default`).
- */
+/** Keep the v1 error handler encapsulated away from internal routes. `releaseId` stays in the body
+ * because Fastify path params default to a 100-character limit. */
 export async function v1ActionsRoutes(app: FastifyInstance, deps: V1ActionsRouteDeps, db: Db): Promise<void> {
   await app.register(
     async (v1) => {
       v1.setErrorHandler(v1ErrorHandler);
       const typed = v1.withTypeProvider<ZodTypeProvider>();
 
-      // POST /api/v1/books/:publicId/search — candidate releases for the book.
       typed.post(
         '/books/:publicId/search',
         {
@@ -224,20 +153,13 @@ export async function v1ActionsRoutes(app: FastifyInstance, deps: V1ActionsRoute
         async (request, reply) => {
           const book = await resolveBookOr404(db, deps, request.params.publicId);
 
-          // `searchAll` returns `[]` for a query that normalizes away, so we can't
-          // distinguish "no matches" from "bad query" downstream — pre-check the
-          // derived query and 400 before calling it (mirrors the internal
-          // /api/search/stream empty-query guard).
+          // Downstream treats an empty normalized query as no matches, so reject it here.
           const query = buildSearchQuery(book);
           if (!query) {
             return reply.status(400).send(envelope('BAD_REQUEST', 'Search query is empty after normalization'));
           }
 
-          // Progressive query relaxation (#2104). v1 search is DISCOVERY only —
-          // it returns candidates and never grabs — so it runs the full ladder
-          // with no corroboration floor, exactly like the interactive modal. The
-          // response envelope is unchanged: no rung disclosure on the public
-          // contract (the `.strict()` release DTO is the enforcement point).
+          // Discovery runs the full relaxation ladder without exposing rung metadata.
           const author = book.authors?.[0]?.name;
           const ladder = buildQueryLadder({ title: book.title, author, query });
           const { results: allResults } = await runQueryLadder(
@@ -245,28 +167,8 @@ export async function v1ActionsRoutes(app: FastifyInstance, deps: V1ActionsRoute
             createAggregateExecutor(book, deps.indexerSearchService),
           );
 
-          // #1800 — v1 search filtering contract. Route raw `searchAll` output
-          // through the SAME display post-processing wrapper the UI/SSE path
-          // uses (search-stream.ts:100) so a v1 consumer sees the same filtered
-          // candidate list the UI does: blacklist gate → Usenet language
-          // enrichment → multi-part filter → quality ranking. Without this the
-          // v1 surface was an unfiltered fifth search path (blacklisted +
-          // "Part 2 of 5" partials reachable). The response envelope is
-          // unchanged — `processed.{durationUnknown,unsupportedResults}` are
-          // consumed internally only; `total` is the FILTERED count.
-          //
-          // Duration MUST flow through `resolveBookQualityInputs` (audioDuration
-          // precedence, minutes→seconds fallback), NOT raw `duration * 60`, so
-          // v1 ranks identically to the auto-grab / retry / RSS paths (#1797).
-          //
-          // REPLAY BOUNDARY (parity, NOT closure): the grab token is a stable,
-          // no-TTL HMAC (grab-token.ts) and /grab (verifyReleaseId) checks only
-          // the MAC — it does not re-search or re-filter. A consumer holding a
-          // previously-signed id for a now-filtered release can still replay it
-          // to /grab. This matches every internal surface (all filter at search
-          // time, none re-filter at grab time). Filtering the list is
-          // presentation parity, not grab-time enforcement; grab-time
-          // re-filtering across all surfaces is out of scope for #1800.
+          // Match UI filtering/ranking; `total` counts filtered results and duration uses the shared resolver.
+          // This is presentation parity, not enforcement: stable no-TTL tokens are not re-searched on grab.
           const { durationSeconds } = resolveBookQualityInputs(book);
           const processed = await postProcessSearchResults(
             allResults,
@@ -280,7 +182,6 @@ export async function v1ActionsRoutes(app: FastifyInstance, deps: V1ActionsRoute
         },
       );
 
-      // POST /api/v1/books/:publicId/grab — grab a release from the search list.
       typed.post(
         '/books/:publicId/grab',
         {
@@ -293,11 +194,6 @@ export async function v1ActionsRoutes(app: FastifyInstance, deps: V1ActionsRoute
               400: v1ErrorEnvelopeSchema,
               401: v1ErrorEnvelopeSchema,
               404: v1ErrorEnvelopeSchema,
-              // 409 `code` discriminator (#1861): `ACTIVE_DOWNLOAD_EXISTS` — a
-              // replaceable client-stage download exists; `PIPELINE_ACTIVE` — a
-              // download has entered the import pipeline (checking/pending_review/
-              // importing), a completed download is awaiting the quality gate, or an
-              // auto import job is pending.
               409: v1ErrorEnvelopeSchema.describe(
                 'Conflict — the book already has a blocking download. `code` is `ACTIVE_DOWNLOAD_EXISTS` when a replaceable client-stage download exists, or `PIPELINE_ACTIVE` when a download has entered the import pipeline (checking, pending_review, importing), a completed download is awaiting the quality gate, or an auto import job is pending.',
               ),
@@ -330,7 +226,7 @@ export async function v1ActionsRoutes(app: FastifyInstance, deps: V1ActionsRoute
           } catch (error: unknown) {
             const mapped = mapGrabError(error, reply);
             if (mapped) return mapped;
-            throw error; // V1NotFoundError / generic → v1ErrorHandler (404 / 500)
+            throw error;
           }
         },
       );
@@ -339,7 +235,6 @@ export async function v1ActionsRoutes(app: FastifyInstance, deps: V1ActionsRoute
   );
 }
 
-/** Resolve `:publicId` → hydrated book, or throw `V1NotFoundError` (→ 404). */
 async function resolveBookOr404(db: Db, deps: V1ActionsRouteDeps, publicId: string) {
   const rowid = await resolveByPublicId(db, books, publicId);
   if (rowid === null) throw new V1NotFoundError();

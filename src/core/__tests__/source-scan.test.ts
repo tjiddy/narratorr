@@ -3,13 +3,8 @@ import path from 'node:path';
 import { scanProductionSources, scanSources } from './source-scan.js';
 
 /**
- * Unit coverage for the shared recursive source scanner (#2000).
- *
- * The `src/core/epub/` suites that consume this helper mock `node:fs/promises`
- * but deliberately pass `readdir`/`readFile` through to the real
- * implementations. This suite is the one place free to *replace* `readFile`,
- * which is what makes the sequencing probe below deterministic rather than a
- * completion race.
+ * This suite can replace readFile, unlike EPUB consumers that pass it through,
+ * making the sequencing probe deterministic.
  */
 
 const h = vi.hoisted(() => ({
@@ -19,10 +14,8 @@ const h = vi.hoisted(() => ({
     readdir: (typeof import('node:fs/promises'))['readdir'];
     readFile: (typeof import('node:fs/promises'))['readFile'];
   },
-  /** Reads currently between entry and resolution — the concurrency probe. */
   inFlight: 0,
   peak: 0,
-  /** Every path handed to `readFile`, in order. */
   read: [] as string[],
 }));
 
@@ -34,9 +27,8 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 });
 
 /**
- * Discriminates the mandated text-only, block-then-line transform from a
- * syntax-aware or reordered one. Every line is load-bearing — see the exact
- * expectations in `STRIPPED`.
+ * Distinguishes the required text-only, block-then-line transform from syntax-aware
+ * or reordered implementations.
  */
 const STRIP_FIXTURE = [
   "const u = 'https://x/y';",
@@ -47,13 +39,13 @@ const STRIP_FIXTURE = [
 ].join('\n');
 
 const STRIPPED = [
-  // Text-only: the line regex truncates inside a string literal.
+  // Text-only truncation reaches inside strings.
   "const u = 'https:",
-  // Block-first: a line-first pass would delete `// b */` and strand `/* a `.
+  // Block-first avoids stranding the opening marker.
   ' const x = 1;',
-  // Code before a `//` survives, trailing space and all.
+  // Code and trailing space before // survive.
   'const y = 2; ',
-  // No closing marker, so the block pass leaves it for the line pass to cut.
+  // Unterminated block text reaches the line pass.
   '/* unterminated with ',
   '',
 ].join('\n');
@@ -63,7 +55,6 @@ let stripRoot: string;
 let emptyRoot: string;
 let otherRoot: string;
 
-/** Every candidate in `treeRoot`, relative and POSIX-separated. */
 const TREE_ALL = ['a.test.ts', 'a.ts', 'c.tsx', 'nested/b.ts', 'skip/x.ts', 'skipx/y.ts'];
 
 beforeAll(async () => {
@@ -89,7 +80,7 @@ afterAll(async () => {
   try {
     await rm(path.dirname(treeRoot), { recursive: true, force: true });
   } catch {
-    /* Windows keeps handles open longer; a leaked tmpdir is cheaper than a red suite. */
+    /* Windows can retain handles briefly; cleanup failure must not fail the suite. */
   }
 });
 
@@ -107,7 +98,7 @@ beforeEach(() => {
     h.peak = Math.max(h.peak, h.inFlight);
     h.read.push(file);
     try {
-      // Yield, so a `Promise.all` implementation has every read in flight at once.
+      // Yield so Promise.all would expose concurrent reads.
       await Promise.resolve();
       return await h.real.readFile(file, 'utf8');
     } finally {
@@ -132,8 +123,7 @@ describe('scanSources selection', () => {
   });
 
   it('prunes an excluded subtree by path segment, not by string prefix', async () => {
-    // The sibling `skipx/` merely *extends* the excluded name and must survive —
-    // the one intentional semantic correction in #2000.
+    // Prefix sibling skipx must survive segment-aware pruning of skip.
     const files = (
       await scanSources({ root: treeRoot, excludeDirs: [path.join(treeRoot, 'skip')] })
     ).map(({ file }) => file);
@@ -194,8 +184,7 @@ describe('scanSources read sequencing', () => {
       includeTests: true,
     });
 
-    // Exactly 1, not "bounded": a `Promise.all` reports a peak equal to the file
-    // count here regardless of the host's descriptor limit.
+    // Promise.all would raise this peak to the file count.
     expect(h.peak).toBe(1);
     expect(h.read.length).toBe(TREE_ALL.length);
     expect(h.read.map((file) => path.relative(treeRoot, file).split(path.sep).join('/')).sort()).toEqual(

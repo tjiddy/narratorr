@@ -3,9 +3,9 @@ import { generatePublicId } from '../utils/public-id.js';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
-import { createDb, runMigrations, type Db } from '@db/index.js';
+import { createDb, runMigrations, type Db, type DbOrTx } from '@db/index.js';
 import {
   books,
   bookAuthors,
@@ -17,16 +17,12 @@ import {
 } from '@db/schema.js';
 import { BookService } from './book.service.js';
 import { replaceSeriesLink } from './book-series-link.js';
+import { SeriesCardService } from './series-card.service.js';
+import type { SettingsService } from './settings.service.js';
+import { normalizeMemberTitleForMatch } from './series-title-match.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 
-/**
- * Integration tests for `BookService.fixMatch` and `replaceSeriesLink` against
- * a real in-memory SQLite database. Covers the transactional persistence path
- * the route tests can't exercise (those mock `services.book.fixMatch`).
- *
- * AC mapping: F2 of PR #1130 review — direct service-level DB-mutation tests
- * for the new Fix Match transaction.
- */
+// Real SQLite coverage owns fixMatch transactions and replaceSeriesLink; route tests mock this boundary.
 describe('BookService.fixMatch — integration (#1129 F2)', () => {
   let dir: string;
   let db: Db;
@@ -63,7 +59,6 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
       publishedDate: '2020-01-01',
       genres: ['Old Genre'],
     });
-    // Simulate locally-populated state that Fix Match must preserve
     await db.update(books).set({
       path: '/library/old-path',
       size: 12345,
@@ -72,7 +67,7 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
       audioFileCount: 1,
       lastGrabGuid: 'guid:old',
       lastGrabInfoHash: 'hash:old',
-      // Maxed-out failed identity: the terminal state Fix Match exists to rescue (#1646).
+      // Exercise the exhausted enrichment state that Fix Match must reset.
       enrichmentStatus: 'failed',
       enrichmentAttempts: 5,
     }).where(eq(books.id, created.id));
@@ -104,8 +99,7 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
     const [row] = await db.select().from(books).where(eq(books.id, bookId));
     expect(row!.asin).toBe('B_NEW');
     expect(row!.title).toBe('New Title');
-    // Regression guard (#1614): subtitle was declared on FixMatchReplacement but
-    // never written by buildFixMatchScalarUpdates; publisher wasn't projected at all.
+    // Regression guard: subtitle and publisher were previously omitted from scalar updates.
     expect(row!.subtitle).toBe('New Subtitle');
     expect(row!.publisher).toBe('New Publisher');
     expect(row!.description).toBe('New description');
@@ -117,9 +111,8 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
     expect(row!.isbn).toBe('9781234567890');
     expect(row!.genres).toEqual(['Fantasy']);
     expect(row!.enrichmentStatus).toBe('pending');
-    // Fix Match grants a fresh attempt budget, not the stale count from the wrong identity (#1646).
+    // A new identity receives a fresh enrichment attempt budget.
     expect(row!.enrichmentAttempts).toBe(0);
-    // Preserved local state
     expect(row!.path).toBe('/library/old-path');
     expect(row!.size).toBe(12345);
     expect(row!.audioCodec).toBe('aac');
@@ -128,7 +121,6 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
     expect(row!.lastGrabGuid).toBe('guid:old');
     expect(row!.lastGrabInfoHash).toBe('hash:old');
 
-    // Author/narrator junctions reflect ONLY the new identity
     const authorRows = await db
       .select({ name: authors.name })
       .from(bookAuthors)
@@ -143,7 +135,6 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
       .where(eq(bookNarrators.bookId, bookId));
     expect(narratorRows.map((r) => r.name)).toEqual(['New Narrator']);
 
-    // series_members points at the NEW series; old membership gone
     const members = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));
     expect(members).toHaveLength(1);
     const seriesRow = (await db.select().from(series).where(eq(series.id, members[0]!.seriesId)))[0]!;
@@ -156,7 +147,6 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
     const svc = new BookService(db, log);
     const bookId = await seedBookA(svc);
 
-    // Pre-condition: an old series_members row exists for this book
     expect(await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId))).toHaveLength(1);
 
     const updated = await svc.fixMatch(bookId, {
@@ -168,7 +158,6 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
       coverUrl: 'https://example.com/solo.jpg',
       duration: 500,
       publishedDate: '2024-05-02',
-      // No seriesName / seriesPosition
     });
     expect(updated).not.toBeNull();
 
@@ -176,18 +165,15 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
     expect(row!.seriesName).toBeNull();
     expect(row!.seriesPosition).toBeNull();
     expect(row!.asin).toBe('B_STANDALONE');
-    // Full-overwrite semantics (#1614): a replacement without subtitle/publisher
-    // nulls the previously-stored values (intentional, unlike enrichment).
+    // Full-overwrite semantics: absent subtitle and publisher become null, unlike enrichment.
     expect(row!.subtitle).toBeNull();
     expect(row!.publisher).toBeNull();
 
-    // No membership rows remain for the book
     const members = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));
     expect(members).toHaveLength(0);
   });
 
-  // #2069 AC13 — re-identifying a book is a NEW operator assertion, so the prior
-  // clears (which described the OLD record) are reset rather than honored.
+  // Re-identification resets operator clears that described the old identity.
   it('resets user_cleared_fields to SQL NULL in the same transaction as the scalar replacement', async () => {
     const svc = new BookService(db, log);
     const bookId = await seedBookA(svc);
@@ -203,8 +189,7 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
 
     const [row] = await db.select().from(books).where(eq(books.id, bookId));
     expect(row!.userClearedFields).toBeNull();
-    // Asserted from the same read as the replacement itself, so a reset that lands
-    // without the scalar rewrite (or vice versa) cannot pass.
+    // One read couples the clear reset to the scalar replacement.
     expect(row!.seriesName).toBe('New Series');
     expect(row!.enrichmentStatus).toBe('pending');
   });
@@ -235,6 +220,89 @@ describe('BookService.fixMatch — integration (#1129 F2)', () => {
       authors: [{ name: 'A' }],
     });
     expect(result).toBeNull();
+  });
+
+  // A blank provider name must clear the series exactly as an absent one does, never seed a blank row (#2224).
+  describe('an unusable replacement series name clears rather than blank-names', () => {
+    const UNUSABLE = [
+      ['empty string', ''],
+      ['spaces', '   '],
+      ['tab + newline', '\t\n'],
+      ['non-breaking space', '\u00A0'],
+    ] as const;
+
+    it.each(UNUSABLE)('%s: nullifies both series columns', async (_label, seriesName) => {
+      const svc = new BookService(db, log);
+      const bookId = await seedBookA(svc);
+      await db.update(books).set({ seriesName: 'The Expanse', seriesPosition: 4 }).where(eq(books.id, bookId));
+
+      await svc.fixMatch(bookId, {
+        asin: 'B_BLANK',
+        title: 'Rematched Title',
+        authors: [{ name: 'New Author' }],
+        seriesName,
+        seriesPosition: 9,
+      });
+
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      expect(row!.seriesName).toBeNull();
+      expect(row!.seriesPosition).toBeNull();
+    });
+
+    it('detaches the prior link and seeds no blank-named series row', async () => {
+      const svc = new BookService(db, log);
+      const bookId = await seedBookA(svc);
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId))).toHaveLength(1);
+
+      await svc.fixMatch(bookId, {
+        asin: 'B_BLANK',
+        title: 'Rematched Title',
+        authors: [{ name: 'New Author' }],
+        seriesName: '   ',
+        seriesPosition: 9,
+      });
+
+      expect(await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId))).toHaveLength(0);
+      expect((await db.select().from(series)).filter((r) => r.normalizedName === '')).toHaveLength(0);
+    });
+
+    it('a usable name still replaces the pair and seeds the link (the blank cases are not vacuous)', async () => {
+      const svc = new BookService(db, log);
+      const bookId = await seedBookA(svc);
+
+      await svc.fixMatch(bookId, {
+        asin: 'B_PROVIDER',
+        title: 'Rematched Title',
+        authors: [{ name: 'New Author' }],
+        seriesName: 'Expanse (Provider Edition)',
+        seriesPosition: 9,
+      });
+
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      expect(row!.seriesName).toBe('Expanse (Provider Edition)');
+      expect(row!.seriesPosition).toBe(9);
+      const members = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId));
+      expect(members).toHaveLength(1);
+      const seriesRow = (await db.select().from(series).where(eq(series.id, members[0]!.seriesId)))[0]!;
+      expect(seriesRow.normalizedName).toBe('expanse provider edition');
+    });
+
+    it('still resets user_cleared_fields — the series guard leaves the identity-replacement contract alone', async () => {
+      const svc = new BookService(db, log);
+      const bookId = await seedBookA(svc);
+      await db.update(books).set({ userClearedFields: '["genres","seriesName"]' }).where(eq(books.id, bookId));
+
+      await svc.fixMatch(bookId, {
+        asin: 'B_BLANK',
+        title: 'Rematched Title',
+        authors: [{ name: 'New Author' }],
+        seriesName: '   ',
+      });
+
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      expect(row!.userClearedFields).toBeNull();
+      expect(row!.enrichmentStatus).toBe('pending');
+    });
   });
 });
 
@@ -355,20 +423,12 @@ describe('replaceSeriesLink — integration (#1129 F2)', () => {
       seriesPosition: 1,
     });
 
-    // Capture the original membership BEFORE we force a failure.
     const before = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, created.id));
     expect(before).toHaveLength(1);
     const beforeRow = before[0]!;
     const bookSnapshotBefore = (await db.select().from(books).where(eq(books.id, created.id)))[0]!;
 
-    // Spy seriesMembers.insert by monkey-patching the underlying tx.insert
-    // call path: we wrap the BookService.fixMatch transaction by overriding
-    // `db.transaction` to invoke the callback then throw mid-flight, AFTER
-    // the membership delete but DURING the insert. Easier: pass a payload that
-    // forces a primary-key collision on `series_members` by pre-seeding a row
-    // with the same id we'd allocate next. SQLite autoincrement makes this
-    // unreliable across runs — use a simpler proxy: replace `tx.insert` so the
-    // membership insert throws.
+    // Fail the membership insert inside the real transaction after earlier writes have run.
     const origTransaction = db.transaction.bind(db);
     const txSpy = vi.spyOn(db, 'transaction').mockImplementation(async (cb: Parameters<typeof origTransaction>[0]) => {
       return origTransaction(async (tx) => {
@@ -395,7 +455,6 @@ describe('replaceSeriesLink — integration (#1129 F2)', () => {
 
     txSpy.mockRestore();
 
-    // Transaction rolled back: book row + old member row are unchanged.
     const bookAfter = (await db.select().from(books).where(eq(books.id, created.id)))[0]!;
     expect(bookAfter.asin).toBe(bookSnapshotBefore.asin);
     expect(bookAfter.title).toBe(bookSnapshotBefore.title);
@@ -404,6 +463,195 @@ describe('replaceSeriesLink — integration (#1129 F2)', () => {
     const after = await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, created.id));
     expect(after).toHaveLength(1);
     expect(after[0]!.id).toBe(beforeRow.id);
+  });
+});
+
+// Seeding a local row before canonical title matching caused a duplicate card entry and false “+ Add”.
+// These tests build the real SeriesCardService result consumed by the modal.
+describe('Fix Match onto a Hardcover-canonical series — card outcome (#2150)', () => {
+  let dir: string;
+  let db: Db;
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'fix-match-card-'));
+    const dbFile = join(dir, 'narratorr.db');
+    await runMigrations(dbFile);
+    db = createDb(dbFile);
+  });
+
+  afterEach(() => {
+    db.$client.close();
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // libsql may keep the file handle on Windows
+    }
+  });
+
+  function cardService(): SeriesCardService {
+    return new SeriesCardService(db, log(), inject<SettingsService>({
+      get: vi.fn().mockResolvedValue({ hardcoverApiKey: 'hc_key' }),
+    }));
+  }
+
+  /** Seed a canonical cache hit so no provider fetch can alter the fixture. */
+  async function seedCanonicalBand(memberTitles: readonly string[]): Promise<number> {
+    const [row] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+      hardcoverSeriesId: 5523,
+      name: 'The Band',
+      normalizedName: 'the band',
+      authorName: 'Nicholas Eames',
+      lastFetchedAt: new Date(),
+    }).returning();
+    let hardcoverBookId = 1000;
+    let position = 1;
+    for (const title of memberTitles) {
+      await db.insert(seriesMembers).values({
+        seriesId: row!.id,
+        hardcoverBookId: ++hardcoverBookId,
+        slug: title.toLowerCase().replace(/\s+/g, '-'),
+        title,
+        normalizedTitle: normalizeMemberTitleForMatch(title),
+        authorName: 'Nicholas Eames',
+        position: position++,
+        source: 'hardcover',
+      });
+    }
+    return row!.id;
+  }
+
+  async function seedOwnedBook(svc: BookService): Promise<number> {
+    const created = await svc.create({
+      title: 'Wrong Identity',
+      authors: [{ name: 'Nicholas Eames' }],
+      asin: 'B_WRONG',
+      seriesName: 'Some Other Series',
+      seriesPosition: 1,
+    });
+    return created.id;
+  }
+
+  it('AC7: the fix-matched book renders as exactly one canonical member with inLibrary, and the card issues no write', async () => {
+    const svc = new BookService(db, log());
+    const seriesId = await seedCanonicalBand(['Kings of the Wyld', 'Bloody Rose']);
+    const bookId = await seedOwnedBook(svc);
+
+    await svc.fixMatch(bookId, {
+      asin: 'B_BR', title: 'Bloody Rose', authors: [{ name: 'Nicholas Eames' }],
+      seriesName: 'The Band', seriesPosition: 2,
+    });
+
+    // Pin the cache fast path by asserting it opens no transaction.
+    const txSpy = vi.spyOn(db, 'transaction');
+    const card = await cardService().getSeriesForBook(bookId);
+    expect(txSpy).not.toHaveBeenCalled();
+    txSpy.mockRestore();
+
+    expect(card).not.toBeNull();
+    expect(card!.hardcoverSeriesId).toBe(5523);
+    const owned = card!.members.filter((m) => m.libraryBookId === bookId);
+    expect(owned).toHaveLength(1);
+    // The surviving entry must be canonical, not a locally rendered clone.
+    expect(owned[0]!.hardcoverBookId).toBe(1002);
+    expect(owned[0]!.inLibrary).toBe(true);
+    expect(card!.members).toHaveLength(2);
+    expect(card!.members.every((m) => m.hardcoverBookId !== null)).toBe(true);
+    const localRows = await db.select().from(seriesMembers)
+      .where(and(eq(seriesMembers.seriesId, seriesId), eq(seriesMembers.source, 'local')));
+    expect(localRows).toHaveLength(0);
+  });
+
+  // The card pools by the just-written book series name, so normalized-equal spelling drift must still match.
+  it('AC7: a normalized-equal, byte-different replacement series name yields the identical single-entry card', async () => {
+    const svc = new BookService(db, log());
+    await seedCanonicalBand(['Kings of the Wyld', 'Bloody Rose']);
+    const bookId = await seedOwnedBook(svc);
+
+    await svc.fixMatch(bookId, {
+      asin: 'B_BR', title: 'Bloody Rose', authors: [{ name: 'Nicholas Eames' }],
+      seriesName: 'the band', seriesPosition: 2,
+    });
+    const bandRows = await db.select().from(series).where(eq(series.normalizedName, 'the band'));
+    expect(bandRows).toHaveLength(1);
+    expect(bandRows[0]!.hardcoverSeriesId).toBe(5523);
+
+    const card = await cardService().getSeriesForBook(bookId);
+    const owned = card!.members.filter((m) => m.libraryBookId === bookId);
+    expect(owned).toHaveLength(1);
+    expect(owned[0]!.hardcoverBookId).toBe(1002);
+    expect(card!.members).toHaveLength(2);
+  });
+
+  // When Hardcover lacks the member, only card reconciliation may seed the local fallback.
+  it('AC8: a book the canonical member set does not contain still renders, seeded by the card reconcile', async () => {
+    const svc = new BookService(db, log());
+    const seriesId = await seedCanonicalBand(['Kings of the Wyld']);
+    const bookId = await seedOwnedBook(svc);
+
+    await svc.fixMatch(bookId, {
+      asin: 'B_OUT', title: 'Outland Interlude', authors: [{ name: 'Nicholas Eames' }],
+      seriesName: 'The Band', seriesPosition: 3,
+    });
+    // replaceSeriesLink seeds nothing here; card reconciliation is the only writer.
+    expect(await db.select().from(seriesMembers).where(eq(seriesMembers.bookId, bookId))).toHaveLength(0);
+
+    const card = await cardService().getSeriesForBook(bookId);
+    const owned = card!.members.filter((m) => m.libraryBookId === bookId);
+    expect(owned).toHaveLength(1);
+    expect(owned[0]!.title).toBe('Outland Interlude');
+    expect(card!.members).toHaveLength(2);
+
+    const seeded = await db.select().from(seriesMembers)
+      .where(and(eq(seriesMembers.seriesId, seriesId), eq(seriesMembers.source, 'local')));
+    expect(seeded).toHaveLength(1);
+    expect(seeded[0]!.bookId).toBe(bookId);
+  });
+
+  // Throw after the real callback because replaceSeriesLink is fixMatch's final awaited step.
+  // Requiring changed uncommitted state prevents a pre-write failure from passing vacuously.
+  it('AC9: a failure after the link writes rolls every series_members row back to its pre-call state', async () => {
+    const svc = new BookService(db, log());
+    const seriesId = await seedCanonicalBand(['Kings of the Wyld', 'Bloody Rose']);
+    const bookId = await seedOwnedBook(svc);
+    // Seed sibling-provider and local rows so null-link, delete, and relink writes all execute.
+    const [sibling] = await db.insert(series).values({ publicId: generatePublicId('sr'),
+      hardcoverSeriesId: 77, name: 'Sibling', normalizedName: 'sibling',
+    }).returning();
+    await db.insert(seriesMembers).values({
+      seriesId: sibling!.id, bookId, hardcoverBookId: 2002, slug: 'sib', title: 'Wrong Identity',
+      normalizedTitle: normalizeMemberTitleForMatch('Wrong Identity'), position: 1, source: 'hardcover',
+      updatedAt: new Date('2020-01-01T00:00:00Z'),
+    });
+
+    const snapshot = async (executor: DbOrTx): Promise<string> => JSON.stringify(
+      (await executor.select().from(seriesMembers))
+        .map((r) => ({ ...r, createdAt: r.createdAt.getTime(), updatedAt: r.updatedAt.getTime() }))
+        .sort((a, b) => a.id - b.id),
+    );
+    const before = await snapshot(db);
+
+    let uncommitted = '';
+    const origTransaction = db.transaction.bind(db);
+    const txSpy = vi.spyOn(db, 'transaction').mockImplementationOnce(async (cb: Parameters<typeof origTransaction>[0]) => {
+      return origTransaction(async (tx) => {
+        await cb(tx);
+        uncommitted = await snapshot(tx);
+        throw new Error('post-write boom');
+      });
+    });
+
+    await expect(svc.fixMatch(bookId, {
+      asin: 'B_BR', title: 'Bloody Rose', authors: [{ name: 'Nicholas Eames' }],
+      seriesName: 'The Band', seriesPosition: 2,
+    })).rejects.toThrow('post-write boom');
+    txSpy.mockRestore();
+
+    expect(uncommitted).not.toBe(before);
+    expect(await snapshot(db)).toBe(before);
+    const [row] = await db.select().from(books).where(eq(books.id, bookId));
+    expect(row!.asin).toBe('B_WRONG');
+    expect(row!.seriesName).toBe('Some Other Series');
+    expect(seriesId).toBeGreaterThan(0);
   });
 });
 

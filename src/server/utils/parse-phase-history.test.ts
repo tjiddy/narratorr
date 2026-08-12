@@ -52,10 +52,7 @@ describe('parsePhaseHistory', () => {
     );
   });
 
-  // Sibling of #2069 F2: this parser had the identical `JSON.parse` catch →
-  // `serializeError` shape, and both of its warn payloads could reproduce the
-  // persisted column. V8's SyntaxError quotes a window of the offending source, and
-  // a ZodError message renders the `received` values.
+  // JSON.parse and ZodError messages can reproduce persisted values.
   it('reproduces neither the raw column nor persisted values in either warn payload', () => {
     const log = createMockLogger();
 
@@ -68,7 +65,7 @@ describe('parsePhaseHistory', () => {
     const [payload] = vi.mocked(log.warn).mock.calls[0] as [Record<string, unknown>, string];
     expect(JSON.stringify(payload)).not.toContain('SENSITIVE_PHASE_VALUE');
     expect(JSON.stringify(payload)).not.toContain('not-a-number');
-    // Paths stay — they are the diagnostic, and they carry no values (#1404).
+    // Paths are safe diagnostics; values are not.
     expect(payload.issuePaths).toEqual(expect.arrayContaining([expect.any(String)]));
   });
 });

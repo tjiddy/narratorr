@@ -3,13 +3,10 @@ import type { FastifyInstance } from 'fastify';
 import type { Db } from '@db/index.js';
 import type { Services } from './services/di.js';
 
-// startJobs starts real croner/timeout schedulers — mock it so startRuntime's
-// ordering contract can be asserted without arming any timers.
+// Avoid arming real schedulers while asserting startup order.
 vi.mock('./jobs/index.js', () => ({ startJobs: vi.fn() }));
 
-// The merge-recovery phases do real DB + filesystem work; here only their POSITION in the
-// boot sequence and their nonfatal posture are under test (their behavior lives in
-// merge-boot-recovery.test.ts / .integration.test.ts).
+// Recovery has dedicated tests; this suite owns only boot ordering and nonfatality.
 vi.mock('./services/merge-boot-recovery.js', () => ({
   settleInterruptedMerges: vi.fn(),
   requeueRecoveredMerges: vi.fn(),
@@ -21,13 +18,7 @@ import { startRuntime } from './startup.js';
 
 const PLAN = { requeue: [7], counters: { candidates: 1, cleaned: 1, settled: 1, retryable: 0, failed: 0 } };
 
-/**
- * Regression guard for the boot ordering contract (#1893, #2099): startRuntime must settle
- * interrupted merges FIRST (before any merge producer exists), then start the import queue
- * worker, then issue the recovered re-queues (after the worker's marker sweep, the single
- * recovery actor per marker), then start the staged-submission runner EXACTLY once, then
- * background jobs — and return the scheduler handle. Deleting a call or reordering fails these.
- */
+/** Regression guard for the load-bearing boot ordering contract. */
 describe('startRuntime', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -65,9 +56,9 @@ describe('startRuntime', () => {
       'startJobs',
     ]);
     expect(services.importSubmissionRunner.start).toHaveBeenCalledTimes(1);
-    // The plan crosses the worker barrier intact — phase 2 receives phase 1's own object.
+    // The exact settlement plan must cross the worker barrier.
     expect(requeueRecoveredMerges).toHaveBeenCalledWith(services.merge, PLAN, expect.anything());
-    expect(result).toBe(scheduler); // returns the scheduler handle for the caller to tear down
+    expect(result).toBe(scheduler);
   });
 
   it('awaits the settlement before the worker starts, and the worker before the re-queue', async () => {
@@ -116,7 +107,6 @@ describe('startRuntime', () => {
 
     const result = await startRuntime(app, services, {} as unknown as Db);
 
-    // Never invoked at all — not with an empty plan, not with a partial one (AC9).
     expect(requeueRecoveredMerges).not.toHaveBeenCalled();
     expect(order).toEqual(['importQueueWorker.start', 'importSubmissionRunner.start', 'startJobs']);
     expect(result).toBe(scheduler);

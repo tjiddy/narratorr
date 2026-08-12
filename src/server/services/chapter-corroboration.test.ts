@@ -1,13 +1,6 @@
 /**
- * #1942 — the chapter-corroboration owner: cache classification, single-flight,
- * throttle/backoff bridge, and the lazy trigger.
- *
- * The load-bearing property under test is NOT "does it return the right number"
- * but "does the right thing SETTLE". A cached verdict means the rescuable book
- * never retries, so a transient outcome (a rate-limit page, an auth-proxy 403, a
- * wrong-edition body) that settles as `no usable runtime` would permanently
- * re-break the false positive this feature exists to fix. Every case therefore
- * asserts BOTH the returned value AND the HTTP call count on a second lookup.
+ * Cache settlement is the invariant: definitive outcomes suppress a second request, while
+ * transient, rate-limited, and wrong-edition outcomes retry. Assert result and call count.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -19,15 +12,32 @@ import {
   corroborateDurationVerdict,
   type ChapterCorroborator,
 } from './chapter-corroboration.js';
-import type { DurationConfidenceResult } from './match-job.helpers.js';
+import type { ChapterRuntimeSeconds, DurationConfidenceResult } from './match-job.helpers.js';
 
 const ASIN = 'B00CXXEX8W';
-/** Fablehaven Book 1's live chapter runtime (2026-07-25). */
+/** Fablehaven Book 1 runtime observed 2026-07-25, in milliseconds. */
 const FABLEHAVEN_MS = 33219490;
 
+/** Complete record with no trimmable tail by default. */
 function completeRecord(overrides: Partial<Extract<ChapterRuntimeOutcome, { kind: 'ok' }>> = {}): ChapterRuntimeOutcome {
-  return { kind: 'ok', runtimeLengthMs: FABLEHAVEN_MS, isAccurate: true, ...overrides };
+  return {
+    kind: 'ok',
+    runtimeLengthMs: FABLEHAVEN_MS,
+    isAccurate: true,
+    trimmedRuntimeMs: FABLEHAVEN_MS,
+    trimmedChapterCount: 0,
+    ...overrides,
+  };
 }
+
+/** Complete record with one promotional tail removed. */
+function trimmedRecord(overrides: Partial<Extract<ChapterRuntimeOutcome, { kind: 'ok' }>> = {}): ChapterRuntimeOutcome {
+  return completeRecord({ runtimeLengthMs: 86_400_000, trimmedRuntimeMs: 85_134_000, trimmedChapterCount: 1, ...overrides });
+}
+
+/** Canonical "nothing usable" result; every miss returns this instead of undefined. */
+const NONE = {};
+const FABLEHAVEN_REFS = { fullSeconds: 33219.49, trimmedSeconds: 33219.49 };
 
 interface Harness {
   corroborator: ChapterCorroborator;
@@ -60,23 +70,122 @@ describe('createChapterCorroborator — trust gate (D3/AC5)', () => {
   it('a complete record with isAccurate true and a positive runtime converts ms → SECONDS', async () => {
     h.getChapterRuntime.mockResolvedValue(completeRecord());
 
-    await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toBe(33219.49);
+    await expect(h.corroborator.getChapterRuntimeSeconds(ASIN))
+      .resolves.toEqual({ fullSeconds: 33219.49, trimmedSeconds: 33219.49 });
+  });
+
+  it('#2168 — a trimmed record yields BOTH references, each converted ms → SECONDS', async () => {
+    h.getChapterRuntime.mockResolvedValue(trimmedRecord());
+
+    await expect(h.corroborator.getChapterRuntimeSeconds(ASIN))
+      .resolves.toEqual({ fullSeconds: 86_400, trimmedSeconds: 85_134 });
   });
 
   it.each([
     ['isAccurate false', completeRecord({ isAccurate: false })],
     ['isAccurate null', completeRecord({ isAccurate: null })],
-    ['isAccurate absent', { kind: 'ok', runtimeLengthMs: FABLEHAVEN_MS, isAccurate: undefined } as ChapterRuntimeOutcome],
-    ['runtimeLengthMs null', completeRecord({ runtimeLengthMs: null })],
-    ['runtimeLengthMs zero', completeRecord({ runtimeLengthMs: 0 })],
-    ['runtimeLengthMs negative', completeRecord({ runtimeLengthMs: -1000 })],
-    ['runtimeLengthMs non-finite', completeRecord({ runtimeLengthMs: Number.POSITIVE_INFINITY })],
+    ['isAccurate absent', { kind: 'ok', runtimeLengthMs: FABLEHAVEN_MS, isAccurate: undefined, trimmedRuntimeMs: FABLEHAVEN_MS, trimmedChapterCount: 0 } as ChapterRuntimeOutcome],
+    ['runtimeLengthMs null', completeRecord({ runtimeLengthMs: null, trimmedRuntimeMs: undefined })],
+    ['runtimeLengthMs zero', completeRecord({ runtimeLengthMs: 0, trimmedRuntimeMs: 0 })],
+    ['runtimeLengthMs negative', completeRecord({ runtimeLengthMs: -1000, trimmedRuntimeMs: -1000 })],
+    ['runtimeLengthMs non-finite', completeRecord({ runtimeLengthMs: Number.POSITIVE_INFINITY, trimmedRuntimeMs: Number.POSITIVE_INFINITY })],
   ])('%s → no usable runtime, and it SETTLES (a second lookup issues no request)', async (_label, outcome) => {
     h.getChapterRuntime.mockResolvedValue(outcome);
 
-    await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
-    await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+    await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
+    await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
     expect(h.getChapterRuntime).toHaveBeenCalledTimes(1);
+  });
+
+  // Both full and trimmed references pass through the same positive-finite gate.
+  it.each([
+    ['zero', 0],
+    ['negative', -5_000],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['-Infinity', Number.NEGATIVE_INFINITY],
+  ])('a degenerate NUMERIC trimmedRuntimeMs (%s) yields NO trimmed reference while the full one survives', async (_label, trimmedRuntimeMs) => {
+    h.getChapterRuntime.mockResolvedValue(completeRecord({ trimmedRuntimeMs, trimmedChapterCount: 1 }));
+
+    await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual({ fullSeconds: 33219.49 });
+  });
+
+  it('a trimmedRuntimeMs the rule refused (undefined) yields the full reference alone', async () => {
+    h.getChapterRuntime.mockResolvedValue(completeRecord({ trimmedRuntimeMs: undefined, trimmedChapterCount: 3 }));
+
+    await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual({ fullSeconds: 33219.49 });
+  });
+
+  it('a provider-declared-INACCURATE table suppresses BOTH references, not just the full one', async () => {
+    h.getChapterRuntime.mockResolvedValue(trimmedRecord({ isAccurate: false }));
+
+    await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
+  });
+});
+
+describe('createChapterCorroborator — the settle diagnostic (#2168 AC16/AC22)', () => {
+  it('a settled ok logs the trimmed runtime AND the count alongside the full one', async () => {
+    const log = createMockLogger();
+    const getChapterRuntime = vi.fn<(asin: string) => Promise<ChapterRuntimeOutcome>>()
+      .mockResolvedValue(trimmedRecord({ trimmedChapterCount: 2 }));
+    const corroborator = createChapterCorroborator({
+      provider: { name: 'Audnexus', getChapterRuntime },
+      log: inject<FastifyBaseLogger>(log),
+      acquireThrottle: () => Promise.resolve(),
+      isRateLimited: () => false,
+      getRateLimitRemainingMs: () => 0,
+      setRateLimited: vi.fn(),
+    });
+
+    await corroborator.getChapterRuntimeSeconds(ASIN);
+
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        asin: ASIN,
+        chapterSeconds: 86_400,
+        trimmedRuntimeMs: 85_134_000,
+        trimmedChapterSeconds: 85_134,
+        trimmedChapterCount: 2,
+      }),
+      expect.stringContaining('settled'),
+    );
+  });
+
+  it('a trusted ZERO-LENGTH trailing match logs a count of 1 even though the two runtimes are equal', async () => {
+    // Trust the adapter's count; runtime equality does not imply zero trimmed chapters.
+    const log = createMockLogger();
+    const getChapterRuntime = vi.fn<(asin: string) => Promise<ChapterRuntimeOutcome>>()
+      .mockResolvedValue(completeRecord({ trimmedChapterCount: 1 }));
+    const corroborator = createChapterCorroborator({
+      provider: { name: 'Audnexus', getChapterRuntime },
+      log: inject<FastifyBaseLogger>(log),
+      acquireThrottle: () => Promise.resolve(),
+      isRateLimited: () => false,
+      getRateLimitRemainingMs: () => 0,
+      setRateLimited: vi.fn(),
+    });
+
+    await corroborator.getChapterRuntimeSeconds(ASIN);
+
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ trimmedChapterCount: 1, chapterSeconds: 33219.49, trimmedChapterSeconds: 33219.49 }),
+      expect.stringContaining('settled'),
+    );
+  });
+
+  it('the count never enters the cache or the return value — two settles differing only in count are indistinguishable', async () => {
+    const withCount = makeHarness();
+    const withoutCount = makeHarness();
+    withCount.getChapterRuntime.mockResolvedValue(trimmedRecord({ trimmedChapterCount: 2 }));
+    withoutCount.getChapterRuntime.mockResolvedValue(trimmedRecord({ trimmedChapterCount: 0 }));
+
+    const a = await withCount.corroborator.getChapterRuntimeSeconds(ASIN);
+    const b = await withoutCount.corroborator.getChapterRuntimeSeconds(ASIN);
+
+    expect(a).toEqual(b);
+    expect(Object.keys(a).sort()).toEqual(['fullSeconds', 'trimmedSeconds']);
+    expect(await withCount.corroborator.getChapterRuntimeSeconds(ASIN)).toEqual(a);
+    expect(withCount.getChapterRuntime).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -88,8 +197,8 @@ describe('createChapterCorroborator — cache matrix (AC2)', () => {
     it('the requested edition\'s complete record with a usable runtime', async () => {
       h.getChapterRuntime.mockResolvedValue(completeRecord());
 
-      await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toBe(33219.49);
-      await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toBe(33219.49);
+      await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(FABLEHAVEN_REFS);
+      await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(FABLEHAVEN_REFS);
       expect(h.getChapterRuntime).toHaveBeenCalledTimes(1);
       expect(h.acquireThrottle).toHaveBeenCalledTimes(1);
     });
@@ -97,8 +206,8 @@ describe('createChapterCorroborator — cache matrix (AC2)', () => {
     it('not_found (the documented HTTP 400/404 — Audnexus asserts the ASIN is absent)', async () => {
       h.getChapterRuntime.mockResolvedValue({ kind: 'not_found' });
 
-      await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
-      await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+      await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
+      await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
       expect(h.getChapterRuntime).toHaveBeenCalledTimes(1);
     });
   });
@@ -112,28 +221,25 @@ describe('createChapterCorroborator — cache matrix (AC2)', () => {
     ])('%s → not cached; the next call re-requests and a valid record then promotes AND settles', async (_label, outcome) => {
       h.getChapterRuntime.mockResolvedValue(outcome);
 
-      await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
-      await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+      await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
+      await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
       expect(h.getChapterRuntime).toHaveBeenCalledTimes(2);
 
       h.getChapterRuntime.mockResolvedValue(completeRecord());
-      await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toBe(33219.49);
+      await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(FABLEHAVEN_REFS);
       expect(h.getChapterRuntime).toHaveBeenCalledTimes(3);
 
-      // ...and the promotion settles: a fourth lookup issues no request.
-      await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toBe(33219.49);
+      await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(FABLEHAVEN_REFS);
       expect(h.getChapterRuntime).toHaveBeenCalledTimes(3);
     });
 
     it('a wrong-edition chapter body can never settle as a verdict about the requested ASIN', async () => {
-      // The adapter already refuses to hand back another edition's runtime; this
-      // pins that the owner does not cache the resulting `invalid_record` either.
       h.getChapterRuntime.mockResolvedValue({ kind: 'invalid_record', reason: 'asin-mismatch' });
 
       await h.corroborator.getChapterRuntimeSeconds(ASIN);
       h.getChapterRuntime.mockResolvedValue(completeRecord());
 
-      await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toBe(33219.49);
+      await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(FABLEHAVEN_REFS);
     });
   });
 });
@@ -155,7 +261,7 @@ describe('createChapterCorroborator — throttle and provider-wide backoff (AC4)
   it('honors an ACTIVE provider-wide backoff — no throttle slot, no request', async () => {
     h.rateLimited.value = true;
 
-    await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+    await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
 
     expect(h.getChapterRuntime).not.toHaveBeenCalled();
     expect(h.acquireThrottle).not.toHaveBeenCalled();
@@ -167,13 +273,13 @@ describe('createChapterCorroborator — throttle and provider-wide backoff (AC4)
 
     h.rateLimited.value = false;
     h.getChapterRuntime.mockResolvedValue(completeRecord());
-    await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toBe(33219.49);
+    await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(FABLEHAVEN_REFS);
   });
 
   it('a RETURNED 429 feeds its finite window back into the shared backoff gate (F11/F16)', async () => {
     h.getChapterRuntime.mockResolvedValue({ kind: 'rate_limited', retryAfterMs: 45_000 });
 
-    await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+    await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
 
     expect(h.setRateLimited).toHaveBeenCalledWith('Audnexus', 45_000);
     const [, windowMs] = h.setRateLimited.mock.calls[0]!;
@@ -205,7 +311,7 @@ describe('createChapterCorroborator — single-flight (AC2)', () => {
     ]);
     release(completeRecord());
 
-    expect(await all).toEqual([33219.49, 33219.49, 33219.49]);
+    expect(await all).toEqual([FABLEHAVEN_REFS, FABLEHAVEN_REFS, FABLEHAVEN_REFS]);
     expect(h.getChapterRuntime).toHaveBeenCalledTimes(1);
     expect(h.acquireThrottle).toHaveBeenCalledTimes(1);
   });
@@ -230,18 +336,18 @@ describe('createChapterCorroborator — single-flight (AC2)', () => {
       h.corroborator.getChapterRuntimeSeconds(ASIN),
     ]);
     release({ kind: 'transient_failure', message: 'socket hang up' });
-    expect(await all).toEqual([undefined, undefined]);
+    expect(await all).toEqual([NONE, NONE]);
     expect(h.getChapterRuntime).toHaveBeenCalledTimes(1);
 
     h.getChapterRuntime.mockResolvedValue(completeRecord());
-    await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toBe(33219.49);
+    await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(FABLEHAVEN_REFS);
     expect(h.getChapterRuntime).toHaveBeenCalledTimes(2);
   });
 
   it('never rejects — a throwing throttle degrades to "no usable runtime" (AC9)', async () => {
     h.acquireThrottle.mockRejectedValue(new Error('throttle exploded'));
 
-    await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toBeUndefined();
+    await expect(h.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(NONE);
   });
 });
 
@@ -250,12 +356,11 @@ describe('createChapterCorroborator — owner-instance isolation (F14/AC2)', () 
     const us = makeHarness();
     const uk = makeHarness();
     us.getChapterRuntime.mockResolvedValue(completeRecord());
-    uk.getChapterRuntime.mockResolvedValue(completeRecord({ runtimeLengthMs: 30000000 }));
+    uk.getChapterRuntime.mockResolvedValue(completeRecord({ runtimeLengthMs: 30000000, trimmedRuntimeMs: 30000000 }));
 
-    await expect(us.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toBe(33219.49);
-    await expect(uk.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toBe(30000);
+    await expect(us.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual(FABLEHAVEN_REFS);
+    await expect(uk.corroborator.getChapterRuntimeSeconds(ASIN)).resolves.toEqual({ fullSeconds: 30000, trimmedSeconds: 30000 });
 
-    // Each settled independently — neither reused the other's verdict.
     expect(us.getChapterRuntime).toHaveBeenCalledTimes(1);
     expect(uk.getChapterRuntime).toHaveBeenCalledTimes(1);
     await us.corroborator.getChapterRuntimeSeconds(ASIN);
@@ -273,15 +378,15 @@ describe('corroborateDurationVerdict — lazy trigger (AC4/AC7/AC9)', () => {
   };
   const HIGH: DurationConfidenceResult = { confidence: 'high' };
 
-  let lookupChapterSeconds: ReturnType<typeof vi.fn<(asin: string) => Promise<number | undefined>>>;
+  let lookupChapterSeconds: ReturnType<typeof vi.fn<(asin: string) => Promise<ChapterRuntimeSeconds>>>;
   let log: ReturnType<typeof createMockLogger>;
 
   beforeEach(() => {
-    lookupChapterSeconds = vi.fn().mockResolvedValue(33219.49);
+    lookupChapterSeconds = vi.fn().mockResolvedValue(FABLEHAVEN_REFS);
     log = createMockLogger();
   });
 
-  function run(verdict: DurationConfidenceResult, asin: string | undefined, recheck = (_cs: number): DurationConfidenceResult => HIGH) {
+  function run(verdict: DurationConfidenceResult, asin: string | undefined, recheck = (_refs: ChapterRuntimeSeconds): DurationConfidenceResult => HIGH) {
     return corroborateDurationVerdict({
       verdict,
       asin,
@@ -301,7 +406,7 @@ describe('corroborateDurationVerdict — lazy trigger (AC4/AC7/AC9)', () => {
     const result = await run(verdict, ASIN);
 
     expect(lookupChapterSeconds).not.toHaveBeenCalled();
-    expect(result).toEqual({ verdict });
+    expect(result).toEqual({ verdict, chapterRuntimes: NONE });
   });
 
   it.each([
@@ -312,7 +417,7 @@ describe('corroborateDurationVerdict — lazy trigger (AC4/AC7/AC9)', () => {
     const result = await run(MISMATCH, asin);
 
     expect(lookupChapterSeconds).not.toHaveBeenCalled();
-    expect(result).toEqual({ verdict: MISMATCH });
+    expect(result).toEqual({ verdict: MISMATCH, chapterRuntimes: NONE });
   });
 
   it('a qualifying mismatch issues exactly ONE lookup and promotes on a usable in-band runtime', async () => {
@@ -320,7 +425,29 @@ describe('corroborateDurationVerdict — lazy trigger (AC4/AC7/AC9)', () => {
 
     expect(lookupChapterSeconds).toHaveBeenCalledExactlyOnceWith(ASIN);
     expect(result.verdict).toEqual(HIGH);
-    expect(result.chapterSeconds).toBe(33219.49);
+    expect(result.chapterRuntimes).toEqual(FABLEHAVEN_REFS);
+  });
+
+  it('#2168 — a TRIMMED-ONLY reference still triggers the recheck, and rides back out for the cap signal', async () => {
+    // Return the promotion reference so downstream duration caps see verification.
+    lookupChapterSeconds.mockResolvedValue({ trimmedSeconds: 85_134 });
+    const recheck = vi.fn(() => HIGH);
+
+    const result = await run(MISMATCH, ASIN, recheck);
+
+    expect(recheck).toHaveBeenCalledExactlyOnceWith({ trimmedSeconds: 85_134 });
+    expect(result).toEqual({ verdict: HIGH, chapterRuntimes: { trimmedSeconds: 85_134 } });
+  });
+
+  it('#2168 — the settle-time debug line names both references', async () => {
+    lookupChapterSeconds.mockResolvedValue({ fullSeconds: 86_400, trimmedSeconds: 85_134 });
+
+    await run(MISMATCH, ASIN);
+
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ asin: ASIN, chapterSeconds: 86_400, trimmedChapterSeconds: 85_134, promoted: true }),
+      expect.stringContaining('corroboration applied'),
+    );
   });
 
   it('trims the ASIN before looking it up', async () => {
@@ -335,14 +462,14 @@ describe('corroborateDurationVerdict — lazy trigger (AC4/AC7/AC9)', () => {
     expect(result.verdict).toEqual(MISMATCH);
   });
 
-  it('no usable chapter runtime → the scalar verdict stands and the recheck never runs', async () => {
-    lookupChapterSeconds.mockResolvedValue(undefined);
+  it('no usable chapter runtime (NEITHER reference) → the scalar verdict stands and the recheck never runs', async () => {
+    lookupChapterSeconds.mockResolvedValue(NONE);
     const recheck = vi.fn(() => HIGH);
 
     const result = await run(MISMATCH, ASIN, recheck);
 
     expect(recheck).not.toHaveBeenCalled();
-    expect(result).toEqual({ verdict: MISMATCH });
+    expect(result).toEqual({ verdict: MISMATCH, chapterRuntimes: NONE });
   });
 
   it('AC9 — a rejecting lookup never escapes: it degrades to the scalar verdict and logs at debug', async () => {
@@ -350,7 +477,7 @@ describe('corroborateDurationVerdict — lazy trigger (AC4/AC7/AC9)', () => {
 
     const result = await run(MISMATCH, ASIN);
 
-    expect(result).toEqual({ verdict: MISMATCH });
+    expect(result).toEqual({ verdict: MISMATCH, chapterRuntimes: NONE });
     expect(log.debug).toHaveBeenCalledWith(
       expect.objectContaining({ asin: ASIN }),
       expect.stringContaining('keeping the scalar duration verdict'),

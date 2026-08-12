@@ -1,3 +1,4 @@
+import { Link } from 'react-router';
 import { type BookMetadata } from '@/lib/api';
 import { formatDurationMinutes } from '@/lib/format';
 import { resolveUrl } from '@/lib/url-utils';
@@ -7,24 +8,23 @@ import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 
 export function BookRow({
   book,
-  inLibrary,
+  libraryBookId,
   onAdd,
   isAdding,
 }: {
   book: BookMetadata;
-  inLibrary: boolean;
+  /** The owned book's id, or null when this edition is not in the library. Null also drives the Add affordance. */
+  libraryBookId: number | null;
   onAdd: (overrides: { searchImmediately: boolean }) => void;
   isAdding: boolean;
 }) {
-  // Prefer canonical `seriesPrimary` over `series[0]` (#1088 / #1097) — `series[0]`
-  // on Audible can be a broader universe entry rather than the real book series.
+  // Audible series[0] may be a broader universe; use canonical seriesPrimary.
   const seriesPos = pickPrimarySeries(book)?.position;
   const duration = formatDurationMinutes(book.duration);
   const narratorNames = book.narrators?.join(', ');
 
   return (
     <div className="flex items-center gap-3 sm:gap-4 py-3 group">
-      {/* Cover thumbnail */}
       <div className="shrink-0">
         <div className="relative w-10 sm:w-12 aspect-square rounded-lg overflow-hidden ring-1 ring-black/10 transition-transform duration-200 group-hover:scale-105">
           {book.coverUrl ? (
@@ -42,13 +42,18 @@ export function BookRow({
         </div>
       </div>
 
-      {/* Book info */}
       <div className="flex-1 min-w-0">
         <span className="text-sm font-medium line-clamp-1">
           {seriesPos != null && (
             <span className="text-muted-foreground font-normal">#{seriesPos} </span>
           )}
-          {book.title}
+          {libraryBookId !== null ? (
+            <Link to={`/books/${libraryBookId}`} className="hover:underline focus-ring rounded" data-testid="author-book-title-link">
+              {book.title}
+            </Link>
+          ) : (
+            book.title
+          )}
         </span>
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5 line-clamp-1">
           {narratorNames && <span>{narratorNames}</span>}
@@ -57,12 +62,15 @@ export function BookRow({
         </div>
       </div>
 
-      {/* Add button */}
       <div className="shrink-0">
-        {inLibrary ? (
-          <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-success/10 text-success" role="img" aria-label="In library">
+        {libraryBookId !== null ? (
+          <Link
+            to={`/books/${libraryBookId}`}
+            className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-success/10 text-success hover:bg-success/20 transition-colors focus-ring"
+            aria-label="View this book in your library"
+          >
             <CheckIcon className="w-4 h-4" />
-          </span>
+          </Link>
         ) : (
           <AddBookPopover onAdd={onAdd} isPending={isAdding} />
         )}

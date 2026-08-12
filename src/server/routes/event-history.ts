@@ -25,7 +25,6 @@ const bookIdParamSchema = z.object({
 type BookIdParam = z.infer<typeof bookIdParamSchema>;
 
 export async function eventHistoryRoutes(app: FastifyInstance, eventHistoryService: EventHistoryService) {
-  // GET /api/event-history
   app.get<{ Querystring: EventHistoryListQuery }>(
     '/api/event-history',
     { schema: { querystring: eventHistoryListQuerySchema } },
@@ -37,7 +36,6 @@ export async function eventHistoryRoutes(app: FastifyInstance, eventHistoryServi
     },
   );
 
-  // GET /api/event-history/books/:bookId
   app.get<{ Params: BookIdParam }>(
     '/api/event-history/books/:bookId',
     { schema: { params: bookIdParamSchema } },
@@ -48,7 +46,6 @@ export async function eventHistoryRoutes(app: FastifyInstance, eventHistoryServi
     },
   );
 
-  // DELETE /api/event-history/:id — delete a single event
   app.delete<{ Params: IdParam }>(
     '/api/event-history/:id',
     { schema: { params: idParamSchema } },
@@ -59,7 +56,6 @@ export async function eventHistoryRoutes(app: FastifyInstance, eventHistoryServi
     },
   );
 
-  // DELETE /api/event-history — bulk delete events (optional eventType filter)
   app.delete<{ Querystring: BulkDeleteQuery }>(
     '/api/event-history',
     { schema: { querystring: bulkDeleteQuerySchema } },
@@ -71,7 +67,6 @@ export async function eventHistoryRoutes(app: FastifyInstance, eventHistoryServi
     },
   );
 
-  // POST /api/event-history/:id/mark-failed
   app.post<{ Params: IdParam }>(
     '/api/event-history/:id/mark-failed',
     { schema: { params: idParamSchema } },

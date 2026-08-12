@@ -1,32 +1,16 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { buildTorrentBytes } from './torrent.js';
 
-/**
- * Fake MyAnonamouse server. Implements the subset of endpoints
- * `src/core/indexers/myanonamouse.ts` actually calls:
- *
- *   GET /tor/js/loadSearchJSONbasic.php   — JSON search
- *   GET /tor/download.php?tid=<id>        — raw .torrent bytes
- *   GET /jsonLoad.php                     — `test()` probe
- *
- * All endpoints require `Cookie: mam_id=<value>`. Unknown/missing cookie → 403
- * with the HTML error shape the real server returns (helpful for producing
- * IndexerAuthError on the app side).
- *
- * Control endpoint (test-use only):
- *   POST /__control/seed   — seeds results for a query term; idempotent
- *   POST /__control/reset  — clears all seed data
- */
+/** Fake MAM endpoints consumed by the indexer; `/__control/*` mutates fixtures without auth. */
 
 export interface MAMFixture {
-  /** Positive integer — becomes `id` in the JSON response and `tid` for download. */
+  /** Positive torrent ID shared by search and download. */
   id: number;
   title: string;
   author: string;
   narrator?: string;
-  /** MAM lang_code matching `normalizeLanguage` in `src/core/utils/language-codes.ts`. */
   langCode: string;
-  /** Human-readable size string, e.g. "881.8 MiB". Narratorr parses this. */
+  /** Human-readable size parsed by Narratorr, for example `881.8 MiB`. */
   size: string;
   seeders: number;
   leechers: number;
@@ -34,13 +18,9 @@ export interface MAMFixture {
 }
 
 export interface CreateMAMFakeOptions {
-  /** Port to listen on. Defaults to 4100. */
   port?: number;
-  /** Accepted `mam_id` cookie value. Defaults to `test-mam-id`. */
   expectedCookie?: string;
-  /** Filename for the torrent payload returned by `/tor/download.php`. Defaults to `silent.m4b`. */
   torrentFileName?: string;
-  /** Byte length to advertise in the torrent info dict. Defaults to 4297 (silent.m4b). */
   torrentFileLength?: number;
 }
 
@@ -60,7 +40,7 @@ export interface MAMFakeHandle {
   reset: () => void;
 }
 
-/** Wraps author/narrator names in MAM's double-encoded JSON shape (`parseDoubleEncodedNames`). */
+/** Encodes names twice to match MAM's `author_info`/`narrator_info` wire format. */
 function encodeNames(names: string): string {
   const inner = JSON.stringify({ '1': names });
   return JSON.stringify(inner);
@@ -72,10 +52,8 @@ export async function createMAMFake(options: CreateMAMFakeOptions = {}): Promise
   const torrentFileName = options.torrentFileName ?? 'silent.m4b';
   const torrentFileLength = options.torrentFileLength ?? 4297;
 
-  // Pre-compute the torrent bytes once — same payload for every download request.
   const torrentBytes = buildTorrentBytes({ fileName: torrentFileName, fileLength: torrentFileLength });
 
-  // query (lowercased, trimmed) -> fixtures
   const seedStore = new Map<string, MAMFixture[]>();
   let wedgeCount = 5;
   let bonusBuyOverride: BonusBuyOverride | null = null;
@@ -83,12 +61,9 @@ export async function createMAMFake(options: CreateMAMFakeOptions = {}): Promise
 
   const server = Fastify({ logger: process.env.E2E_FAKE_LOGS === '1' });
 
-  // ── Auth middleware ──────────────────────────────────────────────────────
-  // The real MAM server returns 403 with an HTML body when `mam_id` is missing.
-  // `MyAnonamouseIndexer.fetchWithCookie` checks for HTTP 403 and throws
-  // IndexerAuthError with the HTML `<br />\s*(.+)` pattern extracted — mirror it.
+  // Preserve MAM's HTML `<br>` error shape; the indexer extracts its auth detail.
   server.addHook('preHandler', async (request, reply) => {
-    if (request.url.startsWith('/__control/')) return; // control endpoints skip auth
+    if (request.url.startsWith('/__control/')) return;
 
     const cookieHeader = request.headers.cookie ?? '';
     const match = /mam_id=([^;]+)/.exec(cookieHeader);
@@ -100,14 +75,10 @@ export async function createMAMFake(options: CreateMAMFakeOptions = {}): Promise
     }
   });
 
-  // ── GET /tor/js/loadSearchJSONbasic.php ─────────────────────────────────
   server.get('/tor/js/loadSearchJSONbasic.php', async (request) => {
     const query = String((request.query as { 'tor[text]'?: string })['tor[text]'] ?? '').trim().toLowerCase();
 
-    // Match any seed key that is contained in, or contains, the incoming query.
-    // Real release search sends `${title} ${author}` — but tests may seed by
-    // title alone. Substring matching keeps the fake forgiving without the
-    // caller having to predict Narratorr's exact query shape.
+    // App searches use `title author`; containment lets fixtures seed the title alone.
     let fixtures: MAMFixture[] | undefined = seedStore.get(query);
     if (!fixtures) {
       for (const [key, value] of seedStore) {
@@ -123,7 +94,7 @@ export async function createMAMFake(options: CreateMAMFakeOptions = {}): Promise
     }
 
     if (!fixtures || fixtures.length === 0) {
-      // MAM's empty-result shape — `MyAnonamouseIndexer.search` treats this as [].
+      // `MyAnonamouseIndexer.search` normalizes MAM's empty-result error shape to `[]`.
       return { error: 'Nothing returned, out of matches' };
     }
 
@@ -145,30 +116,24 @@ export async function createMAMFake(options: CreateMAMFakeOptions = {}): Promise
     };
   });
 
-  // ── GET /tor/download.php ────────────────────────────────────────────────
   server.get('/tor/download.php', async (request, reply) => {
     const tid = Number((request.query as { tid?: string }).tid);
     if (!Number.isFinite(tid) || tid <= 0) {
       return reply.status(404).send({ error: 'Not found' });
     }
 
-    // All known fixtures map to the same canonical torrent payload — the
-    // fake's job is to round-trip through Narratorr's extract/upload/re-hash
-    // pipeline, not to serve distinct torrents per tid.
+    // One canonical payload is enough to exercise extraction, upload, and re-hashing.
     reply
       .status(200)
       .type('application/x-bittorrent')
       .send(torrentBytes);
   });
 
-  // ── GET /jsonLoad.php ────────────────────────────────────────────────────
   server.get('/jsonLoad.php', async () => {
     return { username: 'e2e-test-user', classname: 'User', wedges: wedgeCount };
   });
 
-  // ── POST /json/bonusBuy.php/:ts — wedge spend ───────────────────────────
-  // Real MAM responds `{ success: true }` on accepted spend or `{ success: false, error: "..." }`
-  // for known failures. The override knob lets tests assert specific branches.
+  // The override selects branch-specific responses; the default consumes one wedge.
   server.post('/json/bonusBuy.php/:ts', async (request) => {
     const params = request.params as { ts: string };
     const query = request.query as { torrentid?: string };
@@ -183,7 +148,6 @@ export async function createMAMFake(options: CreateMAMFakeOptions = {}): Promise
     return { success: true };
   });
 
-  // ── Control endpoints ────────────────────────────────────────────────────
   server.post('/__control/seed', async (request, reply) => {
     const body = request.body as { query?: string; fixtures?: MAMFixture[] };
     if (!body?.query || !Array.isArray(body.fixtures)) {
@@ -193,8 +157,6 @@ export async function createMAMFake(options: CreateMAMFakeOptions = {}): Promise
     return { ok: true };
   });
 
-  // Seed the wedge count for /jsonLoad.php and bonus-buy decrement logic.
-  // Accepts { count: number }; rejects negative or non-integer values.
   server.post('/__control/wedges', async (request, reply) => {
     const body = request.body as { count?: unknown };
     const count = body?.count;
@@ -205,8 +167,6 @@ export async function createMAMFake(options: CreateMAMFakeOptions = {}): Promise
     return { ok: true, wedges: wedgeCount };
   });
 
-  // Override the bonus-buy response shape. POST { success?: boolean, error?: string }
-  // applies the override; POST {} clears it back to the wedge-count-aware default.
   server.post('/__control/bonus-buy', async (request, reply) => {
     const body = (request.body ?? {}) as { success?: unknown; error?: unknown };
     if (body.success === undefined && body.error === undefined) {

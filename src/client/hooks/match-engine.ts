@@ -9,14 +9,12 @@ import {
   type PausedReason,
 } from './match-recovery.js';
 
-/** The three chunk-job endpoints the engine drives. */
 export interface MatchApi {
   startMatchJob: (candidates: MatchCandidate[]) => Promise<{ jobId: string }>;
   getMatchJob: (jobId: string) => Promise<MatchJobStatus>;
   cancelMatchJob: (jobId: string) => Promise<unknown>;
 }
 
-/** Immutable snapshot the engine hands to React on every state change. */
 export interface MatchEngineSnapshot {
   results: MatchResult[];
   progress: { matched: number; total: number };
@@ -29,29 +27,15 @@ export interface MatchEngineSnapshot {
   total: number;
 }
 
-/**
- * Which phase of a logical run the poll loop is currently driving (§0/§2/§3):
- * - `auto-initial`    — the initial scan / Restart run; its terminal-gone may
- *   consume the one automatic allowance (→ `automatic-entry` probe context).
- * - `auto-remainder`  — the allowance-started remainder; its polls are in-attempt.
- * - `human-remainder` — a Resume-authorized remainder; its polls are in-attempt.
- */
+/** Only `auto-initial` may spend the automatic allowance; remainder phases are already in-attempt. */
 type RunPhase = 'auto-initial' | 'auto-remainder' | 'human-remainder';
 
-/**
- * Probe context (§3). Determines what a terminal-gone / cancelled / inconclusive
- * outcome does. `automatic-entry` may consume the allowance once; `resume-entry`
- * authorizes exactly one remainder; `in-attempt` never starts a new remainder.
- */
+/** Entry probes may authorize one remainder; `in-attempt` never replaces the job. */
 type ProbeContext = 'automatic-entry' | 'resume-entry' | 'in-attempt';
 
 /**
- * Framework-agnostic match-phase recovery engine (#1864). One logical run spans
- * all its chunks and any internal remainder; a SINGLE serialized timeout-driven
- * poll/retry/probe loop keeps at most one status request in flight, guarded by a
- * run epoch checked after every await (defense-in-depth over the job-id guard).
- * Observed results are queue-owned in an append-only `Map<path, MatchResult>` — the
- * authoritative source for the remainder, never the async React `results` state.
+ * One logical run spans chunks and remainders. A serialized timer loop plus epoch guards
+ * permits one status request in flight; the path-keyed observed map owns remainder state (#1864).
  */
 export class MatchEngine {
   private epoch = 0;
@@ -61,44 +45,31 @@ export class MatchEngine {
   private original: MatchCandidate[] = [];
   private chunks: MatchCandidate[][] = [];
   private chunkIndex = 0;
-  /**
-   * Original-set remainder count captured at the very start of the current run — before
-   * oversized ingestion — so a run that drains its chunks without shrinking the remainder
-   * (a partial `completed` that omits a candidate) pauses instead of re-running the same
-   * candidates forever (no-progress guard in `startRemainderOrFinish`). Measured against
-   * `remaining()` (original-set only), never `observed.size` (grows on off-domain paths).
-   */
+  /** Baseline before oversized ingestion; compare original-set remainder, not off-domain-capable map size. */
   private runEntryRemaining = 0;
   private phase: RunPhase = 'auto-initial';
   private allowanceSpent = false;
   private hasPaused = false;
   private failureCount = 0;
   private isMatching = false;
-  /**
-   * True when the CURRENT logical run is itself a recovery run — a human Restart/Resume,
-   * or the automatic allowance-started remainder. Combined with a transient retry backoff
-   * (`failureCount > 0`) it derives the exposed `recovering` flag (F1), so the fail-closed
-   * CTA stays locked during automatic retry/remainder, not just during a human-driven one.
-   */
+  /** Marks human or automatic remainder runs so the fail-closed CTA stays locked (F1). */
   private recoveryRun = false;
   private paused: PausedReason | null = null;
   private pollHandle: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private api: MatchApi, private onChange: (snap: MatchEngineSnapshot) => void) {}
 
-  // ─── Public commands ──────────────────────────────────────────────
-
-  /** Initial automatic run (scan → match). Fresh logical run; allowance reset. */
+  /** Initial scan-to-match run; resets the logical allowance. */
   startMatching(candidates: MatchCandidate[]): void {
     this.beginLogical(candidates, false);
   }
 
-  /** Restart all — a NEW logical run over current row values; recovery-gated CTA. */
+  /** New logical run over current row values, entered through the recovery CTA. */
   restart(candidates: MatchCandidate[]): void {
     this.beginLogical(candidates, true);
   }
 
-  /** Resume remaining — one authorized attempt (§2-B). Probe when a job id is known. */
+  /** One authorized remainder attempt; probe first when an id survives. */
   resume(): void {
     if (!this.paused) return;
     this.epoch += 1;
@@ -111,7 +82,7 @@ export class MatchEngine {
     if (this.jobId) {
       void this.probe('resume-entry');
     } else {
-      // Start-failure carve-out (§3): no job to probe — start the observed remainder.
+      // A failed start leaves no job to probe; begin the observed remainder directly.
       this.beginRun(this.remaining(), 'human-remainder');
     }
   }
@@ -133,16 +104,11 @@ export class MatchEngine {
     this.abandonActiveJob();
   }
 
-  // ─── Run / chunk orchestration ────────────────────────────────────
-
   private beginLogical(candidates: MatchCandidate[], recover: boolean): void {
     this.epoch += 1;
     this.clearPoll();
     this.abandonActiveJob();
-    // Candidate paths are the logical-run identity (observed map, remainder, and every
-    // status result are keyed by `path`). Duplicate paths would let one result satisfy
-    // several candidates and finish with `matched < total` (§0/F2). Collapse to
-    // first-occurrence up front so `total` and the remainder stay path-consistent.
+    // Path is the run identity; dedupe or one result can satisfy multiple candidates while total disagrees (F2).
     const deduped = dedupeByPath(candidates);
     this.original = deduped;
     this.observed = new Map();
@@ -158,19 +124,12 @@ export class MatchEngine {
 
   private beginRun(candidates: MatchCandidate[], phase: RunPhase): void {
     this.phase = phase;
-    // A fresh chunk run gets a fresh bounded-retry budget (F9). Every remainder start —
-    // completed-probe advance, allowance auto-remainder, or human-remainder — flows through
-    // here, so an exhaustion probe that advances into more work never carries its stale
-    // `failureCount` into the remainder (which would probe/pause after a single blip).
+    // Every chunk/remainder run gets a fresh retry budget; never carry exhaustion into new work (F9).
     this.failureCount = 0;
-    // Baseline BEFORE oversized ingestion: an oversized ejection removes a candidate from
-    // the remainder, so capturing here lets that ejection count as forward progress and earn
-    // one legitimate remainder attempt (F4 discriminator).
+    // Capture before oversized ejection so that removal counts as forward progress (F4).
     this.runEntryRemaining = this.remaining().length;
     const { chunks, oversized } = packMatchCandidates(candidates);
-    // A candidate too large to ever fit a within-budget request (F15) is never sent — it is
-    // surfaced as an unmatchable `none` result so it leaves the remainder (no infinite loop)
-    // and the consumer shows a no-match row rather than a silently-dropped or 413'd book.
+    // A too-large candidate becomes unmatchable `none`; never send it or leave it in the remainder (F15).
     for (const candidate of oversized) this.ingestOversized(candidate);
     this.chunks = chunks;
     this.chunkIndex = 0;
@@ -214,10 +173,7 @@ export class MatchEngine {
       this.schedulePoll(MATCH_POLL_INTERVAL_MS);
     } catch {
       if (this.epoch !== epoch) return;
-      // NO retry on chunk-start POSTs (§4): the request may have created a job and
-      // lost the response — a blind retry double-runs a chunk. A replacement start is
-      // issued only after the old terminal id is cleared, so a rejection leaves no
-      // active job id (F14); the next Resume takes the start-failure carve-out.
+      // Never retry a start POST: a lost response may hide a created job and duplicate the chunk (§4/F14).
       this.pause('start-failed');
     }
   }
@@ -228,10 +184,7 @@ export class MatchEngine {
       this.finishLogical();
       return;
     }
-    // No-progress guard: the run drained all its chunks but did not shrink the original-set
-    // remainder (a partial `completed` response omitted a candidate). Re-running would loop the
-    // same candidates forever, so pause with the existing `run-expired` reason. A Resume makes
-    // exactly one further bounded attempt (jobId is null here → start-failure carve-out).
+    // An unchanged original-set remainder means `completed` omitted work; pause instead of looping (#1870).
     if (remaining.length >= this.runEntryRemaining) {
       this.pause('run-expired');
       return;
@@ -247,8 +200,6 @@ export class MatchEngine {
     this.paused = null;
     this.emit();
   }
-
-  // ─── Single-flight poll loop ──────────────────────────────────────
 
   private schedulePoll(delay: number): void {
     this.clearPoll();
@@ -278,7 +229,7 @@ export class MatchEngine {
   }
 
   private handleStatus(status: MatchJobStatus): void {
-    this.failureCount = 0; // any successful poll resets the retry counter (§1)
+    this.failureCount = 0; // Any successful poll resets the retry budget (§1).
     this.ingest(status);
     if (status.status === 'matching') {
       this.schedulePoll(MATCH_POLL_INTERVAL_MS);
@@ -294,7 +245,7 @@ export class MatchEngine {
       this.terminalCancelled(this.runContext());
       return;
     }
-    this.terminalGone(this.runContext()); // 'failed'
+    this.terminalGone(this.runContext());
   }
 
   private handlePollError(error: unknown): void {
@@ -307,19 +258,16 @@ export class MatchEngine {
       this.pause('request-rejected');
       return;
     }
-    // transport | server — bounded serialized backoff retry, all state preserved.
+    // Transport/server failures use bounded serialized backoff with state preserved.
     this.failureCount += 1;
     if (this.failureCount <= MATCH_RETRY_LIMIT) {
-      // Emit so the derived `recovering` flag (failureCount > 0) reaches consumers and the
-      // fail-closed CTA locks during the transient backoff, not only during a human recovery (F1).
+      // Expose transient backoff through `recovering` so the fail-closed CTA locks (F1).
       this.emit();
       this.schedulePoll(MATCH_RETRY_BACKOFF_MS);
       return;
     }
-    void this.probe(this.runContext()); // exhausted → probe (§1 → §3)
+    void this.probe(this.runContext()); // Exhaustion requires a probe before replacement (§1→§3).
   }
-
-  // ─── Probe before replace (§3) ────────────────────────────────────
 
   private async probe(context: ProbeContext): Promise<void> {
     const epoch = this.epoch;
@@ -334,7 +282,7 @@ export class MatchEngine {
       const cls = classifyPollError(error);
       if (cls === 'gone') this.terminalGone(context);
       else if (cls === 'rejected') this.pause('request-rejected');
-      else this.pause('unreachable'); // transport/5xx inconclusive — retain id, never replace
+      else this.pause('unreachable'); // Inconclusive transport/5xx retains the id; never replace blindly.
     }
   }
 
@@ -342,23 +290,21 @@ export class MatchEngine {
     if (status.status === 'matching') {
       this.failureCount = 0;
       this.ingest(status);
-      this.schedulePoll(MATCH_POLL_INTERVAL_MS); // alive → adopt the live job
+      this.schedulePoll(MATCH_POLL_INTERVAL_MS);
       return;
     }
     if (status.status === 'completed') {
       this.ingest(status);
       this.jobId = null;
-      this.startRemainderOrFinish(this.phase); // terminal-ok → ingest, advance
+      this.startRemainderOrFinish(this.phase);
       return;
     }
     if (status.status === 'cancelled') {
       this.terminalCancelled(context);
       return;
     }
-    this.terminalGone(context); // 'failed'
+    this.terminalGone(context);
   }
-
-  // ─── Terminal-gone / cancelled dispositions (§2/§3) ───────────────
 
   private terminalGone(context: ProbeContext): void {
     if (context === 'resume-entry') {
@@ -367,47 +313,38 @@ export class MatchEngine {
       return;
     }
     if (context === 'automatic-entry' && !this.allowanceSpent) {
-      // The one automatic allowance — consumed before the first pause only. The
-      // allowance-started remainder is itself a recovery run (F1): mark it so the
-      // fail-closed CTA stays locked through the automatic remainder.
+      // Spend the sole automatic allowance before the first pause and lock the recovery CTA (F1).
       this.allowanceSpent = true;
       this.recoveryRun = true;
       this.jobId = null;
       this.beginRun(this.remaining(), 'auto-remainder');
       return;
     }
-    // in-attempt, or automatic-entry with the allowance already spent (F9/F13).
+    // In-attempt, or automatic-entry after its allowance is spent (F9/F13).
     this.pause('run-expired');
   }
 
   private terminalCancelled(context: ProbeContext): void {
     if (context === 'resume-entry') {
-      // Human-authorized: abandon the cancelled job, start a fresh remainder.
+      // Human authorization permits one fresh remainder after cancellation.
       this.jobId = null;
       this.beginRun(this.remaining(), 'human-remainder');
       return;
     }
-    // automatic-entry or in-attempt → pause; NO resurrection (#1833).
+    // Automatic/in-attempt cancellation must not resurrect work (#1833).
     this.pause('cancelled');
   }
 
   private pause(reason: PausedReason): void {
     this.clearPoll();
-    if (reason === 'start-failed') this.jobId = null; // no active job to probe (§4/F14)
+    if (reason === 'start-failed') this.jobId = null; // No active job exists to probe (§4/F14).
     this.hasPaused = true;
     this.isMatching = false;
     this.paused = reason;
     this.emit();
   }
 
-  // ─── Helpers ──────────────────────────────────────────────────────
-
-  /**
-   * Recovery-in-flight (F1): a recovery run (Restart / Resume / automatic remainder), OR a
-   * transient retry backoff in any run. Paused/idle/finished are not "recovering" — the
-   * `paused` gate covers the paused case, and healthy initial polling stays unlocked so the
-   * selection-scoped CTA still enables importing a matched subset (#1102).
-   */
+  /** Recovery includes recovery runs and transient backoff, but excludes paused/idle/healthy initial polling (F1/#1102). */
   private isRecovering(): boolean {
     if (!this.isMatching) return false;
     return this.recoveryRun || this.failureCount > 0;
@@ -424,8 +361,7 @@ export class MatchEngine {
   }
 
   private ingest(status: MatchJobStatus): void {
-    // Queue-owned, append-only merge by `path` — the authoritative source of truth
-    // for the remainder, never the async React `results` state (derived-state-over-copied).
+    // Path-keyed queue state, never asynchronous React state, determines the remainder.
     for (const r of status.results) this.observed.set(r.path, r);
     this.emit();
   }
@@ -457,7 +393,7 @@ export class MatchEngine {
   }
 }
 
-/** First-occurrence-wins path dedupe — the logical-run identity is the candidate path (F2). */
+/** Candidate identity is path; first occurrence wins (F2). */
 function dedupeByPath(candidates: MatchCandidate[]): MatchCandidate[] {
   const seen = new Set<string>();
   const out: MatchCandidate[] = [];

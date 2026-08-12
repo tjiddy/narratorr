@@ -18,12 +18,7 @@ const sizeStyles = {
   },
 } as const;
 
-/**
- * The visible track is a plain <div>; only this wrapping <label> forwards clicks on it to the
- * sr-only checkbox. The component owns that label so a bare `<ToggleSwitch />` is always clickable
- * — call sites must NOT add their own wrapping <label> (nested labels are invalid HTML). A
- * separate text label may still target the input via htmlFor/id.
- */
+/** Owns the label that makes the track clickable; callers must not wrap it in another label. */
 export function ToggleSwitch({ size = 'full', className, disabled, ref, ...inputProps }: ToggleSwitchProps) {
   const s = sizeStyles[size];
 

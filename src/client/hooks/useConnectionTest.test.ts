@@ -111,7 +111,6 @@ describe('useConnectionTest', () => {
 
       expect(result.current.testResult).toEqual({ id: 1, success: false, message: 'Refused' });
 
-      // Second test starts — previous result should remain visible during flight
       let resolveSecond: (v: { success: boolean }) => void;
       testById.mockReturnValue(new Promise((r) => { resolveSecond = r; }));
 
@@ -120,7 +119,6 @@ describe('useConnectionTest', () => {
         testPromise = result.current.handleTest(1);
       });
 
-      // While in-flight, testResult should still be the PREVIOUS result, not null
       expect(result.current.testResult).toEqual({ id: 1, success: false, message: 'Refused' });
 
       await act(async () => {
@@ -197,7 +195,6 @@ describe('useConnectionTest', () => {
 
   describe('handleFormTest flicker prevention', () => {
     it('preserves previous formTestResult while re-test is in flight (no null flash)', async () => {
-      // First test fails
       testByConfig.mockResolvedValueOnce({ success: false, message: 'Bad config' });
 
       const { result } = renderTestHook();
@@ -208,7 +205,6 @@ describe('useConnectionTest', () => {
 
       expect(result.current.formTestResult).toEqual({ success: false, message: 'Bad config' });
 
-      // Second test starts — previous result should remain visible during flight
       let resolveSecond: (v: { success: boolean }) => void;
       testByConfig.mockReturnValue(new Promise((r) => { resolveSecond = r; }));
 
@@ -217,7 +213,6 @@ describe('useConnectionTest', () => {
         testPromise = result.current.handleFormTest({ name: 'corrected' });
       });
 
-      // While in-flight, formTestResult should still be the PREVIOUS result, not null
       expect(result.current.formTestResult).toEqual({ success: false, message: 'Bad config' });
 
       await act(async () => {
@@ -383,8 +378,7 @@ describe('useConnectionTest', () => {
         await result.current.handleFormTest({ name: 'cfg' });
       });
 
-      // Asserting via mock.calls + not.toHaveProperty — `expect.not.objectContaining({ id: expect.anything() })`
-      // matches `{ id: undefined }` because `expect.anything()` excludes undefined.
+    // not.objectContaining with expect.anything() also accepts id: undefined, so inspect mock.calls.
       expect(testByConfig.mock.calls[0]![0]).not.toHaveProperty('id');
     });
 

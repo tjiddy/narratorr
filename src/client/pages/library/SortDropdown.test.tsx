@@ -205,9 +205,8 @@ describe('SortDropdown', () => {
       const user = userEvent.setup();
       render(<SortDropdown {...defaultProps()} />);
       await user.click(screen.getByRole('button', { name: /date added/i }));
-      // 5 ArrowDowns from index 0 reaches index 5 (last)
       for (let i = 0; i < 5; i++) await user.keyboard('{ArrowDown}');
-      await user.keyboard('{ArrowDown}'); // wraps to index 0
+      await user.keyboard('{ArrowDown}');
       const options = screen.getAllByRole('option');
       expect(options[0]).toHaveFocus();
     });
@@ -216,8 +215,8 @@ describe('SortDropdown', () => {
       const user = userEvent.setup();
       render(<SortDropdown {...defaultProps()} />);
       await user.click(screen.getByRole('button', { name: /date added/i }));
-      await user.keyboard('{ArrowDown}'); // index 1
-      await user.keyboard('{ArrowUp}');   // back to index 0
+      await user.keyboard('{ArrowDown}');
+      await user.keyboard('{ArrowUp}');
       const options = screen.getAllByRole('option');
       expect(options[0]).toHaveFocus();
     });
@@ -226,7 +225,7 @@ describe('SortDropdown', () => {
       const user = userEvent.setup();
       render(<SortDropdown {...defaultProps()} />);
       await user.click(screen.getByRole('button', { name: /date added/i }));
-      await user.keyboard('{ArrowUp}'); // wraps to index 5
+      await user.keyboard('{ArrowUp}');
       const options = screen.getAllByRole('option');
       expect(options[5]).toHaveFocus();
     });
@@ -236,7 +235,7 @@ describe('SortDropdown', () => {
       const props = defaultProps();
       render(<SortDropdown {...props} />);
       await user.click(screen.getByRole('button', { name: /date added/i }));
-      await user.keyboard('{ArrowDown}'); // index 1: createdAt-asc (Date Added Oldest)
+      await user.keyboard('{ArrowDown}');
       await user.keyboard('{Enter}');
       expect(props.onSortFieldChange).toHaveBeenCalledWith('createdAt');
       expect(props.onSortDirectionChange).toHaveBeenCalledWith('asc');
@@ -255,7 +254,7 @@ describe('SortDropdown', () => {
       const props = defaultProps();
       render(<SortDropdown {...props} />);
       await user.click(screen.getByRole('button', { name: /date added/i }));
-      await user.keyboard('{ArrowDown}'); // index 1: createdAt-asc
+      await user.keyboard('{ArrowDown}');
       await user.keyboard(' ');
       expect(props.onSortFieldChange).toHaveBeenCalledWith('createdAt');
       expect(props.onSortDirectionChange).toHaveBeenCalledWith('asc');
@@ -294,9 +293,9 @@ describe('SortDropdown', () => {
       render(<SortDropdown {...defaultProps()} />);
       const trigger = screen.getByRole('button', { name: /date added/i });
       await user.click(trigger);
-      await user.keyboard('{ArrowDown}'); // move off first item
-      await user.click(trigger); // close via trigger
-      await user.click(trigger); // reopen
+      await user.keyboard('{ArrowDown}');
+      await user.click(trigger);
+      await user.click(trigger);
       expect(screen.getAllByRole('option')[0]).toHaveFocus();
     });
   });

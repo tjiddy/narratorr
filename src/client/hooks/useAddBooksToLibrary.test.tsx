@@ -6,21 +6,31 @@ import { useAddBooksToLibrary } from './useAddBooksToLibrary';
 import { createMockBook } from '@/__tests__/factories';
 import type { BookMetadata, BookWithAuthor } from '@/lib/api';
 
-vi.mock('@/lib/api', () => ({
+// The 409 reader and its copy are deliberately NOT stubbed: the discriminator and wording rules are
+// what these tests assert. `ApiError` must be the REAL class, not a stand-in — readAddBookConflict
+// gates on `instanceof ApiError` inside a module this factory does not replace, so a look-alike
+// would return null and drop every 409 test into the error-toast path (#2258).
+vi.mock('@/lib/api', async () => ({
+  readAddBookConflict: (await import('@/lib/api/add-book-conflict.js')).readAddBookConflict,
+  formatReviewConflictMessage: (await import('@/lib/api/add-book-conflict.js')).formatReviewConflictMessage,
   api: {
     addBook: vi.fn(),
   },
+  ApiError: (await import('@/lib/api/client.js')).ApiError,
 }));
 
 vi.mock('sonner', () => ({
   toast: {
     success: vi.fn(),
     error: vi.fn(),
+    info: vi.fn(),
   },
 }));
 
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { toast } from 'sonner';
+
+const REVIEW_GENERIC = 'Possible duplicate (review): may be the same recording as a book already in your library';
 
 function makeBook(overrides: Partial<BookMetadata> = {}): BookMetadata {
   return {
@@ -56,7 +66,9 @@ describe('useAddBooksToLibrary', () => {
   let queryClient: QueryClient;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    // reset, not clear: the mixed-batch and isolation tests queue `*Once` responses, which
+    // clearAllMocks leaves undrained.
+    vi.resetAllMocks();
     queryClient = createQueryClient();
   });
 
@@ -158,7 +170,6 @@ describe('useAddBooksToLibrary', () => {
         result.current.addBook(book);
       });
 
-      // mutationFn sets addingAsins synchronously before the await
       await waitFor(() => {
         expect(result.current.addingAsins.has('B003')).toBe(true);
       });
@@ -167,7 +178,6 @@ describe('useAddBooksToLibrary', () => {
         resolveAdd!({} as BookWithAuthor);
       });
 
-      // After success, removed from adding
       await waitFor(() => {
         expect(result.current.addingAsins.has('B003')).toBe(false);
       });
@@ -248,8 +258,159 @@ describe('useAddBooksToLibrary', () => {
         expect(toast.error).toHaveBeenCalledWith("Failed to add 'Failing Book': Network error");
       });
 
-      // Key should be removed from addingAsins
       expect(result.current.addingAsins.has('B005')).toBe(false);
+      // A plain Error is not an ApiError, so no conflict verdict exists to act on.
+      expect(toast.info).not.toHaveBeenCalled();
+      expect(result.current.isBookAdded(book)).toBe(false);
+    });
+  });
+
+  // A 409 is the server declining to create, never a transport failure — reporting it as
+  // "Failed to add" was the reported symptom (#2212).
+  describe('#2212 409 conflict branches', () => {
+    function addOnce(body: unknown, book: BookMetadata) {
+      vi.mocked(api.addBook).mockRejectedValue(new ApiError(409, body));
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+      const { result } = renderHook(
+        () => useAddBooksToLibrary([]),
+        { wrapper: createWrapper(queryClient) },
+      );
+
+      act(() => {
+        result.current.addBook(book);
+      });
+
+      return { result, invalidateSpy };
+    }
+
+    describe('a review verdict is an abstention, not an ownership claim', () => {
+      it('names the incumbent, leaves the book addable, and invalidates nothing', async () => {
+        const book = makeBook({ asin: 'B200', title: 'Held Book' });
+        const { result, invalidateSpy } = addOnce({ conflict: 'review', id: 88, title: 'Piranesi' }, book);
+
+        await waitFor(() => {
+          expect(toast.info).toHaveBeenCalledWith(
+            "Possible duplicate (review): may be the same recording as 'Piranesi'",
+          );
+        });
+
+        expect(result.current.isBookAdded(book)).toBe(false);
+        expect(result.current.addingAsins.has('B200')).toBe(false);
+        expect(toast.error).not.toHaveBeenCalled();
+        expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['books'] });
+      });
+
+      it('falls back to the generic wording when the 409 body carries no title', async () => {
+        const book = makeBook({ asin: 'B201', title: 'Held Book' });
+        const { result } = addOnce({ conflict: 'review', id: 3 }, book);
+
+        await waitFor(() => {
+          expect(toast.info).toHaveBeenCalledWith(REVIEW_GENERIC);
+        });
+
+        expect(result.current.isBookAdded(book)).toBe(false);
+        expect(toast.error).not.toHaveBeenCalled();
+      });
+
+      it('clears the adding key under the title when the book has no asin', async () => {
+        const book = makeBook({ asin: undefined, title: 'No ASIN Book' });
+        const { result } = addOnce({ conflict: 'review', id: 3, title: 'Piranesi' }, book);
+
+        await waitFor(() => {
+          expect(toast.info).toHaveBeenCalled();
+        });
+
+        expect(result.current.addingAsins.has('No ASIN Book')).toBe(false);
+        expect(result.current.isBookAdded(book)).toBe(false);
+      });
+    });
+
+    describe('every other 409 is an ownership claim', () => {
+      it.each([
+        ['same-recording', { conflict: 'same-recording', id: 7, title: 'Owned' }],
+        ['owned-race', { conflict: 'owned-race', id: 7, title: 'Owned' }],
+        ['an absent discriminator', { id: 5, title: 'X' }],
+        ['an unrecognized discriminator', { conflict: 'bogus' }],
+        ['a null body', null],
+        ['a string body', 'nope'],
+        ['an array body', []],
+      ])('marks the book added and refreshes the library for %s', async (_label, body) => {
+        const book = makeBook({ asin: 'B210', title: 'Owned Book' });
+        const { result, invalidateSpy } = addOnce(body, book);
+
+        await waitFor(() => {
+          expect(toast.info).toHaveBeenCalledWith('Already in library');
+        });
+
+        expect(result.current.isBookAdded(book)).toBe(true);
+        expect(result.current.addingAsins.has('B210')).toBe(false);
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
+        expect(toast.error).not.toHaveBeenCalled();
+      });
+    });
+
+    it('keeps the failure copy for a non-409 ApiError', async () => {
+      const book = makeBook({ asin: 'B220', title: 'X' });
+      vi.mocked(api.addBook).mockRejectedValue(new ApiError(500, null));
+
+      const { result } = renderHook(
+        () => useAddBooksToLibrary([]),
+        { wrapper: createWrapper(queryClient) },
+      );
+
+      act(() => {
+        result.current.addBook(book);
+      });
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith("Failed to add 'X': HTTP 500");
+      });
+
+      expect(result.current.isBookAdded(book)).toBe(false);
+      expect(toast.info).not.toHaveBeenCalled();
+    });
+
+    // The reported symptom: one held member made the whole Add All read as a failure.
+    it('reports a mixed addAllInSeries batch per member, with no failure toast', async () => {
+      vi.mocked(api.addBook).mockImplementation(async (payload) => {
+        if (payload.title === 'Held') throw new ApiError(409, { conflict: 'review', id: 88, title: 'Piranesi' });
+        if (payload.title === 'Owned') throw new ApiError(409, { conflict: 'same-recording', id: 7, title: 'Owned' });
+        return {} as BookWithAuthor;
+      });
+
+      const books = [
+        makeBook({ asin: 'B230', title: 'Created' }),
+        makeBook({ asin: 'B231', title: 'Held' }),
+        makeBook({ asin: 'B232', title: 'Owned' }),
+      ];
+
+      const { result } = renderHook(
+        () => useAddBooksToLibrary([]),
+        { wrapper: createWrapper(queryClient) },
+      );
+
+      act(() => {
+        result.current.addAllInSeries(books);
+      });
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith("Added 'Created' to library");
+        expect(toast.info).toHaveBeenCalledWith(
+          "Possible duplicate (review): may be the same recording as 'Piranesi'",
+        );
+        expect(toast.info).toHaveBeenCalledWith('Already in library');
+      });
+
+      // One add per unfiltered member: a rejected member never aborts its siblings.
+      expect(api.addBook).toHaveBeenCalledTimes(3);
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(toast.success).toHaveBeenCalledTimes(1);
+      expect(toast.info).toHaveBeenCalledTimes(2);
+      expect(result.current.addingAsins.size).toBe(0);
+      expect(result.current.isBookAdded(books[1]!)).toBe(false);
+      expect(result.current.isBookAdded(books[0]!)).toBe(true);
+      expect(result.current.isBookAdded(books[2]!)).toBe(true);
     });
   });
 
@@ -328,11 +489,10 @@ describe('useAddBooksToLibrary', () => {
     });
 
     it('continues adding remaining books when one mutation fails — no rollback', async () => {
-      // Second call fails, first and third should still succeed
       vi.mocked(api.addBook)
-        .mockResolvedValueOnce({} as BookWithAuthor)   // Book 1 succeeds
-        .mockRejectedValueOnce(new Error('DB error'))  // Book 2 fails
-        .mockResolvedValueOnce({} as BookWithAuthor);  // Book 3 succeeds
+        .mockResolvedValueOnce({} as BookWithAuthor)
+        .mockRejectedValueOnce(new Error('DB error'))
+        .mockResolvedValueOnce({} as BookWithAuthor);
 
       const books = [
         makeBook({ asin: 'B010', title: 'Series Book 1' }),
@@ -349,18 +509,15 @@ describe('useAddBooksToLibrary', () => {
         result.current.addAllInSeries(books);
       });
 
-      // All three mutations fired — no early exit on failure
       await waitFor(() => {
         expect(api.addBook).toHaveBeenCalledTimes(3);
       });
 
-      // First and third succeed
       await waitFor(() => {
         expect(toast.success).toHaveBeenCalledWith("Added 'Series Book 1' to library");
         expect(toast.success).toHaveBeenCalledWith("Added 'Series Book 3' to library");
       });
 
-      // Second shows error toast
       expect(toast.error).toHaveBeenCalledWith("Failed to add 'Series Book 2': DB error");
     });
   });

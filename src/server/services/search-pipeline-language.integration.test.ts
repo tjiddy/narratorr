@@ -7,9 +7,7 @@ import type { IndexerService } from './indexer.service.js';
 import type * as NetworkServiceModule from '@core/utils/network-service.js';
 import { postProcessSearchResults } from './search-pipeline.js';
 
-// Mock the network boundary (not enrichUsenetLanguages itself) so the real
-// enrichment + filterByLanguage pipeline runs end-to-end. This is the wire-up
-// evidence the spec for #1142 calls for.
+// Mock only the network boundary; enrichment and language filtering stay real.
 const mockDispatcher = { close: vi.fn().mockResolvedValue(undefined) };
 
 vi.mock('@core/utils/network-service.js', async (importActual) => {
@@ -57,7 +55,7 @@ function createMockIndexerService(apiUrls: string[] = []): IndexerService {
       const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
       hostPort.add(`${parsed.hostname.toLowerCase()}:${port}`);
       hostname.add(parsed.hostname.toLowerCase());
-    } catch { /* skip un-parseable */ }
+    } catch { /* Ignore invalid URLs. */ }
   }
   return {
     getLanAllowlist: vi.fn().mockResolvedValue({ hostPort, hostname }),
@@ -86,17 +84,12 @@ function createMockSettings(allowedLanguages: string[]): SettingsService {
 describe('#1142 postProcessSearchResults — Fairy Tale UAT (title-based language detection)', () => {
   beforeEach(() => {
     mockFetchWithSsrfRedirect.mockReset();
-    // The enrichment cache is a process-wide singleton; clear it so a release
-    // re-used across tests (same downloadUrl) is re-fetched, not served from a
-    // prior test's cached outcome (#1315).
+    // The process-wide cache keys by downloadUrl and would couple these tests.
     enrichmentCache.clear();
   });
 
   it('drops all three Fairy Tale German releases with language-mismatch when NZB fetch fails — #1148 UAT', async () => {
-    // Real UAT reproduction: NZB fetch fails (SSRF block on Prowlarr URL — #1149).
-    // Three German releases: naked-drop, lowercase mojibake, uppercase mojibake.
-    // All three must end up with language === 'german' via title fallback and
-    // drop with reason: 'language-mismatch' (not 'language-undetermined').
+    // Reproduces #1148's naked and mojibake spellings after an SSRF fetch failure.
     mockFetchWithSsrfRedirect.mockRejectedValue(
       new Error('Refused: address 192.168.0.22 is in the blocked range'),
     );
@@ -157,7 +150,6 @@ describe('#1142 postProcessSearchResults — Fairy Tale UAT (title-based languag
   });
 
   it('invokes IndexerService.getLanAllowlist exactly once per postProcessSearchResults call (#1149)', async () => {
-    // The LAN allowlist is the shared cost: one DB read per search, not one per release.
     const nzbXml = `<nzb><file poster="t" date="1" subject="t"><groups><group>alt.binaries.audiobooks</group></groups><segments><segment bytes="1" number="1">id@e</segment></segments></file></nzb>`;
     mockFetchWithSsrfRedirect.mockResolvedValue(new Response(nzbXml, { status: 200 }));
 
@@ -178,9 +170,6 @@ describe('#1142 postProcessSearchResults — Fairy Tale UAT (title-based languag
   });
 
   it('with no indexers configured (empty allowlist), the fetch still SSRF-refuses LAN URLs and the title fallback runs', async () => {
-    // Regression guard: empty allowlist must not degrade to permissive — the
-    // SSRF helper still refuses the LAN URL, and language detection falls
-    // back to the title-after-fetch-fail signal (#1148).
     mockFetchWithSsrfRedirect.mockRejectedValue(
       new Error('Refused: address 192.168.0.22 is in the blocked range'),
     );
@@ -213,10 +202,6 @@ describe('#1142 postProcessSearchResults — Fairy Tale UAT (title-based languag
   });
 
   it('with the allowlist supplied, the same Fairy Tale UAT release enriches via the real NZB body and is dropped via the primary signal (#1149)', async () => {
-    // Companion to the #1148 UAT case above: with the allowlist, the NZB fetch
-    // succeeds against the LAN-IP Prowlarr, the body is parsed, and the
-    // German language is set from newsgroup/nzbName — not via the catch-path
-    // title fallback.
     const nzbXml = `<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
       <head><meta type="name">Fairy.Tale.German.Hoerbuch.rar</meta></head>
       <file poster="t" date="1" subject="Fairy.Tale.German.Hoerbuch.rar">
@@ -248,8 +233,6 @@ describe('#1142 postProcessSearchResults — Fairy Tale UAT (title-based languag
   });
 
   it('drops the Fairy Tale (Ungekrzt) release with language-mismatch when allowed languages = [english]', async () => {
-    // Real-world failure shape: NZB meta name lacks any German marker, newsgroup
-    // is generic, but the user-facing title carries the (Ungekrzt) marker.
     const nzbXml = `<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
       <head><meta type="name">Fairy.Tale.part01.rar</meta></head>
       <file poster="t" date="1" subject="Fairy.Tale.part01.rar">
@@ -287,7 +270,6 @@ describe('#1142 postProcessSearchResults — Fairy Tale UAT (title-based languag
       }),
       'Language filter dropped result',
     );
-    // Negative assertion: must NOT fall into the language-undetermined branch.
     expect(log.debug).not.toHaveBeenCalledWith(
       expect.objectContaining({
         title: 'Stephen King – Fairy Tale (Ungekrzt)',

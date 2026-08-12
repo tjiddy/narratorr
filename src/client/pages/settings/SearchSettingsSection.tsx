@@ -44,7 +44,7 @@ function toPayload(data: SearchFormData) {
   };
 }
 
-/** Two-line option explainer — lives in the Search-priority InfoTip; spans, not <p> (rendered inside a <p>). */
+/** Use spans because SettingsRow renders descriptions inside a p. */
 function SearchPriorityExplainer() {
   return (
     <>
@@ -54,7 +54,6 @@ function SearchPriorityExplainer() {
   );
 }
 
-// Single source of truth for the card name: shared by the guard label and the SettingsSection title.
 const CARD_LABEL = 'Search';
 
 export function SearchSettingsSection() {

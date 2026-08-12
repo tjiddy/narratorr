@@ -29,9 +29,7 @@ export function formatDurationMinutes(minutes?: number | null): string | null {
   return `${h}h ${m}m`;
 }
 
-// Single home is now `src/shared/format-duration.ts` (#1854) so the client and the
-// server match-job reason string share one floor-based "Xh Ym" semantic. Re-exported
-// here so the existing `@/lib/format` call sites are unchanged.
+// Preserve client imports while sharing the server's floor-based duration semantics.
 export { formatDurationSeconds } from '@shared/format-duration.js';
 
 export function formatYear(input?: string | null): string | null {

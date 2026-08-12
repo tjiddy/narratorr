@@ -11,16 +11,7 @@ import type { BookStatus } from '@shared/schemas/book.js';
 import { COMPANION_EBOOK_STATUSES, type CompanionEbookStatus } from '@shared/schemas/companion-ebook.js';
 import type { FastifyBaseLogger } from 'fastify';
 
-// DB-backed coverage for the case-insensitive ASIN predicate (#1537, PR-review F1).
-// A mock-based test cannot prove case-insensitivity — `mockDbChain` returns its
-// preloaded row regardless of the WHERE clause, so it would still pass if
-// `findLibraryStatusByAsins` regressed to an exact `inArray(books.asin, asins)`
-// match. This seeds a REAL libsql DB with a case-drifted asin and queries with the
-// opposite casing; it FAILS under an exact predicate and passes only with the
-// case-insensitive `upper(asin)` condition.
-//
-// The DB is also what makes the query-plan assertion below possible: correctness and
-// index usage are independent properties here, and only the second one degrades silently.
+// Mocks cannot validate SQL predicates; a real DB proves case folding and index use independently.
 
 const noopLog = {
   info() {}, warn() {}, error() {}, debug() {}, fatal() {}, trace() {},
@@ -57,7 +48,6 @@ describe('BookService.findLibraryStatusByAsins — case-insensitive ASIN predica
     return row!.publicId;
   }
 
-  /** Seed a book AND its companion observation, returning the numeric + public id. */
   async function seedWithCompanion(
     asin: string,
     bookStatus: BookStatus,
@@ -68,9 +58,7 @@ describe('BookService.findLibraryStatusByAsins — case-insensitive ASIN predica
       .insert(books)
       .values({ publicId: generatePublicId('bk'), title: `Book ${asin}`, asin, status: bookStatus })
       .returning();
-    // Rows are seeded directly: nothing in this issue WRITES a companion row (the
-    // reconciler is #1959). `available` carries the filename/size the
-    // `ck_companion_ebooks_file_present` CHECK requires.
+    // Rows are seeded directly; file-carrying statuses must satisfy the file-present CHECK.
     const carriesFile = observationStatus === 'available' || observationStatus === 'invalid' || observationStatus === 'drm_protected';
     await db.insert(companionEbooks).values({
       bookId: row!.id,
@@ -79,8 +67,6 @@ describe('BookService.findLibraryStatusByAsins — case-insensitive ASIN predica
       sizeBytes: carriesFile ? sizeBytes : null,
       mtimeMs: carriesFile ? 1 : null,
       ctimeMs: carriesFile ? 1 : null,
-      // `ck_companion_ebooks_candidate_count`: `none` must be 0, `ambiguous` >= 2,
-      // and the three file-carrying statuses >= 1.
       candidateCount: observationStatus === 'ambiguous' ? 2 : carriesFile ? 1 : 0,
       selectedFilename: observationStatus === 'available' ? 'companion.epub' : null,
       validationCode: observationStatus === 'invalid' ? 'not_a_zip' : null,
@@ -106,7 +92,6 @@ describe('BookService.findLibraryStatusByAsins — case-insensitive ASIN predica
 
     const map = await service.findLibraryStatusByAsins(['b00upper'], disabled);
 
-    // Map is keyed by the uppercased asin regardless of input casing.
     expect(map.get('B00UPPER')).toEqual({ bookId: publicId, status: 'downloading', companionEbook: null });
   });
 
@@ -137,18 +122,8 @@ describe('BookService.findLibraryStatusByAsins — case-insensitive ASIN predica
   });
 
   /**
-   * The predicate must USE `idx_books_asin_unique`, not merely be correct.
-   *
-   * Every behavioral test above passes under a full table scan, so nothing here would
-   * notice this query silently degrading — and it runs on every metadata search, which
-   * Narratorr Requests now also hits. SQLite uses a PARTIAL index only when the query
-   * restates its condition, even where the condition is logically implied, so `upper()`
-   * alone is not enough: `asin IS NOT NULL` has to be in the WHERE clause too.
-   *
-   * **MIRRORS the predicate in `book.service.ts` `findLibraryStatusByAsins` — change
-   * both together.** The shapes are asserted in one place rather than shared as a
-   * helper because extracting one would not close the drift gap (a service that stopped
-   * calling it would still pass) while adding an export whose only consumer is a test.
+   * SQLite uses this partial index only when WHERE restates `asin IS NOT NULL`.
+   * Keep this predicate synchronized with findLibraryStatusByAsins.
    */
   it('uses idx_books_asin_unique rather than scanning books', async () => {
     const plan = async (where: string) => {
@@ -158,19 +133,14 @@ describe('BookService.findLibraryStatusByAsins — case-insensitive ASIN predica
       return rows.map((r) => r.detail).join(' | ');
     };
 
-    // The shipped predicate.
     expect(await plan(`upper(asin) IN ('B00AAA') AND asin IS NOT NULL`)).toContain(
       'USING INDEX idx_books_asin_unique',
     );
 
-    // Both degradations that a well-meaning simplification would produce. These are the
-    // reason the assertion above is not simply `.not.toContain('SCAN')`.
     expect(await plan(`upper(asin) IN ('B00AAA')`)).toContain('SCAN');
     expect(await plan(`lower(asin) IN ('b00aaa') AND asin IS NOT NULL`)).toContain('SCAN');
   });
 
-  // #1961 — the companion annotation against a REAL libSQL DB, so the numeric
-  // `books.id` projection, the FK join, and the query COUNT are all behavioral.
   describe('companion ebooks (#1961)', () => {
     it('carries { format, sizeBytes } for an imported book with an available companion', async () => {
       const { publicId } = await seedWithCompanion('B00HAVE', 'imported', 'available', 8192);
@@ -203,9 +173,7 @@ describe('BookService.findLibraryStatusByAsins — case-insensitive ASIN predica
       },
     );
 
-    // The `imported` term is the only thing stopping a book deleted off disk from
-    // advertising an ebook forever: the library scan flips imported -> missing
-    // without clearing `books.path` and without touching the companion row.
+    // Missing scans preserve path and companion rows, so status is the only stale-ebook guard.
     it.each(['missing', 'wanted', 'downloading'] as const)(
       'yields null for a %s book carrying an available companion (AC 22)',
       async (bookStatus) => {
@@ -246,7 +214,6 @@ describe('BookService.findLibraryStatusByAsins — case-insensitive ASIN predica
       const map = await service.findLibraryStatusByAsins(asins, enabled);
 
       expect(map.size).toBe(25);
-      // One books select + ceil(25 / 480) = 1 companion select. Never one per book.
       expect(selectSpy).toHaveBeenCalledTimes(2);
       selectSpy.mockRestore();
     });

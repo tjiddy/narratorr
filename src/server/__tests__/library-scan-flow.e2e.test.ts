@@ -5,78 +5,38 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createE2EApp, type E2EApp } from './e2e-helpers.js';
 
-/**
- * MSW with onUnhandledRequest: 'error' — discovery is filesystem-only,
- * so any accidental HTTP call will fail the test immediately.
- */
+/** Fail any network call; discovery must remain filesystem-only. */
 const mswServer = setupServer();
 
 describe('Library scan → Discovery flow E2E', () => {
   let e2e: E2EApp;
   let scanRoot: string;
 
-  // Deterministic file sizes for assertions
-  const FILE_SIZE_SMALL = 1024;       // 1 KB
-  const FILE_SIZE_LARGE = 2048;       // 2 KB
+  const FILE_SIZE_SMALL = 1024;
+  const FILE_SIZE_LARGE = 2048;
 
-  /**
-   * Build a temp directory structure:
-   *
-   * scanRoot/
-   * ├── Brandon Sanderson/
-   * │   ├── The Way of Kings/
-   * │   │   └── book.m4b            (1024 bytes)
-   * │   └── Mistborn/
-   * │       └── The Stormlight Archive/
-   * │           └── Words of Radiance/
-   * │               └── chapter1.mp3  (2048 bytes)
-   * ├── Terry Pratchett/
-   * │   ├── Discworld/
-   * │   │   └── Guards! Guards!/
-   * │   │       ├── part1.m4b        (1024 bytes)
-   * │   │       ├── part2.m4b        (2048 bytes)
-   * │   │       └── cover.jpg        (not audio — ignored)
-   * │   └── Long Book/
-   * │       ├── CD1/
-   * │       │   └── track.mp3        (1024 bytes)
-   * │       └── CD2/
-   * │           └── track.mp3        (2048 bytes)
-   * ├── dedup-test/
-   * │   ├── Brandon Sanderson/
-   * │   │   └── The Way of Kings/
-   * │   │       └── book.m4b            (1024 bytes — duplicate of seeded DB book)
-   * │   └── Patrick Rothfuss/
-   * │       └── The Name of the Wind/
-   * │           └── book.m4b            (1024 bytes)
-   * ├── empty-dir/
-   * └── text-only/
-   *     └── notes.txt
-   */
+  /** Temp directory covers Author/Title, Author/Series/Title, multi-file, CD1/CD2, dedup-test, empty-dir, and text-only. */
   beforeAll(async () => {
     mswServer.listen({ onUnhandledRequest: 'error' });
     e2e = await createE2EApp();
 
     scanRoot = await mkdtemp(join(tmpdir(), 'narratorr-scan-e2e-'));
 
-    // Helper to create a file with deterministic size
     const createFile = async (filePath: string, size: number) => {
       await mkdir(join(filePath, '..'), { recursive: true });
       await writeFile(filePath, Buffer.alloc(size));
     };
 
-    // Book 1: Author/Title (2-part)
     await createFile(
       join(scanRoot, 'Brandon Sanderson', 'The Way of Kings', 'book.m4b'),
       FILE_SIZE_SMALL,
     );
 
-    // Book 2: Author/Series/Title (3-part — series parsing)
     await createFile(
       join(scanRoot, 'Brandon Sanderson', 'The Stormlight Archive', 'Words of Radiance', 'chapter1.mp3'),
       FILE_SIZE_LARGE,
     );
 
-    // Book 3: Multi-file book (file metrics)
     await createFile(
       join(scanRoot, 'Terry Pratchett', 'Discworld', 'Guards! Guards!', 'part1.m4b'),
       FILE_SIZE_SMALL,
@@ -85,13 +45,11 @@ describe('Library scan → Discovery flow E2E', () => {
       join(scanRoot, 'Terry Pratchett', 'Discworld', 'Guards! Guards!', 'part2.m4b'),
       FILE_SIZE_LARGE,
     );
-    // Non-audio file in the same folder — should be ignored for fileCount
     await createFile(
       join(scanRoot, 'Terry Pratchett', 'Discworld', 'Guards! Guards!', 'cover.jpg'),
       512,
     );
 
-    // Book 4: Disc merging (CD1/CD2 under parent)
     await createFile(
       join(scanRoot, 'Terry Pratchett', 'Long Book', 'CD1', 'track.mp3'),
       FILE_SIZE_SMALL,
@@ -101,7 +59,6 @@ describe('Library scan → Discovery flow E2E', () => {
       FILE_SIZE_LARGE,
     );
 
-    // Dedup test subdirectory: 2 Author/Title books, one matching the DB seed
     await createFile(
       join(scanRoot, 'dedup-test', 'Brandon Sanderson', 'The Way of Kings', 'book.m4b'),
       FILE_SIZE_SMALL,
@@ -111,10 +68,8 @@ describe('Library scan → Discovery flow E2E', () => {
       FILE_SIZE_SMALL,
     );
 
-    // Empty directory
     await mkdir(join(scanRoot, 'empty-dir'), { recursive: true });
 
-    // Directory with only non-audio files
     await createFile(join(scanRoot, 'text-only', 'notes.txt'), 256);
   });
 
@@ -134,12 +89,9 @@ describe('Library scan → Discovery flow E2E', () => {
     expect(res.statusCode).toBe(200);
 
     const result = res.json();
-    // 6 books total: Way of Kings, Words of Radiance, Guards! Guards!, Long Book (disc-merged),
-    // plus dedup-test/Way of Kings and dedup-test/Name of the Wind
     expect(result.totalFolders).toBe(6);
     expect(result.discoveries).toHaveLength(6);
 
-    // Check a 2-part book (Author/Title)
     const wayOfKings = result.discoveries.find(
       (d: { parsedTitle: string }) => d.parsedTitle === 'The Way of Kings',
     );
@@ -177,7 +129,6 @@ describe('Library scan → Discovery flow E2E', () => {
       (d: { parsedTitle: string }) => d.parsedTitle === 'Guards! Guards!',
     );
     expect(guards).toBeDefined();
-    // 2 audio files (part1.m4b + part2.m4b), cover.jpg is not counted
     expect(guards.fileCount).toBe(2);
     expect(guards.totalSize).toBe(FILE_SIZE_SMALL + FILE_SIZE_LARGE);
   });
@@ -191,7 +142,6 @@ describe('Library scan → Discovery flow E2E', () => {
 
     const result = res.json();
 
-    // Long Book should be discovered as a single entry (merged from CD1 + CD2)
     const longBook = result.discoveries.find((d: { path: string }) =>
       d.path === join(scanRoot, 'Terry Pratchett', 'Long Book'),
     );
@@ -199,7 +149,6 @@ describe('Library scan → Discovery flow E2E', () => {
     expect(longBook.fileCount).toBe(2);
     expect(longBook.totalSize).toBe(FILE_SIZE_SMALL + FILE_SIZE_LARGE);
 
-    // There should NOT be separate entries for CD1 and CD2
     const cd1 = result.discoveries.find((d: { path: string }) =>
       d.path.includes('CD1'),
     );
@@ -207,7 +156,6 @@ describe('Library scan → Discovery flow E2E', () => {
   });
 
   it('surfaces a title+author match as a review-hint candidate (no decisive ASIN, #1711 F6)', async () => {
-    // Seed a book that matches one of the dedup-test folders by title + author
     const bookRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/books',
@@ -218,7 +166,6 @@ describe('Library scan → Discovery flow E2E', () => {
     });
     expect(bookRes.statusCode).toBe(201);
 
-    // Scan the dedicated dedup-test subdirectory (2 Author/Title books)
     const res = await e2e.app.inject({
       method: 'POST',
       url: '/api/library/import/scan',
@@ -228,13 +175,10 @@ describe('Library scan → Discovery flow E2E', () => {
     expect(res.statusCode).toBe(200);
     const result = res.json();
 
-    // totalFolders counts both folders discovered
     expect(result.totalFolders).toBe(2);
     expect(result.discoveries).toHaveLength(2);
 
-    // A title+author match with no decisive ASIN is NOT a hard duplicate anymore
-    // (#1711 F6): it flows through the match job carrying a review hint so the
-    // post-match recording verdict (same/different/review) can be computed.
+    // Without a decisive ASIN, title+author becomes a review hint rather than a hard duplicate (#1711 F6).
     const wayOfKings = result.discoveries.find(
       (d: { parsedTitle: string }) => d.parsedTitle === 'The Way of Kings',
     );
@@ -242,7 +186,6 @@ describe('Library scan → Discovery flow E2E', () => {
     expect(wayOfKings.isDuplicate).toBe(false);
     expect(wayOfKings.reviewReason).toBeDefined();
 
-    // The non-matching folder is a plain new discovery.
     const nameOfTheWind = result.discoveries.find(
       (d: { parsedTitle: string }) => d.parsedTitle === 'The Name of the Wind',
     );
@@ -285,15 +228,11 @@ describe('Library scan → Discovery flow E2E', () => {
 
     const result = res.json();
 
-    // Every discovery path should match what path.join() produces
     for (const discovery of result.discoveries) {
-      // Verify path doesn't contain mixed separators — it should use
-      // the OS-native separator (which path.join() produces)
       const expectedBase = join(scanRoot, '');
       expect(discovery.path.startsWith(expectedBase.slice(0, -1))).toBe(true);
     }
 
-    // Specifically check a known path uses join() semantics
     const guards = result.discoveries.find(
       (d: { parsedTitle: string }) => d.parsedTitle === 'Guards! Guards!',
     );

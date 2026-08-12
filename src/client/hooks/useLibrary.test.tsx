@@ -56,7 +56,7 @@ describe('useLibrary', () => {
 
   it('handles loading state', () => {
     vi.mocked(api.listLibraryBooks).mockImplementation(
-      () => new Promise(() => {}), // Never resolves
+      () => new Promise(() => {}),
     );
 
     const { result } = renderHook(() => useLibrary(), {
@@ -88,13 +88,10 @@ describe('useLibrary', () => {
 
     expect(result.current.data?.data?.[0]?.title).toBe('Page 1 Book');
 
-    // Rerender with new params — triggers page 2 fetch (which is pending)
     rerender({ limit: 100, offset: 100 });
 
-    // placeholderData keeps page 1 data visible synchronously
     expect(result.current.data?.data?.[0]?.title).toBe('Page 1 Book');
 
-    // Resolve page 2
     act(() => {
       resolveP2({ data: [], total: page1Books.length });
     });

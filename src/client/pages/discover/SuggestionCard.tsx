@@ -1,3 +1,4 @@
+import { Link } from 'react-router';
 import { CoverImage } from '@/components/CoverImage';
 import { AddBookPopover } from '@/components/AddBookPopover';
 import { InLibraryBadge } from '@/components/InLibraryBadge';
@@ -10,6 +11,16 @@ import {
   CheckCircleIcon,
   XIcon,
 } from '@/components/icons';
+
+/** A suggestion is only linkable once it owns a library row; before that the title is plain text. */
+function SuggestionTitle({ title, libraryBookId }: { title: string; libraryBookId: number | null | undefined }) {
+  if (libraryBookId == null) return <>{title}</>;
+  return (
+    <Link to={`/books/${libraryBookId}`} className="hover:underline focus-ring rounded" data-testid="suggestion-title-link">
+      {title}
+    </Link>
+  );
+}
 
 export function SuggestionCard({
   suggestion,
@@ -28,7 +39,7 @@ export function SuggestionCard({
   isAdding: boolean;
   isDismissing: boolean;
   isAdded?: boolean;
-  /** When the add mutation just resolved with a created book id, use it as a transient link target. */
+  /** Transient link target until refetched data supplies libraryBookId. */
   addedLibraryBookId?: number | null;
 }) {
   const libraryBookId = suggestion.libraryBookId ?? addedLibraryBookId;
@@ -45,7 +56,6 @@ export function SuggestionCard({
       style={{ animationDelay: `${Math.min(index, 9) * 50}ms` }}
     >
       <div className="flex gap-4 sm:gap-5">
-        {/* Cover Image */}
         <div className="shrink-0">
           <CoverImage
             src={suggestion.coverUrl}
@@ -55,10 +65,9 @@ export function SuggestionCard({
           />
         </div>
 
-        {/* Content */}
         <div className="flex-1 min-w-0 flex flex-col">
           <h3 className="font-display text-lg sm:text-xl font-semibold line-clamp-2 group-hover:text-primary transition-colors">
-            {suggestion.title}
+            <SuggestionTitle title={suggestion.title} libraryBookId={libraryBookId} />
           </h3>
 
           <p className="text-muted-foreground mt-1">
@@ -72,7 +81,6 @@ export function SuggestionCard({
             </p>
           )}
 
-          {/* Metadata row */}
           <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-auto pt-3">
             {seriesTag && (
               <span className="text-xs sm:text-sm px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-400/90 font-medium">
@@ -93,13 +101,12 @@ export function SuggestionCard({
           </div>
         </div>
 
-        {/* Action Buttons */}
         <div className="shrink-0 flex flex-col items-center gap-2 justify-center">
           {showBadge ? (
             libraryBookId !== null ? (
               <InLibraryBadge bookId={libraryBookId} />
             ) : (
-              // Transient post-add state before the server returns a libraryBookId — non-link badge.
+              // No book ID yet, so the transient badge cannot link.
               <span className="flex items-center gap-2 px-4 py-2.5 text-success font-medium" role="img" aria-label="In library">
                 <CheckCircleIcon className="w-4 h-4" />
                 <span className="hidden sm:inline">In Library</span>

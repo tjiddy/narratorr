@@ -2,44 +2,6 @@ import { z } from 'zod';
 import { v1ListResponseSchema } from './common.js';
 import { protocolSchema, type DownloadProtocol } from '../download-protocol.js';
 
-// ============================================================================
-// Public API v1 — Action endpoints: search + grab (S6 — #1452)
-// ============================================================================
-//
-// The two action endpoints a request-app needs to queue a book: search a book's
-// indexers for candidate releases, then grab one of them. Both sit behind the v1
-// serializer boundary, so the wire contract hides every internal release field
-// (`downloadUrl`, `infoHash`, raw `guid`, internal `indexerId`) behind an opaque,
-// STABLE `releaseId` token: search encodes the grab-relevant + identity fields
-// into it, grab decodes them back to reconstruct the `GrabParams` and the dedup
-// identity. The token is opaque AND integrity-protected — it is HMAC-signed
-// server-side (`signReleaseId`/`verifyReleaseId` in
-// `src/server/services/grab-token.ts`), so a public key holder cannot forge a
-// `releaseId` carrying an attacker-chosen `downloadUrl`. This module only owns
-// the SECRET-FREE half: the canonical base64url body codec (`encodeReleaseId` /
-// `decodeReleaseId`) over which the server signs. The HMAC secret never reaches
-// this client-importable layer (#1488). The token stays STABLE (same release →
-// same body → same deterministic signature → same token), so grab's
-// idempotency/dedup keys still line up across repeated searches with no
-// server-side release cache.
-//
-// These are schemas narratorr OWNS, so they are `.strict()` — the OPPOSITE of
-// the prowlarr-compat surface (learning `compat-surface-zod-strip-not-strict`,
-// #1198). `.strict()` is what makes the response boundary FAIL CLOSED: a leaked
-// internal field is rejected at serialization, not silently stripped and shipped.
-
-// ----------------------------------------------------------------------------
-// Opaque release token — encode (search) / decode (grab)
-// ----------------------------------------------------------------------------
-
-/**
- * The fields packed into the opaque `releaseId`. These are everything grab needs
- * to (a) reconstruct `GrabParams` and (b) derive the dedup identity / mutex key.
- * `downloadUrl`/`title`/`protocol` are required (a grabbable release always has
- * them); the identity fields (`guid`, `infoHash`, `indexerId`) and the display
- * extras (`size`, `seeders`, `isFreeleech`) are optional because not every
- * indexer result carries them.
- */
 export const releaseTokenPayloadSchema = z
   .object({
     downloadUrl: z.string(),
@@ -56,20 +18,8 @@ export const releaseTokenPayloadSchema = z
 
 export type ReleaseTokenPayload = z.infer<typeof releaseTokenPayloadSchema>;
 
-/**
- * Encode a release token payload into the stable, opaque base64url *body* the
- * server signs over (see `signReleaseId` in `src/server/services/grab-token.ts`).
- * This is the SECRET-FREE half of the token — it carries no signature. The key
- * order is fixed (the object literal below), so the SAME release encodes to the
- * SAME body across repeated searches; combined with the deterministic HMAC this
- * is what lets grab's dedup keys line up between a search and a later retried
- * grab. Undefined fields are omitted (never serialized as `null`), so a release
- * that lacks an `infoHash` produces a shorter body without an `infoHash` key, not
- * a `"infoHash":null` entry.
- */
+/** Encode the secret-free canonical body; fixed order and omitted optionals keep signatures stable. */
 export function encodeReleaseId(payload: ReleaseTokenPayload): string {
-  // Rebuild with a FIXED key order so the JSON (and thus the token) is stable;
-  // conditional spreads omit undefined optionals rather than emitting nulls.
   const canonical = {
     downloadUrl: payload.downloadUrl,
     title: payload.title,
@@ -84,13 +34,7 @@ export function encodeReleaseId(payload: ReleaseTokenPayload): string {
   return Buffer.from(JSON.stringify(canonical), 'utf8').toString('base64url');
 }
 
-/**
- * Decode the base64url token *body* back into its payload, or `null` when the
- * body is malformed (not base64url JSON) or fails the strict payload schema.
- * This runs AFTER the server has verified the HMAC (`verifyReleaseId`), so it
- * sees only an integrity-checked body; on its own it performs no signature check.
- * Decoding never throws.
- */
+/** Decode an HMAC-verified body; this does not verify signatures and returns null on invalid input. */
 export function decodeReleaseId(body: string): ReleaseTokenPayload | null {
   let json: unknown;
   try {
@@ -102,17 +46,7 @@ export function decodeReleaseId(body: string): ReleaseTokenPayload | null {
   return parsed.success ? parsed.data : null;
 }
 
-// ----------------------------------------------------------------------------
-// Release DTO (search response item) — strict, opaque
-// ----------------------------------------------------------------------------
-
-/**
- * The public Release DTO returned by the search endpoint. Exposes ONLY
- * display/selection fields plus the opaque `releaseId` the client passes back to
- * grab. Raw internal identifiers (`downloadUrl`, `infoHash`, raw `guid`, internal
- * `indexerId`) are NOT top-level contract fields — they live encoded inside
- * `releaseId`. `.strict()` makes the response boundary fail closed.
- */
+// Raw grab identifiers remain inside the opaque releaseId instead of becoming response fields.
 export const releaseV1Schema = z
   .object({
     releaseId: z.string(),
@@ -130,25 +64,9 @@ export const releaseV1Schema = z
 
 export type ReleaseV1 = z.infer<typeof releaseV1Schema>;
 
-/**
- * The v1 search list response: `{ data: ReleaseV1[], total }`, strict. `data` is
- * FILTERED — it matches the display post-processing gates (blacklist, Usenet
- * language enrichment, multi-part filter, quality ranking) the UI/SSE path
- * applies, so blacklisted and multi-part releases are absent; `total` is the
- * filtered count (#1800).
- */
+// data and total are post-filter values, not raw indexer results.
 export const releaseV1ListResponseSchema = v1ListResponseSchema(releaseV1Schema);
 
-// ----------------------------------------------------------------------------
-// Grab request body — strict
-// ----------------------------------------------------------------------------
-
-/**
- * Validator for `POST /api/v1/books/:publicId/grab`. Carries ONLY the opaque
- * `releaseId` from the search response. `.strict()` rejects unknown/extra keys
- * with a 400 v1 envelope — the public contract cannot carry attacker-influenced
- * extras forward.
- */
 export const grabV1RequestSchema = z
   .object({
     releaseId: z.string().min(1),
@@ -157,16 +75,6 @@ export const grabV1RequestSchema = z
 
 export type GrabV1Request = z.infer<typeof grabV1RequestSchema>;
 
-// ----------------------------------------------------------------------------
-// Projector — SearchResult-shaped source -> public Release DTO
-// ----------------------------------------------------------------------------
-
-/**
- * Minimal structural shape `toReleaseV1` reads. The core `SearchResult`
- * (`src/core/indexers/types.ts`) is structurally assignable to this — declaring
- * it here keeps the shared schema layer free of core imports while the projector
- * still accepts the real search result.
- */
 export interface ReleaseV1Source {
   title: string;
   author?: string | undefined;
@@ -184,16 +92,8 @@ export interface ReleaseV1Source {
 }
 
 /**
- * Project a search result to the public `ReleaseV1` DTO. The identity + grab
- * fields are packed into the opaque, signed `releaseId` (so they stay out of the
- * visible contract); the display fields are surfaced directly. A result with no
- * `downloadUrl` (parse normally drops these) encodes an empty string — such a
- * release is not grabbable, but real indexer results always carry a URL.
- *
- * `signReleaseId` is threaded in FROM THE SERVER (`src/server/services/grab-token.ts`)
- * rather than imported here: this shared module must stay secret-free so the HMAC
- * key is never bundled into the client (#1488). The route passes the real signer;
- * the function it receives turns the canonical payload into the signed token.
+ * The server injects the signer so this client-importable module stays secret-free.
+ * Missing download URLs encode as empty; normal parsing removes those ungrabbable results.
  */
 export function toReleaseV1(
   r: ReleaseV1Source,

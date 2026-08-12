@@ -3,12 +3,6 @@ import { createTestApp, createMockServices, resetMockServices } from '../__tests
 import type { Services } from './index.js';
 import { SentinelOnNonSecretFieldError } from '../utils/secret-codec.js';
 
-/**
- * Tests shared CRUD error paths from registerCrudRoutes once (via notifiers).
- * Notifiers, indexers, and download-clients all delegate to the same handler —
- * testing error paths per-entity would be pure duplication.
- */
-
 const validNotifier = {
   name: 'Test Webhook',
   type: 'webhook',
@@ -98,7 +92,7 @@ describe('crud-routes shared error paths', () => {
       const res = await app.inject({
         method: 'PUT',
         url: '/api/notifiers/1',
-        payload: { name: '' }, // min(1) violation
+        payload: { name: '' },
       });
 
       expect(res.statusCode).toBe(400);

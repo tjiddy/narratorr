@@ -27,7 +27,6 @@ export interface EventHistorySectionProps {
 
 export function EventHistorySection({ urlFilter, onFilterChange }: EventHistorySectionProps = {}) {
   const [localFilter, setLocalFilterState] = useState('');
-  // Derived state: URL filter takes precedence when provided
   const eventType = urlFilter ?? localFilter;
   const [search, setSearchState] = useState('');
   const [searchInput, setSearchInput] = useState('');
@@ -35,7 +34,6 @@ export function EventHistorySection({ urlFilter, onFilterChange }: EventHistoryS
   const pagination = usePagination(DEFAULT_LIMITS.eventHistory);
   const { clampToTotal: clampHistoryPage } = pagination;
 
-  // Reset pagination when filters change
   const setEventType = useCallback((value: string) => {
     setLocalFilterState(value);
     onFilterChange?.(value);
@@ -73,9 +71,7 @@ export function EventHistorySection({ urlFilter, onFilterChange }: EventHistoryS
 
   return (
     <div className="space-y-5">
-      {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-        {/* Type filter pills */}
         <div className="flex flex-wrap gap-1.5">
           {EVENT_TYPE_FILTERS.map((filter) => (
             <FilterPill
@@ -87,7 +83,6 @@ export function EventHistorySection({ urlFilter, onFilterChange }: EventHistoryS
           ))}
         </div>
 
-        {/* Bulk actions */}
         <div className="flex gap-2">
           <button
             type="button"
@@ -109,7 +104,6 @@ export function EventHistorySection({ urlFilter, onFilterChange }: EventHistoryS
           </button>
         </div>
 
-        {/* Search */}
         <form onSubmit={handleSearchSubmit} className="flex gap-2 sm:ml-auto">
           <div className="relative">
             <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/50" />
@@ -125,7 +119,6 @@ export function EventHistorySection({ urlFilter, onFilterChange }: EventHistoryS
         </form>
       </div>
 
-      {/* Event list */}
       {events.length === 0 ? (
         <div className="glass-card rounded-2xl p-8 sm:p-12 text-center">
           <HistoryIcon className="w-12 h-12 text-muted-foreground/40 mx-auto mb-4" />

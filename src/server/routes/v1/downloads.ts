@@ -15,20 +15,6 @@ export interface V1DownloadsRouteDeps {
   downloadService: DownloadService;
 }
 
-/**
- * Native public API v1 — Downloads / activity (read). Registers
- * `GET /api/v1/downloads` and `GET /api/v1/downloads/:publicId` inside an
- * ENCAPSULATED plugin so the v1-scoped `v1ErrorHandler` (v1 error envelope) does
- * not leak onto internal `/api/*` routes. API-key auth is inherited
- * automatically via the global `/api/v*` `onRequest` hook. Mirrors `v1BooksRoutes`
- * (#1449) verbatim: both endpoints declare a `.strict()` Fastify `response`
- * schema and FAIL CLOSED on any leaked internal field at serialization.
- *
- * The list reuses `DownloadService.getAll()`, which already left-joins the full
- * `books` row so `download.book.publicId` is available for the `bk_` cross-ref.
- * A download with no linked book (`bookId` null / book deleted via
- * `onDelete: 'set null'`) lists normally with `book: null`.
- */
 export async function v1DownloadsRoutes(app: FastifyInstance, deps: V1DownloadsRouteDeps, db: Db): Promise<void> {
   await app.register(
     async (v1) => {
@@ -45,8 +31,7 @@ export async function v1DownloadsRoutes(app: FastifyInstance, deps: V1DownloadsR
         },
         async (request) => {
           const { limit, offset } = request.query;
-          // Conditional spreads (not explicit `undefined`) to satisfy
-          // exactOptionalPropertyTypes, mirroring the v1 Books/Authors routes.
+          // Conditional spreads satisfy exactOptionalPropertyTypes.
           const pagination = {
             ...(limit !== undefined && { limit }),
             ...(offset !== undefined && { offset }),

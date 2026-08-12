@@ -125,7 +125,6 @@ describe('ProviderSettings', () => {
       expect(spy).toHaveBeenCalledWith(expect.objectContaining({ listType: 'shelf' }));
     });
 
-    // #732 — Shelf ID is a numeric input; blank maps to undefined, digits to number
     it('Shelf ID input is type="number" and writes a number to settings on input', async () => {
       const spy = vi.fn();
       const user = userEvent.setup();
@@ -166,7 +165,6 @@ describe('ProviderSettings', () => {
     });
   });
 
-  // ── #1879 — custom list by URL ──────────────────────────────────────────────
   describe('HardcoverSettings — custom list (#1879)', () => {
     const CUSTOM_URL = 'https://hardcover.app/@LisaRae/lists/2025-year-in-books';
 
@@ -174,14 +172,12 @@ describe('ProviderSettings', () => {
       const user = userEvent.setup();
       render(<StatefulProvider type="hardcover" initial={{ apiKey: 'k' }} />);
 
-      // Trending default — neither field present.
       expect(screen.queryByLabelText('List URL')).not.toBeInTheDocument();
       expect(screen.queryByLabelText('Import Max')).not.toBeInTheDocument();
 
       await user.selectOptions(screen.getByLabelText('List Type'), 'custom');
 
       expect(screen.getByLabelText('List URL')).toBeInTheDocument();
-      // Import Max is a select (50 / 100 / All), not a number input.
       const importMax = screen.getByLabelText('Import Max') as HTMLSelectElement;
       expect(importMax.tagName).toBe('SELECT');
       expect(Array.from(importMax.options).map((o) => o.value)).toEqual(['50', '100', 'all']);
@@ -225,7 +221,6 @@ describe('ProviderSettings', () => {
       expect(screen.queryByText('Not a Hardcover list URL')).not.toBeInTheDocument();
     });
 
-    // Leak matrix via the dedicated list-type change handler (AC12, F15, F20, F35).
     describe('type-scoped list-type change handler — no foreign-key leak', () => {
       it('custom → trending drops listUrl and importMax', async () => {
         const spy = vi.fn();

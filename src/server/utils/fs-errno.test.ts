@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFINITIVE_ABSENCE_CODES, errnoCode, isDefinitiveAbsence } from './fs-errno.js';
 
-/** A Node-shaped filesystem error — the classifier keys off `.code`, never the message. */
 function coded(code: string): Error {
   return Object.assign(new Error(code), { code });
 }
@@ -17,8 +16,7 @@ describe('isDefinitiveAbsence', () => {
     expect(isDefinitiveAbsence(coded(code))).toBe(true);
   });
 
-  // Everything else is *undetermined*: the probe failed, but the path may well
-  // still be there. Retention depends on these all reading false.
+  // Every other probe failure must retain the path.
   it.each(['EACCES', 'EIO', 'ESTALE', 'EPERM', 'ELOOP', 'EMFILE', 'ENFILE'])(
     'treats %s as undetermined',
     (code) => {

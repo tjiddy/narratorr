@@ -2,13 +2,7 @@ import { z } from 'zod';
 import { DOWNLOAD_CLIENT_REGISTRY, DOWNLOAD_CLIENT_TYPES, type DownloadClientType } from '../download-client-registry';
 import { protocolSchema } from './download-protocol';
 
-// ============================================================================
-// Download Client schemas
-// ============================================================================
-
 export const downloadClientTypeSchema = z.enum(DOWNLOAD_CLIENT_TYPES);
-
-// ── Per-adapter settings schemas (strict — rejects unknown fields) ──────────
 
 const hostPortSettingsFields = {
   host: z.string().trim().min(1),
@@ -54,8 +48,6 @@ export const blackholeSettingsSchema = z.object({
   protocol: protocolSchema,
 }).strict();
 
-// ── Settings types and dispatch map ─────────────────────────────────────────
-
 export type QBittorrentSettings = z.infer<typeof qbittorrentSettingsSchema>;
 export type TransmissionSettings = z.infer<typeof transmissionSettingsSchema>;
 export type SABnzbdSettings = z.infer<typeof sabnzbdSettingsSchema>;
@@ -83,8 +75,6 @@ export const downloadClientSettingsSchemas: Record<DownloadClientType, z.ZodType
   blackhole: blackholeSettingsSchema,
 };
 
-// ── Server-side schemas ─────────────────────────────────────────────────────
-
 function validateSettingsPerType(
   data: { type: string; settings: Record<string, unknown> },
   ctx: z.RefinementCtx,
@@ -101,7 +91,7 @@ function validateSettingsPerType(
   }
 }
 
-// Inline path mapping schema for create payload (no downloadClientId — assigned after insert)
+// Create payload entries omit downloadClientId; it is assigned after insertion.
 const pathMappingEntrySchema = z.object({
   remotePath: z.string().trim().min(1, 'Remote path is required').max(500),
   localPath: z.string().trim().min(1, 'Local path is required').max(500),
@@ -132,10 +122,7 @@ export const updateDownloadClientSchema = z.object({
   }
 });
 
-// Output types (after Zod applies defaults/transforms)
 export type CreateDownloadClientInput = z.infer<typeof createDownloadClientSchema>;
-
-// ── Form schema (unchanged — uses superRefine + registry.requiredFields for zodResolver compat) ──
 
 export const createDownloadClientFormSchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(100),
@@ -166,10 +153,6 @@ export const createDownloadClientFormSchema = z.object({
 });
 
 export type CreateDownloadClientFormData = z.infer<typeof createDownloadClientFormSchema>;
-
-// ============================================================================
-// Remote Path Mapping schemas
-// ============================================================================
 
 export const createRemotePathMappingSchema = z.object({
   downloadClientId: z.number().int().positive('Download client is required'),

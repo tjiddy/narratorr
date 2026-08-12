@@ -7,14 +7,12 @@ import type { LibraryBookListItem } from '@/lib/api';
 import { createMockLibraryBook } from '@/__tests__/factories';
 import { DEFAULT_LIMITS } from '@shared/schemas/common.js';
 
-/** Wrapper that provides Router context with optional initial URL */
 function createWrapper(route = '/library') {
   return function Wrapper({ children }: { children: React.ReactNode }) {
     return <MemoryRouter initialEntries={[route]}>{children}</MemoryRouter>;
   };
 }
 
-/** Mutable ref object for capturing URL state from inside components */
 const urlRef = { current: '' };
 function UrlCapture() {
   const [params] = useSearchParams();
@@ -349,7 +347,7 @@ describe('useLibraryFilters — URL param initialization', () => {
 
   it('initializes page from ?page=3 with correct offset on first render', () => {
     const { result } = renderHook(() => useLibraryFilters(), { wrapper: createWrapper('/library?page=3') });
-    // Page must be synchronous (no effect flush) so the first API fetch uses the right offset
+    // Initialization must be synchronous so the first fetch gets the restored offset.
     expect(result.current.params.pagination.page).toBe(3);
     expect(result.current.params.pagination.offset).toBe(DEFAULT_LIMITS.books * 2);
     expect(result.current.params.apiParams.offset).toBe(DEFAULT_LIMITS.books * 2);
@@ -532,8 +530,6 @@ describe('useLibraryFilters — URL param sync on state change', () => {
     expect(urlRef.current).toContain('sortField=title');
   });
 
-  // Replace semantics are tested via mock in useLibraryFilters.replace.test.tsx
-  // which mocks useSearchParams to assert { replace: true } is passed at runtime.
 });
 
 describe('useLibraryFilters — URL debounce sync', () => {

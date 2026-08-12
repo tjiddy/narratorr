@@ -14,16 +14,7 @@ import {
 } from './import-steps.js';
 import { deriveImportSiblings } from './import-sibling-paths.js';
 
-/**
- * #1338 — boot-time sweep that converges stranded `.import-commit-pending` markers the
- * same-target retry trigger (#1290) never revisits: failed downloads, manual jobs, and
- * recomputed-target orphans. These tests arrange the interrupted on-disk state under a real
- * tmpdir library root and drive the real sweep, asserting disk state after convergence.
- *
- * Real tmpdir (not mocked fs) is used deliberately per hazard #1391: a blanket
- * `stat.mockResolvedValue(...)` would make every marker read as PRESENT and flip the
- * deletion assertions.
- */
+// Use a real tmpdir: mocked stat can make every marker appear present.
 
 function makeLog(): FastifyBaseLogger {
   return {
@@ -37,13 +28,9 @@ const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () 
 
 interface Siblings {
   target: string;
-  /** Legacy un-dotted staging (recognition-only). */
   staging: string;
-  /** Legacy un-dotted backup (recognition-only). */
   backup: string;
-  /** Active born-hidden staging (`.<name>.import-staging`). */
   activeStaging: string;
-  /** Active born-hidden backup (`.<name>.import-backup`). */
   activeBackup: string;
   marker: string;
 }
@@ -75,8 +62,7 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
   it('case 1: failed-download stranded marker — restores originals, clears marker + backup + .import-tmp scratch, one info log names the target', withTmp(async (root) => {
     const { target, staging, backup, marker } = siblings(join(root, 'Author', 'Title'));
     const originalBytes = Buffer.alloc(400, 9);
-    // Half-replaced target present (a staged file already moved in), originals in backup,
-    // a stale .import-tmp scratch dir, and the marker proving the interruption.
+    // Model a half-replaced target with stranded originals and stale staging.
     await mkdir(target, { recursive: true });
     await writeFile(join(target, 'new.m4b'), Buffer.from('STAGED-NEW'));
     await mkdir(backup, { recursive: true });
@@ -89,13 +75,10 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
     const result = await sweepCommitPendingMarkers(root, log);
 
     expect(result).toEqual({ converged: 1, skipped: [] });
-    // Original restored into the target.
     expect(await readFile(join(target, 'old.m4b'))).toEqual(originalBytes);
-    // Marker, backup, AND stale staging scratch all cleared.
     expect(await pathExists(marker)).toBe(false);
     expect(await pathExists(backup)).toBe(false);
     expect(await pathExists(staging)).toBe(false);
-    // Exactly one info log names the recovered target.
     const targetInfoCalls = (log.info as ReturnType<typeof vi.fn>).mock.calls.filter(
       ([arg]) => arg && typeof arg === 'object' && (arg as { targetPath?: string }).targetPath === target,
     );
@@ -106,7 +89,6 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
   it('case 2: deleted target folder — recreates the folder and restores, no BackupRecoveryError', withTmp(async (root) => {
     const { target, backup, marker } = siblings(join(root, 'Author', 'Gone'));
     const bytes = Buffer.alloc(300, 5);
-    // Target folder was rm'd while stranded; only the backup + marker remain.
     await mkdir(backup, { recursive: true });
     await writeFile(join(backup, 'old.m4b'), bytes);
     await writeFile(marker, '');
@@ -124,7 +106,6 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
     const { target, backup, marker } = siblings(join(root, 'Author', 'NoBackup'));
     await mkdir(target, { recursive: true });
     await writeFile(marker, '');
-    // .import-bak deliberately absent.
     expect(await pathExists(backup)).toBe(false);
 
     const result = await sweepCommitPendingMarkers(root, makeLog());
@@ -136,11 +117,10 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
   it('case 4: non-convergent path surfaced — preserves state, warns naming the path, continues to a healthy marker', withTmp(async (root) => {
     const bad = siblings(join(root, 'Author', 'Wedged'));
     const good = siblings(join(root, 'Author', 'Healthy'));
-    // Bad: `.import-bak` is a FILE → readdir ENOTDIR → BackupRecoveryError, state preserved.
+    // A file at the backup path forces an ENOTDIR preservation error.
     await mkdir(dirname(bad.target), { recursive: true });
     await writeFile(bad.backup, Buffer.from('not-a-directory'));
     await writeFile(bad.marker, '');
-    // Good: a normal stranded marker that DOES converge.
     const goodBytes = Buffer.alloc(200, 7);
     await mkdir(good.backup, { recursive: true });
     await writeFile(join(good.backup, 'old.m4b'), goodBytes);
@@ -151,13 +131,10 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
 
     expect(result.converged).toBe(1);
     expect(result.skipped).toEqual([bad.marker]);
-    // Bad path preserved — nothing deleted.
     expect(await pathExists(bad.marker)).toBe(true);
     expect(await pathExists(bad.backup)).toBe(true);
-    // Healthy path converged despite the earlier failure.
     expect(await readFile(join(good.target, 'old.m4b'))).toEqual(goodBytes);
     expect(await pathExists(good.marker)).toBe(false);
-    // Warn enumerates the skipped path.
     const warned = (log.warn as ReturnType<typeof vi.fn>).mock.calls.some(
       ([arg]) => arg && typeof arg === 'object' && (arg as { markerPath?: string }).markerPath === bad.marker,
     );
@@ -174,7 +151,6 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
     expect(result).toEqual({ converged: 0, skipped: [] });
     expect(log.info).not.toHaveBeenCalled();
     expect(log.warn).not.toHaveBeenCalled();
-    // At most the single optional "no stranded markers" debug line.
     expect((log.debug as ReturnType<typeof vi.fn>).mock.calls.length).toBeLessThanOrEqual(1);
   }));
 
@@ -185,7 +161,6 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
     await writeFile(join(backup, 'old.m4b'), bytes);
     await writeFile(marker, '');
 
-    // The recursive finder must descend to depth 2.
     expect(await findCommitPendingMarkers(root)).toEqual([marker]);
 
     const result = await sweepCommitPendingMarkers(root, makeLog());
@@ -198,8 +173,7 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
   it('case 7: assertPathInsideLibrary gate — a marker whose target escapes the root is skipped, no destructive op', withTmp(async (root) => {
     const lib = join(root, 'lib');
     await mkdir(lib, { recursive: true });
-    // A marker physically OUTSIDE the library root. Its backup is seeded so we can assert it
-    // is never touched. (The normal walk can't surface this, so drive the per-marker primitive.)
+    // The normal walk cannot surface an outside-root marker, so use the per-marker seam.
     const { target, backup, marker } = siblings(join(root, 'outside', 'Foreign'));
     await mkdir(backup, { recursive: true });
     await writeFile(join(backup, 'old.m4b'), Buffer.from('UNTOUCHED'));
@@ -209,7 +183,6 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
     const converged = await convergeStrandedMarker(marker, lib, log);
 
     expect(converged).toBe(false);
-    // Nothing acted on: backup + marker intact, target never created.
     expect(await pathExists(marker)).toBe(true);
     expect(await readFile(join(backup, 'old.m4b'), 'utf8')).toBe('UNTOUCHED');
     expect(await pathExists(target)).toBe(false);
@@ -230,21 +203,17 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
     const first = await sweepCommitPendingMarkers(root, makeLog());
     expect(first).toEqual({ converged: 1, skipped: [] });
 
-    // Second pass: marker + backup already gone, so the walk finds nothing.
     const log2 = makeLog();
     const second = await sweepCommitPendingMarkers(root, log2);
     expect(second).toEqual({ converged: 0, skipped: [] });
     expect(log2.warn).not.toHaveBeenCalled();
-    // Restored file still intact.
     expect(await readFile(join(target, 'old.m4b'))).toEqual(bytes);
   }));
 
   it('findCommitPendingMarkers: ENOENT root yields no markers, and a TRUE scratch sibling (beside its live marker) is not descended', withTmp(async (root) => {
-    // ENOENT-tolerant: a non-existent root is "no markers", not a throw.
     expect(await findCommitPendingMarkers(join(root, 'does-not-exist'))).toEqual([]);
 
-    // `Title.import-bak` is a real scratch sibling: a `Title.import-commit-pending` marker sits
-    // beside it at the same level, so it is pruned and the decoy inside it is NOT collected.
+    // A matching sibling marker identifies this suffix-shaped directory as real scratch.
     const bak = join(root, 'Author', 'Title.import-bak');
     await mkdir(bak, { recursive: true });
     await writeFile(join(bak, 'decoy.import-commit-pending'), '');
@@ -255,13 +224,10 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
   }));
 
   it('F1: walks a legitimate library directory whose name ends in a scratch suffix but has NO sibling marker', withTmp(async (root) => {
-    // A real library folder coincidentally named `<...>.import-bak` (e.g. a folder-format or
-    // author segment) with NO sibling `<...>.import-commit-pending` marker. The prior
-    // suffix-only prune would skip it; the sibling-aware prune walks it and finds the marker.
+    // A suffix-shaped folder without a sibling marker is legitimate library content.
     const buriedMarker = join(root, 'Series.import-bak', 'Title.import-commit-pending');
     await mkdir(dirname(buriedMarker), { recursive: true });
     await writeFile(buriedMarker, '');
-    // A second legitimate folder ending in `.import-tmp`, also marker-less at its own level.
     const buriedMarker2 = join(root, 'Collection.import-tmp', 'Inner', 'Book.import-commit-pending');
     await mkdir(dirname(buriedMarker2), { recursive: true });
     await writeFile(buriedMarker2, '');
@@ -287,8 +253,7 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
   }));
 
   it('F3: BackupRecoveryError message carries operator remedy guidance (.import-bak + retry/boot-sweep)', withTmp(async (root) => {
-    // Trigger a real recovery failure: `.import-bak` is a FILE → readdir ENOTDIR → the recovery
-    // wraps it as a BackupRecoveryError. Assert the user-reachable message is actionable.
+    // Force a real ENOTDIR recovery failure for the user-facing message.
     const { target, backup, staging, marker } = siblings(join(root, 'Author', 'Title'));
     await mkdir(dirname(target), { recursive: true });
     await writeFile(backup, Buffer.from('not-a-directory'));
@@ -303,12 +268,9 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
     const message = (error as BackupRecoveryError).message;
     expect(message).toContain(target);
     expect(message).toContain('.import-bak');
-    // Names both remedy levers: per-target retry AND the boot sweep.
     expect(message).toMatch(/retr/i);
     expect(message).toMatch(/sweep/i);
   }));
-
-  // ── #1911: active-convention recovery, mixed-state total cleanup, ambiguity, F13/F19 ──
 
   it('#1911 active recovery: marker + populated `.import-backup` restores originals, clears both conventions + marker', withTmp(async (root) => {
     const { target, activeStaging, activeBackup, marker } = siblings(join(root, 'Author', 'Title'));
@@ -336,7 +298,6 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
     await mkdir(target, { recursive: true });
     await mkdir(backup, { recursive: true });
     await writeFile(join(backup, 'old.m4b'), bytes);
-    // A stale ACTIVE staging dir with audio that must NOT feed the next commit.
     await mkdir(activeStaging, { recursive: true });
     await writeFile(join(activeStaging, 'stale.m4b'), Buffer.from('STALE'));
     await writeFile(marker, '');
@@ -345,7 +306,6 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
 
     expect(result).toEqual({ converged: 1, skipped: [] });
     expect(await readFile(join(target, 'old.m4b'))).toEqual(bytes);
-    // Both conventions' scratch cleared; a subsequent stage sees a clean active staging path.
     expect(await pathExists(activeStaging)).toBe(false);
     expect(await pathExists(activeBackup)).toBe(false);
     expect(await pathExists(backup)).toBe(false);
@@ -366,7 +326,6 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
 
     expect(result).toEqual({ converged: 1, skipped: [] });
     expect(await readFile(join(target, 'old.m4b'))).toEqual(bytes);
-    // The ABS-visible legacy staging must not survive.
     expect(await pathExists(staging)).toBe(false);
     expect(await pathExists(activeBackup)).toBe(false);
     expect(await pathExists(marker)).toBe(false);
@@ -383,7 +342,6 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
     await writeFile(join(activeBackup, 'old-active.m4b'), activeBytes);
     await writeFile(marker, '');
 
-    // Direct seam throws the ambiguity error, preserving everything (no clear, no marker removal).
     const err = await prepareImportSiblings({ targetPath: target, libraryRoot: root, log: makeLog() })
       .then(() => null, (e: unknown) => e);
     expect(err).toBeInstanceOf(BackupAmbiguityError);
@@ -391,12 +349,10 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
     expect(await readFile(join(activeBackup, 'old-active.m4b'))).toEqual(activeBytes);
     expect(await pathExists(marker)).toBe(true);
 
-    // Non-convergent: the boot sweep reports it skipped (operator action, no retry promise).
     const log = makeLog();
     const swept = await sweepCommitPendingMarkers(root, log);
     expect(swept.skipped).toEqual([marker]);
     expect(await pathExists(marker)).toBe(true);
-    // F19: the warn names both backup paths and makes no automatic-retry promise.
     const warn = (log.warn as ReturnType<typeof vi.fn>).mock.calls.find(
       ([arg]) => arg && typeof arg === 'object' && (arg as { markerPath?: string }).markerPath === marker,
     );
@@ -406,7 +362,6 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
     expect(warnMeta.legacyBackupPath).toBe(backup);
     expect(String(warn![1])).not.toMatch(/retry on next boot/i);
 
-    // After the operator removes ONE backup, the next attempt converges.
     await rm(backup, { recursive: true, force: true });
     const after = await sweepCommitPendingMarkers(root, makeLog());
     expect(after).toEqual({ converged: 1, skipped: [] });
@@ -417,7 +372,7 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
   it('#1911 F13: an ACTIVE-backup recovery failure names `.import-backup` in the message', withTmp(async (root) => {
     const { target, activeBackup, marker } = siblings(join(root, 'Author', 'Title'));
     await mkdir(dirname(target), { recursive: true });
-    // `.import-backup` is a FILE → readdir ENOTDIR → BackupRecoveryError naming the active path.
+    // A file at the active backup path forces ENOTDIR.
     await writeFile(activeBackup, Buffer.from('not-a-directory'));
     await writeFile(marker, '');
 
@@ -433,19 +388,17 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
     const dir = join(root, 'Author');
     await mkdir(dir, { recursive: true });
     const visible = siblings(join(dir, 'Title'));
-    const hidden = siblings(join(dir, '.Title')); // a DIFFERENT, dot-led target under the same parent
-    // Foreign pre-upgrade state belonging to `.Title`: populated legacy backup + its own marker.
+    const hidden = siblings(join(dir, '.Title'));
+    // Seed foreign legacy state for a distinct dot-led target.
     const foreignBytes = Buffer.alloc(180, 6);
     await mkdir(hidden.backup, { recursive: true });
     await writeFile(join(hidden.backup, 'foreign.m4b'), foreignBytes);
     await writeFile(hidden.marker, '');
-    // `Title` itself has NO marker → marker-absent prepare (fresh import).
     await mkdir(visible.target, { recursive: true });
 
     await prepareImportSiblings({ targetPath: visible.target, libraryRoot: root, log: makeLog() });
 
-    // The foreign target's backup + marker are UNTOUCHED — disjoint suffix namespaces + per-target
-    // derivation mean Title's op can never reach `.Title`'s siblings.
+    // Per-target sibling derivation must not touch the dot-led target's namespace.
     expect(await readFile(join(hidden.backup, 'foreign.m4b'))).toEqual(foreignBytes);
     expect(await pathExists(hidden.marker)).toBe(true);
   }));
@@ -468,9 +421,7 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
   }));
 
   it('#1911 findCommitPendingMarkers: an ACTIVE dotted scratch sibling beside its live (un-dotted) marker is pruned', withTmp(async (root) => {
-    // `.Title.import-staging` is a true active scratch sibling: the un-dotted
-    // `Title.import-commit-pending` marker sits beside it, so it is pruned and any decoy
-    // marker inside it is NOT collected.
+    // The sibling marker identifies dot-led active scratch and prunes its decoy.
     const { activeStaging, marker } = siblings(join(root, 'Author', 'Title'));
     await mkdir(activeStaging, { recursive: true });
     await writeFile(join(activeStaging, 'decoy.import-commit-pending'), '');
@@ -480,19 +431,15 @@ describe('sweepCommitPendingMarkers (#1338 startup marker sweep)', () => {
   }));
 
   it('#1911 AC13 findCommitPendingMarkers: a HIDDEN-target legacy scratch (`.Title.import-bak` beside `.Title.import-commit-pending`) is pruned, its decoy subtree not collected', withTmp(async (root) => {
-    // The explicit AC13 hidden-target legacy pairing: a dot-led target `.Title` whose legacy
-    // backup `.Title.import-bak` sits beside its OWN dot-led marker `.Title.import-commit-pending`.
-    // isScratchSibling must pair the un-dotted-suffix legacy sibling with the marker on the SAME
-    // (dot-led) basename, so the scratch dir is pruned and the decoy marker inside it is skipped.
+    // Pair hidden-target legacy scratch with the marker sharing its dot-led basename.
     const author = join(root, 'Author');
     await mkdir(author, { recursive: true });
-    const legacyBackup = join(author, '.Title.import-bak');       // hidden target's legacy backup
-    const liveMarker = join(author, '.Title.import-commit-pending'); // its live sibling marker
+    const legacyBackup = join(author, '.Title.import-bak');
+    const liveMarker = join(author, '.Title.import-commit-pending');
     await mkdir(legacyBackup, { recursive: true });
-    await writeFile(join(legacyBackup, 'decoy.import-commit-pending'), ''); // must NOT be collected
+    await writeFile(join(legacyBackup, 'decoy.import-commit-pending'), '');
     await writeFile(liveMarker, '');
 
-    // Only the live sibling marker is found; the pruned scratch subtree's decoy is excluded.
     expect(await findCommitPendingMarkers(root)).toEqual([liveMarker]);
   }));
 });

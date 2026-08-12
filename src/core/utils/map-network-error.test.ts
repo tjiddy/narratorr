@@ -75,7 +75,6 @@ describe('mapNetworkError', () => {
   });
 
   describe('direct Error.code (no TypeError wrapping)', () => {
-    // SSRF DNS preflight (resolveAndValidate) throws raw Errno-style errors before fetch wraps them
     it('direct ENOTFOUND → message includes "DNS resolution failed" and hostname', () => {
       const original = Object.assign(new Error('getaddrinfo ENOTFOUND badhost.example'), { code: 'ENOTFOUND' });
       const result = mapNetworkError(original);

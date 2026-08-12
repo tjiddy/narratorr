@@ -1,11 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Mock } from 'vitest';
 
-// STATEFUL guarded-revert integration (#1857 F22): unlike download-replace-workflow.test.ts,
-// this suite does NOT mock ../utils/book-status.js — the REAL guardedRevertBookStatus +
-// transitionBookStatus run against a mutable book row, so we assert the ACTUAL persisted
-// book status and the SSE gated by the real `landed` result. Only the SSE emitters are
-// mocked (to observe them).
+// Keep book-status real against a mutable row; mock only SSE so persisted guard results stay visible.
 vi.mock('../utils/download-side-effects.js', () => ({
   emitDownloadStatusChange: vi.fn(),
   emitBookStatusChange: vi.fn(),
@@ -34,13 +30,7 @@ function replaceableRow(over: Partial<DownloadRow> = {}): DownloadRow {
   } as DownloadRow;
 }
 
-/**
- * A stateful db whose `books` writes model the REAL guarded transition: the guarded
- * `transitionBookStatus(..., expected: { status: 'downloading' })` lands (and mutates
- * the tracked status) ONLY while the book is still 'downloading'; `downloads` writes
- * (the claim) always land. Exposes the live book status so tests assert the persisted
- * value after the workflow's guarded revert.
- */
+/** Model guarded book transitions against mutable status; download claims always land. */
 function statefulDb(bookStatus: BookStatus) {
   const state = { bookStatus };
   const db = createMockDb();
@@ -49,14 +39,13 @@ function statefulDb(bookStatus: BookStatus) {
       where: () => ({
         returning: async () => {
           if (table === books) {
-            // Guarded revert: expected status is 'downloading'.
             if (state.bookStatus === 'downloading') {
               state.bookStatus = payload.status as BookStatus;
               return [{ id: 1 }];
             }
-            return []; // guard miss — status preserved
+            return [];
           }
-          return [{ id: 1 }]; // downloads claim lands
+          return [{ id: 1 }];
         },
       }),
     }),
@@ -66,14 +55,13 @@ function statefulDb(bookStatus: BookStatus) {
 
 const params: GrabParams = { downloadUrl: 'magnet:?new', title: 'The New Release', bookId: 5, replace: true };
 
-/** Drive the FAILED-GRAB revert path with the given tracked book status + snapshot. */
 async function runFailedGrabRevert(bookStatus: BookStatus, snapshot: BookStatus | null) {
   const { db, state } = statefulDb(bookStatus);
-  // gather (replaceable), in-tx recheck (clear), late-blocker (clear).
+  // Gather is replaceable; the in-transaction and late rechecks are clear.
   (db as unknown as ReturnType<typeof createMockDb>).select
     .mockReturnValueOnce(mockDbChain([replaceableRow({ bookStatusAtGrab: snapshot })]))
     .mockReturnValue(mockDbChain([]));
-  const grab = vi.fn().mockRejectedValue(new Error('client offline')); // fails → triggers revert
+  const grab = vi.fn().mockRejectedValue(new Error('client offline'));
   const ctx: ReplaceCtx = {
     db,
     log: inject<FastifyBaseLogger>(createMockLogger()),
@@ -93,13 +81,13 @@ describe('runReplaceWorkflow — persisted guarded-revert matrix (#1857 F22)', (
 
   it('downloading → reverts to the in-memory snapshot and emits the SSE', async () => {
     const state = await runFailedGrabRevert('downloading', 'wanted');
-    expect(state.bookStatus).toBe('wanted'); // actual persisted value
+    expect(state.bookStatus).toBe('wanted');
     expect(emitBookStatus).toHaveBeenCalledWith(expect.objectContaining({ bookId: 5, newStatus: 'wanted' }));
   });
 
   it('importing → guard MISS, status preserved, NO SSE (covers both pending-job origins — disposition keys off book status)', async () => {
     const state = await runFailedGrabRevert('importing', 'wanted');
-    expect(state.bookStatus).toBe('importing'); // a late import promotion is not clobbered
+    expect(state.bookStatus).toBe('importing');
     expect(emitBookStatus).not.toHaveBeenCalled();
   });
 

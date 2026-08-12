@@ -25,7 +25,6 @@ describe('s6-overlay service definition', () => {
     it('run script is committed with executable permissions', () => {
       const runPath = 'docker/root/etc/s6-overlay/s6-rc.d/svc-narratorr/run';
       const output = execFileSync('git', ['ls-tree', 'HEAD', '--', runPath], { encoding: 'utf-8' });
-      // Git tracks executable files as mode 100755
       expect(output).toMatch(/^100755\s/);
     });
 
@@ -36,7 +35,6 @@ describe('s6-overlay service definition', () => {
 
     it('run script starts dist/server/index.js', () => {
       const content = fs.readFileSync(path.join(serviceDir, 'run'), 'utf-8');
-      // node and the entry point may be on separate lines via shell continuation
       expect(content).toContain('node');
       expect(content).toContain('dist/server/index.js');
     });
@@ -100,7 +98,6 @@ describe('s6-overlay service definition', () => {
     it('finish script is committed with executable permissions', () => {
       const finishGitPath = 'docker/root/etc/s6-overlay/s6-rc.d/svc-narratorr/finish';
       const output = execFileSync('git', ['ls-tree', 'HEAD', '--', finishGitPath], { encoding: 'utf-8' });
-      // Git tracks executable files as mode 100755 — without it, s6 won't run the finish hook
       expect(output).toMatch(/^100755\s/);
     });
 
@@ -142,7 +139,6 @@ describe('s6-overlay service definition', () => {
     it('run script is committed with executable permissions', () => {
       const runPath = 'docker/root/etc/s6-overlay/s6-rc.d/init-narratorr-config/run';
       const output = execFileSync('git', ['ls-tree', 'HEAD', '--', runPath], { encoding: 'utf-8' });
-      // Git tracks executable files as mode 100755 — s6 silently skips a non-executable run script
       expect(output).toMatch(/^100755\s/);
     });
 
@@ -153,10 +149,7 @@ describe('s6-overlay service definition', () => {
 
     it('run script recursively chowns /config to the app user', () => {
       const content = fs.readFileSync(path.join(initServiceDir, 'run'), 'utf-8');
-      // Assert against the actual executable command, not raw content — the header
-      // comment also mentions chown/abc//config, so a token-only match would still
-      // pass if the real command were deleted or no-op'd. Strip comment/blank lines
-      // first so this fails when the load-bearing chown is removed or altered.
+      // Strip comments so header prose cannot satisfy the executable-command assertion.
       const executable = content
         .split('\n')
         .filter((line) => line.trim() !== '' && !line.trim().startsWith('#'))
@@ -172,7 +165,6 @@ describe('s6-overlay service definition', () => {
 
     it('run script fails gracefully — warns rather than hard-exiting on chown failure', () => {
       const content = fs.readFileSync(path.join(initServiceDir, 'run'), 'utf-8');
-      // A `|| <warn>` fallback keeps the s6-rc bring-up alive so the app still boots.
       expect(content).toContain('||');
       expect(content).not.toMatch(/^\s*exit\s+1\b/m);
     });
@@ -181,12 +173,7 @@ describe('s6-overlay service definition', () => {
       'run script exits 0 and warns when the chown cannot complete (graceful boot)',
       () => {
         const runPath = path.join(initServiceDir, 'run');
-        // Determinism (F2): don't rely on the host lacking `lsiown` or `/config`.
-        // Invoke an absolute bash with a controlled PATH pointing at an empty temp
-        // dir, so the ownership command (lsiown/chown) is guaranteed unresolvable
-        // and the `||` fallback always fires. `echo` is a bash builtin, so the
-        // warning still emits under the stripped PATH. This proves the graceful
-        // path independent of ambient host state.
+        // Empty PATH guarantees ownership tools are unavailable; echo remains a Bash builtin.
         const bashBin = ['/bin/bash', '/usr/bin/bash'].find((p) => fs.existsSync(p));
         expect(bashBin, 'no absolute bash found for deterministic invocation').toBeDefined();
         const emptyPathDir = fs.mkdtempSync(path.join(os.tmpdir(), 'narratorr-nopath-'));
@@ -293,7 +280,6 @@ describe('s6-overlay service definition', () => {
 
     it('runner does NOT run corepack enable in runner stage', () => {
       const content = fs.readFileSync(dockerfile, 'utf-8');
-      // corepack enable should only appear in builder/deps stages, not after the runner FROM
       const runnerSection = content.split('AS runner')[1];
       expect(runnerSection).not.toContain('corepack enable');
     });

@@ -16,12 +16,8 @@ import {
 } from './companion-ebook.repository.js';
 import type { CompanionEbookObservation } from './companion-ebook-observation.js';
 
-// Real migrated libSQL, not mocks: the point of this suite is that the repository's Zod
-// boundary rejects BEFORE any SQL runs, and only a real DB can distinguish "Zod refused"
-// from "SQLite's CHECK refused" — both throw and both leave the table empty. Every rejection
-// case therefore asserts the error is a `ZodError`; a `DrizzleQueryError` is a FAILURE, not
-// an alternative pass. The eight CHECKs themselves are covered from raw SQL in #1957's
-// `companion-ebooks-schema.integration.test.ts` and are deliberately not re-tested here.
+// A real migrated DB distinguishes Zod refusal before SQL from SQLite CHECK failure.
+// Boundary cases require ZodError plus no write; raw CHECK coverage lives in the schema suite.
 
 const FILE_FIELDS = {
   filename: 'companion.epub',
@@ -38,7 +34,7 @@ describe('companion-ebook repository (real migrated DB, #1958)', () => {
   let dir: string;
   let db: Db;
   let selectCalls: number;
-  /** `db` with every `.select()` counted — the only way to prove chunking and the no-query empty path. */
+  /** Counts selects to prove chunking and the empty-input no-query path. */
   let countingDb: Db;
 
   beforeEach(async () => {
@@ -67,7 +63,7 @@ describe('companion-ebook repository (real migrated DB, #1958)', () => {
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {
-      // libsql may keep handles on Windows — best effort
+      // libSQL may retain handles on Windows.
     }
   });
 
@@ -84,7 +80,7 @@ describe('companion-ebook repository (real migrated DB, #1958)', () => {
     return rows.length;
   }
 
-  /** Flattened `.cause` chain — Drizzle wraps driver errors, so the SQLite text is not on the top message (#1969). */
+  /** Flatten causes because Drizzle wraps the SQLite message. */
   async function rejectionMessage(fn: () => Promise<unknown>): Promise<string> {
     let caught: unknown;
     let rejected = false;
@@ -104,20 +100,13 @@ describe('companion-ebook repository (real migrated DB, #1958)', () => {
     return parts.length > 0 ? parts.join(' | ') : String(caught);
   }
 
-  /**
-   * The shape EVERY rejection case uses: the throw must be a `ZodError` (proving the public
-   * Zod boundary refused, not SQLite), and no row may have been written.
-   */
+  /** Every rejection must be a ZodError from the public boundary, with no row written. */
   async function expectZodRejection(bookId: number, observation: unknown): Promise<void> {
     await expect(
       upsertCompanionEbook(db, bookId, observation as CompanionEbookObservation),
     ).rejects.toBeInstanceOf(ZodError);
     expect(await rowCount()).toBe(0);
   }
-
-  // ---------------------------------------------------------------------------
-  // Round-trips
-  // ---------------------------------------------------------------------------
 
   describe('round-trips', () => {
     it('stores and reads back an available observation with its file fields intact', async () => {
@@ -180,10 +169,6 @@ describe('companion-ebook repository (real migrated DB, #1958)', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Upsert semantics
-  // ---------------------------------------------------------------------------
-
   describe('upsert semantics', () => {
     it('upserting twice for the same book leaves exactly one row, with createdAt unchanged and updatedAt advanced', async () => {
       const bookId = await seedBook();
@@ -203,8 +188,7 @@ describe('companion-ebook repository (real migrated DB, #1958)', () => {
       const bookId = await seedBook();
       await upsertCompanionEbook(db, bookId, available({ candidateCount: 2, selected: true }));
 
-      // The caller's `ambiguous` variant cannot carry file fields at all — these columns are
-      // cleared by the repository, not by the caller passing nulls.
+      // ambiguous cannot carry file fields; the repository must clear columns itself.
       const cleared = await upsertCompanionEbook(db, bookId, { status: 'ambiguous', candidateCount: 2 });
       expect(cleared).toMatchObject({
         status: 'ambiguous',
@@ -220,10 +204,6 @@ describe('companion-ebook repository (real migrated DB, #1958)', () => {
       expect(await rowCount()).toBe(1);
     });
   });
-
-  // ---------------------------------------------------------------------------
-  // Batch reads
-  // ---------------------------------------------------------------------------
 
   describe('findCompanionEbooksByBookIds', () => {
     it('returns an empty Map for an empty id list without issuing a query', async () => {
@@ -245,8 +225,7 @@ describe('companion-ebook repository (real migrated DB, #1958)', () => {
     });
 
     it('returns every row across more ids than one chunk holds, with one query per chunk', async () => {
-      // 481 ids: one more than the repository's chunk size, so the read must span two
-      // statements — and must NOT degrade to one query per book.
+      // One over the 480-id chunk must issue exactly two statements, never one per book.
       const total = 481;
       const bookIds: number[] = [];
       for (const chunk of chunkArray([...Array(total).keys()], 100)) {
@@ -268,10 +247,6 @@ describe('companion-ebook repository (real migrated DB, #1958)', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Delete / FK behaviour
-  // ---------------------------------------------------------------------------
-
   describe('deleteCompanionEbook and referential integrity', () => {
     it('returns true for an existing row and false for an absent one', async () => {
       const bookId = await seedBook();
@@ -280,8 +255,7 @@ describe('companion-ebook repository (real migrated DB, #1958)', () => {
       expect(await deleteCompanionEbook(db, bookId)).toBe(false);
     });
 
-    // Regression guard against a src/db/client.ts change: libSQL enables PRAGMA
-    // foreign_keys by default (libsql-foreign-keys-on-by-default), so the cascade is live.
+    // libSQL enables foreign_keys by default; pin the live cascade against client changes.
     it('cascade-deletes the observation when the books row is deleted', async () => {
       const bookId = await seedBook();
       await upsertCompanionEbook(db, bookId, { status: 'none' });
@@ -295,16 +269,12 @@ describe('companion-ebook repository (real migrated DB, #1958)', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Transaction composition — the test that pins DbOrTx
-  // ---------------------------------------------------------------------------
-
   describe('transaction composition (DbOrTx)', () => {
     it('sees its own pending write inside the transaction', async () => {
       const bookId = await seedBook();
       await db.transaction(async (tx) => {
         await upsertCompanionEbook(tx, bookId, available());
-        // A `Db`-typed executor would not even typecheck here — that is the point.
+        // This call pins the repository executor as DbOrTx rather than Db.
         expect(await findCompanionEbook(tx, bookId)).toMatchObject({ status: 'available' });
       });
       expect(await rowCount()).toBe(1);
@@ -321,10 +291,6 @@ describe('companion-ebook repository (real migrated DB, #1958)', () => {
       expect(await rowCount()).toBe(0);
     });
   });
-
-  // ---------------------------------------------------------------------------
-  // The write boundary — Layer 2 value rules, each refused before any SQL
-  // ---------------------------------------------------------------------------
 
   describe('write boundary — value rules rejected as ZodError before SQL', () => {
     it.each([1, 0])('ambiguous with candidateCount %i', async (candidateCount) => {
@@ -362,9 +328,7 @@ describe('companion-ebook repository (real migrated DB, #1958)', () => {
       await expectZodRejection(await seedBook(), available({ candidateCount: 2, selected: false }));
     });
 
-    // Both bands are also caught by `ck_companion_ebooks_fingerprint`, so the ZodError type
-    // assertion is what proves the safe-integer guard exists. `2**53` is the dangerous one:
-    // it writes successfully as INTEGER and then poisons every later read of the row.
+    // SQLite also rejects these; ZodError proves boundary ownership. 2**53 can persist but poison reads.
     it.each(['sizeBytes', 'mtimeMs', 'ctimeMs'])('oversized finite %s (1e20 and 2**53)', async (field) => {
       for (const value of [1e20, 2 ** 53]) {
         const bookId = await seedBook();
@@ -406,11 +370,7 @@ describe('companion-ebook repository (real migrated DB, #1958)', () => {
       expect(row.mtimeMs).toBe(1_700_000_000_123);
     });
 
-    // `sizeBytes` has its OWN nonnegative → Math.trunc → safe-integer pipeline, separate from
-    // the shared time schema, so the mtimeMs case above does not pin it: deleting its
-    // transform leaves every other test green and turns an accepted fractional size into a
-    // rejection. Same reason ctimeMs is asserted here rather than inferred from mtimeMs — each
-    // field's wiring to a normalising schema is pinned at the field, not at the schema.
+    // sizeBytes and each timestamp have separate schema wiring; pin each instead of inferring from mtime.
     it('a fractional sizeBytes is ACCEPTED and normalised (4096.75 → 4096)', async () => {
       const bookId = await seedBook();
       const row = await upsertCompanionEbook(db, bookId, available({ sizeBytes: 4096.75 }));
@@ -445,9 +405,7 @@ describe('companion-ebook repository (real migrated DB, #1958)', () => {
       expect(Array.from(res.rows[0] as unknown as unknown[])).toEqual(['integer', 'integer', 'integer']);
     });
 
-    // The ONE case in this suite that fails a Math.floor implementation: positive fractional
-    // values cannot distinguish trunc from floor, and 1.2c's fingerprint short-circuit
-    // compares against rows written here.
+    // A negative fraction is the only fixture that distinguishes trunc from floor.
     it('a signed fractional mtimeMs truncates toward zero (-123.75 → -123, not -124)', async () => {
       const bookId = await seedBook();
       const row = await upsertCompanionEbook(db, bookId, available({ mtimeMs: -123.75 }));

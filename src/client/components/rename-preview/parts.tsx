@@ -2,11 +2,7 @@ import { Fragment, useId } from 'react';
 import { Link } from 'react-router';
 import type { RenameConflictError } from '@/lib/api';
 
-/**
- * Shared building blocks for the rename preview UI. Both the single-book
- * `RenamePreviewModal` and the bulk `BulkRenameModal` compose from these so the
- * diff/banner/conflict rendering has exactly one definition each (see #1406 AC #2).
- */
+// Single and bulk rename modals share these definitions to prevent rendering drift.
 
 export function PreviewBanner({
   libraryRoot,
@@ -79,31 +75,15 @@ export function DiffRow({ sign, text, tone }: { sign: string; text: string; tone
   );
 }
 
-/**
- * Positionally diff a `from`/`to` path pair, segment-by-segment on `/`. Segments
- * that match positionally render dimmed; segments that differ (or have no
- * counterpart in the shorter path) render full-tone — so the eye lands on exactly
- * the rename delta (`The Earthsea Quartet` → `Earthsea Cycle`) instead of scanning
- * an equal-weight red/green wall.
- *
- * Edge cases (see #1439 F5): different segment counts compare up to the shorter
- * length and emphasize the longer path's trailing segments; identical paths dim
- * entirely; a single-segment path (no `/`) is one segment — full-tone unless
- * identical. Empty segments (interior `A//B` or trailing `A/B/`) are `/` artifacts:
- * they're cleaned out before the real segments are compared positionally — so
- * `A//B` vs `A/B` still aligns `B` against `B` instead of shifting it into a
- * changed slot — while an empty segment itself is emphasized only when the other
- * path lacks the same artifact at that position, keeping a meaningful
- * trailing-slash difference (`A/B/` vs `A/B`) visible rather than swallowed.
- */
+// Empty slash artifacts do not advance the real-segment index, but remain changed
+// when the other path lacks an empty segment at that raw position.
 function diffPathSegments(path: string, other: string): Array<{ text: string; changed: boolean }> {
   const rawOther = other.split('/');
   const cleanedOther = rawOther.filter((s) => s !== '');
   let cleanIdx = 0;
   return path.split('/').map((text, i) => {
     if (text === '') {
-      // A `/` artifact — never let it shift real-segment alignment; emphasize only
-      // when the other path has no matching empty at this raw position.
+      // A `/` artifact must not shift real-segment alignment.
       return { text, changed: rawOther[i] !== '' };
     }
     const changed = text !== cleanedOther[cleanIdx];
@@ -142,12 +122,6 @@ function PathDiffLine({
   );
 }
 
-/**
- * A from→to path diff that emphasizes only the changed segment(s). Drop-in for a
- * `DiffRow` pair where both texts are `/`-delimited paths (the bulk modal's
- * collapsed folder diff). Renders the `−` from line and `+` to line, each with
- * positionally-unchanged segments dimmed. See {@link diffPathSegments}.
- */
 export function PathDiffRow({ from, to }: { from: string; to: string }) {
   return (
     <>

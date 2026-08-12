@@ -45,7 +45,6 @@ describe('folderFormatSchema', () => {
   });
 
   it('uses default value when empty input is provided via schema chain', () => {
-    // Direct default behavior: when used in a z.object and not provided
     const result = folderFormatSchema.safeParse(undefined);
     expect(result.success).toBe(true);
     if (result.success) expect(result.data).toBe('{author}/{title}');
@@ -129,9 +128,6 @@ describe('updateSettingsSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  // #1345: a stale browser tab can PUT the removed `seriesCacheRetentionDays` key (dropped in
-  // #1301). updateSettingsSchema inherits Zod's default strip mode, so the stale-tab payload
-  // must succeed (200-with-strip, not 400) and silently drop the fossil key from the output.
   it('strips removed seriesCacheRetentionDays key from a stale-tab general PUT', () => {
     const r = updateSettingsSchema.safeParse({ general: { logLevel: 'info', seriesCacheRetentionDays: 30 } });
     expect(r.success).toBe(true);
@@ -183,7 +179,6 @@ describe('libraryFormSchema — trim behavior', () => {
   });
 
   it('whitespace-only folderFormat fails min(1) after trim (not refine)', () => {
-    // After .trim(), '   ' becomes '' which fails .min(1) before reaching .refine()
     const result = libraryFormSchema.safeParse({ ...validLibraryForm, folderFormat: '   ' });
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -193,7 +188,6 @@ describe('libraryFormSchema — trim behavior', () => {
   });
 
   it('whitespace-only fileFormat fails min(1) after trim (not refine)', () => {
-    // After .trim(), '   ' becomes '' which fails .min(1) before reaching .refine()
     const result = libraryFormSchema.safeParse({ ...validLibraryForm, fileFormat: '   ' });
     expect(result.success).toBe(false);
     if (!result.success) {

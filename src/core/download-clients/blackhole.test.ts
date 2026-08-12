@@ -17,12 +17,8 @@ vi.mock('node:dns/promises', () => ({
 const dispatcherCloseSpy = vi.fn().mockResolvedValue(undefined);
 const createDispatcherSpy = vi.fn((_hostnameAllowlist?: Set<string>) => ({ close: dispatcherCloseSpy }));
 
-// Override `fetchWithSsrfRedirect` with a `globalThis.fetch`-based walker so the
-// `vi.stubGlobal('fetch', mockFetch)` below intercepts download hops. Production
-// routes through undici's fetch when a dispatcher is attached (which bypasses
-// MSW); the helper's redirect routing is asserted in network-service.test.ts.
-// `createSsrfSafeDispatcher` is stubbed so we can spy on dispatcher.close() and on
-// the hostname allowlist it receives without standing up a real undici Agent.
+// Route redirect hops through the stubbed global fetch; production undici routing is
+// covered in network-service.test. Stub the dispatcher to observe allowlisting and close.
 const ssrfRedirectWalker = vi.fn(async (startUrl: string, opts: NetworkServiceModule.FetchWithSsrfRedirectOptions = {}) => {
   const actual = await import('../utils/network-service.js');
   const MAX = 5;
@@ -87,7 +83,7 @@ describe('BlackholeClient', () => {
     createDispatcherSpy.mockClear();
     ssrfRedirectWalker.mockClear();
     mockedDnsLookup.mockReset();
-    // Default every host to a public IP so the SSRF pre-flight gate is open.
+    // Default hosts to public IPs so SSRF validation reaches each test's fetch stub.
     mockedDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
     vi.stubGlobal('fetch', mockFetch);
     client = new BlackholeClient({ watchDir: '/downloads/watch', protocol: 'torrent' });
@@ -95,7 +91,7 @@ describe('BlackholeClient', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
-    // Restore GIT_TAG so the User-Agent test's env stub never leaks.
+    // Prevent the User-Agent env stub leaking across tests.
     vi.unstubAllEnvs();
   });
 
@@ -146,11 +142,7 @@ describe('BlackholeClient', () => {
     });
 
     it('sends User-Agent: Narratorr/<version> on the nzb-url self-download (#1315)', async () => {
-      // Pin GIT_TAG so the assertion is deterministic regardless of the runner's
-      // ambient env (a CI/release env that exports GIT_TAG would otherwise flip
-      // the expected value) AND so deleting getUserAgent()'s tagged-version
-      // branch makes this fail. The unset/unknown fallbacks are covered in
-      // src/shared/user-agent.test.ts.
+      // Pin the tag so ambient release/CI state cannot change the assertion.
       vi.stubEnv('GIT_TAG', 'v9.9.9');
       const nzbContent = new Uint8Array([0x3c, 0x6e, 0x7a, 0x62]);
       mockFetch.mockResolvedValueOnce(nzbResponse(nzbContent, { status: 200 }));
@@ -163,7 +155,6 @@ describe('BlackholeClient', () => {
       );
     });
 
-    // #1243 — follow indexer download redirects (302 getnzb links).
     it('follows a 302 redirect to the real .nzb and writes the followed-redirect bytes', async () => {
       const nzbContent = new Uint8Array([0x3c, 0x6e, 0x7a, 0x62, 0x3e]); // <nzb>
       mockFetch
@@ -204,8 +195,6 @@ describe('BlackholeClient', () => {
       );
     });
 
-    // #1243 (F2) — LAN allowlist threaded through dispatcher + fetch options so a
-    // private/loopback configured-indexer NZB URL still resolves.
     it('threads the LAN allowlist into the dispatcher and fetch for a private-host NZB URL', async () => {
       mockedDnsLookup.mockReset();
       mockedDnsLookup.mockResolvedValue([{ address: '192.168.0.22', family: 4 }]);
@@ -298,7 +287,6 @@ describe('BlackholeClient', () => {
       expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
     });
 
-    // #1243 (F1) — raw AbortSignal.timeout DOMException maps to DownloadClientTimeoutError.
     it('maps a per-hop timeout (DOMException TimeoutError) to DownloadClientTimeoutError', async () => {
       mockFetch.mockRejectedValueOnce(new DOMException('The operation was aborted', 'TimeoutError'));
 
@@ -309,8 +297,7 @@ describe('BlackholeClient', () => {
 
       const error = await client.addDownload(artifact).catch((e: unknown) => e);
       expect(error).toBeInstanceOf(DownloadClientTimeoutError);
-      // The timeout branch must stay reachable before redaction; its message is the
-      // URL-free literal isTimeoutError matches by strict equality (#1246).
+      // Timeout classification must happen before generic redaction/wrapping.
       expect((error as DownloadClientTimeoutError).message).toContain('Request timed out');
       expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
     });
@@ -326,7 +313,6 @@ describe('BlackholeClient', () => {
       await expect(client.addDownload(artifact)).rejects.toBeInstanceOf(DownloadClientError);
     });
 
-    // #1246 — unmapped errors can embed the raw download URL (passkey/apikey); redact before surfacing.
     it('redacts a credentialed URL from an unmapped nzb-url error', async () => {
       mockFetch.mockRejectedValueOnce(new Error('connect ECONNREFUSED https://indexer.example.com/api?apikey=SECRET123'));
 
@@ -449,7 +435,6 @@ describe('BlackholeClient', () => {
       expect(result.message).toContain('not writable');
     });
 
-    // #197 — NodeJS.ErrnoException.code checks (ERR-1)
     it('detects ENOENT via error.code property (not message string matching)', async () => {
       const err = new Error('some unrelated message') as NodeJS.ErrnoException;
       err.code = 'ENOENT';

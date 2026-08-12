@@ -33,12 +33,11 @@ describe('createPollController — completion', () => {
     ) as never;
     const c = createPollController(deps);
     c.start();
-    await vi.advanceTimersByTimeAsync(1); // immediate poll → processing
+    await vi.advanceTimersByTimeAsync(1); // Flush the immediate poll.
     expect(deps.onComplete).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS); // next tick → complete → detail
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS); // Complete on the next tick.
     expect(deps.onComplete).toHaveBeenCalledTimes(1);
     expect(deps.onComplete).toHaveBeenCalledWith(expect.objectContaining({ itemsIncluded: true }));
-    // No further detail fetches after the interval was cleared.
     await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 3);
     expect(deps.onComplete).toHaveBeenCalledTimes(1);
   });
@@ -51,9 +50,9 @@ describe('createPollController — single-flight (F2)', () => {
     deps.api.getImportSubmission = vi.fn(() => new Promise<SubmissionResponse>((r) => { resolveSummary = r; })) as never;
     const c = createPollController(deps);
     c.start();
-    await vi.advanceTimersByTimeAsync(1); // immediate poll starts, never resolves yet
-    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 2); // two ticks fire but are coalesced
-    expect(deps.api.getImportSubmission).toHaveBeenCalledTimes(1); // single-flight
+    await vi.advanceTimersByTimeAsync(1); // Start the unresolved immediate poll.
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS * 2); // Fire two coalesced intervals.
+    expect(deps.api.getImportSubmission).toHaveBeenCalledTimes(1);
     resolveSummary(summary('processing'));
     await vi.advanceTimersByTimeAsync(0);
     c.stop();
@@ -95,9 +94,6 @@ describe('createPollController — failure contracts', () => {
   });
 
   it('terminal-detail 404 is finalized data loss → finalizedMissing + evict (NOT detailLoadFailed) (F3)', async () => {
-    // Summary is `complete`, but the one-time detail fetch 404s. A finalized header can never
-    // be GC'd, so this is the SAME invariant/data-loss signal as a summary 404 — surface
-    // `finalizedMissing` once and evict the dead hint, rather than a retryable results-load failure.
     const deps = baseDeps();
     deps.api.getImportSubmission = vi.fn((_id: number, includeItems: boolean) =>
       includeItems ? Promise.reject(new ApiError(404, { error: 'not-found' })) : Promise.resolve(summary('complete')),

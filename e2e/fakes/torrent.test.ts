@@ -25,7 +25,7 @@ describe('buildTorrentBytes', () => {
     const str = bytes.toString('binary');
     const idx = str.indexOf('6:pieces20:');
     expect(idx).toBeGreaterThan(-1);
-    // 20 bytes after the prefix — all zeros in our placeholder
+    // The 20-byte placeholder payload is all zeros.
     const pieceStart = idx + '6:pieces20:'.length;
     for (let i = 0; i < 20; i++) {
       expect(bytes[pieceStart + i]).toBe(0);
@@ -37,9 +37,7 @@ describe('computeInfoHash', () => {
   it('returns the sha1 of the bencoded info dict', () => {
     const bytes = buildTorrentBytes({ fileName: 'foo', fileLength: 1 });
 
-    // Outer wrapper is `d4:info<info_dict>e` — slice between the `4:info` marker
-    // end (offset 7) and the final trailing `e` to recover the info dict bytes,
-    // then hash them. Should match computeInfoHash exactly.
+    // Independently slice the info dictionary from its known wrapper before hashing it.
     const infoStart = bytes.indexOf(Buffer.from('4:info')) + '4:info'.length;
     const infoBytes = bytes.subarray(infoStart, bytes.length - 1);
     const expected = createHash('sha1').update(infoBytes).digest('hex');

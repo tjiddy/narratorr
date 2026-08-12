@@ -5,8 +5,7 @@ import { resolve } from 'node:path';
 import { useMswServer } from '../__tests__/msw/server.js';
 import type * as NetworkServiceModule from '../utils/network-service.js';
 
-// Route fetchWithOptionalDispatcher through globalThis.fetch so MSW handlers
-// and `vi.spyOn(globalThis, 'fetch')` continue to intercept the proxy path.
+// Keep MSW/fetch spies on this test path while production retains dispatcher routing.
 vi.mock('../utils/network-service.js', async (importActual) => {
   const actual = await importActual<typeof NetworkServiceModule>();
   return {
@@ -32,7 +31,7 @@ describe('AudioBookBayIndexer', () => {
 
   beforeEach(() => {
     indexer = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 1 });
-    // Speed up tests by removing delays
+    // Eliminate scraper throttling in tests.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     vi.spyOn(indexer as any, 'delay').mockResolvedValue(undefined);
   });
@@ -101,7 +100,6 @@ describe('AudioBookBayIndexer', () => {
 
       const { results } = await indexer.search('Brandon Sanderson');
 
-      // 1.23 GB
       expect(results[0]!.size).toBeGreaterThan(1_000_000_000);
       expect(results[0]!.seeders).toBe(42);
       expect(results[0]!.leechers).toBe(5);
@@ -121,7 +119,6 @@ describe('AudioBookBayIndexer', () => {
     });
 
     it('only includes results with download URLs', async () => {
-      // Detail page without info hash
       const noHashHtml = `
         <html><body>
           <h1>Some Book</h1>
@@ -187,7 +184,6 @@ describe('AudioBookBayIndexer', () => {
         }),
       );
 
-      // Should not throw, just skip results without magnet URIs
       const { results } = await indexer.search('test');
       expect(results).toEqual([]);
     });
@@ -288,7 +284,6 @@ describe('AudioBookBayIndexer', () => {
               solution: { response: searchHtml, status: 200 },
             });
           }
-          // Detail page
           return HttpResponse.json({
             status: 'ok',
             solution: { response: detailHtml, status: 200 },
@@ -321,7 +316,6 @@ describe('AudioBookBayIndexer', () => {
     });
 
     it('direct test still uses HEAD/405', async () => {
-      // Non-proxied indexer should still use HEAD
       server.use(
         http.head(`${ABB_BASE}/`, () => {
           return new HttpResponse(null, { status: 405 });
@@ -349,13 +343,11 @@ describe('AudioBookBayIndexer', () => {
         http.post(`${PROXY_URL}/v1`, () => {
           callCount++;
           if (callCount === 1) {
-            // Search page succeeds
             return HttpResponse.json({
               status: 'ok',
               solution: { response: searchHtml, status: 200 },
             });
           }
-          // Detail page proxy fails
           return HttpResponse.error();
         }),
       );
@@ -401,7 +393,6 @@ describe('AudioBookBayIndexer', () => {
 
       const { results } = await indexer.search('test');
       expect(results.length).toBeGreaterThan(0);
-      // "N/A" won't match the /Seeders?[:\s]*(\d+)/ regex, so seeders stays undefined
       expect(results[0]!.seeders).toBeUndefined();
     });
 
@@ -428,7 +419,6 @@ describe('AudioBookBayIndexer', () => {
 
       const { results } = await indexer.search('test');
       expect(results.length).toBeGreaterThan(0);
-      // "unknown" won't match Size regex, so size stays undefined
       expect(results[0]!.size).toBeUndefined();
     });
 
@@ -480,7 +470,7 @@ describe('AudioBookBayIndexer', () => {
 
       const { results } = await indexer.search('test');
       expect(results.length).toBeGreaterThan(0);
-      // 500 MB = 500 * 1024 * 1024 = 524288000
+      // 500 MB * 1024 * 1024
       expect(results[0]!.size).toBe(524288000);
     });
 
@@ -531,9 +521,7 @@ describe('AudioBookBayIndexer', () => {
       const controller = new AbortController();
       await indexer.search('test', { signal: controller.signal });
 
-      // At least one fetch call should have a signal linked to the caller
       expect(capturedSignals.length).toBeGreaterThan(0);
-      // Verify caller abort propagates through AbortSignal.any composition
       controller.abort();
       expect(capturedSignals[0]!.aborted).toBe(true);
     });
@@ -562,8 +550,6 @@ describe('AudioBookBayIndexer', () => {
     });
 
     it('search returns empty results for non-proxy errors', async () => {
-      // Direct (non-proxied) indexer: fetch failures map to plain Error, not ProxyError,
-      // so abb.search() catches and returns [] instead of rethrowing.
       const directIndexer = new AudioBookBayIndexer({
         hostname: ABB_HOST,
         pageLimit: 1,
@@ -598,13 +584,7 @@ describe('AudioBookBayIndexer', () => {
   });
 
   describe('proxy dispatcher option (fetch-spy exception)', () => {
-    // MSW intercepts at the request layer and cannot observe undici-specific
-    // fetch options like `dispatcher` (`src/core/indexers/proxy.ts:67-73`
-    // sets `dispatcher` directly on the RequestInit object). The only way to
-    // assert that the indexer wires its proxy agent into fetch options is to
-    // spy on `globalThis.fetch` and inspect the captured init argument.
-    // Every other proxy scenario in this file routes through MSW; this is the
-    // sole remaining fetch-spy.
+    // MSW cannot inspect undici's dispatcher option, so this block spies on fetch directly.
     const PROXY_URL = 'http://proxy.test:8080';
     let proxiedIndexer: AudioBookBayIndexer;
 
@@ -620,8 +600,6 @@ describe('AudioBookBayIndexer', () => {
 
     it('passes a dispatcher fetch option when constructed with proxyUrl', async () => {
       let callCount = 0;
-      // MSW cannot observe the undici-specific `dispatcher` fetch option — see
-      // describe-block comment. This spy is the documented exception.
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
         callCount++;
         if (callCount === 1) {

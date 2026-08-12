@@ -68,7 +68,6 @@ function isTerminal(state: Omit<MergeCardState, 'bookId'>): boolean {
   return state.outcome !== undefined;
 }
 
-/** Called by useEventSource to update merge progress for a book. Pass null to clear. */
 export function setMergeProgress(bookId: number, progress: Omit<MergeCardState, 'bookId'> | null): void {
   if (progress === null) {
     const existing = dismissTimers.get(bookId);
@@ -76,7 +75,7 @@ export function setMergeProgress(bookId: number, progress: Omit<MergeCardState, 
     dismissTimers.delete(bookId);
     mergeProgressMap.delete(bookId);
   } else {
-    // Clear any pending dismiss timer from a prior terminal state for this book
+    // A new state supersedes any pending terminal dismissal.
     const existingTimer = dismissTimers.get(bookId);
     if (existingTimer) {
       clearTimeout(existingTimer);
@@ -91,17 +90,8 @@ export function setMergeProgress(bookId: number, progress: Omit<MergeCardState, 
 }
 
 /**
- * Apply a `merge_state` snapshot (#2129) — the single source of truth for NON-terminal merge
- * state. The server re-broadcasts it on every merge state change and writes it once to each
- * newly connected client, so this REPLACES the store rather than accumulating into it: whatever
- * is not in the snapshot is not merging.
- *
- * The one exception is a book inside its terminal dismiss window (`outcome` set). Its terminal
- * card carries `message` / `error` / `enrichmentWarning`, none of which the snapshot has, and
- * the server clears the book from the snapshot in the same breath as the terminal event — so
- * the frame that arrives right after `merge_complete` / `merge_failed` always omits it. Keeping
- * it until its existing 3s timer fires is what makes that ordering safe; the timer itself is
- * untouched here.
+ * Replaces non-terminal state from the server snapshot. Omitted terminal cards survive until
+ * their dismiss timers fire because the server broadcasts the cleared snapshot after the event.
  */
 export function applyMergeStateSnapshot(snapshot: MergeStateSnapshot): void {
   const present = new Set<number>();
@@ -133,11 +123,7 @@ export function applyMergeStateSnapshot(snapshot: MergeStateSnapshot): void {
   notify();
 }
 
-/**
- * Snapshot-driven write for one book. Mirrors `setMergeProgress`'s non-terminal branch (drop any
- * pending dismiss timer, replace the entry wholesale) minus the notify — the caller notifies once
- * per snapshot rather than once per book.
- */
+/** Updates one entry without notifying; the caller publishes after the full snapshot. */
 function writeFromSnapshot(bookId: number, state: Omit<MergeCardState, 'bookId'>): void {
   const existingTimer = dismissTimers.get(bookId);
   if (existingTimer) {
@@ -147,7 +133,6 @@ function writeFromSnapshot(bookId: number, state: Omit<MergeCardState, 'bookId'>
   mergeProgressMap.set(bookId, { bookId, ...state });
 }
 
-/** Reactive hook — returns all active merge progress entries for ActivityPage. */
 export function useMergeActivityCards(): MergeCardState[] {
   return useSyncExternalStore(
     subscribe,
@@ -156,11 +141,7 @@ export function useMergeActivityCards(): MergeCardState[] {
   );
 }
 
-/**
- * Reactive hook — returns current merge progress for a single book.
- * Returns progress with `outcome` field during the dismiss window for terminal entries,
- * allowing BookDetails to show fade-out animation before removal.
- */
+/** Includes terminal outcomes until their dismiss window expires. */
 export function useMergeProgress(bookId: number): MergeProgress | null {
   return useSyncExternalStore(
     subscribe,
@@ -169,7 +150,6 @@ export function useMergeProgress(bookId: number): MergeProgress | null {
   );
 }
 
-/** Reset store state for testing. */
 export function _resetForTesting(): void {
   mergeProgressMap.clear();
   for (const timer of dismissTimers.values()) clearTimeout(timer);

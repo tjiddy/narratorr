@@ -59,7 +59,6 @@ describe('library-scan routes', () => {
       expect(body.totalFolders).toBe(2);
     });
 
-    // #1017 — scan response must decorate each discovery with a signed previewUrl
     it('decorates each discovery with a previewUrl whose token verifies to { path, scanRoot }', async () => {
       const mockResult = {
         discoveries: [
@@ -137,9 +136,7 @@ describe('library-scan routes', () => {
     });
   });
 
-  // #1831 — per-route body-size headroom (defense-in-depth for un-proxied deployments).
-  // A body over the ~10 MiB confirm/match limit surfaces a 413 with an accurate message
-  // (via the scoped error-handler passthrough), while other routes still cap at 1 MiB.
+  // The positive 3 MiB case distinguishes the route's ~10 MiB limit from the app's 1 MiB default.
   describe('per-route bodyLimit (#1831)', () => {
     it('match route 413s when the body exceeds ~10 MiB', async () => {
       const oversized = 'x'.repeat(11 * 1024 * 1024);
@@ -152,8 +149,6 @@ describe('library-scan routes', () => {
       expect(services.matchJob.createJob).not.toHaveBeenCalled();
     });
 
-    // Positive boundary: without this, the raise is untestable — createTestApp's default
-    // 1 MiB cap would 413 the 11 MiB negative above even if the route option were deleted.
     it('match route accepts a ~3 MiB body (over the 1 MiB default, under the route limit)', async () => {
       (services.matchJob.createJob as ReturnType<typeof vi.fn>).mockReturnValue('job-3mib');
       const midsize = 'x'.repeat(3 * 1024 * 1024);
@@ -180,7 +175,6 @@ describe('library-scan routes', () => {
     });
   });
 
-  // Wave 11.2 (#755) — single-book scan/import routes retired
   describe('removed routes', () => {
     it('POST /api/library/import/scan-single returns 404', async () => {
       const res = await app.inject({
@@ -200,9 +194,7 @@ describe('library-scan routes', () => {
       expect(res.statusCode).toBe(404);
     });
 
-    // #1902 — the direct-confirm commit path was atomically removed in favour of the staged
-    // submissions lane. Reintroducing this route (or a service path behind it) must fail CI,
-    // so pin that it is gone: the request 404s and no direct-confirm service method is invoked.
+    // The stale confirmImport stub makes accidental restoration of the direct-confirm path observable.
     it('POST /api/library/import/confirm returns 404 (direct-confirm path removed)', async () => {
       const res = await app.inject({
         method: 'POST',
@@ -210,8 +202,6 @@ describe('library-scan routes', () => {
         payload: { books: [{ path: '/audiobooks/Anywhere', title: 'X' }], mode: 'copy' },
       });
       expect(res.statusCode).toBe(404);
-      // Even with the mock harness still stubbing a confirmImport method, the removed route
-      // must never route to a direct-confirm service path.
       const confirmMock = (services.libraryScan as unknown as { confirmImport?: ReturnType<typeof vi.fn> }).confirmImport;
       expect(confirmMock).not.toHaveBeenCalled();
     });
@@ -273,9 +263,6 @@ describe('library-scan routes', () => {
 
   describe('GET /api/library/import/match/:jobId', () => {
     it('returns job status when found', async () => {
-      // Fixture corrected to the real MatchJobStatus contract (#1864 F8): the
-      // status is one of matching/completed/failed/cancelled and progress is
-      // `matched`, not `running`/`completed`.
       const mockStatus = {
         id: 'job-abc-123',
         status: 'matching',
@@ -320,7 +307,6 @@ describe('library-scan routes', () => {
     });
 
     it('returns 404 once the failed job is removed post-TTL', async () => {
-      // After TTL the service drops the job — the poll then 404s (not a stale 200).
       (services.matchJob.getJob as ReturnType<typeof vi.fn>).mockReturnValue(null);
       const res = await app.inject({ method: 'GET', url: '/api/library/import/match/job-failed-1' });
       expect(res.statusCode).toBe(404);
@@ -487,10 +473,6 @@ describe('library-scan routes', () => {
       expect(body.error).toBe('unknown');
     });
 
-    // =======================================================================
-    // #1960 AC9/AC12/AC14 — the route goes through the companion sweep wrapper
-    // =======================================================================
-
     it('AC9/AC12: a successful rescan triggers exactly one companion sweep', async () => {
       (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
         .mockResolvedValue({ scanned: 10, missing: 2, restored: 1 });
@@ -545,7 +527,6 @@ describe('library-scan routes', () => {
     it('AC14: a rescan issued while a companion sweep is still in flight returns 200, not 409', async () => {
       (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
         .mockResolvedValue({ scanned: 1, missing: 0, restored: 0 });
-      // Sweep A never settles — it is provably still pending when the second POST lands.
       let releaseSweep!: () => void;
       const pendingSweep = new Promise<void>((r) => { releaseSweep = r; });
       (services.companionEbook.reconcileAll as ReturnType<typeof vi.fn>)
@@ -575,9 +556,6 @@ describe('library-scan routes', () => {
     });
   });
 
-  // ===========================================================================
-  // #114 — scan response with isDuplicate flag; confirm with forceImport
-  // ===========================================================================
   describe('POST /api/library/import/scan — isDuplicate flag', () => {
     it('response includes isDuplicate on each discovery item', async () => {
       (services.libraryScan.scanDirectory as ReturnType<typeof vi.fn>)
@@ -652,25 +630,20 @@ describe('library-scan routes', () => {
       const res = await app.inject({ method: 'POST', url: '/api/library/import/scan', payload: { path: '/a' } });
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
-      // Both rows flow through as normal candidates — the recording ladder decides identity at confirm time.
       expect(body.discoveries[0].isDuplicate).toBe(false);
       expect(body.discoveries[1].isDuplicate).toBe(false);
       expect(body.discoveries[1].reviewReason).toBe('Possible duplicate folder in this scan');
-      // The within-scan hard-flag machinery is gone — no duplicate reason/first-path survives serialization.
       expect(body.discoveries[1]).not.toHaveProperty('duplicateReason');
       expect(body.discoveries[1]).not.toHaveProperty('duplicateFirstPath');
     });
   });
 
-  // #2055 — the import editor's re-pick path asks the server for the same
-  // chapter-runtime second opinion the match job already gets (#1942).
-  describe('POST /api/library/import/duration-corroboration (#2055)', () => {
-    // The live Fablehaven case, canonical values already pinned in-repo:
-    // scanned 33219.47s (match-job.helpers.test.ts), chapter table 33219.49s
-    // (chapter-corroboration.test.ts FABLEHAVEN_MS), provider scalar 539min = 32340s.
+  describe('POST /api/library/import/duration-corroboration (#2055/#2168)', () => {
+    // Measured Fablehaven references: scan 33219.47s, chapters 33219.49s, provider 539 min.
     const ASIN = 'B00CXXEX8W';
     const SCANNED = 33219.47;
     const CHAPTERS = 33219.49;
+    const REFS = { fullSeconds: CHAPTERS, trimmedSeconds: CHAPTERS };
 
     const chapterStub = () => services.metadata.getChapterRuntimeSeconds as unknown as ReturnType<typeof vi.fn>;
 
@@ -678,7 +651,7 @@ describe('library-scan routes', () => {
       app.inject({ method: 'POST', url: '/api/library/import/duration-corroboration', payload: payload as object });
 
     it('corroborates the scanned runtime against the chapter table', async () => {
-      chapterStub().mockResolvedValue(CHAPTERS);
+      chapterStub().mockResolvedValue(REFS);
 
       const res = await post({ asin: ASIN, scannedSeconds: SCANNED });
 
@@ -687,7 +660,7 @@ describe('library-scan routes', () => {
     });
 
     it('reports a chapter runtime that is also out of band as not corroborated', async () => {
-      chapterStub().mockResolvedValue(40000);
+      chapterStub().mockResolvedValue({ fullSeconds: 40000, trimmedSeconds: 40000 });
 
       const res = await post({ asin: ASIN, scannedSeconds: SCANNED });
 
@@ -696,23 +669,19 @@ describe('library-scan routes', () => {
     });
 
     it('omits chapterSeconds entirely when there is no usable chapter runtime', async () => {
-      chapterStub().mockResolvedValue(undefined);
+      chapterStub().mockResolvedValue({});
 
       const res = await post({ asin: ASIN, scannedSeconds: SCANNED });
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
       expect(body).toEqual({ corroborated: false });
-      // The observation point is the SERIALIZED body: JSON drops an `undefined` value, so
-      // present-but-undefined and absent are the same thing on the wire and this cannot
-      // distinguish them. What it does catch — verified counterfactually — is a fabricated
-      // stand-in (`chapterSeconds: 0`/`null`), which would read as a mismatch claim where
-      // the honest answer is "no second opinion available".
+      // JSON cannot distinguish absent from undefined; this still rejects fabricated 0/null references.
       expect(body).not.toHaveProperty('chapterSeconds');
     });
 
     it('looks the edition up exactly once, with the trimmed ASIN', async () => {
-      chapterStub().mockResolvedValue(CHAPTERS);
+      chapterStub().mockResolvedValue(REFS);
 
       const res = await post({ asin: `  ${ASIN}  `, scannedSeconds: SCANNED });
 
@@ -722,11 +691,11 @@ describe('library-scan routes', () => {
     });
 
     it('pins the shared inclusive tolerance band in both directions', async () => {
-      chapterStub().mockResolvedValue(SCANNED + 240);
+      chapterStub().mockResolvedValue({ fullSeconds: SCANNED + 240, trimmedSeconds: SCANNED + 240 });
       const inBand = await post({ asin: ASIN, scannedSeconds: SCANNED });
       expect(JSON.parse(inBand.payload).corroborated).toBe(true);
 
-      chapterStub().mockResolvedValue(SCANNED + 241);
+      chapterStub().mockResolvedValue({ fullSeconds: SCANNED + 241, trimmedSeconds: SCANNED + 241 });
       const outOfBand = await post({ asin: ASIN, scannedSeconds: SCANNED });
       expect(JSON.parse(outOfBand.payload).corroborated).toBe(false);
     });
@@ -739,7 +708,7 @@ describe('library-scan routes', () => {
       ['negative scannedSeconds', { asin: ASIN, scannedSeconds: -1 }],
       ['non-numeric scannedSeconds', { asin: ASIN, scannedSeconds: 'abc' }],
     ])('rejects %s with 400 and never reaches the provider', async (_label, payload) => {
-      chapterStub().mockResolvedValue(CHAPTERS);
+      chapterStub().mockResolvedValue(REFS);
 
       const res = await post(payload);
 
@@ -763,7 +732,7 @@ describe('library-scan routes', () => {
           (c) => typeof c[1] === 'string' && c[1].includes('Chapter corroboration failed'),
         );
         expect(debugCall).toBeDefined();
-        // serializeError shape — enumerable name/message keys, never the raw Error.
+        // Enumerable name/message keys distinguish serializeError output from the raw Error.
         expect(debugCall![0]).toMatchObject({
           asin: ASIN,
           error: expect.objectContaining({ type: 'Error', message: 'audnexus exploded' }),
@@ -771,6 +740,94 @@ describe('library-scan routes', () => {
       } finally {
         restore();
       }
+    });
+
+    describe('trimmed chapter runtime (#2168)', () => {
+      const ADDIE_SCANNED = 85_144;
+      const ADDIE_FULL = 86_400;
+      const ADDIE_TRIMMED = 85_134;
+
+      // Other positive fixtures reuse one value; this distinct out-of-band trim isolates the full arm.
+      it('corroborates when ONLY the full reference is in band, with a DISTINCT out-of-band trim', async () => {
+        // Δfull=0.02s; Δtrimmed=7199.98s.
+        const OVER_TRIMMED = 26_019.49;
+        chapterStub().mockResolvedValue({ fullSeconds: CHAPTERS, trimmedSeconds: OVER_TRIMMED });
+
+        const res = await post({ asin: ASIN, scannedSeconds: SCANNED });
+
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.payload)).toEqual({
+          corroborated: true,
+          chapterSeconds: CHAPTERS,
+          trimmedChapterSeconds: OVER_TRIMMED,
+        });
+      });
+
+      it('corroborates on the full reference when the walk produced NO usable trimmed one', async () => {
+        chapterStub().mockResolvedValue({ fullSeconds: CHAPTERS });
+
+        const res = await post({ asin: ASIN, scannedSeconds: SCANNED });
+
+        const body = JSON.parse(res.payload);
+        expect(body).toEqual({ corroborated: true, chapterSeconds: CHAPTERS });
+        expect(body).not.toHaveProperty('trimmedChapterSeconds');
+      });
+
+      it('corroborates when ONLY the trimmed reference is in band, and reports it', async () => {
+        chapterStub().mockResolvedValue({ fullSeconds: ADDIE_FULL, trimmedSeconds: ADDIE_TRIMMED });
+
+        const res = await post({ asin: ASIN, scannedSeconds: ADDIE_SCANNED });
+
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.payload)).toEqual({
+          corroborated: true,
+          chapterSeconds: ADDIE_FULL,
+          trimmedChapterSeconds: ADDIE_TRIMMED,
+        });
+      });
+
+      it('reports NOT corroborated when neither reference is in band', async () => {
+        chapterStub().mockResolvedValue({ fullSeconds: ADDIE_FULL, trimmedSeconds: ADDIE_TRIMMED });
+
+        const res = await post({ asin: ASIN, scannedSeconds: 70_000 });
+
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.payload)).toEqual({
+          corroborated: false,
+          chapterSeconds: ADDIE_FULL,
+          trimmedChapterSeconds: ADDIE_TRIMMED,
+        });
+      });
+
+      it('OMITS the trimmed field when a chapter WAS removed but the two runtimes are equal', async () => {
+        // One zero-length chapter was removed, but this field represents a distinct runtime, not the trim act.
+        chapterStub().mockResolvedValue({ fullSeconds: CHAPTERS, trimmedSeconds: CHAPTERS });
+
+        const res = await post({ asin: ASIN, scannedSeconds: SCANNED });
+
+        const body = JSON.parse(res.payload);
+        expect(body).toEqual({ corroborated: true, chapterSeconds: CHAPTERS });
+        expect(body).not.toHaveProperty('trimmedChapterSeconds');
+      });
+
+      it('never puts the trimmed chapter COUNT on the wire', async () => {
+        chapterStub().mockResolvedValue({ fullSeconds: ADDIE_FULL, trimmedSeconds: ADDIE_TRIMMED });
+
+        const res = await post({ asin: ASIN, scannedSeconds: ADDIE_SCANNED });
+
+        expect(Object.keys(JSON.parse(res.payload)).sort())
+          .toEqual(['chapterSeconds', 'corroborated', 'trimmedChapterSeconds']);
+      });
+
+      it('a trimmed-only reference (no usable full one) still answers and reports it', async () => {
+        chapterStub().mockResolvedValue({ trimmedSeconds: ADDIE_TRIMMED });
+
+        const res = await post({ asin: ASIN, scannedSeconds: ADDIE_SCANNED });
+
+        const body = JSON.parse(res.payload);
+        expect(body).toEqual({ corroborated: true, trimmedChapterSeconds: ADDIE_TRIMMED });
+        expect(body).not.toHaveProperty('chapterSeconds');
+      });
     });
   });
 

@@ -113,7 +113,6 @@ export const DOWNLOAD_CLIENT_REGISTRY = {
   },
 } satisfies Record<DownloadClientType, DownloadClientTypeMetadata>;
 
-/** Normalize raw DB settings into typed form settings */
 export function settingsFromClient(
   client: { type: DownloadClientType; settings: unknown },
 ): CreateDownloadClientFormData['settings'] {

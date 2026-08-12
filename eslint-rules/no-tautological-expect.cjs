@@ -1,20 +1,4 @@
-/**
- * ESLint rule: no-tautological-expect
- *
- * Disallows tautological assertions of the form `expect(<literal>).toBe(<same literal>)`
- * (or `.toEqual(<same literal>)`, `.toStrictEqual(<same literal>)`).
- *
- * These assertions pass regardless of whether the production code under test works —
- * `expect(true).toBe(true)`, `expect(1).toBe(1)`, `expect(false).toBe(false)`, etc.
- * They give false confidence and let regressions slip through. If a test only needs
- * to check "the function did not throw," omit the assertion and let the test framework
- * fail on uncaught exceptions; if it needs to verify behavior, write an assertion that
- * actually exercises that behavior.
- *
- * Matches literals that compare equal: same primitive value (boolean, number, string,
- * null, undefined). Does NOT flag identifier-based tautologies (`expect(x).toBe(x)`)
- * because those legitimately appear in reference-equality tests.
- */
+// Rejects equal literal assertions for toBe/toEqual/toStrictEqual; identifier equality remains valid reference testing.
 
 const TAUTOLOGY_MATCHERS = new Set(['toBe', 'toEqual', 'toStrictEqual']);
 
@@ -37,14 +21,38 @@ function literalValue(node) {
   return { kind: 'unknown' };
 }
 
+// Deliberately narrow. A blanket `expect.<member>(...)` would pull in the asymmetric-matcher
+// factories (`expect.any`, `expect.objectContaining`, …), whose argument is a matcher
+// specification, not an assertion subject.
+const EXPECT_MEMBERS = new Set(['soft']);
+
 function isExpectCall(node) {
+  if (!node || node.type !== 'CallExpression' || node.arguments.length < 1) return false;
+  const { callee } = node;
+  if (callee.type === 'Identifier') return callee.name === 'expect';
   return (
-    node &&
-    node.type === 'CallExpression' &&
-    node.callee.type === 'Identifier' &&
-    node.callee.name === 'expect' &&
-    node.arguments.length >= 1
+    callee.type === 'MemberExpression' &&
+    !callee.computed &&
+    callee.object.type === 'Identifier' &&
+    callee.object.name === 'expect' &&
+    callee.property.type === 'Identifier' &&
+    EXPECT_MEMBERS.has(callee.property.name)
   );
+}
+
+// Strips at most one `.not`. Traversing further would accept `expect(x).not.not.toBe(x)`,
+// which is not a tautology — the second negation restores the original assertion.
+function unwrapNegation(node) {
+  if (
+    node &&
+    node.type === 'MemberExpression' &&
+    !node.computed &&
+    node.property.type === 'Identifier' &&
+    node.property.name === 'not'
+  ) {
+    return { subject: node.object, negated: true };
+  }
+  return { subject: node, negated: false };
 }
 
 /** @type {import('eslint').Rule.RuleModule} */
@@ -59,20 +67,21 @@ const rule = {
     messages: {
       tautology:
         'Tautological assertion: `expect({{lhs}}).{{matcher}}({{rhs}})` always passes regardless of production behavior. Replace with an assertion that exercises the code under test, or remove if the test should rely on absence of exceptions.',
+      negatedTautology:
+        'Tautological assertion: `expect({{lhs}}).not.{{matcher}}({{rhs}})` always fails regardless of production behavior. Replace with an assertion that exercises the code under test, or remove it.',
     },
   },
 
   create(context) {
     return {
       CallExpression(node) {
-        // Match `<expectCall>.<matcher>(<arg>)`
         if (node.callee.type !== 'MemberExpression') return;
         const matcherName =
           node.callee.property.type === 'Identifier' ? node.callee.property.name : null;
         if (!matcherName || !TAUTOLOGY_MATCHERS.has(matcherName)) return;
         if (node.arguments.length !== 1) return;
 
-        const expectCall = node.callee.object;
+        const { subject: expectCall, negated } = unwrapNegation(node.callee.object);
         if (!isExpectCall(expectCall)) return;
 
         const lhs = literalValue(expectCall.arguments[0]);
@@ -83,7 +92,7 @@ const rule = {
         const sourceCode = context.sourceCode;
         context.report({
           node,
-          messageId: 'tautology',
+          messageId: negated ? 'negatedTautology' : 'tautology',
           data: {
             lhs: sourceCode.getText(expectCall.arguments[0]),
             matcher: matcherName,

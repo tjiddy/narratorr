@@ -127,13 +127,8 @@ describe('hasNonReplaceableBlocker', () => {
 });
 
 /**
- * Stateful staged/rollback transaction fixture (#1857 F4). Models what
- * `createMockDb` cannot: a transaction that COMMITS staged writes on resolve and
- * DISCARDS them on throw. Each guarded `transitionDownloadState` write is only
- * staged when its `.returning()` resolves a non-empty row (the guard matched),
- * driven by `returningSeq`; the recorded `where` predicates let the test prove the
- * `expected` guard is present (deletion heuristic). `committed` is empty after a
- * rollback — proving every original row is left unchanged.
+ * Stage guarded writes and commit only when the callback resolves. returningSeq controls guard
+ * hits; wherePredicates exposes each guard, and an empty committed array proves rollback.
  */
 function stagedTxDb(returningSeq: Array<Array<{ id: number }>>, recheckRows: DownloadRow[] = [], recheckJobs: Array<{ id: number }> = []) {
   const committed: Array<Record<string, unknown>> = [];
@@ -150,14 +145,14 @@ function stagedTxDb(returningSeq: Array<Array<{ id: number }>>, recheckRows: Dow
             return {
               returning: async () => {
                 const rows = returningSeq[updateCall++] ?? [];
-                if (rows.length > 0) staged.push(payload); // would-be committed write
+                if (rows.length > 0) staged.push(payload);
                 return rows;
               },
             };
           },
         }),
       }),
-      // in-tx recheck gather: first select → rows, second → pending auto jobs
+      // The claim recheck selects rows, then pending auto jobs.
       select: (() => {
         let sel = 0;
         return () => ({
@@ -171,8 +166,6 @@ function stagedTxDb(returningSeq: Array<Array<{ id: number }>>, recheckRows: Dow
         });
       })(),
     };
-    // If cb throws (ClaimMissError), the await propagates and `committed.push`
-    // below never runs → staged writes are discarded (rollback). On resolve, commit.
     const r = await cb(tx);
     committed.push(...staged);
     return r;
@@ -187,31 +180,26 @@ describe('claimReplaceableTargets (#1857 F4/F17/F21/F63)', () => {
   ];
 
   it('guard-claims every target to (failed, idle) with the reason written atomically, then commits', async () => {
-    const { db, committed, wherePredicates } = stagedTxDb([[{ id: 1 }], [{ id: 1 }]]); // both land, recheck empty
+    const { db, committed, wherePredicates } = stagedTxDb([[{ id: 1 }], [{ id: 1 }]]);
     await claimReplaceableTargets(db, 5, targets, 'Replaced by "New"');
 
-    // Both rows committed with the sanctioned failure tuple + the replace reason (F63).
     expect(committed).toHaveLength(2);
     expect(committed[0]).toMatchObject({ clientStatus: 'failed', pipelineStage: 'idle', errorMessage: 'Replaced by "New"' });
-    // Each claim carried the EXACT guarded predicate (id + observed tuple) — deletion heuristic.
     expect(wherePredicates[0]).toEqual(and(eq(downloads.id, 10), eq(downloads.clientStatus, 'downloading'), eq(downloads.pipelineStage, 'idle')));
     expect(wherePredicates[1]).toEqual(and(eq(downloads.id, 11), eq(downloads.clientStatus, 'queued'), eq(downloads.pipelineStage, 'idle')));
   });
 
   it('second claim guard-miss throws ClaimMissError and ROLLS BACK the first (nothing committed)', async () => {
-    const { db, committed, wherePredicates } = stagedTxDb([[{ id: 1 }], []]); // first lands, second misses
+    const { db, committed, wherePredicates } = stagedTxDb([[{ id: 1 }], []]);
 
     await expect(claimReplaceableTargets(db, 5, targets, 'r')).rejects.toBeInstanceOf(ClaimMissError);
 
-    // The first row was STAGED but the sentinel rolled the whole tx back → 0 committed.
     expect(committed).toHaveLength(0);
-    // Both guarded predicates were still issued (the guard IS present on both claims).
     expect(wherePredicates[0]).toEqual(and(eq(downloads.id, 10), eq(downloads.clientStatus, 'downloading'), eq(downloads.pipelineStage, 'idle')));
     expect(wherePredicates[1]).toEqual(and(eq(downloads.id, 11), eq(downloads.clientStatus, 'queued'), eq(downloads.pipelineStage, 'idle')));
   });
 
   it('in-tx recheck finding a new non-replaceable blocker throws ClaimMissError and rolls back all claims', async () => {
-    // Both claims land, but the recheck finds an importing row → blocker → rollback.
     const { db, committed } = stagedTxDb(
       [[{ id: 1 }], [{ id: 1 }]],
       [dl({ id: 99, clientStatus: 'completed', pipelineStage: 'importing', externalId: 'e' })],
@@ -219,13 +207,10 @@ describe('claimReplaceableTargets (#1857 F4/F17/F21/F63)', () => {
     );
 
     await expect(claimReplaceableTargets(db, 5, targets, 'r')).rejects.toBeInstanceOf(ClaimMissError);
-    expect(committed).toHaveLength(0); // every claimed row rolled back
+    expect(committed).toHaveLength(0);
   });
 });
 
-// Exhaustive tuple-product coverage migrated from download-status-registry.test
-// when the legacy `isReplaceableState`/`REPLACEABLE_STATUSES` pair was deleted
-// (#1861). The consolidated grab-time predicates now own replaceability + blocking.
 describe('grab-time predicates over the full (clientStatus, pipelineStage) product (#1861, migrated)', () => {
   const clientStatuses = clientStatusSchema.options;
   const pipelineStages = pipelineStageSchema.options;
@@ -251,7 +236,7 @@ describe('grab-time predicates over the full (clientStatus, pipelineStage) produ
       for (const p of pipelineStages) {
         const blocked = isPipelineBlocker({ clientStatus: c, pipelineStage: p, externalId: 'ext-1' });
         const isNonIdlePipeline = p === 'checking' || p === 'pending_review' || p === 'importing';
-        const isQgEligible = deriveDisplayStatus(c, p) === 'completed'; // tracked → gate-eligible
+        const isQgEligible = deriveDisplayStatus(c, p) === 'completed';
         expect(blocked).toBe(isNonIdlePipeline || isQgEligible);
       }
     }

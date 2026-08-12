@@ -120,7 +120,6 @@ export function ImportActivityCard({ job }: ImportActivityCardProps) {
         isProcessing ? 'ring-1 ring-amber-500/20 shadow-lg shadow-amber-500/5 dark:ring-amber-500/30 dark:shadow-amber-500/10' : ''
       } ${isCompleted ? 'animate-fade-out' : ''}`}
     >
-      {/* Header with cover + title */}
       <div className="flex items-start gap-3 mb-3">
         {coverUrl ? (
           <img src={coverUrl} alt={`Cover for ${job.book.title}`} className="w-10 h-10 rounded-lg object-cover flex-shrink-0 shadow-sm" />
@@ -147,10 +146,8 @@ export function ImportActivityCard({ job }: ImportActivityCardProps) {
         )}
       </div>
 
-      {/* Phase checklist */}
       {phaseHistory.length > 0 && (
         <div className="relative pl-[22px] space-y-0.5 mt-1">
-          {/* Vertical connector — segmented by completion state */}
           <div className="absolute left-[7px] top-1.5 bottom-1.5 w-px bg-border/60 dark:bg-border/40" />
           {phaseHistory.map((entry, idx) => {
             const isDone = entry.completedAt !== undefined;

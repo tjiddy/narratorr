@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { LibraryActionsMenu, type LibraryActionsMenuProps } from './LibraryActionsMenu';
 import { useBulkOperation } from '@/hooks/useBulkOperation';
-import type { BulkOpType } from '@/lib/api';
+import type { BulkOpType, BulkJobFailure } from '@/lib/api';
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 
@@ -36,6 +36,7 @@ interface BulkOverrides {
   completed?: number;
   total?: number;
   failures?: number;
+  failureDetails?: BulkJobFailure[];
 }
 
 function mockBulk(overrides: BulkOverrides = {}) {
@@ -46,6 +47,7 @@ function mockBulk(overrides: BulkOverrides = {}) {
       completed: overrides.completed ?? 0,
       total: overrides.total ?? 0,
       failures: overrides.failures ?? 0,
+      failureDetails: overrides.failureDetails ?? [],
     },
     startJob: mockStartJob,
   });
@@ -160,7 +162,6 @@ describe('LibraryActionsMenu', () => {
       await openMenu(user);
 
       const menu = screen.getByRole('menu');
-      // 3 dividers: after imports, after refresh/search, before remove-missing
       expect(menu.querySelectorAll('.border-t')).toHaveLength(3);
     });
   });
@@ -313,7 +314,6 @@ describe('LibraryActionsMenu', () => {
 
       const focusable = screen.getAllByRole('menuitem').filter((el) => !el.hasAttribute('disabled'));
       const labels = focusable.map((el) => el.textContent);
-      // Bulk items are disabled; non-bulk actions remain focusable.
       expect(labels).toEqual([
         'Import Files',
         'Import Existing Library',
@@ -350,19 +350,16 @@ describe('LibraryActionsMenu', () => {
 
     it('reflects the retag-count prefetch as a busy trigger that also disables other bulk items', async () => {
       const user = userEvent.setup();
-      // Keep the count prefetch pending so isLoadingCount stays true.
       (api.getBulkRetagCount as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
       renderMenu();
       await openMenu(user);
       await user.click(screen.getByRole('menuitem', { name: /re-tag all books/i }));
 
-      // Menu closed on click; trigger now shows the loading state.
       const trigger = screen.getByRole('button', { name: /library actions/i });
       await waitFor(() => {
         expect(trigger.textContent).toMatch(/loading/i);
       });
 
-      // Reopen — bulk items are disabled while the prefetch is in flight.
       await user.click(trigger);
       expect(screen.getByRole('menuitem', { name: /rename all books/i })).toBeDisabled();
       expect(screen.getByRole('menuitem', { name: /re-tag all books/i })).toBeDisabled();
@@ -383,6 +380,90 @@ describe('LibraryActionsMenu', () => {
     });
   });
 
+  describe('named failure disclosure', () => {
+    const liveCase: BulkJobFailure = { bookId: 226, title: "Captain's Fury", error: 'ENOENT' };
+
+    function failureDisclosure() {
+      return screen.getByRole('button', { name: /failure/i });
+    }
+
+    it('renders nothing new when there are no failures', () => {
+      renderMenu({}, { isRunning: true, jobType: 'rename', completed: 5, total: 10, failures: 0 });
+      expect(screen.queryByText(/failure/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /failure/i })).not.toBeInTheDocument();
+    });
+
+    it('reads "1 failure" while collapsed, with the detail hidden', () => {
+      renderMenu({}, { isRunning: true, jobType: 'write_metadata_sidecars', failures: 1, failureDetails: [liveCase] });
+      expect(screen.getByText(/1 failure/i)).toBeInTheDocument();
+      expect(failureDisclosure()).toHaveAttribute('aria-expanded', 'false');
+      expect(screen.queryByText(/Captain's Fury/)).not.toBeInTheDocument();
+    });
+
+    it('names the book when expanded — the live #2159 case', async () => {
+      const user = userEvent.setup();
+      renderMenu({}, { isRunning: true, jobType: 'write_metadata_sidecars', failures: 1, failureDetails: [liveCase] });
+
+      await user.click(failureDisclosure());
+
+      expect(screen.getByText("Captain's Fury (book 226): ENOENT")).toBeInTheDocument();
+      expect(failureDisclosure()).toHaveAttribute('aria-expanded', 'true');
+    });
+
+    it('ends the expanded list with "…and N more" when the count exceeds the retained rows', async () => {
+      const user = userEvent.setup();
+      const failureDetails = Array.from({ length: 50 }, (_, i) => ({ bookId: i + 1, title: `Book ${i + 1}`, error: 'ENOENT' }));
+      renderMenu({}, { isRunning: false, jobType: 'rename', failures: 60, failureDetails });
+
+      await user.click(failureDisclosure());
+
+      expect(screen.getByText('…and 10 more')).toBeInTheDocument();
+      expect(screen.getByText('Book 1 (book 1): ENOENT')).toBeInTheDocument();
+      expect(screen.getByText('Book 50 (book 50): ENOENT')).toBeInTheDocument();
+    });
+
+    it('omits the "…and N more" row when every failure is named', async () => {
+      const user = userEvent.setup();
+      renderMenu({}, { isRunning: false, failures: 1, failureDetails: [liveCase] });
+
+      await user.click(failureDisclosure());
+
+      expect(screen.queryByText(/and \d+ more/)).not.toBeInTheDocument();
+    });
+
+    it('still discloses the named failures after the job completes', async () => {
+      const user = userEvent.setup();
+      renderMenu({}, { isRunning: false, jobType: null, completed: 694, total: 694, failures: 1, failureDetails: [liveCase] });
+
+      expect(screen.getByText(/1 failure/i)).toBeInTheDocument();
+      await user.click(failureDisclosure());
+      expect(screen.getByText("Captain's Fury (book 226): ENOENT")).toBeInTheDocument();
+    });
+
+    describe('z-index scale (CSS-1)', () => {
+      it('failure panel has z-30 class (dropdown scale)', async () => {
+        const user = userEvent.setup();
+        renderMenu({}, { isRunning: true, failures: 1, failureDetails: [liveCase] });
+
+        await user.click(failureDisclosure());
+
+        const panel = screen.getByText("Captain's Fury (book 226): ENOENT").closest('ul')!;
+        expect(panel).toHaveClass('z-30');
+        expect(panel).not.toHaveClass('z-20');
+      });
+    });
+
+    it('collapses again on a second click', async () => {
+      const user = userEvent.setup();
+      renderMenu({}, { isRunning: true, failures: 1, failureDetails: [liveCase] });
+
+      await user.click(failureDisclosure());
+      expect(screen.getByText("Captain's Fury (book 226): ENOENT")).toBeInTheDocument();
+      await user.click(failureDisclosure());
+      expect(screen.queryByText("Captain's Fury (book 226): ENOENT")).not.toBeInTheDocument();
+    });
+  });
+
   describe('accessibility / keyboard', () => {
     it('focuses the first enabled item on open and wraps with ArrowUp/ArrowDown across the full set', async () => {
       const user = userEvent.setup();
@@ -390,9 +471,9 @@ describe('LibraryActionsMenu', () => {
       await openMenu(user);
 
       expect(screen.getByRole('menuitem', { name: /import files/i })).toHaveFocus();
-      await user.keyboard('{ArrowUp}'); // wrap to last enabled item
+      await user.keyboard('{ArrowUp}');
       expect(screen.getByRole('menuitem', { name: /remove missing books/i })).toHaveFocus();
-      await user.keyboard('{ArrowDown}'); // wrap back to first
+      await user.keyboard('{ArrowDown}');
       expect(screen.getByRole('menuitem', { name: /import files/i })).toHaveFocus();
     });
 

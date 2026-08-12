@@ -26,10 +26,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   };
 });
 
-// The marker-gated recovery sequence (#1418) touches real fs and short-circuits to
-// "marker present" under mocked fs (#1391), so it is stubbed here. These unit tests
-// assert it is invoked with the path the writer is about to mutate; the real on-disk
-// recovery behavior is covered in rename.service.marker.test.ts (real tmpdir).
+// Mocked fs short-circuits marker recovery; real-disk coverage lives in rename.service.marker.test.ts.
 vi.mock('../utils/recover-interrupted-commit.js', () => ({
   recoverInterruptedCommit: vi.fn().mockResolvedValue(undefined),
 }));
@@ -84,10 +81,7 @@ describe('RenameService', () => {
     (rename as Mock).mockResolvedValue(undefined);
     (mkdir as Mock).mockResolvedValue(undefined);
     (rm as Mock).mockResolvedValue(undefined);
-    // Default: in-library oldPaths don't exist on disk under the mocked fs, so the
-    // realpath-aware guard sees ENOENT and swallows it — mirroring real-fs behavior
-    // for these synthetic paths. Individual tests override to simulate symlink escapes
-    // or in-library canonical resolution.
+    // Synthetic paths default to ENOENT; containment tests override realpath as needed.
     (realpath as Mock).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
   });
 
@@ -96,7 +90,6 @@ describe('RenameService', () => {
       const { service, bookService } = createService();
       const book = { ...mockBook, path: '/library/Wrong Author/Old Title' };
       bookService.getById.mockResolvedValue(book);
-      // Audio files exist in the source folder and don't match the file template
       (readdir as Mock).mockResolvedValue([
         { name: 'foo.m4b', isFile: () => true },
       ]);
@@ -153,7 +146,6 @@ describe('RenameService', () => {
       const { service, bookService } = createService();
       const book = { ...mockBook, path: '/library/Brandon Sanderson/The Way of Kings' };
       bookService.getById.mockResolvedValue(book);
-      // File already matches the file template
       (readdir as Mock).mockResolvedValue([
         { name: 'Brandon Sanderson - The Way of Kings.m4b', isFile: () => true },
       ]);
@@ -203,11 +195,9 @@ describe('RenameService', () => {
 
       const plan = await service.planRename(1);
 
-      // Folder paths relative to libraryRoot
       expect(plan.folderMove?.from.startsWith('/')).toBe(false);
       expect(plan.folderMove?.to.startsWith('/')).toBe(false);
       expect(plan.libraryRoot).toBe('/library');
-      // Bare filenames — no path separators
       for (const r of plan.fileRenames) {
         expect(r.from).not.toContain('/');
         expect(r.to).not.toContain('/');
@@ -226,11 +216,9 @@ describe('RenameService', () => {
 
       const plan = await service.planRename(1);
 
-      // Now exercise the apply path and capture rename() calls
       (rename as Mock).mockClear();
       await service.renameBook(1);
 
-      // Each rename call: (oldPath, newPath) where both include join(targetPath, filename)
       const applyPairs = (rename as Mock).mock.calls.map((args: unknown[]) => {
         const from = (args[0] as string).split(/[/\\]/).pop()!;
         const to = (args[1] as string).split(/[/\\]/).pop()!;
@@ -247,8 +235,7 @@ describe('RenameService', () => {
       const book = { ...mockBook, path: oldPath };
       bookService.getById.mockResolvedValue(book);
       bookService.update.mockResolvedValue({ ...book, path: targetPath });
-      // Same audio file listing whether read from source folder (preview) or target
-      // folder (apply) — folder move is a rename(), so the file set is preserved.
+      // Preview and apply see the same file set because the folder move preserves its contents.
       (readdir as Mock).mockResolvedValue([
         { name: 'a.m4b', isFile: () => true },
         { name: 'b.m4b', isFile: () => true },
@@ -256,25 +243,18 @@ describe('RenameService', () => {
 
       const plan = await service.planRename(1);
 
-      // Path changed → planner must produce a folderMove so this exercises pathChanged === true
       expect(plan.folderMove).not.toBeNull();
       expect(plan.fileRenames.length).toBeGreaterThan(0);
 
-      // Exercise the apply path and capture file rename calls.
-      // First rename call is the folder move (oldPath → targetPath); subsequent
-      // calls are per-file renames inside the target folder.
       (rename as Mock).mockClear();
       await service.renameBook(1);
 
       const renameCalls = (rename as Mock).mock.calls;
-      // Folder move first, then one rename per planned file rename.
       expect(renameCalls.length).toBe(1 + plan.fileRenames.length);
       const folderMoveCall = renameCalls[0]!;
       expect((folderMoveCall[0] as string).split('\\').join('/')).toBe(oldPath);
       expect((folderMoveCall[1] as string).split('\\').join('/')).toBe(targetPath);
 
-      // The remaining calls are the file renames — their bare-filename pairs must
-      // match plan.fileRenames in order.
       const applyPairs = renameCalls.slice(1).map((args: unknown[]) => {
         const from = (args[0] as string).split(/[/\\]/).pop()!;
         const to = (args[1] as string).split(/[/\\]/).pop()!;
@@ -326,7 +306,6 @@ describe('RenameService', () => {
 
       const result = await service.renameBook(1);
 
-      // {author}/{title} with "Brandon Sanderson" and "The Way of Kings"
       expect(result.newPath).toMatch(/Brandon Sanderson/);
       expect(result.newPath).toMatch(/The Way of Kings/);
     });
@@ -345,7 +324,6 @@ describe('RenameService', () => {
 
     it('returns no-op when target path matches current path and no files to rename', async () => {
       const { service, bookService, settingsService } = createService();
-      // Path already matches what buildTargetPath would produce
       (settingsService.get as Mock).mockResolvedValue({ ...libraryOverrides.library, fileFormat: '' });
       const book = { ...mockBook, path: '/library/Brandon Sanderson/The Way of Kings' };
       bookService.getById.mockResolvedValue(book);
@@ -378,7 +356,6 @@ describe('RenameService', () => {
       const book = { ...mockBook, id: 1, path: '/library/wrong/path' };
       const otherBook = { ...mockBook, id: 2, title: 'The Way of Kings', path: '/library/Brandon Sanderson/The Way of Kings' };
       bookService.getById.mockResolvedValue(book);
-      // checkConflict now uses targeted DB query
       db.select.mockReturnValue(mockDbChain([otherBook]));
       (stat as Mock).mockResolvedValue({ isFile: () => false, isDirectory: () => true });
 
@@ -405,31 +382,26 @@ describe('RenameService', () => {
       bookService.getAll.mockResolvedValue({ data: [book], total: 1 });
       bookService.update.mockResolvedValue({ ...book, path: '/library/Brandon Sanderson/The Way of Kings' });
 
-      // readdir returns files so renameFilesWithTemplate runs, but file rename fails
       (readdir as Mock).mockResolvedValue([
         { name: 'file1.m4b', isFile: () => true },
       ]);
-      // First rename call is the folder move (succeeds), second is file rename (fails)
       (rename as Mock)
         .mockResolvedValueOnce(undefined)  // folder move
         .mockRejectedValueOnce(new Error('EACCES'));  // file rename
 
       await expect(service.renameBook(1)).rejects.toThrow('EACCES');
 
-      // DB path should have been updated before the file rename failure
       expect(bookService.update).toHaveBeenCalledWith(1, expect.objectContaining({ path: expect.any(String) }));
     });
 
     it('handles cross-volume move with copy+delete fallback (EXDEV)', async () => {
       const { service, bookService } = createService();
-      // In-library source (EXDEV can still happen within the root across bind mounts) —
-      // the containment guard must let it through to the EXDEV fallback.
+      // EXDEV can occur across bind mounts without leaving the library root.
       const book = { ...mockBook, path: '/library/Wrong Author/Old Title' };
       bookService.getById.mockResolvedValue(book);
       bookService.getAll.mockResolvedValue({ data: [book], total: 1 });
       bookService.update.mockResolvedValue(book);
 
-      // First rename call (folder move) throws EXDEV
       (rename as Mock).mockRejectedValueOnce(Object.assign(new Error('EXDEV'), { code: 'EXDEV' }));
 
       await service.renameBook(1);
@@ -438,7 +410,6 @@ describe('RenameService', () => {
       expect(rm).toHaveBeenCalled();
     });
 
-    // #1418 — marker convergence runs before any destructive mutation
     it('converges the commit-pending marker on oldPath before moving the folder', async () => {
       const { service, bookService } = createService();
       const book = { ...mockBook, path: '/library/Wrong Author/Old Title' };
@@ -448,19 +419,16 @@ describe('RenameService', () => {
 
       await service.renameBook(1);
 
-      // Recovery is invoked on the OLD path with the library root, before the move.
       expect(recoverInterruptedCommit).toHaveBeenCalledWith(
         '/library/Wrong Author/Old Title',
         '/library',
         expect.anything(),
       );
-      // Recovery happened before the destructive rename.
       const recoverOrder = (recoverInterruptedCommit as Mock).mock.invocationCallOrder[0]!;
       const renameOrder = (rename as Mock).mock.invocationCallOrder[0]!;
       expect(recoverOrder).toBeLessThan(renameOrder);
     });
 
-    // #1418 (F5) — recovery runs even when the folder name is unchanged (file-only rename)
     it('converges the marker even when pathChanged is false (file-template rename only)', async () => {
       const { service, bookService } = createService();
       const book = { ...mockBook, path: '/library/Brandon Sanderson/The Way of Kings' };
@@ -476,7 +444,6 @@ describe('RenameService', () => {
       );
     });
 
-    // #1418 — a recovery failure aborts before any destructive mutation
     it('aborts the rename when recovery throws, leaving DB and disk untouched', async () => {
       const { service, bookService } = createService();
       const book = { ...mockBook, path: '/library/Wrong Author/Old Title' };
@@ -485,13 +452,10 @@ describe('RenameService', () => {
 
       await expect(service.renameBook(1)).rejects.toThrow('recovery failed');
 
-      // No destructive mutation ran: neither the folder move nor the file-template
-      // renames (both go through rename()), and the DB row was not updated.
       expect(rename).not.toHaveBeenCalled();
       expect(bookService.update).not.toHaveBeenCalled();
     });
 
-    // #1550 — library-root containment guard runs before any destructive mutation
     describe('library-root containment guard (#1550)', () => {
       it('rejects an outside-root book.path before recovery, move, or DB update (folder-move branch)', async () => {
         const { service, bookService } = createService();
@@ -537,7 +501,6 @@ describe('RenameService', () => {
 
       it('rejects on the !pathChanged branch before in-place file renames (symlink escape)', async () => {
         const { service, bookService } = createService();
-        // Path already at its computed target → pathChanged=false → in-place rename branch.
         bookService.getById.mockResolvedValue({ ...mockBook, path: '/library/Brandon Sanderson/The Way of Kings' });
         (readdir as Mock).mockResolvedValue([{ name: 'foo.m4b', isFile: () => true }]);
         (realpath as Mock)
@@ -554,8 +517,6 @@ describe('RenameService', () => {
         const book = { ...mockBook, path: '/library/Wrong Author/Old Title' };
         bookService.getById.mockResolvedValue(book);
         bookService.update.mockResolvedValue(book);
-        // realpath ENOENT (default) — the guard must not raise; rename/recovery proceed.
-
         await service.renameBook(1);
 
         expect(recoverInterruptedCommit).toHaveBeenCalled();
@@ -579,23 +540,18 @@ describe('RenameService', () => {
     });
   });
 
-  // N+1 elimination tests (issue #356)
   describe('checkConflict optimization', () => {
     it('uses targeted DB query instead of bookService.getAll()', async () => {
       const { service, db, bookService } = createService();
       const book = { ...mockBook, id: 1, path: '/library/wrong/path' };
       bookService.getById.mockResolvedValue(book);
       bookService.update.mockResolvedValue({ ...book, path: '/library/Brandon Sanderson/The Way of Kings' });
-      // stat succeeds = target exists on disk
       (stat as Mock).mockResolvedValue({ isFile: () => false, isDirectory: () => true });
-      // DB query returns no conflict
       db.select.mockReturnValue(mockDbChain([]));
 
       await service.renameBook(1);
 
-      // getAll should NOT be called
       expect(bookService.getAll).not.toHaveBeenCalled();
-      // db.select should be called for the conflict check
       expect(db.select).toHaveBeenCalled();
     });
 
@@ -604,7 +560,6 @@ describe('RenameService', () => {
       const book = { ...mockBook, id: 1, path: '/library/wrong/path' };
       bookService.getById.mockResolvedValue(book);
       bookService.update.mockResolvedValue(book);
-      // stat rejects = target doesn't exist → no conflict check needed
       (stat as Mock).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
 
       await service.renameBook(1);
@@ -664,8 +619,7 @@ describe('RenameService', () => {
         renameFilesWithTemplate('/library/test', '{title}', mockBook, 'Brandon Sanderson', inject<FastifyBaseLogger>(log)),
       ).rejects.toThrow('EACCES');
 
-      // Rollback: rename should be called to undo the first successful rename
-      expect(rename).toHaveBeenCalledTimes(3); // 2 attempts + 1 rollback
+      expect(rename).toHaveBeenCalledTimes(3); // Two attempts plus one rollback.
     });
 
     it('continues rollback when one rollback fails', async () => {
@@ -686,7 +640,7 @@ describe('RenameService', () => {
         renameFilesWithTemplate('/library/test', '{title}', mockBook, 'Brandon Sanderson', inject<FastifyBaseLogger>(log)),
       ).rejects.toThrow('EACCES');
 
-      // 3 forward attempts + 2 rollback attempts (file2 reverse + file1 reverse)
+      // Three forward attempts plus two reverse attempts.
       expect(rename).toHaveBeenCalledTimes(5);
     });
 
@@ -708,15 +662,12 @@ describe('RenameService', () => {
         renameFilesWithTemplate('/library/test', '{title}', mockBook, 'Brandon Sanderson', inject<FastifyBaseLogger>(log)),
       ).rejects.toThrow('EACCES');
 
-      // 3 forward attempts + 2 rollback attempts = 5 total
       expect(rename).toHaveBeenCalledTimes(5);
-      // log.error called for EACH failed rollback file
       const errorCalls = (log.error as ReturnType<typeof vi.fn>).mock.calls;
       const rollbackErrors = errorCalls.filter(
         (call: unknown[]) => typeof call[1] === 'string' && call[1].includes('Rollback failed'),
       );
       expect(rollbackErrors).toHaveLength(2);
-      // Original error is re-thrown (not a rollback error)
     });
 
     it('does not log rollback error when single rollback succeeds', async () => {
@@ -734,9 +685,7 @@ describe('RenameService', () => {
         renameFilesWithTemplate('/library/test', '{title}', mockBook, 'Brandon Sanderson', inject<FastifyBaseLogger>(log)),
       ).rejects.toThrow('EACCES');
 
-      // 2 forward + 1 rollback = 3 total
       expect(rename).toHaveBeenCalledTimes(3);
-      // No rollback errors logged — the single rollback succeeded
       const errorCalls = (log.error as ReturnType<typeof vi.fn>).mock.calls;
       const rollbackErrors = errorCalls.filter(
         (call: unknown[]) => typeof call[1] === 'string' && call[1].includes('Rollback failed'),
@@ -746,7 +695,6 @@ describe('RenameService', () => {
 
     it('deduplicates colliding filenames', async () => {
       const { log } = createService();
-      // Two files, template produces same name for both
       (readdir as Mock).mockResolvedValue([
         { name: 'a.m4b', isFile: () => true },
         { name: 'b.m4b', isFile: () => true },
@@ -760,11 +708,9 @@ describe('RenameService', () => {
         inject<FastifyBaseLogger>(log),
       );
 
-      // Should have renamed both files, second gets (2) suffix
       const renameCalls = (rename as Mock).mock.calls;
       const newNames = renameCalls.map((call: unknown[]) => call[1] as string);
       expect(newNames).toHaveLength(2);
-      // Check they're different
       expect(new Set(newNames).size).toBe(2);
     });
 
@@ -784,7 +730,6 @@ describe('RenameService', () => {
       );
 
       expect(rename).toHaveBeenCalled();
-      // The renamed file should use period separator and uppercase
       const newPath = (rename as Mock).mock.calls[0]![1] as string;
       expect(newPath).toContain('BRANDON.SANDERSON');
     });
@@ -796,7 +741,6 @@ describe('RenameService', () => {
           { name: 'audiobook.m4b', isFile: () => true },
         ]);
 
-        // Template references trackNumber — should produce empty for single file
         await renameFilesWithTemplate(
           '/library/test',
           '{title} {trackNumber}',
@@ -805,8 +749,6 @@ describe('RenameService', () => {
           inject<FastifyBaseLogger>(log),
         );
 
-        // With track tokens omitted, {trackNumber} resolves to empty →
-        // result is "The Way of Kings" (trailing space trimmed by sanitizePath)
         const newPath = (rename as Mock).mock.calls[0]![1] as string;
         expect(newPath).not.toContain('1');
         expect(newPath).toContain('The Way of Kings.m4b');
@@ -830,7 +772,6 @@ describe('RenameService', () => {
 
         const renameCalls = (rename as Mock).mock.calls;
         expect(renameCalls).toHaveLength(3);
-        // Each file gets a trackNumber
         expect((renameCalls[0]![1] as string)).toContain('1 - The Way of Kings');
         expect((renameCalls[1]![1] as string)).toContain('2 - The Way of Kings');
         expect((renameCalls[2]![1] as string)).toContain('3 - The Way of Kings');
@@ -929,7 +870,6 @@ describe('RenameService', () => {
         );
 
         const newPath = ((rename as Mock).mock.calls[0]![1] as string).split('\\').join('/');
-        // partName absent → conditional prefix " - " omitted → just "Title"
         expect(newPath).toBe('/library/test/The Way of Kings.m4b');
       });
 
@@ -948,7 +888,6 @@ describe('RenameService', () => {
         );
 
         const newPath = ((rename as Mock).mock.calls[0]![1] as string).split('\\').join('/');
-        // trackTotal absent → conditional " of " omitted → just "Title"
         expect(newPath).toBe('/library/test/The Way of Kings.m4b');
       });
 
@@ -988,7 +927,6 @@ describe('RenameService', () => {
         );
 
         const newPath = ((rename as Mock).mock.calls[0]![1] as string).split('\\').join('/');
-        // trackNumber absent → suffix ". " omitted → just "Title"
         expect(newPath).toBe('/library/test/The Way of Kings.m4b');
       });
     });
@@ -1003,7 +941,7 @@ describe('RenameService', () => {
         getAll: vi.fn(),
         update: vi.fn(),
       };
-      // Use a different folder format so target path differs from current path
+      // Use a different folder format so the target path changes.
       const settingsService = createMockSettingsService({
         library: { ...libraryOverrides.library, folderFormat: '{author}/{series}/{title}' },
       });
@@ -1017,7 +955,6 @@ describe('RenameService', () => {
         inject<EventHistoryService>(eventHistory),
       );
 
-      // Target doesn't exist on disk (no conflict)
       (stat as Mock).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
       (rename as Mock).mockResolvedValue(undefined);
       (readdir as Mock).mockResolvedValue([]);
@@ -1084,7 +1021,6 @@ describe('RenameService', () => {
     });
   });
 
-  // ── #229 Observability — skip logging ───────────────────────────────────
   describe('logging improvements (#229)', () => {
     it('already organized skip logged at debug with { bookId }', async () => {
       const { service, bookService, settingsService, log } = createService();
@@ -1101,7 +1037,6 @@ describe('RenameService', () => {
     });
   });
 
-  // ── #1491 connector refresh hook ─────────────────────────────────────────
   describe('connector refresh hook', () => {
     it('enqueues a rename refresh when files were renamed (no path change)', async () => {
       const { service, bookService, connector } = createService();

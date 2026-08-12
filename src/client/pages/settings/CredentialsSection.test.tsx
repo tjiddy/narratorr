@@ -32,7 +32,6 @@ vi.mock('sonner', () => ({
 }));
 
 import { api, ApiError } from '@/lib/api';
-// Cast to access all mocked methods
 const mockApi = api as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
 describe('CredentialsSection', () => {
@@ -516,7 +515,6 @@ describe('CredentialsSection', () => {
       await waitFor(() => {
         expect(toast.error).toHaveBeenCalledWith('Only available when AUTH_BYPASS is active');
       });
-      // Change password form should still be visible (form state preserved)
       expect(screen.getByRole('button', { name: 'Change Password' })).toBeInTheDocument();
     });
   });

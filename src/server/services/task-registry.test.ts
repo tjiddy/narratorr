@@ -43,8 +43,6 @@ describe('TaskRegistry', () => {
         name: 'monitor',
         type: 'cron',
         lastRun: null,
-        // nextRun is null until the scheduler (scheduleCron) feeds it via setNextRun —
-        // the registry no longer estimates a next-run from the cron string.
         nextRun: null,
         running: false,
       });
@@ -65,8 +63,6 @@ describe('TaskRegistry', () => {
     });
 
     it('returns null nextRun for a registered cron task before any setNextRun call', () => {
-      // The estimator fallback is gone — the registry only stores what the
-      // scheduler hands it, so a cron task reads null until setNextRun runs.
       registry.register('monitor', 'cron', vi.fn(), '*/30 * * * * *');
       const [task] = registry.getAll();
       expect(task!.nextRun).toBeNull();
@@ -138,7 +134,6 @@ describe('TaskRegistry', () => {
       registry.register('monitor', 'cron', fn, '*/30 * * * * *');
 
       const first = registry.executeTracked('monitor');
-      // Second call should be a no-op (silently skip)
       await registry.executeTracked('monitor');
       expect(fn).toHaveBeenCalledOnce();
 
@@ -147,7 +142,6 @@ describe('TaskRegistry', () => {
     });
 
     it('is a no-op for unknown task names', async () => {
-      // Should not throw
       await registry.executeTracked('nonexistent');
     });
 
@@ -248,7 +242,6 @@ describe('TaskRegistry', () => {
       await first;
     });
 
-    // #149 — TaskRegistryError typed throws (ERR-1)
     it('TaskRegistryError constructor sets name and code correctly', () => {
       const err = new TaskRegistryError('test message', 'NOT_FOUND');
       expect(err.name).toBe('TaskRegistryError');
@@ -272,6 +265,8 @@ describe('TaskRegistry', () => {
       await expect(registry.runTask('job')).rejects.toSatisfy(
         (e: unknown) => e instanceof TaskRegistryError && e.code === 'ALREADY_RUNNING',
       );
+      // The guard must exclude the second run, not merely report it: one body invocation.
+      expect(fn).toHaveBeenCalledOnce();
       resolve!();
       await first;
     });
@@ -284,12 +279,17 @@ describe('TaskRegistry', () => {
 
     it('throws TaskRegistryError with code ALREADY_RUNNING when task is already running in runExclusive()', async () => {
       let resolve: () => void;
-      registry.register('job', 'cron', vi.fn().mockReturnValue(new Promise<void>((r) => { resolve = r; })), '*/5 * * * *');
+      const fn = vi.fn().mockReturnValue(new Promise<void>((r) => { resolve = r; }));
+      const exclusiveBody = vi.fn().mockResolvedValue('x');
+      registry.register('job', 'cron', fn, '*/5 * * * *');
 
       const first = registry.runTask('job');
-      await expect(registry.runExclusive('job', async () => 'x')).rejects.toSatisfy(
+      await expect(registry.runExclusive('job', exclusiveBody)).rejects.toSatisfy(
         (e: unknown) => e instanceof TaskRegistryError && e.code === 'ALREADY_RUNNING',
       );
+      // Excluded, not merely reported: the exclusive body never ran alongside the first run.
+      expect(exclusiveBody).not.toHaveBeenCalled();
+      expect(fn).toHaveBeenCalledOnce();
       resolve!();
       await first;
     });

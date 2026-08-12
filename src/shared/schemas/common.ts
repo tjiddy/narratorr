@@ -1,9 +1,5 @@
 import { z } from 'zod';
 
-// ============================================================================
-// Common schemas
-// ============================================================================
-
 export const idParamSchema = z.object({
   id: z.string().transform((val, ctx) => {
     const parsed = parseInt(val, 10);
@@ -18,11 +14,6 @@ export const idParamSchema = z.object({
   }),
 });
 
-// ============================================================================
-// Pagination schemas
-// ============================================================================
-
-/** Default page sizes when client omits limit param */
 export const DEFAULT_LIMITS = {
   books: 120,
   blacklist: 100,

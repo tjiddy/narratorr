@@ -38,8 +38,6 @@ describe('idParamSchema', () => {
   });
 
   it('truncates floating point strings to integer (parseInt behavior)', () => {
-    // parseInt('3.14') returns 3 — documents current behavior
-    // This is acceptable for route params since URLs don't produce fractional IDs
     const result = idParamSchema.safeParse({ id: '3.14' });
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.id).toBe(3);
@@ -111,8 +109,7 @@ describe('paginationParamsSchema', () => {
 });
 
 describe('DEFAULT_LIMITS.books grid invariant', () => {
-  // The library grid renders 2/3/4/5/6 columns across breakpoints. The page size
-  // must be divisible by each column count so every page fills complete rows.
+  // The supported breakpoints use 2–6 columns; every page must end on a complete row.
   it.each([2, 3, 4, 5, 6])('books page size is divisible by %i columns', (columns) => {
     expect(DEFAULT_LIMITS.books % columns).toBe(0);
   });

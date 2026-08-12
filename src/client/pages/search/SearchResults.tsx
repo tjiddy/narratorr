@@ -20,19 +20,7 @@ export function SearchResults({
   const [tab, setTab] = useState<DiscoverTab>('books');
   const hasResults = results && (results.authors.length > 0 || results.books.length > 0);
 
-  // Ownership source for the search cards (#1916). `/api/books` caps at
-  // DEFAULT_LIMITS.books (120) ordered created-at-descending, so on a large
-  // library an older exact-ASIN incumbent fell outside the page and the card
-  // offered Add for a recording already owned. `useBookIdentifiers()` is the
-  // unpaginated, status-blind identity list every other ownership surface in
-  // the app already reads, and it shares one cache entry across pages —
-  // don't reintroduce a page-local `useQuery` alongside it.
-  //
-  // Loading and failure are deliberately fail-open: `libraryBooks` stays
-  // undefined, `findLibraryMatch` returns null, and the card shows Add. The
-  // server's 409-with-incumbent verdict is the real duplicate backstop, so a
-  // stale-or-absent hint can never create a duplicate — and blocking Add on an
-  // ownership hint would be a worse regression than briefly over-offering it.
+  // Ownership uses unpaginated identifiers and fails open; the server's 409 response is the duplicate backstop.
   const { data: libraryBooks } = useBookIdentifiers();
 
   if (!searchTerm) {

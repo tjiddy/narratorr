@@ -20,12 +20,7 @@ vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
 }));
 
 
-/**
- * `searchAllWithStatus` value for ONE indexer that answered (#2104 D16).
- * `succeeded: 1` makes an empty list a GENUINE zero rather than an outage, so
- * the query ladder advances; every fixture here answers identically on every
- * rung, leaving the pre-ladder outcomes unchanged.
- */
+// succeeded: 1 makes empty results a genuine zero, allowing query-ladder fallback.
 function withStatus(results: SearchResult[]) {
   return { results, succeeded: 1, failed: 0 };
 }
@@ -136,9 +131,7 @@ describe('runSearchJob', () => {
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.searched).toBe(2);
-    // Both books answer a GENUINE zero at rung 1, so each relaxes once more: a
-    // colon-free, paren-free title costs exactly ONE extra rung (#2104 AC6) —
-    // the author-dropped one. Rung 1 stays byte-identical to the pre-ladder query.
+    // Each genuine zero advances once to the author-free rung.
     expect(vi.mocked(indexer.searchAllWithStatus).mock.calls.map((c) => c[0])).toEqual([
       'Book One Author A', 'book one',
       'Book Two Author B', 'book two',
@@ -171,7 +164,7 @@ describe('runSearchJob', () => {
     ];
     const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const bookList = createMockBookListService(wantedBooks);
-    const indexer = createMockIndexerService([]); // no results for any search
+    const indexer = createMockIndexerService([]);
     const download = createMockDownloadOrchestrator();
 
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
@@ -179,7 +172,6 @@ describe('runSearchJob', () => {
     expect(result.searched).toBe(2);
     expect(result.grabbed).toBe(0);
     expect(download.grab).not.toHaveBeenCalled();
-    // Should log "No results found" for each book
     expect(log.debug).toHaveBeenCalledWith(
       expect.objectContaining({ bookId: 1 }),
       'No results found',
@@ -200,21 +192,19 @@ describe('runSearchJob', () => {
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([]);
     const results = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
-    vi.mocked(indexer.searchAllWithStatus).mockResolvedValueOnce(withStatus(results))     // Book A succeeds with results
-      .mockRejectedValueOnce(new Error('Network error'))  // Book B throws
-      .mockResolvedValueOnce(withStatus(results));    // Book C succeeds with results
+    vi.mocked(indexer.searchAllWithStatus).mockResolvedValueOnce(withStatus(results))
+      .mockRejectedValueOnce(new Error('Network error'))
+      .mockResolvedValueOnce(withStatus(results));
     const download = createMockDownloadOrchestrator();
 
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
-    // Book A searched + grabbed, Book B failed (not counted), Book C searched + grabbed
     expect(result.searched).toBe(2);
     expect(result.grabbed).toBe(2);
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({ bookId: 2 }),
       'Search failed for book',
     );
-    // All three books should have been attempted
     expect(indexer.searchAllWithStatus).toHaveBeenCalledTimes(3);
   });
 
@@ -230,7 +220,6 @@ describe('runSearchJob', () => {
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.searched).toBe(1);
-    // Query should just be the title without author
     expect(vi.mocked(indexer.searchAllWithStatus).mock.calls[0]![0]).toBe('Anonymous Work');
   });
 
@@ -242,7 +231,6 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService(searchResults);
     const download = createMockDownloadOrchestrator();
 
-    // grab throws duplicate error
     vi.mocked(download.grab).mockRejectedValueOnce(
       new DuplicateDownloadError('Book 1 already has an active download (id: 5)', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } }),
     );
@@ -265,14 +253,12 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService(searchResults);
     const download = createMockDownloadOrchestrator();
 
-    // grab throws a non-duplicate error
     vi.mocked(download.grab).mockRejectedValueOnce(
       new Error('No download client configured'),
     );
 
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
-    // Search succeeded but grab failed — searched is still counted
     expect(result.searched).toBe(1);
     expect(result.grabbed).toBe(0);
     expect(log.warn).toHaveBeenCalledWith(
@@ -296,7 +282,6 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService(searchResults);
     const download = createMockDownloadOrchestrator();
 
-    // Bare-string rejection — would serialize to {} via Pino without serializeError wrapping
     vi.mocked(download.grab).mockRejectedValueOnce('string error');
 
     await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
@@ -325,7 +310,7 @@ describe('runSearchJob', () => {
 
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
-    expect(result.searched).toBe(1); // only second book counted
+    expect(result.searched).toBe(1);
     expect(log.warn).toHaveBeenCalled();
   });
 
@@ -375,13 +360,11 @@ describe('runSearchJob', () => {
 
   it('applies quality filtering to search results (min seeders)', async () => {
     const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }], duration: 3600 }];
-    // minSeeders = 5 should filter out the low-seeder result
     const settings = createMockSettingsService({
       search: { enabled: true, intervalMinutes: 60 },
       quality: { grabFloor: 0, minSeeders: 5, protocolPreference: 'none' },
     });
     const bookList = createMockBookListService(wantedBooks);
-    // Only result has 2 seeders — below min
     const indexer = createMockIndexerService([mockResult(2, 'magnet:?xt=urn:btih:aaa')]);
     const download = createMockDownloadOrchestrator();
 
@@ -459,7 +442,6 @@ describe('runSearchJob', () => {
 
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
-    // Only the English result should be grabbed — French is filtered out
     expect(download.grab).toHaveBeenCalledTimes(1);
     expect(download.grab).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:english' }),
@@ -489,9 +471,7 @@ describe('searchAllWanted', () => {
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
     expect(result.searched).toBe(2);
-    // Both books answer a GENUINE zero at rung 1, so each relaxes once more: a
-    // colon-free, paren-free title costs exactly ONE extra rung (#2104 AC6) —
-    // the author-dropped one. Rung 1 stays byte-identical to the pre-ladder query.
+    // Each genuine zero advances once to the author-free rung.
     expect(vi.mocked(indexer.searchAllWithStatus).mock.calls.map((c) => c[0])).toEqual([
       'Book One Author A', 'book one',
       'Book Two Author B', 'book two',
@@ -514,7 +494,6 @@ describe('searchAllWanted', () => {
     );
   });
 
-  // #197 — DuplicateDownloadError instanceof catch (ERR-1)
   it('skips books where grab throws DuplicateDownloadError — increments skipped', async () => {
     const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }];
     const searchResults = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
@@ -577,9 +556,9 @@ describe('searchAllWanted', () => {
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([]);
     const results = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
-    vi.mocked(indexer.searchAllWithStatus).mockResolvedValueOnce(withStatus(results)) // Book A — grab succeeds
-      .mockResolvedValueOnce(withStatus(results)) // Book B — grab fails (active download)
-      .mockResolvedValueOnce(withStatus(results)); // Book C — grab succeeds
+    vi.mocked(indexer.searchAllWithStatus).mockResolvedValueOnce(withStatus(results))
+      .mockResolvedValueOnce(withStatus(results))
+      .mockResolvedValueOnce(withStatus(results));
     const download = createMockDownloadOrchestrator();
     vi.mocked(download.grab)
       .mockResolvedValueOnce({ id: 1 } as never)
@@ -593,7 +572,6 @@ describe('searchAllWanted', () => {
 
   it('filters results below grab floor (no grab attempted)', async () => {
     const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author' }], duration: 600 }];
-    // size=1000 bytes, duration=600 min (10h) → very low MB/hr, should be filtered out
     const searchResults: SearchResult[] = [{ title: 'Test', protocol: 'torrent', indexer: 'abb', seeders: 10, downloadUrl: 'magnet:?aaa', size: 1000 }];
     const settings = createMockSettingsService({ quality: { grabFloor: 100, minSeeders: 0, protocolPreference: 'none' } });
     const bookList = createMockBookListService(wantedBooks);
@@ -610,8 +588,7 @@ describe('searchAllWanted', () => {
   it('grabFloor=0 disables quality filtering (all results eligible)', async () => {
     const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author' }], duration: 600 }];
     const searchResults: SearchResult[] = [{ title: 'Test', protocol: 'torrent', indexer: 'abb', seeders: 10, downloadUrl: 'magnet:?aaa', size: 1000 }];
-    // minDownloadSize: 0 explicitly — this test proves grabFloor=0 disables MB/hr filtering on a
-    // deliberately tiny release; the (now 50MB) default size gate must not mask that premise.
+    // Disable the independent size gate so this isolates grabFloor.
     const settings = createMockSettingsService({ quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 0 } });
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService(searchResults);
@@ -624,7 +601,7 @@ describe('searchAllWanted', () => {
 
   it('results without downloadUrl are skipped (not grabbable)', async () => {
     const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author' }] }];
-    const searchResults = [mockResult(10, undefined)]; // no downloadUrl
+    const searchResults = [mockResult(10, undefined)];
     const settings = createMockSettingsService();
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService(searchResults);
@@ -704,14 +681,14 @@ describe('searchAllWanted', () => {
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([]);
     const results = [mockResult(10, 'magnet:?aaa')];
-    vi.mocked(indexer.searchAllWithStatus).mockResolvedValueOnce(withStatus(results)) // Book A — grab succeeds
-      .mockRejectedValueOnce(new Error('Timeout')) // Book B — search fails
-      .mockResolvedValueOnce(withStatus(results)) // Book C — active download
-      .mockResolvedValueOnce(withStatus([])); // Book D — no results
+    vi.mocked(indexer.searchAllWithStatus).mockResolvedValueOnce(withStatus(results))
+      .mockRejectedValueOnce(new Error('Timeout'))
+      .mockResolvedValueOnce(withStatus(results))
+      .mockResolvedValueOnce(withStatus([]));
     const download = createMockDownloadOrchestrator();
     vi.mocked(download.grab)
-      .mockResolvedValueOnce({ id: 1 } as never) // Book A
-      .mockRejectedValueOnce(new DuplicateDownloadError('already has an active download', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } })); // Book C
+      .mockResolvedValueOnce({ id: 1 } as never)
+      .mockRejectedValueOnce(new DuplicateDownloadError('already has an active download', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } }));
 
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
@@ -730,9 +707,6 @@ describe('searchAllWanted', () => {
 
     expect(result.skipped).toBe(0);
     expect(result.errors).toBe(1);
-    // #852 — non-Error rejections must be wrapped via serializeError before logging.
-    // #863 — tryGrab now normalizes non-Error rejections to Error at catch, so the
-    // serialized shape is `type: 'Error'` with a real stack instead of `type: 'string'`.
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         bookId: 1,
@@ -741,8 +715,6 @@ describe('searchAllWanted', () => {
       'Grab failed for book',
     );
   });
-
-  // ===== #386 — metadata.languages wiring =====
 
   it('reads metadata.languages and passes it to searchAndGrabForBook', async () => {
     const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }];
@@ -757,7 +729,6 @@ describe('searchAllWanted', () => {
 
     await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
-    // settingsService.get('metadata') must be called to get languages
     expect(settings.get).toHaveBeenCalledWith('metadata');
     expect(settings.get).toHaveBeenCalledWith('quality');
   });
@@ -768,7 +739,6 @@ describe('searchAllWanted', () => {
       metadata: { audibleRegion: 'us', languages: ['english'] },
     });
     const bookList = createMockBookListService(wantedBooks);
-    // Only a French result — should be filtered out by language, so nothing is grabbed
     const frenchResult: SearchResult = {
       title: 'Book One',
       protocol: 'torrent',
@@ -783,7 +753,6 @@ describe('searchAllWanted', () => {
 
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
-    // French result filtered out → no grab
     expect(download.grab).not.toHaveBeenCalled();
     expect(result.grabbed).toBe(0);
   });
@@ -817,7 +786,6 @@ describe('searchAllWanted', () => {
 
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
-    // Only the English result should be grabbed
     expect(download.grab).toHaveBeenCalledTimes(1);
     expect(download.grab).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:english' }),
@@ -837,9 +805,7 @@ describe('searchAllWanted', () => {
 
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
-    // Search succeeded but grab failed — searched is counted, errors incremented
     expect(result).toEqual({ searched: 1, grabbed: 0, skipped: 0, errors: 1 });
-    // #852 — Error rejections must be wrapped via serializeError, producing { message, type, stack }
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         bookId: 1,
@@ -853,10 +819,6 @@ describe('searchAllWanted', () => {
     );
   });
 });
-
-// ============================================================================
-// #392 — Caller wiring: broadcaster passed to searchAndGrabForBook
-// ============================================================================
 
 function createStreamingIndexerService(results: SearchResult[] = []): IndexerSearchService {
   return inject<IndexerSearchService>({
@@ -883,7 +845,6 @@ describe('#392 runSearchJob broadcaster wiring', () => {
 
     await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory, undefined, broadcaster as never);
 
-    // When broadcaster is passed, searchAndGrabForBook uses streaming path
     expect(indexer.getEnabledIndexers).toHaveBeenCalled();
     expect(indexer.searchAllStreaming).toHaveBeenCalled();
     expect(broadcaster.emit).toHaveBeenCalledWith('search_started', expect.objectContaining({ book_id: 1 }));
@@ -909,9 +870,7 @@ describe('#392 searchAllWanted broadcaster wiring', () => {
 });
 
 describe('runSearchJob — narrator priority wiring (#439)', () => {
-  // Two candidates in the same match-score band:
-  // - Fair-quality narrator match (79 MB/hr for 10h book = ~828 MB)
-  // - Good-quality non-match (200 MB/hr for 10h book = ~2097 MB)
+  // Same match-score band; narrator match competes with higher audio quality.
   const FAIR_SIZE = Math.round(79 * 10 * 1024 * 1024);
   const GOOD_SIZE = Math.round(200 * 10 * 1024 * 1024);
   const narratorMatch: SearchResult = {
@@ -974,14 +933,8 @@ describe('searchAllWanted — narrator priority wiring (#439)', () => {
   });
 });
 
-
-// ============================================================================
-// #2104 — the query-ladder exhaustion cooldown, at the scheduled-cycle seam
-// ============================================================================
-
 describe('runSearchJob — query-ladder cooldown (#2104)', () => {
-  // "Book One" / "Author A": colon-free and paren-free, so the ladder is
-  // rung 1 plus exactly ONE author-dropped rung.
+  // This fixture's full ladder has exactly two rungs.
   const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }];
   const enabledSearch = () => createMockSettingsService({ search: { enabled: true, intervalMinutes: 360 } });
   const log = createMockLogger();
@@ -1004,7 +957,6 @@ describe('runSearchJob — query-ladder cooldown (#2104)', () => {
   const queriesOf = (svc: IndexerSearchService) =>
     vi.mocked(svc.searchAllWithStatus).mock.calls.map((c) => c[0] as string);
 
-  // AC20 — cycle 1 exhausts, cycle 2 within the window runs rung 1 only.
   it('runs the full ladder on the exhausting cycle and rung 1 only on the next (AC20)', async () => {
     const searchLadderCooldown = new SearchLadderCooldown();
 
@@ -1017,9 +969,7 @@ describe('runSearchJob — query-ladder cooldown (#2104)', () => {
     expect(queriesOf(second)).toEqual(['Book One Author A']);
   });
 
-  // AC21 — `runSearchJob` calls `retryBudget.resetAll()` at every cycle entry.
-  // COUNTERFACTUAL: store the cooldown on RetryBudget instead and that reset
-  // wipes it, so cycle 2 issues the full ladder again and this fails.
+  // Keep cooldown off RetryBudget: resetAll() runs at every cycle entry.
   it('survives the per-cycle retryBudget.resetAll() (AC21)', async () => {
     const searchLadderCooldown = new SearchLadderCooldown();
     const retryBudget = new RetryBudget();
@@ -1033,8 +983,6 @@ describe('runSearchJob — query-ladder cooldown (#2104)', () => {
     expect(queriesOf(second)).toEqual(['Book One Author A']);
   });
 
-  // AC34 — `searchAllWanted` is an explicitly manual trigger and records
-  // nothing, so it must not inherit an unattended cycle's exhaustion.
   it('leaves searchAllWanted running the FULL ladder while a cooldown entry is live (AC34)', async () => {
     const searchLadderCooldown = new SearchLadderCooldown();
     await cycle(createMockIndexerService([]), searchLadderCooldown);

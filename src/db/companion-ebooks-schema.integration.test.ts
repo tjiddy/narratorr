@@ -8,17 +8,8 @@ import { books, companionEbooks } from './schema.js';
 import { COMPANION_EBOOK_STATUSES } from '@shared/schemas/companion-ebook.js';
 import { generatePublicId } from '../server/utils/public-id.js';
 
-// Real-DB coverage for the #1957 companion_ebooks table. The eight CHECK constraints
-// only exist in the generated migration, so nothing short of migrating a real libSQL
-// file proves they are there (the #1131 failure mode: a constraint that silently never
-// reached the built DB while unit tests stayed green). libSQL enables PRAGMA
-// foreign_keys by default (libsql-foreign-keys-on-by-default), so the FK clause is live
-// without any pragma.
-//
-// Every rejection case below is constructed to violate EXACTLY ONE constraint: SQLite
-// evaluates CHECKs in declaration order and reports only the first failure, so a row
-// that breaks two would assert a name that depends on declaration order. The two cases
-// that cannot be made single-violation assert rejection without a name, and say so.
+// Migrate a real libSQL database: schema-level CHECKs and FKs are the subject.
+// Each named rejection violates one CHECK because SQLite reports only the first failure.
 
 const CONSTRAINT_NAMES = [
   'ck_companion_ebooks_status_domain',
@@ -61,7 +52,6 @@ const EMPTY_ROW: Omit<RawRow, 'bookId' | 'status'> = {
   selectedFilename: null,
 };
 
-/** A rejection case: a row spec (minus `book_id`) and the constraint it must trip. */
 type RejectionCase = {
   name: string;
   row: Partial<Omit<RawRow, 'bookId'>> & { status: string };
@@ -70,11 +60,7 @@ type RejectionCase = {
 
 const CHECK_FAILURE_RE = /CHECK constraint failed: (\S+)/;
 
-/**
- * Pull the constraint name out of a SQLite CHECK failure. `\S+` captures the whole
- * name, and callers compare it with `toBe`, so a name that is a prefix of another
- * cannot satisfy the wrong assertion the way a substring match would.
- */
+/** Extract the complete constraint name so prefix matches cannot pass. */
 function checkConstraintName(message: string): string {
   const match = CHECK_FAILURE_RE.exec(message);
   if (!match) throw new Error(`not a CHECK-constraint failure: ${message}`);
@@ -109,11 +95,7 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
     return row!.id;
   }
 
-  /**
-   * Raw insert. Rows carrying an out-of-domain status, a fractional number, or a
-   * deliberately mismatched shape cannot be expressed through Drizzle's narrowed insert
-   * types, so every rejection case goes through SQL directly.
-   */
+  /** Bypass narrowed Drizzle types to exercise invalid database shapes. */
   async function insertRaw(spec: Partial<RawRow> & { status: string }): Promise<void> {
     const r: RawRow = { bookId: null, ...EMPTY_ROW, ...spec };
     await db.run(sql`
@@ -124,11 +106,7 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
     `);
   }
 
-  /**
-   * Runs `fn`, requires it to reject, and returns the flattened error chain. Drizzle
-   * wraps driver failures in a `DrizzleQueryError` whose own message is just the failed
-   * query — the SQLite message (`CHECK constraint failed: …`) lives under `.cause`.
-   */
+  /** Flatten causes because Drizzle nests the SQLite diagnostic below its query error. */
   async function rejectionMessage(fn: () => Promise<unknown>): Promise<string> {
     let caught: unknown;
     let rejected = false;
@@ -160,10 +138,6 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
     return res.rows[0]![0] as string;
   }
 
-  // ---------------------------------------------------------------------------
-  // Structure — the non-vacuity anchor for every rejection test below
-  // ---------------------------------------------------------------------------
-
   describe('the migrated table actually carries the constraints', () => {
     it('declares all eight named CHECK constraints', async () => {
       const ddl = await tableDdl();
@@ -179,8 +153,6 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
       for (const status of COMPANION_EBOOK_STATUSES) {
         expect(domainClause).toContain(`'${status}'`);
       }
-      // A `?` here means the sql.raw derivation emitted a bound parameter instead of
-      // literal DDL, which would make the migration invalid.
       expect(domainClause).not.toContain('?');
     });
 
@@ -201,14 +173,9 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // book_id identity (Decision 8 / F4)
-  // ---------------------------------------------------------------------------
-
   describe('book_id is NOT NULL UNIQUE, not a rowid alias', () => {
     it('rejects an insert that omits book_id', async () => {
-      // The regression that matters most: under the previous `.primaryKey()` shape
-      // SQLite generated a rowid here and the row silently attached to a real book.
+      // Under the previous .primaryKey() shape, SQLite generated a rowid here instead of rejecting.
       const message = await rejectionMessage(() =>
         db.run(sql`INSERT INTO companion_ebooks (status, candidate_count) VALUES ('none', 0)`),
       );
@@ -237,17 +204,8 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // The NOT NULL / DEFAULT premises the CHECK predicates are built on
-  // ---------------------------------------------------------------------------
-
   describe('status is NOT NULL — the premise that keeps every other CHECK total', () => {
-    // Rule 1 of the never-NULL policy. If `.notNull()` were dropped from the column and
-    // the migration, a NULL status would make `status <> 'x'` / `status NOT IN (...)`
-    // evaluate to NULL in six of the eight predicates — and SQLite treats a NULL CHECK
-    // result as SATISFIED, so the row would be accepted. Testing unknown *strings* does
-    // not cover that: an unknown string is a value the domain CHECK can see and reject,
-    // a NULL is not.
+    // Unknown strings exercise the domain CHECK; NULL instead makes dependent CHECKs pass.
 
     it('rejects an insert that omits status', async () => {
       const bookId = await seedBook();
@@ -266,8 +224,6 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
     });
 
     it('rejects an explicit NULL candidate_count', async () => {
-      // The other half of rule 1: `typeof(candidate_count) = 'integer'` is total, but the
-      // per-status arms (`candidate_count = 0`, `>= 2`, `>= 1`) are not.
       const bookId = await seedBook();
       const message = await rejectionMessage(() =>
         db.run(sql`INSERT INTO companion_ebooks (book_id, status, candidate_count) VALUES (${bookId}, 'none', NULL)`),
@@ -281,7 +237,6 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
       const missingStatus: typeof companionEbooks.$inferInsert = { bookId: 1 };
       void missingStatus;
 
-      // ...while candidateCount must stay omissible, because the DB supplies the default.
       const omittedCount: typeof companionEbooks.$inferInsert = { bookId: 1, status: 'none' };
       void omittedCount;
 
@@ -292,8 +247,7 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
     });
 
     it('defaults candidate_count to 0 in the migrated DB when the column is omitted', async () => {
-      // Pins the DDL default independently of Drizzle: this INSERT names no
-      // candidate_count column at all, so only the migration's `DEFAULT 0` can supply it.
+      // Raw omission pins the migrated DDL default independently of Drizzle.
       const bookId = await seedBook();
       await db.run(sql`INSERT INTO companion_ebooks (book_id, status) VALUES (${bookId}, 'none')`);
 
@@ -302,18 +256,13 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Status domain (F1)
-  // ---------------------------------------------------------------------------
-
   describe('status domain', () => {
     it('rejects an unrecognised status on an otherwise-valid none shape', async () => {
       await expectViolates({ status: 'bogus' }, 'ck_companion_ebooks_status_domain');
     });
 
     it('rejects the never-NULL regression row the pre-fix selection predicate accepted', async () => {
-      // status='ambiguous' + NULL filename + a selection evaluated to NULL under the old
-      // bare-equality form, and SQLite treats a NULL CHECK as satisfied.
+      // The old nullable equality made this selection CHECK evaluate to NULL and pass.
       await expectViolates(
         { status: 'ambiguous', selectedFilename: 'b.epub', candidateCount: 2 },
         'ck_companion_ebooks_selection',
@@ -321,16 +270,11 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
     });
 
     it('rejects an unrecognised status carrying a selection with a NULL filename', async () => {
-      // Name deliberately not asserted: this row violates both the status-domain and the
-      // selection constraint, so which one fires depends on declaration order.
+      // Two CHECKs fail, so declaration order makes the reported name unstable.
       const bookId = await seedBook();
       await expect(insertRaw({ bookId, status: 'bogus', selectedFilename: 'b.epub' })).rejects.toThrow();
     });
   });
-
-  // ---------------------------------------------------------------------------
-  // Integer storage (F2)
-  // ---------------------------------------------------------------------------
 
   describe('integer storage is enforced by CHECK, not by the column type', () => {
     const fractionalCases: RejectionCase[] = [
@@ -361,8 +305,6 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
     });
 
     it('accepts a whole-valued float and stores it as an integer', async () => {
-      // Pins that the CHECK rejects only genuinely fractional values — SQLite's INTEGER
-      // affinity converts a REAL losslessly — so it cannot be satisfied vacuously.
       const bookId = await seedBook();
       await insertRaw({ bookId, status: 'available', ...FINGERPRINT, mtimeMs: 456.0, candidateCount: 1 });
 
@@ -372,13 +314,8 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Half-set rejection — one case per conjunct, each asserting its constraint name (F3)
-  // ---------------------------------------------------------------------------
-
   describe('half-set rows are rejected by the constraint that owns the invariant', () => {
     const cases: RejectionCase[] = [
-      // ck_companion_ebooks_file_present — a single-file status missing any fingerprint part
       {
         name: 'available with NULL filename',
         row: { status: 'available', ...FINGERPRINT, filename: null, candidateCount: 1 },
@@ -410,7 +347,6 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
         constraint: 'ck_companion_ebooks_file_present',
       },
 
-      // ck_companion_ebooks_file_absent — a no-single-file status carrying fingerprint data
       {
         name: 'ambiguous with a filename',
         row: { status: 'ambiguous', filename: 'a.epub', candidateCount: 2 },
@@ -437,7 +373,6 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
         constraint: 'ck_companion_ebooks_file_absent',
       },
 
-      // ck_companion_ebooks_validation_code — set for exactly `invalid`, never otherwise
       {
         name: 'invalid without a validation_code',
         row: { status: 'invalid', ...FINGERPRINT, candidateCount: 1 },
@@ -459,7 +394,6 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
         constraint: 'ck_companion_ebooks_validation_code',
       },
 
-      // ck_companion_ebooks_candidate_count — per-status counts, and the >= 0 floor
       {
         name: 'none with candidate_count=1',
         row: { status: 'none', candidateCount: 1 },
@@ -481,7 +415,6 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
         constraint: 'ck_companion_ebooks_candidate_count',
       },
 
-      // ck_companion_ebooks_selection — the forward implication
       {
         name: 'none with a selection',
         row: { status: 'none', selectedFilename: 'a.epub' },
@@ -493,8 +426,6 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
         constraint: 'ck_companion_ebooks_selection',
       },
 
-      // ck_companion_ebooks_multi_candidate_selection (F5) — the reverse implication.
-      // Without it a reconciler that guessed between two candidates would satisfy the DB.
       {
         name: 'available at candidate_count=2 with no selection',
         row: { status: 'available', ...FINGERPRINT, candidateCount: 2 },
@@ -511,7 +442,6 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
         constraint: 'ck_companion_ebooks_multi_candidate_selection',
       },
 
-      // ck_companion_ebooks_fingerprint — size is unsigned; timestamps deliberately are not
       {
         name: 'available with size_bytes=-1',
         row: { status: 'available', ...FINGERPRINT, sizeBytes: -1, candidateCount: 1 },
@@ -523,10 +453,6 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
       await expectViolates(row, constraint);
     });
   });
-
-  // ---------------------------------------------------------------------------
-  // Accepted rows — every status has at least one legal shape
-  // ---------------------------------------------------------------------------
 
   describe('legal shapes the reconciler must be able to write', () => {
     const accepted: Array<{ name: string; row: Partial<Omit<RawRow, 'bookId'>> & { status: string } }> = [
@@ -542,8 +468,6 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
         row: { status: 'available', ...FINGERPRINT, candidateCount: 2, selectedFilename: FINGERPRINT.filename },
       },
       {
-        // The case a `candidate_count >= 2` selection constraint would wrongly reject:
-        // the unselected sibling was deleted, so the count dropped while the pick stands.
         name: 'available with a live selection whose sibling was deleted (count=1)',
         row: { status: 'available', ...FINGERPRINT, candidateCount: 1, selectedFilename: FINGERPRINT.filename },
       },
@@ -567,7 +491,6 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
         row: { status: 'drm_protected', ...FINGERPRINT, candidateCount: 2, selectedFilename: FINGERPRINT.filename },
       },
       {
-        // The `size_bytes >= 0` boundary — a `> 0` misread fails here.
         name: 'zero-valued fingerprint fields',
         row: { status: 'available', filename: 'z.epub', sizeBytes: 0, mtimeMs: 0, ctimeMs: 0, candidateCount: 1 },
       },
@@ -582,10 +505,7 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
     });
 
     it('round-trips a pre-epoch mtime/ctime exactly, as integers (F6)', async () => {
-      // Filesystem times are signed — ext4 represents dates back to 1901 — so a
-      // user-preserved pre-1970 mtime must stay persistable. Negative size_bytes is
-      // rejected in the same suite, pinning the asymmetry rather than leaving it
-      // incidental.
+      // Filesystem times are signed even though size_bytes is not.
       const preEpochMs = -2_208_988_800_000; // 1900-01-01
       const bookId = await seedBook();
       await insertRaw({
@@ -607,15 +527,7 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
     });
 
     it('accepts a typed Drizzle insert that omits candidateCount and applies every default', async () => {
-      // Deliberately omits candidateCount: this is the shape a real writer uses for a
-      // `none` observation, and it pins the Drizzle half of `.default(0)` — both that the
-      // column stays omissible in `$inferInsert` and that the value lands as 0.
-      //
-      // It does NOT cover the DB half: Drizzle INLINES its schema-level default into the
-      // INSERT rather than omitting the column, so this row is written with an explicit
-      // `candidate_count = 0` and survives even if the migration's `DEFAULT 0` is
-      // deleted (measured). The migrated DDL default is pinned separately by the raw
-      // insert in the NOT NULL / DEFAULT block above.
+      // Drizzle inlines schema defaults; the raw omission above separately pins DDL defaulting.
       const bookId = await seedBook();
       await db.insert(companionEbooks).values({ bookId, status: 'none' });
 
@@ -626,15 +538,8 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // FK behaviour
-  // ---------------------------------------------------------------------------
-
   describe('foreign key to books', () => {
     it('cascade-deletes the companion row when the book is deleted', async () => {
-      // Rationale is orphan-row accumulation and regression protection against a future
-      // src/db/client.ts change — not "FKs might be off" (they are on by default) and not
-      // rowid reuse (books.id is AUTOINCREMENT).
       const bookId = await seedBook();
       await insertRaw({ bookId, status: 'none' });
 
@@ -650,10 +555,7 @@ describe('companion_ebooks schema — constraints in the built DB (#1957)', () =
     });
 
     it('rejects a fractional book_id via the FK', async () => {
-      // book_id carries no `typeof` CHECK of its own: books.id is an INTEGER PRIMARY KEY,
-      // so no non-integer value can ever match a parent rowid and the FK rejects it
-      // (Decision 4). Under the pre-Decision-8 rowid-alias shape this failed with
-      // SQLITE_MISMATCH instead.
+      // book_id has no typeof CHECK; parent-row identity makes the FK reject non-integers.
       await seedBook();
       const message = await rejectionMessage(() => insertRaw({ bookId: 1.5, status: 'none' }));
       expect(message).toContain('FOREIGN KEY constraint failed');

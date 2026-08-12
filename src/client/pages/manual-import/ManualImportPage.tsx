@@ -34,7 +34,6 @@ export function ManualImportPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="animate-fade-in-up">
         <div className="flex items-center gap-3 mb-1">
           <button
@@ -59,14 +58,11 @@ export function ManualImportPage() {
         )}
       </div>
 
-      {/* In-session staged-submit recoverable/error banner (#1902) */}
       <StagedSubmitBanner message={banner} onDismiss={dismissBanner} />
 
-      {/* Durable last-import panel + attention banner (#1894) */}
       <LastImportPanel source="manual" />
       <ImportAttentionBanner source="manual" onImportAgain={() => resetToPath()} />
 
-      {/* Step 1: Path Input */}
       {step === 'path' && (
         <PathStep
           scanPath={scanPath}
@@ -81,16 +77,13 @@ export function ManualImportPage() {
         />
       )}
 
-      {/* Held for recording review (#1711/#1732) — manual sources can't be recovered
-          from Library Import, so the recovery surface lives here too. */}
+      {/* Manual submissions cannot be recovered from Library Import, so their held rows render here. */}
       <HeldReviewPanel
         heldReview={heldReview}
         onReconfirm={handleReconfirmHeld}
         isPending={importMutation.isPending}
       />
 
-      {/* Match-phase recovery banner (#1864) — manual import now surfaces match
-          failures (previously silently dropped) with inline Resume/Restart. */}
       {paused && pausedReason && step === 'review' && (
         <MatchPausedBanner
           reason={pausedReason}
@@ -102,11 +95,9 @@ export function ManualImportPage() {
         />
       )}
 
-      {/* Step 2: Review Cards */}
       {step === 'review' && (
         <div className="animate-fade-in-up stagger-1">
           <div className="glass-card rounded-xl overflow-hidden">
-            {/* Select all header */}
             <div className="flex items-center gap-3 px-4 py-2.5 border-b border-white/5">
               <button
                 type="button"
@@ -125,7 +116,6 @@ export function ManualImportPage() {
               </span>
             </div>
 
-            {/* Card list */}
             <div className="max-h-[55vh] overflow-y-auto divide-y divide-white/5">
               {rows.map((row, index) => (
                 <ImportCard
@@ -137,7 +127,6 @@ export function ManualImportPage() {
               ))}
             </div>
 
-            {/* Summary bar */}
             <ImportSummaryBar
               readyCount={readyCount}
               reviewCount={reviewCount}
@@ -160,7 +149,6 @@ export function ManualImportPage() {
         </div>
       )}
 
-      {/* Edit Modal */}
       {editIndex !== null && rows[editIndex] && (
         <BookEditModal
           book={rows[editIndex].book}

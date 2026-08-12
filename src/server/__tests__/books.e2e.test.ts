@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createE2EApp, type E2EApp } from './e2e-helpers.js';
-import { books } from '@db/schema.js';
+import { eq, inArray } from 'drizzle-orm';
+import { authors, books, series } from '@db/schema.js';
 import { generatePublicId } from '../utils/public-id.js';
 import { BOOK_STATUSES } from '@shared/schemas/book.js';
 import { DEFAULT_LIMITS } from '@shared/schemas/common.js';
@@ -122,11 +123,228 @@ describe('Books E2E', () => {
   });
 });
 
-// #1916 — the Add-Book search page derives ownership from this endpoint, so it
-// must stay unpaginated and status-blind. `/api/books` caps at DEFAULT_LIMITS.books
-// (120) and orders created-at-descending; if identifiers ever grew a limit or a
-// status predicate, the search card would silently regress to the wrong affordance
-// for any book outside the visible page.
+// Its own app/DB: the suite above asserts absolute list state, so a second book cannot live there.
+describe('POST /api/books — a full-cast edition of an owned book is added, not refused (#2206)', () => {
+  let e2e: E2EApp;
+
+  // `duration` is MINUTES; the prod specimen is a 13h17m solo edition and a 10h33m full-cast one.
+  const SOLO = {
+    title: 'The Golden Compass',
+    authors: [{ name: 'Philip Pullman' }],
+    narrators: ['Ruth Wilson'],
+    asin: 'B0D9C9BMTW',
+    duration: 797,
+  };
+  const FULL_CAST = {
+    title: 'The Golden Compass',
+    authors: [{ name: 'Philip Pullman' }],
+    narrators: ['Philip Pullman', 'Rupert Degas', 'Sean Barrett', 'Full Cast'],
+    asin: 'B0FULLCAST',
+    duration: 633,
+  };
+
+  const post = (payload: unknown) => e2e.app.inject({ method: 'POST', url: '/api/books', payload });
+
+  beforeAll(async () => {
+    e2e = await createE2EApp();
+  });
+
+  afterAll(async () => {
+    await e2e.cleanup();
+  });
+
+  it('seeds the solo-narrator incumbent into an empty library', async () => {
+    const res = await post(SOLO);
+    expect(res.statusCode).toBe(201);
+    expect(res.json().narrators.map((n: { name: string }) => n.name)).toEqual(['Ruth Wilson']);
+  });
+
+  it('accepts the full-cast edition with 201 and keeps both rows', async () => {
+    const res = await post(FULL_CAST);
+
+    expect(res.statusCode).toBe(201);
+    const created = res.json();
+    expect(created.asin).toBe('B0FULLCAST');
+    expect(created.narrators.map((n: { name: string }) => n.name)).toContain('Rupert Degas');
+
+    const list = await e2e.app.inject({ method: 'GET', url: '/api/books' });
+    expect(list.json().total).toBe(2);
+    expect((list.json().data as { asin: string }[]).map((b) => b.asin).sort()).toEqual(['B0D9C9BMTW', 'B0FULLCAST']);
+  });
+
+  // Asserts the delta, not the absolute count: the row total here is inherited from the case above,
+  // so an absolute assertion would make this control fail for a reason that is not its own.
+  it('still refuses a re-post of the incumbent recording with 409, creating no row', async () => {
+    const totalOf = async (): Promise<number> =>
+      (await e2e.app.inject({ method: 'GET', url: '/api/books' })).json().total;
+    const before = await totalOf();
+
+    const res = await post({ ...SOLO, asin: undefined });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json().asin).toBe('B0D9C9BMTW');
+    expect(await totalOf()).toBe(before);
+  });
+});
+
+// Its own app/DB: the abridged veto needs an incumbent whose production_type is not `unknown`.
+describe('POST /api/books — an abridged edition of an unabridged incumbent reviews, and can be overridden (#2199)', () => {
+  let e2e: E2EApp;
+
+  // No duration on either side, so the resolver falls through to the production-form veto.
+  const UNABRIDGED = {
+    title: 'Piranesi',
+    authors: [{ name: 'Susanna Clarke' }],
+    narrators: ['Chiwetel Ejiofor'],
+    asin: 'B0UNABRIDG',
+    formatType: 'Unabridged',
+  };
+  const ABRIDGED = { ...UNABRIDGED, asin: 'B0ABRIDGED', formatType: 'abridged  ' };
+
+  const post = (payload: unknown) => e2e.app.inject({ method: 'POST', url: '/api/books', payload });
+
+  beforeAll(async () => {
+    e2e = await createE2EApp();
+  });
+
+  afterAll(async () => {
+    await e2e.cleanup();
+  });
+
+  it('persists the normalized production type on the seeded incumbent', async () => {
+    const res = await post(UNABRIDGED);
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().productionType).toBe('unabridged');
+  });
+
+  it('holds the abridged edition as an undecided review naming the incumbent', async () => {
+    const res = await post(ABRIDGED);
+    const body = res.json();
+
+    expect(res.statusCode).toBe(409);
+    expect(body.conflict).toBe('review');
+    expect(body.recordingReviewReason).toBe('production-type-mismatch');
+    expect(body.title).toBe('Piranesi');
+    expect(body.asin).toBe('B0UNABRIDG');
+  });
+
+  it('creates the abridged edition when the operator overrides the review, and the row is durable', async () => {
+    const res = await post({ ...ABRIDGED, overrideRecordingReview: true });
+
+    expect(res.statusCode).toBe(201);
+    const created = res.json();
+    expect(created.productionType).toBe('abridged');
+
+    const reread = await e2e.app.inject({ method: 'GET', url: `/api/books/${created.id}` });
+    expect(reread.statusCode).toBe(200);
+    expect(reread.json().asin).toBe('B0ABRIDGED');
+    expect(reread.json().productionType).toBe('abridged');
+  });
+});
+
+// Its own app/DB: the route suite can only assert the payload handed to `BookService.create`, and a
+// payload can look right while the persisted row is lossy. This is the stronger observable for the
+// #2243 wire→create partition — every field read back out of a migrated database.
+describe('POST /api/books — every wire persistence field survives to the row (#2243)', () => {
+  let e2e: E2EApp;
+
+  const FULL = {
+    title: 'Leviathan Wakes',
+    authors: [
+      { name: 'James S. A. Corey', asin: 'B00AUTHOR1' },
+      { name: 'Ty Franck', asin: 'B00AUTHOR2' },
+    ],
+    narrators: ['Jefferson Mays', 'Kevin R. Free'],
+    subtitle: 'Book One of the Expanse',
+    description: 'Humanity has colonised the solar system.',
+    publisher: 'Orbit',
+    coverUrl: 'https://example.com/leviathan.jpg',
+    asin: 'B0LEVIATHN',
+    isbn: '978-1-84149-989-9',
+    seriesName: 'The Expanse',
+    seriesPosition: 1,
+    duration: 1240,
+    publishedDate: '2011-06-02',
+    genres: ['Science Fiction'],
+    formatType: 'Unabridged',
+  };
+
+  beforeAll(async () => {
+    e2e = await createE2EApp();
+  });
+
+  afterAll(async () => {
+    await e2e.cleanup();
+  });
+
+  // Distinct identity from FULL on every axis the resolver keys on, so this case's POST is admitted
+  // whatever else the suite has written, and its authors can never be another case's rows.
+  const CO_AUTHORED = {
+    title: 'Nemesis Games',
+    authors: [
+      { name: 'Daniel Abraham', asin: 'B00AUTHOR3' },
+      { name: 'Walter Jon Williams', asin: 'B00AUTHOR4' },
+    ],
+    asin: 'B0NEMESIS1',
+  };
+
+  it('persists every column and both relations, then reads them back', async () => {
+    const res = await e2e.app.inject({ method: 'POST', url: '/api/books', payload: { ...FULL, searchImmediately: false } });
+    expect(res.statusCode).toBe(201);
+
+    const reread = await e2e.app.inject({ method: 'GET', url: `/api/books/${res.json().id}` });
+    expect(reread.statusCode).toBe(200);
+    const row = reread.json();
+
+    expect(row).toMatchObject({
+      title: 'Leviathan Wakes',
+      subtitle: 'Book One of the Expanse',
+      description: 'Humanity has colonised the solar system.',
+      publisher: 'Orbit',
+      coverUrl: 'https://example.com/leviathan.jpg',
+      asin: 'B0LEVIATHN',
+      isbn: '978-1-84149-989-9',
+      seriesName: 'The Expanse',
+      seriesPosition: 1,
+      duration: 1240,
+      publishedDate: '2011-06-02',
+      genres: ['Science Fiction'],
+      // formatType is translated, never stored; the row carries its normalization.
+      productionType: 'unabridged',
+      status: 'wanted',
+    });
+    expect(row.authors.map((a: { name: string }) => a.name)).toEqual(['James S. A. Corey', 'Ty Franck']);
+    expect(row.narrators.map((n: { name: string }) => n.name)).toEqual(['Jefferson Mays', 'Kevin R. Free']);
+    // Shape guard only, and deliberately here rather than in a case of its own: `buildNewBookValues`
+    // never wrote this field, so no persisted observable could red against the pre-#2243 code. AC11's
+    // real counterfactual is the create payload (books.test.ts 'sends neither transient flag').
+    expect(row).not.toHaveProperty('searchImmediately');
+  });
+
+  // Each author's own ASIN reaches `findOrCreateAuthor` through `syncAuthors`, and is invisible in
+  // the book payload — the authors table is the only place it can be observed. Arranges and measures
+  // its own POST: reading a row another case created makes a focused run fail with no regression.
+  it('writes each author row with its own ASIN', async () => {
+    const names = CO_AUTHORED.authors.map((a) => a.name);
+    expect(await e2e.db.select({ name: authors.name }).from(authors).where(inArray(authors.name, names))).toEqual([]);
+
+    const res = await e2e.app.inject({ method: 'POST', url: '/api/books', payload: CO_AUTHORED });
+    expect(res.statusCode).toBe(201);
+
+    const rows = await e2e.db
+      .select({ name: authors.name, asin: authors.asin })
+      .from(authors)
+      .where(inArray(authors.name, names));
+
+    expect(rows.sort((a, b) => a.name.localeCompare(b.name))).toEqual([
+      { name: 'Daniel Abraham', asin: 'B00AUTHOR3' },
+      { name: 'Walter Jon Williams', asin: 'B00AUTHOR4' },
+    ]);
+  });
+});
+
+// Add-book ownership depends on this endpoint staying status-blind and unpaginated.
 describe('GET /api/books/identifiers — unpaginated and status-blind (#1916)', () => {
   let e2e: E2EApp;
   const SEEDED = 131;
@@ -156,8 +374,6 @@ describe('GET /api/books/identifiers — unpaginated and status-blind (#1916)', 
     expect(body).toHaveLength(SEEDED);
     expect(body.every((row) => typeof row.id === 'number')).toBe(true);
 
-    // Every seeded ASIN is present — including the ones that fall outside the
-    // most-recent 120 rows that `/api/books` would have returned.
     const returnedAsins = new Set(body.map((row) => row.asin));
     for (let i = 0; i < SEEDED; i++) {
       expect(returnedAsins.has(`B${String(i).padStart(9, '0')}`)).toBe(true);
@@ -172,5 +388,59 @@ describe('GET /api/books/identifiers — unpaginated and status-blind (#1916)', 
     const cappedRows = capped.json().data as unknown[];
     expect(cappedRows).toHaveLength(DEFAULT_LIMITS.books);
     expect((identifiers.json() as unknown[]).length).toBeGreaterThan(cappedRows.length);
+  });
+});
+
+// The manual-add surface, through the real route and a real DB (#2224).
+describe('POST /api/books — a whitespace-only series name is not persisted (#2224)', () => {
+  let e2e: E2EApp;
+
+  beforeAll(async () => {
+    e2e = await createE2EApp();
+  });
+
+  afterAll(async () => {
+    await e2e.cleanup();
+  });
+
+  it('creates the book, drops both series fields, and seeds no series row', async () => {
+    const res = await e2e.app.inject({
+      method: 'POST',
+      url: '/api/books',
+      payload: {
+        title: 'Leviathan Wakes',
+        authors: [{ name: 'James S. A. Corey' }],
+        seriesName: '   ',
+        seriesPosition: 1,
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const created = res.json();
+    expect(created.seriesName).toBeNull();
+    expect(created.seriesPosition).toBeNull();
+
+    const [row] = await e2e.db.select().from(books).where(eq(books.id, created.id));
+    expect(row!.seriesName).toBeNull();
+    expect(row!.seriesPosition).toBeNull();
+    expect(await e2e.db.select().from(series)).toHaveLength(0);
+  });
+
+  it('a usable series name on the same route still persists and seeds its row', async () => {
+    const res = await e2e.app.inject({
+      method: 'POST',
+      url: '/api/books',
+      payload: {
+        title: 'Caliban’s War',
+        authors: [{ name: 'James S. A. Corey' }],
+        seriesName: 'The Expanse',
+        seriesPosition: 2,
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().seriesName).toBe('The Expanse');
+    expect(res.json().seriesPosition).toBe(2);
+    expect(await e2e.db.select().from(series)).toHaveLength(1);
   });
 });

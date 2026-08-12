@@ -37,7 +37,6 @@ describe('service-side sentinel helpers', () => {
 
       const result = resolveAndEncryptSettings('indexer', incoming, existing);
 
-      // Sentinel resolved to the exact stored ciphertext; encryptFields skipped it.
       expect(result.apiKey).toBe(stored);
       expect(decrypt(result.apiKey as string, key)).toBe('super-secret');
     });
@@ -72,13 +71,12 @@ describe('service-side sentinel helpers', () => {
 
       const result = resolveAndEncryptSettings('indexer', incoming, { apiKey: stored });
 
-      expect(incoming.apiKey).toBe(SENTINEL); // caller's object untouched
+      expect(incoming.apiKey).toBe(SENTINEL);
       expect(result).not.toBe(incoming);
       expect(result.apiKey).toBe(stored);
     });
 
     it('respects the per-entity allowlist — a key secret for one entity is non-secret for another', () => {
-      // `apiUrl` is a secret field for `indexer` but not for `downloadClient`.
       const existing = { apiUrl: encrypt('https://x', getKey()) };
 
       expect(() => resolveAndEncryptSettings('indexer', { apiUrl: SENTINEL }, existing)).not.toThrow();
@@ -88,7 +86,6 @@ describe('service-side sentinel helpers', () => {
     });
 
     it('resolves against a value-column-style object (settings.service variant)', () => {
-      // settings.service passes the `value` column object directly as `existing`.
       const stored = encrypt('hc-key', getKey());
       const result = resolveAndEncryptSettings('metadata', { hardcoverApiKey: SENTINEL }, { hardcoverApiKey: stored });
 
@@ -121,7 +118,7 @@ describe('service-side sentinel helpers', () => {
       const result = resolveSettings('indexer', incoming, { apiKey: 'stored' });
 
       expect(result).toEqual(incoming);
-      expect(result).not.toBe(incoming); // still a fresh clone
+      expect(result).not.toBe(incoming);
     });
 
     it('does not mutate the caller-provided incoming object', () => {

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BookRow } from './BookRow';
 import { createMockBookMetadata } from '@/__tests__/factories';
@@ -17,15 +18,17 @@ function renderBookRow(props: Partial<Parameters<typeof BookRow>[0]> = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const defaultProps = {
     book: createMockBookMetadata(),
-    inLibrary: false,
+    libraryBookId: null,
     onAdd: vi.fn(),
     isAdding: false,
     ...props,
   };
   return render(
-    <QueryClientProvider client={queryClient}>
-      <BookRow {...defaultProps} />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <BookRow {...defaultProps} />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -45,7 +48,6 @@ describe('BookRow', () => {
     expect(screen.queryByText('#1')).not.toBeInTheDocument();
   });
 
-  // #1097 — series position prefers seriesPrimary.position over series[0].position
   it('renders position from seriesPrimary instead of series[0] when both are present (#1097)', () => {
     renderBookRow({
       book: createMockBookMetadata({
@@ -56,7 +58,6 @@ describe('BookRow', () => {
         ],
       }),
     });
-    // Prefers primary (#2), not series[0] (#5)
     expect(screen.getByText('#2')).toBeInTheDocument();
     expect(screen.queryByText('#5')).not.toBeInTheDocument();
   });
@@ -71,10 +72,20 @@ describe('BookRow', () => {
     expect(screen.getByText('45h')).toBeInTheDocument();
   });
 
-  it('shows check icon when inLibrary', () => {
-    renderBookRow({ inLibrary: true });
+  it('links the check affordance to the owned book instead of rendering an Add control', () => {
+    renderBookRow({ libraryBookId: 42 });
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
-    expect(screen.getByLabelText('In library')).toBeInTheDocument();
+    expect(screen.getByLabelText(/in your library/i)).toHaveAttribute('href', '/books/42');
+  });
+
+  it('links the title to the owned book when it is in the library', () => {
+    renderBookRow({ libraryBookId: 42 });
+    expect(screen.getByTestId('author-book-title-link')).toHaveAttribute('href', '/books/42');
+  });
+
+  it('leaves the title unlinked when the book is not in the library', () => {
+    renderBookRow();
+    expect(screen.queryByTestId('author-book-title-link')).not.toBeInTheDocument();
   });
 
   it('shows Add popover button when not in library', () => {
@@ -92,10 +103,8 @@ describe('BookRow', () => {
     const user = userEvent.setup();
     renderBookRow({ onAdd: handleAdd });
 
-    // Click to open popover
     await user.click(screen.getByRole('button'));
 
-    // Click Add to Library
     const addButton = await screen.findByRole('button', { name: /add to library/i });
     await user.click(addButton);
 

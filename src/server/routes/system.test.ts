@@ -40,9 +40,7 @@ describe('system routes', () => {
   beforeEach(() => {
     resetMockServices(services);
     for (const s of Object.values(logSpies)) s.mockClear();
-    // After reset, default runExclusive to invoke its callback (call-through) so tests
-    // exercising the underlying job behavior don't need to opt in. Tests asserting the
-    // 409 busy path override per-call with mockRejectedValueOnce(new TaskRegistryError).
+    // Default the registry mock to call through; busy-path tests override it once.
     (services.taskRegistry.runExclusive as Mock).mockImplementation(
       (_name: string, fn: () => Promise<unknown>) => fn(),
     );
@@ -70,12 +68,10 @@ describe('system routes', () => {
     it('omits instanceBadge when unset, includes it when configured (#1842)', async () => {
       const original = config.instanceBadge;
 
-      // Unset → payload byte-identical to today.
       config.instanceBadge = undefined;
       let res = await app.inject({ method: 'GET', url: '/api/system/status' });
       expect(JSON.parse(res.payload)).not.toHaveProperty('instanceBadge');
 
-      // Set → badge appears verbatim alongside the existing fields.
       config.instanceBadge = 'dev';
       try {
         res = await app.inject({ method: 'GET', url: '/api/system/status' });
@@ -166,9 +162,7 @@ describe('system routes', () => {
     });
   });
 
-  // #1554 — the dedicated POST /api/system/tasks/rss route was removed; RSS is
-  // now triggered only through the generic POST /api/system/tasks/:name/run runner
-  // (covered against the real registry below). The dedicated path is a route-level 404.
+  // RSS is available only through the generic task runner; this former dedicated path must stay 404.
   describe('POST /api/system/tasks/rss (removed — #1554)', () => {
     it('returns a route-level 404 (no dedicated handler matches)', async () => {
       const res = await app.inject({ method: 'POST', url: '/api/system/tasks/rss' });
@@ -250,7 +244,6 @@ describe('system routes', () => {
     });
   });
 
-  // #746 — manual triggers route through TaskRegistry concurrency guard
   describe('manual task trigger concurrency (TaskRegistry-guarded)', () => {
     const cases = [
       { url: '/api/system/tasks/search', task: 'search' },
@@ -284,7 +277,6 @@ describe('system routes', () => {
     });
   });
 
-  // #746 — exercises the real TaskRegistry, not the proxy mock, to validate AC4 + AC7.
   describe('TaskRegistry concurrency end-to-end (real registry)', () => {
     let realRegistry: TaskRegistry;
     let realApp: Awaited<ReturnType<typeof createTestApp>>;
@@ -293,7 +285,6 @@ describe('system routes', () => {
     beforeAll(async () => {
       realServices = createMockServices();
       realRegistry = new TaskRegistry();
-      // Replace the proxy-mocked taskRegistry with a real instance.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (realServices as any).taskRegistry = realRegistry;
       realApp = await createTestApp(realServices);
@@ -310,11 +301,8 @@ describe('system routes', () => {
       let release: (v: unknown) => void;
       const held = new Promise((resolve) => { release = resolve; });
 
-      // Start a manual run that holds the lock until we release it.
       const manualRun = realRegistry.runExclusive('search', () => held);
 
-      // While the manual run holds the lock, the scheduled tick must skip silently —
-      // no throw, and the registered fn is never invoked.
       await expect(realRegistry.executeTracked('search')).resolves.toBeUndefined();
       expect(trackedFn).not.toHaveBeenCalled();
 
@@ -322,10 +310,8 @@ describe('system routes', () => {
       await manualRun;
     });
 
-    // #1554 — retargeted from the removed dedicated /tasks/rss route to the
-    // surviving runExclusive-backed /tasks/search route, preserving #746 AC7 coverage.
     it('successful manual run updates lastRun via runExclusive side effect (AC7)', async () => {
-      // Re-register to reset lastRun (the AC4 test above already exercised 'search').
+      // Re-register because the previous test populated lastRun.
       realRegistry.register('search', 'timeout', vi.fn().mockResolvedValue(undefined));
       (realServices.settings.get as Mock).mockImplementation((cat: string) =>
         Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
@@ -343,9 +329,6 @@ describe('system routes', () => {
       expect(new Date(after!.lastRun!).getTime()).toBeGreaterThan(0);
     });
 
-    // #1554 — RSS stays reachable through the generic runner after the dedicated
-    // route's removal. The generic runner returns { ok: true } and discards the job
-    // summary (the dedicated route used to return { polled, matched, grabbed }).
     it('generic POST /api/system/tasks/rss/run drives the registered rss task and returns { ok: true }', async () => {
       const rssFn = vi.fn().mockResolvedValue(undefined);
       realRegistry.register('rss', 'timeout', rssFn);
@@ -399,8 +382,6 @@ describe('system routes', () => {
       const tempFile = path.join(tempDir, 'test.zip');
       await fsp.writeFile(tempFile, 'fake');
 
-      // Even if getBackupPath somehow accepts a filename with separators,
-      // the Content-Disposition header must not contain them
       (services.backup.getBackupPath as Mock).mockReturnValue(tempFile);
 
       const res = await app.inject({ method: 'GET', url: '/api/system/backups/path%5Cfile.zip/download' });
@@ -752,7 +733,7 @@ describe('system routes', () => {
       const payload = JSON.parse(res.payload);
       expect(payload.message).toContain('Restore confirmed');
 
-      // Let setImmediate fire
+      // Let setImmediate fire the scheduled exit.
       await new Promise(r => setImmediate(r));
       expect(exitSpy).toHaveBeenCalledWith(0);
 
@@ -762,11 +743,7 @@ describe('system routes', () => {
 
   describe('GET /api/system/notices (#1862 — third-party license notices)', () => {
     it('returns 200 { content } read from `<cwd>/THIRD_PARTY_NOTICES.md` (cwd-relative, not hardcoded /app)', async () => {
-      // Isolate ambient input: stub cwd + readFile so the outcome does not depend on the
-      // runner's launch directory or checkout contents (F7). Asserting the readFile path is
-      // path.join(cwd, 'THIRD_PARTY_NOTICES.md') proves resolution is cwd-relative — the same
-      // resolution that yields repo root in dev/CI and /app in the runtime image — so a
-      // regression to a hardcoded '/app/...' path would fail here.
+      // Stub ambient inputs so the cwd-relative path assertion is independent of runner location/files.
       const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue('/fake/app');
       const readSpy = vi.spyOn(fsp, 'readFile').mockResolvedValue('STUB NOTICE BODY');
 
@@ -799,11 +776,8 @@ describe('system routes', () => {
   });
 });
 
-// ── POST /api/system/restore (multipart upload) ────────────────────────────
-// Separate top-level describe because the base createTestApp does NOT register
-// @fastify/multipart, and it must be registered BEFORE routes.
+// createTestApp cannot be used here: multipart must register before routes.
 
-/** Create a zip Buffer using archiver. Resolves when the archive is finalized. */
 function createZipBuffer(entries: { name: string; content: Buffer }[]): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const archive = new ZipArchive({ zlib: { level: 0 } });
@@ -818,7 +792,6 @@ function createZipBuffer(entries: { name: string; content: Buffer }[]): Promise<
   });
 }
 
-/** Build a raw multipart/form-data payload suitable for Fastify inject. */
 function createMultipartPayload(filename: string, content: Buffer, boundary = 'boundary123') {
   const header = Buffer.from(
     `--${boundary}\r\n` +
@@ -841,7 +814,6 @@ describe('POST /api/system/restore', () => {
     services = createMockServices();
     const mockDb = inject<Db>({ run: vi.fn().mockResolvedValue(undefined) });
 
-    // Build a Fastify app with multipart registered BEFORE routes
     const instance = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
     instance.setValidatorCompiler(validatorCompiler);
     instance.setSerializerCompiler(serializerCompiler);
@@ -890,7 +862,6 @@ describe('POST /api/system/restore', () => {
   });
 
   it('returns 400 when no file is uploaded', async () => {
-    // Send multipart with an empty text field instead of a file
     const boundary = 'boundary456';
     const raw = [
       `--${boundary}`,
@@ -1104,8 +1075,6 @@ describe('POST /api/system/restore', () => {
           'x-requested-with': 'XMLHttpRequest',
         },
       });
-      // The handler may run a search job that returns various results; either way,
-      // the request must NOT be 403 — that proves the CSRF gate let it through.
       expect(res.statusCode).not.toBe(403);
       expect(res.statusCode).not.toBe(401);
     });
@@ -1137,8 +1106,6 @@ describe('POST /api/system/restore', () => {
       });
       expect(res.statusCode).toBe(403);
       expect(JSON.parse(res.payload).error).toMatch(/CSRF/);
-      // Cover upload handler delegates to bookService.uploadCover — proves the body
-      // was rejected by the gate before the route handler consumed it.
       expect(csrfServices.book.uploadCover as Mock).not.toHaveBeenCalled();
     });
 
@@ -1167,10 +1134,6 @@ describe('POST /api/system/restore', () => {
       expect(res.headers['www-authenticate']).toBe('Basic realm="Narratorr"');
     });
 
-    // The api-key CSRF exemption is NOT testable on this suite's routes: system routes
-    // live outside `/api/v*`, so a presented key is rejected out-of-scope (#1453) before
-    // `validateApiKey` or the CSRF gate ever runs. The contract is pinned where it is
-    // observable — auth.plugin.test.ts covers the in-scope key CSRF bypass and the
-    // non-v* out-of-scope 401 (#2054).
+    // System routes reject API keys before CSRF; auth.plugin.test.ts covers the in-scope bypass.
   });
 });

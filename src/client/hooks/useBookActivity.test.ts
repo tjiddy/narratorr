@@ -113,14 +113,8 @@ describe('useBookActivity', () => {
   });
 });
 
-// ============================================================================
-// #2129 — activity derived from the merge_state snapshot alone
-// ============================================================================
-
 describe('useBookActivity from a merge_state snapshot', () => {
   it('reports a queued merge learned ONLY from the snapshot (the reported regression)', () => {
-    // The book was announced as queued once, before this client existed; the connect greeting
-    // is its only source. Pre-#2129 nothing rendered here at all.
     applyMergeStateSnapshot({ active: [], queued: [{ book_id: 42, book_title: 'The Shining' }] });
     const { result } = renderHook(() => useBookActivity(42), { wrapper });
     expect(result.current).toEqual({ state: 'queued', label: 'Merge queued' });
@@ -135,9 +129,6 @@ describe('useBookActivity from a merge_state snapshot', () => {
     expect(result.current).toEqual({ state: 'working', label: 'Encoding…', percentage: 35 });
   });
 
-  // Chip-render assertions for these states live in BookActivityBadge.test.tsx (#2142) — this
-  // suite owns only the snapshot → activity derivation; the end-to-end wire → rendered-percent
-  // chain is pinned in LibraryBookCard.test.tsx.
   it('reports null after the terminal sequence, while the Activity card is still in its dismiss window', () => {
     setMergeProgress(42, { bookTitle: 'Dogs of War', phase: 'complete', outcome: 'success', message: 'Merged 3 files' });
     applyMergeStateSnapshot({ active: [], queued: [] });

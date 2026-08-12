@@ -178,7 +178,6 @@ describe('fetchApi with URL_BASE', () => {
   });
 
   it('prepends URL_BASE to API requests when set', async () => {
-    // Set URL_BASE on window and force fresh module import
     window.__NARRATORR_URL_BASE__ = '/narratorr';
     vi.resetModules();
     const { fetchApi: prefixedFetchApi } = await import('./client.js');
@@ -197,7 +196,6 @@ describe('fetchApi with URL_BASE', () => {
   });
 
   it('exports URL_BASE from window injection', () => {
-    // In test env, window.__NARRATORR_URL_BASE__ is undefined → URL_BASE defaults to ''
     expect(typeof URL_BASE).toBe('string');
   });
 });
@@ -359,8 +357,6 @@ describe('fetchMultipart', () => {
   });
 });
 
-// #1893 — Retry-After parsing + projection onto ApiError. The staged-import retry
-// helper honors `retryAfterMs`; the field is optional so existing callers are unaffected.
 describe('parseRetryAfterMs (#1893)', () => {
   it('parses non-negative delta-seconds to ms', () => {
     expect(parseRetryAfterMs('5')).toBe(5000);

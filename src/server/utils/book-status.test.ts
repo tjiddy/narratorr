@@ -19,7 +19,6 @@ describe('transitionBookStatus', () => {
     const setArg = setFn.mock.calls[0]![0] as Record<string, unknown>;
     expect(setArg).toHaveProperty('status', 'downloading');
     expect(setArg).toHaveProperty('updatedAt');
-    // Omitted fields are never written — they can't clobber a concurrent writer.
     expect(setArg).not.toHaveProperty('path');
     expect(setArg).not.toHaveProperty('size');
     const whereFn = (chain as Record<string, Mock>).where;
@@ -52,7 +51,7 @@ describe('transitionBookStatus', () => {
 
   it('returns false when the expected guard does not match (no rows updated)', async () => {
     const db = createMockDb();
-    db.update.mockReturnValue(mockDbChain([])); // returning() resolves empty → precondition missed
+    db.update.mockReturnValue(mockDbChain([]));
 
     const landed = await transitionBookStatus(db as unknown as Db, 9, { status: 'missing', expected: { status: 'imported' } });
 
@@ -103,13 +102,12 @@ describe('revertBookStatus', () => {
 describe('guardedRevertBookStatus (#1857)', () => {
   it('lands and returns the resolved snapshot when the book is still in the expected state', async () => {
     const db = createMockDb();
-    const chain = mockDbChain([{ id: 42 }]); // returning() → one row → guard matched
+    const chain = mockDbChain([{ id: 42 }]);
     db.update.mockReturnValue(chain);
 
     const result = await guardedRevertBookStatus(db as unknown as Db, { id: 42 }, 'missing', 'downloading');
 
     expect(result).toEqual({ landed: true, status: 'missing' });
-    // Equality guard compiled into the WHERE predicate.
     const whereFn = (chain as Record<string, Mock>).where;
     expect(whereFn).toHaveBeenCalledWith(and(eq(books.id, 42), eq(books.status, 'downloading')));
     expect((chain as Record<string, Mock>).set).toHaveBeenCalledWith(expect.objectContaining({ status: 'missing' }));
@@ -117,7 +115,7 @@ describe('guardedRevertBookStatus (#1857)', () => {
 
   it('misses (landed=false) when the book has moved away from the expected state (late importing)', async () => {
     const db = createMockDb();
-    db.update.mockReturnValue(mockDbChain([])); // returning() empty → guard missed
+    db.update.mockReturnValue(mockDbChain([]));
     const result = await guardedRevertBookStatus(db as unknown as Db, { id: 1 }, 'wanted', 'downloading');
     expect(result).toEqual({ landed: false, status: 'wanted' });
   });

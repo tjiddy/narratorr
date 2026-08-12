@@ -61,8 +61,7 @@ export function ActivityPage() {
     },
   });
 
-  // Clamp page when total shrinks — use stable clampToTotal callback (destructured above)
-  // instead of the full pagination object to avoid re-running on every render.
+  // Depend on the stable callback; the pagination object is recreated every render.
   useEffect(() => { clampQueuePage(queueTotal); }, [queueTotal, clampQueuePage]);
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -78,7 +77,6 @@ export function ActivityPage() {
       } else {
         next.set('tab', value);
       }
-      // Clear filter when switching to active tab
       if (value === 'active') {
         next.delete('filter');
       }
@@ -92,10 +90,8 @@ export function ActivityPage() {
 
   return (
     <div className="space-y-10">
-      {/* Header */}
       <PageHeader title="Activity" subtitle="Monitor your downloads and import history" />
 
-      {/* Tab buttons */}
       <div className="flex justify-center animate-fade-in-up stagger-1">
         <Tabs tabs={ACTIVITY_TABS} value={tab} onChange={(v) => setTab(v as 'active' | 'history')} ariaLabel="Activity" />
       </div>
@@ -121,9 +117,7 @@ export function ActivityPage() {
 
       {tab === 'history' && (
         <div role="tabpanel" id="tabpanel-history" aria-labelledby="tab-history" className="animate-fade-in-up stagger-2 space-y-10">
-          {/* Durable import-history cards (#1894) render above the event-history list,
-              isolated by a section boundary so a render failure here can't take the
-              event-history list down with it (F5). */}
+          {/* Isolate import-history rendering so malformed rows cannot take down event history below it. */}
           <SectionErrorBoundary
             fallback={
               <div className="rounded-lg border border-border p-3 text-sm text-muted-foreground" data-testid="import-history-boundary-fallback">

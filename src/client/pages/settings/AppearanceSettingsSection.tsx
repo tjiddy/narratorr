@@ -1,4 +1,4 @@
-// Does not use useSettingsForm: theme is stored in localStorage via useTheme, not the settings API.
+// Theme persists through useTheme/localStorage, not the settings API.
 import { SunIcon } from '@/components/icons';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';

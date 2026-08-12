@@ -8,14 +8,6 @@ import { stagedAudioReplace, prepareImportSiblings, BackupRecoveryError, markerP
 import { deriveImportSiblings } from './import-sibling-paths.js';
 import { copyAudioFiles, copyDiscGroup, getAudioPathSize } from './import-helpers.js';
 
-/**
- * #1287 — the manual-import path must NOT merge a new audio edition into a target
- * that already contains audio (that recreates the #1252 Frankenbook). These tests
- * exercise the real staged-swap (`stagedAudioReplace` → `commitStagedImport`) over
- * a real tmpdir so the byte-level "clean audio replace, non-audio preserved,
- * atomic on failure" contract is asserted directly.
- */
-
 function makeLog(): FastifyBaseLogger {
   return {
     info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
@@ -24,7 +16,6 @@ function makeLog(): FastifyBaseLogger {
   } as unknown as FastifyBaseLogger;
 }
 
-/** Recursively list every file path relative to `dir`, POSIX-normalized. */
 async function listAllFiles(dir: string, prefix = ''): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
   const out: string[] = [];
@@ -75,7 +66,6 @@ describe('stagedAudioReplace (#1287 manual import over populated target)', () =>
     await replaceFromSource();
 
     expect(await listAllFiles(target)).toEqual(['a.mp3', 'b.mp3', 'c.mp3']);
-    // Transient siblings cleaned up — active born-hidden scratch AND any legacy leftover (#1911).
     const { stagingPath, backupPath, legacyStagingPath, legacyBackupPath } = deriveImportSiblings(target);
     expect(await pathExists(stagingPath)).toBe(false);
     expect(await pathExists(backupPath)).toBe(false);
@@ -96,18 +86,15 @@ describe('stagedAudioReplace (#1287 manual import over populated target)', () =>
       log: makeLog(),
       sourceAudioSize: await getAudioPathSize(source),
       stage: async (sp) => {
-        // `basename` (not `split('/')`) so the dot-led check holds on Windows, where the
-        // Node-composed path uses backslash separators (cross-platform test rule).
+        // basename keeps the dot-led check platform-independent.
         observedStagingBasename = basename(sp);
         await copyAudioFiles(source, sp);
         stagingWasDotLedDuringStage = await pathExists(sp) && observedStagingBasename!.startsWith('.');
       },
     });
 
-    // The staging dir handed to `stage()` is the born-hidden active path and is dot-led.
     expect(basename(stagingPath)).toMatch(/^\.Title\.import-staging$/);
     expect(stagingWasDotLedDuringStage).toBe(true);
-    // Audio committed into the VISIBLE target; scratch gone.
     expect(await listAllFiles(target)).toContain('new.mp3');
     expect(await pathExists(stagingPath)).toBe(false);
     expect(await pathExists(backupPath)).toBe(false);
@@ -126,7 +113,6 @@ describe('stagedAudioReplace (#1287 manual import over populated target)', () =>
     expect(files).toContain('cover.jpg');
     expect(files).toContain('book.nfo');
     expect(files).not.toContain('old.m4b');
-    // Non-audio bytes untouched.
     expect(await readFile(join(target, 'cover.jpg'), 'utf8')).toBe('JPEGDATA');
   });
 
@@ -140,39 +126,33 @@ describe('stagedAudioReplace (#1287 manual import over populated target)', () =>
     await replaceFromSource();
 
     const files = await listAllFiles(target);
-    // No audio survives anywhere — top-level or nested.
     expect(files.filter((f) => f.endsWith('.mp3'))).toEqual(['new.mp3']);
     expect(files).not.toContain('Disc 1/old.mp3');
-    // Nested + top-level non-audio preserved.
     expect(files).toContain('Disc 1/disc.nfo');
     expect(files).toContain('cover.jpg');
     expect(await pathExists(`${target}.import-bak`)).toBe(false);
   });
 
   it('#1852 F8: the staged swap never backs up or removes a hidden target temp or a hidden subtree (backup enumeration skips them)', async () => {
-    await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));                 // stale visible audio → replaced
-    await writeFile(join(target, '.active.tmp.mp3'), Buffer.alloc(300, 9));         // active born-hidden temp → must survive
+    await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
+    await writeFile(join(target, '.active.tmp.mp3'), Buffer.alloc(300, 9));
     await mkdir(join(target, '.staging'), { recursive: true });
-    await writeFile(join(target, '.staging', 'ghost.mp3'), Buffer.alloc(200, 8));   // hidden subtree at depth → never descended
+    await writeFile(join(target, '.staging', 'ghost.mp3'), Buffer.alloc(200, 8));
     await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
 
     await replaceFromSource();
 
     const files = await listAllFiles(target);
-    expect(files).toContain('new.mp3');            // new edition swapped in
-    expect(files).not.toContain('old.m4b');        // stale visible audio replaced
-    expect(files).toContain('.active.tmp.mp3');    // hidden temp untouched (never enumerated as backup audio)
-    expect(files).toContain('.staging/ghost.mp3'); // hidden subtree never descended
+    expect(files).toContain('new.mp3');
+    expect(files).not.toContain('old.m4b');
+    expect(files).toContain('.active.tmp.mp3');
+    expect(files).toContain('.staging/ghost.mp3');
     expect(await pathExists(`${target}.import-bak`)).toBe(false);
   });
 
   it('#1852 F11: a hidden target ROOT is an identity root — its visible audio is enumerated, backed up, and replaced', async () => {
-    // The owning operation may hand `stagedAudioReplace` a born-hidden target path (Root Policy:
-    // identity roots are descended, never self-rejected). listAudioFilesRecursive must therefore
-    // enumerate the hidden root's VISIBLE children so the stale edition is backed up and replaced.
-    // A regression that self-rejected a hidden root would back up nothing → old.m4b would survive
-    // alongside new.mp3 (mixed edition), failing the not.toContain assertion below.
-    const hiddenTarget = join(libraryRoot, 'Author', '.Title'); // hidden ROOT basename
+    // Hidden roots are descended; only hidden descendants are skipped.
+    const hiddenTarget = join(libraryRoot, 'Author', '.Title');
     await mkdir(hiddenTarget, { recursive: true });
     await writeFile(join(hiddenTarget, 'old.m4b'), Buffer.alloc(500, 1));
     await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
@@ -186,8 +166,8 @@ describe('stagedAudioReplace (#1287 manual import over populated target)', () =>
     });
 
     const files = await listAllFiles(hiddenTarget);
-    expect(files).toContain('new.mp3');     // staged edition swapped in
-    expect(files).not.toContain('old.m4b'); // stale audio under the hidden root was enumerated + replaced
+    expect(files).toContain('new.mp3');
+    expect(files).not.toContain('old.m4b');
     expect(await pathExists(`${hiddenTarget}.import-bak`)).toBe(false);
   });
 
@@ -213,17 +193,15 @@ describe('stagedAudioReplace (#1287 manual import over populated target)', () =>
       log: makeLog(),
       sourceAudioSize: 1000,
       stage: async (stagingPath) => {
-        // Simulate a copy that fails partway: write a partial staged file, then throw.
+        // Simulate a partial staged file before the copy fails.
         await mkdir(stagingPath, { recursive: true });
         await writeFile(join(stagingPath, 'partial.mp3'), Buffer.alloc(50));
         throw new Error('Disk full mid-copy');
       },
     })).rejects.toThrow('Disk full mid-copy');
 
-    // Existing target audio is exactly as it was — never touched.
     expect(await listAllFiles(target)).toEqual(['cover.jpg', 'old.m4b']);
     expect(await readFile(join(target, 'old.m4b'))).toEqual(originalBytes);
-    // The partial staging dir is cleaned up.
     expect(await pathExists(`${target}.import-tmp`)).toBe(false);
     expect(await pathExists(`${target}.import-bak`)).toBe(false);
   });
@@ -238,7 +216,6 @@ describe('stagedAudioReplace (#1287 manual import over populated target)', () =>
     await replaceFromSource();
 
     const files = await listAllFiles(target);
-    // Two discs flattened + sequentially renamed to the top level; old audio gone.
     expect(files).not.toContain('old.mp3');
     expect(files.every((f) => !f.includes('/'))).toBe(true);
     expect(files.filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
@@ -248,7 +225,6 @@ describe('stagedAudioReplace (#1287 manual import over populated target)', () =>
   it('AC6: colliding source basenames abort before the populated target is touched', async () => {
     const originalBytes = Buffer.alloc(300, 1);
     await writeFile(join(target, 'old.mp3'), originalBytes);
-    // Two non-disc subfolders each with the same basename → flatten collision throw.
     await mkdir(join(source, 'A'), { recursive: true });
     await mkdir(join(source, 'B'), { recursive: true });
     await writeFile(join(source, 'A', '01.mp3'), Buffer.alloc(300, 2));
@@ -256,7 +232,6 @@ describe('stagedAudioReplace (#1287 manual import over populated target)', () =>
 
     await expect(replaceFromSource()).rejects.toThrow(/Duplicate filename/i);
 
-    // Pre-existing target audio is byte-unchanged — the throw happened during staging.
     expect(await listAllFiles(target)).toEqual(['old.mp3']);
     expect(await readFile(join(target, 'old.mp3'))).toEqual(originalBytes);
     expect(await pathExists(`${target}.import-tmp`)).toBe(false);
@@ -299,14 +274,7 @@ describe('stagedAudioReplace (#1287 manual import over populated target)', () =>
   });
 });
 
-/**
- * #1290 — a process-killed commit (SIGKILL/OOM/power loss) leaves originals stranded
- * in `.import-bak` and a commit-pending marker on disk; the in-process rollback never
- * ran. On the next import the marker drives recovery: the originals are restored to the
- * target before any deletion, instead of the prior strict-clear that deleted them.
- * These tests stage that interrupted on-disk state over a real tmpdir and drive the
- * real entry path (`prepareImportSiblings` / `stagedAudioReplace`).
- */
+// A durable marker makes stranded originals authoritative after process death.
 describe('interrupted-commit recovery (#1290 marker-gated restore)', () => {
   let libraryRoot: string;
   let target: string;
@@ -327,9 +295,7 @@ describe('interrupted-commit recovery (#1290 marker-gated restore)', () => {
     await rm(libraryRoot, { recursive: true, force: true });
   });
 
-  /** Re-enter the import pre-step exactly as the startup-recovery re-run would. The seam
-   * derives BOTH conventions from `targetPath`; these legacy-seeded specimens exercise the
-   * legacy recognition path (#1911). */
+  /** Legacy-seeded fixtures exercise legacy recognition through the real pre-step. */
   function recover(): Promise<void> {
     return prepareImportSiblings({ targetPath: target, libraryRoot, log: makeLog() });
   }
@@ -351,12 +317,11 @@ describe('interrupted-commit recovery (#1290 marker-gated restore)', () => {
     const originalBytes = Buffer.alloc(400, 9);
     await mkdir(backup, { recursive: true });
     await writeFile(join(backup, 'old.m4b'), originalBytes);
-    await writeFile(join(backup, '.ghost.tmp.mp3'), Buffer.alloc(100, 7)); // hidden entry in the backup
+    await writeFile(join(backup, '.ghost.tmp.mp3'), Buffer.alloc(100, 7));
     await writeFile(marker, '');
 
     await recover();
 
-    // Visible backed-up audio is restored; the hidden entry is NOT (recovery enumeration skips it).
     expect(await readFile(join(target, 'old.m4b'))).toEqual(originalBytes);
     expect(await pathExists(join(target, '.ghost.tmp.mp3'))).toBe(false);
     expect(await pathExists(backup)).toBe(false);
@@ -383,28 +348,21 @@ describe('interrupted-commit recovery (#1290 marker-gated restore)', () => {
   it('AC: interrupted move-in conflict — backup overwrites the half-moved-in same-name target file', async () => {
     const original = Buffer.from('ORIGINAL-EDITION');
     const halfMovedIn = Buffer.from('STAGED-NEW-EDITION');
-    // A kill mid move-in: the new staged file already sits at target/book.m4b...
     await writeFile(join(target, 'book.m4b'), halfMovedIn);
-    // ...while the original is in the backup, and the marker proves the interruption.
     await mkdir(backup, { recursive: true });
     await writeFile(join(backup, 'book.m4b'), original);
     await writeFile(marker, '');
 
     await recover();
 
-    // The backup is authoritative: the original overwrites the half-moved-in file.
     expect(await readFile(join(target, 'book.m4b'))).toEqual(original);
   });
 
   it('AC (gap 3): recovery overwrites the colliding half-moved-in file but does NOT delete a non-colliding moved-in new-edition file', async () => {
-    // The interrupted-conflict AC has TWO halves. The colliding half (backup overwrites a
-    // same-name half-moved-in file) is pinned above; this pins the OTHER half: a new-edition
-    // file that was moved into the target with NO backup counterpart must SURVIVE recovery —
-    // recovery only restores backed-up relative paths, it never sweeps the target clean.
+    // Recovery restores backup collisions but never sweeps unrelated moved-in files.
     const original = Buffer.from('ORIGINAL-EDITION');
     const halfMovedColliding = Buffer.from('STAGED-NEW-SAME-NAME');
     const nonCollidingNew = Buffer.from('STAGED-NEW-NO-BACKUP-COUNTERPART');
-    // Half-moved-in new edition: book.mp3 collides with the backup; bonus.mp3 does not.
     await writeFile(join(target, 'book.mp3'), halfMovedColliding);
     await writeFile(join(target, 'bonus.mp3'), nonCollidingNew);
     await mkdir(backup, { recursive: true });
@@ -413,27 +371,19 @@ describe('interrupted-commit recovery (#1290 marker-gated restore)', () => {
 
     await recover();
 
-    // Colliding half: the backup is authoritative, overwriting the half-moved-in same-name file.
     expect(await readFile(join(target, 'book.mp3'))).toEqual(original);
-    // Non-colliding half: the moved-in new-edition file with no backup counterpart SURVIVES —
-    // a regression that swept the target during recovery would delete it and fail here.
     expect(await readFile(join(target, 'bonus.mp3'))).toEqual(nonCollidingNew);
     expect(await pathExists(backup)).toBe(false);
     expect(await pathExists(marker)).toBe(false);
   });
 
   it('AC (gap 2): marker-present recovery runs as a PRE-STEP of a completing import — real stage() copies the new edition, whose bytes win end-to-end', async () => {
-    // Existing coverage drives recovery via `prepareImportSiblings` in isolation. This pins the
-    // full chain: an interrupted on-disk state (marker + stranded original) feeds a real
-    // `stagedAudioReplace` whose `stage()` copies a NEW edition — recovery restores the original
-    // first, then the swap replaces it. The new edition's bytes must win at the end.
+    // Pin recovery-before-swap through the full stagedAudioReplace chain.
     const oldBytes = Buffer.from('OLD-EDITION-STRANDED');
     const newBytes = Buffer.alloc(600, 7);
-    // Interrupted-commit shape: original stranded in the backup, marker present, target empty of audio.
     await mkdir(backup, { recursive: true });
     await writeFile(join(backup, 'old.m4b'), oldBytes);
     await writeFile(marker, '');
-    // The new edition to import.
     const source = join(libraryRoot, '_downloads', 'release');
     await mkdir(source, { recursive: true });
     await writeFile(join(source, 'new.mp3'), newBytes);
@@ -444,10 +394,8 @@ describe('interrupted-commit recovery (#1290 marker-gated restore)', () => {
       stage: (stagingPath) => copyAudioFiles(source, stagingPath),
     });
 
-    // Recovery ran as a pre-step, THEN the new edition replaced the recovered original end-to-end.
     expect(await listAllFiles(target)).toEqual(['new.mp3']);
     expect(await readFile(join(target, 'new.mp3'))).toEqual(newBytes);
-    // No stale old edition survives, and no leftover siblings/marker remain.
     expect(await pathExists(backup)).toBe(false);
     expect(await pathExists(marker)).toBe(false);
     expect(await pathExists(staging)).toBe(false);
@@ -472,22 +420,18 @@ describe('interrupted-commit recovery (#1290 marker-gated restore)', () => {
     await writeFile(join(backup, 'a.m4b'), aBytes);
     await writeFile(join(backup, 'z.m4b'), zBytes);
     await writeFile(marker, '');
-    // Block the restore of z.m4b: a non-empty directory at the destination makes the
-    // file→dir rename throw partway through the restore loop.
+    // A non-empty destination directory fails one restore mid-loop.
     await mkdir(join(target, 'z.m4b'), { recursive: true });
     await writeFile(join(target, 'z.m4b', 'blocker'), Buffer.from('x'));
 
-    // Drive the full caller chain so the preserve-backup cleanup path is exercised.
     await expect(stagedAudioReplace({
       targetPath: target, libraryRoot, log: makeLog(), sourceAudioSize: 1,
-      stage: async () => { /* unreached — recovery throws first */ },
+      stage: async () => {},
     })).rejects.toBeInstanceOf(BackupRecoveryError);
 
-    // The unrestored original AND the marker survive for the next boot.
     expect(await pathExists(join(backup, 'z.m4b'))).toBe(true);
     expect(await pathExists(marker)).toBe(true);
 
-    // Next boot: clear the blocker, re-run recovery → converges, both files restored.
     await rm(join(target, 'z.m4b'), { recursive: true, force: true });
     await recover();
 
@@ -498,33 +442,22 @@ describe('interrupted-commit recovery (#1290 marker-gated restore)', () => {
   });
 
   it('#1336 window 1: a recovery-enumeration readdir error preserves .import-bak + the marker', async () => {
-    // Marker present, but `.import-bak` cannot be enumerated as a directory — here it is a
-    // plain FILE, so `listAudioFilesRecursive` → `readdir` rejects with ENOTDIR (a non-ENOENT
-    // error). The enumeration now sits INSIDE recoverInterruptedBackup's wrapping try (#1336),
-    // so it surfaces as a BackupRecoveryError and the cleanup preserves both — instead of the
-    // raw readdir error propagating to cleanup and deleting the stranded originals. Moving the
-    // enumeration back outside the try would let the raw ENOTDIR escape and fail this test.
-    await writeFile(backup, Buffer.from('not-a-directory')); // `.import-bak` as a file → readdir ENOTDIR
+    // An ENOTDIR backup enumeration must become a preservation error.
+    await writeFile(backup, Buffer.from('not-a-directory'));
     await writeFile(marker, '');
 
     await expect(stagedAudioReplace({
       targetPath: target, libraryRoot, log: makeLog(), sourceAudioSize: 1,
-      stage: async () => { /* unreached — recovery enumeration throws first */ },
+      stage: async () => {},
     })).rejects.toBeInstanceOf(BackupRecoveryError);
 
-    // Both survive for the next boot's recovery attempt — nothing was deleted.
     expect(await pathExists(marker)).toBe(true);
     expect(await pathExists(backup)).toBe(true);
   });
 
   it('#1336: a plain commit failure leaves the marker on disk → .import-bak + marker preserved (identity-independent)', async () => {
-    // Drive a real commit failure over a populated target: the staged file move-in fails
-    // because a non-empty directory squats at its destination path. commitStagedImport
-    // rolls back and rethrows the ORIGINAL (plain) error — NOT a BackupRecoveryError — with
-    // the commit-pending marker still on disk. The catch's cleanup must key on the marker's
-    // disk presence (#1336), not the error's identity, and preserve the backup + marker.
+    // A plain commit error must preserve backup when the durable marker remains.
     await writeFile(join(target, 'old.mp3'), Buffer.alloc(300, 1));
-    // A directory at target/new.mp3 makes the staged file→target rename fail mid-commit.
     await mkdir(join(target, 'new.mp3'), { recursive: true });
     await writeFile(join(target, 'new.mp3', 'blocker'), Buffer.from('x'));
 
@@ -543,7 +476,6 @@ describe('interrupted-commit recovery (#1290 marker-gated restore)', () => {
     expect(error).toBeInstanceOf(Error);
     expect(error).not.toBeInstanceOf(BackupRecoveryError);
 
-    // The marker survives, and the (active #1911) backup is NOT deleted while the marker is present.
     const activeBackup = deriveImportSiblings(target).backupPath;
     expect(await pathExists(marker)).toBe(true);
     expect(await pathExists(activeBackup)).toBe(true);
@@ -552,8 +484,7 @@ describe('interrupted-commit recovery (#1290 marker-gated restore)', () => {
   it('false-positive guard: a stale non-empty .import-bak with NO marker is strict-cleared, target NOT regressed', async () => {
     const committedBytes = Buffer.from('NEW-COMMITTED');
     const staleBytes = Buffer.from('OLD-STALE');
-    // Success-leftover shape: target holds the correctly committed new audio, the
-    // backup holds stale old audio, and there is NO marker.
+    // Without a marker, a leftover backup is disposable success debris.
     await writeFile(join(target, 'book.m4b'), committedBytes);
     await mkdir(backup, { recursive: true });
     await writeFile(join(backup, 'book.m4b'), staleBytes);
@@ -561,7 +492,6 @@ describe('interrupted-commit recovery (#1290 marker-gated restore)', () => {
     const log = makeLog();
     await prepareImportSiblings({ targetPath: target, libraryRoot, log });
 
-    // Backup strict-cleared, committed target audio untouched, no recovery log.
     expect(await pathExists(backup)).toBe(false);
     expect(await readFile(join(target, 'book.m4b'))).toEqual(committedBytes);
     expect(log.info).not.toHaveBeenCalledWith(expect.anything(), expect.stringMatching(/Recovering interrupted import commit/i));
@@ -580,7 +510,6 @@ describe('interrupted-commit recovery (#1290 marker-gated restore)', () => {
 
     await recover();
 
-    // Target untouched; no backup conjured.
     expect(await listAllFiles(target)).toEqual(['keep.jpg']);
     expect(await pathExists(backup)).toBe(false);
   });
@@ -596,12 +525,7 @@ describe('interrupted-commit recovery (#1290 marker-gated restore)', () => {
   });
 });
 
-/**
- * #1341 — a metadata-derived folder can collide with the commit-pending marker path, so a
- * DIRECTORY (or any non-file) sits at `<target>.import-commit-pending`. Reads must treat it
- * as marker-absent, but a full import must ABORT before any destructive sibling clearing —
- * never strict-clearing an adjacent pre-existing `.import-bak` nor raising a raw EISDIR.
- */
+// A non-file marker-path collision must abort before destructive sibling clearing.
 describe('marker-path directory collision (#1341)', () => {
   let libraryRoot: string;
   let target: string;
@@ -622,7 +546,6 @@ describe('marker-path directory collision (#1341)', () => {
   it('markerPresent reads a DIRECTORY at the marker path as marker-absent (false)', async () => {
     await mkdir(`${target}.import-commit-pending`, { recursive: true });
 
-    // Verified through the exported read-side caller, not the private markerExists.
     expect(await markerPresent(target, makeLog())).toBe(false);
   });
 
@@ -630,9 +553,7 @@ describe('marker-path directory collision (#1341)', () => {
     const targetBytes = Buffer.from('TARGET-AUDIO');
     const bakBytes = Buffer.from('REAL-BOOK-IN-BAK');
     await writeFile(join(target, 'existing.mp3'), targetBytes);
-    // A DIRECTORY squats at the marker path (metadata collision).
     await mkdir(`${target}.import-commit-pending`, { recursive: true });
-    // A real adjacent pre-existing `.import-bak` holding a real book's audio.
     await mkdir(`${target}.import-bak`, { recursive: true });
     await writeFile(join(`${target}.import-bak`, 'realbook.mp3'), bakBytes);
 
@@ -649,25 +570,16 @@ describe('marker-path directory collision (#1341)', () => {
       },
     })).rejects.toBeInstanceOf(MarkerPathConflictError);
 
-    // Aborted at the preflight — staging never ran.
     expect(staged).toBe(false);
-    // The adjacent pre-existing `.import-bak` audio survives intact — not strict-cleared,
-    // not soft-removed by failure cleanup.
     expect(await readFile(join(`${target}.import-bak`, 'realbook.mp3'))).toEqual(bakBytes);
-    // Existing target audio is byte-unchanged and no `.import-tmp` was committed.
     expect(await readFile(join(target, 'existing.mp3'))).toEqual(targetBytes);
     expect(await pathExists(`${target}.import-tmp`)).toBe(false);
   });
 
-  // POSIX-only: wedging the marker path under a regular file yields ENOTDIR on Linux (a
-  // genuine non-ENOENT error → markerPresent preserves), but Windows returns ENOENT for the
-  // same path (errno -4058), so markerExists reads it as marker-absent and the preservation
-  // branch never fires. The behavior under test is real-OS error-code routing that can't be
-  // portably reproduced via the filesystem (EACCES/ELOOP setups aren't cross-platform either),
-  // and narratorr runs on Linux/Docker — so skip on win32; CI (Linux) fully exercises it.
+  // Linux reports ENOTDIR for this shape; Windows reports ENOENT, so only POSIX reaches
+  // the fail-toward-preservation branch through the real filesystem.
   it.skipIf(process.platform === 'win32')('preservation: a genuine non-ENOENT marker stat error still returns true from markerPresent (#1336)', async () => {
-    // An ancestor that is a FILE makes stat on the derived marker path throw ENOTDIR (a
-    // non-ENOENT error) — markerPresent must fail toward preservation and return true.
+    // A file ancestor makes marker stat fail with ENOTDIR.
     const ancestorFile = join(libraryRoot, 'AuthorAsFile');
     await writeFile(ancestorFile, 'x');
     const wedgedTarget = join(ancestorFile, 'Title');

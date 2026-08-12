@@ -10,8 +10,6 @@ import type { FolderEntry } from './useFolderHistory.js';
 import { wireStagedComplete, summaryResponse, acceptedRow, heldRow, type StagedMockFns } from '@/lib/staged-import/__tests__/staged-fixtures';
 import { __resetOutboxCache } from '@/lib/staged-import/outbox';
 
-// Track match job state for controlled polling — fresh per test via makeMatchState().
-// Widened to the #1864 paused/recovery contract (paused/reason/remaining/recovering + restart/resume).
 type MatchState = {
   results: MatchResult[];
   isMatching: boolean;
@@ -74,7 +72,6 @@ const mockBrowseDirectory = vi.fn();
 const mockGetSettings = vi.fn();
 const mockGetImportSubmissionAttention = vi.fn();
 const mockListImportSubmissions = vi.fn();
-// Staged submit + poll pipeline (#1902).
 const mockCreateSubmission = vi.fn();
 const mockPutSubmissionItems = vi.fn();
 const mockFinalizeSubmission = vi.fn();
@@ -90,12 +87,10 @@ vi.mock('@/lib/api', async () => {
       searchMetadata: vi.fn().mockResolvedValue({ books: [], authors: [], series: [] }),
       browseDirectory: (...args: unknown[]) => mockBrowseDirectory(...args),
       getSettings: (...args: unknown[]) => mockGetSettings(...args),
-      // #1894 — the last-import panel + attention banner mounted at the page top.
       listImportSubmissions: (...args: unknown[]) => mockListImportSubmissions(...args),
       getImportSubmissionAttention: (...args: unknown[]) => mockGetImportSubmissionAttention(...args),
       getImportSubmissionDetail: vi.fn(),
       discardImportSubmission: vi.fn(),
-      // #1902 staged write + poll lane.
       createImportSubmission: (...args: unknown[]) => mockCreateSubmission(...args),
       putImportSubmissionItems: (...args: unknown[]) => mockPutSubmissionItems(...args),
       finalizeImportSubmission: (...args: unknown[]) => mockFinalizeSubmission(...args),
@@ -110,7 +105,6 @@ const stagedMocks: StagedMockFns = {
   create: mockCreateSubmission, put: mockPutSubmissionItems, finalize: mockFinalizeSubmission,
   get: mockGetSubmission, byClient: mockGetSubmissionByClientId,
 };
-/** The staged items actually PUT to the server, flattened across chunks. */
 const submittedItems = () =>
   mockPutSubmissionItems.mock.calls.flatMap(c => (c[1] as { items: { ordinal: number; item: Record<string, unknown> }[] }).items.map(r => r.item));
 
@@ -118,7 +112,6 @@ vi.mock('@/hooks/useEscapeKey', () => ({
   useEscapeKey: vi.fn(),
 }));
 
-// Track folder history state for controlled rendering
 let mockFavorites: FolderEntry[] = [];
 let mockRecents: FolderEntry[] = [];
 const mockAddRecent = vi.fn();
@@ -199,16 +192,12 @@ async function scanAndReview(books: DiscoveredBook[] = [makeDiscoveredBook()]) {
   await userEvent.type(input, '/media/audiobooks');
   await userEvent.click(screen.getByText('Scan'));
 
-  // Wait for review step
   await screen.findByText(/selected/);
 
   return result;
 }
 
-/**
- * Simulate match results arriving by updating the mock and re-rendering.
- * The useMatchJob mock reads from the module-level `matchState.results` on each render.
- */
+// The mocked hook reads matchState again on every render.
 async function simulateMatchResults(
   rerender: (ui: React.ReactElement) => void,
   results: MatchResult[],
@@ -218,7 +207,6 @@ async function simulateMatchResults(
   matchState.isMatching = matching;
   createWrapper();
   rerender(<ManualImportPage />);
-  // Allow useEffect to process
   await screen.findByText(/selected/);
 }
 
@@ -232,8 +220,7 @@ describe('ManualImportPage', () => {
     mockBrowseDirectory.mockResolvedValue({ dirs: ['audiobooks', 'media'], parent: '/' });
     mockGetImportSubmissionAttention.mockResolvedValue({ data: null, watch: false });
     mockListImportSubmissions.mockResolvedValue({ data: [], total: 0 });
-    // Staged pipeline (#1902): reset the source-scoped hint and wire a clean submit → poll →
-    // detail chain for the standard review book. Tests that assert other outcomes re-wire.
+    // Default to a complete staged pipeline; failure tests override individual calls.
     localStorage.clear();
     __resetOutboxCache();
     wireStagedComplete(stagedMocks, { source: 'manual', mode: 'copy', items: [acceptedRow(0, '/media/audiobooks/Author/Book Title', 'Book Title')] });
@@ -429,7 +416,6 @@ describe('ManualImportPage', () => {
         providerId: 'jdale',
       };
 
-      // Match arrives: best match is Stephen Fry narration; Jim Dale version is an alternative
       await simulateMatchResults(rerender, [makeMatchResult({
         path: '/a/HarryPotter',
         confidence: 'high',
@@ -437,21 +423,16 @@ describe('ManualImportPage', () => {
         alternatives: [jimDaleMeta],
       })]);
 
-      // Card shows Stephen Fry (wait for mergeMatchResults effect to propagate narrator to edited state)
       await screen.findByText(/Stephen Fry/);
 
-      // User opens edit modal
       await userEvent.click(screen.getByLabelText('Edit metadata'));
       const dialog = screen.getByRole('dialog');
 
-      // Select the Jim Dale alternative from the alternatives list
       const jimDaleButton = within(dialog).getAllByText('Jim Dale')[0]!.closest('button')!;
       await userEvent.click(jimDaleButton);
 
-      // Save
       await userEvent.click(within(dialog).getByText('Save'));
 
-      // Card now shows Jim Dale, not Stephen Fry
       await waitFor(() => {
         expect(screen.getByText(/Jim Dale/)).toBeInTheDocument();
         expect(screen.queryByText(/Stephen Fry/)).not.toBeInTheDocument();
@@ -464,7 +445,6 @@ describe('ManualImportPage', () => {
       const book = makeDiscoveredBook({ path: '/a/Fixed', parsedTitle: 'Fixed' });
       const { rerender } = await scanAndReview([book]);
 
-      // Simulate no-match
       await simulateMatchResults(rerender, [makeMatchResult({
         path: '/a/Fixed',
         confidence: 'none',
@@ -480,17 +460,14 @@ describe('ManualImportPage', () => {
       expect(screen.getByText('0 of 1 selected')).toBeInTheDocument();
       expect(screen.getByText('No Match')).toBeInTheDocument();
 
-      // Open modal and click an alternative
       await userEvent.click(screen.getByLabelText('Edit metadata'));
       const dialog = screen.getByRole('dialog');
 
       const altButton = within(dialog).getByText('Correct Title');
       await userEvent.click(altButton);
 
-      // Save
       await userEvent.click(within(dialog).getByText('Save'));
 
-      // Row should now be checked and confidence promoted to medium
       expect(screen.getByText('1 of 1 selected')).toBeInTheDocument();
       expect(screen.getByText('Review')).toBeInTheDocument();
     });
@@ -508,11 +485,9 @@ describe('ManualImportPage', () => {
 
       expect(screen.getByText('0 of 1 selected')).toBeInTheDocument();
 
-      // Open modal and save without picking metadata
       await userEvent.click(screen.getByLabelText('Edit metadata'));
       await userEvent.click(within(screen.getByRole('dialog')).getByText('Save'));
 
-      // Should still be unchecked
       expect(screen.getByText('0 of 1 selected')).toBeInTheDocument();
     });
   });
@@ -538,22 +513,17 @@ describe('ManualImportPage', () => {
       const book = makeDiscoveredBook({ path: '/a/NoMatch', parsedTitle: 'NoMatch' });
       const { rerender } = await scanAndReview([book]);
 
-      // Manually re-check the row first (user toggles it back on)
-      // Then simulate no-match arriving — the row gets unchecked by the effect
       await simulateMatchResults(rerender, [
         makeMatchResult({ path: '/a/NoMatch', confidence: 'none', bestMatch: null }),
       ]);
 
-      // Re-select the no-match row manually
       await userEvent.click(screen.getByLabelText('Select'));
 
-      // Should be selected but still disabled because it's unmatched
       expect(screen.getByText('1 of 1 selected')).toBeInTheDocument();
       const btn = screen.getByRole('button', { name: /Import 1/ });
       expect(btn).toBeDisabled();
     });
 
-    // #1102 — gate is scoped to selection, not the global match-job state
     it('enables import when only a matched row is selected and others are still pending', async () => {
       const books = [
         makeDiscoveredBook({ path: '/a/A', parsedTitle: 'Book A' }),
@@ -562,13 +532,10 @@ describe('ManualImportPage', () => {
       ];
       const { rerender } = await scanAndReview(books);
 
-      // Only Book A returns a match — B and C remain pending. Match job stays in flight.
       await simulateMatchResults(rerender, [
         makeMatchResult({ path: '/a/A', confidence: 'high', bestMatch: { title: 'Book A', authors: [{ name: 'Author' }] } }),
       ], /* matching */ true);
 
-      // Deselect Book B and Book C so only the matched Book A row remains selected.
-      // Re-query after each click since the row's button label flips Select<->Deselect.
       const firstDeselects = screen.getAllByLabelText('Deselect');
       await userEvent.click(firstDeselects[1]!);
       const remainingDeselects = screen.getAllByLabelText('Deselect');
@@ -586,7 +553,6 @@ describe('ManualImportPage', () => {
       ];
       await scanAndReview(books);
 
-      // No match results have arrived; both rows are selected by default.
       const btn = screen.getByRole('button', { name: /Import 2/ });
       expect(btn).toBeDisabled();
       expect(btn).toHaveAttribute('title', '2 selected books are still matching');
@@ -599,12 +565,10 @@ describe('ManualImportPage', () => {
       ];
       const { rerender } = await scanAndReview(books);
 
-      // Row /a/None comes back as no-match (auto-unchecks). /a/Pending stays pending.
       await simulateMatchResults(rerender, [
         makeMatchResult({ path: '/a/None', confidence: 'none', bestMatch: null }),
       ], /* matching */ true);
 
-      // Re-select the no-match row manually.
       await userEvent.click(screen.getByLabelText('Select'));
       expect(screen.getByText('2 of 2 selected')).toBeInTheDocument();
 
@@ -630,7 +594,6 @@ describe('ManualImportPage', () => {
     });
 
     it('Import stays disabled while paused even after deselecting every pending row', async () => {
-      // Book A matched (ready), Book B pending. Paused.
       matchState.paused = true;
       matchState.reason = 'run-expired';
       matchState.results = [makeMatchResult({ path: '/a/A', bestMatch: { title: 'Book A', authors: [{ name: 'A' }] } })];
@@ -642,17 +605,13 @@ describe('ManualImportPage', () => {
       ];
       await scanAndReview(books);
 
-      // Deselect the pending Book B — selectedPendingCount would drop to 0, which
-      // without the pause gate would enable Import on the matched Book A.
       const deselects = screen.getAllByLabelText('Deselect');
       await userEvent.click(deselects[1]!);
 
       expect(screen.getByRole('button', { name: /Import/ })).toBeDisabled();
     });
 
-    // #1895 scope guard (F3): the paused-relaxation and paused-visual changes are Library-only.
-    // Manual passes no `paused` prop to the shared components, so a paused Manual pending row keeps
-    // the spinning "Matching" badge + "{n} matching" summary — never "Paused" — and no affordance.
+    // Paused styling is deliberately Library-only; Manual keeps the matching presentation.
     it('paused Manual Import keeps the "Matching" pending badge/summary (no #1895 paused visual) and no deselect-pending affordance', async () => {
       matchState.paused = true;
       matchState.reason = 'run-expired';
@@ -660,7 +619,6 @@ describe('ManualImportPage', () => {
 
       await scanAndReview([makeDiscoveredBook({ path: '/a/B', parsedTitle: 'Book B' })]);
 
-      // The pending row and the summary both stay in the non-paused "matching" wording.
       expect(screen.getByText('Matching')).toBeInTheDocument();
       expect(screen.getByText('1 matching')).toBeInTheDocument();
       expect(screen.queryByText('Paused')).not.toBeInTheDocument();
@@ -669,7 +627,6 @@ describe('ManualImportPage', () => {
     });
 
     it('Import stays disabled while recovering (automatic retry/remainder) even after deselecting every pending row (F1)', async () => {
-      // recovering=true WITHOUT paused models an automatic retry/remainder in flight.
       matchState.recovering = true;
       matchState.results = [makeMatchResult({ path: '/a/A', bestMatch: { title: 'Book A', authors: [{ name: 'A' }] } })];
       matchState.total = 2;
@@ -680,7 +637,6 @@ describe('ManualImportPage', () => {
       ];
       await scanAndReview(books);
 
-      // Deselect the pending Book B — without the recovering gate this would enable Import.
       const deselects = screen.getAllByLabelText('Deselect');
       await userEvent.click(deselects[1]!);
 
@@ -730,7 +686,6 @@ describe('ManualImportPage', () => {
       const book = makeDiscoveredBook();
       const { rerender } = await scanAndReview([book]);
 
-      // Simulate match completing
       await simulateMatchResults(rerender, [makeMatchResult()]);
 
       const btn = screen.getByRole('button', { name: /Import 1/ });
@@ -750,7 +705,6 @@ describe('ManualImportPage', () => {
 
       await simulateMatchResults(rerender, [makeMatchResult()]);
 
-      // Switch to move mode
       await userEvent.selectOptions(screen.getByRole('combobox'), 'move');
 
       await userEvent.click(screen.getByRole('button', { name: /Import 1/ }));
@@ -787,8 +741,6 @@ describe('ManualImportPage', () => {
 
   describe('processing progress label (#1902)', () => {
     it('a still-processing poll renders a non-zero "Registering X of Y" label', async () => {
-      // The staged upload chunks are small (bounded items), so the live registration progress
-      // is driven by the processing poll: expectedCount=2, processedCount=1 → "Registering 1 of 2".
       const books = [
         makeDiscoveredBook({ path: '/a/B1', parsedTitle: 'B1' }),
         makeDiscoveredBook({ path: '/a/B2', parsedTitle: 'B2' }),
@@ -799,8 +751,6 @@ describe('ManualImportPage', () => {
         makeMatchResult({ path: '/a/B2', bestMatch: { title: 'B2', authors: [{ name: 'A' }], asin: 'A2' } }),
       ]);
 
-      // create/PUT/finalize resolve, then the summary poll stays in `processing` (never completes)
-      // with 1 of 2 processed — the first immediate tick paints the label.
       mockCreateSubmission.mockResolvedValue(summaryResponse({ id: 7, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 2 }));
       mockPutSubmissionItems.mockResolvedValue(summaryResponse({ id: 7, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 2 }));
       mockFinalizeSubmission.mockResolvedValue(summaryResponse({ id: 7, source: 'manual', mode: 'copy', status: 'processing', expectedCount: 2, processedCount: 0 }));
@@ -817,7 +767,6 @@ describe('ManualImportPage', () => {
       const { rerender } = await scanAndReview([book]);
       await simulateMatchResults(rerender, [makeMatchResult()]);
 
-      // Deferred create — no chunk/poll progress yet, so the summary bar shows its default label.
       mockCreateSubmission.mockReturnValue(new Promise(() => {}));
       await userEvent.click(screen.getByRole('button', { name: /Import 1/ }));
 
@@ -838,7 +787,6 @@ describe('ManualImportPage', () => {
       const panel = await screen.findByTestId('held-review-panel');
       expect(within(panel).getByText('Book Title')).toBeInTheDocument();
       expect(within(panel).getByRole('button', { name: /re-confirm and import/i })).toBeInTheDocument();
-      // The dead-end navigation no longer fires for held results.
       expect(mockNavigate).not.toHaveBeenCalled();
     });
 
@@ -873,16 +821,12 @@ describe('ManualImportPage', () => {
 
   describe('post-prune-safe outcome projection (#1902 F6/F29)', () => {
     it('a mixed completion pruned before the detail fetch stays non-green, with held/skip detail actions unavailable', async () => {
-      // A detail fetch on a pruned record can carry NO items (the schema forbids it), so the
-      // page must fall back to count-driven severity: accepted+held+skipped+failed with a
-      // non-null failed count → error severity (never a green success), and — because the per-row
-      // detail is gone — the actionable held-review panel must NOT render.
+      // Pruned submissions carry aggregate counts but no actionable row details.
       const agg = { accepted: 1, held: 1, skipped: 1, failed: 1 };
       const prunedSummary = summaryResponse({ id: 12, source: 'manual', mode: 'copy', status: 'complete', expectedCount: 4, aggregates: agg, detailsPruned: true, processedCount: 4 });
       mockCreateSubmission.mockResolvedValue(summaryResponse({ id: 12, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 4 }));
       mockPutSubmissionItems.mockResolvedValue(summaryResponse({ id: 12, source: 'manual', mode: 'copy', status: 'receiving', expectedCount: 4 }));
       mockFinalizeSubmission.mockResolvedValue(summaryResponse({ id: 12, source: 'manual', mode: 'copy', status: 'processing', expectedCount: 4 }));
-      // Both the summary poll and the terminal detail fetch return the pruned summary (no items).
       mockGetSubmission.mockResolvedValue(prunedSummary);
 
       const book = makeDiscoveredBook();
@@ -891,14 +835,9 @@ describe('ManualImportPage', () => {
 
       await userEvent.click(screen.getByRole('button', { name: /Import 1/ }));
 
-      // Wait for the terminal projection to run (the poll reaches complete and fetches detail).
       await waitFor(() => expect(mockGetSubmission).toHaveBeenCalledWith(12, true));
-      // Detail is pruned, so the actionable held-review panel does NOT render (detail actions
-      // unavailable), and a partial (non-clean) outcome stays on the page — no green navigation.
       expect(screen.queryByTestId('held-review-panel')).not.toBeInTheDocument();
       expect(mockNavigate).not.toHaveBeenCalled();
-      // (Count-driven non-green severity for this same pruned mix is asserted in the hook test,
-      // where the toast channel is observable — see useManualImport.test.ts F6.)
     });
   });
 
@@ -923,13 +862,11 @@ describe('ManualImportPage', () => {
 
       await screen.findByText(/Not found/);
 
-      // Typing clears the error
       await userEvent.type(input, '/new');
       expect(screen.queryByText(/Not found/)).not.toBeInTheDocument();
     });
 
     it('clears stale error when subsequent scan succeeds', async () => {
-      // First scan fails
       mockScanDirectory.mockRejectedValueOnce(new Error('Permission denied'));
 
       renderPage();
@@ -939,7 +876,6 @@ describe('ManualImportPage', () => {
 
       await screen.findByText(/Permission denied/);
 
-      // User changes path and scans again — succeeds
       await userEvent.clear(input);
       mockScanDirectory.mockResolvedValueOnce({
         discoveries: [makeDiscoveredBook()],
@@ -948,7 +884,6 @@ describe('ManualImportPage', () => {
       await userEvent.type(input, '/good/path');
       await userEvent.click(screen.getByText('Scan'));
 
-      // Error should be cleared, review step visible
       await screen.findByText(/selected/);
       expect(screen.queryByText(/Permission denied/)).not.toBeInTheDocument();
     });
@@ -961,10 +896,8 @@ describe('ManualImportPage', () => {
 
       await userEvent.click(screen.getByLabelText('Back'));
 
-      // Now on path step
       expect(screen.getByPlaceholderText('/path/to/audiobooks')).toBeInTheDocument();
 
-      // Scan again with different books
       mockScanDirectory.mockResolvedValueOnce({
         discoveries: [
           makeDiscoveredBook({ path: '/new/Book', parsedTitle: 'New Book' }),
@@ -976,7 +909,6 @@ describe('ManualImportPage', () => {
       await userEvent.click(screen.getByText('Scan'));
       await screen.findByText('2 of 2 selected');
 
-      // Old book should be gone
       expect(screen.queryByText('Book Title')).not.toBeInTheDocument();
     });
   });
@@ -1001,14 +933,11 @@ describe('ManualImportPage', () => {
       const dialog = await screen.findByRole('dialog');
       await within(dialog).findByText('projects');
 
-      // Navigate into projects
       await userEvent.click(within(dialog).getByText('projects'));
       await within(dialog).findByText('Author1');
 
-      // Select current path
       await userEvent.click(within(dialog).getByRole('button', { name: 'Select' }));
 
-      // Modal should close and path should be populated
       expect(screen.queryByText('Browse Directories')).not.toBeInTheDocument();
       const input = screen.getByPlaceholderText('/path/to/audiobooks') as HTMLInputElement;
       expect(input.value).toContain('projects');
@@ -1023,7 +952,6 @@ describe('ManualImportPage', () => {
     it('when path field is empty and user opens Browse, the modal seeds from library settings path', async () => {
       renderPage();
 
-      // path starts empty — settings.library.path is '/audiobooks'
       await userEvent.click(screen.getByRole('button', { name: /browse/i }));
       await screen.findByRole('dialog');
 
@@ -1111,11 +1039,8 @@ describe('ManualImportPage', () => {
     });
 
     it('renders formatted lastUsedAt date for recent folder entries', () => {
-      // 2026-03-05T12:00:00.000Z → "Mar 5, 2026" (toLocaleDateString pattern)
       mockRecents = [{ path: '/podcasts', lastUsedAt: '2026-03-05T12:00:00.000Z' }];
       renderPage();
-      // The formatted date is rendered in a span (shown on hover via group-hover CSS)
-      // but it's still in the DOM — assert the text node exists
       const formatted = new Date('2026-03-05T12:00:00.000Z').toLocaleDateString(undefined, {
         year: 'numeric',
         month: 'short',
@@ -1434,11 +1359,9 @@ describe('ManualImportPage — scanned path display (#284)', () => {
     await scanAndReview();
     expect(screen.getByText('/media/audiobooks')).toBeInTheDocument();
 
-    // Go back to path step
     await userEvent.click(screen.getByLabelText('Back'));
     await screen.findByPlaceholderText('/path/to/audiobooks');
 
-    // Scan a different directory
     mockScanDirectory.mockResolvedValueOnce({
       discoveries: [makeDiscoveredBook({ path: '/other/dir/Book', parsedTitle: 'Other Book' })],
       totalFolders: 1,
@@ -1449,7 +1372,6 @@ describe('ManualImportPage — scanned path display (#284)', () => {
     await userEvent.click(screen.getByText('Scan'));
     await screen.findByText(/selected/);
 
-    // Path display should show the new directory
     expect(screen.getByText('/other/dir')).toBeInTheDocument();
     expect(screen.queryByText('/media/audiobooks')).not.toBeInTheDocument();
   });
@@ -1467,11 +1389,9 @@ describe('ManualImportPage — scanned path display (#284)', () => {
       const user = userEvent.setup();
       mockGetImportSubmissionAttention.mockResolvedValue({ data: abandonedManual, watch: true });
       renderPage();
-      // The banner is source-scoped to manual and shows on the path step.
       await waitFor(() => expect(mockGetImportSubmissionAttention).toHaveBeenCalledWith({ source: 'manual' }));
       const banner = await screen.findByTestId('import-attention-banner');
       await user.click(within(banner).getByRole('button', { name: 'Import again' }));
-      // Still on the path step (the Scan button is present) and never navigated to /library.
       expect(screen.getByText('Scan')).toBeInTheDocument();
       expect(mockNavigate).not.toHaveBeenCalledWith('/library');
     });
@@ -1479,14 +1399,12 @@ describe('ManualImportPage — scanned path display (#284)', () => {
     it('"Import again" from the REVIEW step resets to path — review rows clear, no navigation (F38)', async () => {
       const user = userEvent.setup();
       mockGetImportSubmissionAttention.mockResolvedValue({ data: abandonedManual, watch: true });
-      await scanAndReview([makeDiscoveredBook()]); // drives the page to the review step
-      expect(screen.getByText(/selected/)).toBeInTheDocument(); // review content present
+      await scanAndReview([makeDiscoveredBook()]);
+      expect(screen.getByText(/selected/)).toBeInTheDocument();
       const banner = await screen.findByTestId('import-attention-banner');
       await user.click(within(banner).getByRole('button', { name: 'Import again' }));
-      // Reset lands back on the path step: the Scan button returns and review content clears…
       expect(screen.getByText('Scan')).toBeInTheDocument();
       await waitFor(() => expect(screen.queryByText(/selected/)).not.toBeInTheDocument());
-      // …without navigating away (deletion-proof: a no-op callback would leave review mounted).
       expect(mockNavigate).not.toHaveBeenCalledWith('/library');
     });
 
@@ -1499,7 +1417,6 @@ describe('ManualImportPage — scanned path display (#284)', () => {
       };
       mockListImportSubmissions.mockResolvedValue({ data: [manualSummary], total: 1 });
       renderPage();
-      // The panel queries the LATEST manual submission and renders its output.
       await waitFor(() => expect(mockListImportSubmissions).toHaveBeenCalledWith({ source: 'manual', limit: 1 }));
       expect(await screen.findByTestId('last-import-panel')).toBeInTheDocument();
       expect(screen.getByText('1 held')).toBeInTheDocument();

@@ -6,7 +6,6 @@ export const systemSettingsSchema = z.object({
   backupRetention: z.number().int().min(1).max(100).default(7),
 });
 
-// Cast for zodResolver/z.infer compatibility.
 export const systemFormSchema = stripDefaults(systemSettingsSchema).pick({
   backupIntervalMinutes: true,
   backupRetention: true,

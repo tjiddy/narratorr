@@ -26,8 +26,6 @@ describe('globalTeardown', () => {
   });
 
   it('is a no-op when no run state has been recorded', async () => {
-    // Ensures globalTeardown is safe to invoke in harnesses where
-    // createRunTempDirs never ran (e.g. a misconfigured project).
     await expect(globalTeardown()).resolves.toBeUndefined();
   });
 
@@ -35,7 +33,7 @@ describe('globalTeardown', () => {
     const run = createRunTempDirs();
     orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
-    // Simulate libSQL having written the DB file and its WAL / SHM sidecars.
+    // Include libSQL's sidecars to verify deleting the enclosing DB directory.
     writeFileSync(run.dbPath, 'db-bytes');
     writeFileSync(`${run.dbPath}-wal`, 'wal-bytes');
     writeFileSync(`${run.dbPath}-shm`, 'shm-bytes');
@@ -59,8 +57,6 @@ describe('globalTeardown', () => {
   });
 
   it('removes the temp dirs of every recorded run (root + subpath + forms)', async () => {
-    // #1556 boots a second isolated subpath server; #1555 boots a third
-    // forms-auth server. Teardown must sweep ALL temp-dir sets, not just the root.
     const root = createRunTempDirs();
     const subpath = createRunTempDirs('subpath');
     const forms = createRunTempDirs('forms');
@@ -86,9 +82,6 @@ describe('globalTeardown', () => {
   });
 
   it('does not throw when a target directory was already removed', async () => {
-    // Simulates partial-state recovery — e.g. a crash mid-run that removed
-    // the library dir but left the config dir. Teardown should clean what
-    // remains without exploding on the missing one.
     const run = createRunTempDirs();
     orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
@@ -115,7 +108,6 @@ describe('globalTeardown', () => {
 
     expect(closeMam).toHaveBeenCalledTimes(1);
     expect(closeQbit).toHaveBeenCalledTimes(1);
-    // Registry is cleared after teardown so a second run starts clean.
     expect(getRegisteredFakes()).toEqual([]);
   });
 
@@ -123,14 +115,13 @@ describe('globalTeardown', () => {
     const run = createRunTempDirs();
     orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
 
-    // A dangling listener is cheaper than a failed teardown — must swallow.
     registerFake({ name: 'mam', close: async () => { throw new Error('boom'); } });
     const qbitClose = vi.fn(async () => { /* no-op */ });
     registerFake({ name: 'qbit', close: qbitClose });
 
     await expect(globalTeardown()).resolves.toBeUndefined();
 
-    // Second fake still closed even though the first threw.
+    // The second fake must still close even though the first threw.
     expect(qbitClose).toHaveBeenCalledTimes(1);
     expect(existsSync(run.libraryPath)).toBe(false);
   });
@@ -147,9 +138,7 @@ describe('globalTeardown', () => {
   });
 
   it('ignores temp dirs created by an unrelated process', async () => {
-    // Scoping guarantee: globalTeardown only removes what was recorded by
-    // this process's createRunTempDirs. A dir created by a concurrent run
-    // or a prior process must be left alone.
+    // Teardown must never touch paths absent from this process's run registry.
     const unrelatedDir = mkdtempSync(join(tmpdir(), 'narratorr-e2e-other-'));
     orphans.push(unrelatedDir);
 

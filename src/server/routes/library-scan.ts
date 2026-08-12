@@ -6,6 +6,8 @@ import type { CompanionSweepTrigger } from '../services/companion-ebook-trigger.
 import type { MatchJobService } from '../services/match-job.service.js';
 import type { BookService } from '../services/book.service.js';
 import type { MetadataService } from '../services/metadata.service.js';
+import type { ChapterRuntimeSeconds } from '../services/match-job.helpers.js';
+import { decideIntake } from '../services/book-intake/index.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { parseFolderStructure, parseFolderStructureRaw, cleanNameWithTrace } from '../utils/folder-parsing.js';
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
@@ -27,26 +29,18 @@ import { serializeError } from '../utils/serialize-error.js';
 import { mintPreviewToken } from '../services/preview-token.js';
 
 
-/**
- * Per-route body-size headroom for the confirm + match routes (#1831). Defense-in-depth
- * for un-proxied *direct* deployments only: the byte-budgeted chunked client keeps every
- * request it sends well under 1 MiB, so behind the default nginx proxy (`client_max_body_size
- * 1m`) this raise is inert — the proxy emits its own 413 before Fastify sees the body. It is
- * explicitly NOT the mechanism for a self-oversize confirm item (that is diverted pre-flight
- * client-side). The global 1 MiB default stays on every other route.
- */
-const CONFIRM_MATCH_BODY_LIMIT = 10 * 1024 * 1024; // 10 MiB
+// Direct-deployment headroom only: nginx still rejects above 1 MiB, the client diverts single
+// oversized items, and every other route retains Fastify's global limit.
+const CONFIRM_MATCH_BODY_LIMIT = 10 * 1024 * 1024;
 
 type ScanDirectoryBody = z.infer<typeof scanDirectoryBodySchema>;
 type MatchStartBody = z.infer<typeof matchStartBodySchema>;
 type JobIdParam = z.infer<typeof jobIdParamSchema>;
 
-/** Map a BookMetadata author ref to a plain string name. */
 function toAuthorName(a: string | { name: string }): string {
   return typeof a === 'string' ? a : a.name;
 }
 
-/** Map a BookMetadata result to the scan-debug response shape. */
 function toSearchResultItem(r: { title: string; authors?: (string | { name: string })[] | undefined; asin?: string | undefined; providerId?: string | undefined }) {
   return {
     title: r.title,
@@ -64,13 +58,10 @@ export async function libraryScanRoutes(
   metadataService: MetadataService,
   companionEbook?: CompanionSweepTrigger,
 ): Promise<void> {
-  // Rescan library — verify book paths exist on disk
   app.post('/api/library/rescan', async (request, reply) => {
     request.log.info('Starting library rescan');
     try {
-      // #1960 AC9 — never `libraryScan.rescanLibrary()` directly: the wrapper is what runs the
-      // companion sweep AFTER the scan has released its `scanning` flag. The mapping below is
-      // untouched because the wrapper rethrows every error unchanged (AC12).
+      // The wrapper waits for the scanning flag to release before sweeping and preserves errors.
       const result = await rescanLibraryWithCompanionSweep({ libraryScan, companionEbook, log: request.log });
       return result;
     } catch (error: unknown) {
@@ -87,7 +78,6 @@ export async function libraryScanRoutes(
     }
   });
 
-  // Bulk scan directory (kept for Library Import #125)
   app.post<{ Body: ScanDirectoryBody }>(
     '/api/library/import/scan',
     { schema: { body: scanDirectoryBodySchema } },
@@ -115,7 +105,6 @@ export async function libraryScanRoutes(
     },
   );
 
-  // Start a match job for discovered books
   app.post<{ Body: MatchStartBody }>(
     '/api/library/import/match',
     { schema: { body: matchStartBodySchema }, bodyLimit: CONFIRM_MATCH_BODY_LIMIT },
@@ -128,7 +117,6 @@ export async function libraryScanRoutes(
     },
   );
 
-  // Poll match job status
   app.get<{ Params: JobIdParam }>(
     '/api/library/import/match/:jobId',
     { schema: { params: jobIdParamSchema } },
@@ -142,7 +130,6 @@ export async function libraryScanRoutes(
     },
   );
 
-  // Cancel a match job
   app.delete<{ Params: JobIdParam }>(
     '/api/library/import/match/:jobId',
     { schema: { params: jobIdParamSchema } },
@@ -153,15 +140,12 @@ export async function libraryScanRoutes(
     },
   );
 
-  // Scan debug — trace folder parsing and metadata matching pipeline
   app.post<{ Body: ScanDebugBody }>(
     '/api/library/scan-debug',
     { schema: { body: scanDebugBodySchema } },
     (request, reply) => handleScanDebug(request, reply, metadataService, bookService),
   );
 
-  // Duration corroboration (#2055) — the import editor's re-pick asks for the same
-  // chapter-runtime second opinion the match job already gets (#1942).
   app.post<{ Body: DurationCorroborationBody }>(
     '/api/library/import/duration-corroboration',
     { schema: { body: durationCorroborationBodySchema } },
@@ -169,25 +153,10 @@ export async function libraryScanRoutes(
   );
 }
 
-// ─── Duration Corroboration (#2055) ─────────────────────────────────
-
 /**
- * Answer "does this edition's CHAPTER TABLE corroborate the scanned runtime?".
- *
- * The re-pick path in the import editor judges a Review row against the provider's
- * `runtimeLengthMin` SCALAR, which for a small slice of the catalog (Fablehaven Book 1 /
- * `B00CXXEX8W`) understates the edition's own chapter table by minutes — so doing the
- * right thing (re-picking the CORRECT edition) still reads as a duration mismatch. The
- * match job already corroborates against the chapter table; this route is the same
- * evidence, reachable from the client.
- *
- * Both operands are SECONDS end to end — this handler never sees or produces a minutes
- * value (`book-duration-minutes-vs-quality-seconds`), and the band decision is the shared
- * `withinDurationTolerance`, not a re-implemented comparison.
- *
- * A lookup failure degrades to `{ corroborated: false }` at 200, mirroring
- * `corroborateDurationVerdict`'s "a corroboration failure must never escape" contract:
- * a 5xx here would turn a missing second opinion into a broken re-pick.
+ * Give client re-picks the match job's chapter-table evidence when scalar runtime is wrong.
+ * Both operands are seconds and use shared tolerance. Lookup failure returns false at 200 so a
+ * missing second opinion cannot break the re-pick.
  */
 async function handleDurationCorroboration(
   request: { body: DurationCorroborationBody; log: FastifyBaseLogger },
@@ -195,23 +164,31 @@ async function handleDurationCorroboration(
 ): Promise<DurationCorroborationResult> {
   const { asin, scannedSeconds } = request.body;
 
-  let chapterSeconds: number | undefined;
+  let chapterRuntimes: ChapterRuntimeSeconds;
   try {
-    chapterSeconds = await metadataService.getChapterRuntimeSeconds(asin);
+    chapterRuntimes = await metadataService.getChapterRuntimeSeconds(asin);
   } catch (error: unknown) {
     request.log.debug({ error: serializeError(error), asin }, 'Chapter corroboration failed — no second opinion available');
     return { corroborated: false };
   }
 
-  // No usable runtime (not_found, trust-gate fail, invalid record, transient failure, or
-  // a closed provider gate): a truthful "no second opinion", NOT a mismatch claim — so
-  // `chapterSeconds` is absent from the response rather than present-and-undefined.
-  if (chapterSeconds === undefined) return { corroborated: false };
+  // No usable runtime means no second opinion, so omit chapterSeconds rather than imply mismatch.
+  const { fullSeconds, trimmedSeconds } = chapterRuntimes;
+  if (fullSeconds === undefined && trimmedSeconds === undefined) return { corroborated: false };
 
-  return { corroborated: withinDurationTolerance(chapterSeconds, scannedSeconds), chapterSeconds };
+  // Match against full or trimmed as the job does. chapterSeconds remains the full total;
+  // expose trimmed seconds only when distinct, and never expose the diagnostic chapter count.
+  const corroborated = inBand(fullSeconds, scannedSeconds) || inBand(trimmedSeconds, scannedSeconds);
+  return {
+    corroborated,
+    ...(fullSeconds !== undefined && { chapterSeconds: fullSeconds }),
+    ...(trimmedSeconds !== undefined && trimmedSeconds !== fullSeconds && { trimmedChapterSeconds: trimmedSeconds }),
+  };
 }
 
-// ─── Scan Debug Helpers ─────────────────────────────────────────────
+function inBand(reference: number | undefined, scannedSeconds: number): boolean {
+  return reference !== undefined && withinDurationTolerance(reference, scannedSeconds);
+}
 
 async function handleScanDebug(
   request: { body: ScanDebugBody; log: FastifyBaseLogger },
@@ -225,7 +202,6 @@ async function handleScanDebug(
   const { parts, raw, pattern, cleaning, cleanedTitle, cleanedAuthor, asin } = buildParsingTrace(folderName);
   const partialTrace = { input: folderName, parts, parsing: { pattern, raw }, cleaning, search: null, match: null, duplicate: null };
 
-  // Search step — 502 on metadata provider failure
   let searchResult;
   try {
     searchResult = await runSearchTrace(cleanedTitle, cleanedAuthor, metadataService, request.log, asin);
@@ -238,24 +214,23 @@ async function handleScanDebug(
     });
   }
 
-  // Duplicate check — 500 on database failure (not a provider issue)
   let duplicate: ScanDebugTrace['duplicate'];
   try {
     const authorList = cleanedAuthor ? [{ name: cleanedAuthor }] : undefined;
-    // Pass the parsed ASIN (#1662) so the diagnostic mirrors the real confirm-time
-    // identity check. With the 3-way verdict (#1711) the trace shows the resolver's
-    // outcome: `same-recording` is the only hard duplicate; a scan-time trace has no
-    // narrators so a title+author hit typically surfaces as `review`.
-    const resolution = await bookService.findDuplicate({
-      title: cleanedTitle,
-      ...(authorList && { authors: authorList }),
-      ...(asin !== undefined && { asin }),
+    // Include parsed ASIN so diagnostics use confirm-time identity; only same-recording is a hard duplicate.
+    const decision = await decideIntake({ bookService }, {
+      item: {
+        title: cleanedTitle,
+        ...(authorList && { authors: authorList }),
+        ...(asin !== undefined && { asin }),
+      },
     });
-    const existing = resolution.book;
+    // Admit carries no incumbent row, so the diagnostic reports no reason for it.
+    const existing = decision.kind === 'admit' ? null : decision.incumbent;
     duplicate = {
-      isDuplicate: resolution.verdict === 'same-recording',
+      isDuplicate: decision.kind === 'same-recording',
       existingBookId: existing?.id ?? null,
-      reason: existing ? resolution.verdict : null,
+      reason: existing ? decision.kind : null,
     };
   } catch (error: unknown) {
     request.log.error({ error: serializeError(error) }, 'Scan debug duplicate check failed');
@@ -275,7 +250,6 @@ function buildParsingTrace(folderName: string) {
   const rawParsed = parseFolderStructureRaw(parts);
   const pattern = parts.length <= 1 ? '1-part' : parts.length === 2 ? '2-part' : '3+-part';
 
-  // Build raw output with asin (null when not detected)
   const raw = {
     author: rawParsed.author,
     title: rawParsed.title,
@@ -284,9 +258,7 @@ function buildParsingTrace(folderName: string) {
     asin: rawParsed.asin ?? null,
   };
 
-  // Trace cleaning from raw (pre-cleanName) values so each step shows real transformations.
-  // typeof string guard inherently excludes null, numbers, and any future non-string raw fields,
-  // so cleanNameWithTrace (string-only) is never called with a numeric seriesPosition.
+  // Trace pre-clean values; the string guard keeps numeric seriesPosition out of cleanNameWithTrace.
   const cleaning: Record<string, ReturnType<typeof cleanNameWithTrace>> = {};
   for (const [key, value] of Object.entries(raw)) {
     if (typeof value === 'string' && key !== 'asin') cleaning[key] = cleanNameWithTrace(value);
@@ -306,7 +278,6 @@ async function runSearchTrace(
   log: FastifyBaseLogger,
   asin?: string,
 ) {
-  // Direct ASIN lookup when available
   let directLookup: { asin: string; hit: boolean } | null = null;
   if (asin) {
     try {
@@ -332,7 +303,6 @@ async function runSearchTrace(
     }
   }
 
-  // Keyword search (fallback or no ASIN)
   const searchResult = await searchWithSwapRetryTrace({
     searchFn: (query, options) => metadataService.searchBooks(query, options),
     title: cleanedTitle,

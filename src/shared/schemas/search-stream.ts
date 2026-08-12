@@ -1,10 +1,6 @@
 import { z } from 'zod';
 import { protocolSchema } from './download-protocol.js';
 
-// ============================================================================
-// Search stream SSE event schemas (per-request, not broadcast)
-// ============================================================================
-
 export const searchStreamIndexerSchema = z.object({
   id: z.number(),
   name: z.string(),
@@ -58,6 +54,7 @@ export const searchResultSchema = z.object({
   matchScore: z.number().optional(),
   isFreeleech: z.boolean().optional(),
   isVipOnly: z.boolean().optional(),
+  format: z.string().optional(),
 });
 
 export const searchResponseSchema = z.object({
@@ -67,11 +64,7 @@ export const searchResponseSchema = z.object({
     count: z.number(),
     titles: z.array(z.string()),
   }),
-  /**
-   * The winning rung's query when progressive relaxation (#2104) produced the
-   * hits — absent when rung 1 (the query the user actually asked for) did.
-   * Additive and optional, so an existing client parse is unaffected.
-   */
+  // Present only when progressive relaxation succeeds after the original query fails.
   relaxedQuery: z.string().optional(),
 });
 
@@ -82,7 +75,6 @@ export type IndexerCancelledEvent = z.infer<typeof indexerCancelledEventSchema>;
 export type SearchResultPayload = z.infer<typeof searchResultSchema>;
 export type SearchResponsePayload = z.infer<typeof searchResponseSchema>;
 
-/** SSE event type string literals for search streaming */
 export type SearchStreamEventType =
   | 'search-start'
   | 'indexer-complete'

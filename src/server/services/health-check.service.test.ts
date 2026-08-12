@@ -17,13 +17,22 @@ vi.mock('../jobs/version-check.js', () => ({
   checkForUpdate: vi.fn(),
 }));
 
-// ffmpeg is auto-detected now; checkFfmpeg calls resolveFfmpegPath(). Plain-arrow mock over a
-// hoisted toggle (survives vi.clearAllMocks); default detected, flip false for the not-found path.
-const { ffmpegState } = vi.hoisted(() => ({ ffmpegState: { resolves: true } }));
+// A hoisted toggle survives vi.clearAllMocks while driving auto-detection's found/not-found paths.
+const { ffmpegState, mutagenState } = vi.hoisted(() => ({
+  ffmpegState: { resolves: true },
+  mutagenState: { resolves: true },
+}));
 vi.mock('@core/utils/audio-processor.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@core/utils/audio-processor.js')>();
   return { ...actual, resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null) };
 });
+vi.mock('@core/utils/mutagen-resolver.js', () => ({
+  resolveMutagenDetection: () => Promise.resolve(
+    mutagenState.resolves
+      ? { python: '/usr/bin/python3', version: '1.47.0', override: undefined, overrideSuperseded: false }
+      : null,
+  ),
+}));
 
 function createService(overrides?: {
   indexer?: Partial<IndexerService>;
@@ -34,6 +43,7 @@ function createService(overrides?: {
   fsAccess?: (path: string, mode?: number) => Promise<void>;
   fsStatfs?: (path: string) => Promise<{ bavail: number; bsize: number }>;
   probeFfmpeg?: (path: string) => Promise<string>;
+  probeMutagen?: (pythonPath: string) => Promise<string>;
   resolveProxyIp?: (proxyUrl: string) => Promise<string>;
 }) {
   const log = createMockLogger();
@@ -73,6 +83,7 @@ function createService(overrides?: {
       fsAccess: overrides?.fsAccess ?? vi.fn().mockResolvedValue(undefined),
       fsStatfs: overrides?.fsStatfs ?? vi.fn().mockResolvedValue({ bavail: 100_000_000, bsize: 4096 }),
       probeFfmpeg: overrides?.probeFfmpeg ?? vi.fn().mockResolvedValue('6.1.1'),
+      probeMutagen: overrides?.probeMutagen ?? vi.fn().mockResolvedValue('1.47.0'),
       resolveProxyIp: overrides?.resolveProxyIp ?? vi.fn().mockResolvedValue('203.0.113.1'),
     },
   );
@@ -80,12 +91,7 @@ function createService(overrides?: {
   return { service, indexer, downloadClient, settings, notifier, log, db };
 }
 
-/**
- * The `health` payload of every `on_health_issue` notify call, in dispatch order,
- * optionally narrowed to one `checkName`. Filtering by check rather than counting
- * all calls keeps an assertion honest when a pass legitimately changes more than
- * one check (#2090).
- */
+/** Ordered health notifications, optionally filtered to exclude unrelated transitions (#2090). */
 function healthNotifications(
   notifier: { notify: unknown },
   checkName?: string,
@@ -98,7 +104,6 @@ function healthNotifications(
     .filter((health) => checkName === undefined || health.checkName === checkName);
 }
 
-/** Drive `n` consecutive full health passes. */
 async function runPasses(service: HealthCheckService, n: number): Promise<void> {
   for (let i = 0; i < n; i += 1) await service.runAllChecks();
 }
@@ -302,7 +307,6 @@ describe('HealthCheckService', () => {
 
   describe('checkDiskSpace', () => {
     it('returns healthy when free space above threshold', async () => {
-      // 10GB free, threshold 5GB
       const { service } = createService({
         fsStatfs: vi.fn().mockResolvedValue({ bavail: 10_000_000_000 / 4096, bsize: 4096 }),
       });
@@ -312,7 +316,6 @@ describe('HealthCheckService', () => {
     });
 
     it('returns healthy when free space exactly at threshold (boundary: inclusive)', async () => {
-      // Exactly 5GB
       const fiveGB = 5 * 1024 * 1024 * 1024;
       const { service } = createService({
         fsStatfs: vi.fn().mockResolvedValue({ bavail: fiveGB / 4096, bsize: 4096 }),
@@ -323,7 +326,6 @@ describe('HealthCheckService', () => {
     });
 
     it('returns warning with human-readable sizes when free space below threshold', async () => {
-      // 2GB free, threshold 5GB
       const twoGB = 2 * 1024 * 1024 * 1024;
       const { service } = createService({
         fsStatfs: vi.fn().mockResolvedValue({ bavail: twoGB / 4096, bsize: 4096 }),
@@ -345,7 +347,6 @@ describe('HealthCheckService', () => {
 
     it('returns warning when library path is not configured', async () => {
       const nullLibSettings = createMockSettingsService({ library: { path: '' } });
-      // Override library.get to return null to test unconfigured path
       (nullLibSettings.get as ReturnType<typeof vi.fn>).mockImplementation((key: string) => {
         if (key === 'library') return Promise.resolve(null);
         return Promise.resolve(DEFAULT_SETTINGS[key as keyof typeof DEFAULT_SETTINGS]);
@@ -416,7 +417,6 @@ describe('HealthCheckService', () => {
 
     it('stays silent when ffmpeg is absent and no automation needs it (ffmpeg is optional)', async () => {
       ffmpegState.resolves = false;
-      // Default mock settings: autoMergeDownloads off, tagging.enabled off.
       const { service } = createService();
       const results = await service.runAllChecks();
       const check = results.find((r) => r.checkName === 'ffmpeg');
@@ -436,18 +436,21 @@ describe('HealthCheckService', () => {
       ffmpegState.resolves = true;
     });
 
-    it('reports an error when ffmpeg is absent and tag embedding is enabled', async () => {
+    // #2210: tag embedding gates on mutagen now, so an absent ffmpeg is silent for it.
+    it('stays silent when ffmpeg is absent and only tag embedding is enabled', async () => {
       ffmpegState.resolves = false;
-      const { service } = createService({
-        settings: createMockSettingsService({ tagging: { enabled: true } }),
-      });
-      const results = await service.runAllChecks();
-      const check = results.find((r) => r.checkName === 'ffmpeg');
-      expect(check).toMatchObject({ state: 'error' });
-      ffmpegState.resolves = true;
+      try {
+        const { service } = createService({
+          settings: createMockSettingsService({ tagging: { enabled: true } }),
+        });
+        const results = await service.runAllChecks();
+        expect(results.find((r) => r.checkName === 'ffmpeg')).toBeUndefined();
+      } finally {
+        ffmpegState.resolves = true;
+      }
     });
 
-    it('populates target settings:post-processing on healthy and error paths', async () => {
+    it('populates target settings:audio-tools on healthy and error paths', async () => {
       const { service: healthy } = createService();
       const healthyCheck = (await healthy.runAllChecks()).find((r) => r.checkName === 'ffmpeg');
       expect(healthyCheck?.target).toEqual({ kind: 'settings', path: 'audio-tools' });
@@ -457,6 +460,56 @@ describe('HealthCheckService', () => {
       });
       const errorCheck = (await error.runAllChecks()).find((r) => r.checkName === 'ffmpeg');
       expect(errorCheck?.target).toEqual({ kind: 'settings', path: 'audio-tools' });
+    });
+  });
+
+  describe('checkMutagen (#2210 AC13)', () => {
+    const taggingOn = () => createMockSettingsService({ tagging: { enabled: true } });
+
+    it('stays silent when tag embedding is disabled, even with no interpreter', async () => {
+      mutagenState.resolves = false;
+      try {
+        const { service } = createService();
+        const results = await service.runAllChecks();
+        expect(results.find((r) => r.checkName === 'mutagen')).toBeUndefined();
+      } finally {
+        mutagenState.resolves = true;
+      }
+    });
+
+    it('reports healthy when tag embedding is enabled and the probe succeeds', async () => {
+      const probeMutagen = vi.fn().mockResolvedValue('1.47.0');
+      const { service } = createService({ settings: taggingOn(), probeMutagen });
+
+      const check = (await service.runAllChecks()).find((r) => r.checkName === 'mutagen');
+
+      expect(check).toMatchObject({ state: 'healthy', target: { kind: 'settings', path: 'processing' } });
+      expect(probeMutagen).toHaveBeenCalledWith('/usr/bin/python3');
+    });
+
+    it('reports an error naming MUTAGEN_PYTHON when no interpreter resolves', async () => {
+      mutagenState.resolves = false;
+      try {
+        const { service } = createService({ settings: taggingOn() });
+        const check = (await service.runAllChecks()).find((r) => r.checkName === 'mutagen');
+
+        expect(check).toMatchObject({ state: 'error' });
+        expect(check!.message).toContain('MUTAGEN_PYTHON');
+      } finally {
+        mutagenState.resolves = true;
+      }
+    });
+
+    it('reports an error naming the interpreter when the probe throws', async () => {
+      const { service } = createService({
+        settings: taggingOn(),
+        probeMutagen: vi.fn().mockRejectedValue(new Error('spawn ENOENT')),
+      });
+
+      const check = (await service.runAllChecks()).find((r) => r.checkName === 'mutagen');
+
+      expect(check).toMatchObject({ state: 'error' });
+      expect(check!.message).toContain('/usr/bin/python3');
     });
   });
 
@@ -607,7 +660,7 @@ describe('HealthCheckService', () => {
     });
 
     it('returns healthy when progressUpdatedAt is exactly 1 hour ago (boundary: exclusive)', async () => {
-      // Add 1 second buffer to avoid flaky timing between Date.now() calls
+      // Stay 1s inside the boundary to absorb Date.now() drift.
       const exactlyOneHour = new Date(Date.now() - 60 * 60 * 1000 + 1000);
       const { service } = createService({
         db: {
@@ -724,17 +777,10 @@ describe('HealthCheckService', () => {
         },
       });
       const results = await service.runAllChecks();
-      // Should still have library-root, disk-space, ffmpeg, stuck-downloads results
       expect(results.length).toBeGreaterThanOrEqual(3);
     });
 
-    // #2090 note: every test below drives a LOCAL check (`library-root` via a
-    // rejecting `fsAccess`, `disk-space` via `fsStatfs`) rather than an indexer.
-    // Local checks confirm on their first pass, so these keep observing pass-1
-    // dispatch. Driven by an indexer they would either go red (the window
-    // suppresses pass 1) or — worse — stay green while no notification is ever
-    // dispatched, making the fire-and-forget assertions vacuous. Each one that
-    // depends on a notification actually happening asserts that explicitly.
+    // Local checks notify on pass 1; notification-dependent tests also prove dispatch to avoid vacuous assertions (#2090).
     const libraryRootMissing = () => vi.fn().mockRejectedValue(
       Object.assign(new Error('ENOENT'), { code: 'ENOENT' }),
     );
@@ -742,9 +788,7 @@ describe('HealthCheckService', () => {
     it('fires on_health_issue notification once per changed check', async () => {
       const { service, notifier } = createService({ fsAccess: libraryRootMissing() });
 
-      // First run establishes state
       await service.runAllChecks();
-      // The initial run from unknown → error should fire a notification
       expect(healthNotifications(notifier, 'library-root')).toMatchObject([
         { previousState: 'healthy', currentState: 'error' },
       ]);
@@ -768,12 +812,10 @@ describe('HealthCheckService', () => {
       const { service, notifier } = createService({ fsAccess: libraryRootMissing() });
 
       await service.runAllChecks();
-      // The first pass must actually have dispatched, or the second pass's silence
-      // proves nothing.
+      // Prove pass 1 dispatched before treating pass 2 silence as evidence.
       expect(healthNotifications(notifier, 'library-root')).toHaveLength(1);
       (notifier.notify as ReturnType<typeof vi.fn>).mockClear();
 
-      // Second run — same state, should not fire
       await service.runAllChecks();
       expect(healthNotifications(notifier)).toHaveLength(0);
     });
@@ -786,10 +828,8 @@ describe('HealthCheckService', () => {
         },
       });
 
-      // Should not throw
       const results = await service.runAllChecks();
-      // The rejecting notifier was actually invoked — otherwise "did not throw" is
-      // trivially true and this exercises no rejection containment at all.
+      // Prove the rejecting notifier ran; otherwise non-throwing is vacuous.
       expect(healthNotifications(notifier, 'library-root')).toHaveLength(1);
       expect(results.length).toBeGreaterThan(0);
     });
@@ -814,7 +854,6 @@ describe('HealthCheckService', () => {
     });
 
     it('runAllChecks resolves before a pending notification settles (deterministic deferred promise)', async () => {
-      // Create a deferred promise that stays pending
       let resolveNotify!: () => void;
       const pendingPromise = new Promise<void>((resolve) => { resolveNotify = resolve; });
       let notifySettled = false;
@@ -827,15 +866,12 @@ describe('HealthCheckService', () => {
         },
       });
 
-      // runAllChecks should resolve even though the notification promise is still pending
       const results = await service.runAllChecks();
       expect(results.length).toBeGreaterThan(0);
-      // The deferred promise was actually requested — `notifySettled === false` is
-      // trivially true for a notification that was never dispatched.
+      // The deferred promise must be requested; notifySettled is also false when nothing was dispatched.
       expect(healthNotifications(notifier, 'library-root')).toHaveLength(1);
-      expect(notifySettled).toBe(false); // notification is still pending
+      expect(notifySettled).toBe(false);
 
-      // Clean up: settle the deferred promise
       resolveNotify();
       await pendingPromise;
     });
@@ -851,7 +887,7 @@ describe('HealthCheckService', () => {
 
       await service.runAllChecks();
       expect(healthNotifications(notifier, 'library-root')).toHaveLength(1);
-      // Allow microtasks to flush so fireAndForget's .catch() handler runs
+      // Flush fireAndForget's catch handler.
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(log.warn).toHaveBeenCalledWith(
@@ -861,8 +897,7 @@ describe('HealthCheckService', () => {
     });
 
     it('logs canonical serialized error when a sub-check throws outside its inner try', async () => {
-      // indexerService.getAll() throws — this is called before checkIndexers'
-      // inner try/catch, so the rejection propagates up to runAllChecks' catch.
+      // getAll throws outside checkIndexers' inner catch and reaches runAllChecks' catch.
       const { service, log } = createService({
         indexer: {
           getAll: vi.fn().mockRejectedValue(new Error('indexer backend down')),
@@ -887,7 +922,6 @@ describe('HealthCheckService', () => {
     });
 
     it('returns warning when at least one check is warning and none are error', async () => {
-      // Trigger a warning by setting low disk space (2GB, threshold 5GB)
       const twoGB = 2 * 1024 * 1024 * 1024;
       const { service } = createService({
         fsStatfs: vi.fn().mockResolvedValue({ bavail: twoGB / 4096, bsize: 4096 }),
@@ -897,7 +931,6 @@ describe('HealthCheckService', () => {
     });
 
     it('returns error when at least one check is error, even with warnings present', async () => {
-      // Trigger both: error from ffmpeg + warning from low disk space
       const twoGB = 2 * 1024 * 1024 * 1024;
       const { service } = createService({
         fsStatfs: vi.fn().mockResolvedValue({ bavail: twoGB / 4096, bsize: 4096 }),
@@ -909,12 +942,7 @@ describe('HealthCheckService', () => {
   });
 
   describe('concurrency', () => {
-    // A call that lands while a pass is running coalesces into the mutex: it does
-    // NOT spawn a parallel pass. Post-#1411 (F1) it resolves with the guaranteed
-    // trailing rerun's result — a pass that begins after it registered — instead
-    // of returning the pre-existing cachedResults immediately. Returning stale
-    // cache here was the bug that let a manual Run Now overlapping a scheduled
-    // pass miss its freshly-fetched version row.
+    // Concurrent callers await one trailing pass; stale cache once made Run Now miss an update fetched mid-pass (#1411 F1).
     it('a coalesced call waits for and resolves with the trailing rerun, not the pre-existing cache (#1411 F1)', async () => {
       let resolveFirstPass!: () => void;
       const getAll = vi.fn()
@@ -926,16 +954,14 @@ describe('HealthCheckService', () => {
       let secondResolved = false;
       const second = service.runAllChecks().then((r) => { secondResolved = true; return r; });
 
-      // While pass #1 is gated, the coalesced call must NOT have resolved — it
-      // parks for the trailing rerun rather than handing back stale cache.
+      // The coalesced call must remain parked while pass 1 is gated.
       await new Promise((r) => setTimeout(r, 0));
       expect(secondResolved).toBe(false);
 
       resolveFirstPass!();
       const [, secondResults] = await Promise.all([first, second]);
 
-      // It resolved with a real pass result, and exactly two passes ran (the
-      // initial pass + one trailing rerun) — coalesced, not an unbounded loop.
+      // Exactly two passes proves one trailing rerun, not a parallel or unbounded loop.
       expect(secondResults).toEqual(expect.any(Array));
       expect(getAll).toHaveBeenCalledTimes(2);
     });
@@ -1049,7 +1075,7 @@ describe('HealthCheckService', () => {
 
     it('renders develop-channel copy and a compare link for a develop update (F2)', async () => {
       vi.mocked(getUpdateStatus).mockReturnValue({
-        latestVersion: 'def5678', // bare develop HEAD sha — must NOT leak into the message
+        latestVersion: 'def5678',
         releaseUrl: 'https://github.com/tjiddy/narratorr/compare/abc1234...develop',
         channel: 'develop',
       });
@@ -1063,7 +1089,6 @@ describe('HealthCheckService', () => {
         message: 'A newer develop build is available',
         link: { url: 'https://github.com/tjiddy/narratorr/compare/abc1234...develop', label: 'Compare changes' },
       });
-      // No v-prefixed sha leaked into the message, and the diff isn't labelled "Release notes".
       expect(check!.message).not.toContain('vdef5678');
       expect(check!.link!.label).not.toBe('Release notes');
     });
@@ -1114,7 +1139,6 @@ describe('HealthCheckService', () => {
       await service.runAllChecks();
       expect(service.getCachedResults().find((r) => r.checkName === 'version-update')).toBeUndefined();
 
-      // Simulate a version-check populating cachedUpdate, then a nudge → recompute.
       vi.mocked(getUpdateStatus).mockReturnValue({
         latestVersion: '1.2.3',
         releaseUrl: 'https://example.com/r',
@@ -1122,8 +1146,6 @@ describe('HealthCheckService', () => {
       });
       await service.runAllChecks();
 
-      // The cached-read source (what the endpoints serve) now includes the row —
-      // proving a real recompute ran, not bare invalidation that leaves it empty.
       const cached = service.getCachedResults();
       expect(cached.find((r) => r.checkName === 'version-update')).toMatchObject({
         checkName: 'version-update',
@@ -1149,31 +1171,26 @@ describe('HealthCheckService', () => {
     });
 
     it('a recompute requested mid-pass coalesces into exactly one trailing rerun that observes the new status', async () => {
-      // Gate the first pass on a slow indexer so we can fire a nudge while it runs.
+      // Gate pass 1 so the nudge joins it in flight.
       let releaseFirstPass: () => void;
       const getAll = vi.fn()
         .mockReturnValueOnce(new Promise<unknown[]>((r) => { releaseFirstPass = () => r([]); }))
         .mockResolvedValue([]);
       const { service } = createService({ indexer: { getAll, test: vi.fn() } });
 
-      // First pass observes NO update.
       vi.mocked(getUpdateStatus).mockReturnValue(undefined);
       const first = service.runAllChecks();
 
-      // While the first pass is mid-flight, the version-check completes with a
-      // newer build and nudges a recompute. The nudge must not be dropped.
       vi.mocked(getUpdateStatus).mockReturnValue({
         latestVersion: '2.0.0',
         releaseUrl: 'https://example.com/r2',
         channel: 'stable',
       });
-      const nudge = service.runAllChecks(); // returns stale cached immediately
+      const nudge = service.runAllChecks();
 
-      // Let the first (and then the coalesced trailing) pass complete.
       releaseFirstPass!();
       await Promise.all([first, nudge]);
 
-      // The trailing rerun observed the NEW status → it is surfaced, not lost.
       const cached = service.getCachedResults();
       expect(cached.find((r) => r.checkName === 'version-update')).toMatchObject({
         checkName: 'version-update',
@@ -1181,8 +1198,7 @@ describe('HealthCheckService', () => {
         message: 'Update available: v2.0.0',
       });
 
-      // Exactly one trailing rerun: the first pass + one rerun = 2 full passes,
-      // so getAll (called once per pass) was invoked exactly twice — no loop.
+      // Two getAll calls prove exactly one trailing rerun.
       expect(getAll).toHaveBeenCalledTimes(2);
     });
 
@@ -1194,21 +1210,16 @@ describe('HealthCheckService', () => {
       await service.runAllChecks();
       await service.runAllChecks();
 
-      // Two awaited, non-overlapping passes → exactly two getAll calls. A spurious
-      // trailing rerun would push this to 3.
       expect(getAll).toHaveBeenCalledTimes(2);
     });
   });
 
-  // #1411 — manual "Run Now" fires a live version check before reading the
-  // report, so the version-update row reflects a fresh check instead of the
-  // up-to-24h-stale daily cache. Scheduled runs keep calling runAllChecks().
+  // Run Now performs a live version check; scheduled runs remain cache-only (#1411).
   describe('#1411 — runManualChecks (manual Run Now fires a live version check)', () => {
     beforeEach(() => {
       vi.mocked(checkForUpdate).mockReset();
       vi.mocked(getUpdateStatus).mockReset();
-      // checkForUpdate resolves void in production; default to a settled promise
-      // so the awaited `.catch` chain in runManualChecks has a thenable to bind.
+      // Production returns Promise<void>; runManualChecks immediately binds catch.
       vi.mocked(checkForUpdate).mockResolvedValue(undefined);
     });
 
@@ -1219,9 +1230,6 @@ describe('HealthCheckService', () => {
 
     it('awaits checkForUpdate BEFORE reading the report, so the run reflects the fresh cache (AC #1)', async () => {
       const { service, log } = createService();
-      // The update only becomes visible AFTER checkForUpdate resolves. If
-      // runAllChecks read getUpdateStatus before/concurrently, the row would be
-      // absent — its presence proves serial ordering.
       let fetched = false;
       vi.mocked(checkForUpdate).mockImplementation(async () => {
         await Promise.resolve();
@@ -1257,8 +1265,6 @@ describe('HealthCheckService', () => {
 
       const results = await service.runManualChecks(log as unknown as FastifyBaseLogger);
 
-      // Even with a 25ms-delayed fetch, the row is present → runAllChecks waited
-      // for the fetch to land rather than reading the pre-fetch (undefined) cache.
       expect(results.find((r) => r.checkName === 'version-update')).toMatchObject({
         message: 'Update available: v3.1.0',
       });
@@ -1285,10 +1291,8 @@ describe('HealthCheckService', () => {
 
     it('a failing version fetch does not fail the run — falls through to the cached value (AC #2)', async () => {
       const { service, log } = createService();
-      // Defensive: the production checkForUpdate swallows its own errors and never
-      // rejects, but runManualChecks guards it so a rejection can't fail the run.
+      // Production swallows update errors, but the manual entry point independently contains a rejection.
       vi.mocked(checkForUpdate).mockRejectedValue(new Error('GitHub unreachable'));
-      // The prior cached value remains intact and is what the report reflects.
       vi.mocked(getUpdateStatus).mockReturnValue({
         latestVersion: '1.2.3',
         releaseUrl: 'https://example.com/cached',
@@ -1297,7 +1301,6 @@ describe('HealthCheckService', () => {
 
       const results = await service.runManualChecks(log as unknown as FastifyBaseLogger);
 
-      // Run still completed with the cached row; the failure was logged, not thrown.
       expect(results.find((r) => r.checkName === 'version-update')).toMatchObject({
         message: 'Update available: v1.2.3',
       });
@@ -1309,7 +1312,6 @@ describe('HealthCheckService', () => {
 
     it('dev/unbuilt build: checkForUpdate is a silent no-op and the run completes cleanly with no version-update row (AC #5)', async () => {
       const { service, log } = createService();
-      // Mirrors checkForUpdate's `version === 'dev'` early return: touches nothing.
       vi.mocked(checkForUpdate).mockResolvedValue(undefined);
       vi.mocked(getUpdateStatus).mockReturnValue(undefined);
 
@@ -1325,22 +1327,17 @@ describe('HealthCheckService', () => {
 
       await service.runAllChecks();
 
-      // The scheduled health-check cron calls runAllChecks() directly; it must
-      // never reach checkForUpdate — that lives only in the manual entry point.
       expect(checkForUpdate).not.toHaveBeenCalled();
     });
 
     it('returns a post-fetch report even when the manual run overlaps an active health pass (AC #1, F1)', async () => {
-      // Gate the first (scheduled) pass on a slow indexer so the manual run lands
-      // while runAllChecks is already `running` and would otherwise coalesce into
-      // the in-progress branch and return the pre-fetch cachedResults.
+      // Gate the scheduled pass so the manual run joins it after fetching.
       let releaseScheduledPass!: () => void;
       const getAll = vi.fn()
         .mockReturnValueOnce(new Promise<unknown[]>((r) => { releaseScheduledPass = () => r([]); }))
         .mockResolvedValue([]);
       const { service, log } = createService({ indexer: { getAll, test: vi.fn() } });
 
-      // Update only becomes visible AFTER the manual run's checkForUpdate resolves.
       let fetched = false;
       vi.mocked(checkForUpdate).mockImplementation(async () => { fetched = true; });
       vi.mocked(getUpdateStatus).mockImplementation(() =>
@@ -1349,49 +1346,36 @@ describe('HealthCheckService', () => {
           : undefined,
       );
 
-      // Scheduled pass #1 is now parked on the gated getAll (running === true).
       const scheduled = service.runAllChecks();
 
-      // Manual run: awaits the live fetch (stamps 2.0.0), then coalesces into the
-      // active pass. It must resolve with the trailing rerun's post-fetch report.
+      // The manual fetch completes before joining the active pass and awaiting its trailing rerun.
       const manual = service.runManualChecks(log as unknown as FastifyBaseLogger);
 
-      // Let the manual fetch resolve and its coalesced runAllChecks register
-      // before the scheduled pass drains.
+      // Let the manual caller register its trailing rerun before releasing the scheduled pass.
       await new Promise((r) => setTimeout(r, 0));
       releaseScheduledPass();
 
       const [, manualResults] = await Promise.all([scheduled, manual]);
 
-      // The report the manual caller receives reflects the post-fetch cache — the
-      // pre-fetch (undefined) cachedResults would have omitted this row entirely.
       expect(manualResults.find((r) => r.checkName === 'version-update')).toMatchObject({
         checkName: 'version-update',
         state: 'warning',
         message: 'Update available: v2.0.0',
       });
-      // Exactly one trailing rerun: pass #1 + one rerun = 2 full passes (getAll
-      // called once per pass) — the overlap coalesced, it did not spawn a loop.
+      // Two getAll calls prove exactly one trailing rerun.
       expect(getAll).toHaveBeenCalledTimes(2);
     });
   });
 
-  // #2090 — notification dispatch waits for a network-backed check's new state to
-  // hold three consecutive passes. Detection, the health card and every API
-  // response stay instant; only the notifier is debounced. Local checks keep
-  // firing on pass 1.
-  //
-  // Most assertions below are "zero notifications were sent", which is exactly the
-  // shape that passes against broken production code, so each names the mutation
-  // that must turn it red (see the `vacuous-assertion-observation-points` learning).
+  // Network transitions notify after three passes; reports stay immediate and local checks notify on pass 1 (#2090).
+  // Mutation-sensitive observation points keep zero-notification assertions from passing vacuously.
   describe('#2090 — notification confirmation window', () => {
     const FAILED = { success: false, message: 'down' };
     const OK = { success: true };
     const oneIndexer = [{ id: 1, name: 'NZB', enabled: true }];
 
     beforeEach(() => {
-      // version-update is a local check: a cached update leaked from an earlier
-      // block would add an unrelated pass-1 notification to these totals.
+      // Prevent a cached local update from polluting pass-1 notification totals.
       vi.mocked(getUpdateStatus).mockReturnValue(undefined);
       vi.mocked(checkForUpdate).mockResolvedValue(undefined);
     });
@@ -1414,7 +1398,7 @@ describe('HealthCheckService', () => {
       });
 
       it('sends nothing at all for a blip that self-heals inside the window — no orphaned resolve', async () => {
-        // The issue's live specimen: a ~7s upstream failure straddling two ticks.
+        // Live specimen: a ~7s upstream failure straddled two ticks.
         const { service, notifier } = createService({
           indexer: {
             getAll: vi.fn().mockResolvedValue(oneIndexer),
@@ -1422,25 +1406,17 @@ describe('HealthCheckService', () => {
           },
         });
 
-        await runPasses(service, 2); // the blip: two failing observations
+        await runPasses(service, 2);
         expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
 
-        // Recovery is debounced symmetrically, so a resolve does not become
-        // ELIGIBLE until the third healthy pass. Stopping at the first healthy
-        // pass would leave the entire window in which an orphan can appear
-        // unobserved — the assertion would not cover the property this test is
-        // named for. Run the recovery all the way through its own window.
+        // Run all three healthy passes; stopping earlier cannot observe an orphaned resolve at confirmation.
         await service.runAllChecks();
         expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
         await service.runAllChecks();
         expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
         await service.runAllChecks();
 
-        // Neither the failure nor the recovery is announced: the failure was never
-        // confirmed, so there is no announced episode for a resolve to close. An
-        // implementation that banks an unconfirmed failure into the notified map
-        // emits a spurious `error -> healthy` resolve exactly here, on the third
-        // healthy pass, and nowhere earlier.
+        // Banking the unconfirmed failure would emit a spurious error→healthy resolve on this third healthy pass.
         expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
       });
 
@@ -1450,11 +1426,9 @@ describe('HealthCheckService', () => {
         });
 
         await runPasses(service, 2);
-        // Observation point 1: still silent after two confirming passes.
         expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
 
         await service.runAllChecks();
-        // Observation point 2: the third pass is the one that dispatches.
         expect(healthNotifications(notifier, 'indexer:NZB')).toEqual([
           { checkName: 'indexer:NZB', previousState: 'healthy', currentState: 'error', message: 'down' },
         ]);
@@ -1504,7 +1478,6 @@ describe('HealthCheckService', () => {
 
         await runPasses(service, 7);
 
-        // At most one pair per sustained episode — never one per flap.
         expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(1);
       });
     });
@@ -1593,9 +1566,7 @@ describe('HealthCheckService', () => {
       });
     });
 
-    // AC 2.1-2.5 — `checkName` classifies, the tracking key identifies. Connector
-    // names are neither unique nor immutable, so every scenario below is one the
-    // pre-#2090 `checkName`-keyed map gets wrong.
+    // checkName classifies; connector kind+id identifies because names are neither unique nor immutable (AC 2.1–2.5).
     describe('tracking identity (AC 2.1-2.5)', () => {
       const twoSameNamedIndexers = [
         { id: 1, name: 'NZB', enabled: true },
@@ -1608,13 +1579,11 @@ describe('HealthCheckService', () => {
         });
 
         await runPasses(service, 2);
-        // Mutation: key by `checkName` and both results land on one entry, which
-        // reaches 3 during pass 2 and notifies a whole pass early.
+        // Keying by checkName merges both observations and confirms one pass early.
         expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
 
         await service.runAllChecks();
-        // One confirmation apiece — a single pass contributes at most one
-        // observation to any one tracking key (AC 2.2).
+        // Each identity receives at most one observation per pass (AC 2.2).
         expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(2);
       });
 
@@ -1628,8 +1597,7 @@ describe('HealthCheckService', () => {
 
         await runPasses(service, 3);
 
-        // Mutation: key by `checkName` and the error/healthy pair restarts the run
-        // every pass — zero notifications ever fire.
+        // Keying by checkName makes the error/healthy pair restart confirmation every pass.
         expect(healthNotifications(notifier, 'indexer:NZB')).toEqual([
           { checkName: 'indexer:NZB', previousState: 'healthy', currentState: 'error', message: 'down' },
         ]);
@@ -1647,9 +1615,7 @@ describe('HealthCheckService', () => {
         });
 
         await runPasses(service, 2);
-        // Mutation: drop the `download-client` arm from the tracking key and this
-        // falls back to `checkName`, confirming a pass early — the indexer tests
-        // above cannot observe that arm.
+        // Dropping the download-client key arm falls back to checkName and confirms one pass early.
         expect(healthNotifications(notifier, 'download-client:qbit')).toHaveLength(0);
 
         await service.runAllChecks();
@@ -1671,8 +1637,7 @@ describe('HealthCheckService', () => {
         expect(healthNotifications(notifier)).toHaveLength(0);
 
         await service.runAllChecks();
-        // Mutation: key by `checkName` and the rename restarts the run — nothing
-        // fires on pass 3.
+        // Keying by checkName would restart confirmation on rename.
         expect(healthNotifications(notifier)).toEqual([
           { checkName: 'indexer:B', previousState: 'healthy', currentState: 'error', message: 'down' },
         ]);
@@ -1712,20 +1677,15 @@ describe('HealthCheckService', () => {
         expect(healthNotifications(notifier)).toHaveLength(1);
 
         await runPasses(service, 3);
-        // AC 2.4: AUTOINCREMENT never reissues an id, so id 2 starts from a fresh
-        // default-healthy entry. Mutation: key by `checkName` and the reused name
-        // inherits id 1's notified `error`, emitting a spurious resolve on pass 6.
+        // IDs are not reused; checkName-keying would make id 2 inherit id 1's error and emit a spurious resolve.
         expect(healthNotifications(notifier)).toHaveLength(1);
       });
 
       it('keeps library-root and disk-space independent despite their shared route target', async () => {
-        // Both carry `{ kind: 'route', path: '/settings' }` — the client's cardKey
-        // arm. Driving them to the SAME state in the same pass is what makes the
-        // bad key observable: with distinct states a merged entry still produces
-        // two transitions (healthy->error, error->warning) and looks correct.
+        // Both share target and state; a target-keyed map would merge them, while distinct states could mask the bug.
         const { service, notifier } = createService({
           fsAccess: vi.fn().mockRejectedValue(Object.assign(new Error('nope'), { code: 'ENOENT' })),
-          fsStatfs: vi.fn().mockResolvedValue({ bavail: 0, bsize: 4096 }), // freeBytes === 0 -> error
+          fsStatfs: vi.fn().mockResolvedValue({ bavail: 0, bsize: 4096 }),
         });
 
         await service.runAllChecks();
@@ -1759,10 +1719,7 @@ describe('HealthCheckService', () => {
 
         settingsState.hardcoverApiKey = 'valid-key';
         await service.runAllChecks();
-        // The third *appearing* error observation confirms. Asserting only "zero
-        // during the absent passes" is satisfied by an incorrect reset-on-absence
-        // too; this is the assertion that separates freeze from reset. Mutation:
-        // delete the pending entry on absence and the notification slips to pass 7.
+        // Silence during absence cannot distinguish freeze from reset; first-reappearance confirmation can.
         expect(healthNotifications(notifier, 'hardcover')).toHaveLength(1);
       });
     });
@@ -1781,8 +1738,7 @@ describe('HealthCheckService', () => {
 
         await runPasses(service, 3);
 
-        // Mutation: retain and emit the first observation's message and this reads
-        // 'down 1' — a stale diagnostic that satisfies every state assertion above.
+        // Retaining the first observation would emit stale message "down 1" despite correct state transitions.
         expect(healthNotifications(notifier, 'indexer:NZB')).toEqual([
           { checkName: 'indexer:NZB', previousState: 'healthy', currentState: 'error', message: 'down 3' },
         ]);
@@ -1806,26 +1762,20 @@ describe('HealthCheckService', () => {
         expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
 
         await service.runAllChecks();
-        // A stale notified map would suppress this entirely (still `error`) — and
-        // `previousState: 'healthy'` is what proves it was cleared, not merely
-        // flipped. Both maps are observed through public behavior only.
+        // A stale notified map suppresses this; previousState healthy proves it was cleared, not flipped.
         expect(healthNotifications(notifier, 'indexer:NZB')).toEqual([
           { checkName: 'indexer:NZB', previousState: 'healthy', currentState: 'error', message: 'down' },
         ]);
       });
     });
 
-    // AC 15 — the unit of accounting is one `runChecksOnce` execution, not a
-    // wall-clock interval and not only the scheduled cron. Every pass is a real
-    // live probe, so three failing passes is three real observations of failure.
+    // Confirmation counts live probe passes, including manual/coalesced runs, not wall time or cron ticks (AC 15).
     describe('pass accounting (AC 15)', () => {
       it('counts manual "Run Now" passes, so three back-to-back runs confirm', async () => {
         const { service, notifier, log } = createService({
           indexer: { getAll: vi.fn().mockResolvedValue(oneIndexer), test: vi.fn().mockResolvedValue(FAILED) },
         });
 
-        // No timers advance between these three calls: the counter is driven by
-        // passes, not elapsed time.
         await service.runManualChecks(log as unknown as FastifyBaseLogger);
         await service.runManualChecks(log as unknown as FastifyBaseLogger);
         expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
@@ -1844,16 +1794,15 @@ describe('HealthCheckService', () => {
         });
 
         const first = service.runAllChecks();
-        const nudge = service.runAllChecks(); // coalesces -> guarantees a trailing rerun
+        const nudge = service.runAllChecks(); // Guarantees one trailing rerun.
         releaseFirstPass();
         await Promise.all([first, nudge]);
 
-        expect(getAll).toHaveBeenCalledTimes(2); // two real passes ran
+        expect(getAll).toHaveBeenCalledTimes(2);
         expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
 
         await service.runAllChecks();
-        // If the trailing rerun had not counted, this third call would be
-        // observation 2 and nothing would fire.
+        // If the trailing rerun did not count, this call would be observation 2 and remain silent.
         expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(1);
       });
     });

@@ -95,7 +95,6 @@ describe('BookHero — Refresh & Scan menu item', () => {
     renderHero({ showRefreshScan: true, onRefreshScanClick });
     await openMenu(user);
     await user.click(screen.getByRole('menuitem', { name: 'Refresh & Scan' }));
-    // Menu should still be open — the menu item should still be in the DOM
     expect(screen.getByRole('menuitem', { name: 'Refresh & Scan' })).toBeInTheDocument();
   });
 

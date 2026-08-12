@@ -46,9 +46,9 @@ describe('BookImportService', () => {
     it('returns active-job-exists 409 when an active processing import_jobs row exists', async () => {
       const failedJob = { id: 5, bookId: 1, type: 'manual', metadata: '{}' };
       db.select
-        .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }])) // book lookup
-        .mockReturnValueOnce(mockDbChain([failedJob]))                    // failed-job lookup
-        .mockReturnValueOnce(mockDbChain([{ id: 7 }]));                   // in-tx active-job pre-check
+        .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }]))
+        .mockReturnValueOnce(mockDbChain([failedJob]))
+        .mockReturnValueOnce(mockDbChain([{ id: 7 }]));
 
       const result = await service.retryImport(1, nudge);
 
@@ -58,13 +58,11 @@ describe('BookImportService', () => {
     });
 
     it('returns active-job-exists 409 when an active PENDING import_jobs row exists (#747 bug fix)', async () => {
-      // Pre-fix code only checked 'processing' — this test asserts that an
-      // already-queued retry (status='pending') is now correctly detected.
       const failedJob = { id: 5, bookId: 1, type: 'manual', metadata: '{}' };
       db.select
         .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }]))
         .mockReturnValueOnce(mockDbChain([failedJob]))
-        .mockReturnValueOnce(mockDbChain([{ id: 9 }])); // pending active job present
+        .mockReturnValueOnce(mockDbChain([{ id: 9 }]));
 
       const result = await service.retryImport(1, nudge);
 
@@ -93,9 +91,9 @@ describe('BookImportService', () => {
         metadata: '{"path":"/a","mode":"copy"}',
       };
       db.select
-        .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }])) // book
-        .mockReturnValueOnce(mockDbChain([failedJob]))                    // failed
-        .mockReturnValueOnce(mockDbChain([]));                            // in-tx active
+        .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }]))
+        .mockReturnValueOnce(mockDbChain([failedJob]))
+        .mockReturnValueOnce(mockDbChain([]));
       db.insert.mockReturnValueOnce(mockDbChain([{ id: 99 }]));
       db.update.mockReturnValueOnce(mockDbChain([]));
 
@@ -120,29 +118,23 @@ describe('BookImportService', () => {
     });
 
     it('wraps the active-job INSERT and books UPDATE in a single db.transaction (#799 AC1)', async () => {
-      // Independent of select/insert/update assertions — protects the AC1
-      // boundary. A future refactor that removes `db.transaction(...)` and
-      // inlines the writes would still pass other retryImport tests but fail
-      // this one.
+      // Independent callback assertions protect one transaction wrapping enqueue and the books update.
       const failedJob = { id: 10, bookId: 1, type: 'manual', metadata: '{}' };
       db.select
         .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }]))
         .mockReturnValueOnce(mockDbChain([failedJob]))
-        .mockReturnValueOnce(mockDbChain([])); // in-tx pre-check
+        .mockReturnValueOnce(mockDbChain([]));
       db.insert.mockReturnValueOnce(mockDbChain([{ id: 99 }]));
       db.update.mockReturnValueOnce(mockDbChain([]));
 
       await service.retryImport(1, nudge);
 
-      // retryImport opens exactly one transaction wrapping enqueue + books UPDATE.
-      // (enqueue does NOT open its own when given a tx, so total is 1.)
       expect(db.transaction).toHaveBeenCalledTimes(1);
       const txCallback = db.transaction.mock.calls[0]![0] as (tx: typeof db) => Promise<unknown>;
       expect(typeof txCallback).toBe('function');
 
-      // Verify the callback owns BOTH the importJobs INSERT and the books UPDATE
-      // on the SAME tx handle — proving they share one transaction.
-      const txSelect = vi.fn().mockReturnValue(mockDbChain([])); // pre-check
+      // The callback must own both writes on the same transaction handle.
+      const txSelect = vi.fn().mockReturnValue(mockDbChain([]));
       const txInsert = vi.fn().mockReturnValue(mockDbChain([{ id: 100 }]));
       const txUpdate = vi.fn().mockReturnValue(mockDbChain([]));
       const txMock = { select: txSelect, insert: txInsert, update: txUpdate };
@@ -190,15 +182,14 @@ describe('BookImportService', () => {
     it('does NOT nudge when the in-tx pre-check finds an active job (rollback path, #799 AC5)', async () => {
       const failedJob = { id: 10, bookId: 1, type: 'manual', metadata: '{}' };
       db.select
-        .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }])) // book
-        .mockReturnValueOnce(mockDbChain([failedJob]))                    // failed
-        .mockReturnValueOnce(mockDbChain([{ id: 7 }]));                   // in-tx active
+        .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }]))
+        .mockReturnValueOnce(mockDbChain([failedJob]))
+        .mockReturnValueOnce(mockDbChain([{ id: 7 }]));
 
       const result = await service.retryImport(1, nudge);
 
       expect(result).toEqual({ error: 'active-job-exists', status: 409 });
       expect(nudge).not.toHaveBeenCalled();
-      // Crucial: books UPDATE must not run when enqueue short-circuits.
       expect(db.update).not.toHaveBeenCalled();
     });
 
@@ -207,7 +198,7 @@ describe('BookImportService', () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }]))
         .mockReturnValueOnce(mockDbChain([failedJob]))
-        .mockReturnValueOnce(mockDbChain([])); // pre-check sees no row (TOCTOU)
+        .mockReturnValueOnce(mockDbChain([]));
       const indexErr = Object.assign(new Error('libsql failure'), {
         cause: { message: 'UNIQUE constraint failed: idx_import_jobs_book_active' },
       });
@@ -224,9 +215,9 @@ describe('BookImportService', () => {
         { id: 10, bookId: 1, type: 'manual', metadata: '{}' },
       ]);
       db.select
-        .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }])) // book
-        .mockReturnValueOnce(failedJobChain)                              // failed
-        .mockReturnValueOnce(mockDbChain([]));                            // in-tx active
+        .mockReturnValueOnce(mockDbChain([{ id: 1, status: 'failed' }]))
+        .mockReturnValueOnce(failedJobChain)
+        .mockReturnValueOnce(mockDbChain([]));
       db.insert.mockReturnValueOnce(mockDbChain([{ id: 99 }]));
       db.update.mockReturnValueOnce(mockDbChain([]));
 
@@ -242,7 +233,7 @@ describe('BookImportService', () => {
 
   describe('enqueue', () => {
     it('returns jobId on success when no active row exists', async () => {
-      db.select.mockReturnValueOnce(mockDbChain([])); // in-tx pre-check
+      db.select.mockReturnValueOnce(mockDbChain([]));
       db.insert.mockReturnValueOnce(mockDbChain([{ id: 77 }]));
 
       const result = await service.enqueue({
@@ -263,7 +254,7 @@ describe('BookImportService', () => {
     });
 
     it('returns active-job-exists when in-tx pre-check finds an active row', async () => {
-      db.select.mockReturnValueOnce(mockDbChain([{ id: 12 }])); // active row found
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 12 }]));
 
       const result = await service.enqueue({
         bookId: 5,
@@ -276,7 +267,7 @@ describe('BookImportService', () => {
     });
 
     it('catches UNIQUE-constraint backstop matching index-name form and returns 409', async () => {
-      db.select.mockReturnValueOnce(mockDbChain([])); // pre-check sees no row (TOCTOU window)
+      db.select.mockReturnValueOnce(mockDbChain([]));
       const indexErr = Object.assign(new Error('libsql failure'), {
         cause: { message: 'UNIQUE constraint failed: idx_import_jobs_book_active' },
       });
@@ -310,9 +301,7 @@ describe('BookImportService', () => {
     });
 
     it('does NOT classify bare-column book_id violations from other tables as active-job conflicts', async () => {
-      // A UNIQUE violation surfaced from another table that happens to have a
-      // `book_id` column (e.g. book_authors, book_narrators, blacklist) must
-      // propagate as a 500-class error, not be swallowed as 409 active-job.
+      // Bare book_id UNIQUE violations can come from unrelated tables and must not become 409s.
       db.select.mockReturnValueOnce(mockDbChain([]));
       const otherTableErr = Object.assign(new Error('libsql failure'), {
         cause: { message: 'UNIQUE constraint failed: book_id' },
@@ -325,40 +314,29 @@ describe('BookImportService', () => {
     });
 
     it('wraps active-job pre-check + insert in db.transaction (TOCTOU guard, AC4) (F1)', async () => {
-      // Independent of select/insert assertions — this test specifically
-      // protects the transaction boundary. If a refactor removed
-      // `this.db.transaction(...)` and inlined the same select/insert calls,
-      // the other enqueue tests would still pass; this one would fail.
-      db.select.mockReturnValueOnce(mockDbChain([])); // in-tx pre-check
+      // Callback assertions protect the atomic pre-check/insert boundary, not merely call order.
+      db.select.mockReturnValueOnce(mockDbChain([]));
       db.insert.mockReturnValueOnce(mockDbChain([{ id: 50 }]));
 
       const result = await service.enqueue({ bookId: 5, type: 'auto', metadata: '{}' });
 
       expect(result).toEqual({ jobId: 50 });
-      // The transaction MUST be invoked exactly once and its callback MUST
-      // own the select+insert pair so the active-job check and the insert
-      // share a single atomic visibility window.
       expect(db.transaction).toHaveBeenCalledTimes(1);
       const txCallback = db.transaction.mock.calls[0]![0] as (tx: typeof db) => Promise<unknown>;
       expect(typeof txCallback).toBe('function');
 
-      // Verify the callback semantics: invoking it with a fresh tx-shaped mock
-      // routes BOTH the select pre-check AND the insert to that same handle —
-      // proving the two reads/writes are inside the same transaction context.
       const txSelect = vi.fn().mockReturnValue(mockDbChain([]));
       const txInsert = vi.fn().mockReturnValue(mockDbChain([{ id: 51 }]));
       const txMock = { select: txSelect, insert: txInsert };
       const cbResult = await txCallback(txMock as never);
-      expect(txSelect).toHaveBeenCalledTimes(1); // active-job pre-check on tx handle
-      expect(txInsert).toHaveBeenCalledTimes(1); // insert on tx handle
+      expect(txSelect).toHaveBeenCalledTimes(1);
+      expect(txInsert).toHaveBeenCalledTimes(1);
       expect(cbResult).toEqual({ jobId: 51 });
     });
 
     it('uses the caller-provided tx and does NOT open a nested db.transaction (#799 shape B)', async () => {
-      // When the caller passes its own tx (e.g. retryImport), enqueue must
-      // route the pre-check + insert through THAT tx and skip opening its
-      // own — otherwise the writes wouldn't share the parent's atomicity.
-      const txSelect = vi.fn().mockReturnValue(mockDbChain([])); // no active row
+      // A caller-provided transaction must own both operations; nesting would break parent atomicity.
+      const txSelect = vi.fn().mockReturnValue(mockDbChain([]));
       const txInsert = vi.fn().mockReturnValue(mockDbChain([{ id: 88 }]));
       const txMock = { select: txSelect, insert: txInsert };
 
@@ -370,15 +348,11 @@ describe('BookImportService', () => {
       expect(result).toEqual({ jobId: 88 });
       expect(txSelect).toHaveBeenCalledTimes(1);
       expect(txInsert).toHaveBeenCalledTimes(1);
-      // No nested transaction — the parent tx owns the boundary.
       expect(db.transaction).not.toHaveBeenCalled();
     });
 
     it('propagates errors from the caller-provided tx (parent rolls back, #799 shape B)', async () => {
-      // When using a caller-provided tx, errors must propagate so the parent
-      // transaction can roll back. The defensive backstop only swallows
-      // unique-index violations on the OWN-tx path; on a caller tx, that
-      // would corrupt the parent.
+      // Caller-transaction errors must escape so the parent can roll back; only the own-tx path maps conflicts.
       const txSelect = vi.fn().mockReturnValue(mockDbChain([]));
       const indexErr = Object.assign(new Error('libsql failure'), {
         cause: { message: 'UNIQUE constraint failed: idx_import_jobs_book_active' },
@@ -393,23 +367,18 @@ describe('BookImportService', () => {
     });
 
     it('skips insert when pre-check inside the transaction finds an active row (TOCTOU guard) (F1)', async () => {
-      // Companion to the boundary test above — verifies the in-tx pre-check
-      // result short-circuits the insert call so a duplicate is never even
-      // attempted. Together with the boundary test, these protect the AC4
-      // contract: the check and the insert must atomically agree.
       const txCallback = vi.fn();
       db.transaction.mockImplementationOnce(async (cb: (tx: typeof db) => Promise<unknown>) => {
         txCallback.mockImplementation(cb);
         return cb(db);
       });
 
-      db.select.mockReturnValueOnce(mockDbChain([{ id: 12 }])); // active row exists in-tx
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 12 }]));
 
       const result = await service.enqueue({ bookId: 5, type: 'auto', metadata: '{}' });
 
       expect(result).toEqual({ error: 'active-job-exists', status: 409 });
       expect(db.transaction).toHaveBeenCalledTimes(1);
-      // Critical: insert never even attempted when pre-check sees an active row.
       expect(db.insert).not.toHaveBeenCalled();
     });
   });

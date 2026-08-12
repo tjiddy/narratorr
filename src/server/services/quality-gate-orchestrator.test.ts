@@ -115,8 +115,7 @@ function createOrchestrator(opts?: {
       ...(opts?.settingsService && { settingsService: inject<SettingsService>(opts.settingsService) }),
     },
   );
-  // nudgeImportWorker is required-wiring; wire here so existing tests that don't
-  // explicitly construct an unwired orchestrator continue to work.
+  // Default fixtures are wired; required-wiring tests construct their own orchestrator.
   orchestrator.wire({ nudgeImportWorker: vi.fn(), bookImportService: {} as never });
 
   return { orchestrator, qualityGateService, db, log, eventHistory, broadcaster, blacklistService, downloadClientService, importOrchestrator, importService };
@@ -283,7 +282,6 @@ describe('QualityGateOrchestrator', () => {
         { skipCover: true, ffprobePath: '/usr/bin/ffprobe', onWarn: expect.any(Function), onDebug: expect.any(Function), onFilesWithoutCodec: expect.any(Function) },
       );
 
-      // Diagnostic callback wiring — onWarn → log.warn(payload, msg); onDebug → log.debug(payload, msg)
       const options = vi.mocked(scanAudioDirectory).mock.calls[0]![1]!;
       options.onWarn!('warn-msg', { warnPayload: 1 });
       expect(log.warn).toHaveBeenCalledWith({ warnPayload: 1 }, 'warn-msg');
@@ -324,8 +322,6 @@ describe('QualityGateOrchestrator', () => {
     });
   });
 
-  // ===== #1120 — outputPath fallback when client path resolution scans empty =====
-
   describe('outputPath fallback (#1120)', () => {
     const downloadWithOutputPath = { ...baseDownload, outputPath: '/downloads/persisted-correct-path' };
 
@@ -343,7 +339,6 @@ describe('QualityGateOrchestrator', () => {
       expect(scanAudioDirectory).toHaveBeenNthCalledWith(1, '/downloads/stale-from-qb', expect.any(Object));
       expect(scanAudioDirectory).toHaveBeenNthCalledWith(2, '/downloads/persisted-correct-path', expect.any(Object));
       expect(qualityGateService.processDownload).toHaveBeenCalledWith(downloadWithOutputPath, baseBook, fallbackScan);
-      // No probe_failed event was recorded
       const probeFailureCalls = (eventHistory.create as ReturnType<typeof vi.fn>).mock.calls
         .filter((c: unknown[]) => {
           const arg = c[0] as { reason?: { probeFailure?: boolean } };
@@ -351,7 +346,6 @@ describe('QualityGateOrchestrator', () => {
         });
       expect(probeFailureCalls).toHaveLength(0);
       expect(qualityGateService.hold).not.toHaveBeenCalledWith(1);
-      // Info log records the fallback usage
       expect(log.info).toHaveBeenCalledWith(
         expect.objectContaining({ downloadId: 1, resolvedPath: '/downloads/stale-from-qb', outputPath: '/downloads/persisted-correct-path' }),
         expect.stringContaining('outputPath as scan fallback'),
@@ -409,7 +403,6 @@ describe('QualityGateOrchestrator', () => {
       expect(qualityGateService.hold).toHaveBeenCalledWith(1);
       expect(qualityGateService.hold).toHaveBeenCalledTimes(1);
       expect(eventHistory.create).toHaveBeenCalledTimes(1);
-      // Persisted reason is the unchanged NULL_REASON-based object (no diagnostic keys)
       expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
         reason: { ...NULL_REASON, probeFailure: true, probeError: 'No audio files found', holdReasons: ['probe_failed'] },
       }));
@@ -468,7 +461,6 @@ describe('QualityGateOrchestrator', () => {
         filesPresentNoCodec: false,
       });
 
-      // Persisted reason has no diagnostic keys — exact match against canonical shape
       expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
         reason: { ...NULL_REASON, probeFailure: true, probeError: 'No audio files found', holdReasons: ['probe_failed'] },
       }));
@@ -490,12 +482,10 @@ describe('QualityGateOrchestrator', () => {
       expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
         reason: { ...NULL_REASON, probeFailure: true, probeError: 'No audio files found', holdReasons: ['probe_failed'] },
       }));
-      // Debug log records the fallback scan failure (with serialized error)
       expect(log.debug).toHaveBeenCalledWith(
         expect.objectContaining({ downloadId: 1, outputPath: '/downloads/persisted-correct-path', error: expect.any(Object) }),
         expect.stringContaining('outputPath fallback scan failed'),
       );
-      // Warn log shows fallbackAttempted: true
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ fallbackAttempted: true, outputPath: '/downloads/persisted-correct-path' }),
         'Quality gate: no audio files found',
@@ -505,7 +495,6 @@ describe('QualityGateOrchestrator', () => {
     it('holds with the unreadable_codec reason (not "No audio files found") when files are present but the codec is unreadable (#1667)', async () => {
       const { orchestrator, qualityGateService, eventHistory, log } = createOrchestrator();
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
-      // Scanner collected files but could not determine a codec → fires onFilesWithoutCodec, returns null
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockImplementation((_path: string, opts: { onFilesWithoutCodec?: () => void }) => {
         opts?.onFilesWithoutCodec?.();
         return Promise.resolve(null);
@@ -528,7 +517,6 @@ describe('QualityGateOrchestrator', () => {
     it('still holds with probe_failed when the directory is genuinely empty (onFilesWithoutCodec not fired)', async () => {
       const { orchestrator, qualityGateService, eventHistory } = createOrchestrator();
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
-      // Empty dir: scanner returns null WITHOUT firing onFilesWithoutCodec
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
       await orchestrator.processCompletedDownloads();
@@ -543,16 +531,15 @@ describe('QualityGateOrchestrator', () => {
       const { orchestrator, qualityGateService, eventHistory } = createOrchestrator();
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: downloadWithOutputPath, book: baseBook }]);
       (resolveSavePath as ReturnType<typeof vi.fn>).mockResolvedValue({ resolvedPath: '/downloads/stale', originalPath: '/downloads/stale' });
-      // *Once queues sequence the primary vs. fallback scan — reset first so no stale queued
-      // response leaks across tests (clearAllMocks does not drain *Once queues; see learnings).
+      // clearAllMocks leaves once-queues intact; reset before sequencing primary and fallback scans.
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockReset();
       (scanAudioDirectory as ReturnType<typeof vi.fn>)
-        // primary (savePath): files present but no codec → fires onFilesWithoutCodec, returns null
+        // Primary: files present, no codec.
         .mockImplementationOnce((_path: string, opts: { onFilesWithoutCodec?: () => void }) => {
           opts?.onFilesWithoutCodec?.();
           return Promise.resolve(null);
         })
-        // fallback (outputPath): genuinely empty → returns null WITHOUT firing the callback
+        // Fallback: empty.
         .mockResolvedValueOnce(null);
 
       await orchestrator.processCompletedDownloads();
@@ -570,9 +557,9 @@ describe('QualityGateOrchestrator', () => {
       (resolveSavePath as ReturnType<typeof vi.fn>).mockResolvedValue({ resolvedPath: '/downloads/stale', originalPath: '/downloads/stale' });
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockReset();
       (scanAudioDirectory as ReturnType<typeof vi.fn>)
-        // primary (savePath): genuinely empty → returns null WITHOUT firing the callback
+        // Primary: empty.
         .mockResolvedValueOnce(null)
-        // fallback (outputPath): files present but no codec → fires onFilesWithoutCodec, returns null
+        // Fallback: files present, no codec.
         .mockImplementationOnce((_path: string, opts: { onFilesWithoutCodec?: () => void }) => {
           opts?.onFilesWithoutCodec?.();
           return Promise.resolve(null);
@@ -623,11 +610,9 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.processCompletedDownloads();
 
-      // SSE should NOT be emitted (no book)
       const statusChangeCalls = (broadcaster.emit as ReturnType<typeof vi.fn>).mock.calls
         .filter((c: unknown[]) => c[0] === 'download_status_change' && (c[1] as { new_status: string }).new_status === 'pending_review');
       expect(statusChangeCalls).toHaveLength(0);
-      // Event should not be recorded (no book)
       expect(eventHistory.create).not.toHaveBeenCalled();
     });
   });
@@ -674,7 +659,6 @@ describe('QualityGateOrchestrator', () => {
 
     it('emits download_status_change SSE with statusTransition.from (not stale download.status)', async () => {
       const { orchestrator, qualityGateService, broadcaster } = createOrchestrator();
-      // download.status='completed' (from initial query), but statusTransition says checking→failed
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: { ...baseDownload, status: 'completed' }, book: baseBook }]);
       qualityGateService.processDownload.mockResolvedValue({
         action: 'rejected', reason: { action: 'rejected', mbPerHour: 40, existingMbPerHour: 40, narratorMatch: true, existingNarrator: null, downloadNarrator: null, durationDelta: 0, codec: 'AAC', channels: 1, probeFailure: false, probeError: null, holdReasons: [] },
@@ -683,7 +667,6 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.processCompletedDownloads();
 
-      // SSE should use 'checking' (from statusTransition), NOT 'completed' (from stale download.status)
       expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', expect.objectContaining({
         download_id: 1, book_id: 1, old_status: 'checking', new_status: 'failed',
       }));
@@ -761,7 +744,7 @@ describe('QualityGateOrchestrator', () => {
       expect(qualityGateService.reject).toHaveBeenCalledWith(1);
       expect(result).toEqual({ id: 1, status: 'failed' });
       expect(eventHistory.create).not.toHaveBeenCalled();
-      // Default reject (no retry) skips blacklist (#301)
+      // Default retry=false skips blacklisting (#301).
       expect(blacklistService.create).not.toHaveBeenCalled();
     });
 
@@ -785,7 +768,6 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.processCompletedDownloads();
 
-      // SSE should still have been emitted despite event failure
       expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', expect.anything());
     });
 
@@ -842,9 +824,7 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.processCompletedDownloads();
 
-      // The outer catch should have set pending_review
       expect(qualityGateService.hold).toHaveBeenCalledWith(1);
-      // And recorded an unhandled_error decision
       expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
         reason: expect.objectContaining({ probeFailure: true, holdReasons: ['unhandled_error'] }),
       }));
@@ -918,8 +898,6 @@ describe('QualityGateOrchestrator', () => {
       expect(spread.probeError).toBeNull();
     });
   });
-
-  // ===== #248 — Reject cleanup: fallback file deletion =====
 
   describe('performRejectionCleanup — fallback file deletion', () => {
     it('deletes outputPath from disk when adapter removeDownload succeeds but files remain', async () => {
@@ -1000,7 +978,7 @@ describe('QualityGateOrchestrator', () => {
       expect(rm).toHaveBeenCalledWith('/downloads/test-book', { recursive: true, force: true });
     });
 
-    // #263: downloadRoot ancestry check removed — outputPath trust is ensured by resolveOutputPath hardening in monitor.ts
+    // outputPath is trusted here because monitor.ts hardens resolveOutputPath; no duplicate ancestry check (#263).
 
     it('skips adapter call when downloadClientId is null', async () => {
       const { orchestrator, qualityGateService, downloadClientService } = createOrchestrator();
@@ -1013,7 +991,7 @@ describe('QualityGateOrchestrator', () => {
 
       expect(downloadClientService.getAdapter).not.toHaveBeenCalled();
       expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
-      // Negative twin (#1293 F2): missing-client proceed path STILL runs the fallback outputPath delete
+      // Missing client wiring must not skip fallback deletion (#1293 F2).
       expect(rm).toHaveBeenCalledWith('/downloads/test-book', { recursive: true, force: true });
     });
 
@@ -1028,14 +1006,12 @@ describe('QualityGateOrchestrator', () => {
 
       expect(downloadClientService.getAdapter).not.toHaveBeenCalled();
       expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
-      // Negative twin (#1293 F2): missing-externalId proceed path STILL runs the fallback outputPath delete
+      // Missing externalId must not skip fallback deletion (#1293 F2).
       expect(rm).toHaveBeenCalledWith('/downloads/test-book', { recursive: true, force: true });
     });
 
     it('runs fallback outputPath delete on the no-adapter proceed path (#1293 F2)', async () => {
       const { orchestrator, qualityGateService, downloadClientService } = createOrchestrator();
-      // Adapter unresolvable (client id present but getAdapter returns null) — removeDownload is a
-      // no-op, but the AC requires the fallback outputPath deletion to still run.
       downloadClientService.getAdapter.mockResolvedValue(null);
       const download = { ...baseDownload, outputPath: '/downloads/test-book' };
       qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download, book: baseBook });
@@ -1048,8 +1024,6 @@ describe('QualityGateOrchestrator', () => {
       expect(rm).toHaveBeenCalledWith('/downloads/test-book', { recursive: true, force: true });
     });
   });
-
-  // ===== #248 — Reject cleanup: blacklist with guid =====
 
   describe('performRejectionCleanup — GUID blacklisting', () => {
     it('blacklists by infoHash when present (retry=true)', async () => {
@@ -1093,8 +1067,6 @@ describe('QualityGateOrchestrator', () => {
     });
   });
 
-  // ===== #248 — Reject cleanup: fire-and-forget re-search =====
-
   describe('performRejectionCleanup — re-search on reject', () => {
     it('triggers retrySearch fire-and-forget when retry=true and redownloadFailed is true', async () => {
       const mockRetrySearchDeps = { log: createMockLogger() } as unknown as RetrySearchDeps;
@@ -1108,7 +1080,6 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.reject(1, { retry: true });
 
-      // Fire-and-forget — flush microtasks
       await vi.waitFor(() => {
         expect(retrySearch).toHaveBeenCalledWith(baseBook.id, mockRetrySearchDeps);
       });
@@ -1125,7 +1096,7 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.reject(1, { retry: false });
 
-      // Flush microtasks
+      // Flush microtasks so any detached retry can start.
       await new Promise((r) => setTimeout(r, 0));
 
       expect(retrySearch).not.toHaveBeenCalled();
@@ -1143,11 +1114,9 @@ describe('QualityGateOrchestrator', () => {
       qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: baseDownload, book: baseBook });
       (retrySearch as ReturnType<typeof vi.fn>).mockReturnValue(retryPromise);
 
-      // reject() should return without waiting for retrySearch
       const result = await orchestrator.reject(1, { retry: true });
       expect(result).toEqual({ id: 1, status: 'failed' });
 
-      // retrySearch should have been triggered but not yet resolved
       resolveRetry();
     });
 
@@ -1161,11 +1130,9 @@ describe('QualityGateOrchestrator', () => {
       qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: baseDownload, book: baseBook });
       (retrySearch as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('search failed'));
 
-      // Should not throw
       const result = await orchestrator.reject(1, { retry: true });
       expect(result).toEqual({ id: 1, status: 'failed' });
 
-      // Flush microtasks to let the .catch fire
       await vi.waitFor(() => {
         expect(log.warn).toHaveBeenCalledWith(
           expect.objectContaining({ bookId: 1 }),
@@ -1202,12 +1169,6 @@ describe('QualityGateOrchestrator', () => {
     });
   });
 
-  // Regression coverage for shared helper extraction: existing tests above cover
-  // blacklisting with bad_quality, download file deletion, re-search trigger, and
-  // dispatchSideEffects auto-reject — all exercising the same code path through
-  // blacklistAndRetrySearch() after extraction.
-
-  // #301 — Split reject into dismiss (retry=false) vs reject-and-search (retry=true)
   describe('reject with retry flag (#301)', () => {
     beforeEach(() => {
       vi.clearAllMocks();
@@ -1328,7 +1289,6 @@ describe('QualityGateOrchestrator', () => {
 
       expect(revertBookStatus).not.toHaveBeenCalled();
       expect(mockAdapter.removeDownload).toHaveBeenCalled();
-      // No book_status_change SSE — only download_status_change if book is present
       const bookSSECalls = (broadcaster.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
         (call: unknown[]) => call[0] === 'book_status_change',
       );
@@ -1366,10 +1326,9 @@ describe('QualityGateOrchestrator', () => {
     });
   });
 
-  // #299 — Rejection cleanup respects delete-after-import and deregisters from download client
   describe('rejection cleanup respects import settings (#299)', () => {
     const importSettings = { deleteAfterImport: true, minSeedTime: 60, minSeedRatio: 0, minFreeSpaceGB: 5, redownloadFailed: true };
-    const downloadWithOutput = { ...baseDownload, outputPath: '/downloads/test-book', completedAt: new Date(Date.now() - 7200_000) }; // 2h ago, well past 60min seed time
+    const downloadWithOutput = { ...baseDownload, outputPath: '/downloads/test-book', completedAt: new Date(Date.now() - 7200_000) }; // 2h old; past 60m seed time.
 
     function setupWithSettings(settings: typeof importSettings) {
       const settingsService = { get: vi.fn().mockResolvedValue(settings) };
@@ -1395,7 +1354,6 @@ describe('QualityGateOrchestrator', () => {
       expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
       expect(rm).not.toHaveBeenCalled();
       expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ downloadId: downloadWithOutput.id }), expect.stringContaining('deleteAfterImport'));
-      // pendingCleanup NOT set — verify no DB update with pendingCleanup
       const dbUpdateCalls = (db.update as ReturnType<typeof vi.fn>).mock.calls;
       const pendingCleanupUpdates = dbUpdateCalls.filter(() => {
         const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
@@ -1405,7 +1363,7 @@ describe('QualityGateOrchestrator', () => {
     });
 
     it('auto-reject + deleteAfterImport=true + seed time not met → files preserved, pendingCleanup set to current timestamp', async () => {
-      const recentDownload = { ...downloadWithOutput, completedAt: new Date(Date.now() - 30_000) }; // 30s ago, well within 60min seed time
+      const recentDownload = { ...downloadWithOutput, completedAt: new Date(Date.now() - 30_000) };
       const { orchestrator, qualityGateService, db } = setupWithSettings(importSettings);
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: recentDownload, book: baseBook }]);
       qualityGateService.processDownload.mockResolvedValue({
@@ -1416,7 +1374,6 @@ describe('QualityGateOrchestrator', () => {
 
       expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
       expect(rm).not.toHaveBeenCalled();
-      // pendingCleanup should be set via DB update
       expect(db.update).toHaveBeenCalled();
       const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
       const pendingCall = setCalls.find((call: unknown[]) => call[0] && typeof call[0] === 'object' && 'pendingCleanup' in (call[0] as Record<string, unknown>));
@@ -1437,7 +1394,7 @@ describe('QualityGateOrchestrator', () => {
     });
 
     it('auto-reject + usenet download + deleteAfterImport=true → files deleted AND download removed immediately', async () => {
-      const usenetDownload = { ...downloadWithOutput, protocol: 'usenet' as const, completedAt: new Date(Date.now() - 30_000) }; // 30s ago — should still be immediate for usenet
+      const usenetDownload = { ...downloadWithOutput, protocol: 'usenet' as const, completedAt: new Date(Date.now() - 30_000) };
       const { orchestrator, qualityGateService } = setupWithSettings(importSettings);
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: usenetDownload, book: baseBook }]);
       qualityGateService.processDownload.mockResolvedValue({
@@ -1486,7 +1443,6 @@ describe('QualityGateOrchestrator', () => {
       const { orchestrator, qualityGateService, log } = setupWithSettings(importSettings);
       qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: downloadWithOutput, book: baseBook });
 
-      // Should not throw
       await orchestrator.reject(1, { retry: false });
 
       expect(log.warn).toHaveBeenCalled();
@@ -1503,18 +1459,15 @@ describe('QualityGateOrchestrator', () => {
       qualityGateService.processDownload.mockResolvedValue({
         action: 'rejected', reason: { ...NULL_REASON }, statusTransition: { from: 'checking', to: 'failed' },
       });
-      // First adapter call fails, second succeeds
       mockAdapter.removeDownload.mockRejectedValueOnce(new Error('first fails')).mockResolvedValueOnce(undefined);
 
       await orchestrator.processCompletedDownloads();
 
-      // Both downloads were processed (atomicClaim called twice)
       expect(qualityGateService.atomicClaim).toHaveBeenCalledTimes(2);
     });
 
-    // Boundary values
     it('minSeedTime=0 → no seed time enforced, immediate removal, pendingCleanup never set', async () => {
-      const recentDownload = { ...downloadWithOutput, completedAt: new Date(Date.now() - 1_000) }; // 1s ago
+      const recentDownload = { ...downloadWithOutput, completedAt: new Date(Date.now() - 1_000) };
       const { orchestrator, qualityGateService } = setupWithSettings({ ...importSettings, minSeedTime: 0 });
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: recentDownload, book: baseBook }]);
       qualityGateService.processDownload.mockResolvedValue({
@@ -1527,7 +1480,6 @@ describe('QualityGateOrchestrator', () => {
     });
 
     it('completedAt exactly at seed time boundary → elapsed equals threshold so torrent IS removed (strictly less-than defers)', async () => {
-      // completedAt exactly 60 minutes ago — elapsed == minSeedMs, NOT strictly less-than, so removed immediately
       const boundaryDownload = { ...downloadWithOutput, completedAt: new Date(Date.now() - 60 * 60_000) };
       const { orchestrator, qualityGateService } = setupWithSettings(importSettings);
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: boundaryDownload, book: baseBook }]);
@@ -1537,14 +1489,11 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.processCompletedDownloads();
 
-      // At exactly the boundary: elapsed === minSeedMs, which is NOT strictly less-than, so it SHOULD be removed
-      // Spec says "strictly less-than" for the condition that defers. elapsed < minSeedMs defers. elapsed >= minSeedMs removes.
-      // 60min elapsed, 60min threshold → elapsed is NOT < threshold → remove immediately
       expect(mockAdapter.removeDownload).toHaveBeenCalledWith(boundaryDownload.externalId, true);
     });
 
     it('completedAt one second past seed time boundary → torrent removed, pendingCleanup remains NULL', async () => {
-      const pastBoundaryDownload = { ...downloadWithOutput, completedAt: new Date(Date.now() - (60 * 60_000 + 1_000)) }; // 60m + 1s ago
+      const pastBoundaryDownload = { ...downloadWithOutput, completedAt: new Date(Date.now() - (60 * 60_000 + 1_000)) };
       const { orchestrator, qualityGateService } = setupWithSettings(importSettings);
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: pastBoundaryDownload, book: baseBook }]);
       qualityGateService.processDownload.mockResolvedValue({
@@ -1575,8 +1524,8 @@ describe('QualityGateOrchestrator', () => {
     const deferredDownload = {
       ...baseDownload, id: 10, status: 'failed' as const,
       outputPath: '/downloads/deferred-book',
-      pendingCleanup: new Date(Date.now() - 3600_000), // marked 1h ago
-      completedAt: new Date(Date.now() - 7200_000), // completed 2h ago — well past 60min seed time
+      pendingCleanup: new Date(Date.now() - 3600_000), // Marked 1h ago.
+      completedAt: new Date(Date.now() - 7200_000), // Completed 2h ago; seed time met.
     };
 
     function setupWithSettings(settings: typeof importSettings) {
@@ -1599,7 +1548,6 @@ describe('QualityGateOrchestrator', () => {
 
       expect(mockAdapter.removeDownload).toHaveBeenCalledWith(deferredDownload.externalId, true);
       expect(rm).toHaveBeenCalledWith(deferredDownload.outputPath, { recursive: true, force: true });
-      // Verify DB update clears pendingCleanup and outputPath
       expect(db.update).toHaveBeenCalled();
       const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
       const clearCall = setCalls.find((call: unknown[]) => {
@@ -1611,7 +1559,7 @@ describe('QualityGateOrchestrator', () => {
     });
 
     it('finds download with pendingCleanup set + seed time still not elapsed → skipped, pendingCleanup untouched', async () => {
-      const recentDownload = { ...deferredDownload, completedAt: new Date(Date.now() - 30_000) }; // completed 30s ago
+      const recentDownload = { ...deferredDownload, completedAt: new Date(Date.now() - 30_000) };
       const { orchestrator, qualityGateService } = setupWithSettings(importSettings);
       qualityGateService.getDeferredCleanupCandidates = vi.fn().mockResolvedValue([recentDownload]);
 
@@ -1649,7 +1597,6 @@ describe('QualityGateOrchestrator', () => {
       await orchestrator.cleanupDeferredRejections();
 
       expect(log.warn).toHaveBeenCalledWith(expect.objectContaining({ downloadId: deferredDownload.id }), expect.any(String));
-      // Second download should still be processed
       expect(mockAdapter.removeDownload).toHaveBeenCalledTimes(2);
     });
 
@@ -1660,10 +1607,8 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.cleanupDeferredRejections();
 
-      // outputPath should be cleared (files are deleted by fallback), but pendingCleanup should NOT be cleared
       expect(rm).toHaveBeenCalledWith(deferredDownload.outputPath, { recursive: true, force: true });
       const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
-      // Should have an outputPath-clear call but NOT a pendingCleanup-clear call
       const outputPathClearCall = setCalls.find((call: unknown[]) => {
         const payload = call[0] as Record<string, unknown>;
         return payload && 'outputPath' in payload && payload.outputPath === null && !('pendingCleanup' in payload && payload.pendingCleanup === null);
@@ -1678,14 +1623,11 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.cleanupDeferredRejections();
 
-      // rm was attempted
       expect(rm).toHaveBeenCalledWith(deferredDownload.outputPath, { recursive: true, force: true });
-      // File deletion failure logged as warning
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ downloadId: deferredDownload.id, outputPath: deferredDownload.outputPath }),
         expect.stringContaining('file deletion failed'),
       );
-      // Neither pendingCleanup nor outputPath should be cleared — full retry next cycle
       const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
       const clearCall = setCalls.find((call: unknown[]) => {
         const payload = call[0] as Record<string, unknown>;
@@ -1702,9 +1644,7 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.cleanupDeferredRejections();
 
-      // rm should NOT be called — files are already gone
       expect(rm).not.toHaveBeenCalled();
-      // Both markers should be cleared
       const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
       const clearBothCall = setCalls.find((call: unknown[]) => {
         const payload = call[0] as Record<string, unknown>;
@@ -1726,7 +1666,6 @@ describe('QualityGateOrchestrator', () => {
         expect.objectContaining({ downloadId: deferredDownload.id, outputPath: deferredDownload.outputPath }),
         expect.stringContaining('stat failed'),
       );
-      // Neither marker should be cleared — can't verify file state
       const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
       const clearCall = setCalls.find((call: unknown[]) => {
         const payload = call[0] as Record<string, unknown>;
@@ -1736,16 +1675,13 @@ describe('QualityGateOrchestrator', () => {
     });
 
     it('retry after prior adapter failure cleared outputPath → outputPath=null treated as files gone, pendingCleanup cleared', async () => {
-      // Simulate cycle 2: adapter now succeeds, outputPath was already cleared in cycle 1
       const retryDownload = { ...deferredDownload, outputPath: null };
       const { orchestrator, qualityGateService, db } = setupWithSettings(importSettings);
       qualityGateService.getDeferredCleanupCandidates = vi.fn().mockResolvedValue([retryDownload]);
 
       await orchestrator.cleanupDeferredRejections();
 
-      // Adapter should succeed (default mock), files are already gone (outputPath=null)
       expect(mockAdapter.removeDownload).toHaveBeenCalledWith(retryDownload.externalId, true);
-      // pendingCleanup should now be cleared — the retry is complete
       const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
       const clearCall = setCalls.find((call: unknown[]) => {
         const payload = call[0] as Record<string, unknown>;
@@ -1755,18 +1691,14 @@ describe('QualityGateOrchestrator', () => {
     });
 
     it('null adapter on proceed path counts as adapter-success → both markers cleared after file delete (#1293 F3)', async () => {
-      // getAdapter returns null (client deleted): no removeDownload call is made, but the AC requires
-      // a null adapter to count as adapter-success so a successful outputPath delete clears BOTH markers.
       const { orchestrator, qualityGateService, db, downloadClientService } = setupWithSettings(importSettings);
       downloadClientService.getAdapter.mockResolvedValue(null);
       qualityGateService.getDeferredCleanupCandidates = vi.fn().mockResolvedValue([deferredDownload]);
 
       await orchestrator.cleanupDeferredRejections();
 
-      // No client-side removal happened (adapter unresolvable), but files were deleted via fallback
       expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
       expect(rm).toHaveBeenCalledWith(deferredDownload.outputPath, { recursive: true, force: true });
-      // Both pendingCleanup and outputPath must be cleared (no-adapter treated as adapter-success)
       const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
       const clearBothCall = setCalls.find((call: unknown[]) => {
         const payload = call[0] as Record<string, unknown>;
@@ -1776,7 +1708,6 @@ describe('QualityGateOrchestrator', () => {
     });
   });
 
-  // #300 — Persisted payload includes new existing audio metadata fields
   describe('persisted payload — existing audio metadata (#300)', () => {
     it('stored reason JSON includes existingCodec, existingChannels, existingDuration, downloadedDuration for held downloads with existing book metadata', async () => {
       const { orchestrator, qualityGateService, eventHistory } = createOrchestrator();
@@ -1809,10 +1740,9 @@ describe('QualityGateOrchestrator', () => {
     });
   });
 
-  // #318 — minSeedRatio in quality-gate rejection cleanup
   describe('seed ratio gating (rejection cleanup)', () => {
     const ratioSettings = { deleteAfterImport: true, minSeedTime: 60, minSeedRatio: 1.0, minFreeSpaceGB: 5, redownloadFailed: true };
-    const downloadWithOutput = { ...baseDownload, outputPath: '/downloads/test-book', completedAt: new Date(Date.now() - 7200_000) }; // 2h ago
+    const downloadWithOutput = { ...baseDownload, outputPath: '/downloads/test-book', completedAt: new Date(Date.now() - 7200_000) };
 
     beforeEach(() => {
       vi.clearAllMocks();
@@ -1824,7 +1754,6 @@ describe('QualityGateOrchestrator', () => {
     it('auto-reject + minSeedRatio > 0 + ratio below threshold → pendingCleanup set (deferred)', async () => {
       const settingsService = { get: vi.fn().mockResolvedValue(ratioSettings) };
       const { orchestrator, qualityGateService, db, downloadClientService } = createOrchestrator({ settingsService: inject<SettingsService>(settingsService) });
-      // Mock getDownload to return low ratio
       (downloadClientService.getAdapter as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockAdapter, getDownload: vi.fn().mockResolvedValue({ ratio: 0.3 }) });
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: downloadWithOutput, book: baseBook }]);
       qualityGateService.processDownload.mockResolvedValue({
@@ -1865,16 +1794,13 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.processCompletedDownloads();
 
-      // removeDownloadFiles calls adapter.removeDownload — proves immediate cleanup, not deferred
       expect(mockAdapter.removeDownload).toHaveBeenCalledWith(usenetDownload.externalId, true);
-      // No pendingCleanup should be set for usenet
       const setCalls = (db.update().set as ReturnType<typeof vi.fn>).mock.calls;
       const pendingCall = setCalls.find((call: unknown[]) => call[0] && typeof call[0] === 'object' && 'pendingCleanup' in (call[0] as Record<string, unknown>));
       expect(pendingCall).toBeUndefined();
     });
   });
 
-  // #318 — minSeedRatio in cleanupDeferredRejections
   describe('seed ratio gating (deferred rejection cleanup)', () => {
     const ratioSettings = { deleteAfterImport: true, minSeedTime: 60, minSeedRatio: 1.0, minFreeSpaceGB: 5, redownloadFailed: true };
     const deferredDownload = { ...baseDownload, outputPath: '/downloads/test-book', completedAt: new Date(Date.now() - 7200_000), pendingCleanup: new Date() };
@@ -1932,8 +1858,7 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.processCompletedDownloads();
 
-      // Revert goes through the guarded transition (expected: importing) so a concurrent
-      // writer can't be clobbered.
+      // The expected importing status prevents clobbering a concurrent writer.
       expect(transitionBookStatus).toHaveBeenCalledWith(db, 1, { status: 'downloading', expected: { status: 'importing' } });
     });
 
@@ -1979,7 +1904,6 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.processCompletedDownloads();
 
-      // Should NOT emit book_status_change for the revert (only download_status_change and review_needed)
       expect(broadcaster.emit).not.toHaveBeenCalledWith('book_status_change', expect.objectContaining({
         old_status: 'downloading', new_status: 'downloading',
       }));
@@ -1998,32 +1922,23 @@ describe('QualityGateOrchestrator', () => {
 
       expect(qualityGateService.getCompletedDownloadById).toHaveBeenCalledWith(1);
       expect(qualityGateService.atomicClaim).toHaveBeenCalledWith(1);
-      // After migration: enqueues auto import job instead of slot-based inline execution
       expect(enqueueAutoImport).toHaveBeenCalledWith(
         expect.anything(), 1, 1, expect.any(Function), expect.anything(),
       );
     });
 
     it('treats enqueueAutoImport=false as a benign idempotency outcome (#747 F2)', async () => {
-      // AC7 / Proposed Fix §4 row "QGO": when the post-`dispatchSideEffects`
-      // enqueue returns conflict (another path already enqueued), QGO must
-      // log+continue — NOT throw, NOT transition the download to
-      // `pending_review`. A regression that mistakenly treats the conflict as
-      // an error would call `setStatus(downloadId, 'pending_review')` from
-      // the outer catch handler.
+      // A false enqueue means another path won; it must not enter the outer error path or hold the download (#747 F2).
       const { orchestrator, qualityGateService } = createOrchestrator();
       qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
-      // Decision is 'imported' (default mock) so the helper IS reached;
-      // simulate a benign idempotency conflict at that call site.
+      // The default imported decision reaches enqueue; false simulates the benign conflict.
       vi.mocked(enqueueAutoImport).mockResolvedValueOnce(false);
 
       await expect(orchestrator.processOneDownload(1)).resolves.toBeUndefined();
 
-      // Helper was actually invoked (proves we reached the imported branch).
       expect(enqueueAutoImport).toHaveBeenCalledWith(
         expect.anything(), 1, 1, expect.any(Function), expect.anything(),
       );
-      // Critical: no transition to pending_review on conflict.
       expect(qualityGateService.hold).not.toHaveBeenCalledWith(
         expect.anything(),
       );
@@ -2038,8 +1953,6 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.processOneDownload(1);
 
-      // Book was promoted to importing then reverted to downloading on hold — both
-      // via the guarded transition helper.
       expect(transitionBookStatus).toHaveBeenCalledWith(db, 1, { status: 'importing' });
       expect(transitionBookStatus).toHaveBeenCalledWith(db, 1, { status: 'downloading', expected: { status: 'importing' } });
       expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
@@ -2102,8 +2015,6 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.processOneDownload(1);
 
-      // The revert guard at dispatchSideEffects checks book.status === 'importing'
-      // which should fire because processOneDownload updated the in-memory book
       expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
         old_status: 'importing', new_status: 'downloading',
       }));
@@ -2111,8 +2022,6 @@ describe('QualityGateOrchestrator', () => {
 
     it('returns early for non-existent download', async () => {
       const { orchestrator, qualityGateService, log } = createOrchestrator();
-      // Default mock returns null — no need to set
-
       await orchestrator.processOneDownload(999);
 
       expect(qualityGateService.getCompletedDownloadById).toHaveBeenCalledWith(999);
@@ -2159,9 +2068,7 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.processOneDownload(1);
 
-      // Download set to pending_review
       expect(qualityGateService.hold).toHaveBeenCalledWith(1);
-      // Book reverted from importing → downloading
       expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
         book_id: 1, old_status: 'importing', new_status: 'downloading',
       }));
@@ -2181,7 +2088,6 @@ describe('QualityGateOrchestrator', () => {
         { skipCover: true, ffprobePath: '/usr/bin/ffprobe', onWarn: expect.any(Function), onDebug: expect.any(Function), onFilesWithoutCodec: expect.any(Function) },
       );
 
-      // Diagnostic callback wiring — onWarn → log.warn(payload, msg); onDebug → log.debug(payload, msg)
       const options = vi.mocked(scanAudioDirectory).mock.calls[0]![1]!;
       options.onWarn!('warn-msg', { warnPayload: 1 });
       expect(log.warn).toHaveBeenCalledWith({ warnPayload: 1 }, 'warn-msg');
@@ -2190,7 +2096,6 @@ describe('QualityGateOrchestrator', () => {
     });
   });
 
-  // ── #739 — required-wiring contract ────────────────────────────────────
   describe('required-wiring contract', () => {
     function makeUnwiredOrchestrator() {
       const db = createMockDb();
@@ -2226,34 +2131,23 @@ describe('QualityGateOrchestrator', () => {
       return { orchestrator, log, qualityGateService, broadcaster, db };
     }
 
-    // required-wiring contract surfaces, doesn't get swallowed.
     it('processOneDownload() imported path surfaces ServiceWireError instead of converting to pending_review', async () => {
       const { orchestrator, qualityGateService } = makeUnwiredOrchestrator();
 
-      // processDownload mock returns action='imported', so the auto-import
-      // path runs and requires wired nudgeImportWorker. The error must NOT
-      // be swallowed by the recoverable processing catch — it must propagate
-      // out of processOneDownload so the composition-root bug is visible.
+      // Imported path needs nudgeImportWorker; swallowing ServiceWireError would hide a composition-root bug.
       await expect(orchestrator.processOneDownload(1)).rejects.toThrow(/QualityGateOrchestrator used before wire/);
 
-      // Critical: hold() (pending_review fallback) must NOT be called — that is
-      // the recoverable-error fallback and would mask the wiring bug.
+      // A pending-review fallback would mask the wiring bug.
       expect(qualityGateService.hold).not.toHaveBeenCalledWith(baseDownload.id);
     });
 
-    // fail-fast contract: no state transitions before wire check.
     it('processOneDownload() unwired path fails BEFORE atomicClaim and book status promotion', async () => {
       const { orchestrator, qualityGateService, broadcaster, db } = makeUnwiredOrchestrator();
 
       await expect(orchestrator.processOneDownload(1)).rejects.toThrow(/QualityGateOrchestrator used before wire/);
 
-      // Critical fail-fast assertions: every state-changing call that
-      // sequentially follows the wire-check must not have happened.
       expect(qualityGateService.atomicClaim).not.toHaveBeenCalled();
-      // Book status promotion (db.update on books) must not have run.
       expect(db.update).not.toHaveBeenCalled();
-      // SSE notifications about the (non-existent) state transitions must
-      // not have been emitted either.
       expect(broadcaster.emit).not.toHaveBeenCalled();
     });
 
@@ -2264,7 +2158,6 @@ describe('QualityGateOrchestrator', () => {
     });
   });
 
-  // ── #725 — typed-deps-object refactor: per-dep absence preserves silent-skip ─
   describe('optional-dep absence (#725)', () => {
     function buildOrchestratorWithoutDep<K extends keyof QualityGateOrchestratorOptionalDeps>(omit: K) {
       const db = createMockDb();
@@ -2319,7 +2212,6 @@ describe('QualityGateOrchestrator', () => {
 
       await expect(orchestrator.processCompletedDownloads()).resolves.not.toThrow();
       expect(eventHistory.create).not.toHaveBeenCalled();
-      // SSE side effects still fire
       expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', expect.objectContaining({ new_status: 'pending_review' }));
     });
 
@@ -2334,7 +2226,6 @@ describe('QualityGateOrchestrator', () => {
 
       await expect(orchestrator.processCompletedDownloads()).resolves.not.toThrow();
       expect(broadcaster.emit).not.toHaveBeenCalled();
-      // Event still recorded
       expect(eventHistory.create).toHaveBeenCalled();
     });
 
@@ -2362,27 +2253,18 @@ describe('QualityGateOrchestrator', () => {
       const downloadWithOutput = { ...baseDownload, outputPath: '/downloads/test-book' };
       qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download: downloadWithOutput, book: baseBook });
 
-      // Without settingsService, gatedRejectionCleanup keeps shouldDelete=true (default-trust),
-      // so the adapter removeDownload still runs. The settingsService is "optional" in the sense
-      // that absence does not throw — only when settingsService is present and *throws* does the
-      // cleanup default to non-destructive. Verify no throw and adapter call happens.
       await expect(orchestrator.reject(1, { retry: false })).resolves.not.toThrow();
     });
   });
 
-  // ── #725 — named-key construction prevents silent positional-arg reorders ────
   describe('named-key construction (#725)', () => {
     it('object-literal optional deps reject mismatched value types at compile time', () => {
-      // The TS compiler narrows each named field to its declared interface,
-      // so swapping two same-typed deps (e.g. eventHistory vs broadcaster, both
-      // service-shaped) is no longer possible without an explicit cast.
+      // Named fields prevent service-shaped dependencies from being silently reordered.
       const db = createMockDb();
       const log = createMockLogger();
       const downloadClientService = inject<DownloadClientService>({});
       const qualityGateService = inject<QualityGateService>({});
 
-      // Constructing with a wrongly-typed value for a named field is a compile error:
-      // eventHistory.create must take an event payload, not a blacklist payload.
       const _bad = new QualityGateOrchestrator(
         qualityGateService, inject<Db>(db), inject<FastifyBaseLogger>(log), downloadClientService,
         // @ts-expect-error eventHistory shape must match EventHistoryService
@@ -2390,7 +2272,6 @@ describe('QualityGateOrchestrator', () => {
       );
       void _bad;
 
-      // Constructing with all-correct named keys compiles fine.
       const good = new QualityGateOrchestrator(
         qualityGateService, inject<Db>(db), inject<FastifyBaseLogger>(log), downloadClientService,
         {
@@ -2405,13 +2286,7 @@ describe('QualityGateOrchestrator', () => {
 
 });
 
-// #1857 F15 / AC8 — cross-owner invariant: a confirmed replace can NEVER cancel a
-// row the quality gate owns or is about to claim, because such rows classify as
-// PIPELINE_ACTIVE (not replaceable). This is the ROOT reason the QG needs no new
-// guards for this feature: replace's classification, not a QG change, is what keeps
-// the gate's atomicClaim / eager `importing` promotion / decision / SSE / enqueue
-// running exactly as the rest of this suite asserts. These tests pin that classifier
-// so the invariant can't silently regress.
+// Replace classifies QG-owned rows as PIPELINE_ACTIVE, preventing cancellation without extra QG guards (#1857 F15/AC8).
 describe('replace × quality-gate ownership (#1857 F15 / AC8)', () => {
   const qgRow = (over: Partial<DownloadRow>): DownloadRow => ({
     id: 1, title: 'QG-owned', clientStatus: 'completed', pipelineStage: 'idle',
@@ -2433,24 +2308,19 @@ describe('replace × quality-gate ownership (#1857 F15 / AC8)', () => {
     ['tracked completed awaiting the gate', qgRow({ clientStatus: 'completed', pipelineStage: 'idle', externalId: 'ext-1' })],
   ] as const)('classifies a %s download as PIPELINE_ACTIVE — replace cancels nothing, QG keeps the row', async (_label, row) => {
     const classification = await classifyFor([row]);
-    // PIPELINE_ACTIVE means the confirmed replace throws and cancels NOTHING — the row
-    // stays for the quality gate, whose decision path is therefore unaffected.
     expect(classification.kind).toBe('pipeline');
     if (classification.kind === 'pipeline') {
-      // A held review directs to Activity; anything else is 'processing'.
+      // Held reviews route to Activity; other active stages report processing.
       expect(classification.reason).toBe(row.pipelineStage === 'pending_review' ? 'awaiting_review' : 'processing');
     }
   });
 
   it('a Blackhole handoff (completed, externalId null) is NOT a QG row and does NOT block replace', async () => {
     const classification = await classifyFor([qgRow({ clientStatus: 'completed', pipelineStage: 'idle', externalId: null })]);
-    expect(classification.kind).toBe('clear'); // terminal, not QG-eligible → replace may proceed
+    expect(classification.kind).toBe('clear');
   });
 
-  // AC8 (#1857 F25) — the confirmed replace runs WHILE the QG is HELD at a defined
-  // decision barrier (proving live interleaving, not accidental sequencing). The QG
-  // must complete FULFILLED (claim → promotion → decision → enqueue); the replace must
-  // reject PIPELINE_ACTIVE and cancel nothing.
+  // A decision barrier proves live interleaving: QG fulfills while replace rejects PIPELINE_ACTIVE (#1857 F25).
   it('replace runs while the QG is held mid-decision: QG completes fulfilled, replace rejects PIPELINE_ACTIVE (cancels nothing)', async () => {
     vi.mocked(scanAudioDirectory).mockResolvedValue(makeScan());
     vi.mocked(resolveSavePath).mockResolvedValue({ resolvedPath: '/downloads/test', originalPath: '/downloads/test' });
@@ -2459,8 +2329,7 @@ describe('replace × quality-gate ownership (#1857 F15 / AC8)', () => {
     const downloadingBook = { ...baseBook, status: 'downloading' as const };
     qualityGateService.getCompletedDownloadById.mockResolvedValue({ download: completedDownload, book: { ...downloadingBook } });
 
-    // Barrier: hold the QG at its decision (processDownload) — it has already claimed +
-    // promoted the book to importing and is now deciding — until the replace has run.
+    // Hold processDownload after claim and promotion until replace finishes.
     let signalAtDecision!: () => void;
     const atDecision = new Promise<void>((res) => { signalAtDecision = res; });
     let releaseDecision!: () => void;
@@ -2472,9 +2341,8 @@ describe('replace × quality-gate ownership (#1857 F15 / AC8)', () => {
     });
 
     const qgPromise = orchestrator.processOneDownload(1);
-    await atDecision; // the QG is now provably held mid-decision
+    await atDecision;
 
-    // The book's QG-owned row is still present (checking-equivalent, QG-eligible).
     const replaceDb = createMockDb();
     replaceDb.select
       .mockReturnValueOnce(mockDbChain([qgRow({ clientStatus: 'completed', pipelineStage: 'checking', externalId: 'ext-1' })]))
@@ -2492,19 +2360,17 @@ describe('replace × quality-gate ownership (#1857 F15 / AC8)', () => {
       safe: (fn) => fn(),
     };
 
-    // Replace runs entirely while the QG is held → rejects PIPELINE_ACTIVE, cancels nothing.
     const replaceOutcome = await runReplaceWorkflow(ctx, { downloadUrl: 'm', title: 'New Release', bookId: 1, replace: true })
       .then(() => ({ ok: true }))
       .catch((e: unknown) => ({ ok: false, error: e }));
     expect(replaceOutcome).toMatchObject({ ok: false, error: { code: 'PIPELINE_ACTIVE' } });
     expect(replaceGrab).not.toHaveBeenCalled();
     expect(removeExternalItem).not.toHaveBeenCalled();
-    // Ordering proof: the QG has NOT enqueued yet — it is genuinely mid-flight, held.
-    expect(qualityGateService.atomicClaim).toHaveBeenCalledWith(1); // claim already happened
-    expect(transitionBookStatus).toHaveBeenCalledWith(expect.anything(), 1, expect.objectContaining({ status: 'importing' })); // promotion happened
-    expect(enqueueAutoImport).not.toHaveBeenCalled(); // enqueue is downstream of the held decision
+    // Ordering proof: claim and promotion happened, but enqueue is still downstream of the held decision.
+    expect(qualityGateService.atomicClaim).toHaveBeenCalledWith(1);
+    expect(transitionBookStatus).toHaveBeenCalledWith(expect.anything(), 1, expect.objectContaining({ status: 'importing' }));
+    expect(enqueueAutoImport).not.toHaveBeenCalled();
 
-    // Release the QG → it MUST complete fulfilled (unaffected by the replace).
     releaseDecision();
     await expect(qgPromise).resolves.toBeUndefined();
     expect(enqueueAutoImport).toHaveBeenCalledWith(expect.anything(), 1, 1, expect.any(Function), expect.anything());

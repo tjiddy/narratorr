@@ -67,8 +67,7 @@ function buildEmbed(event: NotificationEvent, payload: EventPayload, includeCove
   }
 
   if (event === 'import_run_finished' && payload.submission) {
-    // Every count field is always emitted — `.toString()` (not truthiness) so a
-    // required `0` is not dropped (F79).
+    // Emit every count, including zero.
     const s = payload.submission;
     fields.push({ name: 'Source', value: s.source, inline: true });
     fields.push({ name: 'Status', value: s.status, inline: true });

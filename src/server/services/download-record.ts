@@ -8,11 +8,10 @@ import type { DownloadArtifact } from '@core/download-clients/types.js';
 import type { BookStatus } from '@shared/schemas/book.js';
 import { serializeError } from '../utils/serialize-error.js';
 
-/** Resolve a downloadUrl into a typed artifact. HTTP grabs (torrent *and*
- *  usenet) need the LAN allowlist: torrent fetches the bytes here, while the
- *  usenet NZB-URL passthrough threads the allowlist into the Blackhole adapter's
- *  own redirect-following self-download (#966, #1243). magnet and data: grabs
- *  return artifacts without an outbound HTTP fetch. */
+/**
+ * HTTP torrent and NZB grabs require the LAN allowlist, including Blackhole's later redirecting
+ * fetch. Magnet and data URLs require no outbound request.
+ */
 export async function resolveArtifact(
   effectiveDownloadUrl: string,
   protocol: DownloadProtocol,
@@ -45,20 +44,13 @@ export interface InsertDownloadRecordCtx {
   externalId: string | null;
 }
 
-/** Minimal adapter shape the insert-failure compensation needs. */
 interface CompensationAdapter {
   removeDownload(externalId: string, deleteFiles: boolean): Promise<unknown>;
 }
 
 /**
- * Insert the download row; on insert failure AFTER a successful client-add,
- * best-effort compensate a tracked download via `removeDownload(externalId, true)`
- * (delete-files, matching the cancel path — NOT the adapter default `false`, F30)
- * before rethrowing, so the just-admitted payload is not left orphaned (F5). The
- * no-orphan guarantee is best-effort, not absolute (#1857 F1/F18): BOTH a null
- * adapter (compensation cannot run) AND a throwing `removeDownload` leave a live
- * untracked external download — either way the orphaned `externalId` is logged for
- * operator recovery. Blackhole (null externalId) has no id to compensate.
+ * If DB insertion fails after client admission, best-effort remove the external download with
+ * files before rethrowing. Missing or failing adapters leave an orphan whose id is logged.
  */
 export async function insertDownloadRecordOrCompensate(
   db: Db,
@@ -94,7 +86,6 @@ async function compensateOrphanedDownload(
     );
     return;
   }
-  // Adapter was null — compensation could not run; the orphan still needs logging.
   log.warn(
     { externalId, clientId },
     'Download insert failed AND compensation adapter unavailable — orphaned external download (operator recovery needed)',
@@ -108,7 +99,6 @@ export async function insertDownloadRecord(
   ctx: InsertDownloadRecordCtx,
 ): Promise<{ id: number }[]> {
   const isHandoff = !ctx.externalId;
-  // A fresh grab is pure client truth — `pipelineStage` defaults to 'idle'.
   const clientStatus: 'completed' | 'downloading' = isHandoff ? 'completed' : 'downloading';
   const downloadProgress = isHandoff ? 1 : 0;
   const downloadCompletedAt = isHandoff ? new Date() : undefined;
@@ -132,9 +122,7 @@ export async function insertDownloadRecord(
       clientStatus,
       progress: downloadProgress,
       completedAt: downloadCompletedAt,
-      // Normalize '' → null at the insert seam so an adapter returning an empty
-      // external id can never persist a `''` that would strand as a permanent
-      // QG/import blocker no consumer drains (#1861). Matches `isHandoff` above.
+      // Empty external ids must become handoffs, never permanent pipeline blockers.
       externalId: ctx.externalId || null,
       bookStatusAtGrab: params.bookStatusAtGrab ?? null,
     })

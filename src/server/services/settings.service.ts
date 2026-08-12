@@ -38,7 +38,7 @@ function parseCategory<K extends SettingsCategory>(
   return DEFAULT_SETTINGS[key];
 }
 
-// 30s covers page-load + navigation jitter without stale reads on settings flips
+// Covers page-load and navigation jitter without hiding settings flips for long.
 const CACHE_TTL_MS = 30_000;
 
 interface CacheEntry {
@@ -110,7 +110,7 @@ export class SettingsService {
 
   async set<K extends SettingsCategory>(key: K, value: AppSettings[K]): Promise<void> {
     let dbValue: unknown = value;
-    // Handle sentinel passthrough and encryption for secret categories
+    // Resolve masked sentinels before encrypting secret categories.
     const entity = SECRET_CATEGORIES[key];
     if (entity && dbValue && typeof dbValue === 'object') {
       const existing = await this.db.select().from(settings).where(eq(settings.key, key)).limit(1);
@@ -146,12 +146,7 @@ export class SettingsService {
     return this.getAll();
   }
 
-  /**
-   * Boot helper: read the RAW stored `ffmpegPath` from the processing blob, bypassing Zod
-   * (which now strips the removed field). Returns the trimmed legacy value if an operator set
-   * a custom path in an older version, else undefined — used to warn when that value was
-   * silently dropped by the auto-detection migration (the operator should use FFMPEG_PATH).
-   */
+  /** Read removed ffmpegPath from raw storage so boot can warn operators to use FFMPEG_PATH. */
   async getLegacyFfmpegPath(): Promise<string | undefined> {
     const row = await this.db.select().from(settings).where(eq(settings.key, 'processing')).limit(1);
     const raw = row[0]?.value as Record<string, unknown> | undefined;
@@ -159,25 +154,19 @@ export class SettingsService {
     return typeof val === 'string' && val.trim() ? val.trim() : undefined;
   }
 
-  /**
-   * Run once at startup: migrate quality.preferredLanguage to metadata.languages.
-   * Idempotent — skips if metadata.languages already exists in the raw blob.
-   */
+  /** Migrate raw quality.preferredLanguage unless raw metadata.languages already exists. */
   async migrateLanguageSettings(): Promise<void> {
     try {
-      // Check if metadata already has languages (idempotency)
       const metadataRow = await this.db.select().from(settings).where(eq(settings.key, 'metadata')).limit(1);
       const metadataBlob = (metadataRow[0]?.value ?? {}) as Record<string, unknown>;
       if (Array.isArray(metadataBlob.languages)) return;
 
-      // Read raw quality blob (bypasses Zod to access legacy field)
       const qualityRow = await this.db.select().from(settings).where(eq(settings.key, 'quality')).limit(1);
       if (qualityRow.length === 0) return;
 
       const qualityBlob = { ...(qualityRow[0]!.value as Record<string, unknown>) };
       const preferredLanguage = qualityBlob.preferredLanguage;
 
-      // Migrate non-empty preferredLanguage to metadata.languages
       if (typeof preferredLanguage === 'string' && preferredLanguage.trim()) {
         const normalized = normalizeLanguage(preferredLanguage);
         const canonicalSet = new Set<string>(CANONICAL_LANGUAGES);
@@ -189,7 +178,6 @@ export class SettingsService {
         }
       }
 
-      // Clean up: remove preferredLanguage from raw quality blob
       delete qualityBlob.preferredLanguage;
       await this.db
         .insert(settings)
@@ -201,13 +189,7 @@ export class SettingsService {
     }
   }
 
-  /**
-   * One-time write migration: when a legacy install stored `quality.rejectWords`
-   * as the empty-string literal default, replace it with the new packaged
-   * defaults. The migration flag is marked applied unconditionally — including
-   * when no quality row exists or when the user already customized the value —
-   * so that a future user-cleared `''` is never re-treated as legacy.
-   */
+  /** Replace the legacy empty default once; later intentional empty values must stay empty. */
   async migrateRejectWordsDefault(): Promise<void> {
     const MIGRATION_ID = 'rejectWords-defaults-v1';
     try {
@@ -242,15 +224,8 @@ export class SettingsService {
   }
 
   /**
-   * One-time write migration: when an install ran v1 and stored exactly the OLD
-   * packaged default (#986's initial value, before #993 appended `Abridged`),
-   * upgrade it to the new packaged default. Customized values, deliberately-cleared
-   * empty strings, and already-on-new-default values are left alone. The v2 flag
-   * is marked applied unconditionally so a subsequent boot is a strict no-op.
-   *
-   * Compares against a HARDCODED OLD default literal — NOT against the current
-   * `DEFAULT_REJECT_WORDS`, which is the new value. A future addition would ship
-   * a v3 migration with its own hardcoded comparison string.
+   * Upgrade only the exact hardcoded v1 default; preserve custom and empty values, then always
+   * record v2. Future packaged-default changes need their own hardcoded migration.
    */
   async migrateRejectWordsAbridgedDefault(): Promise<void> {
     const MIGRATION_ID = 'rejectWords-defaults-v2-abridged';
@@ -288,24 +263,8 @@ export class SettingsService {
   }
 
   /**
-   * One-time write migration (#1367): #1302 wired `processing.maxConcurrentProcessing`
-   * to the manual-merge semaphore and flipped the packaged default 2→1 to preserve
-   * de-facto serial behavior. But `bootstrapProcessingDefaults` froze the then-packaged
-   * `2` into every Docker install's processing row at first boot, so the default flip
-   * never reached the dominant cohort. This rewrites a stored `2` (the old packaged
-   * default) back to `1`.
-   *
-   * Reads the RAW stored blob (not via `parseCategory`) so a value `> 8` — persistable
-   * during the pre-#1368 develop window when the field was unbounded but UI-editable —
-   * is still visible: `parseCategory` falls back to the WHOLE `DEFAULT_SETTINGS.processing`
-   * category on any parse failure, silently wiping `ffmpegPath`/`postProcessingScript`.
-   * The raw read lets us clamp `> 8` to `8` and rescue the category. Realistic `> 8`
-   * population is ~zero (develop-only, days old), but the same pass rescues it for free.
-   *
-   * Only `=== 2` is reset, NOT any non-1 value: a stored `3`–`8` can only exist via a
-   * deliberate UI edit, so those users expressed intent and are left untouched. The flag
-   * is marked applied UNCONDITIONALLY (including no-row / missing-field / already-`1`
-   * paths) so a deliberate post-upgrade value is never re-flipped on a later boot.
+   * Rewrite frozen default 2→1 but preserve intentional 3–8. Read raw storage so values above 8
+   * can be clamped without parseCategory replacing the whole blob; always mark the migration done.
    */
   async migrateMaxConcurrentProcessingDefaults(): Promise<void> {
     const MIGRATION_ID = 'maxConcurrentProcessing-defaults-v1';
@@ -323,9 +282,9 @@ export class SettingsService {
         const value = stored.maxConcurrentProcessing;
         let rewrite: number | null = null;
         if (value === 2) {
-          rewrite = 1; // old packaged default → new serial default
+          rewrite = 1;
         } else if (typeof value === 'number' && value > 8) {
-          rewrite = 8; // clamp out-of-range value that would otherwise wipe the category on read
+          rewrite = 8;
         }
         if (rewrite !== null) {
           stored.maxConcurrentProcessing = rewrite;

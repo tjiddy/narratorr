@@ -12,15 +12,8 @@ import { runEnrichment } from '../server/jobs/enrichment.js';
 import { applyAudnexusEnrichment } from '../server/services/enrichment-orchestration.helpers.js';
 import type { MetadataService } from '../server/services/metadata.service.js';
 
-// Real-DB coverage for `books.user_cleared_fields` (#2069). These cases CANNOT be
-// pure unit tests: a parser unit test feeds the parser a string directly and so
-// never crosses the driver-decode boundary AC1 exists to avoid. Everything below
-// inserts the raw column value with raw SQL into a migrated database and then
-// exercises the real read/write paths.
-//
-// The suite also proves the column survives migrate-from-scratch: `runMigrations`
-// builds the schema from an empty file, and every assertion goes through Drizzle
-// rather than raw DDL strings.
+// A migrated real DB is required to cross Drizzle's decode boundary and observe
+// committed state; parser-only tests and shared root/transaction mocks cannot do either.
 
 function createLog(): FastifyBaseLogger {
   return {
@@ -67,7 +60,7 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
     return row!.id;
   }
 
-  /** Write the column OUT OF BAND, the only way it can become non-canonical. */
+  /** Write out of band to seed corrupt or otherwise non-canonical values. */
   async function writeRawColumn(bookId: number, raw: string): Promise<void> {
     await db.run(sql`UPDATE books SET user_cleared_fields = ${raw} WHERE id = ${bookId}`);
   }
@@ -77,10 +70,6 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
     return rows[0]!.raw;
   }
 
-  /**
-   * A scheduled enrichment pass over a single `pending` candidate whose provider
-   * result fills every clearable scalar. Returns nothing — assert on the row.
-   */
   async function runOneEnrichmentPass(): Promise<void> {
     const metadataService = {
       resolveBook: vi.fn().mockResolvedValue({
@@ -114,10 +103,7 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
     });
 
     it('lets an internal whole-row consumer select the same invalid row without throwing', async () => {
-      // This is the guard that the PLAIN-TEXT column — not the parser — is what keeps
-      // one corrupt row from breaking unrelated queries. A `{ mode: 'json' }` column
-      // would `JSON.parse` in Drizzle's driver mapper and throw here, on a query that
-      // has nothing to do with tombstones (quality gate, discovery, download service).
+      // JSON-mode Drizzle would parse and throw during this unrelated whole-row hydration.
       const bookId = await seedBook();
       await writeRawColumn(bookId, '{oops');
 
@@ -135,7 +121,6 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
 
       const [row] = await db.select().from(books).where(eq(books.id, bookId));
       expect(row!.enrichmentStatus).toBe('enriched');
-      // Degraded to "no tombstones", so every fill lands.
       expect(row!.publisher).toBe('Dragonsteel');
       expect(row!.seriesName).toBe('Secret Projects');
     });
@@ -305,7 +290,7 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
       const bookId = await seedBook({ seriesName: 'The Cosmere', publisher: 'Tor' });
       const memberId = await seedSeriesWithMember(bookId, 'local');
 
-      // Fail AFTER the book scalar/tombstone write, inside the same transaction.
+      // Fail after the scalar/tombstone write but before the transaction commits.
       const link = await import('../server/services/book-series-link.js');
       const spy = vi.spyOn(link, 'detachBookFromSeriesMembers').mockRejectedValueOnce(new Error('reconcile boom'));
 
@@ -329,8 +314,7 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
 
       const detail = await db.transaction(async (tx) => {
         const inside = await bookService.update(bookId, { publisher: null }, { userAsserted: true, tx });
-        // The hydration read is ON the handle, so it observes the still-uncommitted
-        // write — a `this.db` read could not, and `db.transaction` nesting throws.
+        // Hydrate through tx so the read sees its own uncommitted write.
         expect(inside!.publisher).toBeNull();
         expect(inside!.userClearedFields).toEqual(['publisher']);
         return inside;
@@ -374,14 +358,8 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
     });
   });
 
-  // ─── AC11 / F14: post-import atomicity, against a REAL migrated DB ───
-  //
-  // This proof cannot live in `enrichment-orchestration.helpers.test.ts`: there the
-  // root `db` and the transaction handle are the SAME mock object, so a regression
-  // that moved the scalar write BEFORE `db.transaction` produces identical
-  // observations (same update chain, one transaction call, same rejected promise).
-  // Only committed state distinguishes the two shapes — so the observation point is
-  // the row itself after the failure.
+  // Root DB and tx are the same object in unit mocks; only committed DB state detects
+  // a scalar write accidentally moved outside the transaction.
   describe('AC11 / F14 — post-import atomicity, against a real DB', () => {
     const providerData = { subtitle: 'A Cosmere Novel', publisher: 'Dragonsteel', genres: ['Fantasy'], narrators: ['Michael Kramer'] };
 
@@ -391,9 +369,7 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
         resolveBook: vi.fn().mockResolvedValue(null),
       } as unknown as MetadataService;
 
-      // Fail the GENRES write specifically — after the scalar write has been issued
-      // and after the narrator write has succeeded, so the failure lands squarely in
-      // the window the atomicity claim is about.
+      // Fail the genre write after scalar and narrator writes have been issued.
       const realUpdate = bookService.update.bind(bookService);
       vi.spyOn(bookService, 'update').mockImplementation(async (id, data, options) => {
         if (failOnGenres && data && 'genres' in data) throw new Error('genre write boom');
@@ -410,22 +386,19 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
     it('leaves the row NOT enriched when the array write fails after the scalar write', async () => {
       const bookId = await seedBook({ asin: 'B0BATOMIC1' });
 
-      await applyAudnexusEnrichment(
-        bookId,
-        { primaryAsin: 'B0BATOMIC1', existingNarrator: null, existingGenres: null, existingSubtitle: null, existingPublisher: null },
-        enrichmentDeps(bookId, true),
-      );
+      await expect(
+        applyAudnexusEnrichment(
+          bookId,
+          { primaryAsin: 'B0BATOMIC1', existingNarrator: null, existingGenres: null, existingSubtitle: null, existingPublisher: null },
+          enrichmentDeps(bookId, true),
+        ),
+      ).rejects.toThrow('genre write boom');
 
       const [row] = await db.select().from(books).where(eq(books.id, bookId));
-      // The whole transaction rolled back: status did NOT advance, and neither did
-      // the scalar fills that were issued inside it. A row left at `enriched` with
-      // the later write missing would be permanently outside the scheduled
-      // candidate selector (which only picks pending/skipped/retryable-failed).
       expect(row!.enrichmentStatus).toBe('pending');
       expect(row!.subtitle).toBeNull();
       expect(row!.publisher).toBeNull();
       expect(row!.genres).toBeNull();
-      // The narrator write that SUCCEEDED inside the same transaction rolled back too.
       const narratorLinks = await db.select().from(bookNarrators).where(eq(bookNarrators.bookId, bookId));
       expect(narratorLinks).toHaveLength(0);
     });
@@ -449,9 +422,6 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
     });
 
     it('COUNTERFACTUAL: the same two writes in SEPARATE transactions strand an enriched row', async () => {
-      // The pre-#2069 shape, executed against this same DB so the defect is
-      // demonstrated rather than asserted about. If the production code ever
-      // regresses to two transactions, the first test above flips to this outcome.
       const bookId = await seedBook({ asin: 'B0BSPLIT' });
 
       await db.transaction(async (tx) => {
@@ -464,30 +434,20 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
       ).rejects.toThrow('genre write boom');
 
       const [row] = await db.select().from(books).where(eq(books.id, bookId));
-      // Exactly the stranding the single-transaction shape prevents: `enriched` with
-      // the later write missing, and now invisible to the scheduled selector.
       expect(row!.enrichmentStatus).toBe('enriched');
       expect(row!.genres).toBeNull();
     });
   });
 
-  // ─── F21 / F5: the DEFERRED unmatched-genre telemetry, against a real DB ───
-  //
-  // `bookService.update`'s caller-owned-tx arm emits no post-commit side effects,
-  // so a rollback cannot strand them — which makes running the telemetry the
-  // OWNER's job, after its own commit. Before #2069 both genre-fill paths used the
-  // self-managed arm and recorded unmatched genres; the deferred hand-back restores
-  // that. `unmatched_genres` is the observation point, so these see the committed
-  // effect rather than a call on a mock.
+  // Caller-owned transactions defer side effects to the owner after commit. Observe the
+  // real unmatched_genres table so a pre-commit telemetry leak cannot hide behind mocks.
   describe('F21 / F5 — enrichment owners resume genre telemetry after commit', () => {
-    /** Survives `normalizeGenres` and is in no synonym/known list, so it lands. */
     const UNMATCHED = 'Zzzz Unmatched Genre';
 
     async function readTrackedGenres(): Promise<string[]> {
       return (await db.select().from(unmatchedGenres)).map((r) => r.genre);
     }
 
-    /** A scheduled pass whose provider result carries the unmatched genre. */
     async function runScheduledPass(): Promise<void> {
       const metadataService = {
         resolveBook: vi.fn().mockResolvedValue({
@@ -517,8 +477,6 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
       await runScheduledPass();
 
       expect(await readTrackedGenres()).toEqual([UNMATCHED]);
-      // The write it is telemetry FOR actually landed — so this is not recording a
-      // fill that never happened.
       const [row] = await db.select().from(books).where(eq(books.id, bookId));
       expect(row!.genres).toEqual([UNMATCHED]);
     });
@@ -532,15 +490,12 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
       expect(await readTrackedGenres()).toEqual([]);
       const [row] = await db.select().from(books).where(eq(books.id, bookId));
       expect(row!.genres).toBeNull();
-      // …while the pass itself still succeeded, so the empty table is about the
-      // suppressed write, not a failed run.
       expect(row!.enrichmentStatus).toBe('enriched');
     });
 
     it('scheduled: a stale-dropped candidate records nothing', async () => {
       const bookId = await seedBook({ asin: 'B0BGENRE03' });
-      // A Fix Match commits during the provider fetch, so the write transaction
-      // aborts on its identity re-read.
+      // Simulate Fix Match changing identity during the provider fetch.
       const metadataService = {
         resolveBook: vi.fn().mockImplementation(async () => {
           await db.update(books).set({ asin: 'B0BREIDENT' }).where(eq(books.id, bookId));
@@ -577,9 +532,6 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
 
     it('post-import: a rolled-back transaction records nothing (the effect is DEFERRED, not pre-commit)', async () => {
       const bookId = await seedBook({ asin: 'B0BGENRE06' });
-      // Fail the narrators write, which runs BEFORE the genres write inside the same
-      // transaction — so the genre write is issued-then-rolled-back rather than never
-      // attempted, which is the case a pre-commit effect would leak on.
       const realUpdate = bookService.update.bind(bookService);
       vi.spyOn(bookService, 'update').mockImplementation(async (id, data, options) => {
         if (data && 'narrators' in data) throw new Error('narrator write boom');
@@ -590,11 +542,13 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
         enrichBook: vi.fn().mockResolvedValue({ genres: [UNMATCHED], narrators: ['Michael Kramer'] }),
         resolveBook: vi.fn().mockResolvedValue(null),
       } as unknown as MetadataService;
-      await applyAudnexusEnrichment(
-        bookId,
-        { primaryAsin: 'B0BGENRE06', existingNarrator: null, existingGenres: null },
-        { db, log, bookService, metadataService },
-      );
+      await expect(
+        applyAudnexusEnrichment(
+          bookId,
+          { primaryAsin: 'B0BGENRE06', existingNarrator: null, existingGenres: null },
+          { db, log, bookService, metadataService },
+        ),
+      ).rejects.toThrow('narrator write boom');
       vi.restoreAllMocks();
 
       expect(await readTrackedGenres()).toEqual([]);
@@ -604,8 +558,6 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
     });
 
     it('the operator-facing self-managed PUT arm still records genres itself', async () => {
-      // The wrapper keeps owning its own post-commit effects — the deferred hand-back
-      // is only for callers that supply a transaction.
       const bookId = await seedBook();
 
       await bookService.update(bookId, { genres: [UNMATCHED] }, { userAsserted: true });
@@ -633,13 +585,11 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
     });
   });
 
-  // ─── #2152: "in the series, unnumbered", end to end through BookService ───
   describe('#2152 — the seriesPosition tombstone against a real DB', () => {
     async function readRow(bookId: number) {
       return (await db.select().from(books).where(eq(books.id, bookId)))[0]!;
     }
 
-    /** Hunters of Dune: a numbered franchise-tail book the operator unnumbers. */
     async function seedHunters(): Promise<number> {
       return seedBook({ title: 'Hunters of Dune', seriesName: 'Dune', seriesPosition: 7 });
     }
@@ -700,7 +650,6 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
       expect(row.userClearedFields).toBe('["seriesName","seriesPosition"]');
       expect(row.seriesName).toBeNull();
       expect(row.seriesPosition).toBeNull();
-      // Renders exactly as it did with `['seriesName']` alone.
       expect(row.seriesName).toBe(afterNameClear.seriesName);
       expect(row.seriesPosition).toBe(afterNameClear.seriesPosition);
       expect(updated!.userClearedFields).toEqual(['seriesName', 'seriesPosition']);
@@ -720,7 +669,7 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
     it('AC4 row 1 exemption: an unrelated PUT leaves a stale name-tombstoned position exactly as it is', async () => {
       const bookId = await seedBook({ title: 'Hunters of Dune', seriesName: 'Dune' });
       await bookService.update(bookId, { seriesName: null }, { userAsserted: true });
-      // Seed the stale orphan directly — rule **b** makes it unreachable in-app.
+      // Normal writes prevent this stale orphan, so seed it directly.
       await db.update(books).set({ seriesPosition: 7 }).where(eq(books.id, bookId));
 
       await bookService.update(bookId, { subtitle: 'x' }, { userAsserted: true });
@@ -749,7 +698,6 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
 
       const row = await readRow(bookId);
       expect(row.seriesName).toBe('Dune Chronicles');
-      // Rule **a** touches the TOMBSTONE only — the column it left NULL stays NULL.
       expect(row.seriesPosition).toBeNull();
       expect(row.userClearedFields).toBeNull();
     });
@@ -786,7 +734,7 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
     });
 
     it('a scheduled enrichment pass does not resurrect the cleared position', async () => {
-      // The orphan shape `fillSeriesFields` acts on: no stored name, stale position.
+      // Seed the no-name/stale-position shape fillSeriesFields handles.
       const bookId = await seedBook({ title: 'Tress of the Emerald Sea', asin: 'B0BTRESS01', seriesPosition: 5, enrichmentStatus: 'pending' });
       await writeRawColumn(bookId, '["seriesPosition"]');
 

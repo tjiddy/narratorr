@@ -39,14 +39,10 @@ export interface GrabParams {
   source?: CreateEventInput['source'] | undefined;
 }
 
-/** Per-grab knobs for the unlocked inner grab primitive (#1857). */
 export interface GrabInnerOpts {
-  /** When set, inherit this snapshot instead of capturing the book's current
-   *  status (the replace winner inherits the replaced row's snapshot, F6). */
+  /** Replace winners inherit the replaced row's pre-grab status (#1857 F6). */
   bookStatusAtGrabOverride?: BookStatus | null | undefined;
-  /** When true (internal replace path only), the post-insert `books.status`
-   *  write is best-effort + bounded-retry and the SSE fires only on success
-   *  (F16/F22/F29); v1 + auto callers keep today's propagation. */
+  /** Internal replace retries status writes and emits SSE only after success (F16/F22/F29). */
   bestEffortBookStatus?: boolean | undefined;
 }
 
@@ -61,39 +57,22 @@ export class DownloadOrchestrator {
     private blacklistService?: BlacklistService,
   ) {}
 
-  /**
-   * Grab for v1 / RSS / retrySearch / search-pipeline callers (propagating
-   * post-insert failures). Serialized by the per-`bookId` admission mutex around
-   * the shared check→add→insert (AC17). Since #1861 every caller runs the ONE
-   * consolidated blocker classification in `DownloadService.checkDuplicateDownloads`.
-   */
+  /** Standard grab: propagate post-insert failures and serialize per-book check→add→insert (#1857 AC17). */
   async grab(params: GrabParams): Promise<DownloadWithBook> {
     if (!params.bookId) return this.grabWithinAdmissionLock(params, {});
     return withBookAdmissionLock(params.bookId, () => this.grabWithinAdmissionLock(params, {}));
   }
 
-  /**
-   * Grab for the internal `POST /api/search/grab` route (#1857): the same
-   * consolidated blocker classification as every other caller and — with
-   * `replace: true` — the confirmed cancel-&-replace workflow (single-flight
-   * coalescing + per-book mutex + claim-first protocol).
-   */
+  /** Internal route adds confirmed replace with single-flight, mutex, and claim-first protocol (#1857). */
   async grabInternal(params: GrabParams): Promise<DownloadWithBook> {
     if (!params.bookId) {
-      // Orphan grab — no book to lock; the blocker classification is a no-op without a bookId.
       return this.grabWithinAdmissionLock(params, {});
     }
     if (params.replace) return this.grabWithReplace(params);
     return withBookAdmissionLock(params.bookId, () => this.grabWithinAdmissionLock(params, {}));
   }
 
-  /**
-   * Retry-search grab (#1857 AC17): acquire the book mutex ONCE, recheck for any
-   * grab blocker inside it, and either report `'already_active'` (the book is
-   * already served — a live download, a QG-eligible completed row, or a pending
-   * auto import job) or grab via the UNLOCKED inner primitive (no self-deadlock,
-   * since `skipDuplicateCheck` bypasses the guard the mutex protects).
-   */
+  /** Retry rechecks blockers under one book mutex, then uses the unlocked primitive to avoid self-deadlock. */
   async grabForRetry(params: GrabParams): Promise<DownloadWithBook | 'already_active'> {
     const bookId = params.bookId;
     if (!bookId) return this.grabWithinAdmissionLock(params, {});
@@ -103,12 +82,7 @@ export class DownloadOrchestrator {
     });
   }
 
-  /**
-   * True when the book has ANY grab blocker (#1861): a client-stage replaceable
-   * row, a pipeline-stage row, a QG-eligible completed row, OR a pending/processing
-   * auto import job — the exact set the consolidated classifier treats as
-   * non-`clear`. The early retry precheck seam AND the retry in-lock recheck.
-   */
+  /** Consolidated #1861 blocker set used by both retry's early and in-lock checks. */
   async hasGrabBlocker(bookId: number): Promise<boolean> {
     return classifyBlockers(await gatherBookBlockers(this.db, bookId)).kind !== 'clear';
   }
@@ -136,16 +110,9 @@ export class DownloadOrchestrator {
     };
   }
 
-  /**
-   * UNLOCKED grab primitive — the shared check→add→insert body plus side-effect
-   * orchestration, with the mutex STRIPPED (F31). Callers must already hold (or be
-   * establishing) the per-book admission mutex. Wraps DownloadService.grab() with:
-   * book status update → grab_started SSE → book_status_change SSE (on write success)
-   * → notification → event recording.
-   */
+  /** Unlocked primitive: callers must hold or establish the per-book admission mutex (#1857 F31). */
   private async grabWithinAdmissionLock(params: GrabParams, opts: GrabInnerOpts): Promise<DownloadWithBook> {
-    // Capture pre-grab book.status BEFORE downloadService.grab (unless inheriting an
-    // explicit snapshot) — the quality gate needs the user's pre-grab intent (#1144).
+    // Capture pre-grab intent before the download mutates lifecycle state (#1144).
     let bookStatusAtGrab: BookStatus | null = opts.bookStatusAtGrabOverride ?? null;
     if (params.bookId && opts.bookStatusAtGrabOverride === undefined) {
       const row = await this.db
@@ -156,10 +123,8 @@ export class DownloadOrchestrator {
       bookStatusAtGrab = (row[0]?.status ?? null) as BookStatus | null;
     }
 
-    // Core grab — let errors (including duplicate detection) propagate
     const download = await this.downloadService.grab({ ...params, bookStatusAtGrab });
 
-    // Side effects — each independently guarded, errors don't affect grab result
     const isHandoff = !download.externalId;
     const protocol = params.protocol ?? 'torrent';
 
@@ -168,9 +133,7 @@ export class DownloadOrchestrator {
       const written = await this.writeBookStatusOnGrab(params.bookId, bookStatus, opts.bestEffortBookStatus ?? false);
 
       this.safe(() => emitGrabStarted({ broadcaster: this.broadcaster, downloadId: download.id, bookId: params.bookId!, bookTitle: params.title, releaseTitle: params.title, log: this.log }));
-      // book_status_change SSE fires ONLY when the status write landed (F29) — a
-      // failed write must not broadcast a transition the DB never committed. Old_status
-      // uses the captured pre-grab lifecycle so a re-grab reports the true transition.
+      // Emit only committed transitions; oldStatus is the captured pre-grab lifecycle (F29).
       if (written) {
         this.safe(() => emitBookStatusChangeOnGrab({ broadcaster: this.broadcaster, bookId: params.bookId!, isHandoff, oldStatus: bookStatusAtGrab, log: this.log }));
       }
@@ -188,11 +151,8 @@ export class DownloadOrchestrator {
   }
 
   /**
-   * Write `books.status` after a grab. Default (v1/auto/normal): await the write,
-   * a throw propagates (unchanged, F16) → always returns `true`. Best-effort
-   * (internal replace path): bounded-retry, return whether it landed so the SSE can
-   * be suppressed on persistent failure (F22/F29). `books.status` is a display
-   * projection — the download row is the source of truth (AC14).
+   * Standard status writes propagate; internal replace retries twice and suppresses SSE on failure.
+   * The download row remains authoritative over this display projection (F16/F22/F29/AC14).
    */
   private async writeBookStatusOnGrab(bookId: number, status: BookStatus, bestEffort: boolean): Promise<boolean> {
     if (!bestEffort) {
@@ -211,32 +171,21 @@ export class DownloadOrchestrator {
     return false;
   }
 
-  /**
-   * Cancel a download with side-effect orchestration.
-   * Prefetches download+book context, delegates to DownloadService.cancel(),
-   * then dispatches book status revert + SSE events.
-   */
   async cancel(id: number): Promise<boolean> {
-    // Prefetch context for side effects
     const download = await this.downloadService.getById(id);
     if (!download) return false;
 
     const oldStatus = download.status;
     const oldBookStatus: BookStatus = download.book?.status ?? 'downloading';
 
-    // Core cancel
     const cancelled = await this.downloadService.cancel(id);
     if (!cancelled) return false;
 
-    // Blacklist the release (best-effort — failure must not block cancel)
     await this.blacklistCancelledRelease(download);
 
-    // Side effects — each independently guarded
     if (download.bookId) {
       try {
-        // Restore the explicit pre-grab lifecycle (the captured snapshot), never a
-        // path-inferred guess — a book that was failed/missing before the grab is
-        // restored to that exact state.
+        // Restore captured pre-grab intent, never a path-inferred guess.
         const revertStatus = await revertBookStatus(this.db, { id: download.bookId }, download.bookStatusAtGrab ?? null);
         this.safe(() => emitBookStatusChange({ broadcaster: this.broadcaster, bookId: download.bookId!, oldStatus: oldBookStatus, newStatus: revertStatus, log: this.log }));
       } catch (revertError: unknown) {
@@ -245,20 +194,16 @@ export class DownloadOrchestrator {
       this.safe(() => emitDownloadStatusChange({ broadcaster: this.broadcaster, downloadId: id, bookId: download.bookId!, oldStatus, newStatus: 'failed', log: this.log }));
       this.safe(() => recordDownloadFailedEvent({ eventHistory: this.eventHistory, downloadId: id, bookId: download.bookId!, bookTitle: download.title, errorMessage: 'Cancelled by user', log: this.log }));
     }
-    // Orphaned downloads (no bookId) skip SSE and event recording — no book to invalidate
+    // Orphans have no book state or history to invalidate.
 
     return true;
   }
 
-  /** Delegate retry to DownloadService (retry internally calls grab which will go through orchestrator via retrySearchDeps). */
+  /** DownloadService retry re-enters this orchestrator through retrySearchDeps. */
   async retry(id: number): Promise<RetryResult> {
     return this.downloadService.retry(id);
   }
 
-  /**
-   * Update download progress with SSE dispatch.
-   * Delegates to DownloadService.updateProgress(), then emits SSE events.
-   */
   async updateProgress(id: number, progress: number, bookId?: number): Promise<void> {
     await this.downloadService.updateProgress(id, progress, bookId);
 
@@ -267,19 +212,16 @@ export class DownloadOrchestrator {
 
       if (progress >= 1) {
         emitDownloadStatusChange({ broadcaster: this.broadcaster, downloadId: id, bookId, oldStatus: 'downloading', newStatus: 'completed', log: this.log });
-        // Look up download for title context
         const dl = await this.downloadService.getById(id);
         recordDownloadCompletedEvent({ eventHistory: this.eventHistory, downloadId: id, bookId, bookTitle: dl?.title ?? '', log: this.log });
       }
     }
   }
 
-  /** Run a side-effect function, catching and logging any error. */
   private safe(fn: () => void): void {
     try { fn(); } catch (error: unknown) { this.log.warn({ error: serializeError(error) }, 'Side-effect dispatch failed'); }
   }
 
-  /** Best-effort blacklist of a cancelled release. Skips when no identifiers are present. */
   private async blacklistCancelledRelease(download: DownloadWithBook): Promise<void> {
     if (!this.blacklistService) return;
     if (!download.infoHash && !download.guid) {
@@ -300,7 +242,6 @@ export class DownloadOrchestrator {
     }
   }
 
-  /** Set download error with SSE dispatch and event recording. */
   async setError(id: number, errorMessage: string, meta?: { bookId?: number; bookTitle?: string; oldStatus?: DownloadStatus }): Promise<void> {
     await this.downloadService.setError(id, errorMessage, meta);
     if (meta?.bookId && meta?.oldStatus) {

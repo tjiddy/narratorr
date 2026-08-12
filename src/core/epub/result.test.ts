@@ -8,19 +8,12 @@ import type {
   EpubCover,
 } from './result.js';
 
-/**
- * `result.ts` has no runtime surface, so a runtime `expect` cannot see the
- * union. Everything here is pinned at typecheck: adding or removing a code
- * breaks `pnpm typecheck`, as does relaxing any required nested field. Each
- * block carries one real runtime assertion so the file is a valid suite.
- */
+// Union contracts are pinned by typecheck; runtime assertions keep this a valid suite.
 
 const FULL_METADATA: EpubMetadata = { title: 'Dune', author: 'Frank Herbert', language: 'en' };
 
 describe('EpubValidationCode — exhaustiveness pin', () => {
   it('has exactly eleven members', () => {
-    // Adding a twelfth code to the union breaks this (missing key); removing one
-    // breaks it too (excess property).
     const ALL_CODES: Record<EpubValidationCode, true> = {
       not_a_zip: true,
       truncated: true,
@@ -62,8 +55,6 @@ describe('EpubValidation — discrimination pin', () => {
   });
 
   it('requires `code` on the invalid arm', () => {
-    // Requiredness, not value: the positive above still compiles if `code`
-    // becomes optional, so the omission is what pins the contract.
     // @ts-expect-error - an invalid validation must carry its reason code
     const noCode: EpubValidation = { status: 'invalid' };
     expect(noCode.status).toBe('invalid');
@@ -72,8 +63,6 @@ describe('EpubValidation — discrimination pin', () => {
 
 describe('EpubInspection — discrimination pin', () => {
   it('keeps the drm_protected and invalid arms', () => {
-    // Positive assignments: deleting either arm from the union fails the build
-    // right here, which is what the available-only tests below cannot catch.
     const drm: EpubInspection = { status: 'drm_protected' };
     const invalid: EpubInspection = { status: 'invalid', code: 'malformed_xml' };
 
@@ -182,9 +171,6 @@ describe('EpubInspection — payload pin', () => {
   });
 
   it('requires both EpubCover fields', () => {
-    // The two negatives above supply both properties, so each stays an error on
-    // its wrong *value* even if the property became optional. Omission is the
-    // only assertion that pins requiredness.
     // @ts-expect-error - `mediaType` is required
     const noMediaType: EpubCover = { bytes: Buffer.alloc(0) };
     // @ts-expect-error - `bytes` is required

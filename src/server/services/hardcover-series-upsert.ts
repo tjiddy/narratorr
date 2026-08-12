@@ -5,13 +5,7 @@ import type { SeriesRow } from './types.js';
 import type { HardcoverSeriesData } from '@core/metadata/hardcover.js';
 import { generatePublicId } from '../utils/public-id.js';
 
-/**
- * Id-first upsert of the canonical `series` row for a resolved Hardcover series.
- * Extracted from `series-card.service.ts` (which is at its `max-lines` cap); the
- * body is unchanged. Matches on `hardcover_series_id` first so a renamed series
- * cannot collide on the normalized-name unique index, then falls back to the
- * normalized name, then inserts.
- */
+/** Upsert by Hardcover id first, then normalized name, so renames cannot collide. */
 export async function upsertHardcoverSeries(
   tx: DbOrTx,
   resolved: HardcoverSeriesData,

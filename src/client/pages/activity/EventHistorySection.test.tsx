@@ -89,7 +89,7 @@ describe('EventHistorySection', () => {
 
     const searchInput = screen.getByPlaceholderText('Search by title...');
     await user.type(searchInput, 'Kings');
-    await user.tab(); // blur triggers search
+    await user.tab();
 
     expect(mockUseEventHistory).toHaveBeenCalledWith(
       expect.objectContaining({ search: 'Kings' }),
@@ -174,7 +174,6 @@ describe('EventHistorySection', () => {
       expect(screen.getByText('Imported')).toBeInTheDocument();
       expect(screen.getByText('File Changes')).toBeInTheDocument();
       expect(screen.getByText('Removed')).toBeInTheDocument();
-      // Count all filter pill buttons (inside the flex-wrap container)
       const filterButtons = screen.getAllByRole('button').filter(
         (btn) => ['All', 'Errors', 'Needs Review', 'Downloads', 'Imported', 'File Changes', 'Removed'].includes(btn.textContent ?? ''),
       );
@@ -193,10 +192,7 @@ describe('EventHistorySection', () => {
       );
     });
 
-    // #2104 AC37 — `search_relaxed_held` is the review surface for a relaxed
-    // rung whose candidates failed the corroboration floor. Without it in this
-    // value the event is only reachable under All-history, which is not "surfaces
-    // for review".
+    // Keep search_relaxed_held reachable through Needs Review, not only All.
     it('Needs Review chip sends held_for_review, recording_review_skipped AND search_relaxed_held', async () => {
       const user = userEvent.setup();
       mockDefaultHook();
@@ -262,7 +258,6 @@ describe('EventHistorySection', () => {
       mockDefaultHook();
 
       renderWithProviders(<EventHistorySection />);
-      // First click a filter, then click All to clear
       await user.click(screen.getByText('Errors'));
       await user.click(screen.getByText('All'));
 
@@ -309,7 +304,6 @@ describe('EventHistorySection', () => {
       const confirmButtons = screen.getAllByRole('button', { name: /Clear Errors/i });
       await user.click(confirmButtons[confirmButtons.length - 1]!);
 
-      // Should be exactly one call, no onSuccess callback
       expect(mockBulkDelete).toHaveBeenCalledTimes(1);
       expect(mockBulkDelete).not.toHaveBeenCalledWith(
         expect.anything(),

@@ -1,19 +1,11 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, ApiError } from '@/lib/api';
 import type { GrabPayload } from '@shared/schemas/search.js';
 import { queryKeys } from '@/lib/queryKeys';
+import { useGenerationGuard, type GenerationContext } from '@/hooks/useGenerationGuard';
 import { getErrorMessage } from '@/lib/error-message.js';
-
-// ============================================================================
-// useReplaceGrab (#1857)
-//
-// The grab-time cancel-&-replace state machine, extracted from SearchReleasesModal
-// so the modal stays a renderer within the enforced complexity/size caps and this
-// flow is independently unit-testable. Owns: the grab mutation, the pending-replace
-// payload, the multi-code 409 branching, and the confirm-dialog view model.
-// ============================================================================
 
 type PipelineActiveReason = 'processing' | 'awaiting_review';
 
@@ -25,11 +17,9 @@ interface ConflictBody {
 }
 
 interface PendingReplace {
-  /** The original grab payload (without `replace`), re-issued with `replace: true`. */
+  /** Reused with `replace: true` after confirmation. */
   payload: GrabPayload;
-  /** The release the user chose to grab (for the confirm copy). */
   selectedTitle: string;
-  /** The active download(s) being replaced (for the confirm copy). */
   activeTitle: string;
   count: number;
 }
@@ -44,8 +34,7 @@ export interface ReplaceConfirm {
 }
 
 function pipelineActiveMessage(reason: PipelineActiveReason | undefined, bookTitle: string): string {
-  // AC10 requires a book-NAMED toast (no transport vocabulary). Name the book by
-  // title; fall back to "This book" only when a title is somehow unavailable.
+  // User-facing errors name the book and hide transport details.
   const name = bookTitle ? `“${bookTitle}”` : 'This book';
   if (reason === 'awaiting_review') {
     return `${name} has a download awaiting your review — approve or reject it on the Activity page.`;
@@ -62,13 +51,10 @@ function confirmMessage(pending: PendingReplace): string {
 }
 
 export interface UseReplaceGrabResult {
-  /** Start a grab for a fully-built payload (the modal supplies the SearchResult fields). */
   grab: (payload: GrabPayload) => void;
-  /** Whether a grab (initial or confirmed replace) is in flight. */
   isGrabbing: boolean;
-  /** The confirm-dialog view model when a replaceable conflict is pending, else null. */
   confirm: ReplaceConfirm | null;
-  /** Clear pending state (call on modal close / book change). */
+  /** Clears pending state and invalidates callbacks after modal close or book change. */
   reset: () => void;
 }
 
@@ -76,45 +62,37 @@ export function useReplaceGrab(onGrabSuccess: () => void, bookTitle: string): Us
   const queryClient = useQueryClient();
   const [pending, setPending] = useState<PendingReplace | null>(null);
 
-  // Lifecycle generation (F17): every teardown — modal close / book change — bumps
-  // this. A grab's callbacks capture the generation at `onMutate` time and no-op if
-  // it has since changed, so a response that resolves AFTER the modal closed or its
-  // book switched can never repopulate a confirm for, or close/replace against, the
-  // wrong book. `reset()` is the teardown seam the modal already calls on both events.
-  const genRef = useRef(0);
+  // reset() retires the lifecycle so callbacks from a closed modal or previous book cannot mutate this view.
+  const { capture, isLive, retire } = useGenerationGuard();
   const reset = useCallback(() => {
-    genRef.current += 1;
+    retire();
     setPending(null);
-  }, []);
+  }, [retire]);
 
   const grabMutation = useMutation({
     mutationFn: (payload: GrabPayload) => api.searchGrab(payload),
-    onMutate: () => ({ gen: genRef.current }),
-    onSuccess: (_data, _vars, context: { gen: number }) => {
-      // The grab DID succeed server-side — ALWAYS reconcile the two server-state
-      // caches, even for a generation-stale response (close/book change mid-flight),
-      // so book status + Activity don't stay cached as if the grab never happened (F23).
+    onMutate: capture,
+    onSuccess: (_data, _vars, context: GenerationContext) => {
+      // The server changed even if this lifecycle is stale; always reconcile shared caches.
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       queryClient.invalidateQueries({ queryKey: queryKeys.activity() });
-      // Lifecycle-LOCAL effects (toast, pending clear, close) only for the live context.
-      if (context.gen !== genRef.current) return; // stale response after close/book change
+      // Suppress lifecycle-local effects after close or book change.
+      if (!isLive(context)) return;
       toast.success('Download started! Check the Activity page.');
       setPending(null);
       onGrabSuccess();
     },
-    onError: (err: Error, variables: GrabPayload, context: { gen: number } | undefined) => {
-      if (context && context.gen !== genRef.current) return; // stale response after close/book change
+    onError: (err: Error, variables: GrabPayload, context: GenerationContext | undefined) => {
+      if (!isLive(context)) return;
       const wasConfirmedRetry = variables.replace === true;
       if (err instanceof ApiError && err.status === 409) {
         const body = (err.body ?? {}) as ConflictBody;
-        // PIPELINE_ACTIVE — not swappable. Honest, book-named toast keyed on reason,
-        // on the initial grab AND on a confirmed replace that lost the race.
+        // Pipeline conflicts cannot be replaced, including after a confirmed grab loses its race.
         if (body.code === 'PIPELINE_ACTIVE') {
           setPending(null);
           toast.error(pipelineActiveMessage(body.reason, bookTitle));
           return;
         }
-        // ACTIVE_DOWNLOAD_EXISTS on the INITIAL grab → offer confirm→replace.
         if (body.code === 'ACTIVE_DOWNLOAD_EXISTS' && !wasConfirmedRetry) {
           setPending({
             payload: variables,
@@ -125,7 +103,6 @@ export function useReplaceGrab(onGrabSuccess: () => void, bookTitle: string): Us
           return;
         }
       }
-      // Generic error, OR any confirmed-retry failure → clear pending, generic toast.
       setPending(null);
       toast.error(`Failed to grab: ${getErrorMessage(err)}.`);
     },

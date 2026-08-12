@@ -10,7 +10,7 @@ describe('Pagination', () => {
       renderWithProviders(
         <Pagination page={1} totalPages={5} total={50} limit={10} onPageChange={vi.fn()} />,
       );
-      // Text is split across child elements, use custom matcher
+      // The text spans child elements, so use a custom matcher.
       expect(screen.getByText((_content, element) =>
         element?.tagName === 'P' && element.textContent === 'Showing 1–10 of 50',
       )).toBeInTheDocument();

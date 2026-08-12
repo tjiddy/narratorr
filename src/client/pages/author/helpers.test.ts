@@ -98,7 +98,6 @@ describe('groupBooksBySeries', () => {
     });
   });
 
-  // #1097 — grouping prefers seriesPrimary over series[0]
   describe('canonical primary-series preference (#1097)', () => {
     it('groups books under seriesPrimary.name when it differs from series[0].name', () => {
       const books = [
@@ -131,7 +130,7 @@ describe('groupBooksBySeries', () => {
         book({
           title: 'Words of Radiance',
           seriesPrimary: { name: 'The Stormlight Archive', position: 2 },
-          // series[0] position would put it last (7) — wrong order without primary preference
+          // series[0].position is 7, so using it would misorder this fixture.
           series: [{ name: 'Cosmere', position: 7 }, { name: 'The Stormlight Archive', position: 2 }],
         }),
         book({

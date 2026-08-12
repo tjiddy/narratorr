@@ -80,7 +80,6 @@ describe('useEscapeKey', () => {
       const onEscape = vi.fn();
       renderHook(() => useEscapeKey(true, onEscape));
 
-      // Simulate an Escape event where another handler already called preventDefault
       const event = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
       event.preventDefault();
       document.dispatchEvent(event);
@@ -102,7 +101,6 @@ describe('useEscapeKey', () => {
       const onEscape = vi.fn();
       renderHook(() => useEscapeKey(true, onEscape));
 
-      // Register a higher-priority listener that stops immediate propagation
       const earlyHandler = (e: KeyboardEvent) => {
         if (e.key === 'Escape') {
           e.preventDefault();
@@ -113,14 +111,12 @@ describe('useEscapeKey', () => {
 
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
 
-      // The hook listener never fires because stopImmediatePropagation was called
       expect(onEscape).not.toHaveBeenCalled();
 
       document.removeEventListener('keydown', earlyHandler, { capture: true });
     });
   });
 
-  // #1857 — nested modals: only the topmost open modal closes on Escape.
   describe('topmost-modal arbitration', () => {
     it('closes only the innermost (last-registered) modal on Escape', () => {
       const outer = vi.fn();
@@ -133,7 +129,6 @@ describe('useEscapeKey', () => {
       expect(inner).toHaveBeenCalledTimes(1);
       expect(outer).not.toHaveBeenCalled();
 
-      // Once the inner modal unmounts, Escape falls through to the outer.
       innerHook.unmount();
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
       expect(outer).toHaveBeenCalledTimes(1);

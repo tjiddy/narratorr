@@ -3,16 +3,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-/**
- * AC #2 (#1406): the rename-preview building blocks must have exactly one
- * definition each after extraction — both `RenamePreviewModal` and the new
- * `BulkRenameModal` compose from the shared module rather than re-declaring them.
- *
- * (Note: `RetagPreviewModal` has its own unrelated `DiffRow` for retag-plan
- * diffs — a distinct component with a different signature — so this test asserts
- * the invariant on the rename-preview surface specifically: defined once in the
- * shared module, never redefined in either rename modal.)
- */
+// Pins one shared definition per rename building block. RetagPreviewModal's unrelated
+// DiffRow has a different signature and is intentionally out of scope.
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PARTS = join(HERE, 'parts.tsx');
 const CONSUMERS = [

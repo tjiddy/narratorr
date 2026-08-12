@@ -18,27 +18,52 @@ export interface ImmediateSearchDeps {
   eventBroadcaster?: EventBroadcasterService | undefined;
 }
 
-/** Fire-and-forget: search indexers and grab the best result for a newly added book. */
+export interface ImmediateSearchBook {
+  id: number;
+  title: string;
+  duration?: number | null;
+  audioDuration?: number | null;
+  authors?: Array<{ name: string }> | null;
+  narrators?: Array<{ name: string }> | null;
+}
+
+/**
+ * Awaitable search; failures are contained the same way the detached wrapper contains them, so a
+ * caller sequencing several books settles one before starting the next and one rejection cannot
+ * break the chain.
+ */
+export async function runImmediateSearch(
+  book: ImmediateSearchBook,
+  deps: ImmediateSearchDeps,
+  log: FastifyBaseLogger,
+): Promise<void> {
+  try {
+    const [qualitySettings, metadataSettings, searchSettings] = await Promise.all([
+      deps.settingsService.get('quality'),
+      deps.settingsService.get('metadata'),
+      deps.settingsService.get('search'),
+    ]);
+    const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
+    await searchAndGrabForBook(book, {
+      indexerSearchService: deps.indexerSearchService,
+      downloadOrchestrator: deps.downloadOrchestrator,
+      qualitySettings: buildSearchFilterOptions(qualitySettings, metadataSettings, { narratorPriority }),
+      log,
+      blacklistService: deps.blacklistService,
+      indexerService: deps.indexerService,
+      eventHistory: deps.eventHistory,
+      broadcaster: deps.eventBroadcaster,
+    });
+  } catch (error: unknown) {
+    log.warn({ error: serializeError(error), bookId: book.id }, 'Search-immediately trigger failed');
+  }
+}
+
+/** Fire-and-forget search; failures are logged rather than propagated. */
 export function triggerImmediateSearch(
-  book: { id: number; title: string; duration?: number | null; audioDuration?: number | null; authors?: Array<{ name: string }> | null; narrators?: Array<{ name: string }> | null },
+  book: ImmediateSearchBook,
   deps: ImmediateSearchDeps,
   log: FastifyBaseLogger,
 ) {
-  Promise.all([deps.settingsService.get('quality'), deps.settingsService.get('metadata'), deps.settingsService.get('search')])
-    .then(async ([qualitySettings, metadataSettings, searchSettings]) => {
-      const narratorPriority = buildNarratorPriority(searchSettings.searchPriority, book.narrators);
-      await searchAndGrabForBook(book, {
-        indexerSearchService: deps.indexerSearchService,
-        downloadOrchestrator: deps.downloadOrchestrator,
-        qualitySettings: buildSearchFilterOptions(qualitySettings, metadataSettings, { narratorPriority }),
-        log,
-        blacklistService: deps.blacklistService,
-        indexerService: deps.indexerService,
-        eventHistory: deps.eventHistory,
-        broadcaster: deps.eventBroadcaster,
-      });
-    })
-    .catch((err: unknown) => {
-      log.warn({ error: serializeError(err), bookId: book.id }, 'Search-immediately trigger failed');
-    });
+  void runImmediateSearch(book, deps, log);
 }

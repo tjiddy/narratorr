@@ -35,7 +35,6 @@ describe('POST /api/library/scan-debug', () => {
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
-      // Validate response conforms to the shared debug-trace schema
       const parsed = scanDebugTraceSchema.safeParse(body);
       expect(parsed.success).toBe(true);
       expect(body.input).toBe('Author/Title');
@@ -95,7 +94,6 @@ describe('POST /api/library/scan-debug', () => {
       });
 
       expect(res.statusCode).toBe(400);
-      // The cap is enforced by Fastify pre-handler, so no downstream work is reached.
       const body = JSON.parse(res.payload);
       expect(body.partialTrace).toBeUndefined();
       expect(services.metadata.searchBooks).not.toHaveBeenCalled();
@@ -120,8 +118,7 @@ describe('POST /api/library/scan-debug', () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
 
-      // 1024 unclosed brackets is the worst case for the quadratic bracket-strip
-      // regex; the cap keeps the input small enough that it completes negligibly.
+      // Unclosed brackets are the quadratic worst case for bracket stripping.
       const res = await app.inject({
         method: 'POST',
         url: '/api/library/scan-debug',
@@ -260,9 +257,8 @@ describe('POST /api/library/scan-debug', () => {
         expect(res.statusCode).toBe(200);
         const body = JSON.parse(res.payload);
         expect(body.parsing.raw.seriesPosition).toBe(2);
-        // Cleaning trace must skip the numeric field — cleanNameWithTrace expects strings only
+        // cleanNameWithTrace accepts strings only.
         expect(body.cleaning.seriesPosition).toBeUndefined();
-        // String fields still appear (guard didn't over-filter)
         expect(body.cleaning.title).toBeDefined();
         expect(body.cleaning.series).toBeDefined();
       });
@@ -280,8 +276,6 @@ describe('POST /api/library/scan-debug', () => {
         expect(body.cleaning.seriesPosition).toBeUndefined();
       });
 
-      // #2145 — the diagnostic surface for the Detailed preset's own 3-level output. The route
-      // already forwards `rawParsed.seriesPosition ?? null`; this asserts the parser now supplies it.
       it('surfaces the position captured from a bare NN - Title leaf on a 3+-part path', async () => {
         const res = await app.inject({
           method: 'POST',
@@ -331,9 +325,8 @@ describe('POST /api/library/scan-debug', () => {
       });
 
       const body = JSON.parse(res.payload);
-      // Cleaning trace must start from the raw segment, not the already-cleaned parser output
+      // Trace input must be the raw segment, not parser-cleaned output.
       expect(body.cleaning.title.input).toBe('Title MP3');
-      // normalize step is the transition that strips "MP3"
       const normalizeStep = body.cleaning.title.steps.find((s: { name: string }) => s.name === 'normalize');
       expect(normalizeStep.output).toBe('Title');
       expect(body.cleaning.title.result).toBe('Title');
@@ -383,12 +376,10 @@ describe('POST /api/library/scan-debug', () => {
 
       const body = JSON.parse(res.payload);
       expect(res.statusCode).toBe(200);
-      // The series paren is no longer swept into the author — corrected fields surface in the trace.
       expect(body.parsing.raw.author).toBe('Jim Butcher');
       expect(body.parsing.raw.title).toBe("Academ's Fury");
       expect(body.parsing.raw.series).toBe('Codex Alera');
       expect(body.parsing.raw.seriesPosition).toBe(2);
-      // Cleaned author drives the search query — must be the clean author, not author+paren.
       expect(body.cleaning.author.result).toBe('Jim Butcher');
       expect(body.cleaning.seriesPosition).toBeUndefined();
       expect(body.search.initialQuery).toBe("Academ's Fury Jim Butcher");
@@ -452,7 +443,6 @@ describe('POST /api/library/scan-debug', () => {
 
       const body = JSON.parse(res.payload);
       expect(body.cleaning.title.result).toBe('Title');
-      // bracketTagStrip step shows the actual transformation
       const bracketTagStep = body.cleaning.title.steps.find((s: { name: string }) => s.name === 'bracketTagStrip');
       expect(bracketTagStep.output).toBe('Title');
     });
@@ -468,11 +458,9 @@ describe('POST /api/library/scan-debug', () => {
       });
 
       const body = JSON.parse(res.payload);
-      // The bracketTagStrip step unwraps rather than blanking the title.
       const bracketTagStep = body.cleaning.title.steps.find((s: { name: string }) => s.name === 'bracketTagStrip');
       expect(bracketTagStep.output).not.toBe('');
       expect(bracketTagStep.output).toMatch(/^[^[\]]*$/);
-      // The resolved title and the derived search query carry no bracket characters.
       expect(body.cleaning.title.result).toMatch(/^[^[\]]*$/);
       expect(body.search.initialQuery).toMatch(/^[^[\]]*$/);
     });
@@ -607,10 +595,6 @@ describe('POST /api/library/scan-debug', () => {
       expect(body.duplicate.reason).toBeNull();
     });
 
-    // #1723 F8 — scan-debug is diagnostic: it surfaces the resolver verdict in the
-    // trace (it never 409s or enqueues). A `review` verdict with an incumbent reports
-    // reason='review' and the incumbent id, but isDuplicate stays false (only
-    // same-recording is a hard duplicate).
     it('surfaces a review verdict in the trace (reason=review, isDuplicate=false) (#1723 F8)', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       (services.book.findDuplicate as ReturnType<typeof vi.fn>)
@@ -640,8 +624,53 @@ describe('POST /api/library/scan-debug', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      // findDuplicate called with title only, no authorList, no parsed ASIN (#1662)
       expect(services.book.findDuplicate).toHaveBeenCalledWith(expect.objectContaining({ title: 'JustATitle' }));
+    });
+
+    it('probes with title, authors and asin ONLY — no narrators/duration/productionType keys', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
+
+      await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'Sanderson/Tress of the Emerald Sea [B0D18DYG5C]' },
+      });
+
+      const candidate = (services.book.findDuplicate as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      // Key presence, not undefined-ness: a defaulted `undefined` would pass a toBeUndefined check.
+      expect(Object.keys(candidate).sort()).toEqual(['asin', 'authors', 'title']);
+    });
+
+    it('carries no authors key when no author was parsed', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
+
+      await app.inject({ method: 'POST', url: '/api/library/scan-debug', payload: { folderName: 'JustATitle' } });
+
+      expect((services.book.findDuplicate as ReturnType<typeof vi.fn>).mock.calls[0]![0]).not.toHaveProperty('authors');
+    });
+
+    it('carries no asin key when no ASIN was parsed', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });
+
+      await app.inject({ method: 'POST', url: '/api/library/scan-debug', payload: { folderName: 'Author/Title' } });
+
+      expect((services.book.findDuplicate as ReturnType<typeof vi.fn>).mock.calls[0]![0]).not.toHaveProperty('asin');
+    });
+
+    it('reports a different-recording with an incumbent as not-a-duplicate with a null reason', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ verdict: 'different-recording', book: null, hasIncumbent: true });
+
+      const res = await app.inject({ method: 'POST', url: '/api/library/scan-debug', payload: { folderName: 'Author/Title' } });
+
+      const body = JSON.parse(res.payload);
+      expect(body.duplicate.isDuplicate).toBe(false);
+      expect(body.duplicate.existingBookId).toBeNull();
+      expect(body.duplicate.reason).toBeNull();
     });
   });
 
@@ -714,7 +743,6 @@ describe('POST /api/library/scan-debug', () => {
       expect(body.error).toBe('Internal Server Error');
       expect(body.message).toContain('Duplicate check failed');
       expect(body.message).toContain('DB connection lost');
-      // Partial trace should include completed search/match but null duplicate
       expect(body.partialTrace.search).not.toBeNull();
       expect(body.partialTrace.match).not.toBeNull();
       expect(body.partialTrace.duplicate).toBeNull();
@@ -809,7 +837,6 @@ describe('POST /api/library/scan-debug', () => {
 
       const body = res.json();
       expect(body.search.directLookup).toEqual({ asin: 'B0D18DYG5C', hit: false });
-      // Falls back to keyword search
       expect(body.search.results).toHaveLength(1);
       expect(body.search.results[0].title).toBe('Fallback');
     });
@@ -831,17 +858,11 @@ describe('POST /api/library/scan-debug', () => {
       const body = res.json();
       expect(res.statusCode).toBe(200);
       expect(body.search.directLookup).toEqual({ asin: 'B0D18DYG5C', hit: false });
-      // Falls back to keyword search, NOT a 502
       expect(body.search.results).toHaveLength(1);
       expect(body.search.results[0].title).toBe('Fallback');
     });
 
-    // ── #985 region-mismatched ASIN regression ───────────────────────────
-    // Production cause: Audible's region-mismatched ASIN responses can return
-    // a parseable but content-empty product. Provider-level rejection lives in
-    // audible.test.ts (#985); this case asserts scan-debug-level behavior when
-    // metadataService.getBook resolves null for the ASIN — keyword fallback
-    // must run on the parsed folder title, not on the ASIN itself.
+    // Region-mismatched Audible ASINs can resolve to an empty product normalized to null.
     it('falls back to keyword search on the parsed folder title when getBook returns null for region-mismatched ASIN', async () => {
       (services.metadata.getBook as ReturnType<typeof vi.fn>)
         .mockResolvedValue(null);
@@ -859,7 +880,6 @@ describe('POST /api/library/scan-debug', () => {
       const body = res.json();
       expect(res.statusCode).toBe(200);
       expect(body.search.directLookup).toEqual({ asin: 'B0D6PCZ98M', hit: false });
-      // initialQuery is the parsed/cleaned folder title, NOT the ASIN
       expect(body.search.initialQuery).not.toBe('B0D6PCZ98M');
       expect(body.search.initialQuery).toContain('Sunrise on the Reaping');
       expect(body.search.results).toHaveLength(1);

@@ -10,11 +10,7 @@ import { ConnectorRequestError, type ConnectorAdapter, type ConnectorImportBatch
 import { CONNECTOR_TIMEOUT_MS } from '@core/utils/constants.js';
 import type { ConnectorRow } from './types.js';
 
-// Mock the network boundary only (the adapters' single transport call) so the
-// REAL ADAPTER_FACTORIES -> createAdapter -> parseEntitySettings construction
-// path runs in the listTargetsConfig regression test below (#1523 F1). The
-// adapters are the only callers of fetchWithTimeout in this file's scope, so a
-// module-level mock here doesn't touch the stubbed-adapter queue tests.
+// Mock only transport so target tests still exercise real adapter construction and settings parsing.
 vi.mock('@core/utils/network-service.js', () => ({
   fetchWithTimeout: vi.fn(),
 }));
@@ -46,7 +42,6 @@ describe('ConnectorService', () => {
     _resetKey();
   });
 
-  // ── CRUD + secrets ──────────────────────────────────────────────────────────
   describe('CRUD + encryption', () => {
     function makeService() {
       return new ConnectorService(db as never, log as never);
@@ -62,10 +57,8 @@ describe('ConnectorService', () => {
       });
 
       const valuesArg = (insertChain as { values: ReturnType<typeof vi.fn> }).values.mock.calls[0]![0] as { settings: Record<string, unknown> };
-      // baseUrl is a registered connector secret (#1491) — encrypted alongside apiKey.
       expect(isEncrypted(valuesArg.settings.baseUrl as string)).toBe(true);
       expect(isEncrypted(valuesArg.settings.apiKey as string)).toBe(true);
-      // libraryId is not a secret — stays plaintext.
       expect(valuesArg.settings.libraryId).toBe('lib-1');
     });
 
@@ -113,7 +106,6 @@ describe('ConnectorService', () => {
 
       const valuesArg = (insertChain as { values: ReturnType<typeof vi.fn> }).values.mock.calls[0]![0] as { settings: Record<string, unknown> };
       expect(isEncrypted(valuesArg.settings.token as string)).toBe(true);
-      // sectionId is not a secret — stays plaintext.
       expect(valuesArg.settings.sectionId).toBe('1');
     });
 
@@ -171,7 +163,6 @@ describe('ConnectorService', () => {
     });
   });
 
-  // ── targets ─────────────────────────────────────────────────────────────────
   describe('targets', () => {
     it('listTargetsConfig returns targets on success', async () => {
       const service = new ConnectorService(db as never, log as never);
@@ -186,10 +177,7 @@ describe('ConnectorService', () => {
       expect(result).toEqual({ success: true, targets: [{ id: 'lib-1', name: 'Audiobooks' }] });
     });
 
-    // #1523 — a new connector fetches its dropdown before the selector is known.
-    // listTargetsConfig must build the adapter through the targets-scoped schema
-    // (selector optional), NOT the strict schema (which would throw on an empty
-    // libraryId/sectionId before the adapter is ever built).
+    // New connectors fetch targets before choosing a selector, so this path must use the selector-optional schema.
     it.each(['audiobookshelf', 'plex'] as const)(
       'listTargetsConfig builds the %s adapter via the targets-scoped schema (empty selector)',
       async (type) => {
@@ -213,21 +201,16 @@ describe('ConnectorService', () => {
       },
     );
 
-    // #1523 F1 — exercise the REAL adapter-construction path (no adapterForConfig
-    // mock): a new connector with an empty/missing selector must parse through the
-    // targets-scoped schema, build the adapter, and reach listTargets() instead of
-    // throwing at parseEntitySettings before the network call (the original bug).
+    // Keep adapterForConfig real here so a missing selector must survive parsing and reach transport.
     it.each([
       {
         type: 'audiobookshelf' as const,
-        // libraryId omitted entirely — the regressed field.
         settings: { baseUrl: 'http://abs.local:13378', apiKey: 'real-key' },
         targetsUrl: 'http://abs.local:13378/api/libraries',
         body: { libraries: [{ id: 'lib-1', name: 'Audiobooks' }] },
       },
       {
         type: 'plex' as const,
-        // sectionId omitted entirely — the regressed field.
         settings: { baseUrl: 'http://plex.local:32400', token: 'real-token' },
         targetsUrl: 'http://plex.local:32400/library/sections',
         body: { MediaContainer: { Directory: [{ key: 'lib-1', title: 'Audiobooks' }] } },
@@ -242,8 +225,6 @@ describe('ConnectorService', () => {
       const result = await service.listTargetsConfig({ type, settings });
 
       expect(result).toEqual({ success: true, targets: [{ id: 'lib-1', name: 'Audiobooks' }] });
-      // The real adapter actually issued its single list-targets request — proves
-      // construction did not throw on the absent selector before the network call.
       expect(fetchWithTimeout).toHaveBeenCalledWith(targetsUrl, expect.anything(), CONNECTOR_TIMEOUT_MS);
     });
 
@@ -261,29 +242,19 @@ describe('ConnectorService', () => {
     });
   });
 
-  // ── config-path sentinel resolution (#1781 F1) ───────────────────────────────
-  // The resolve-only path in adapterForConfig backs BOTH public config callers
-  // (testConfig, listTargetsConfig). Exercise the REAL adapter-construction path
-  // (no adapterForConfig mock) with an `id` plus masked secrets, and assert the
-  // saved plaintext — not `********` or `$ENC$...` — reaches the transport. If the
-  // resolveSettings('connector', ...) delegation regressed back to `data.settings`,
-  // the adapter would fetch `********/api/libraries` with `Bearer ********`, so
-  // these exact URL + header assertions would fail.
+  // Both config callers must resolve masked secrets from storage before constructing a real adapter.
+  // Exact URL and headers reject sentinel or ciphertext leakage into transport.
   describe('config-path sentinel resolution', () => {
     it.each([
       { caller: 'testConfig' as const },
       { caller: 'listTargetsConfig' as const },
     ])('$caller resolves ******** connector secrets against the saved row before building the adapter', async ({ caller }) => {
       const service = new ConnectorService(db as never, log as never);
-      // getById(1) → decrypts these to http://saved.local + saved-key.
       const existing = createMockDbConnector({
         settings: { baseUrl: encrypt('http://saved.local', TEST_KEY), apiKey: encrypt('saved-key', TEST_KEY), libraryId: 'lib-1' },
       });
       db.select.mockReturnValue(mockDbChain([existing]));
-      // No global clearMocks (vitest.config.ts) and the transport mock is
-      // module-level, so clear its call history per row — otherwise the second
-      // caller's toHaveBeenCalledWith could match the first row's stale call and
-      // a list-targets regression to ******** would slip through (#1781 F2).
+      // No global clearMocks: reset per row so stale calls cannot satisfy the second caller's assertion.
       vi.mocked(fetchWithTimeout).mockReset().mockResolvedValue({
         ok: true,
         json: async () => ({ libraries: [{ id: 'lib-1', name: 'Audiobooks' }] }),
@@ -295,8 +266,6 @@ describe('ConnectorService', () => {
         : await service.listTargetsConfig(data);
 
       expect(result).toMatchObject({ success: true });
-      // Decrypted baseUrl → URL; decrypted apiKey → Authorization header. Neither
-      // the sentinel nor the ciphertext leaks through to the real request.
       expect(fetchWithTimeout).toHaveBeenCalledWith(
         'http://saved.local/api/libraries',
         { headers: { Authorization: 'Bearer saved-key' } },
@@ -305,18 +274,13 @@ describe('ConnectorService', () => {
     });
   });
 
-  // ── refresh queue: delegation + connector-specific resolver ──────────────────
-  // The queue's own behavior (debounce/serialization/retry/timeout/drain/logging)
-  // is exercised against ConnectorRefreshQueue directly in
-  // connector-refresh-queue.test.ts. Here we cover the two ConnectorService-owned
-  // seams: delegating notifyRefresh/stop to the queue, and the resolveFlush
-  // callback that resolves a pending entry to the connector-specific request plan.
+  // Queue tests own scheduling and retry; this suite owns service delegation and connector-specific resolution.
   describe('refresh queue delegation + resolver', () => {
     function connectorRow(id: number, enabled = true): ConnectorRow {
       return createMockDbConnector({ id, enabled }) as unknown as ConnectorRow;
     }
     const ITEM = (bookId: number) => ({ bookId, title: `Book ${bookId}`, libraryPath: `/lib/${bookId}` });
-    // resolveFlush only reads connectorId/reasons/items — timers are unused here.
+    // resolveFlush never reads timers, so sentinel values are sufficient here.
     function entry(connectorId: number, reasons: PendingFlush['reasons'] = ['import'], items = [ITEM(1)]): PendingFlush {
       return { connectorId, reasons, items, timer: 0 as never, deadlineTimer: 0 as never };
     }
@@ -324,7 +288,6 @@ describe('ConnectorService', () => {
       return (service as unknown as { resolveFlush: (e: PendingFlush) => Promise<ResolvedFlush | null> }).resolveFlush(e);
     }
 
-    // ── delegation ─────────────────────────────────────────────────────────────
     it('notifyRefresh enumerates enabled connectors and delegates one queue.enqueue per (connector × item)', async () => {
       const service = new ConnectorService(db as never, log as never);
       db.select.mockReturnValue(mockDbChain([createMockDbConnector({ id: 1 }), createMockDbConnector({ id: 2 })]));
@@ -352,10 +315,7 @@ describe('ConnectorService', () => {
       expect(stopSpy).toHaveBeenCalledTimes(1);
     });
 
-    // ── resolver: skip / resolve / failure-context (the extraction seam) ─────────
     it('resolveFlush returns null (skip) when the connector is disabled at flush time — adapter never resolved', async () => {
-      // Ports the pre-extraction "skips the flush when the connector is disabled at
-      // flush time" onto the resolver: null → the queue treats it as a no-op skip.
       const service = new ConnectorService(db as never, log as never);
       vi.spyOn(service, 'getById').mockResolvedValue(connectorRow(1, false));
       const getAdapterSpy = vi.spyOn(service, 'getAdapter');
@@ -382,8 +342,6 @@ describe('ConnectorService', () => {
       const resolved = await resolveFlush(service, entry(1, ['import', 'restored'], [ITEM(1), ITEM(2)]));
       expect(resolved).not.toBeNull();
       expect(resolved!.requestCount).toBe(2);
-      // NO connectorName leak into the success context assembly — that field is only
-      // read on the failed branch; the queue merges reasons/count from the entry.
       expect(resolved!.logContext).toEqual({ connectorId: 1, connectorType: 'audiobookshelf', connectorName: 'Test ABS', url: 'http://abs.local:13378' });
 
       const signal = new AbortController().signal;
@@ -416,10 +374,7 @@ describe('ConnectorService', () => {
       expect(r2!.logContext.url).toBe('[unparseable]');
     });
 
-    // The F5 guard on the ConnectorService side: a getAdapter failure AFTER the row
-    // resolved must surface the connector-derived context so the queue's failed-flush
-    // warn keeps type/name/url (the redacted host that disambiguates same-type
-    // connectors at 3am), rather than degrading them.
+    // Once a row resolves, adapter failures must retain its redacted context for actionable queue warnings.
     it('resolveFlush wraps a getAdapter ZodError (drifted settings) in FlushResolutionError carrying the full logContext + original error', async () => {
       const service = new ConnectorService(db as never, log as never);
       vi.spyOn(service, 'getById').mockResolvedValue(connectorRow(1));

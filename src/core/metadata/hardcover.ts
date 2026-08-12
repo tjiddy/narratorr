@@ -66,11 +66,7 @@ const GET_SERIES_MEMBERS_BY_ID_QUERY = `
   }
 `;
 
-// `query_type` is Hardcover's Algolia-style hit-type filter. The documented
-// values (`books`, `authors`, `series`, `characters`, ...) are lowercase, and
-// the #1139 spec author also verified that `"Series"` (capitalized) returns
-// results — the Algolia layer appears to be casing-tolerant. Keep the
-// lowercase form to match Hardcover's docs; do not "fix" it to capitalized.
+// Hardcover documents lowercase `query_type` values; keep `series` lowercase.
 const SEARCH_SERIES_QUERY = `
   query SearchSeries($query: String!) {
     search(query: $query, query_type: "series", per_page: 25, page: 1) {
@@ -167,8 +163,7 @@ function mapNetworkError(error: unknown): never {
 }
 
 function mapMember(entry: z.infer<typeof hardcoverBookSeriesSchema>): HardcoverMember {
-  // Shared with the dedup picker's grouping key so the two notions of "same
-  // position" cannot drift apart (#2097).
+  // Share normalization with the dedup grouping key.
   const position = normalizeMemberPosition(entry.position);
   return {
     hardcoverBookId: entry.book.id,
@@ -180,58 +175,10 @@ function mapMember(entry: z.infer<typeof hardcoverBookSeriesSchema>): HardcoverM
 }
 
 /**
- * The sole producer of `HardcoverMember[]` — both `getSeriesMembers` and
- * `getSeriesMembersById` route through it — which is what makes the one length
- * filter below a complete chokepoint (#2109 AC7).
- *
- * A member whose title exceeds `MAX_VARIANT_TITLE_LENGTH` is DROPPED; every
- * other member in the same response is returned normally. Titles here are
- * community-edited UGC arriving as a bare `z.string()`, and the consuming
- * `persistMembers` generates title variants for each one inside a transaction
- * that libSQL serializes against every other write.
- *
- * Three deliberate choices, each ruling out a worse degrade:
- *
- *  - **Never truncate.** A truncated title is a sheared fragment that
- *    `findInLibraryMatch` then treats as a member's COMPLETE identity, so it can
- *    FULL≡FULL a different library book named by the retained prefix — and on
- *    the manual-bind path `bindHardcoverSeries` durably rewrites that book's
- *    series fields. Dropping cannot produce that: the sheared string is never
- *    constructed. Dropping can only ever yield FEWER members and therefore fewer
- *    matches, so its failure mode is a false refusal, never a false pair.
- *  - **Never reject the response.** `hardcoverBookSchema` nests inside
- *    `seriesMembersResponseSchema`, whose `safeParse` failure throws
- *    `MetadataError` — a `.max()` there would let one absurd member take down the
- *    entire series card, converting a bounded perf problem into a hard outage.
- *  - **Silent, deliberately.** `src/core/**` holds no logger and may not import
- *    fastify, so surfacing the drop would mean plumbing a count out of the
- *    adapter into the calling service — machinery a 2048-character threshold no
- *    real title reaches does not warrant. `hardcover.test.ts` pins the drop so it
- *    stays visible to developers.
- *
- * The same-position PICKER (#2097) runs next, and the order of the two steps is
- * deliberate: the length filter first, so a position whose most-read work has an
- * absurd title still yields its surviving sibling rather than losing the slot.
- * Hardcover registers some translations as their own WORK rather than as an
- * edition, so a series can carry several works at one position; the queries used
- * to hand that to Hasura via `distinct_on: position`, which kept the MOST-READ
- * row regardless of script (live: the Russian "…: Перед бурей" beat the English
- * "Before the Storm" at WoW position 15). `pickPreferredMembersByPosition`
- * replaces that with an explicit Latin-script-first preference, readership only
- * as the tie-break.
- *
- * Two consequences worth knowing here:
- *
- *  - **Unpositioned works no longer collapse.** `DISTINCT ON` treats SQL NULLs
- *    as equal, so every position-less work in a series used to come back as one
- *    row; each one now surfaces. That is a member-count increase on such series
- *    and is correct — those are different books, not duplicates.
- *  - **Retained rows keep their source order**, because `persistMembers` walks
- *    this array and claims library books greedily through a shared
- *    `matchedLibraryIds` set (the #2108 pinned claim order), so a reordering
- *    picker would change which book claims which member. Note that the RENDER
- *    path does not observe this order: `buildCardFromCache` reloads the
- *    persisted rows unordered and sorts them by position then title.
+ * Sole member-array chokepoint. Drop overlong UGC titles before same-position selection—never
+ * truncate or reject the whole response—so safe siblings survive. The picker prefers Latin-script
+ * works, uses readership as tie-break, and preserves unpositioned works plus source order because
+ * persistence claims library books greedily.
  */
 function mapSeries(entry: z.infer<typeof hardcoverSeriesSchema>): HardcoverSeriesData {
   const withinLengthCap = (entry.book_series ?? [])
@@ -276,11 +223,7 @@ export class HardcoverClient {
   private readonly apiKey: string;
 
   constructor(apiKey: string) {
-    // Hardcover's docs display the auth header value as `Bearer <token>`; users
-    // routinely paste the visible string verbatim, doubling the prefix. Strip a
-    // leading `Bearer ` (case-insensitive, including the bare `Bearer` boundary
-    // via `(?:\s+|$)`) and surrounding whitespace at the integration boundary
-    // so both the test endpoint and the production resolver normalize once.
+    // Users paste the documented `Bearer <token>` value; normalize the optional prefix once.
     this.apiKey = apiKey.replace(/^\s*bearer(?:\s+|$)/i, '').trim();
   }
 
@@ -330,12 +273,7 @@ export class HardcoverClient {
     if (parsed.data.errors?.length) {
       throw new MetadataError(HARDCOVER_PROVIDER, `Hardcover search error: ${parsed.data.errors[0]!.message}`);
     }
-    // Re-rank by popularity: Typesense text-relevance buries flagship series
-    // behind low-readership spin-offs (see #1239). Drop zero-book stubs, then
-    // sort by readersCount desc. `Array.prototype.sort` is stable (ES2019+), so
-    // equal-readersCount ties preserve Hardcover's relative order. The full
-    // filtered/sorted pool is returned unsliced — the picker display cap lives
-    // in SeriesCardService, and the automatic resolver consumes the wider pool.
+    // Drop empty stubs and stably re-rank by readership; consumers apply their own display caps.
     const candidates = extractSearchCandidates(parsed.data.data?.search?.results)
       .filter((c) => c.booksCount > 0);
     candidates.sort((a, b) => b.readersCount - a.readersCount);
@@ -343,16 +281,7 @@ export class HardcoverClient {
   }
 }
 
-/**
- * Hardcover's `search` API returns its results envelope as a free-form JSON
- * payload. Extract the candidates defensively — accept either an array, or a
- * `hits` / `results` array inside an object.
- *
- * Each hit is unwrapped per-hit: Hardcover migrated search from Algolia (fields
- * top-level on the hit) to Typesense (every field nested under a `document` key,
- * alongside `highlight` / `text_match` siblings). Read fields from `hit.document`
- * when present, falling back to `hit` itself so legacy/Algolia hits still parse.
- */
+/** Accepts legacy top-level hits and Typesense hits nested under `document`. */
 function extractSearchCandidates(raw: unknown): HardcoverSearchCandidate[] {
   const hits = extractHitsArray(raw);
   const out: HardcoverSearchCandidate[] = [];
@@ -375,12 +304,7 @@ function extractSearchCandidates(raw: unknown): HardcoverSearchCandidate[] {
   return out;
 }
 
-/**
- * Cover art for a series candidate is best-effort: the Typesense `search`
- * payload may carry it as a top-level `image_url` string, or nested under
- * `image` / `cached_image` objects with a `url`. Absent on most series hits —
- * the candidate list renders fine without it (name + book count carry the UI).
- */
+/** Accepts direct and nested Typesense cover shapes; missing art is valid. */
 function extractImageUrl(hit: Record<string, unknown>): string | null {
   const directUrl = hit.image_url;
   if (typeof directUrl === 'string' && directUrl.length > 0) return directUrl;
@@ -410,8 +334,7 @@ function extractAuthorName(hit: Record<string, unknown>): string | null {
     const name = (author as Record<string, unknown>).name;
     if (typeof name === 'string' && name.length > 0) return name;
   }
-  // Typesense exposes the author as a singular `author_name` string alongside
-  // (or instead of) the nested `author` object.
+  // Typesense may expose only the singular `author_name` field.
   const authorName = hit.author_name;
   if (typeof authorName === 'string' && authorName.length > 0) return authorName;
   const authorNames = hit.author_names;

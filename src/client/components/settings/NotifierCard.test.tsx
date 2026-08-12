@@ -10,9 +10,7 @@ import { notifierSettingsSchemas } from '@shared/schemas.js';
 import type { Notifier, TestResult } from '@/lib/api';
 import type { IdTestResult } from './SettingsCardShell';
 
-// Every settings key declared by a notifier type OTHER than `ownType`, minus any key
-// `ownType` also declares (e.g. slack/discord both use `webhookUrl`). Delegates to the shared
-// #908-family helper so all four leak-guard suites derive foreign keys identically.
+// Foreign keys exclude names shared with ownType; all leak guards use the same helper.
 const foreignNotifierKeys = (ownType: NotifierType): string[] =>
   foreignRegistryKeys(ownType, NOTIFIER_TYPES, NOTIFIER_REGISTRY);
 
@@ -511,7 +509,6 @@ describe('NotifierCard — edit mode', () => {
       />,
     );
 
-    // Fill all required webhook fields so the form passes validation and reaches onFormTest
     await user.type(screen.getByPlaceholderText('My Webhook'), 'New Notifier');
     await user.type(screen.getByPlaceholderText('https://example.com/webhook'), 'https://hook.example.com');
     await user.click(screen.getByText('Test').closest('button')!);
@@ -556,12 +553,6 @@ describe('NotifierCard — edit mode', () => {
   });
 });
 
-// #1103 F7 — empty-events notifier UX. After the migration scrub, an on_upgrade-only
-// notifier row ends up with events: [] and enabled: false. The component must:
-//   - show the no-events hint in view mode
-//   - disable the Enabled toggle in edit mode while events.length === 0
-//   - surface the 'Select at least one event' validation message when the user tries
-//     to save the edit form without selecting an event
 describe('NotifierCard — empty-events notifier (#1103 F7)', () => {
   const emptyEventsNotifier: Notifier = createMockNotifier({
     id: 99,
@@ -582,7 +573,6 @@ describe('NotifierCard — empty-events notifier (#1103 F7)', () => {
       />,
     );
 
-    // The empty-events hint replaces the normal `Events: ...` line.
     expect(screen.getByTestId('notifier-empty-events-hint')).toHaveTextContent(
       /No events selected/i,
     );
@@ -601,7 +591,6 @@ describe('NotifierCard — empty-events notifier (#1103 F7)', () => {
 
     const enabledCheckbox = screen.getByRole('checkbox', { name: 'Enabled' });
     expect(enabledCheckbox).toBeDisabled();
-    // Hint text describes WHY the toggle is disabled — visible to the user.
     expect(screen.getByText(/Select at least one event to enable this notifier/i)).toBeInTheDocument();
   });
 
@@ -619,7 +608,6 @@ describe('NotifierCard — empty-events notifier (#1103 F7)', () => {
 
     expect(screen.getByRole('checkbox', { name: 'Enabled' })).toBeDisabled();
 
-    // Pick any event.
     await user.click(screen.getByRole('checkbox', { name: 'Grab' }));
 
     expect(screen.getByRole('checkbox', { name: 'Enabled' })).not.toBeDisabled();
@@ -641,27 +629,13 @@ describe('NotifierCard — empty-events notifier (#1103 F7)', () => {
     const form = screen.getByText('Edit Notifier').closest('form')!;
     fireEvent.submit(form);
 
-    // Zod's events.min(1, 'Select at least one event') fires; the error text appears in red below the events list.
     expect(await screen.findByText('Select at least one event')).toBeInTheDocument();
     expect(onSubmit).not.toHaveBeenCalled();
   });
 });
 
-// #908 family — settingsFromX registry-overlay guard (siblings: IndexerCard.test.tsx,
-// DownloadClientForm.test.tsx). NotifierCard hydrates edit-mode settings via the
-// `settingsFromNotifier` registry overlay (NotifierCard.tsx:32-46): it seeds from the entity
-// type's `defaultSettings` and overlays only the non-null stored values whose KEY is in that
-// type's `defaultSettings`. Stored keys foreign to the type (e.g. a stale Telegram `botToken`
-// on a webhook row — real in a hand-edited/legacy self-hosted DB) are dropped at hydration, so
-// a clean row AND a dirty row both hydrate to the type's own keys only. (Earlier this guard was
-// claimed to hold "by construction" for clean rows; the #1343 own-keys filter makes it true for
-// dirty rows too.) The filter is safe because notifier `defaultSettings` keys ≡ the strict
-// per-type schema keys for every type — pinned by the schema-alignment test below.
-//
-// As of #1342 the edit-mode Type selector is rendered disabled and unregistered
-// (NotifierCardForm.tsx), so in-edit type switching is intentionally unreachable; the overlay
-// is validated at hydration, per type. The create-mode reset effect (NotifierCard.tsx:92-97)
-// is a separate guard for the in-create type switch — covered by its own test below.
+// Edit hydration accepts only non-null keys declared by that notifier type; schema alignment below
+// proves the allowlist is complete. Create-mode type switching has a separate reset guard.
 describe('#908 — settingsFromNotifier registry overlay (no foreign-type leak)', () => {
   it('webhook entity edit Test payload preserves webhook keys and leaks no foreign-type keys', async () => {
     const onFormTest = vi.fn();
@@ -690,14 +664,11 @@ describe('#908 — settingsFromNotifier registry overlay (no foreign-type leak)'
 
     const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
 
-    // Stored webhook-specific keys MUST round-trip (value-checked so a default can't masquerade).
     expect(payloadSettings).toHaveProperty('url', 'https://hook.example.com');
     expect(payloadSettings).toHaveProperty('method', 'POST');
     expect(payloadSettings).toHaveProperty('bodyTemplate', '{{title}}');
 
-    // NO key from ANY other notifier type may leak — AC1/CLAUDE.md require the selected
-    // type's payload to carry no foreign keys (the strict per-type server schema rejects them).
-    // Covers discord (webhookUrl/includeCover) plus script/email/telegram/slack/pushover/ntfy/gotify.
+    // Strict per-type schemas reject every foreign key, not just one representative.
     const foreignKeys = foreignNotifierKeys('webhook');
     expect(foreignKeys).toContain('webhookUrl');
     expect(foreignKeys).toContain('botToken');
@@ -733,14 +704,11 @@ describe('#908 — settingsFromNotifier registry overlay (no foreign-type leak)'
 
     const payloadSettings = onFormTest.mock.calls[0]![0].settings as Record<string, unknown>;
 
-    // Stored discord-specific keys MUST round-trip — includeCover:false is non-default,
-    // so the overlay (not the registry default of true) must win.
+    // includeCover=false proves stored values override registry defaults.
     expect(payloadSettings).toHaveProperty('webhookUrl', 'https://discord.com/api/webhooks/x');
     expect(payloadSettings).toHaveProperty('includeCover', false);
 
-    // NO key from ANY other notifier type may leak. `webhookUrl` is shared with slack so it
-    // is the discord type's own key (correctly excluded); webhook keys (url/method/headers/
-    // bodyTemplate) plus script/email/telegram/pushover/ntfy/gotify keys MUST all be absent.
+    // webhookUrl is shared with Slack, so it is not foreign to Discord.
     const foreignKeys = foreignNotifierKeys('discord');
     expect(foreignKeys).toContain('url');
     expect(foreignKeys).not.toContain('webhookUrl');
@@ -749,12 +717,8 @@ describe('#908 — settingsFromNotifier registry overlay (no foreign-type leak)'
     }
   });
 
-  // Mutation-kill: the create-mode reset effect (NotifierCard.tsx:92-97). Validation-free
-  // (DOM field state), because the Test button is RHF `handleSubmit`-gated and a freshly
-  // switched-to type has empty required fields — so we round-trip a type switch and assert the
-  // previous type's field value did not survive. Deleting the reset effect leaves the typed
-  // webhook `url` in RHF state across the switch (shouldUnregister defaults to false), so the
-  // remounted field shows the stale value and this assertion reds.
+  // Test is validation-gated after a type switch, so round-trip the DOM to exercise the reset.
+  // Without it, RHF preserves the stale URL because shouldUnregister defaults to false.
   it('#908 create-mode type switch resets the previous type\'s field (reset-effect guard)', async () => {
     const user = userEvent.setup();
     renderWithProviders(
@@ -769,15 +733,10 @@ describe('#908 — settingsFromNotifier registry overlay (no foreign-type leak)'
     await user.selectOptions(typeSelect, 'discord');
     await user.selectOptions(typeSelect, 'webhook');
 
-    // After the round-trip the reset effect must have cleared the stale webhook url.
     expect(screen.getByPlaceholderText('https://example.com/webhook')).toHaveValue('');
   });
 
-  // Boundary: a DIRTY webhook row carrying a stale foreign `botToken` (Telegram-only) plus a
-  // non-default `method: 'PUT'` (so the present-value check can't be satisfied by the registry
-  // default 'POST'). The own-keys filter drops `botToken` at hydration, so validation passes and
-  // the Test payload is clean. Removing the filter re-admits `botToken` (the form settings schema
-  // declares it, so zod won't strip it) and this reds.
+  // Non-default PUT proves hydration preserves owned values while dropping a stale foreign botToken.
   it('#908 dirty webhook row drops a stale foreign botToken and keeps the non-default method', async () => {
     const onFormTest = vi.fn();
     const user = userEvent.setup();
@@ -809,9 +768,7 @@ describe('#908 — settingsFromNotifier registry overlay (no foreign-type leak)'
     expect(payloadSettings).toHaveProperty('url', 'https://hook.example.com');
   });
 
-  // Null-stored-value backfill: a discord row persisting `includeCover: null` must hydrate to the
-  // registry default `true` (the overlay skips null values). A `val != null` → `!== undefined`
-  // mutation would overlay the null and red this.
+  // Null must be skipped so the registry default backfills it.
   it('#908 discord includeCover:null backfills to the registry default true', async () => {
     const onFormTest = vi.fn();
     const user = userEvent.setup();
@@ -841,9 +798,7 @@ describe('#908 — settingsFromNotifier registry overlay (no foreign-type leak)'
     expect(payloadSettings).toHaveProperty('includeCover', true);
   });
 
-  // #1607 — an ntfy row with a stored (masked) access token and a priority must hydrate both into
-  // the edit Test payload. The access token arrives as the masked sentinel (the server resolves it
-  // against the entity id, injected downstream by the shared hook), and the priority carries through.
+  // The downstream hook injects the entity id used to resolve the masked access token.
   it('#1607 ntfy edit Test payload carries the masked access token sentinel and priority', async () => {
     const onFormTest = vi.fn();
     const user = userEvent.setup();
@@ -875,11 +830,7 @@ describe('#908 — settingsFromNotifier registry overlay (no foreign-type leak)'
   });
 });
 
-// #908 — schema-alignment guard. The `settingsFromNotifier` own-keys filter uses each type's
-// `defaultSettings` keys as the allowlist. That is only safe while the default key set equals
-// the strict per-type schema key set — otherwise a valid-but-default-less schema field would be
-// silently dropped at hydration. This pins the invariant: adding such a field reds here, forcing
-// either a matching default or an explicit revisit of the filter's allowlist source.
+// Filtering by defaultSettings is safe only while those keys equal each strict per-type schema.
 describe('#908 — notifier registry/schema key-set alignment', () => {
   it.each(NOTIFIER_TYPES)('%s defaultSettings keys equal its strict schema keys', (type) => {
     const defaultKeys = Object.keys(NOTIFIER_REGISTRY[type].defaultSettings).sort();

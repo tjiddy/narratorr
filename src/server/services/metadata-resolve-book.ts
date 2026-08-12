@@ -5,10 +5,12 @@ import {
   type BookMetadata,
   type SearchBooksResult,
 } from '@core/index.js';
+import { normalizeTitleLosslessly } from '@core/utils/title-variants.js';
+import { canonicalizeAsin } from '@shared/asin.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { matchPassesValidation } from './match-validation.js';
+import { matchPassesValidation, type MatchValidationItem } from './match-validation.js';
+import { collapsesToOneRecording, selectCanonicalRecording } from './metadata-recording-collapse.js';
 
-/** Input to {@link resolveBook}. */
 export interface ResolveBookInput {
   asin?: string | undefined;
   title: string;
@@ -16,19 +18,24 @@ export interface ResolveBookInput {
 }
 
 /**
- * How many top candidates {@link resolveBook} validates before giving up.
- * `applyBookFilters` preserves provider order and does NOT relevance-rank
- * (metadata.service.ts), so `books[0]` is not reliably the best match for a
- * keyword query — validate a small window and take the first that passes.
+ * Provider filtering preserves order rather than relevance-ranking, so validate a small result
+ * window instead of trusting the first item. Order therefore carries no relevance signal either:
+ * when several candidates pass, the first one is an arbitrary pick among siblings of the same
+ * series, so the window is disambiguated on identity-preserving exact title where that names
+ * exactly one candidate — or where the several it names are provably one recording — and is
+ * otherwise held for the existing retry/Fix Match path.
  */
 const VALIDATION_WINDOW = 5;
 
+/** Log message for the hold branch; the only signal an operator has for the live hold rate. */
+export const AMBIGUOUS_WINDOW_HELD = 'Ambiguous metadata window held — no unique title match';
+
 /**
- * Collaborators {@link resolveBook} needs from {@link MetadataService}. Mirrors
- * the `metadata-fix-match` deps pattern so the orchestration lives outside the
- * service file (which is at its `max-lines` budget) while still using the
- * service's throttle/rate-limit/provider-selection internals.
+ * Log message for the collapse branch. Diagnostic rather than `info`: an operator needs the hold
+ * rate because a hold silently blocks acquisition, while a resolved window is an ordinary success.
  */
+export const AMBIGUOUS_WINDOW_COLLAPSED = 'Ambiguous metadata window collapsed — duplicate listings of one recording';
+
 export interface ResolveBookDeps {
   provider: MetadataSearchProvider | undefined;
   enrichBook(asin: string): Promise<BookMetadata | null>;
@@ -42,31 +49,13 @@ export interface ResolveBookDeps {
 }
 
 /**
- * Robust audiobook resolution — the ONE shared path used by both the
- * import-list add flow and the background enrichment job, so "how to resolve a
- * book to audiobook metadata" no longer lives in two inconsistent
- * implementations.
- *
- * 1. A (trimmed, non-empty) `asin` is tried first via `enrichBook` — the precise
- *    identity fast path. A blank/whitespace ASIN is treated as absent.
- * 2. On miss (or no ASIN) it falls back to a **title + author** search and
- *    validates the top candidates (up to {@link VALIDATION_WINDOW}) with
- *    {@link matchPassesValidation}, returning the first that passes. Amazon
- *    assigns a separate ASIN per format, so a print/Kindle ASIN 404s on the
- *    audiobook-only Audnexus service — the search re-finds the real audiobook.
- *    A whitespace-only `author` is normalized to absent so the query stays
- *    title-only and validation does not run author overlap against junk.
- * 3. Returns the matched {@link BookMetadata} (carrying the correct audiobook
- *    ASIN it resolved) or `null` when genuinely unresolvable.
- *
- * Transient failures propagate: a provider {@link RateLimitError} is re-thrown
- * (on BOTH the `enrichBook` path and the fallback search via
- * {@link searchBooksThrowing}), and any OTHER error caught during the fallback
- * search (timeout / 5xx / malformed JSON — a provider `TransientError`) is also
- * re-thrown, so the caller can distinguish a transient provider state from a
- * real no-match. `null` is reserved for a genuine no-match: an empty search
- * result (or no provider configured). Any thrown error means "transient, retry
- * later", never "no such book".
+ * Try a nonblank ASIN, then validate a small title/author search window; format-specific ASIN
+ * misses can therefore recover the audiobook edition. Null means a genuine miss, while transient
+ * provider failures propagate for retry. Several passing candidates are disambiguated on exact
+ * title, or held as a miss rather than guessed, because the window is not relevance-ranked and a
+ * guess among siblings writes durable metadata onto the wrong book. Exact title naming SEVERAL
+ * candidates is only a guess when they are different books: a set proven to be one recording
+ * resolves (#2219), because holding it blocks the row from ever enriching.
  */
 export async function resolveBook(deps: ResolveBookDeps, input: ResolveBookInput): Promise<BookMetadata | null> {
   const asin = input.asin?.trim();
@@ -78,23 +67,96 @@ export async function resolveBook(deps: ResolveBookDeps, input: ResolveBookInput
   const author = input.author?.trim() || undefined;
   const query = author ? `${input.title} ${author}` : input.title;
   const books = await searchBooksThrowing(deps, query);
-  return (
-    books
-      .slice(0, VALIDATION_WINDOW)
-      .find((candidate) => matchPassesValidation({ title: input.title, author }, candidate)) ?? null
-  );
+
+  const passing = distinctPassingCandidates(books.slice(0, VALIDATION_WINDOW), { title: input.title, author });
+  if (passing.length === 0) return null;
+  if (passing.length === 1) return passing[0]!;
+
+  return disambiguateWindow(deps, input, query, passing);
 }
 
 /**
- * Provider search that PROPAGATES transient failures instead of swallowing them
- * to `[]` like the public `search`/`searchBooks` (which exist for discovery/UI
- * where a provider wobble is just an incomplete result). Used only by
- * {@link resolveBook}, where a transient provider failure must be
- * distinguishable from a real no-match: a `RateLimitError` re-throws (after
- * recording the rate-limit state) and ANY other caught error (timeout / 5xx /
- * malformed JSON — a provider `TransientError`, or a generic `Error`) also
- * re-throws. `[]` is reserved for the genuine no-match cases only — no provider
- * configured, or a provider that returns an empty `books` array.
+ * The exact-title arm. One candidate is the row's book. Several are its duplicate listings only if
+ * every pair is provably the same recording; anything less holds, because the alternative is a
+ * durable write onto a sibling.
+ */
+function disambiguateWindow(
+  deps: ResolveBookDeps,
+  input: ResolveBookInput,
+  query: string,
+  passing: BookMetadata[],
+): BookMetadata | null {
+  const exact = exactTitleCandidates(passing, input.title);
+  if (exact.length === 1) return exact[0]!;
+
+  if (collapsesToOneRecording(exact)) {
+    const selected = selectCanonicalRecording(exact, input.asin);
+    deps.log.debug({
+      query,
+      passing: passing.length,
+      exact: exact.length,
+      selectedAsin: canonicalizeAsin(selected.asin),
+      // Sorted so the payload is independent of provider order, like the pick itself.
+      equivalentAsins: exact.map((candidate) => canonicalizeAsin(candidate.asin)).sort(),
+    }, AMBIGUOUS_WINDOW_COLLAPSED);
+    return selected;
+  }
+
+  // `exact` splits the surviving holds into the two populations that need opposite fixes: 0 means
+  // no candidate survived the lossless title fold (a title/normalization miss), >=2 means candidates
+  // were found but could not be proven one recording. Without it the two are indistinguishable in
+  // the logs, which is the only signal an operator has for a row that silently never acquires.
+  deps.log.info({ query, passing: passing.length, exact: exact.length, window: VALIDATION_WINDOW }, AMBIGUOUS_WINDOW_HELD);
+  return null;
+}
+
+/**
+ * Candidates the gate admits, keyed by canonical ASIN so the same book listed twice is one
+ * candidate rather than an ambiguity. A null key is identity-less: such candidates never collapse
+ * with each other or with a keyed one, so a window of ASIN-less siblings still holds.
+ */
+function distinctPassingCandidates(candidates: BookMetadata[], item: MatchValidationItem): BookMetadata[] {
+  const seen = new Set<string>();
+  const distinct: BookMetadata[] = [];
+  for (const candidate of candidates) {
+    if (!matchPassesValidation(item, candidate)) continue;
+    const key = canonicalizeAsin(candidate.asin);
+    if (key !== null) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
+    distinct.push(candidate);
+  }
+  return distinct;
+}
+
+/**
+ * Every candidate whose title IS the row's title; empty when none qualifies.
+ *
+ * The fold must be `normalizeTitleLosslessly` and NOT `normalizeTitleCore`: the latter is
+ * deliberately tolerant for library-work dedup, where it strips every trailing parenthetical and
+ * every `Book N`/`Vol N` marker — so it names `Saga Book 2` as a match for row `Saga Book 1`,
+ * which is the wrong-sibling write this selector exists to prevent. Do not "DRY" the two folds
+ * together. Requiring agreement under both was rejected too: only the lossless fold matches the
+ * bracketed `[Audible]` edition tail, so a conjunction would forfeit a correct match.
+ *
+ * This set — never the wider passing window — is also the only collapse scope the recording check
+ * may run over (#2219). Recording SCOPE uses that same tolerant dedup fold, so `Saga Book 2`
+ * compares `same-recording` with both `Saga Book 1` listings; exactness here is the only thing
+ * keeping it out. Any implementation that reorders the two filters is wrong.
+ *
+ * An empty fold is outside the domain — untitled rows would otherwise claim each other, the same
+ * restriction the series matcher places on its reflexivity arm.
+ */
+export function exactTitleCandidates(candidates: BookMetadata[], title: string): BookMetadata[] {
+  const key = normalizeTitleLosslessly(title);
+  if (key === '') return [];
+  return candidates.filter((candidate) => normalizeTitleLosslessly(candidate.title) === key);
+}
+
+/**
+ * Unlike discovery search, propagate provider failures; reserve an empty array for no provider or
+ * a genuine empty result.
  */
 async function searchBooksThrowing(deps: ResolveBookDeps, query: string): Promise<BookMetadata[]> {
   const { provider } = deps;
@@ -115,9 +177,6 @@ async function searchBooksThrowing(deps: ResolveBookDeps, query: string): Promis
     } else {
       deps.log.warn({ query, error: serializeError(error) }, 'Resolver fallback search failed (transient)');
     }
-    // A caught fallback-search error is transient by default — propagate it so
-    // callers leave the book pending/retryable. Only a genuinely empty result
-    // (or no provider) is a no-match; that path returns `[]` above.
     throw error;
   }
 }

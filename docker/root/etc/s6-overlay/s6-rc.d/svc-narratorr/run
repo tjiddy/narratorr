@@ -3,8 +3,7 @@
 
 cd /app || exit 1
 
-# Ensure crash-report directory exists and is writable by the app user.
-# Node's --report-* flags require a pre-existing writable directory.
+# Node report flags require a pre-existing directory writable by `abc`.
 s6-setuidgid abc mkdir -p /config/crash-reports
 
 exec \

@@ -32,7 +32,6 @@ describe('diceCoefficient', () => {
   });
 
   it('handles real author name variations', () => {
-    // Same author, different ordering
     const score = diceCoefficient('Brandon Sanderson', 'Sanderson, Brandon');
     expect(score).toBeGreaterThan(0.5);
   });
@@ -58,17 +57,14 @@ describe('scoreResult', () => {
   });
 
   it('weights title at 0.6 and author at 0.4', () => {
-    // Perfect title, no author match
     const titleOnly = scoreResult(
       { title: 'The Way of Kings', author: 'Wrong Author' },
       { title: 'The Way of Kings', author: 'Brandon Sanderson' },
     );
-    // Perfect author, no title match
     const authorOnly = scoreResult(
       { title: 'Wrong Title xxxxxxxxx', author: 'Brandon Sanderson' },
       { title: 'The Way of Kings', author: 'Brandon Sanderson' },
     );
-    // Title match should contribute more
     expect(titleOnly).toBeGreaterThan(authorOnly);
   });
 
@@ -109,7 +105,6 @@ describe('scoreResult', () => {
       { title: 'The Way of Kings', author: 'Sanderson, Brandon' },
       { title: 'The Way of Kings', author: 'Brandon Sanderson' },
     );
-    // Should still be a strong match despite name ordering
     expect(score).toBeGreaterThan(0.7);
   });
 });
@@ -170,7 +165,7 @@ describe('normalizeNarrator', () => {
   });
 
   it('does NOT strip commas, semicolons, or ampersands', () => {
-    // These are delimiters handled by tokenizeNarrators, not normalization
+    // Tokenization, not normalization, owns these delimiters.
     expect(normalizeNarrator('a,b')).toBe('a,b');
     expect(normalizeNarrator('a;b')).toBe('a;b');
     expect(normalizeNarrator('a&b')).toBe('a&b');
@@ -204,7 +199,6 @@ describe('normalizeNarrator', () => {
     });
 
     it('collapses a 3-initial run without touching the surname', () => {
-      // J.R.R. Tolkien — both spaced and unspaced forms reduce identically.
       expect(normalizeNarrator('J. R. R. Tolkien')).toBe('jrr tolkien');
       expect(normalizeNarrator('J.R.R. Tolkien')).toBe('jrr tolkien');
     });
@@ -215,9 +209,6 @@ describe('normalizeNarrator', () => {
   });
 
   describe('5A bare-prefix guard — never empties a token (#1655)', () => {
-    // Role-prefix strip is non-destructive: a prefix-only value normalizes to
-    // itself (non-empty), proving the placeholder/no-signal call is NOT in the
-    // global string primitive — it lives at the comparison layer (5B).
     it('leaves a bare "Narrator" intact', () => {
       expect(normalizeNarrator('Narrator')).toBe('narrator');
     });
@@ -235,7 +226,6 @@ describe('normalizeNarrator', () => {
     });
 
     it('does NOT partial-match a prefix inside a longer word (word boundary)', () => {
-      // `voice` must not strip from `Voiceover`, nor `narrator` from `Narrators`.
       expect(normalizeNarrator('Voiceover Artist')).toBe('voiceover artist');
       expect(normalizeNarrator('Narrators Guild')).toBe('narrators guild');
     });
@@ -256,8 +246,6 @@ describe('narratorsFuzzyMatch (#1650)', () => {
   });
 
   it('returns false for a bare-surname variant below threshold (dice ≈ 0.706)', () => {
-    // Documents the design contract: no phonetic/alias layer — Stevenson/Stephenson
-    // scores below 0.8 and is (correctly) treated as a mismatch.
     expect(narratorsFuzzyMatch('Stevenson', ['Stephenson'])).toBe(false);
   });
 
@@ -287,31 +275,23 @@ describe('narratorsFuzzyMatch (#1650)', () => {
   });
 
   it('honors a caller-supplied threshold override', () => {
-    // Stevenson/Stephenson scores ≈ 0.706 — clears a relaxed 0.7 bar.
     expect(narratorsFuzzyMatch('Stevenson', ['Stephenson'], 0.7)).toBe(true);
   });
 
   it('treats the 0.8 threshold as INCLUSIVE — a score of exactly 0.8 matches (#1652)', () => {
-    // `abcdef` vs `abcdeg` share 4 of 5 bigrams → dice = 2*4/(5+5) = exactly 0.8.
-    // Locks the `>=` boundary: a `>=`→`>` regression would flip this to false.
     expect(diceCoefficient('abcdef', 'abcdeg')).toBe(0.8);
     expect(narratorsFuzzyMatch('abcdef', ['abcdeg'], 0.8)).toBe(true);
   });
 
   it('is order-insensitive — a Last, First flip still matches (#1652)', () => {
-    // `Stevenson, Juliet` vs `Juliet Stevenson`: the as-is dice ≈ 0.696 (below
-    // 0.8), but the token-sorted compare lines the words up → match.
     expect(narratorsFuzzyMatch('Stevenson, Juliet', ['Juliet Stevenson'])).toBe(true);
   });
 
   it('does NOT force abbreviation/initial expansion (Mike/Michael stays a mismatch — #1652)', () => {
-    // Word-order is in scope; phonetic/abbreviation expansion is explicitly out.
     expect(narratorsFuzzyMatch('Mike', ['Michael'])).toBe(false);
   });
 
   describe('5A noise resolves the 6 non-placeholder false positives (#1655)', () => {
-    // The UAT false-positive fixture: same person on both sides, sunk previously
-    // by tag noise the normalizer now folds. Each must fuzzy-MATCH (no cap).
     it('initials spacing — "R. C. Bray" ↔ "R.C. Bray"', () => {
       expect(narratorsFuzzyMatch('R. C. Bray', ['R.C. Bray'])).toBe(true);
     });
@@ -342,8 +322,6 @@ describe('narratorsFuzzyMatch (#1650)', () => {
 
 describe('compareNarratorSignals (3-state, #1650/#1652)', () => {
   it('returns "no-signal" for punctuation-only narrators on both sides (lone hyphen vs period)', () => {
-    // The #1652 headline: `'-'` and `'.'` both normalize to empty, so there is no
-    // usable signal — NOT a mismatch. The file-side guard and the primitive agree.
     expect(compareNarratorSignals('-', ['.'])).toBe('no-signal');
   });
 
@@ -369,10 +347,6 @@ describe('compareNarratorSignals (3-state, #1650/#1652)', () => {
   });
 
   describe('5B placeholder denylist → "no-signal", NOT "mismatch" (#1655)', () => {
-    // Junk file tags carry no usable signal even though they normalize to a
-    // non-empty string. The two UAT placeholder fixtures plus the full denylist
-    // set must collapse to no-signal (no cap) — asserted at THIS layer, never
-    // via narratorsFuzzyMatch (which can't distinguish no-signal from mismatch).
     it('"Multiple Readers" against a real full-cast edition is no-signal (Hyperion fixture)', () => {
       expect(
         compareNarratorSignals('Multiple Readers', [
@@ -406,7 +380,6 @@ describe('compareNarratorSignals (3-state, #1650/#1652)', () => {
     });
 
     it('drops only the placeholder token from a mixed file tag, keeping the real name', () => {
-      // `Various, Ray Porter` — `various` is dropped, `Ray Porter` still matches.
       expect(compareNarratorSignals('Various, Ray Porter', ['Ray Porter'])).toBe('match');
     });
 
@@ -417,18 +390,7 @@ describe('compareNarratorSignals (3-state, #1650/#1652)', () => {
 });
 
 describe('over-reach guard — pins current behavior, NOT hardening (#1657)', () => {
-  // The 5A/5B blocks prove noise → clean. These pin that the same transforms did
-  // NOT start matching different people OR drop real names. Every assertion below
-  // is the CURRENT, verified output — a future tightening must change these on
-  // purpose, test-visibly. Behavior-changing hardening is deferred (see #1657
-  // Out of Scope).
-
   describe('different-middle-initial — accepted collapseInitials over-match', () => {
-    // Same first-initial + same surname + 1-char-different middle initial. The
-    // word-sorted leg of nameDice clears 0.8 once collapseInitials joins the run,
-    // so these read as 'match'. This is the accepted trade-off documented on
-    // collapseInitials — pin it as a match (NOT a mismatch), so removing it later
-    // is a conscious decision.
     it('R. C. Bray vs R. K. Bray is a match (over-match accepted)', () => {
       expect(compareNarratorSignals('R. C. Bray', ['R. K. Bray'])).toBe('match');
     });
@@ -439,8 +401,6 @@ describe('over-reach guard — pins current behavior, NOT hardening (#1657)', ()
   });
 
   describe('real name containing a denied placeholder token is KEPT', () => {
-    // The 5B denylist is exact-set membership, not substring — `Authorson`
-    // contains `author` but is real signal, never dropped.
     it('normalizeNarrator keeps "Authorson"', () => {
       expect(normalizeNarrator('Authorson')).toBe('authorson');
     });
@@ -451,9 +411,7 @@ describe('over-reach guard — pins current behavior, NOT hardening (#1657)', ()
   });
 
   describe('role-word-first-name — current 5A behavior (vanishingly rare)', () => {
-    // A real first name that happens to be a bare role word is consumed by the
-    // role-prefix strip. Pinned as current behavior; requiring a `by`/`:` suffix
-    // is deferred (#1657 Out of Scope).
+    // Prefix stripping intentionally consumes a real name beginning with a bare role word.
     it('normalizeNarrator("Voice Carter") → "carter"', () => {
       expect(normalizeNarrator('Voice Carter')).toBe('carter');
     });
@@ -464,9 +422,6 @@ describe('over-reach guard — pins current behavior, NOT hardening (#1657)', ()
   });
 
   describe('parenthetical disambiguator — current global-strip behavior', () => {
-    // normalizeNarrator strips ALL parentheticals (global /\([^)]*\)/g), trailing
-    // OR embedded. Switching to a trailing-only strip is deferred (#1657 Out of
-    // Scope) — pin the current global behavior.
     it('strips a trailing disambiguator', () => {
       expect(normalizeNarrator('James Marsters (Spike from Buffy)')).toBe('james marsters');
     });

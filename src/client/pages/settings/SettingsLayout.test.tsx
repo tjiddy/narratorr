@@ -61,7 +61,6 @@ describe('SettingsLayout', () => {
     expect(screen.getByText('Import Lists').closest('a')).toHaveAttribute('href', '/settings/import-lists');
     expect(screen.getByText('System').closest('a')).toHaveAttribute('href', '/settings/system');
 
-    // Navigate to Indexers
     await user.click(screen.getByText('Indexers'));
     expect(screen.getByText('Indexers').closest('a')).toHaveAttribute('href', '/settings/indexers');
   });

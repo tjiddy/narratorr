@@ -21,15 +21,26 @@ vi.mock('../utils/import-helpers.js', () => ({
   getVisiblePathSize: vi.fn().mockResolvedValue(1_000_000),
 }));
 
+// The default directory implements both predicates because vi.mock factories are not type-checked.
 vi.mock('node:fs/promises', () => ({
-  stat: vi.fn().mockResolvedValue({ isDirectory: () => true }),
+  stat: vi.fn().mockResolvedValue({ isDirectory: () => true, isFile: () => false }),
   readdir: vi.fn().mockResolvedValue([]),
+}));
+
+// Mock the reader too: the full fs replacement omits readFile, and the real reader
+// would collapse that TypeError to null, making OPF precedence tests vacuous.
+// Real reader contracts live in ../utils/opf-reader.fs.test.ts.
+vi.mock('../utils/opf-reader.js', () => ({
+  readOpfMetadata: vi.fn(),
 }));
 
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
 import { getVisiblePathSize } from '../utils/import-helpers.js';
-import { readdir } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
+import type { Stats } from 'node:fs';
+import { readOpfMetadata } from '../utils/opf-reader.js';
+import type { OpfMetadata } from '../utils/opf-reader.js';
 import { refreshScanBook, RefreshScanError } from './refresh-scan.service.js';
 
 function createMockLogger() {
@@ -58,6 +69,24 @@ function makeScanResult(overrides: Record<string, unknown> = {}) {
     totalSize: 300_000_000,
     totalDuration: 7200,
     hasCoverArt: false,
+    ...overrides,
+  };
+}
+
+function makeOpf(overrides: Partial<OpfMetadata> = {}): OpfMetadata {
+  return {
+    title: null,
+    subtitle: null,
+    authors: [],
+    narrators: [],
+    description: null,
+    publisher: null,
+    publishedDate: null,
+    asin: null,
+    isbn: null,
+    seriesName: null,
+    seriesPosition: null,
+    genres: [],
     ...overrides,
   };
 }
@@ -111,9 +140,10 @@ describe('refreshScanBook', () => {
     vi.mocked(readdir).mockResolvedValue(
       ['ch1.mp3', 'ch2.mp3', 'ch3.mp3'] as unknown as Awaited<ReturnType<typeof readdir>>,
     );
+    // Default: no sidecar. Cases that assert OPF precedence opt in explicitly.
+    vi.mocked(readOpfMetadata).mockResolvedValue(null);
   });
 
-  // Happy path
   it('returns RefreshScanResult with bookId, codec, bitrate, fileCount, durationMinutes, narratorsUpdated', async () => {
     vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult({ tagNarrator: 'New Narrator' }));
     const result = await refreshScanBook(1, mockBookService, mockSettingsService, log);
@@ -145,7 +175,6 @@ describe('refreshScanBook', () => {
     expect(result.durationMinutes).toBe(0);
   });
 
-  // Audio fields overwrite — via bookService.update()
   it('overwrites all 10 audio technical fields from scan results', async () => {
     await refreshScanBook(1, mockBookService, mockSettingsService, log);
 
@@ -192,15 +221,13 @@ describe('refreshScanBook', () => {
     );
   });
 
-  // Zero-duration skip-write guard: an all-rejected scan (every file's duration omitted as
-  // implausible) yields totalDuration 0 and must NOT clobber the stored duration/audioDuration.
+  // Zero can mean every implausible duration was rejected, so it must not clobber stored values.
   it('does not write duration/audioDuration when totalDuration is 0 (skip-write guard)', async () => {
     vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult({ totalDuration: 0 }));
     await refreshScanBook(1, mockBookService, mockSettingsService, log);
     const updateArg = vi.mocked(mockBookService.update).mock.calls[0]![1];
     expect(updateArg).not.toHaveProperty('duration');
     expect(updateArg).not.toHaveProperty('audioDuration');
-    // Other technical fields still refresh.
     expect(updateArg).toEqual(expect.objectContaining({ audioCodec: 'mp3', audioTotalSize: 300_000_000 }));
     expect(log.warn).toHaveBeenCalled();
   });
@@ -211,14 +238,89 @@ describe('refreshScanBook', () => {
     expect(updateArg).toEqual(expect.objectContaining({ duration: 120, audioDuration: 7200 }));
   });
 
-  // Narrator overwrite semantics
-  it('overwrites narrator from tags even when book already has narrators', async () => {
-    vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult({ tagNarrator: 'New Narrator' }));
+  // Narrator precedence is OPF sidecar, embedded tags, then stored values.
+  it('OPF narrators win over a stale tag narrator', async () => {
+    vi.mocked(readOpfMetadata).mockResolvedValue(makeOpf({ narrators: ['Curated Narrator'] }));
+    vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult({ tagNarrator: 'Stale Tag' }));
+    const result = await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    expect(mockBookService.update).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ narrators: ['Curated Narrator'] }),
+    );
+    expect(result.narratorsUpdated).toBe(true);
+  });
+
+  // Reader-specific null-producing cases are covered against real fs in opf-reader.fs.test.ts.
+  it('falls through to the tag narrator when the reader yields no sidecar', async () => {
+    vi.mocked(readOpfMetadata).mockResolvedValue(null);
+    vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult({ tagNarrator: 'Tag Narrator' }));
+    const result = await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    expect(mockBookService.update).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ narrators: ['Tag Narrator'] }),
+    );
+    expect(result.narratorsUpdated).toBe(true);
+  });
+
+  it('falls through to the tag narrator when the sidecar carries no narrators', async () => {
+    vi.mocked(readOpfMetadata).mockResolvedValue(makeOpf({ narrators: [], title: 'Test Book' }));
+    vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult({ tagNarrator: 'Tag Narrator' }));
     await refreshScanBook(1, mockBookService, mockSettingsService, log);
     expect(mockBookService.update).toHaveBeenCalledWith(
       1,
-      expect.objectContaining({ narrators: ['New Narrator'] }),
+      expect.objectContaining({ narrators: ['Tag Narrator'] }),
     );
+  });
+
+  it('writes OPF narrators when there is no tag narrator at all', async () => {
+    vi.mocked(readOpfMetadata).mockResolvedValue(makeOpf({ narrators: ['A', 'B'] }));
+    const result = await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    expect(mockBookService.update).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ narrators: ['A', 'B'] }),
+    );
+    expect(result.narratorsUpdated).toBe(true);
+  });
+
+  it('preserves stored narrators when neither source supplies names', async () => {
+    const result = await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    const updateArg = vi.mocked(mockBookService.update).mock.calls[0]![1];
+    // Do not send []; BookService ignores it, making the payload disagree with narratorsUpdated.
+    expect(updateArg).not.toHaveProperty('narrators');
+    expect(result.narratorsUpdated).toBe(false);
+  });
+
+  // narratorsUpdated requires a usable replacement, not merely a present tag field.
+  it('narratorsUpdated is false for a whitespace-only tag narrator', async () => {
+    vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult({ tagNarrator: '   ' }));
+    const result = await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    expect(vi.mocked(mockBookService.update).mock.calls[0]![1]).not.toHaveProperty('narrators');
+    expect(result.narratorsUpdated).toBe(false);
+  });
+
+  it('narratorsUpdated is false for a delimiters-only tag narrator', async () => {
+    vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult({ tagNarrator: ',;&' }));
+    const result = await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    expect(vi.mocked(mockBookService.update).mock.calls[0]![1]).not.toHaveProperty('narrators');
+    expect(result.narratorsUpdated).toBe(false);
+  });
+
+  // Reader normalization is final; re-splitting would shred a duo credited as one name.
+  it('uses OPF narrators verbatim — a duo credited under one name is not split', async () => {
+    vi.mocked(readOpfMetadata).mockResolvedValue(
+      makeOpf({ narrators: ['Rosalyn Landor & Simon Vance'] }),
+    );
+    await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    expect(mockBookService.update).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ narrators: ['Rosalyn Landor & Simon Vance'] }),
+    );
+  });
+
+  it('reads the sidecar exactly once, from the book path', async () => {
+    await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    expect(readOpfMetadata).toHaveBeenCalledTimes(1);
+    expect(readOpfMetadata).toHaveBeenCalledWith('/library/author/book', log);
   });
 
   it('splits multi-narrator tag on comma, semicolon, ampersand delimiters', async () => {
@@ -241,7 +343,7 @@ describe('refreshScanBook', () => {
   });
 
   it('does not update narrator when tagNarrator is absent from scan result', async () => {
-    vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult()); // no tagNarrator
+    vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult());
     await refreshScanBook(1, mockBookService, mockSettingsService, log);
     const updateArg = vi.mocked(mockBookService.update).mock.calls[0]![1];
     expect(updateArg).not.toHaveProperty('narrators');
@@ -252,7 +354,6 @@ describe('refreshScanBook', () => {
     expect(result.narratorsUpdated).toBe(false);
   });
 
-  // Cover art excluded
   it('passes skipCover: true to scanAudioDirectory', async () => {
     await refreshScanBook(1, mockBookService, mockSettingsService, log);
     expect(scanAudioDirectory).toHaveBeenCalledWith(
@@ -261,7 +362,6 @@ describe('refreshScanBook', () => {
     );
   });
 
-  // Preserved fields
   it('does not include title, author, series, description, coverUrl, genres in DB update', async () => {
     await refreshScanBook(1, mockBookService, mockSettingsService, log);
     const updateArg = vi.mocked(mockBookService.update).mock.calls[0]![1];
@@ -273,11 +373,9 @@ describe('refreshScanBook', () => {
     expect(updateArg).not.toHaveProperty('genres');
   });
 
-  // Atomicity — bookService.update() wraps narrators + book row in a single transaction
   it('calls bookService.update() with narrators and audio fields together for atomicity', async () => {
     vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult({ tagNarrator: 'Narrator' }));
     await refreshScanBook(1, mockBookService, mockSettingsService, log);
-    // Single update call contains both audio fields AND narrators
     expect(mockBookService.update).toHaveBeenCalledTimes(1);
     expect(mockBookService.update).toHaveBeenCalledWith(
       1,
@@ -296,11 +394,9 @@ describe('refreshScanBook', () => {
   it('propagates readdir failure instead of silently zeroing topLevelAudioFileCount', async () => {
     vi.mocked(readdir).mockRejectedValue(new Error('EACCES: permission denied'));
     await expect(refreshScanBook(1, mockBookService, mockSettingsService, log)).rejects.toThrow('EACCES: permission denied');
-    // bookService.update should NOT have been called — the error should prevent persisting bad data
     expect(mockBookService.update).not.toHaveBeenCalled();
   });
 
-  // topLevelAudioFileCount
   it('counts only root-level audio files for topLevelAudioFileCount', async () => {
     vi.mocked(readdir).mockResolvedValue(
       ['ch1.mp3', 'ch2.m4b', 'cover.jpg', 'subfolder'] as unknown as Awaited<ReturnType<typeof readdir>>,
@@ -323,7 +419,149 @@ describe('refreshScanBook', () => {
     );
   });
 
-  // Error paths
+  it('probes the root exactly once for a directory root too', async () => {
+    await refreshScanBook(1, mockBookService, mockSettingsService, log);
+    expect(stat).toHaveBeenCalledTimes(1);
+    expect(stat).toHaveBeenCalledWith('/library/author/book');
+  });
+
+  // Pointer imports store a file path; classify it from the existing stat so readdir
+  // cannot fail ENOTDIR. refresh-scan.service.fs.test.ts pins the real-fs counterpart.
+  describe('file root (#2172)', () => {
+    // clearAllMocks preserves implementations, so use *Once and consume exactly one stat per test.
+    function armPointerBook(path: string): void {
+      vi.mocked(mockBookService.getById).mockResolvedValue(makeBook({ path }));
+      vi.mocked(stat).mockResolvedValueOnce(inject<Stats>({ isFile: () => true, isDirectory: () => false }));
+    }
+
+    it('a visible .m4b pointer counts 1 and issues no readdir at all', async () => {
+      armPointerBook('/audiobooks/Doctor Sleep.m4b');
+      await refreshScanBook(1, mockBookService, mockSettingsService, log);
+      expect(mockBookService.update).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ topLevelAudioFileCount: 1 }),
+      );
+      // Counting alone could pass if ENOTDIR were swallowed; the file branch must skip readdir.
+      expect(readdir).not.toHaveBeenCalled();
+    });
+
+    // Reuse the existence probe for classification; a second stat adds a TOCTOU window
+    // and a failure surface outside isDefinitiveAbsence.
+    it('probes the root exactly once, with the book path', async () => {
+      armPointerBook('/audiobooks/Doctor Sleep.m4b');
+      await refreshScanBook(1, mockBookService, mockSettingsService, log);
+      expect(stat).toHaveBeenCalledTimes(1);
+      expect(stat).toHaveBeenCalledWith('/audiobooks/Doctor Sleep.m4b');
+    });
+
+    it('lowercases the extension — a .M4B pointer counts 1', async () => {
+      armPointerBook('/audiobooks/Doctor Sleep.M4B');
+      await refreshScanBook(1, mockBookService, mockSettingsService, log);
+      expect(mockBookService.update).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ topLevelAudioFileCount: 1 }),
+      );
+    });
+
+    it('consults AUDIO_EXTENSIONS, not the .m4b literal — a .mp3 pointer counts 1', async () => {
+      armPointerBook('/audiobooks/Doctor Sleep.mp3');
+      await refreshScanBook(1, mockBookService, mockSettingsService, log);
+      expect(mockBookService.update).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ topLevelAudioFileCount: 1 }),
+      );
+    });
+
+    // These branch tests need the mocked scanner; the real scanner returns NO_AUDIO_FILES
+    // before count calculation. The following table pins that operator outcome.
+    it.each([
+      ['hidden basename', '/audiobooks/.Doctor Sleep.m4b'],
+      ['non-audio extension', '/audiobooks/Doctor Sleep.txt'],
+      ['no extension at all', '/audiobooks/Doctor Sleep'],
+    ])('branch-pinning under a mocked scanner: %s counts 0', async (_label, path) => {
+      armPointerBook(path);
+      await refreshScanBook(1, mockBookService, mockSettingsService, log);
+      expect(mockBookService.update).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ topLevelAudioFileCount: 0 }),
+      );
+      expect(readdir).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['hidden basename', '/audiobooks/.Doctor Sleep.m4b'],
+      ['non-audio extension', '/audiobooks/Doctor Sleep.txt'],
+      ['no extension at all', '/audiobooks/Doctor Sleep'],
+    ])('operator outcome for %s: NO_AUDIO_FILES, nothing written', async (_label, path) => {
+      armPointerBook(path);
+      vi.mocked(scanAudioDirectory).mockResolvedValueOnce(null);
+      await expect(refreshScanBook(1, mockBookService, mockSettingsService, log))
+        .rejects.toMatchObject({ code: 'NO_AUDIO_FILES' });
+      expect(mockBookService.update).not.toHaveBeenCalled();
+    });
+
+    it('still sizes the pointer through getVisiblePathSize and writes the result', async () => {
+      armPointerBook('/audiobooks/Doctor Sleep.m4b');
+      vi.mocked(getVisiblePathSize).mockResolvedValueOnce(42_000_000);
+      await refreshScanBook(1, mockBookService, mockSettingsService, log);
+      expect(getVisiblePathSize).toHaveBeenCalledTimes(1);
+      expect(getVisiblePathSize).toHaveBeenCalledWith('/audiobooks/Doctor Sleep.m4b');
+      expect(mockBookService.update).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ size: 42_000_000, topLevelAudioFileCount: 1 }),
+      );
+    });
+
+    it('still consults the sidecar reader, and its null leaves narrators to the tag ladder', async () => {
+      armPointerBook('/audiobooks/Doctor Sleep.m4b');
+      vi.mocked(readOpfMetadata).mockResolvedValue(null);
+      vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult({ tagNarrator: 'Tag Narrator' }));
+      const result = await refreshScanBook(1, mockBookService, mockSettingsService, log);
+      expect(readOpfMetadata).toHaveBeenCalledTimes(1);
+      expect(readOpfMetadata).toHaveBeenCalledWith('/audiobooks/Doctor Sleep.m4b', log);
+      expect(mockBookService.update).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ narrators: ['Tag Narrator'] }),
+      );
+      expect(result.narratorsUpdated).toBe(true);
+    });
+
+    it('writes the count even when the zero-duration skip-write guard fires', async () => {
+      armPointerBook('/audiobooks/Doctor Sleep.m4b');
+      vi.mocked(scanAudioDirectory).mockResolvedValue(makeScanResult({ totalDuration: 0 }));
+      await refreshScanBook(1, mockBookService, mockSettingsService, log);
+      const updateArg = vi.mocked(mockBookService.update).mock.calls[0]![1];
+      expect(updateArg).not.toHaveProperty('duration');
+      expect(updateArg).not.toHaveProperty('audioDuration');
+      expect(updateArg).toEqual(expect.objectContaining({ topLevelAudioFileCount: 1 }));
+      expect(log.warn).toHaveBeenCalled();
+    });
+
+    // Stat, not extension, determines root kind; botched imports can leave extension-shaped directories.
+    it('a DIRECTORY whose name carries an audio extension is still read with readdir', async () => {
+      vi.mocked(mockBookService.getById).mockResolvedValue(makeBook({ path: '/library/Doctor Sleep.m4b' }));
+      vi.mocked(stat).mockResolvedValueOnce(inject<Stats>({ isFile: () => false, isDirectory: () => true }));
+      vi.mocked(readdir).mockResolvedValue(
+        ['ch1.mp3', 'ch2.mp3'] as unknown as Awaited<ReturnType<typeof readdir>>,
+      );
+      await refreshScanBook(1, mockBookService, mockSettingsService, log);
+      expect(readdir).toHaveBeenCalledWith('/library/Doctor Sleep.m4b');
+      expect(mockBookService.update).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ topLevelAudioFileCount: 2 }),
+      );
+    });
+
+    it('a root that is neither file nor directory still falls through to readdir, and its failure propagates', async () => {
+      vi.mocked(stat).mockResolvedValueOnce(inject<Stats>({ isFile: () => false, isDirectory: () => false }));
+      vi.mocked(readdir).mockRejectedValue(new Error('ENOTDIR: not a directory'));
+      await expect(refreshScanBook(1, mockBookService, mockSettingsService, log))
+        .rejects.toThrow('ENOTDIR: not a directory');
+      expect(readdir).toHaveBeenCalledWith('/library/author/book');
+      expect(mockBookService.update).not.toHaveBeenCalled();
+    });
+  });
+
   it('throws RefreshScanError NOT_FOUND when book does not exist', async () => {
     vi.mocked(mockBookService.getById).mockResolvedValue(null);
     await expect(refreshScanBook(999, mockBookService, mockSettingsService, log))
@@ -345,9 +583,7 @@ describe('refreshScanBook', () => {
   });
 
   it('throws RefreshScanError PATH_MISSING when the path statted ENOTDIR (#1965)', async () => {
-    // ENOTDIR is the other definitive absence: the book's library path (or a parent)
-    // became a regular file. Before #1965 the inline check tested `code === 'ENOENT'`
-    // only, so this escaped as a raw errno instead of PATH_MISSING.
+    // ENOTDIR means the path or a parent became a regular file and maps to PATH_MISSING.
     const { stat: statFn } = await import('node:fs/promises');
     const enotdir = Object.assign(new Error('ENOTDIR: not a directory'), { code: 'ENOTDIR' });
     vi.mocked(statFn).mockRejectedValueOnce(enotdir);
@@ -356,9 +592,7 @@ describe('refreshScanBook', () => {
   });
 
   it('classifies a plain non-Error throw carrying a definitive errno (#1965)', async () => {
-    // The old inline check also required `error instanceof Error`, so a bare
-    // `{ code: 'ENOENT' }` — which some fs wrappers throw — fell through to the
-    // rethrow. `isDefinitiveAbsence` reads the code off any object.
+    // Some fs wrappers throw bare {code} objects; classification must not require Error.
     const { stat: statFn } = await import('node:fs/promises');
     vi.mocked(statFn).mockRejectedValueOnce({ code: 'ENOENT' });
     await expect(refreshScanBook(1, mockBookService, mockSettingsService, log))
@@ -368,7 +602,7 @@ describe('refreshScanBook', () => {
   it('rethrows non-ENOENT stat errors as unexpected failures', async () => {
     const { stat: statFn } = await import('node:fs/promises');
     const eacces = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
-    // toMatchObject alone won't prove it's NOT a RefreshScanError — need both assertions on fresh calls (#468)
+    // Use fresh calls: toMatchObject alone cannot prove this is not RefreshScanError.
     vi.mocked(statFn).mockRejectedValueOnce(eacces);
     await expect(refreshScanBook(1, mockBookService, mockSettingsService, log))
       .rejects.toMatchObject({ message: 'EACCES: permission denied' });
@@ -383,7 +617,6 @@ describe('refreshScanBook', () => {
       .rejects.toMatchObject({ code: 'NO_AUDIO_FILES' });
   });
 
-  // ffprobePath
   it('resolves ffprobePath from processing settings before calling scan', async () => {
     await refreshScanBook(1, mockBookService, mockSettingsService, log);
     expect(resolveFfprobePathFromSettings).toHaveBeenCalledWith('/usr/bin/ffmpeg');
@@ -393,7 +626,6 @@ describe('refreshScanBook', () => {
     );
   });
 
-  // Diagnostic callback wiring — onWarn → log.warn(payload, msg); onDebug → log.debug(payload, msg)
   it('forwards onWarn/onDebug callbacks to the injected logger', async () => {
     await refreshScanBook(1, mockBookService, mockSettingsService, log);
     const options = vi.mocked(scanAudioDirectory).mock.calls[0]![1]!;

@@ -23,12 +23,8 @@ import { openCompanionEbook } from '../../services/companion-ebook-open.js';
 import { v1CompanionEbookRoutes } from './companion-ebook.js';
 
 /**
- * Stream lifecycle for the PUBLIC v1 route, driven through a REAL bound port rather than
- * `app.inject()`. Per `sse-inject-helper-gap`, injection cannot exercise a client disconnect
- * or socket teardown, and every property under test here — exactly-once handle close, no
- * `{"error":…}` body appended to an already-committed `200`, and the semaphore slot coming
- * back after each teardown path — is invisible to it.
- * `src/server/routes/companion-ebook-stream.test.ts` is the in-repo pattern this copies.
+ * Real-socket coverage: `app.inject()` cannot exercise disconnect or teardown.
+ * This makes handle closure, committed-response behavior, and semaphore release observable.
  */
 
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));
@@ -73,31 +69,18 @@ async function waitUntil(predicate: () => boolean, label: string): Promise<void>
 interface RawResponse {
   status?: number;
   contentLength?: string;
-  /** Whatever the response advertised, or `undefined` when the header is absent. */
   acceptRanges?: string;
-  /** Every response header, for assertions about a header's ABSENCE. */
   headers: http.IncomingHttpHeaders;
   length: number;
   tail: string;
   terminated: boolean;
 }
 
-/** What a caller can vary about one request. Both keys are independent and either may stand alone. */
 interface GetOptions {
-  /** Fires once the first response chunk lands — the disconnect rows use it to abort mid-stream. */
   onFirstChunk?: (request: http.ClientRequest) => void;
-  /** Merged over the API-key headers. The `Range` row (#2026 row 14) is a request header and nothing else. */
   headers?: http.OutgoingHttpHeaders;
 }
 
-/**
- * One real HTTP GET, resolved with whatever the client actually received.
- *
- * An options object rather than positional optionals: the two knobs are used by disjoint
- * callers — the disconnect rows want only `onFirstChunk`, the `Range` row wants only `headers` —
- * and a positional list would force one of them to pass a meaningless `undefined` placeholder
- * and would fix the ordering for anything added later.
- */
 function get(url: string, options: GetOptions = {}): Promise<RawResponse> {
   return new Promise<RawResponse>((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -194,8 +177,7 @@ describe('v1 companion ebook stream — real socket', () => {
     app.setSerializerCompiler(serializerCompiler);
     await app.register(cookie);
     await app.register(authPlugin, { authService });
-    // Limit 1 throughout: it makes "the slot came back" observable as a 200 rather than a 503,
-    // and "exactly one slot came back" observable as a concurrent 503.
+    // A limit of one exposes leaks as 503s and double releases as concurrent 200s.
     await v1CompanionEbookRoutes(app, {
       bookService: bookService as never,
       settingsService: settingsService as never,
@@ -213,7 +195,6 @@ describe('v1 companion ebook stream — real socket', () => {
     rmSync(libraryRoot, { recursive: true, force: true });
   });
 
-  /** Wrap the real handle so `close()` calls are countable, optionally corrupting the stream. */
   function spyOnHandle(options?: { failAfterFirstChunk: boolean }) {
     vi.mocked(openCompanionEbook).mockImplementationOnce(async (input, log) => {
       const result = await realOpen(input, log);
@@ -237,7 +218,6 @@ describe('v1 companion ebook stream — real socket', () => {
     });
   }
 
-  /** Hold the next `gatedCalls` opens so a slot stays occupied deterministically. */
   function gateOpen(gatedCalls = 1): { open: () => void } {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -249,11 +229,7 @@ describe('v1 companion ebook stream — real socket', () => {
     return { open: () => release() };
   }
 
-  /**
-   * Capacity is EXACTLY one slot — not zero (a leaked acquire) and not two (a double release,
-   * which `Semaphore.release()`'s floorless decrement would make permanent). One held stream
-   * must succeed while a concurrent second is refused with the exact 503 body.
-   */
+  /** Prove capacity is neither leaked nor double-released; the semaphore decrement has no floor. */
   async function expectCapacityIsExactlyOne() {
     const calls = () => vi.mocked(openCompanionEbook).mock.calls.length;
     const before = calls();
@@ -289,7 +265,7 @@ describe('v1 companion ebook stream — real socket', () => {
   it('closes the handle exactly once when the client aborts mid-stream, and returns the slot', async () => {
     spyOnHandle();
 
-    const res = await get(baseUrl, { onFirstChunk: (request) => request.destroy() }); // real client disconnect
+    const res = await get(baseUrl, { onFirstChunk: (request) => request.destroy() });
 
     expect(res.terminated).toBe(true);
     expect(res.length).toBeLessThan(PAYLOAD.length);
@@ -305,13 +281,11 @@ describe('v1 companion ebook stream — real socket', () => {
 
     const res = await get(baseUrl);
 
-    // The connection is cut and the promised length was never delivered, so the client can
-    // tell the body is incomplete rather than accepting a truncated EPUB as a whole one.
+    // Termination plus Content-Length exposes a truncated EPUB instead of accepting it as whole.
     expect(res.terminated).toBe(true);
     expect(res.contentLength).toBe(String(PAYLOAD.length));
     expect(res.length).toBeLessThan(PAYLOAD.length);
-    // Asserted on the RECEIVED BYTES, not on whether a handler ran: no JSON envelope was
-    // appended under the already-committed 200.
+    // Inspect received bytes; handler execution cannot prove the committed body stayed clean.
     expect(res.tail).not.toContain('"error"');
     expect(res.tail).not.toContain('companion_epub');
 
@@ -327,25 +301,18 @@ describe('v1 companion ebook stream — real socket', () => {
     expect(failed.terminated).toBe(true);
     await wait(150);
 
-    // A stream error can fire BOTH the stream `error` and the response `close` signal; the
-    // idempotent releaser is what keeps that from raising the effective cap for the process.
+    // Stream `error` and response `close` can both fire; release must remain idempotent.
     await expectCapacityIsExactlyOne();
   });
 
   it('returns the slot when the client disconnects BEFORE the stream starts (open still in flight)', async () => {
-    // The regression this pins: the slot is acquired before `openCompanionEbook` is awaited,
-    // but the disconnect listener used to be registered only inside `streamCompanionEbook`,
-    // which runs AFTER that await. A client that hung up while the open was in flight fired
-    // `close` with nothing listening; the helper then attached `once('close', …)` to an
-    // already-closed socket, so it never fired and the slot was held for the life of the
-    // process. `maxConcurrentStreams` repeats and this route answers 503 permanently — no
-    // library write access needed, just an API key and a hangup.
+    // Acquire precedes the awaited open. Registering `close` only inside the later stream helper
+    // misses an in-flight disconnect and permanently leaks the sole slot.
     const calls = () => vi.mocked(openCompanionEbook).mock.calls.length;
     const before = calls();
     const { open } = gateOpen(1);
 
-    // Not `get()`: its abort hook fires on the first response chunk, which is far too late —
-    // the disconnect has to land while the open is still gated.
+    // `get()` aborts on the first chunk; this disconnect must land while open is still gated.
     const aborted = http.get(baseUrl, { headers: keyHeaders }, () => undefined);
     aborted.on('error', () => undefined);
 
@@ -354,38 +321,23 @@ describe('v1 companion ebook stream — real socket', () => {
     open();
     await wait(150);
 
-    // The slot must be back: a fresh request gets 200, not the 503 a leaked slot would force.
     const after = await get(baseUrl);
     expect(after.status).toBe(200);
     expect(after.length).toBe(PAYLOAD.length);
   });
 
   /**
-   * #2026 row 14 — a `Range` request header.
-   *
-   * `streamCompanionEbook` has NO range handling: it opens the whole file, sets one
-   * `Content-Length` from the live `fstat`, and sends. So the honest, correct answer to a
-   * ranged request is the complete body under a plain `200` — never a `206`, never an
-   * `Accept-Ranges` advertisement, and above all never a truncated body under a
-   * `Content-Length` that promised more.
-   *
-   * The dangerous regression is not "no range support"; it is a partial body served as if it
-   * were whole. Asserting the delivered byte count against the advertised length is what
-   * catches that, so this row is asserted on RECEIVED BYTES rather than on the status alone.
-   *
-   * Adding range support so this could assert a `206` is explicitly out of scope — that is a
-   * production change, and this row asserts what ships.
+   * #2026 row 14: range support is absent, so return the whole body under 200 with no range headers.
+   * Compare received bytes with Content-Length to reject a partial body presented as whole.
    */
   it('ignores a Range header and returns the complete body under a plain 200', async () => {
     const res = await get(baseUrl, { headers: { Range: 'bytes=0-99' } });
 
     expect(res.status).toBe(200);
     expect(res.status).not.toBe(206);
-    // The full file, and the advertised length agrees with it — no corrupt partial.
     expect(res.contentLength).toBe(String(PAYLOAD.length));
     expect(res.length).toBe(PAYLOAD.length);
     expect(res.terminated).toBe(false);
-    // Absent, not merely `none`: the route advertises no range capability at all.
     expect(res.acceptRanges).toBeUndefined();
     expect(res.headers).not.toHaveProperty('content-range');
   });

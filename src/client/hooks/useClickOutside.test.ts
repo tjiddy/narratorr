@@ -182,11 +182,9 @@ describe('useClickOutside', () => {
 
       renderHook(() => useClickOutside(ref, handler));
 
-      // click should NOT trigger
       document.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       expect(handler).not.toHaveBeenCalled();
 
-      // mousedown SHOULD trigger
       document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
       expect(handler).toHaveBeenCalledTimes(1);
 
