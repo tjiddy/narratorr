@@ -11,6 +11,8 @@ export interface BookEvent {
   source: string;
   reason: Record<string, unknown> | null;
   createdAt: string;
+  /** The book's CURRENT folder, projected server-side; null once the book is deleted. */
+  bookPath?: string | null;
 }
 
 export interface EventHistoryParams {

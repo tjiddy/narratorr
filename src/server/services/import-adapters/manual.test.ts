@@ -260,6 +260,14 @@ describe('ManualImportAdapter', () => {
         expect(normPath(arg.bookFolder)).toBe(TARGET_PATH);
       });
 
+      it('opts the manual-import call site into divergence preservation as source `manual` (#2297 AC9/AC15)', async () => {
+        await makeOpfAdapter(true).process(makeJob(), ctx);
+
+        // A hard-coded 'auto' in the writer would attribute an operator's import to the wrong path.
+        expect(vi.mocked(writeOpfForImport).mock.calls[0]![0].preserve)
+          .toEqual({ source: 'manual', eventHistory: deps.eventHistory });
+      });
+
       it('writes the OPF sidecar into the pointer/adopt finalPath (the source path) when enabled', async () => {
         const job = makeJob({ metadata: JSON.stringify({ path: '/audiobooks/Author/Title', title: 'Test Book', authorName: 'Author' }) });
         await makeOpfAdapter(true).process(job, ctx);

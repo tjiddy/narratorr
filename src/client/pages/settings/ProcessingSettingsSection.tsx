@@ -12,6 +12,7 @@ import { errorInputClass } from '@/components/settings/formStyles';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { TAG_MODE_LABELS } from '@/lib/constants';
 import { tagModeSchema, postProcessingScriptTimeoutField, DEFAULT_SETTINGS, type AppSettings } from '@shared/schemas.js';
+import { OPF_FILENAME, OPF_BACKUP_FILENAME } from '@core/utils/opf-regex.js';
 import { SettingsSection } from './SettingsSection';
 import { useFfmpegStatus } from '@/hooks/useFfmpegStatus';
 import { useMutagenStatus } from '@/hooks/useMutagenStatus';
@@ -183,7 +184,13 @@ function AutomationsForm() {
             label="OPF metadata sidecar"
             description={
               <>
-                Write a <code className="px-1 py-0.5 bg-muted rounded text-xs">metadata.opf</code> into each book folder on import.{' '}
+                Write a <code className="px-1 py-0.5 bg-muted rounded text-xs">{OPF_FILENAME}</code> into each book folder on import.{' '}
+                If an import would replace a sidecar Narratorr wrote earlier whose values have since
+                diverged, the previous file is kept beside the book as{' '}
+                <code className="px-1 py-0.5 bg-muted rounded text-xs">{OPF_BACKUP_FILENAME}</code> and the
+                change is recorded in Activity → Needs Review. The Activity record is pruned by the
+                general housekeeping retention setting; the backup file on disk is not, and is only
+                removed when you delete the book.{' '}
                 <InfoTip label="Audiobookshelf setup">
                   Using Audiobookshelf? Enable this, then turn on “Prefer OPF metadata” in your ABS
                   library settings so it reads the sidecar instead of the audio file’s tags.

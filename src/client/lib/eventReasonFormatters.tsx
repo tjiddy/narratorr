@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { formatBytes } from '@/lib/api';
 import { capitalize } from '@/lib/eventReasonHelpers';
 import { qualityGateReasonSchema } from '@shared/schemas.js';
+import { OPF_BACKUP_FILENAME } from '@core/utils/opf-regex.js';
 import { QualityComparisonPanel } from '@/pages/activity/QualityComparisonPanel';
 import { AlertCircleIcon } from '@/components/icons';
 
@@ -110,6 +111,77 @@ function SearchRelaxedHeldDetails({ reason }: { reason: Record<string, unknown> 
   );
 }
 
+const OPF_FIELD_LABELS: Record<string, string> = {
+  title: 'Title', subtitle: 'Subtitle', authors: 'Authors', narrators: 'Narrators',
+  description: 'Description', publisher: 'Publisher', publishedDate: 'Published',
+  asin: 'ASIN', isbn: 'ISBN', seriesName: 'Series', seriesPosition: 'Series #', genres: 'Genres',
+};
+
+function formatPreviousValue(value: unknown): string {
+  if (value === null || value === undefined) return '(none)';
+  if (Array.isArray(value)) return value.length === 0 ? '(none)' : value.join(', ');
+  return String(value);
+}
+
+function SidecarDivergedDetails({ reason, bookPath }: { reason: Record<string, unknown>; bookPath: string | null }) {
+  const changedFields = Array.isArray(reason.changed_fields) ? (reason.changed_fields as string[]) : [];
+  const previous = (reason.previous ?? {}) as Record<string, unknown>;
+  const previousUnavailable = reason.previous_unavailable === true;
+  const generatedUnparseable = reason.generated_unparseable === true;
+  const equivalenceUnproven = reason.equivalence_unproven === true;
+
+  return (
+    <div className="space-y-1">
+      {previousUnavailable && generatedUnparseable ? (
+        <p className="text-xs text-muted-foreground">
+          Neither the replaced sidecar nor the regenerated one yielded readable metadata, so no field
+          names could be recovered from either document. The replaced file is preserved in full.
+        </p>
+      ) : previousUnavailable ? (
+        <p className="text-xs text-muted-foreground">
+          The replaced sidecar yielded no readable metadata, so its previous values could not be
+          summarised here. The complete replaced file is preserved.
+        </p>
+      ) : (
+        <>
+          {equivalenceUnproven && (
+            <p className="text-xs text-muted-foreground">
+              These values could not be compared beyond the metadata reader&apos;s length limits, so
+              the sidecar was preserved rather than assumed unchanged.
+            </p>
+          )}
+          {generatedUnparseable && (
+            <p className="text-xs text-muted-foreground">
+              The regenerated sidecar yielded no readable metadata; the values below are the ones
+              that were at risk.
+            </p>
+          )}
+          {changedFields.map((field) => (
+            <KeyValueRow
+              key={field}
+              label={OPF_FIELD_LABELS[field] ?? field}
+              value={formatPreviousValue(previous[field])}
+            />
+          ))}
+        </>
+      )}
+      {/* Composed from the book's current folder plus the writer's own filename constant, not a
+          stored path: events are append-only, so a path recorded at write time would go stale on
+          the first rename, and a second literal here could drift from where the writer puts it. */}
+      {bookPath ? (
+        <KeyValueRow label="Backup" value={`${bookPath}/${OPF_BACKUP_FILENAME}`} />
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          This book is no longer in the library, so its backup file location is gone.
+        </p>
+      )}
+      <p className="text-xs text-muted-foreground/70">
+        Values shown are a summary; the book&apos;s latest backup file holds the replaced sidecar in full.
+      </p>
+    </div>
+  );
+}
+
 function GenericDetails({ reason }: { reason: Record<string, unknown> }) {
   const entries = Object.entries(reason).filter(([, v]) => v != null);
   if (entries.length === 0) return null;
@@ -126,7 +198,14 @@ function GenericDetails({ reason }: { reason: Record<string, unknown> }) {
   );
 }
 
-const DETAIL_RENDERERS: Record<string, React.FC<{ reason: Record<string, unknown>; indexerMap: IndexerMap }>> = {
+interface DetailRendererProps {
+  reason: Record<string, unknown>;
+  indexerMap: IndexerMap;
+  /** The book's current folder; renderers that name a file compose it from this, never from `reason`. */
+  bookPath: string | null;
+}
+
+const DETAIL_RENDERERS: Record<string, React.FC<DetailRendererProps>> = {
   grabbed: ({ reason, indexerMap }) => <GrabbedDetails reason={reason} indexerMap={indexerMap} />,
   download_completed: ({ reason }) => <DownloadCompletedDetails reason={reason} />,
   imported: ({ reason }) => <ImportedDetails reason={reason} />,
@@ -136,24 +215,26 @@ const DETAIL_RENDERERS: Record<string, React.FC<{ reason: Record<string, unknown
   held_for_review: ({ reason }) => <HeldForReviewDetails reason={reason} />,
   grab_failed: ({ reason }) => <GrabFailedDetails reason={reason} />,
   search_relaxed_held: ({ reason }) => <SearchRelaxedHeldDetails reason={reason} />,
+  sidecar_diverged: ({ reason, bookPath }) => <SidecarDivergedDetails reason={reason} bookPath={bookPath} />,
 };
 
-export function EventReasonDetails({ eventType, reason, indexerMap }: {
+export function EventReasonDetails({ eventType, reason, indexerMap, bookPath = null }: {
   eventType: string;
   reason: Record<string, unknown>;
   indexerMap: IndexerMap;
+  bookPath?: string | null;
 }) {
   const Renderer = DETAIL_RENDERERS[eventType];
   const isHeldForReview = eventType === 'held_for_review';
 
   if (isHeldForReview && Renderer) {
-    return <Renderer reason={reason} indexerMap={indexerMap} />;
+    return <Renderer reason={reason} indexerMap={indexerMap} bookPath={bookPath} />;
   }
 
   return (
     <div className="mt-2 p-3 bg-muted/50 rounded-xl border border-border/50 animate-fade-in">
       {Renderer ? (
-        <Renderer reason={reason} indexerMap={indexerMap} />
+        <Renderer reason={reason} indexerMap={indexerMap} bookPath={bookPath} />
       ) : (
         <GenericDetails reason={reason} />
       )}

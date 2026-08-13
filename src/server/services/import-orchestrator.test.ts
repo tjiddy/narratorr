@@ -216,6 +216,16 @@ describe('ImportOrchestrator', () => {
       expect(opfArg).not.toHaveProperty('book');
     });
 
+    it('opts the download-import call site into divergence preservation as source `auto` (#2297 AC9/AC15)', async () => {
+      settingsService = createMockSettingsService({ tagging: { writeOpf: true } });
+      orchestrator = new ImportOrchestrator(importService, settingsService, log, notifier, tagging, eventHistory, broadcaster, inject<never>(connector), bookService);
+
+      await orchestrator.importDownload(1);
+
+      // A missing flag must red here, not only in the writer's own suite.
+      expect(vi.mocked(writeOpfForImport).mock.calls[0]![0].preserve).toEqual({ source: 'auto', eventHistory });
+    });
+
     it('passes enabled:false to the OPF helper when writeOpf is disabled (default)', async () => {
       await orchestrator.importDownload(1);
 

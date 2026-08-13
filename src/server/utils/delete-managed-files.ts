@@ -3,7 +3,7 @@ import { join, extname, basename } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
 import { COVER_FILE_REGEX } from '@core/utils/cover-regex.js';
-import { OPF_FILE_REGEX, hasNarratorrMarker } from '@core/utils/opf-regex.js';
+import { OPF_FILE_REGEX, OPF_BACKUP_FILE_REGEX, hasNarratorrMarker } from '@core/utils/opf-regex.js';
 import { assertRealPathInsideLibrary, PathOutsideLibraryError } from './paths.js';
 import { serializeError } from './serialize-error.js';
 
@@ -29,8 +29,9 @@ function isManagedFile(name: string, atRoot: boolean): boolean {
 }
 
 /**
- * Delete a root metadata.opf only when its provenance marker proves ownership. Read failures
- * preserve it as foreign, so classification must precede directory recursion.
+ * Delete a root metadata.opf — or its metadata.opf.bak rolling snapshot — only when its
+ * provenance marker proves ownership. Read failures preserve it as foreign. Callers must have
+ * established that the entry is a regular file; this function reads through whatever it is given.
  */
 async function classifyRootOpf(fullPath: string, result: DeleteManagedFilesResult, log: FastifyBaseLogger): Promise<void> {
   let content: string;
@@ -70,7 +71,9 @@ async function rmdirIfEmpty(dir: string, log: FastifyBaseLogger): Promise<void> 
   }
 }
 
-/** Recursively sweep bottom-up; symlinked children remain foreign and are never followed. */
+/** Recursively sweep bottom-up; symlinked children remain foreign and are never followed — the
+ * root OPF branch included, so a leftover metadata.opf.bak neither orphans itself nor keeps a
+ * deleted book's folder alive on ENOTEMPTY. */
 async function sweepDir(dir: string, rootDir: string, result: DeleteManagedFilesResult, log: FastifyBaseLogger): Promise<void> {
   const atRoot = dir === rootDir;
   const entries = await readdir(dir, { withFileTypes: true });
@@ -78,9 +81,13 @@ async function sweepDir(dir: string, rootDir: string, result: DeleteManagedFiles
     // Never touch born-hidden entries another operation may be writing.
     if (isHiddenName(entry.name)) continue;
     const fullPath = join(dir, entry.name);
-    if (atRoot && OPF_FILE_REGEX.test(entry.name)) {
-      // Content proves root OPF ownership; EISDIR must fail safe before recursion.
-      await classifyRootOpf(fullPath, result, log);
+    if (atRoot && (OPF_FILE_REGEX.test(entry.name) || OPF_BACKUP_FILE_REGEX.test(entry.name))) {
+      // Type first, from the Dirent readdir already returned (lstat semantics, no extra syscall):
+      // classifyRootOpf opens the path, so a symlink to marked content elsewhere would otherwise
+      // read as owned and the operator's link would be deleted — the entry the writer refuses.
+      // Write and delete must agree, or provenance means one thing on Monday and another Tuesday.
+      if (entry.isFile()) await classifyRootOpf(fullPath, result, log);
+      else result.preservedForeign.push(fullPath);
     } else if (entry.isDirectory()) {
       await sweepDir(fullPath, rootDir, result, log);
     } else if (isManagedFile(entry.name, atRoot)) {

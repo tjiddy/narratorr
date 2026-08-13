@@ -78,6 +78,14 @@ export type BookEventRow = Omit<typeof bookEvents.$inferSelect, 'eventType' | 's
   source: EventSource;
 };
 
+/**
+ * The book's CURRENT folder, projected onto every listed event. Renderers compose derived file
+ * locations from it (`sidecar_diverged` points at `metadata.opf.bak`) instead of reading a path
+ * stored on an append-only row, which would go stale the first time the book is renamed. `null`
+ * once the book is deleted and `bookId` is nulled — there is then no folder, which is the truth.
+ */
+export type BookEventWithPath = BookEventRow & { bookPath: string | null };
+
 export type BlacklistRow = Omit<typeof blacklist.$inferSelect, 'reason' | 'blacklistType'> & {
   reason: BlacklistReason;
   blacklistType: BlacklistType;
