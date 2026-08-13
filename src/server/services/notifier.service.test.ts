@@ -5,7 +5,11 @@ import { initializeKey, _resetKey, encrypt, isEncrypted } from '../utils/secret-
 import { ADAPTER_FACTORIES, type NotifierAdapter } from '@core/index.js';
 
 import { createMockDbNotifier } from '../__tests__/factories.js';
-import { NOTIFIER_BACKOFF_BASE_MS } from './notifier-failure-state.js';
+import {
+  NOTIFIER_BACKOFF_BASE_MS,
+  NOTIFIER_WARN_AFTER_CONSECUTIVE_FAILURES,
+  describeNotifierDelivery,
+} from './notifier-failure-state.js';
 
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 
@@ -967,6 +971,488 @@ describe('NotifierService', () => {
       );
 
       fetchSpy.mockRestore();
+    });
+  });
+
+  // #2312 — a broken notifier must back off, stop on a terminal failure, and stay observable.
+  describe('#2312 delivery state', () => {
+    function deferred<T>() {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((r) => { resolve = r; });
+      return { promise, resolve };
+    }
+
+    function stubAdapter(send: NotifierAdapter['send']): NotifierAdapter {
+      return { type: 'webhook', send, test: vi.fn().mockResolvedValue({ success: true }) };
+    }
+
+    /** Route every webhook build through one adapter so send calls are countable. */
+    function installAdapter(send: NotifierAdapter['send']) {
+      const adapter = stubAdapter(send);
+      return vi.spyOn(ADAPTER_FACTORIES, 'webhook').mockReturnValue(adapter);
+    }
+
+    const TRANSIENT = { success: false, message: 'HTTP 503', failure: { httpStatus: 503 } };
+    const TERMINAL = { success: false, message: 'HTTP 401', failure: { httpStatus: 401 } };
+    const OK = { success: true };
+
+    beforeEach(() => {
+      db.select.mockReturnValue(mockDbChain([mockWebhookNotifier]));
+    });
+
+    describe('AC8 — transient failures back off and recover', () => {
+      it('drops and counts every notification arriving inside the window, then attempts exactly one after it', async () => {
+        const send = vi.fn().mockResolvedValue(TRANSIENT);
+        const factory = installAdapter(send);
+
+        await service.notify('on_grab', { event: 'on_grab' });
+        expect(send).toHaveBeenCalledTimes(1);
+
+        for (let i = 0; i < 3; i += 1) await service.notify('on_grab', { event: 'on_grab' });
+
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(service.getFailureSnapshot(1).suppressedCount).toBe(3);
+
+        clock.now += NOTIFIER_BACKOFF_BASE_MS;
+        await service.notify('on_grab', { event: 'on_grab' });
+        expect(send).toHaveBeenCalledTimes(2);
+
+        factory.mockRestore();
+      });
+
+      it('surfaces the suppressed count on the health entry once the streak warns', async () => {
+        const send = vi.fn().mockResolvedValue(TRANSIENT);
+        const factory = installAdapter(send);
+
+        for (let i = 0; i < NOTIFIER_WARN_AFTER_CONSECUTIVE_FAILURES; i += 1) {
+          clock.now += NOTIFIER_BACKOFF_BASE_MS * 2 ** i;
+          await service.notify('on_grab', { event: 'on_grab' });
+        }
+        await service.notify('on_grab', { event: 'on_grab' });
+
+        const entry = describeNotifierDelivery(service.getFailureSnapshot(1));
+        expect(entry.state).toBe('warning');
+        expect(entry.message).toContain('1 notification suppressed since');
+
+        factory.mockRestore();
+      });
+
+      it('no timer fires a send — nothing is attempted until an event arrives', async () => {
+        const send = vi.fn().mockResolvedValue(TRANSIENT);
+        const factory = installAdapter(send);
+
+        await service.notify('on_grab', { event: 'on_grab' });
+        clock.now += 10 * 60 * 60_000;
+        await new Promise((r) => setImmediate(r));
+
+        expect(send).toHaveBeenCalledTimes(1);
+        factory.mockRestore();
+      });
+
+      it('resolves promptly while backing off, leaving no awaited retry ladder', async () => {
+        const send = vi.fn().mockResolvedValue(TRANSIENT);
+        const factory = installAdapter(send);
+
+        await service.notify('on_grab', { event: 'on_grab' });
+        await expect(service.notify('on_grab', { event: 'on_grab' })).resolves.toBeUndefined();
+
+        factory.mockRestore();
+      });
+
+      it('resets the schedule on the first success, so the next failure starts at the base rung', async () => {
+        const send = vi.fn()
+          .mockResolvedValueOnce(TRANSIENT)
+          .mockResolvedValueOnce(TRANSIENT)
+          .mockResolvedValueOnce(OK)
+          .mockResolvedValueOnce(TRANSIENT);
+        const factory = installAdapter(send);
+
+        await service.notify('on_grab', { event: 'on_grab' });
+        clock.now += NOTIFIER_BACKOFF_BASE_MS;
+        await service.notify('on_grab', { event: 'on_grab' });
+        clock.now += NOTIFIER_BACKOFF_BASE_MS * 2;
+        await service.notify('on_grab', { event: 'on_grab' });
+
+        expect(service.getFailureSnapshot(1)).toMatchObject({ state: 'ok', consecutiveFailures: 0, suppressedCount: 0 });
+
+        await service.notify('on_grab', { event: 'on_grab' });
+        expect(service.getFailureSnapshot(1).nextAttemptAt - clock.now).toBe(NOTIFIER_BACKOFF_BASE_MS);
+
+        factory.mockRestore();
+      });
+    });
+
+    describe('AC9 — terminal failures stop and surface', () => {
+      it('issues no further attempts, in contrast with the transient case', async () => {
+        const send = vi.fn().mockResolvedValue(TERMINAL);
+        const factory = installAdapter(send);
+
+        for (let i = 0; i < 6; i += 1) {
+          clock.now += 24 * 60 * 60_000;
+          await service.notify('on_grab', { event: 'on_grab' });
+        }
+
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(service.getFailureSnapshot(1).state).toBe('stopped');
+        expect(service.getFailureSnapshot(1).suppressedCount).toBe(5);
+
+        factory.mockRestore();
+      });
+
+      it('a transient failure over the same span keeps attempting', async () => {
+        const send = vi.fn().mockResolvedValue(TRANSIENT);
+        const factory = installAdapter(send);
+
+        for (let i = 0; i < 6; i += 1) {
+          clock.now += 24 * 60 * 60_000;
+          await service.notify('on_grab', { event: 'on_grab' });
+        }
+
+        expect(send).toHaveBeenCalledTimes(6);
+        factory.mockRestore();
+      });
+
+      it('promotes a backing-off notifier to stopped and logs the operator reason', async () => {
+        const send = vi.fn().mockResolvedValueOnce(TRANSIENT).mockResolvedValueOnce(TERMINAL);
+        const factory = installAdapter(send);
+
+        await service.notify('on_grab', { event: 'on_grab' });
+        clock.now += NOTIFIER_BACKOFF_BASE_MS;
+        await service.notify('on_grab', { event: 'on_grab' });
+
+        expect(service.getFailureSnapshot(1)).toMatchObject({
+          state: 'stopped',
+          reason: 'authentication rejected — check credentials',
+        });
+        expect(log.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ notifier: 'Test Webhook', reason: 'authentication rejected — check credentials' }),
+          'Notification failed permanently — delivery stopped',
+        );
+
+        factory.mockRestore();
+      });
+
+      it('an unclassifiable failure is transient, never terminal', async () => {
+        const send = vi.fn().mockResolvedValue({ success: false, message: 'dns exploded' });
+        const factory = installAdapter(send);
+
+        await service.notify('on_grab', { event: 'on_grab' });
+
+        expect(service.getFailureSnapshot(1).state).toBe('backing-off');
+        factory.mockRestore();
+      });
+    });
+
+    describe('races at and around the attempt gate', () => {
+      it('ok: two concurrent events both send', async () => {
+        const send = vi.fn().mockResolvedValue(OK);
+        const factory = installAdapter(send);
+
+        await Promise.all([
+          service.notify('on_grab', { event: 'on_grab' }),
+          service.notify('on_grab', { event: 'on_grab' }),
+        ]);
+
+        expect(send).toHaveBeenCalledTimes(2);
+        factory.mockRestore();
+      });
+
+      it('backing-off before the gate: zero sends, both suppressed', async () => {
+        const send = vi.fn().mockResolvedValue(TRANSIENT);
+        const factory = installAdapter(send);
+
+        await service.notify('on_grab', { event: 'on_grab' });
+        send.mockClear();
+
+        await Promise.all([
+          service.notify('on_grab', { event: 'on_grab' }),
+          service.notify('on_grab', { event: 'on_grab' }),
+        ]);
+
+        expect(send).toHaveBeenCalledTimes(0);
+        expect(service.getFailureSnapshot(1).suppressedCount).toBe(2);
+        factory.mockRestore();
+      });
+
+      it('backing-off at a reopened gate: exactly one send, the loser counted as suppressed', async () => {
+        const send = vi.fn().mockResolvedValue(TRANSIENT);
+        const factory = installAdapter(send);
+
+        await service.notify('on_grab', { event: 'on_grab' });
+        send.mockClear();
+        clock.now += NOTIFIER_BACKOFF_BASE_MS;
+
+        await Promise.all([
+          service.notify('on_grab', { event: 'on_grab' }),
+          service.notify('on_grab', { event: 'on_grab' }),
+        ]);
+
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(service.getFailureSnapshot(1).suppressedCount).toBe(1);
+        // Only the winner committed, so the schedule advanced by exactly one rung.
+        expect(service.getFailureSnapshot(1).consecutiveFailures).toBe(2);
+        expect(service.getFailureSnapshot(1).nextAttemptAt - clock.now).toBe(NOTIFIER_BACKOFF_BASE_MS * 2);
+
+        factory.mockRestore();
+      });
+
+      it('stopped: two concurrent events, zero sends, both suppressed', async () => {
+        const send = vi.fn().mockResolvedValue(TERMINAL);
+        const factory = installAdapter(send);
+
+        await service.notify('on_grab', { event: 'on_grab' });
+        send.mockClear();
+
+        await Promise.all([
+          service.notify('on_grab', { event: 'on_grab' }),
+          service.notify('on_grab', { event: 'on_grab' }),
+        ]);
+
+        expect(send).toHaveBeenCalledTimes(0);
+        expect(service.getFailureSnapshot(1).suppressedCount).toBe(2);
+        factory.mockRestore();
+      });
+
+      it('two concurrent transient outcomes from ok count as two failures', async () => {
+        const send = vi.fn().mockResolvedValue(TRANSIENT);
+        const factory = installAdapter(send);
+
+        await Promise.all([
+          service.notify('on_grab', { event: 'on_grab' }),
+          service.notify('on_grab', { event: 'on_grab' }),
+        ]);
+
+        expect(send).toHaveBeenCalledTimes(2);
+        expect(service.getFailureSnapshot(1).consecutiveFailures).toBe(2);
+        expect(service.getFailureSnapshot(1).nextAttemptAt - clock.now).toBe(NOTIFIER_BACKOFF_BASE_MS * 2);
+        factory.mockRestore();
+      });
+    });
+
+    describe('outcome arbitration from ok — order does not decide severity', () => {
+      /** Resolve two concurrent sends in a controlled order rather than by timing. */
+      async function raceOutcomes(first: unknown, second: unknown) {
+        const a = deferred<never>();
+        const b = deferred<never>();
+        const send = vi.fn().mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise);
+        const factory = installAdapter(send as unknown as NotifierAdapter['send']);
+
+        const calls = Promise.all([
+          service.notify('on_grab', { event: 'on_grab' }),
+          service.notify('on_grab', { event: 'on_grab' }),
+        ]);
+        a.resolve(first as never);
+        await new Promise((r) => setImmediate(r));
+        b.resolve(second as never);
+        await calls;
+
+        factory.mockRestore();
+        return service.getFailureSnapshot(1);
+      }
+
+      it.each([
+        ['terminal then transient', TERMINAL, TRANSIENT],
+        ['transient then terminal', TRANSIENT, TERMINAL],
+        ['terminal then success', TERMINAL, OK],
+        ['success then terminal', OK, TERMINAL],
+      ])('%s settles at stopped', async (_label, first, second) => {
+        expect((await raceOutcomes(first, second)).state).toBe('stopped');
+      });
+
+      it('a success cannot erase a terminal verdict from the health entry', async () => {
+        const snapshot = await raceOutcomes(TERMINAL, OK);
+        expect(describeNotifierDelivery(snapshot).state).toBe('error');
+      });
+
+      it('success then transient leaves a one-failure streak at the first rung', async () => {
+        const snapshot = await raceOutcomes(OK, TRANSIENT);
+        expect(snapshot).toMatchObject({ state: 'backing-off', consecutiveFailures: 1 });
+        expect(snapshot.nextAttemptAt - clock.now).toBe(NOTIFIER_BACKOFF_BASE_MS);
+        expect(describeNotifierDelivery(snapshot).state).toBe('healthy');
+      });
+
+      it('transient then success is the recovery reset', async () => {
+        const snapshot = await raceOutcomes(TRANSIENT, OK);
+        expect(snapshot).toMatchObject({ state: 'ok', consecutiveFailures: 0, suppressedCount: 0 });
+        expect(describeNotifierDelivery(snapshot).state).toBe('healthy');
+      });
+    });
+
+    describe('AC13 — a failing notifier never breaks its peers or the caller', () => {
+      it('a throwing adapter does not stop the other subscribed notifier receiving', async () => {
+        const healthy = vi.fn().mockResolvedValue(OK);
+        const second = createMockDbNotifier({ id: 2, name: 'Second', events: ['on_grab'] });
+        db.select.mockReturnValue(mockDbChain([mockWebhookNotifier, second]));
+
+        const factory = vi.spyOn(ADAPTER_FACTORIES, 'webhook')
+          .mockImplementationOnce(() => stubAdapter(vi.fn().mockRejectedValue(new Error('adapter exploded'))))
+          .mockImplementationOnce(() => stubAdapter(healthy));
+
+        await expect(service.notify('on_grab', { event: 'on_grab' })).resolves.toBeUndefined();
+
+        expect(healthy).toHaveBeenCalledTimes(1);
+        expect(service.getFailureSnapshot(1).state).toBe('backing-off');
+        expect(service.getFailureSnapshot(2).state).toBe('ok');
+
+        factory.mockRestore();
+      });
+    });
+
+    describe('AC14 — the excluded recipient is dropped before the gate', () => {
+      it('sends to the peer, never to the excluded notifier, and leaves its counters untouched', async () => {
+        const source = vi.fn().mockResolvedValue(TERMINAL);
+        const peer = vi.fn().mockResolvedValue(OK);
+        const second = createMockDbNotifier({ id: 2, name: 'Peer', events: ['on_health_issue'] });
+        db.select.mockReturnValue(mockDbChain([
+          createMockDbNotifier({ id: 1, events: ['on_health_issue'] }),
+          second,
+        ]));
+
+        const factory = vi.spyOn(ADAPTER_FACTORIES, 'webhook')
+          .mockImplementationOnce(() => stubAdapter(peer))
+          .mockImplementationOnce(() => stubAdapter(source));
+
+        await service.notify(
+          'on_health_issue',
+          { event: 'on_health_issue', health: { checkName: 'notifier:Test Webhook', previousState: 'healthy', currentState: 'error' } },
+          { excludeNotifierId: 1 },
+        );
+
+        expect(source).toHaveBeenCalledTimes(0);
+        expect(peer).toHaveBeenCalledTimes(1);
+        expect(service.getFailureSnapshot(1)).toMatchObject({ state: 'ok', suppressedCount: 0, consecutiveFailures: 0 });
+        expect(service.getFailureSnapshot(2).state).toBe('ok');
+
+        factory.mockRestore();
+      });
+
+      it('excluding a backing-off source neither attempts nor counts a suppression', async () => {
+        const send = vi.fn().mockResolvedValue(TRANSIENT);
+        const factory = installAdapter(send);
+
+        await service.notify('on_grab', { event: 'on_grab' });
+        const before = service.getFailureSnapshot(1);
+        send.mockClear();
+
+        db.select.mockReturnValue(mockDbChain([createMockDbNotifier({ id: 1, events: ['on_health_issue'] })]));
+        for (let i = 0; i < 3; i += 1) {
+          await service.notify(
+            'on_health_issue',
+            { event: 'on_health_issue', health: { checkName: 'notifier:Test Webhook', previousState: 'healthy', currentState: 'warning' } },
+            { excludeNotifierId: 1 },
+          );
+        }
+
+        expect(send).toHaveBeenCalledTimes(0);
+        expect(service.getFailureSnapshot(1)).toMatchObject({
+          suppressedCount: before.suppressedCount,
+          consecutiveFailures: before.consecutiveFailures,
+          state: before.state,
+        });
+
+        // A real event in the same window still counts, so the figure stays meaningful.
+        db.select.mockReturnValue(mockDbChain([mockWebhookNotifier]));
+        await service.notify('on_grab', { event: 'on_grab' });
+        expect(service.getFailureSnapshot(1).suppressedCount).toBe(before.suppressedCount + 1);
+
+        factory.mockRestore();
+      });
+    });
+
+    describe('AC12 — repairing clears the failure state, renaming does not', () => {
+      const STORED = createMockDbNotifier({ id: 1, settings: { url: 'https://example.com/hook' } });
+
+      async function stopIt() {
+        const send = vi.fn().mockResolvedValue(TERMINAL);
+        const factory = installAdapter(send);
+        await service.notify('on_grab', { event: 'on_grab' });
+        expect(service.getFailureSnapshot(1).state).toBe('stopped');
+        factory.mockRestore();
+        return send;
+      }
+
+      /** Did the very next notification actually attempt a send? */
+      async function attemptsAgain(): Promise<boolean> {
+        const send = vi.fn().mockResolvedValue(OK);
+        const factory = installAdapter(send);
+        await service.notify('on_grab', { event: 'on_grab' });
+        factory.mockRestore();
+        return send.mock.calls.length > 0;
+      }
+
+      beforeEach(() => {
+        db.select.mockReturnValue(mockDbChain([STORED]));
+        db.update.mockReturnValue(mockDbChain([STORED]));
+      });
+
+      it('a settings change clears it and the next notification sends immediately', async () => {
+        await stopIt();
+        await service.update(1, { settings: { url: 'https://new.hook' } });
+        expect(service.getFailureSnapshot(1).state).toBe('ok');
+        expect(await attemptsAgain()).toBe(true);
+      });
+
+      it('a type change clears it', async () => {
+        await stopIt();
+        await service.update(1, { type: 'discord' });
+        expect(service.getFailureSnapshot(1).state).toBe('ok');
+      });
+
+      it('toggling enabled clears it', async () => {
+        await stopIt();
+        await service.update(1, { enabled: false });
+        expect(service.getFailureSnapshot(1).state).toBe('ok');
+      });
+
+      it('a rename preserves it — identity is the id, not the display name', async () => {
+        await stopIt();
+        await service.update(1, { name: 'Renamed' });
+        expect(service.getFailureSnapshot(1).state).toBe('stopped');
+        expect(await attemptsAgain()).toBe(false);
+      });
+
+      it('an events change preserves it', async () => {
+        await stopIt();
+        await service.update(1, { events: ['on_import'] });
+        expect(service.getFailureSnapshot(1).state).toBe('stopped');
+      });
+
+      it('a PUT whose resolved values all equal the stored ones preserves it (the ciphertext trap)', async () => {
+        await stopIt();
+        // A comparison against the encrypted column reports a change every time, because
+        // encrypt() re-randomises its IV per call. This row is the only one that catches it.
+        await service.update(1, { settings: { url: 'https://example.com/hook' } });
+        expect(service.getFailureSnapshot(1).state).toBe('stopped');
+        expect(await attemptsAgain()).toBe(false);
+      });
+
+      it('a same-value update carrying a masked-secret sentinel preserves it', async () => {
+        // The edit form re-submits '********' for `url`; it must resolve to the stored value
+        // and therefore compare equal, rather than reading as a repair.
+        await stopIt();
+        await service.update(1, { settings: { url: '********' } });
+        expect(service.getFailureSnapshot(1).state).toBe('stopped');
+        expect(await attemptsAgain()).toBe(false);
+      });
+
+      it('a sentinel alongside a genuinely changed field still clears it', async () => {
+        await stopIt();
+        await service.update(1, { settings: { url: '********', method: 'PUT' } });
+        expect(service.getFailureSnapshot(1).state).toBe('ok');
+      });
+
+      it('delete() prunes the entry so a recreated notifier starts healthy', async () => {
+        await stopIt();
+        db.delete.mockReturnValue(mockDbChain());
+        await service.delete(1);
+        expect(service.getFailureSnapshot(1).state).toBe('ok');
+      });
+
+      it('clearAdapterCache() drops the failure state too, so no suite leaks it', async () => {
+        await stopIt();
+        service.clearAdapterCache();
+        expect(service.getFailureSnapshot(1).state).toBe('ok');
+      });
     });
   });
 });
