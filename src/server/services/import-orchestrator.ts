@@ -59,9 +59,19 @@ export class ImportOrchestrator {
     this.wired.set(deps);
   }
 
-  /** Wrap the core import with lifecycle emissions and best-effort side effects. */
-  async importDownload(downloadId: number, callbacks?: ImportProgressCallbacks): Promise<ImportResult> {
-    const ctx = await this.importService.getImportContext(downloadId);
+  /**
+   * Wrap the core import with lifecycle emissions and best-effort side effects.
+   * `job` carries the caller's own book provenance; without it a context-resolution failure has no
+   * identity to report, since the download row it would have been read from is what went missing.
+   */
+  async importDownload(downloadId: number, callbacks?: ImportProgressCallbacks, job?: { bookId: number }): Promise<ImportResult> {
+    let ctx: ImportContext;
+    try {
+      ctx = await this.importService.getImportContext(downloadId);
+    } catch (error: unknown) {
+      await this.dispatchContextFailureSideEffects(error, downloadId, job);
+      throw error;
+    }
 
     // Always emit book status; suppress duplicate download status on the approve path.
     emitBookImporting({ broadcaster: this.broadcaster, bookId: ctx.bookId, bookStatus: ctx.bookStatus, log: this.log });
@@ -206,6 +216,44 @@ export class ImportOrchestrator {
       // Pre-enqueue rejection is skipped admission, not merge_failed; only a started merge owns that event.
       this.log.warn({ error: serializeError(mergeError), bookId: ctx.bookId }, 'Auto-merge enqueue failed — import unaffected');
     }
+  }
+
+  /**
+   * Sibling of dispatchFailureSideEffects for a failure that produced no ImportContext (#2307).
+   * No SSE: emitImportFailure would name a download row that no longer exists and needs a
+   * revertedBookStatus only bookStatusAtGrab can supply — the worker's `import_failed` is the one
+   * operator-visible event for this failure. No blacklist either; a vanished row is not bad content.
+   * Nothing here may throw: the context error is the only value that leaves importDownload.
+   */
+  private async dispatchContextFailureSideEffects(error: unknown, downloadId: number, job?: { bookId: number }): Promise<void> {
+    if (!job) return;
+    const { bookId } = job;
+
+    let bookTitle: string | null = null;
+    let lookupError: unknown;
+    if (this.bookService) {
+      try {
+        bookTitle = (await this.bookService.getById(bookId))?.title ?? null;
+      } catch (titleError: unknown) {
+        lookupError = titleError;
+      }
+    }
+
+    // book_events.book_id is an FK and book_title is NOT NULL, so without a live book there is no
+    // valid row to write — the helper's .catch would swallow the violation as a silent success.
+    if (bookTitle === null) {
+      this.log.error({
+        downloadId, bookId, error: serializeError(error),
+        ...(lookupError !== undefined && { lookupError: serializeError(lookupError) }),
+      }, 'Import context resolution failed — book unavailable, no history event recorded');
+      return;
+    }
+
+    this.log.error({ downloadId, bookId, bookTitle, error: serializeError(error) }, 'Import context resolution failed');
+
+    recordImportFailedEvent({ eventHistory: this.eventHistory, bookId, bookTitle, authorName: null, downloadId: null, source: 'auto', error, log: this.log });
+
+    notifyImportFailure({ notifierService: this.notifierService, downloadTitle: bookTitle, error, log: this.log });
   }
 
   private dispatchFailureSideEffects(error: unknown, ctx: ImportContext): void {
