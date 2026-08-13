@@ -63,7 +63,9 @@ export interface DedupIdentity {
   authorName?: string | null | undefined;
 }
 
-function resolveAuthorSlug(id: DedupIdentity): string | null {
+/** The one author-slug rule the identity predicate keys on; exported so a caller narrowing rows
+ * for `matchesLibraryIdentity` derives the same slug the match will compare. */
+export function resolveAuthorSlug(id: DedupIdentity): string | null {
   if (typeof id.authorSlug === 'string') return id.authorSlug.length > 0 ? id.authorSlug : null;
   if (typeof id.authorName === 'string' && id.authorName.length > 0) return slugify(id.authorName);
   return null;

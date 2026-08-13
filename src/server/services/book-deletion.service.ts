@@ -4,6 +4,7 @@ import type { DownloadService } from './download.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
+import type { ImportListExclusionService } from './import-list-exclusion.service.js';
 import { basename } from 'node:path';
 import { PathOutsideLibraryError } from '../utils/paths.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
@@ -29,8 +30,9 @@ export interface DeleteBookOptions {
 }
 
 /**
- * Disk deletion must succeed before DB mutation. Download cancellation and event/cache side
- * effects are best-effort; record the event before DB deletion to preserve its snapshot.
+ * Disk deletion must succeed before DB mutation, and the import-list exclusion before every other
+ * side effect. Download cancellation and event/cache side effects are best-effort; record the event
+ * before DB deletion to preserve its snapshot.
  */
 export class BookDeletionService {
   constructor(
@@ -40,6 +42,7 @@ export class BookDeletionService {
     private settingsService: SettingsService,
     private log: FastifyBaseLogger,
     private eventHistory?: EventHistoryService,
+    private exclusions?: ImportListExclusionService,
   ) {}
 
   async deleteBook(id: number, { deleteFiles }: DeleteBookOptions): Promise<BookDeletionResult> {
@@ -55,6 +58,11 @@ export class BookDeletionService {
         fileSummary = diskResult.summary;
       }
     }
+
+    // Immediately after the disk step and before every other side effect. Later, a rejection would
+    // leave the book present with its downloads already cancelled and a `deleted` event already in
+    // Activity; earlier, a disk failure would permanently exclude a book still in the library.
+    await this.recordImportListExclusion(book);
 
     await this.cancelActiveDownloads(id);
 
@@ -112,6 +120,25 @@ export class BookDeletionService {
     if (activeDownloads.length > 0) {
       this.log.info({ bookId: id, count: activeDownloads.length }, 'Cancelled active downloads for book');
     }
+  }
+
+  /**
+   * Remember an import-list book so no list re-adds it. Awaited, unlike the event below: it is the
+   * durable artifact the next sync's gate reads, so a rejection aborts the deletion.
+   *
+   * Only import-list provenance triggers it. An exclusion counteracts an automated re-add and
+   * nothing re-adds a manually-added book, so the narrowest trigger is the right one — an invisible
+   * permanent block is worse than the re-add loop. Known consequence: `books.import_list_id` is
+   * `onDelete: 'set null'`, so deleting the LIST first erases the provenance and a later book
+   * delete records nothing.
+   */
+  private async recordImportListExclusion(book: BookWithAuthor | null): Promise<void> {
+    if (!book || !this.exclusions || book.importListId === null) return;
+    const exclusion = await this.exclusions.recordExclusion(
+      { title: book.title, asin: book.asin, authorName: book.authors[0]?.name ?? null },
+      { importListId: book.importListId, importListName: book.importListName ?? null },
+    );
+    this.log.info({ bookId: book.id, exclusionId: exclusion.id }, 'Recorded import list exclusion for deleted book');
   }
 
   /** Start the event write without blocking deletion; log rejection. */
