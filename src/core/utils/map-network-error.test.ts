@@ -110,6 +110,27 @@ describe('mapNetworkError', () => {
       expect(result.message).toContain('unknown network issue');
     });
   });
+
+  // The mapped error is all a caller gets once the cause is dropped, and failure
+  // classification keys on the code rather than on the human-readable text (#2312).
+  describe('structural code preservation', () => {
+    it('carries a mapped cause code onto the returned error', () => {
+      const cause = Object.assign(new Error('getaddrinfo ENOTFOUND host.test'), { code: 'ENOTFOUND' });
+      const result = mapNetworkError(new TypeError('fetch failed', { cause }));
+      expect((result as Error & { code?: string }).code).toBe('ENOTFOUND');
+    });
+
+    it('carries an unmapped cause code through too', () => {
+      const cause = Object.assign(new Error('socket hang up'), { code: 'UND_ERR_SOCKET' });
+      const result = mapNetworkError(new TypeError('fetch failed', { cause }));
+      expect((result as Error & { code?: string }).code).toBe('UND_ERR_SOCKET');
+    });
+
+    it('tags an aborted/timed-out request with ETIMEDOUT', () => {
+      const result = mapNetworkError(new DOMException('The operation was aborted', 'TimeoutError'));
+      expect((result as Error & { code?: string }).code).toBe('ETIMEDOUT');
+    });
+  });
 });
 
 describe('redactUrlsFromMessage', () => {

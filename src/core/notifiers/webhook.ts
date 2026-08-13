@@ -1,4 +1,5 @@
-import type { NotifierAdapter, NotificationEvent, EventPayload } from './types.js';
+import type { NotifierAdapter, NotifierResult, NotificationEvent, EventPayload } from './types.js';
+import { describeTransportError } from '../utils/failure-classification.js';
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { NOTIFIER_TIMEOUT_MS } from '../utils/constants.js';
 import { getErrorMessage } from '@shared/error-message.js';
@@ -48,7 +49,7 @@ export class WebhookNotifier implements NotifierAdapter {
 
   constructor(private config: WebhookConfig) {}
 
-  async send(event: NotificationEvent, payload: EventPayload): Promise<{ success: boolean; message?: string }> {
+  async send(event: NotificationEvent, payload: EventPayload): Promise<NotifierResult> {
     const method = this.config.method || 'POST';
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -66,19 +67,19 @@ export class WebhookNotifier implements NotifierAdapter {
       const response = await fetchWithTimeout(this.config.url, { method, headers, body }, NOTIFIER_TIMEOUT_MS);
 
       if (!response.ok) {
-        return { success: false, message: `HTTP ${response.status}: ${response.statusText}` };
+        return { success: false, message: `HTTP ${response.status}: ${response.statusText}`, failure: { httpStatus: response.status } };
       }
 
       return { success: true };
     } catch (error: unknown) {
       if (error instanceof DOMException && error.name === 'TimeoutError') {
-        return { success: false, message: 'Request timed out' };
+        return { success: false, message: 'Request timed out', failure: describeTransportError(error) };
       }
-      return { success: false, message: getErrorMessage(error) };
+      return { success: false, message: getErrorMessage(error), failure: describeTransportError(error) };
     }
   }
 
-  async test(): Promise<{ success: boolean; message?: string }> {
+  async test(): Promise<NotifierResult> {
     const testPayload: EventPayload = {
       event: 'on_grab',
       book: { title: 'Test Book', author: 'Test Author' },

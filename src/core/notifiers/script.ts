@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { sanitizedEnv } from '../utils/sanitized-env.js';
-import type { NotifierAdapter, NotificationEvent, EventPayload } from './types.js';
+import type { NotifierAdapter, NotifierResult, NotificationEvent, EventPayload, FailureDescriptor } from './types.js';
 
 export interface ScriptConfig {
   path: string;
@@ -59,7 +59,7 @@ export class ScriptNotifier implements NotifierAdapter {
 
   constructor(private config: ScriptConfig) {}
 
-  async send(event: NotificationEvent, payload: EventPayload): Promise<{ success: boolean; message?: string }> {
+  async send(event: NotificationEvent, payload: EventPayload): Promise<NotifierResult> {
     const timeoutMs = (this.config.timeout ?? 30) * 1000;
     const env = sanitizedEnv(payloadToEnv(event, payload));
 
@@ -69,10 +69,18 @@ export class ScriptNotifier implements NotifierAdapter {
         env,
       }, (error, _stdout, stderr) => {
         if (error) {
+          // execFile puts the exit code in `code` for a normal exit and a signal name there
+          // when the process was killed; neither is a terminal identity, so both fall through
+          // to the classifier's transient default.
+          const failure: FailureDescriptor = {};
+          if (typeof error.code === 'number') failure.exitCode = error.code;
+          if (typeof error.code === 'string') failure.errorCode = error.code;
+          if (error.killed) failure.killed = true;
+
           if (error.killed) {
-            resolve({ success: false, message: `Script timed out after ${this.config.timeout ?? 30}s` });
+            resolve({ success: false, message: `Script timed out after ${this.config.timeout ?? 30}s`, failure });
           } else {
-            resolve({ success: false, message: error.message });
+            resolve({ success: false, message: error.message, failure });
           }
           return;
         }
@@ -90,7 +98,7 @@ export class ScriptNotifier implements NotifierAdapter {
     });
   }
 
-  async test(): Promise<{ success: boolean; message?: string }> {
+  async test(): Promise<NotifierResult> {
     const testPayload: EventPayload = {
       event: 'on_grab',
       book: { title: 'Test Book', author: 'Test Author' },

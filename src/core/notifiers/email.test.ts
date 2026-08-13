@@ -65,27 +65,66 @@ describe('EmailNotifier', () => {
     }));
   });
 
-  it('returns failure on SMTP auth error', async () => {
-    mockSendMail.mockRejectedValue(new Error('Invalid login: 535 authentication failed'));
+  // Nodemailer rejects with the reply code on `responseCode` and its own catalogue code on
+  // `code`; a fixture carrying only a message cannot exercise structural classification.
+  function smtpError(message: string, fields: { responseCode?: number; code?: string }): Error {
+    return Object.assign(new Error(message), fields);
+  }
+
+  it('surfaces the SMTP reply code as a failure descriptor and names auth in operator language', async () => {
+    mockSendMail.mockRejectedValue(smtpError('Invalid login: 535 authentication failed', { responseCode: 535, code: 'EAUTH' }));
 
     const notifier = new EmailNotifier(config);
     const result = await notifier.send('on_grab', { event: 'on_grab' });
 
     expect(result.success).toBe(false);
-    expect(result.message).toBe('SMTP authentication failed');
+    expect(result.failure).toEqual({ smtpReplyCode: 535, errorCode: 'EAUTH' });
+    expect(result.message).toBe('authentication rejected — check credentials');
   });
 
-  it('returns failure on TLS error', async () => {
-    mockSendMail.mockRejectedValue(new Error('TLS handshake failed: self-signed certificate'));
+  it('surfaces the 554 recipient rejection as a terminal descriptor (#2312 incident)', async () => {
+    mockSendMail.mockRejectedValue(smtpError('554 5.7.1 <x@y>: Recipient address rejected', { responseCode: 554, code: 'EENVELOPE' }));
+
+    const notifier = new EmailNotifier(config);
+    const result = await notifier.send('on_grab', { event: 'on_grab' });
+
+    expect(result.failure).toEqual({ smtpReplyCode: 554, errorCode: 'EENVELOPE' });
+    expect(result.message).toBe('the mail server rejected the recipient or sender address');
+  });
+
+  it('surfaces a TLS failure by its structural code, with no reply code present', async () => {
+    mockSendMail.mockRejectedValue(smtpError('self-signed certificate in certificate chain', { code: 'ETLS' }));
 
     const notifier = new EmailNotifier(config);
     const result = await notifier.send('on_grab', { event: 'on_grab' });
 
     expect(result.success).toBe(false);
-    expect(result.message).toContain('TLS connection failed');
+    expect(result.failure).toEqual({ errorCode: 'ETLS' });
+    expect(result.message).toBe("TLS/certificate rejected — check the TLS setting and the server's certificate");
   });
 
-  it('returns failure on generic error', async () => {
+  it('classifies on structure, not message text — reworded auth failure keeps its verdict (AC3)', async () => {
+    mockSendMail.mockRejectedValue(smtpError('Anmeldung fehlgeschlagen', { responseCode: 535, code: 'EAUTH' }));
+
+    const notifier = new EmailNotifier(config);
+    const result = await notifier.send('on_grab', { event: 'on_grab' });
+
+    // A message-substring implementation would find no 'auth' here and fall through.
+    expect(result.message).toBe('authentication rejected — check credentials');
+  });
+
+  it('a transient failure whose text mentions authentication stays transient (AC3 inverse)', async () => {
+    mockSendMail.mockRejectedValue(smtpError('421 authentication proxy temporarily unavailable', { responseCode: 421, code: 'ECONNECTION' }));
+
+    const notifier = new EmailNotifier(config);
+    const result = await notifier.send('on_grab', { event: 'on_grab' });
+
+    expect(result.failure).toEqual({ smtpReplyCode: 421, errorCode: 'ECONNECTION' });
+    // Transient failures keep the transport's own wording rather than an operator verdict.
+    expect(result.message).toBe('421 authentication proxy temporarily unavailable');
+  });
+
+  it('returns failure with an empty descriptor when the error carries no structure', async () => {
     mockSendMail.mockRejectedValue(new Error('Connection refused'));
 
     const notifier = new EmailNotifier(config);
@@ -93,6 +132,15 @@ describe('EmailNotifier', () => {
 
     expect(result.success).toBe(false);
     expect(result.message).toBe('Connection refused');
+    expect(result.failure).toEqual({});
+  });
+
+  it('a successful send carries no failure descriptor', async () => {
+    const notifier = new EmailNotifier(config);
+    const result = await notifier.send('on_grab', { event: 'on_grab' });
+
+    expect(result.success).toBe(true);
+    expect(result.failure).toBeUndefined();
   });
 
   it('formats on_health_issue message with check details', async () => {
