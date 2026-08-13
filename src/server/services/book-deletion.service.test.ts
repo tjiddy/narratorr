@@ -474,7 +474,7 @@ describe('BookDeletionService — the import-list exclusion (#2305)', () => {
     const { service, exclusions } = createService({
       bookService: {
         getById: vi.fn().mockResolvedValue(importedBook),
-        deleteBookFiles: vi.fn().mockRejectedValue(new PathOutsideLibraryError('outside')),
+        deleteBookFiles: vi.fn().mockRejectedValue(new PathOutsideLibraryError('/elsewhere/book', '/audiobooks')),
       },
     });
 
@@ -485,7 +485,7 @@ describe('BookDeletionService — the import-list exclusion (#2305)', () => {
   });
 
   it('aborts the whole deletion when the exclusion write rejects — no cancel, no event, no row delete', async () => {
-    const { service, exclusions, bookService, downloadOrchestrator, eventHistory, downloadService } = createService({
+    const { service, bookService, downloadOrchestrator, eventHistory, downloadService } = createService({
       bookService: { getById: vi.fn().mockResolvedValue(importedBook) },
       downloadService: { getActiveByBookId: vi.fn().mockResolvedValue([{ id: 77 }]) },
       exclusions: { recordExclusion: vi.fn().mockRejectedValue(new Error('exclusions table locked')) },
