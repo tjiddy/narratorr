@@ -382,7 +382,7 @@ describe('MatchJobService — OPF/tag ASIN identification rung (#2292)', () => {
       expect(metadataService.searchBooks).toHaveBeenCalledTimes(1);
     });
 
-    it('a lone usable ASIN that misses costs exactly one lookup, then the text search runs', async () => {
+    it('a lone usable ASIN from the OPF that misses costs exactly one lookup, then the text search runs', async () => {
       vi.mocked(readOpfMetadata).mockResolvedValue(makeOpf({ asin: GUNSLINGER_ASIN }));
       vi.mocked(metadataService.getBook).mockResolvedValue(null);
       vi.mocked(metadataService.searchBooks).mockResolvedValue([darkTowerI({ title: 'The Gunslinger' })]);
@@ -391,6 +391,50 @@ describe('MatchJobService — OPF/tag ASIN identification rung (#2292)', () => {
 
       expect(getBookArgs()).toEqual([[GUNSLINGER_ASIN]]);
       expect(metadataService.searchBooks).toHaveBeenCalledTimes(1);
+    });
+
+    // The tag-only rows are the ones that pin the kill-shot's DELETION: only a book whose tag query
+    // is usable reaches the planner, so only these two would double-probe if `runAsinKillShot` were
+    // restored inside `runTagSearch`. The OPF-sourced row above cannot observe that regression.
+    // The search results carry an `asin` so `fetchDetails` adds no getBook call of its own.
+    it('a lone usable ASIN from the tag that misses costs exactly one lookup, even with a usable tag query', async () => {
+      vi.mocked(readOpfMetadata).mockResolvedValue(null);
+      vi.mocked(scanAudioDirectory).mockResolvedValue(
+        makeScan({ tagAsin: GUNSLINGER_ASIN, tagTitle: 'The Gunslinger', tagAuthor: 'Stephen King' }),
+      );
+      vi.mocked(metadataService.getBook).mockResolvedValue(null);
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        darkTowerI({ title: 'The Gunslinger', asin: 'B0TAGPATH1' }),
+      ]);
+
+      const result = await runSingle();
+
+      expect(getBookArgs()).toEqual([[GUNSLINGER_ASIN]]);
+      expect(metadataService.searchBooks).toHaveBeenCalledWith(
+        'The Gunslinger Stephen King',
+        { title: 'The Gunslinger', author: 'Stephen King' },
+      );
+      expect(result.bestMatch?.asin).toBe('B0TAGPATH1');
+    });
+
+    it('a lone usable ASIN from the tag that ERRORS costs exactly one lookup, even with a usable tag query', async () => {
+      vi.mocked(readOpfMetadata).mockResolvedValue(null);
+      vi.mocked(scanAudioDirectory).mockResolvedValue(
+        makeScan({ tagAsin: GUNSLINGER_ASIN, tagTitle: 'The Gunslinger', tagAuthor: 'Stephen King' }),
+      );
+      vi.mocked(metadataService.getBook).mockRejectedValue(new Error('provider exploded'));
+      vi.mocked(metadataService.searchBooks).mockResolvedValue([
+        darkTowerI({ title: 'The Gunslinger', asin: 'B0TAGPATH1' }),
+      ]);
+
+      const result = await runSingle();
+
+      expect(getBookArgs()).toEqual([[GUNSLINGER_ASIN]]);
+      expect(metadataService.searchBooks).toHaveBeenCalledWith(
+        'The Gunslinger Stephen King',
+        { title: 'The Gunslinger', author: 'Stephen King' },
+      );
+      expect(result.bestMatch?.asin).toBe('B0TAGPATH1');
     });
 
     it('AC8 — a tag ASIN fires even with no usable tag title or author', async () => {
