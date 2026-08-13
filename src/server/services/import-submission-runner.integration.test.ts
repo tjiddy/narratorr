@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { eq, asc } from 'drizzle-orm';
 import { createDb, runMigrations, type Db } from '@db/index.js';
-import { books, importJobs, importSubmissions, importSubmissionItems } from '@db/schema.js';
+import { books, importJobs, importSubmissions, importSubmissionItems, seriesMembers } from '@db/schema.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import { BookService } from './book.service.js';
@@ -935,13 +935,18 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       return (detail?.authors ?? []).map((a) => a.name);
     }
 
-    it('AC10: an OPF title/series never overrides the folder parse', async () => {
+    it('AC10/#2296 row 3: an OPF title/series never overrides a series the FOLDER genuinely asserted', async () => {
       const path = bookFolder('ac10-folder', opfWith([
         '<dc:title>Opf Title</dc:title>',
         '<meta name="calibre:series" content="Opf Series"/>',
         '<meta name="calibre:series_index" content="9"/>',
       ]));
-      await seedProcessing([{ path, title: 'Folder Title', seriesName: 'Folder Series', seriesPosition: 2, forceImport: true }]);
+      // Provider metadata carrying a THIRD series is what separates row 3 from row 4; without it this
+      // case only proves row 2 (nothing to mirror) and passes even with the mirror rule inverted.
+      await seedProcessing([{
+        path, title: 'Folder Title', seriesName: 'Folder Series', seriesPosition: 2, forceImport: true,
+        metadata: { title: 'T', authors: [{ name: 'A' }], seriesPrimary: { name: 'Provider Series', position: 5 } },
+      }]);
 
       await drainAll();
 
@@ -977,7 +982,7 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       expect(await bookAuthorNames((await onlyBook()).id)).toEqual(['Folder Author']);
     });
 
-    it('AC10: an OPF series never overrides a series the PROVIDER supplied', async () => {
+    it('#2296 row 1: an OPF series OVERRIDES a series the PROVIDER supplied', async () => {
       const path = bookFolder('ac10-provider-series', opfWith([
         '<meta name="calibre:series" content="Opf Series"/>',
         '<meta name="calibre:series_index" content="9"/>',
@@ -989,7 +994,126 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
 
       await drainAll();
 
-      expect(await onlyBook()).toMatchObject({ seriesName: 'Provider Series', seriesPosition: 5 });
+      expect(await onlyBook()).toMatchObject({ seriesName: 'Opf Series', seriesPosition: 9 });
+    });
+
+    // The client copies the provider's series into the top-level item of every untouched row, where it
+    // outranks metadata.seriesPrimary at resolveImportSeries — so only this shape reproduces #2296.
+    describe('#2296 — the client-shaped payload', () => {
+      const OPF_SERIES = ['<meta name="calibre:series" content="Discworld"/>', '<meta name="calibre:series_index" content="4"/>'];
+
+      function mirroredItem(path: string, extra: Partial<StagedImportItem> = {}): StagedImportItem {
+        return {
+          path, title: 'Mort', forceImport: true,
+          seriesName: 'Discworld: Death', seriesPosition: 1,
+          metadata: { title: 'Mort', authors: [{ name: 'Terry Pratchett' }], seriesPrimary: { name: 'Discworld: Death', position: 1 } },
+          ...extra,
+        };
+      }
+
+      it('row 4 headline: a provider-mirrored top-level pair is replaced by the OPF pair', async () => {
+        const path = bookFolder('r4-headline', opfWith(OPF_SERIES));
+        const subId = await seedProcessing([mirroredItem(path)]);
+
+        await drainAll();
+
+        expect(await onlyBook()).toMatchObject({ seriesName: 'Discworld', seriesPosition: 4 });
+        // Series is not an input to classifyConfirmItem, so rewriting it must not change the verdict.
+        const [row] = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId));
+        expect(row!.disposition).toBe('accepted');
+        // The adapter renders the library path from the enqueued payload, not from the row.
+        expect(await jobPayload()).toMatchObject({ seriesName: 'Discworld', seriesPosition: 4 });
+      });
+
+      it('row 5: the hybrid pair (provider name + FOLDER position) is a mirror, and the stale position goes', async () => {
+        const path = bookFolder('r5-hybrid', opfWith(OPF_SERIES));
+        await seedProcessing([mirroredItem(path, {
+          seriesPosition: 2,
+          metadata: { title: 'Mort', authors: [{ name: 'Terry Pratchett' }], seriesPrimary: { name: 'Discworld: Death' } },
+        })]);
+
+        await drainAll();
+
+        expect(await onlyBook()).toMatchObject({ seriesName: 'Discworld', seriesPosition: 4 });
+      });
+
+      it('row 2b: metadata present with NO primary leaves nothing to mirror, so the item pair survives', async () => {
+        const path = bookFolder('r2b-noprimary', opfWith(OPF_SERIES));
+        await seedProcessing([{
+          path, title: 'Mort', forceImport: true, seriesName: 'Folder Series', seriesPosition: 2,
+          metadata: { title: 'Mort', authors: [{ name: 'A' }] },
+        }]);
+
+        await drainAll();
+
+        expect(await onlyBook()).toMatchObject({ seriesName: 'Folder Series', seriesPosition: 2 });
+      });
+
+      it('row 6: an OPF with no series leaves the mirrored item pair exactly as it arrived', async () => {
+        const path = bookFolder('r6-noseries', opfWith(['<dc:description>Opf Description</dc:description>']));
+        await seedProcessing([mirroredItem(path)]);
+
+        await drainAll();
+
+        expect(await onlyBook()).toMatchObject({
+          seriesName: 'Discworld: Death', seriesPosition: 1, description: 'Opf Description',
+        });
+      });
+
+      it('AC10: a whitespace-only calibre:series destroys neither the provider nor the item pair', async () => {
+        const path = bookFolder('r6-blank', opfWith([
+          '<meta name="calibre:series" content="   "/>',
+          '<meta name="calibre:series_index" content="4"/>',
+        ]));
+        await seedProcessing([mirroredItem(path)]);
+
+        await drainAll();
+
+        expect(await onlyBook()).toMatchObject({ seriesName: 'Discworld: Death', seriesPosition: 1 });
+      });
+
+      it.each([
+        ['an absent index', ['<meta name="calibre:series" content="Discworld"/>']],
+        ['a non-numeric index', ['<meta name="calibre:series" content="Discworld"/>', '<meta name="calibre:series_index" content="abc"/>']],
+      ])('%s yields a named series with NO position — the provider position is never inherited', async (_label, inner) => {
+        const path = bookFolder(`r4-${_label.replace(/\s+/g, '-')}`, opfWith(inner));
+        await seedProcessing([mirroredItem(path)]);
+
+        await drainAll();
+
+        expect(await onlyBook()).toMatchObject({ seriesName: 'Discworld', seriesPosition: null });
+        expect(await jobPayload()).not.toHaveProperty('seriesPosition');
+      });
+
+      it.each([
+        ['zero', '0', 0],
+        ['a decimal', '3.5', 3.5],
+      ])('%s is a valid OPF position and replaces the mirrored one', async (_label, raw, expected) => {
+        const path = bookFolder(`r4-pos-${raw}`, opfWith([
+          '<meta name="calibre:series" content="Discworld"/>',
+          `<meta name="calibre:series_index" content="${raw}"/>`,
+        ]));
+        await seedProcessing([mirroredItem(path)]);
+
+        await drainAll();
+
+        expect(await onlyBook()).toMatchObject({ seriesName: 'Discworld', seriesPosition: expected });
+      });
+
+      it('two books whose OPFs assert the SAME series and position both import, neither renumbered', async () => {
+        const inner = ['<meta name="calibre:series" content="The Cosmere"/>', '<meta name="calibre:series_index" content="2"/>'];
+        await seedProcessing([
+          mirroredItem(bookFolder('collide-a', opfWith(inner)), { title: 'Mistborn' }),
+          mirroredItem(bookFolder('collide-b', opfWith(inner)), { title: 'Stormlight' }),
+        ]);
+
+        await drainAll();
+
+        const rows = await db.select().from(books).orderBy(asc(books.id));
+        expect(rows.map((r) => [r.seriesName, r.seriesPosition])).toEqual([['The Cosmere', 2], ['The Cosmere', 2]]);
+        const members = await db.select().from(seriesMembers);
+        expect(members.map((m) => m.position)).toEqual([2, 2]);
+      });
     });
 
     it('AC10: provider authors present + no folder author → the provider authors survive', async () => {

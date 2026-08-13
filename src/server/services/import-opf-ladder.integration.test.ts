@@ -180,9 +180,10 @@ describe('OPF → tags → provider import ladder (#2158, DB-backed)', () => {
     const path = seedFolder('with-opf-', curatedOpf());
     setTags(TAG_NARRATOR);
 
+    // The provider series is a per-call override: the shared factory feeds (b) and (c) too.
     const { row, detail } = await runLadder({
       path, title: 'Folder Title', forceImport: true,
-      narrators: [PROVIDER_NARRATOR], metadata: providerMatch(),
+      narrators: [PROVIDER_NARRATOR], metadata: providerMatch({ seriesPrimary: { name: 'Provider Series', position: 1 } }),
     });
 
     expect(narratorNames(detail)).toEqual([OPF_NARRATOR]);
@@ -191,6 +192,8 @@ describe('OPF → tags → provider import ladder (#2158, DB-backed)', () => {
       description: 'Opf Description',
       publisher: 'Opf Publisher',
       publishedDate: '1999-09-09',
+      seriesName: 'Opf Series',
+      seriesPosition: 4,
     });
     expect(row.genres).toEqual(['Opf Genre']);
   });
