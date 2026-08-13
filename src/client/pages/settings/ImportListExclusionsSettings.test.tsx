@@ -139,6 +139,36 @@ describe('ImportListExclusionsSettings', () => {
     expect(api.removeImportListExclusion).not.toHaveBeenCalled();
   });
 
+  describe('when the list query fails', () => {
+    it('shows a read failure instead of claiming there is nothing excluded', async () => {
+      vi.mocked(api.getImportListExclusions).mockRejectedValue(new Error('database is locked'));
+
+      renderWithProviders(<ImportListExclusionsSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load exclusions.')).toBeInTheDocument();
+      });
+      // The distinction the operator needs: a read failure is not an empty exclusion list.
+      expect(screen.queryByText('No exclusions')).not.toBeInTheDocument();
+    });
+
+    it('retries the read when the operator clicks Retry, and renders the rows once it succeeds', async () => {
+      vi.mocked(api.getImportListExclusions)
+        .mockRejectedValueOnce(new Error('database is locked'))
+        .mockResolvedValue({ data: mockExclusions, total: 2 });
+      const user = userEvent.setup();
+
+      renderWithProviders(<ImportListExclusionsSettings />);
+      await waitFor(() => expect(screen.getByText('Failed to load exclusions.')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Retry' }));
+
+      await waitFor(() => expect(screen.getByText('The Reckoning')).toBeInTheDocument());
+      expect(screen.queryByText('Failed to load exclusions.')).not.toBeInTheDocument();
+      expect(api.getImportListExclusions).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it('requests the first page at the shared default limit', async () => {
     vi.mocked(api.getImportListExclusions).mockResolvedValue({ data: [], total: 0 });
 

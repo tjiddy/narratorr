@@ -7,7 +7,8 @@ import { ConfirmModal } from '@/components/ConfirmModal';
 import { Pagination } from '@/components/Pagination';
 import { usePagination } from '@/hooks/usePagination';
 import { DEFAULT_LIMITS } from '@shared/schemas/common.js';
-import { LoadingSpinner, XCircleIcon, TrashIcon } from '@/components/icons';
+import { LoadingSpinner, XCircleIcon } from '@/components/icons';
+import { ImportListExclusionRow } from './ImportListExclusionRow';
 
 export function ImportListExclusionsSettings() {
   const queryClient = useQueryClient();
@@ -16,7 +17,7 @@ export function ImportListExclusionsSettings() {
   const { clampToTotal } = pagination;
 
   const paginationParams = { limit: pagination.limit, offset: pagination.offset };
-  const { data: response, isLoading } = useQuery({
+  const { data: response, isLoading, isError, refetch } = useQuery({
     queryKey: queryKeys.importListExclusions(paginationParams),
     queryFn: () => api.getImportListExclusions(paginationParams),
     placeholderData: (previousData) => previousData,
@@ -55,6 +56,19 @@ export function ImportListExclusionsSettings() {
         <div className="flex items-center justify-center py-12">
           <LoadingSpinner className="w-8 h-8 text-primary" />
         </div>
+      ) : isError ? (
+        // Ahead of the empty state on purpose: a failed read renders as `entries === []`, and
+        // telling the operator nothing is excluded when the list could not be read is a lie.
+        <div className="glass-card rounded-2xl p-8 sm:p-12 text-center">
+          <p className="text-sm text-red-500">Failed to load exclusions.</p>
+          <button
+            type="button"
+            onClick={() => { void refetch(); }}
+            className="mt-4 px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-all focus-ring"
+          >
+            Retry
+          </button>
+        </div>
       ) : entries.length === 0 ? (
         <div className="glass-card rounded-2xl p-8 sm:p-12 text-center">
           <XCircleIcon className="w-12 h-12 text-muted-foreground/40 mx-auto mb-4" />
@@ -66,39 +80,12 @@ export function ImportListExclusionsSettings() {
       ) : (
         <div className="space-y-3">
           {entries.map((entry, index) => (
-            <div
+            <ImportListExclusionRow
               key={entry.id}
-              className="glass-card rounded-xl p-4 animate-fade-in-up"
-              style={{ animationDelay: `${index * 50}ms` }}
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0 flex-1">
-                  <h3 className="font-medium text-sm truncate">{entry.title}</h3>
-                  <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                    {entry.authorName && (
-                      <span className="text-xs text-muted-foreground">{entry.authorName}</span>
-                    )}
-                    <span className="text-xs px-2 py-0.5 bg-muted rounded-md font-medium text-muted-foreground">
-                      {entry.importListName ?? 'Unknown list'}
-                    </span>
-                    {entry.asin && (
-                      <span className="text-xs text-muted-foreground font-mono">{entry.asin}</span>
-                    )}
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(entry.createdAt).toLocaleDateString()}
-                    </span>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setDeleteTarget(entry)}
-                  className="p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors focus-ring shrink-0"
-                  aria-label={`Remove exclusion for ${entry.title}`}
-                >
-                  <TrashIcon className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
+              entry={entry}
+              index={index}
+              onRemove={setDeleteTarget}
+            />
           ))}
         </div>
       )}
