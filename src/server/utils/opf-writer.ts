@@ -207,22 +207,18 @@ async function replaceMarkedSidecar(
 ): Promise<void> {
   const { bookId, bookFolder, log, preserve } = args;
 
-  // Byte-equal is quiet, and the comparison is on BUFFERS: it makes "byte-equal" literal, and a
-  // malformed sidecar that merely decodes to the same text still fails it and is preserved.
-  if (existingBytes.equals(Buffer.from(generated, 'utf-8'))) {
-    await replaceFileAtomically(opfPath, generated);
-    log.info({ bookId, opfPath }, 'Wrote metadata.opf sidecar');
-    return;
-  }
-
-  const generatedParse = parseGeneratedWithWarning(generated, bookId, log);
-
+  // Byte-equal is quiet and short-circuits before any parse, so two identical unparseable files
+  // are silent. The comparison is on BUFFERS: it makes "byte-equal" literal, and a malformed
+  // sidecar that merely decodes to the same text still fails it and is preserved.
   let preserved = false;
-  if (preserve) {
-    const verdict = detectSidecarDivergence(parseOpfWithDiagnostics(existingText), generatedParse);
-    if (verdict.diverged) {
-      await preserveExistingSidecar(args, bookFolder, book, verdict.divergence, existingBytes, preserve);
-      preserved = true;
+  if (!existingBytes.equals(Buffer.from(generated, 'utf-8'))) {
+    const generatedParse = parseGeneratedWithWarning(generated, bookId, log);
+    if (preserve) {
+      const verdict = detectSidecarDivergence(parseOpfWithDiagnostics(existingText), generatedParse);
+      if (verdict.diverged) {
+        await preserveExistingSidecar(args, bookFolder, book, verdict.divergence, existingBytes, preserve);
+        preserved = true;
+      }
     }
   }
 
