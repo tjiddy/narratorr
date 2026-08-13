@@ -7,7 +7,7 @@ import { normalizeProductionType } from '@core/metadata/production-type.js';
 import { cleanTagTitle, extractYear, hasTagSeriesMarker, isPureVolumeMarker } from '../utils/folder-parsing.js';
 import type { Confidence, MatchCandidate, MatchResult } from './match-job.types.js';
 import type { MatchReasonKind } from '@shared/match-reason-kind.js';
-import type { MatchSource, TagSearchOutcome } from './tag-search-planner.js';
+import type { MatchSource } from './tag-search-planner.js';
 import type { BookService } from './book.service.js';
 import { decideIntake } from './book-intake/index.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -201,32 +201,6 @@ export function tagPassPredicatesPass(
     return false;
   }
   return true;
-}
-
-/** Resolve a tagged ASIN directly; misses and provider failures fall through to planner attempts. */
-export async function runAsinKillShot(
-  metadataService: { getBook(id: string): Promise<BookMetadata | null> },
-  log: FastifyBaseLogger,
-  path: string,
-  tagAsin: string,
-  tagQuery: TagQuery,
-): Promise<TagSearchOutcome | null> {
-  try {
-    const found = await metadataService.getBook(tagAsin);
-    if (found) {
-      log.debug({ path, tagAsin, title: found.title }, 'Tag-search ASIN kill-shot hit');
-      return {
-        scored: [{ meta: found, score: 1.0 }],
-        attempt: { title: found.title ?? tagQuery.title, author: tagQuery.author, source: 'asin-tag', maxConfidence: 'high' },
-      };
-    }
-  } catch (error: unknown) {
-    log.warn(
-      { error: serializeError(error), path, tagAsin },
-      'tag-search provider error — falling through to filename-derived path',
-    );
-  }
-  return null;
 }
 
 export interface TagQuery {
