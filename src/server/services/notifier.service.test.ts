@@ -1519,6 +1519,48 @@ describe('NotifierService', () => {
         expect(service.getFailureSnapshot(1).state).toBe('ok');
       });
 
+      it('an update arriving mid-send does not let the in-flight outcome re-stop the repair', async () => {
+        const inFlight = deferred<{ success: boolean; message: string; failure: { httpStatus: number } }>();
+        const factory = installAdapter(vi.fn().mockReturnValue(inFlight.promise) as unknown as NotifierAdapter['send']);
+
+        const sending = service.notify('on_grab', { event: 'on_grab' });
+        await service.update(1, { settings: { url: 'https://repaired.hook' } });
+        inFlight.resolve(TERMINAL as never);
+        await sending;
+
+        // Without the generation token the late terminal commit lands after the repair and
+        // the operator's fix is silently undone.
+        expect(service.getFailureSnapshot(1).state).toBe('ok');
+        factory.mockRestore();
+      });
+
+      it('a delete arriving mid-send does not resurrect the pruned entry', async () => {
+        const inFlight = deferred<{ success: boolean; message: string; failure: { httpStatus: number } }>();
+        const factory = installAdapter(vi.fn().mockReturnValue(inFlight.promise) as unknown as NotifierAdapter['send']);
+
+        const sending = service.notify('on_grab', { event: 'on_grab' });
+        db.delete.mockReturnValue(mockDbChain());
+        await service.delete(1);
+        inFlight.resolve(TERMINAL as never);
+        await sending;
+
+        expect(service.getFailureSnapshot(1).state).toBe('ok');
+        factory.mockRestore();
+      });
+
+      it('a rename mid-send still lets the in-flight outcome commit — nothing was invalidated', async () => {
+        const inFlight = deferred<{ success: boolean; message: string; failure: { httpStatus: number } }>();
+        const factory = installAdapter(vi.fn().mockReturnValue(inFlight.promise) as unknown as NotifierAdapter['send']);
+
+        const sending = service.notify('on_grab', { event: 'on_grab' });
+        await service.update(1, { name: 'Renamed' });
+        inFlight.resolve(TERMINAL as never);
+        await sending;
+
+        expect(service.getFailureSnapshot(1).state).toBe('stopped');
+        factory.mockRestore();
+      });
+
       it('delete() prunes the entry so a recreated notifier starts healthy', async () => {
         await stopIt();
         db.delete.mockReturnValue(mockDbChain());

@@ -166,38 +166,42 @@ export class NotifierService {
           return;
         }
 
+        // An update or delete arriving mid-send invalidates this entry; the token lets the
+        // late outcome be dropped rather than resurrecting state the operator just cleared.
+        const generation = this.failures.generation(notifier.id);
+
         try {
           const adapter = this.getAdapter(notifier);
           const result = await adapter.send(event, payload);
-          this.recordOutcome(notifier, event, result);
+          this.recordOutcome(notifier, event, result, generation);
         } catch (error: unknown) {
-          this.commitFailure(notifier.id, describeTransportError(error));
+          this.commitFailure(notifier.id, describeTransportError(error), generation);
           this.log.warn({ notifier: notifier.name, notifierType: notifier.type, event, error: serializeError(error) }, 'Notification error');
         }
       }),
     );
   }
 
-  private recordOutcome(notifier: NotifierRow, event: NotificationEvent, result: NotifierResult): void {
+  private recordOutcome(notifier: NotifierRow, event: NotificationEvent, result: NotifierResult, generation: number): void {
     const context = { notifier: notifier.name, notifierType: notifier.type, event };
 
     if (result.success) {
-      this.failures.recordSuccess(notifier.id);
+      this.failures.recordSuccess(notifier.id, generation);
       this.log.debug(context, 'Notification sent');
       return;
     }
 
-    const verdict = this.commitFailure(notifier.id, result.failure);
+    const verdict = this.commitFailure(notifier.id, result.failure, generation);
     this.log.warn(
       { ...context, message: result.message, reason: verdict.reason },
       verdict.terminal ? 'Notification failed permanently — delivery stopped' : 'Notification failed',
     );
   }
 
-  private commitFailure(id: number, failure: NotifierResult['failure']) {
+  private commitFailure(id: number, failure: NotifierResult['failure'], generation: number) {
     const verdict = classifyFailure(failure);
-    if (verdict.terminal) this.failures.recordTerminalFailure(id, verdict.reason);
-    else this.failures.recordTransientFailure(id, verdict.reason);
+    if (verdict.terminal) this.failures.recordTerminalFailure(id, verdict.reason, generation);
+    else this.failures.recordTransientFailure(id, verdict.reason, generation);
     return verdict;
   }
 

@@ -47,11 +47,20 @@ export function backoffDelayMs(consecutiveFailures: number): number {
 export class NotifierFailureTracker {
   // A notifier in `ok` holds no entry, so the common path allocates nothing.
   private entries = new Map<number, NotifierFailureSnapshot>();
+  // Bumped whenever an entry is invalidated, so an in-flight attempt from the previous
+  // lifetime cannot commit its outcome — otherwise a send that started before an AC12 repair
+  // could re-stop a notifier the operator has just fixed.
+  private generations = new Map<number, number>();
 
   constructor(private now: () => number = Date.now) {}
 
   get(id: number): NotifierFailureSnapshot {
     return { ...(this.entries.get(id) ?? PRISTINE) };
+  }
+
+  /** Read at reserve time and passed back at commit time to detect an intervening clear. */
+  generation(id: number): number {
+    return this.generations.get(id) ?? 0;
   }
 
   /**
@@ -85,13 +94,15 @@ export class NotifierFailureTracker {
   }
 
   /** An attempt may raise severity, never lower it — except a success out of `backing-off`. */
-  recordSuccess(id: number): void {
+  recordSuccess(id: number, generation?: number): void {
+    if (this.isStale(id, generation)) return;
     const entry = this.entries.get(id);
     if (!entry || entry.state === 'stopped') return;
     this.entries.delete(id);
   }
 
-  recordTransientFailure(id: number, reason: string): void {
+  recordTransientFailure(id: number, reason: string, generation?: number): void {
+    if (this.isStale(id, generation)) return;
     const entry = this.entryFor(id);
     if (entry.state === 'stopped') return;
     entry.state = 'backing-off';
@@ -101,7 +112,8 @@ export class NotifierFailureTracker {
   }
 
   /** No backoff schedule: retrying cannot succeed, and spacing attempts only delays discovery. */
-  recordTerminalFailure(id: number, reason: string): void {
+  recordTerminalFailure(id: number, reason: string, generation?: number): void {
+    if (this.isStale(id, generation)) return;
     const entry = this.entryFor(id);
     entry.state = 'stopped';
     entry.consecutiveFailures += 1;
@@ -110,11 +122,17 @@ export class NotifierFailureTracker {
   }
 
   clear(id: number): void {
+    this.generations.set(id, this.generation(id) + 1);
     this.entries.delete(id);
   }
 
   clearAll(): void {
+    for (const id of [...this.entries.keys()]) this.clear(id);
     this.entries.clear();
+  }
+
+  private isStale(id: number, generation: number | undefined): boolean {
+    return generation !== undefined && generation !== this.generation(id);
   }
 
   private entryFor(id: number): NotifierFailureSnapshot {
