@@ -797,6 +797,19 @@ describe('writeOpfSidecar — backup destination claim (#2297 AC10)', () => {
 });
 
 describe('writeOpfSidecar — recording is nonfatal (#2297 AC16)', () => {
+  it.each(['auto', 'manual'] as const)('records the caller-supplied source `%s` verbatim', async (source) => {
+    await actualFs.writeFile(opfPath, generateOpf(makeBook(folder, { publisher: 'Gollancz' })), 'utf-8');
+    const { service, create } = makeEventHistory();
+
+    await writeOpfSidecar({
+      enabled: true, bookService: makeBookService(makeBook(folder, { publisher: 'Corgi' })), bookId: 1,
+      bookFolder: folder, log: makeLog(), preserve: { source, eventHistory: service },
+    });
+
+    // A hard-coded literal in the writer would attribute a manual import to the automatic path.
+    expect(create.mock.calls[0]![0].source).toBe(source);
+  });
+
   it('still replaces the sidecar when eventHistory.create rejects', async () => {
     const curated = generateOpf(makeBook(folder, { publisher: 'Gollancz' }));
     await actualFs.writeFile(opfPath, curated, 'utf-8');
