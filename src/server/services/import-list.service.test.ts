@@ -2371,6 +2371,25 @@ describe('ImportListService — import-list exclusions (#2305)', () => {
     );
   });
 
+  it('does not retroactively re-count an item when the exclusion is removed mid-batch', async () => {
+    // The gate reads once per item, so removing the exclusion between items changes only the
+    // items still to come.
+    const { service } = setup({
+      items: [
+        { title: 'Excluded Book', author: 'Author One' },
+        { title: 'Fresh Book', author: 'Author Two' },
+      ],
+      isExcluded: vi.fn().mockResolvedValueOnce({ id: 42 }).mockResolvedValue(null),
+    });
+
+    await service.syncDueLists();
+
+    expect(mockLog.info).toHaveBeenCalledWith(
+      expect.objectContaining({ createdCount: 1, heldReviewCount: 0, excludedCount: 1 }),
+      'Import list sync completed',
+    );
+  });
+
   it('contributes nothing to the immediate-search batch for an excluded item', async () => {
     const { service } = setup({
       items: [

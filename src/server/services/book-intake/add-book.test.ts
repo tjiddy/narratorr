@@ -582,6 +582,27 @@ describe('addBook — the import-list exclusion gate (#2305)', () => {
     expect(result).not.toHaveProperty('verdict');
   });
 
+  it('reads once and does not re-check, so an exclusion racing in after the read still creates', async () => {
+    const exclusions = gate(null);
+    const deps = makeDeps({ exclusions });
+
+    const result = await addBook(deps, request(), makeLog());
+
+    expect(result.outcome).toBe('created');
+    expect(exclusions.isExcluded).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the owned-race path untouched — the gate is advisory, not a lock', async () => {
+    const deps = makeDeps({ exclusions: gate(null) });
+    vi.mocked(deps.bookService.create).mockRejectedValue(
+      new OwnedRecordingError({ existingBookId: 9, title: 'Leviathan Wakes (owned)', reason: 'same-asin' }),
+    );
+
+    const result = await addBook(deps, request(), makeLog());
+
+    expect(result).toMatchObject({ outcome: 'owned-race', existingBookId: 9 });
+  });
+
   it('propagates a gate read failure to the caller and creates nothing', async () => {
     const exclusions = { isExcluded: vi.fn().mockRejectedValue(new Error('exclusions table locked')) };
     const deps = makeDeps({ exclusions });
