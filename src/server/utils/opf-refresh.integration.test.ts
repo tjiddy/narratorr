@@ -24,9 +24,10 @@ function makeLog(): FastifyBaseLogger {
 
 const pathExists = (p: string): Promise<boolean> => stat(p).then(() => true, () => false);
 
-function makeBook(): BookWithAuthor {
+function makeBook(path: string): BookWithAuthor {
   return {
     id: 1,
+    path,
     title: 'The Real Current Title',
     subtitle: null,
     description: 'A description that the foreign file does not contain.',
@@ -42,8 +43,8 @@ function makeBook(): BookWithAuthor {
   } as unknown as BookWithAuthor;
 }
 
-function makeBookService(): BookService {
-  return { getById: vi.fn().mockResolvedValue(makeBook()) } as unknown as BookService;
+function makeBookService(path: string): BookService {
+  return { getById: vi.fn().mockResolvedValue(makeBook(path)) } as unknown as BookService;
 }
 
 function makeSettingsService(writeOpf: boolean): SettingsService {
@@ -70,7 +71,7 @@ describe('refreshOpfForBook — real-fs foreign-file preservation (#1699)', () =
 
     await refreshOpfForBook({
       settingsService: makeSettingsService(true),
-      bookService: makeBookService(),
+      bookService: makeBookService(bookFolder),
       bookId: 1,
       bookFolder,
       log: makeLog(),
@@ -87,7 +88,7 @@ describe('refreshOpfForBook — real-fs foreign-file preservation (#1699)', () =
 
     await refreshOpfForBook({
       settingsService: makeSettingsService(true),
-      bookService: makeBookService(),
+      bookService: makeBookService(bookFolder),
       bookId: 1,
       bookFolder,
       log: makeLog(),
@@ -101,7 +102,7 @@ describe('refreshOpfForBook — real-fs foreign-file preservation (#1699)', () =
 
   it('skips entirely (no write, no throw) when bookFolder is null', withTmp(async (root) => {
     const settingsService = makeSettingsService(true);
-    const bookService = makeBookService();
+    const bookService = makeBookService(root);
 
     await expect(refreshOpfForBook({
       settingsService,
@@ -121,7 +122,7 @@ describe('refreshOpfForBook — real-fs foreign-file preservation (#1699)', () =
     await mkdir(bookFolder, { recursive: true });
     const opfPath = join(bookFolder, OPF_FILENAME);
     await writeFile(opfPath, FOREIGN_OPF, 'utf-8');
-    const bookService = makeBookService();
+    const bookService = makeBookService(bookFolder);
 
     await refreshOpfForBook({
       settingsService: makeSettingsService(false),
@@ -139,7 +140,7 @@ describe('refreshOpfForBook — real-fs foreign-file preservation (#1699)', () =
     const bookFolder = join(root, 'Author', 'Book');
     await mkdir(bookFolder, { recursive: true });
     const opfPath = join(bookFolder, OPF_FILENAME);
-    const bookService = makeBookService();
+    const bookService = makeBookService(bookFolder);
 
     await refreshOpfForBook({
       settingsService: makeSettingsService(false),
