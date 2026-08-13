@@ -13,10 +13,7 @@ import { addBook, type AddBookDeps, type AddBookEvent } from './book-intake/inde
 import type { ImportListType } from '@shared/import-list-registry.js';
 import { importListSettingsSchemas, type ImportListSettings } from '@shared/schemas/import-list.js';
 import type { ImportListRow } from './types.js';
-import { triggerImmediateSearch, type ImmediateSearchDeps } from './trigger-immediate-search.js';
-import type { AppSettings } from '@shared/schemas.js';
-
-type QualitySettings = AppSettings['quality'];
+import { runImmediateSearch, type ImmediateSearchBook, type ImmediateSearchDeps } from './trigger-immediate-search.js';
 
 const MS_PER_MINUTE = 60_000;
 
@@ -24,6 +21,12 @@ type NewImportList = typeof importLists.$inferInsert;
 
 /** Per-item result used to report created versus review-held counts (#1735). */
 type ItemOutcome = 'created' | 'held_review' | 'skipped';
+
+/** A created book carries the payload its search will key on; every other outcome carries none. */
+interface ItemResult {
+  outcome: ItemOutcome;
+  search?: ImmediateSearchBook;
+}
 
 interface SyncCounts {
   createdCount: number;
@@ -189,6 +192,7 @@ export class ImportListService {
     const qualitySettings = this.searchDeps ? await this.searchDeps.settingsService.get('quality') : undefined;
 
     const counts: SyncCounts = { createdCount: 0, heldReviewCount: 0 };
+    const pendingSearches: ImmediateSearchBook[] = [];
     for (const item of items) {
       if (!item.title?.trim()) {
         this.log.warn({ listId: list.id, item }, 'Skipping item with empty/null title');
@@ -196,14 +200,33 @@ export class ImportListService {
       }
 
       try {
-        const outcome = await this.processItem(item, list, qualitySettings);
-        if (outcome === 'created') counts.createdCount++;
-        else if (outcome === 'held_review') counts.heldReviewCount++;
+        const result = await this.processItem(item, list);
+        if (result.outcome === 'created') {
+          counts.createdCount++;
+          if (result.search) pendingSearches.push(result.search);
+        } else if (result.outcome === 'held_review') counts.heldReviewCount++;
       } catch (error: unknown) {
         this.log.warn({ listId: list.id, title: item.title, error: getErrorMessage(error) }, 'Failed to process import list item');
       }
     }
+
+    if (this.searchDeps && qualitySettings?.searchImmediately) {
+      await this.runSearchChain(pendingSearches, this.searchDeps);
+    }
     return counts;
+  }
+
+  /**
+   * Serial and awaited (#2304): a detached search per created book put ~109 multi-indexer searches
+   * in flight on one sync, which MAM answered with HTTP 429 and Prowlarr with timeouts. Awaiting
+   * also keeps the `import-list-sync` task guard held for the cycle it covers, so no admission
+   * state of its own is needed. Nothing else is awaited here — no timer, retry, or deadline — so
+   * each book's search terminates exactly as it does in the scheduled cycle.
+   */
+  private async runSearchChain(books: readonly ImmediateSearchBook[], deps: ImmediateSearchDeps): Promise<void> {
+    for (const book of books) {
+      await runImmediateSearch(book, deps, this.log);
+    }
   }
 
   /**
@@ -219,7 +242,7 @@ export class ImportListService {
     };
   }
 
-  private async processItem(item: ImportListItem, list: ImportListRow, qualitySettings?: QualitySettings): Promise<ItemOutcome> {
+  private async processItem(item: ImportListItem, list: ImportListRow): Promise<ItemResult> {
     // A shelf item's title and author are user data, so the resolved match owns the row's identity.
     const result = await addBook(this.addDeps(), {
       resolve: 'required',
@@ -231,20 +254,16 @@ export class ImportListService {
       },
     }, this.log);
 
-    if (result.outcome === 'owned-race') return 'skipped';
-    if (result.outcome === 'duplicate') return result.verdict === 'review' ? 'held_review' : 'skipped';
+    if (result.outcome === 'owned-race') return { outcome: 'skipped' };
+    if (result.outcome === 'duplicate') return { outcome: result.verdict === 'review' ? 'held_review' : 'skipped' };
 
     const created = result.book;
     this.log.info({ bookId: created.id, title: created.title, listName: list.name }, 'Book added from import list');
 
-    if (this.searchDeps && qualitySettings?.searchImmediately) {
+    return {
+      outcome: 'created',
       // The row's resolved primary author, not the hydrated list, is what the search query keys on.
-      const bookForSearch = {
-        ...created,
-        authors: result.authorName ? [{ name: result.authorName }] : [],
-      };
-      triggerImmediateSearch(bookForSearch, this.searchDeps, this.log);
-    }
-    return 'created';
+      search: { ...created, authors: result.authorName ? [{ name: result.authorName }] : [] },
+    };
   }
 }

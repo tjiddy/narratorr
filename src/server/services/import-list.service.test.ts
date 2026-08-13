@@ -4,6 +4,7 @@ import type { Db } from '@db/index.js';
 import { ImportListService } from './import-list.service.js';
 import type { BookService, BookWithAuthor } from './book.service.js';
 import { OwnedRecordingError } from './book-dedup.js';
+import { TaskRegistry } from './task-registry.js';
 import type { MetadataService } from './metadata.service.js';
 import { RateLimitError, TransientError } from '@core/index.js';
 import { initializeKey, _resetKey, encrypt, getKey } from '../utils/secret-codec.js';
@@ -21,14 +22,39 @@ vi.mock('@core/import-lists/index.js', () => ({
 // Prevent unit tests from invoking the real search pipeline.
 vi.mock('./trigger-immediate-search.js', () => ({
   triggerImmediateSearch: vi.fn(),
+  runImmediateSearch: vi.fn(),
+}));
+
+// The AC5 containment case runs the REAL `runImmediateSearch` so its own try/catch is what the
+// assertion depends on; stubbing its one live dependency is how a search failure can originate
+// where production's catch sees it.
+vi.mock('./search-pipeline.js', () => ({
+  searchAndGrabForBook: vi.fn(),
+  buildNarratorPriority: vi.fn(() => []),
+  buildSearchFilterOptions: vi.fn(() => ({})),
 }));
 
 const { IMPORT_LIST_ADAPTER_FACTORIES } = await import('@core/import-lists/index.js');
 const mockFactories = IMPORT_LIST_ADAPTER_FACTORIES as Record<string, ReturnType<typeof vi.fn>>;
-const { triggerImmediateSearch } = await import('./trigger-immediate-search.js');
+const { triggerImmediateSearch, runImmediateSearch } = await import('./trigger-immediate-search.js');
 const mockTriggerImmediateSearch = triggerImmediateSearch as unknown as ReturnType<typeof vi.fn>;
+const mockRunImmediateSearch = runImmediateSearch as unknown as ReturnType<typeof vi.fn>;
+const { runImmediateSearch: realRunImmediateSearch } =
+  await vi.importActual<typeof import('./trigger-immediate-search.js')>('./trigger-immediate-search.js');
+const { searchAndGrabForBook } = await import('./search-pipeline.js');
+const mockSearchAndGrabForBook = searchAndGrabForBook as unknown as ReturnType<typeof vi.fn>;
 
 const mockLog = createMockLogger() as unknown as FastifyBaseLogger;
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+/** Drain the microtask queue so an in-flight chain settles onto its next gate. */
+const flush = () => new Promise((resolve) => { setImmediate(resolve); });
 
 function makeBookService(overrides: {
   findDuplicate?: ReturnType<typeof vi.fn>;
@@ -89,6 +115,10 @@ describe('ImportListService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // `clearAllMocks` keeps implementations, and the chain tests install per-book gating ones that
+    // would otherwise stall an unrelated test (see [[vitest-clearallmocks-once-queue]]).
+    mockRunImmediateSearch.mockReset();
+    mockSearchAndGrabForBook.mockReset();
     _resetKey();
     initializeKey(randomBytes(32));
   });
@@ -591,7 +621,7 @@ describe('ImportListService', () => {
         expect(eventInsertChain.values).not.toHaveBeenCalledWith(
           expect.objectContaining({ source: 'import_list' }),
         );
-        expect(mockTriggerImmediateSearch).not.toHaveBeenCalled();
+        expect(mockRunImmediateSearch).not.toHaveBeenCalled();
         expect(mockLog.debug).toHaveBeenCalledWith(
           expect.objectContaining({ title: 'Already Have' }),
           expect.stringContaining('Book already exists (same recording), skipped'),
@@ -653,7 +683,7 @@ describe('ImportListService', () => {
         expect(eventInsertChain.values).not.toHaveBeenCalledWith(
           expect.objectContaining({ source: 'import_list' }),
         );
-        expect(mockTriggerImmediateSearch).not.toHaveBeenCalled();
+        expect(mockRunImmediateSearch).not.toHaveBeenCalled();
       });
 
       // Real review resolutions carry the incumbent; `book: null` cannot exercise this contract.
@@ -694,7 +724,7 @@ describe('ImportListService', () => {
             reason: expect.objectContaining({ importListName: 'Review List', existingBookId: 999 }),
           }),
         );
-        expect(mockTriggerImmediateSearch).not.toHaveBeenCalled();
+        expect(mockRunImmediateSearch).not.toHaveBeenCalled();
         expect(mockLog.info).toHaveBeenCalledWith(
           expect.objectContaining({ title: 'Maybe Owned', asin: 'B_REVIEW', existingBookId: 999 }),
           expect.stringContaining('needs recording review'),
@@ -727,7 +757,7 @@ describe('ImportListService', () => {
           expect.stringContaining('Import list sync completed'),
         );
         // The row still enters the search pipeline; only the bookkeeping write is lost.
-        await vi.waitFor(() => expect(mockTriggerImmediateSearch).toHaveBeenCalledTimes(1));
+        expect(mockRunImmediateSearch).toHaveBeenCalledTimes(1);
         await vi.waitFor(() => expect(mockLog.warn).toHaveBeenCalledWith(
           expect.objectContaining({ bookId: 88 }),
           expect.stringContaining('Failed to record book_added event'),
@@ -813,8 +843,8 @@ describe('ImportListService', () => {
         });
         expect(failWarn).toBeDefined();
 
-        await vi.waitFor(() => expect(mockTriggerImmediateSearch).toHaveBeenCalledTimes(1));
-        const [bookArg] = mockTriggerImmediateSearch.mock.calls[0]!;
+        expect(mockRunImmediateSearch).toHaveBeenCalledTimes(1);
+        const [bookArg] = mockRunImmediateSearch.mock.calls[0]!;
         expect(bookArg).toEqual(expect.objectContaining({ id: 20, title: 'Good Item' }));
       });
     });
@@ -1699,8 +1729,8 @@ describe('ImportListService', () => {
         );
         await service.syncDueLists();
 
-        await vi.waitFor(() => expect(mockTriggerImmediateSearch).toHaveBeenCalledTimes(1));
-        const [bookArg, depsArg] = mockTriggerImmediateSearch.mock.calls[0]!;
+        expect(mockRunImmediateSearch).toHaveBeenCalledTimes(1);
+        const [bookArg, depsArg] = mockRunImmediateSearch.mock.calls[0]!;
         expect(bookArg).toEqual(expect.objectContaining({ id: 42, title: 'Search Me', authors: [{ name: 'Search Author' }] }));
         expect(depsArg).toBe(searchDeps);
       });
@@ -1724,8 +1754,8 @@ describe('ImportListService', () => {
         );
         await service.syncDueLists();
 
-        await vi.waitFor(() => expect(mockTriggerImmediateSearch).toHaveBeenCalledTimes(1));
-        const [bookArg] = mockTriggerImmediateSearch.mock.calls[0]!;
+        expect(mockRunImmediateSearch).toHaveBeenCalledTimes(1);
+        const [bookArg] = mockRunImmediateSearch.mock.calls[0]!;
         expect(bookArg).toEqual(expect.objectContaining({ id: 11, title: 'Anonymous Book', authors: [] }));
       });
 
@@ -1756,8 +1786,8 @@ describe('ImportListService', () => {
         );
         await service.syncDueLists();
 
-        await vi.waitFor(() => expect(mockTriggerImmediateSearch).toHaveBeenCalledTimes(1));
-        const [bookArg] = mockTriggerImmediateSearch.mock.calls[0]!;
+        expect(mockRunImmediateSearch).toHaveBeenCalledTimes(1);
+        const [bookArg] = mockRunImmediateSearch.mock.calls[0]!;
         expect(bookArg).toEqual(expect.objectContaining({
           id: 51, title: 'Resolved Title', authors: [{ name: 'Resolved Author' }],
         }));
@@ -1783,7 +1813,7 @@ describe('ImportListService', () => {
         );
         await service.syncDueLists();
 
-        expect(mockTriggerImmediateSearch).not.toHaveBeenCalled();
+        expect(mockRunImmediateSearch).not.toHaveBeenCalled();
       });
 
       it('reads quality settings exactly once per syncList cycle (AC6)', async () => {
@@ -1813,6 +1843,340 @@ describe('ImportListService', () => {
         const get = searchDeps.settingsService.get as unknown as ReturnType<typeof vi.fn>;
         const qualityCalls = get.mock.calls.filter((args) => args[0] === 'quality');
         expect(qualityCalls).toHaveLength(1);
+      });
+    });
+
+    // #2304: the detached per-item trigger put N books' searches in flight at once, which
+    // rate-limited MAM and timed Prowlarr out. The chain is collected after creation and awaited.
+    describe('serial search chain (#2304)', () => {
+      interface ChainHarness {
+        service: ImportListService;
+        create: ReturnType<typeof vi.fn>;
+        findDuplicate: ReturnType<typeof vi.fn>;
+        provider: { fetchItems: ReturnType<typeof vi.fn>; test: ReturnType<typeof vi.fn> };
+        updateChain: ReturnType<typeof mockDbChain>;
+      }
+
+      /** One due NYT list whose items are `titles`, each creating a book with id = index + 1. */
+      const harness = (
+        titles: string[],
+        opts: { searchImmediately?: boolean; withSearchDeps?: boolean } = {},
+      ): ChainHarness => {
+        const provider = {
+          fetchItems: vi.fn().mockResolvedValue(titles.map((title) => ({ title, author: `${title} Author` }))),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(provider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        const updateChain = mockDbChain([]);
+        db.update.mockReturnValue(updateChain);
+
+        const ids = new Map(titles.map((title, index) => [title, index + 1]));
+        const create = vi.fn().mockImplementation(async (data: { title: string }) =>
+          createdBook(ids.get(data.title) ?? 0, data.title));
+        const findDuplicate = vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null });
+        const searchDeps = opts.withSearchDeps === false
+          ? undefined
+          : makeSearchDeps({ searchImmediately: opts.searchImmediately ?? true });
+
+        return {
+          service: new ImportListService(
+            inject<Db>(db), mockLog, makeBookService({ create, findDuplicate }), undefined, searchDeps,
+          ),
+          create, findDuplicate, provider, updateChain,
+        };
+      };
+
+      const titleOf = (mock: ReturnType<typeof vi.fn>) =>
+        (mock.mock.calls as [{ title: string }][]).map(([arg]) => arg.title);
+
+      it('never has more than one book search in flight, and searches in item order (AC1)', async () => {
+        const { service: svc, create } = harness(['A', 'B', 'C', 'D']);
+        const gates = new Map(['A', 'B', 'C', 'D'].map((title) => [title, deferred()]));
+        const trace: string[] = [];
+        mockRunImmediateSearch.mockImplementation(async (book: { title: string }) => {
+          trace.push(`start:${book.title}`);
+          await gates.get(book.title)!.promise;
+          trace.push(`end:${book.title}`);
+        });
+
+        const sync = svc.syncDueLists();
+        await flush();
+        expect(create).toHaveBeenCalledTimes(4);
+        expect(trace).toEqual(['start:A']);
+
+        gates.get('A')!.resolve();
+        await flush();
+        expect(trace).toEqual(['start:A', 'end:A', 'start:B']);
+
+        gates.get('B')!.resolve();
+        await flush();
+        expect(trace).toEqual(['start:A', 'end:A', 'start:B', 'end:B', 'start:C']);
+
+        gates.get('C')!.resolve();
+        gates.get('D')!.resolve();
+        await sync;
+        expect(trace).toEqual([
+          'start:A', 'end:A', 'start:B', 'end:B', 'start:C', 'end:C', 'start:D', 'end:D',
+        ]);
+        // The detached wrapper is what put ~109 searches in flight; this path must not reach it.
+        expect(mockTriggerImmediateSearch).not.toHaveBeenCalled();
+      });
+
+      it('creates every book before the first search starts (AC2, AC3)', async () => {
+        const { service: svc, create } = harness(['A', 'B', 'C']);
+        const gate = deferred();
+        mockRunImmediateSearch.mockImplementation(async () => { await gate.promise; });
+
+        const sync = svc.syncDueLists();
+        await flush();
+
+        expect(titleOf(create)).toEqual(['A', 'B', 'C']);
+        expect(mockRunImmediateSearch).toHaveBeenCalledTimes(1);
+
+        gate.resolve();
+        await sync;
+        expect(titleOf(mockRunImmediateSearch)).toEqual(['A', 'B', 'C']);
+      });
+
+      it('adds no wait of its own — the chain completes with fake timers never advanced (AC4)', async () => {
+        vi.useFakeTimers();
+        try {
+          const { service: svc } = harness(['A', 'B', 'C']);
+          mockRunImmediateSearch.mockResolvedValue(undefined);
+
+          await svc.syncDueLists();
+
+          expect(titleOf(mockRunImmediateSearch)).toEqual(['A', 'B', 'C']);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('a slow search delays the chain and nothing else (AC4)', async () => {
+        vi.useFakeTimers();
+        try {
+          const { service: svc, updateChain } = harness(['Slow', 'Next']);
+          mockRunImmediateSearch.mockImplementation(async (book: { title: string }) => {
+            if (book.title === 'Slow') await new Promise((resolve) => { setTimeout(resolve, 240_000); });
+          });
+
+          const sync = svc.syncDueLists();
+          await vi.advanceTimersByTimeAsync(240_000);
+          await sync;
+
+          expect(titleOf(mockRunImmediateSearch)).toEqual(['Slow', 'Next']);
+          expect((updateChain.set.mock.calls[0]![0] as Record<string, unknown>).lastSyncError).toBeNull();
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      // Runs the real `runImmediateSearch`: AC5 forbids the chain adding its own try/catch, so the
+      // helper's is the only containment and deleting it must red this test.
+      it('a failed search does not stop the chain, fail the sync, or alter nextRunAt (AC5)', async () => {
+        const { service: svc, create, updateChain } = harness(['A', 'Boom', 'C']);
+        mockRunImmediateSearch.mockImplementation(realRunImmediateSearch);
+        mockSearchAndGrabForBook.mockImplementation(async (book: { title: string }) => {
+          if (book.title === 'Boom') throw new Error('indexer down');
+        });
+
+        await svc.syncDueLists();
+
+        expect(titleOf(mockSearchAndGrabForBook)).toEqual(['A', 'Boom', 'C']);
+        expect(titleOf(create)).toEqual(['A', 'Boom', 'C']);
+        const setCall = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+        expect(setCall.lastSyncError).toBeNull();
+        expect(setCall.nextRunAt).toBeInstanceOf(Date);
+        expect(mockLog.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ bookId: 2 }),
+          'Search-immediately trigger failed',
+        );
+      });
+
+      it('an item whose creation throws is absent from the chain and from createdCount (AC5)', async () => {
+        const { service: svc, create } = harness(['A', 'Bad', 'C']);
+        create.mockImplementation(async (data: { title: string }) => {
+          if (data.title === 'Bad') throw new Error('insert failed');
+          return createdBook(data.title === 'A' ? 1 : 3, data.title);
+        });
+        mockRunImmediateSearch.mockResolvedValue(undefined);
+
+        await svc.syncDueLists();
+
+        expect(titleOf(mockRunImmediateSearch)).toEqual(['A', 'C']);
+        expect(mockLog.info).toHaveBeenCalledWith(
+          expect.objectContaining({ createdCount: 2, heldReviewCount: 0 }),
+          expect.stringContaining('Import list sync completed'),
+        );
+      });
+
+      it('searches nothing and leaves no chain pending when the list created no books (AC7)', async () => {
+        const { service: svc, findDuplicate, create } = harness(['Owned One', 'Owned Two']);
+        findDuplicate.mockResolvedValue({ verdict: 'same-recording', book: { id: 999, title: 'Owned' } });
+        mockRunImmediateSearch.mockResolvedValue(undefined);
+
+        await svc.syncDueLists();
+
+        expect(create).not.toHaveBeenCalled();
+        expect(mockRunImmediateSearch).not.toHaveBeenCalled();
+      });
+
+      it('searches the single created book and resolves (AC7)', async () => {
+        const { service: svc } = harness(['Only One']);
+        mockRunImmediateSearch.mockResolvedValue(undefined);
+
+        await svc.syncDueLists();
+
+        expect(titleOf(mockRunImmediateSearch)).toEqual(['Only One']);
+      });
+
+      it('searches nothing and never reads quality settings without searchDeps (AC7)', async () => {
+        const { service: svc, create } = harness(['A', 'B'], { withSearchDeps: false });
+
+        await expect(svc.syncDueLists()).resolves.toBeUndefined();
+
+        expect(create).toHaveBeenCalledTimes(2);
+        expect(mockRunImmediateSearch).not.toHaveBeenCalled();
+      });
+
+      it('searches nothing when searchImmediately is off, however many books were created (AC7)', async () => {
+        const { service: svc, create } = harness(['A', 'B', 'C'], { searchImmediately: false });
+
+        await svc.syncDueLists();
+
+        expect(create).toHaveBeenCalledTimes(3);
+        expect(mockRunImmediateSearch).not.toHaveBeenCalled();
+      });
+
+      it('gives duplicate, owned-race and review-held items no chain slot (AC7)', async () => {
+        const { service: svc, create, findDuplicate } = harness(['Fresh', 'Dup', 'Held', 'Race']);
+        findDuplicate.mockImplementation(async (candidate: { title: string }) => {
+          if (candidate.title === 'Dup') return { verdict: 'same-recording', book: { id: 901, title: 'Dup' } };
+          if (candidate.title === 'Held') return { verdict: 'review', book: { id: 902, title: 'Held' }, hasIncumbent: true };
+          return { verdict: 'different-recording', book: null };
+        });
+        create.mockImplementation(async (data: { title: string }) => {
+          if (data.title === 'Race') {
+            throw new OwnedRecordingError({ existingBookId: 903, title: 'Race', reason: 'asin-owned' });
+          }
+          return createdBook(1, data.title);
+        });
+        mockRunImmediateSearch.mockResolvedValue(undefined);
+
+        await svc.syncDueLists();
+
+        expect(titleOf(mockRunImmediateSearch)).toEqual(['Fresh']);
+      });
+
+      it('gives an empty/whitespace-titled item no chain slot (AC7)', async () => {
+        const provider = {
+          fetchItems: vi.fn().mockResolvedValue([
+            { title: 'Real Book', author: 'Author' },
+            { title: '   ', author: 'Ghost' },
+          ]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(provider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const create = vi.fn().mockImplementation(async (data: { title: string }) => createdBook(1, data.title));
+        mockRunImmediateSearch.mockResolvedValue(undefined);
+        const svc = new ImportListService(
+          inject<Db>(db), mockLog, makeBookService({ create }), undefined,
+          makeSearchDeps({ searchImmediately: true }),
+        );
+
+        await svc.syncDueLists();
+
+        expect(titleOf(mockRunImmediateSearch)).toEqual(['Real Book']);
+      });
+
+      it('keeps the single-flight bound across every due list in one tick (AC8)', async () => {
+        const trace: string[] = [];
+        const nytProvider = {
+          fetchItems: vi.fn().mockImplementation(async () => {
+            trace.push('fetch:A');
+            return [{ title: 'A1', author: 'Author A' }];
+          }),
+          test: vi.fn(),
+        };
+        const hardcoverProvider = {
+          fetchItems: vi.fn().mockImplementation(async () => {
+            trace.push('fetch:B');
+            return [{ title: 'B1', author: 'Author B' }];
+          }),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(nytProvider);
+        mockFactories.hardcover!.mockReturnValue(hardcoverProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([
+          dueNytList({ id: 1, name: 'List A' }),
+          {
+            id: 2, name: 'List B', type: 'hardcover', enabled: true,
+            settings: { apiKey: 'key', listType: 'trending' },
+            syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
+            lastSyncError: null, createdAt: new Date(),
+          },
+        ]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const gates = new Map([['A1', deferred()], ['B1', deferred()]]);
+        mockRunImmediateSearch.mockImplementation(async (book: { title: string }) => {
+          trace.push(`start:${book.title}`);
+          await gates.get(book.title)!.promise;
+          trace.push(`end:${book.title}`);
+        });
+
+        let id = 1;
+        const create = vi.fn().mockImplementation(async (data: { title: string }) => createdBook(id++, data.title));
+        const svc = new ImportListService(
+          inject<Db>(db), mockLog, makeBookService({ create }), undefined,
+          makeSearchDeps({ searchImmediately: true }),
+        );
+
+        const sync = svc.syncDueLists();
+        await flush();
+        expect(trace).toEqual(['fetch:A', 'start:A1']);
+
+        gates.get('A1')!.resolve();
+        await flush();
+        expect(trace).toEqual(['fetch:A', 'start:A1', 'end:A1', 'fetch:B', 'start:B1']);
+
+        gates.get('B1')!.resolve();
+        await sync;
+        expect(trace).toEqual(['fetch:A', 'start:A1', 'end:A1', 'fetch:B', 'start:B1', 'end:B1']);
+      });
+
+      it('holds the import-list-sync task guard for the whole chain, so the next tick skips (AC9)', async () => {
+        const { service: svc, provider } = harness(['A']);
+        const gate = deferred();
+        mockRunImmediateSearch.mockImplementation(async () => { await gate.promise; });
+
+        const registry = new TaskRegistry();
+        registry.register('import-list-sync', 'cron', () => svc.syncDueLists());
+
+        const first = registry.executeTracked('import-list-sync');
+        await flush();
+        expect(provider.fetchItems).toHaveBeenCalledTimes(1);
+        expect(registry.getAll().find((t) => t.name === 'import-list-sync')!.running).toBe(true);
+
+        await registry.executeTracked('import-list-sync');
+        expect(provider.fetchItems).toHaveBeenCalledTimes(1);
+
+        gate.resolve();
+        await first;
+        expect(registry.getAll().find((t) => t.name === 'import-list-sync')!.running).toBe(false);
       });
     });
 
