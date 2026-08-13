@@ -11,3 +11,4 @@ export * from './parse.js';
 export * from './quality.js';
 export * from './similarity.js';
 export * from './language-codes.js';
+export * from './failure-classification.js';
