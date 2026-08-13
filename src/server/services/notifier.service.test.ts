@@ -1406,6 +1406,37 @@ describe('NotifierService', () => {
       });
     });
 
+    describe('AC10 — the operator\'s enabled column is never written by a system stop', () => {
+      it('issues no write of any kind when a terminal failure stops the notifier', async () => {
+        const send = vi.fn().mockResolvedValue(TERMINAL);
+        const factory = installAdapter(send);
+
+        await service.notify('on_grab', { event: 'on_grab' });
+
+        expect(service.getFailureSnapshot(1).state).toBe('stopped');
+        // `enabled` is the operator's intent; a system stop is separate state, so no UPDATE runs.
+        expect(db.update).not.toHaveBeenCalled();
+        factory.mockRestore();
+      });
+
+      it('a fresh service starts clean, so a persistently-broken notifier re-reports after restart', async () => {
+        const send = vi.fn().mockResolvedValue(TERMINAL);
+        const factory = installAdapter(send);
+        await service.notify('on_grab', { event: 'on_grab' });
+        expect(service.getFailureSnapshot(1).state).toBe('stopped');
+
+        const restarted = new NotifierService(db as never, log as never, () => clock.now);
+        expect(restarted.getFailureSnapshot(1).state).toBe('ok');
+
+        // It re-probes once and immediately re-commits, so nothing stays hidden.
+        await restarted.notify('on_grab', { event: 'on_grab' });
+        expect(send).toHaveBeenCalledTimes(2);
+        expect(restarted.getFailureSnapshot(1).state).toBe('stopped');
+
+        factory.mockRestore();
+      });
+    });
+
     describe('AC12 — repairing clears the failure state, renaming does not', () => {
       const STORED = createMockDbNotifier({ id: 1, settings: { url: 'https://example.com/hook' } });
 
