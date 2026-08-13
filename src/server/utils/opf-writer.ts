@@ -99,7 +99,11 @@ export interface WriteOpfForImportArgs {
   bookId: number;
   bookFolder: string;
   log: FastifyBaseLogger;
-  /** Receives the original caught value when the string outcome is `failed`. */
+  /**
+   * Fires exactly once on every `failed` outcome, with the original caught value — except for a
+   * refused `metadata.opf.bak` claim, which has no caught cause and passes an
+   * {@link OpfBackupClaimError} naming the destination and the state it refused.
+   */
   onFailure?: ((cause: unknown) => void) | undefined;
   preserve?: DivergencePreservation | undefined;
 }
