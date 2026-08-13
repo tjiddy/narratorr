@@ -1595,14 +1595,39 @@ describe('monitor job', () => {
 
     it('calls processOneDownload via fireAndForget when download completes', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
-        { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42 },
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42, title: 'The Stranger [2026]' },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
       db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await runMonitorWithQG();
 
-      expect(qualityGateOrchestrator.processOneDownload).toHaveBeenCalledWith(1);
+      expect(qualityGateOrchestrator.processOneDownload).toHaveBeenCalledWith(1, expect.anything());
+    });
+
+    // The polled snapshot is the only provenance left if the row vanishes before the gate re-reads it (#2307).
+    it('hands the polled book id and release title to the quality gate', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42, title: 'The Stranger [2026]' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+      await runMonitorWithQG();
+
+      expect(qualityGateOrchestrator.processOneDownload).toHaveBeenCalledWith(1, { bookId: 42, releaseTitle: 'The Stranger [2026]' });
+    });
+
+    it('forwards a null book id rather than dropping the provenance argument', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: null, title: 'Orphan Release' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+      await runMonitorWithQG();
+
+      expect(qualityGateOrchestrator.processOneDownload).toHaveBeenCalledWith(1, { bookId: null, releaseTitle: 'Orphan Release' });
     });
 
     it('does not call processOneDownload when progress < 1', async () => {
@@ -1784,7 +1809,7 @@ describe('monitor job', () => {
 
       await runMonitorWithQG();
 
-      expect(qualityGateOrchestrator.processOneDownload).toHaveBeenCalledWith(1);
+      expect(qualityGateOrchestrator.processOneDownload).toHaveBeenCalledWith(1, expect.anything());
     });
   });
 

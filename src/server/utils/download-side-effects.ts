@@ -148,7 +148,8 @@ export function recordDownloadCompletedEvent(args: RecordDownloadCompletedEventA
 
 export interface RecordDownloadFailedEventArgs {
   eventHistory: EventHistoryService | undefined;
-  downloadId: number;
+  /** Null when the download row is already gone — book_events.download_id is an FK. */
+  downloadId: number | null;
   bookId: number | undefined;
   bookTitle: string;
   errorMessage: string;
