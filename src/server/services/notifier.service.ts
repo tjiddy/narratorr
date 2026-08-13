@@ -201,6 +201,14 @@ export class NotifierService {
     return verdict;
   }
 
+  /**
+   * The adapter result narrowed back to the route/client TestResult shape. The failure
+   * descriptor is an internal classification input, not part of the v1 API surface.
+   */
+  private static toTestResult(result: NotifierResult): { success: boolean; message?: string } {
+    return { success: result.success, ...(result.message !== undefined && { message: result.message }) };
+  }
+
   async test(id: number): Promise<{ success: boolean; message?: string }> {
     const notifier = await this.getById(id);
     if (!notifier) {
@@ -209,7 +217,7 @@ export class NotifierService {
 
     try {
       const adapter = this.getAdapter(notifier);
-      return await adapter.test();
+      return NotifierService.toTestResult(await adapter.test());
     } catch (error: unknown) {
       return {
         success: false,
@@ -239,7 +247,7 @@ export class NotifierService {
       const adapter = this.createAdapter(fakeRow);
       const result = await adapter.test();
       this.log.debug({ type: data.type, success: result.success, message: result.message }, 'Notifier config test result');
-      return result;
+      return NotifierService.toTestResult(result);
     } catch (error: unknown) {
       return {
         success: false,

@@ -161,6 +161,43 @@ describe('HealthDashboard', () => {
       expect(card).toHaveAttribute('href', '/settings/download-clients?edit=7');
     });
 
+    it('links to /settings/notifications?edit=<id> for a notifier target (#2312)', async () => {
+      (api.getHealthStatus as Mock).mockResolvedValue([
+        {
+          checkName: 'notifier:Email',
+          state: 'error',
+          message: 'Delivery stopped: authentication rejected — check credentials.',
+          target: { kind: 'notifier', id: 7 },
+        },
+      ]);
+
+      renderWithProviders(<HealthDashboard />);
+
+      const card = await screen.findByRole('link', { name: /notifier:Email/i });
+      expect(card).toHaveAttribute('href', '/settings/notifications?edit=7');
+    });
+
+    it('renders two same-named notifiers as two distinct cards (#2312 AC11)', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      (api.getHealthStatus as Mock).mockResolvedValue([
+        { checkName: 'notifier:Email', state: 'healthy', target: { kind: 'notifier', id: 7 } },
+        { checkName: 'notifier:Email', state: 'error', message: 'Delivery stopped: nope.', target: { kind: 'notifier', id: 8 } },
+      ]);
+
+      renderWithProviders(<HealthDashboard />);
+
+      await waitFor(() => {
+        expect(screen.getAllByText('notifier:Email')).toHaveLength(2);
+      });
+      const links = screen.getAllByRole('link', { name: /notifier:Email/i });
+      expect(links.map((l) => l.getAttribute('href')))
+        .toEqual(['/settings/notifications?edit=7', '/settings/notifications?edit=8']);
+      // cardKey's non-connector arm would collide these onto one key.
+      expect(consoleError.mock.calls.flat().join(' ')).not.toMatch(/same key/i);
+
+      consoleError.mockRestore();
+    });
+
     it('links to /settings/post-processing for ffmpeg settings target', async () => {
       (api.getHealthStatus as Mock).mockResolvedValue([
         {

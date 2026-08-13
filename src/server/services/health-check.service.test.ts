@@ -10,6 +10,7 @@ import type { IndexerService } from './indexer.service.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
+import type { NotifierRow } from './types.js';
 import {
   NOTIFIER_WARN_AFTER_CONSECUTIVE_FAILURES,
   type NotifierFailureSnapshot,
@@ -2027,7 +2028,7 @@ describe('HealthCheckService', () => {
         const rows = [{ id: 7, name: 'Email', enabled: true }];
         const { service, notifier } = createService({
           notifier: {
-            getAll: vi.fn(async () => rows),
+            getAll: vi.fn(async (): Promise<NotifierRow[]> => rows as unknown as NotifierRow[]),
             getFailureSnapshot: vi.fn((id: number) => snapshots[id as 7] ?? pristineSnapshot()),
           },
         });
@@ -2163,7 +2164,8 @@ describe('HealthCheckService', () => {
         expect(results.map((r) => r.checkName)).toEqual(
           expect.arrayContaining(['library-root', 'disk-space', 'ffmpeg', 'stuck-downloads']),
         );
-        const logged = log.error.mock.calls.find((c) => c[1] === 'Health check failed')?.[0] as { error: unknown };
+        const errorSpy = log.error as ReturnType<typeof vi.fn>;
+        const logged = errorSpy.mock.calls.find((c: unknown[]) => c[1] === 'Health check failed')?.[0] as { error: unknown };
         // A raw Error satisfies toMatchObject({ message }); `type` is what it lacks.
         expect(logged.error).not.toBeInstanceOf(Error);
         expect(logged.error).toMatchObject({ type: 'Error', message: 'notifier table gone' });
@@ -2175,7 +2177,7 @@ describe('HealthCheckService', () => {
         const rows = [{ id: 7, name: 'Email', enabled: true }];
         const { service } = createService({
           notifier: {
-            getAll: vi.fn(async () => rows.slice()),
+            getAll: vi.fn(async (): Promise<NotifierRow[]> => rows.slice() as unknown as NotifierRow[]),
             getFailureSnapshot: vi.fn().mockReturnValue(pristineSnapshot()),
           },
         });

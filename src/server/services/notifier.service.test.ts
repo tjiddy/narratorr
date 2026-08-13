@@ -1278,6 +1278,53 @@ describe('NotifierService', () => {
       });
     });
 
+    describe('the failure descriptor stays off the API surface', () => {
+      it('test(id) returns only { success, message } for a failed probe', async () => {
+        const factory = vi.spyOn(ADAPTER_FACTORIES, 'webhook').mockReturnValue({
+          type: 'webhook',
+          send: vi.fn(),
+          test: vi.fn().mockResolvedValue(TERMINAL),
+        });
+
+        const result = await service.test(1);
+
+        expect(result).toEqual({ success: false, message: 'HTTP 401' });
+        expect(Object.keys(result)).toEqual(['success', 'message']);
+        factory.mockRestore();
+      });
+
+      it('testConfig() returns only { success, message } for a failed probe', async () => {
+        const factory = vi.spyOn(ADAPTER_FACTORIES, 'webhook').mockReturnValue({
+          type: 'webhook',
+          send: vi.fn(),
+          test: vi.fn().mockResolvedValue(TERMINAL),
+        });
+
+        const result = await service.testConfig({ type: 'webhook', settings: { url: 'https://probe.test' } });
+
+        expect(result).toEqual({ success: false, message: 'HTTP 401' });
+        factory.mockRestore();
+      });
+
+      it('a probe neither commits an outcome nor clears one', async () => {
+        const send = vi.fn().mockResolvedValue(TERMINAL);
+        const factory = installAdapter(send);
+        await service.notify('on_grab', { event: 'on_grab' });
+        factory.mockRestore();
+
+        const probe = vi.spyOn(ADAPTER_FACTORIES, 'webhook').mockReturnValue({
+          type: 'webhook',
+          send: vi.fn(),
+          test: vi.fn().mockResolvedValue(OK),
+        });
+        await service.test(1);
+        probe.mockRestore();
+
+        // Only an AC12 repair leaves `stopped`; a manual probe is not one.
+        expect(service.getFailureSnapshot(1).state).toBe('stopped');
+      });
+    });
+
     describe('AC13 — a failing notifier never breaks its peers or the caller', () => {
       it('a throwing adapter does not stop the other subscribed notifier receiving', async () => {
         const healthy = vi.fn().mockResolvedValue(OK);
