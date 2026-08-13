@@ -40,7 +40,13 @@ vi.mock('@core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn().mockResolvedValue(null),
 }));
 
+// #2292's ASIN rung reads a sidecar per book; keep these fixture paths off the real filesystem.
+vi.mock('../utils/opf-reader.js', () => ({
+  readOpfMetadata: vi.fn().mockResolvedValue(null),
+}));
+
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
+import { readOpfMetadata } from '../utils/opf-reader.js';
 
 async function waitForJob(service: MatchJobService, id: string, maxMs = 2000): Promise<void> {
   const start = Date.now();
@@ -75,6 +81,7 @@ describe('MatchJobService — rate-limit provider fan-out (AC26 / F2)', () => {
     mockAudnexus.getChapterRuntime.mockResolvedValue({ kind: 'not_found' });
 
     vi.mocked(scanAudioDirectory).mockReset();
+    vi.mocked(readOpfMetadata).mockResolvedValue(null);
 
     mockLog = createMockLogger();
     metadataService = new MetadataService(inject<FastifyBaseLogger>(mockLog));
