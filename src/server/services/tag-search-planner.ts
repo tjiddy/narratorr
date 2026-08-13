@@ -6,6 +6,7 @@ import { cleanTagTitle } from '../utils/folder-parsing.js';
 export const MAX_TAG_SEARCH_ATTEMPTS = 5;
 
 export type AttemptSource =
+  | 'asin-opf'
   | 'asin-tag'
   | 'exact'
   | 'album'

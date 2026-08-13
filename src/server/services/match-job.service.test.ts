@@ -19,6 +19,13 @@ vi.mock('@core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn().mockResolvedValue(null),
 }));
 
+// #2292 routes every match through the OPF ASIN rung, so without this the fixture paths below
+// would reach the real filesystem. `null` — no sidecar — is the production behaviour every test
+// in this file assumes; the rung's own cases live in match-job.service.opf-asin.test.ts.
+vi.mock('../utils/opf-reader.js', () => ({
+  readOpfMetadata: vi.fn().mockResolvedValue(null),
+}));
+
 // Preserve crypto.randomBytes: auth.service builds DUMMY_SALT during transitive import.
 vi.mock('node:crypto', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -26,6 +33,7 @@ vi.mock('node:crypto', async (importOriginal) => {
 });
 
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
+import { readOpfMetadata } from '../utils/opf-reader.js';
 import { randomUUID } from 'node:crypto';
 
 function makeBookMetadata(overrides: Partial<BookMetadata> = {}): BookMetadata {
@@ -86,6 +94,8 @@ describe('MatchJobService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Re-establish the no-sidecar default: an undefined resolution would break the rung everywhere.
+    vi.mocked(readOpfMetadata).mockResolvedValue(null);
     log = createMockLogger();
     metadataService = createMockMetadataService();
     settingsService = inject<SettingsService>({ get: vi.fn().mockResolvedValue({ ffmpegPath: '' }) });

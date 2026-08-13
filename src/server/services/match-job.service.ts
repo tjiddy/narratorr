@@ -3,8 +3,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { MetadataService } from './metadata.service.js';
 import type { BookService } from './book.service.js';
 import type { BookMetadata } from '@core/metadata/index.js';
-import type { Confidence, MatchCandidate, MatchResult, MatchJobStatus } from './match-job.types.js';
-import type { MatchReasonKind } from '@shared/match-reason-kind.js';
+import type { MatchCandidate, MatchResult, MatchJobStatus } from './match-job.types.js';
 import { scanAudioDirectory, type AudioScanResult } from '@core/utils/audio-scanner.js';
 import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
 import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
@@ -14,9 +13,11 @@ import { diceCoefficient } from '@core/utils/similarity.js';
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { applyAttemptCap, applyLibraryDuplicate, applyNarratorCap, deriveTagQuery, isDurationVerified, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, resolveSingleResultConfidence, runAsinKillShot, tagPassPredicatesPass, TITLE_SIMILARITY_FLOOR, type ChapterRuntimeSeconds, type DurationConfidenceResult, type NarratorCapContext, type TagQuery } from './match-job.helpers.js';
+import { applyLibraryDuplicate, applyNarratorCap, deriveTagQuery, isDurationVerified, rankResults, rankResultsCleaned, resolveConfidenceFromDuration, resolveSingleResultConfidence, tagPassPredicatesPass, TITLE_SIMILARITY_FLOOR, type ChapterRuntimeSeconds, type DurationConfidenceResult, type NarratorCapContext, type TagQuery } from './match-job.helpers.js';
 import { planTagSearchAttempts, type TagSearchAttempt, type TagSearchOutcome } from './tag-search-planner.js';
 import { corroborateDurationVerdict, type CorroboratedDuration } from './chapter-corroboration.js';
+import { runAsinIdentificationRung } from './match-asin-rung.js';
+import { assembleMatchOutcome } from './match-outcome-assembly.js';
 
 
 // Preserve public type imports after the contracts moved to match-job.types.ts.
@@ -198,8 +199,17 @@ class MatchJob {
       // High-producing paths converge on one narrator-cap exit; early non-high returns bypass it.
       let resolved: MatchResult, capCtx: NarratorCapContext;
 
+      // An exact ASIN the book already carries outranks any text query, so it runs first.
+      const asinOutcome = await runAsinIdentificationRung(
+        { metadataService: this.metadataService, log: this.log },
+        book.path,
+        audioResult?.tagAsin,
+      );
+
       // Tag title and albumartist are structurally distinct, so this pass never swaps them on zero results.
-      const tagMatch = await this.tryTagDerivedMatch(book, audioResult);
+      const tagMatch = asinOutcome
+        ? await this.assemble(book.path, audioResult, asinOutcome)
+        : await this.tryTagDerivedMatch(book, audioResult);
       if (tagMatch) {
         ({ result: resolved, ctx: capCtx } = tagMatch);
       } else {
@@ -337,45 +347,31 @@ class MatchJob {
   ): Promise<{ result: MatchResult; ctx: NarratorCapContext } | null> {
     const tagQuery = deriveTagQuery(audioResult);
     if (!tagQuery || !audioResult) return null;
-    // Confidence helpers compare raw seconds against provider minutes × 60.
-    const scannedSeconds = audioResult.totalDuration;
     this.log.debug({ path: book.path, tagTitle: tagQuery.title, tagAuthor: tagQuery.author }, 'Tag-derived metadata search');
     const outcome = await this.runTagSearch(book, audioResult, tagQuery);
     if (!outcome) return null;
-
-    const { scored, attempt } = outcome;
-    const top = scored[0]!;
-
-    const single = scored.length === 1;
-    // Resolve duration before the attempt cap: mismatches stay medium; missing runtime may still be capped.
-    const resolveVerdict = (chapterRuntimes?: ChapterRuntimeSeconds): DurationConfidenceResult => single
-      ? resolveSingleResultConfidence(top.meta, scannedSeconds, chapterRuntimes)
-      : resolveConfidenceFromDuration(scored, scannedSeconds, chapterRuntimes);
-    // Give a would-be mismatch one lazy chapter-table check before either cap.
-    const { verdict, chapterRuntimes } = await this.corroborateDuration(book, top.meta, resolveVerdict(), resolveVerdict);
-
-    // durationVerified feeds narrator capping; capBypassedByDuration only bypasses medium attempt caps.
-    const durationVerified = isDurationVerified(top.meta, scannedSeconds, chapterRuntimes);
-    const capBypassedByDuration = attempt.maxConfidence === 'medium' && durationVerified;
-    const cap = (raw: Confidence, reason: string | undefined, reasonKind: MatchReasonKind | undefined): { confidence: Confidence; reason?: string; reasonKind?: MatchReasonKind } =>
-      capBypassedByDuration ? { confidence: 'high' } : applyAttemptCap(raw, attempt.maxConfidence, reason, reasonKind);
-
-    const { confidence, reason, reasonKind } = verdict;
-    const result: MatchResult = { path: book.path, ...cap(confidence, reason, reasonKind), bestMatch: top.meta, alternatives: single ? [] : scored.slice(1).map(s => s.meta) };
-    return { result, ctx: { log: this.log, matchSource: attempt.source, durationVerified } };
+    return this.assemble(book.path, audioResult, outcome);
   }
 
-  // Try the ASIN kill-shot, then each planned search → detail → rank → predicate attempt.
+  private assemble(
+    path: string,
+    audioResult: AudioScanResult | null,
+    outcome: TagSearchOutcome,
+  ): Promise<{ result: MatchResult; ctx: NarratorCapContext }> {
+    return assembleMatchOutcome(
+      { log: this.log, lookupChapterSeconds: asin => this.metadataService.getChapterRuntimeSeconds(asin) },
+      path,
+      audioResult,
+      outcome,
+    );
+  }
+
+  // Each planned search → detail → rank → predicate attempt; the ASIN sources already ran.
   private async runTagSearch(
     book: MatchCandidate,
     audioResult: AudioScanResult,
     tagQuery: TagQuery,
   ): Promise<TagSearchOutcome | null> {
-    if (audioResult.tagAsin) {
-      const asinHit = await runAsinKillShot(this.metadataService, this.log, book.path, audioResult.tagAsin, tagQuery);
-      if (asinHit) return asinHit;
-    }
-
     const attempts = planTagSearchAttempts(audioResult, tagQuery);
     for (const attempt of attempts) {
       // A non-null tag scan uses 0 as no-signal while preserving the edition-tiebreaker API.
