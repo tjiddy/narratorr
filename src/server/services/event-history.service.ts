@@ -36,7 +36,9 @@ export interface CreateEventInput {
  * point at `metadata.opf.bak`, and a stored path on an append-only row would go stale on the
  * first rename with nothing to update it. The join is left, so a deleted book reads `null`.
  */
-const withCurrentBookPath = { ...getTableColumns(bookEvents), bookPath: books.path };
+// Built lazily: a top-level `getTableColumns(bookEvents)` dereferences the schema at import
+// time and crashes any suite whose partial `@db/schema.js` mock omits the table.
+const withCurrentBookPath = () => ({ ...getTableColumns(bookEvents), bookPath: books.path });
 
 export interface EventHistoryServiceWireDeps {
   retrySearchDeps: RetrySearchDeps;
@@ -101,7 +103,7 @@ export class EventHistoryService {
       .where(where);
 
     let query = this.db
-      .select(withCurrentBookPath)
+      .select(withCurrentBookPath())
       .from(bookEvents)
       .leftJoin(books, eq(bookEvents.bookId, books.id))
       .where(where)
@@ -120,7 +122,7 @@ export class EventHistoryService {
 
   async getByBookId(bookId: number): Promise<BookEventWithPath[]> {
     return this.db
-      .select(withCurrentBookPath)
+      .select(withCurrentBookPath())
       .from(bookEvents)
       .leftJoin(books, eq(bookEvents.bookId, books.id))
       .where(eq(bookEvents.bookId, bookId))

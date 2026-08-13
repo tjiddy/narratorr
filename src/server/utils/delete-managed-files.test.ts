@@ -238,7 +238,7 @@ describe('deleteManagedBookFiles', () => {
     expect(await pathExists(book)).toBe(true);
   }));
 
-  it('fails safe when a root metadata.opf cannot be read (a directory named metadata.opf) — preserved + warned (#1674)', withTmp(async (root) => {
+  it('preserves a DIRECTORY named metadata.opf as foreign without reading through it (#1674, #2297)', withTmp(async (root) => {
     const book = join(root, 'Book');
     await mkdir(join(book, 'metadata.opf'), { recursive: true });
     await writeFile(join(book, 'a.mp3'), 'a');
@@ -250,7 +250,8 @@ describe('deleteManagedBookFiles', () => {
     expect(base(result.preservedForeign)).toEqual(['metadata.opf']);
     expect(await pathExists(join(book, 'metadata.opf'))).toBe(true);
     expect(await pathExists(book)).toBe(true);
-    expect(log.warn).toHaveBeenCalled();
+    // Type is settled from the Dirent before any read, so there is no EISDIR to report.
+    expect(log.warn).not.toHaveBeenCalled();
   }));
 
   it('refuses a guarded-mode bookPath that is an in-library symlink escaping the root — external files untouched (#1591)', withTmp(async (root) => {
@@ -326,5 +327,79 @@ describe('deleteManagedBookFiles', () => {
     } finally {
       await rm(external, { recursive: true, force: true });
     }
+  }));
+});
+
+describe('deleteManagedBookFiles — the rolling sidecar backup (#2297 AC13)', () => {
+  const CAN_SYMLINK = process.platform !== 'win32';
+
+  it('deletes a marked metadata.opf.bak alongside the sidecar and then removes the empty folder', withTmp(async (root) => {
+    const book = join(root, 'Author', 'Book');
+    await mkdir(book, { recursive: true });
+    await writeFile(join(book, 'metadata.opf'), MARKED_OPF);
+    await writeFile(join(book, 'metadata.opf.bak'), MARKED_OPF);
+    await writeFile(join(book, 'a.mp3'), 'a');
+
+    const result = await deleteManagedBookFiles(book, root, makeLog());
+
+    // Left behind, the backup would both orphan itself and keep the folder alive on ENOTEMPTY.
+    expect(base(result.deletedManaged)).toEqual(['a.mp3', 'metadata.opf', 'metadata.opf.bak']);
+    expect(await pathExists(book)).toBe(false);
+  }));
+
+  it('preserves an UNMARKED operator-authored metadata.opf.bak and keeps the folder', withTmp(async (root) => {
+    const book = join(root, 'Author', 'Book');
+    await mkdir(book, { recursive: true });
+    await writeFile(join(book, 'metadata.opf.bak'), FOREIGN_OPF);
+    await writeFile(join(book, 'a.mp3'), 'a');
+
+    const result = await deleteManagedBookFiles(book, root, makeLog());
+
+    expect(base(result.preservedForeign)).toEqual(['metadata.opf.bak']);
+    expect(await pathExists(join(book, 'metadata.opf.bak'))).toBe(true);
+    expect(await pathExists(book)).toBe(true);
+  }));
+
+  it.skipIf(!CAN_SYMLINK)('never reads through a symlinked metadata.opf.bak, so the operator link and its target survive', withTmp(async (root) => {
+    const outside = join(root, 'marked-elsewhere.opf');
+    await writeFile(outside, MARKED_OPF);
+    const book = join(root, 'Author', 'Book');
+    await mkdir(book, { recursive: true });
+    await symlink(outside, join(book, 'metadata.opf.bak'));
+    await writeFile(join(book, 'a.mp3'), 'a');
+
+    const result = await deleteManagedBookFiles(book, root, makeLog());
+
+    // A content-only classifier follows the link, reads the marker, and deletes the link.
+    expect(base(result.preservedForeign)).toEqual(['metadata.opf.bak']);
+    expect(await pathExists(join(book, 'metadata.opf.bak'))).toBe(true);
+    expect(await pathExists(outside)).toBe(true);
+    expect(await pathExists(book)).toBe(true);
+  }));
+
+  it.skipIf(!CAN_SYMLINK)('never reads through a symlinked metadata.opf either', withTmp(async (root) => {
+    const outside = join(root, 'marked-elsewhere.opf');
+    await writeFile(outside, MARKED_OPF);
+    const book = join(root, 'Author', 'Book');
+    await mkdir(book, { recursive: true });
+    await symlink(outside, join(book, 'metadata.opf'));
+
+    const result = await deleteManagedBookFiles(book, root, makeLog());
+
+    expect(base(result.preservedForeign)).toEqual(['metadata.opf']);
+    expect(await pathExists(outside)).toBe(true);
+    expect(await pathExists(book)).toBe(true);
+  }));
+
+  it('preserves a DIRECTORY named metadata.opf.bak as foreign', withTmp(async (root) => {
+    const book = join(root, 'Author', 'Book');
+    await mkdir(join(book, 'metadata.opf.bak'), { recursive: true });
+    await writeFile(join(book, 'a.mp3'), 'a');
+
+    const result = await deleteManagedBookFiles(book, root, makeLog());
+
+    expect(base(result.preservedForeign)).toEqual(['metadata.opf.bak']);
+    expect(await pathExists(join(book, 'metadata.opf.bak'))).toBe(true);
+    expect(await pathExists(book)).toBe(true);
   }));
 });
