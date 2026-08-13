@@ -5,7 +5,7 @@ import {
   type AddAllSeriesResponse,
 } from '@shared/series-add-all.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { addBook, type AddBookDeps } from './book-intake/index.js';
+import { addBook, unreachableExclusion, type AddBookDeps } from './book-intake/index.js';
 import type { ImmediateSearchDeps } from './trigger-immediate-search.js';
 import { runImmediateSearchChain } from './immediate-search-chain.js';
 import type { BookDetail, BookService } from './book.service.js';
@@ -150,6 +150,9 @@ export class SeriesAddAllService {
         created.push(result.book);
         return { title, position, disposition: 'created', bookId: result.book.id };
       }
+      // Add All supplies no exclusion port, so an excluded book stays addable from a series card;
+      // the arm is asserted unreachable rather than folded into `owned` or `failed`.
+      if (result.outcome === 'excluded') return unreachableExclusion(result);
       if (result.outcome === 'owned-race' || result.verdict === 'same-recording') {
         return { title, position, disposition: 'owned', bookId: result.existingBookId };
       }

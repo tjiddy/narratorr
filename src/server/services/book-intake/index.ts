@@ -1,6 +1,6 @@
 export { decideIntake } from './decide-intake.js';
 export { buildDuplicateCandidate } from './candidate.js';
-export { addBook } from './add-book.js';
+export { addBook, unreachableExclusion } from './add-book.js';
 export type { IntakeDecision, IntakeDeps, IntakeItem, IntakeRequest } from './types.js';
 export type {
   AddBookDeps,
@@ -12,5 +12,6 @@ export type {
   AddBookRequest,
   AddBookResolve,
   AddBookResult,
+  ExclusionGate,
 } from './add-book.js';
 export type { AddBookSeed, IdentityPolicy } from './resolve.js';

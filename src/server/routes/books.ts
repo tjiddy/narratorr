@@ -32,7 +32,7 @@ export interface BookRouteDeps {
 import { searchAndGrabForBook, buildNarratorPriority, buildSearchFilterOptions } from '../services/search-pipeline.js';
 import { z } from 'zod';
 import { triggerImmediateSearch } from '../services/trigger-immediate-search.js';
-import { addBook, type AddBookItem, type AddBookResult } from '../services/book-intake/index.js';
+import { addBook, unreachableExclusion, type AddBookItem, type AddBookResult } from '../services/book-intake/index.js';
 import {
   idParamSchema,
   bookListQuerySchema,
@@ -102,7 +102,7 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
  * reading `id`/`title`, and `conflict` is the only field they must opt into. `review` means the
  * resolver abstained, which is not the ownership claim a bare row reads as.
  */
-function buildAddConflictBody(result: Exclude<AddBookResult, { outcome: 'created' }>) {
+function buildAddConflictBody(result: Exclude<AddBookResult, { outcome: 'created' | 'excluded' }>) {
   if (result.outcome === 'owned-race') {
     // Hydration is best-effort, so the error's identity is the floor and the body is never null.
     return { id: result.existingBookId, title: result.bookTitle, ...result.book, conflict: 'owned-race' as const };
@@ -158,6 +158,9 @@ async function registerAddBookRoute(app: FastifyInstance, deps: BookRouteDeps) {
         resolve: 'skip',
         provenance: { source: 'manual', eventShape: 'snapshot' },
       }, request.log);
+      // This surface supplies no exclusion port, so the operator can still add an excluded book
+      // by hand; the arm is asserted unreachable rather than answered with a 409.
+      if (result.outcome === 'excluded') return unreachableExclusion(result);
       if (result.outcome !== 'created') {
         return reply.status(409).send(buildAddConflictBody(result));
       }

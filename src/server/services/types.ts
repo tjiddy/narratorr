@@ -7,6 +7,7 @@ import type {
   downloads,
   connectors,
   importJobs,
+  importListExclusions,
   importLists,
   indexers,
   notifiers,
@@ -68,6 +69,9 @@ export type NotifierRow = Omit<typeof notifiers.$inferSelect, 'type'> & {
 export type ImportListRow = Omit<typeof importLists.$inferSelect, 'type'> & {
   type: ImportListType;
 };
+
+// No enum columns, so $inferSelect needs no re-narrowing.
+export type ImportListExclusionRow = typeof importListExclusions.$inferSelect;
 
 export type ConnectorRow = Omit<typeof connectors.$inferSelect, 'type'> & {
   type: ConnectorType;

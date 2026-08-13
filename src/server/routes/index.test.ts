@@ -21,6 +21,7 @@ vi.mock('../services', () => ({
   NotifierService: vi.fn(),
   ConnectorService: vi.fn(),
   BlacklistService: vi.fn(),
+  ImportListExclusionService: vi.fn(),
   RemotePathMappingService: vi.fn(),
   RenameService: vi.fn(),
 
@@ -80,8 +81,8 @@ vi.mock('@core/utils/audio-processor.js', () => ({ detectFfmpegPath: vi.fn(), pr
 vi.mock('@core/indexers/proxy.js', () => ({ resolveProxyIp: vi.fn() }));
 
 describe('routeRegistry', () => {
-  it('contains all 39 route factories', () => {
-    expect(routeRegistry).toHaveLength(39);
+  it('contains all 40 route factories', () => {
+    expect(routeRegistry).toHaveLength(40);
   });
 
   it('every entry is a function', () => {

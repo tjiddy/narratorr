@@ -2,6 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { normalizeProductionType } from '@core/metadata/production-type.js';
 import type { RecordingReviewReason } from '@core/utils/recording-identity.js';
 import type { ProductionType } from '@shared/schemas/book.js';
+import type { DedupIdentity } from '@shared/dedup.js';
 import type { EventSource } from '@shared/schemas/event-history.js';
 import { announceBookAdded, bookAddedSnapshotEvent } from '../../utils/event-helpers.js';
 import { serializeError } from '../../utils/serialize-error.js';
@@ -98,11 +99,22 @@ export type AddBookRequest =
  */
 export type AddBookResolve = AddBookRequest['resolve'];
 
+/**
+ * The read half of the import-list exclusion list, as much of it as the gate needs. A matched row
+ * is returned rather than a boolean because the refusal reports which exclusion refused it.
+ */
+export interface ExclusionGate {
+  isExcluded: (identity: DedupIdentity) => Promise<{ id: number } | null>;
+}
+
 export interface AddBookDeps extends AsinEnrichmentDeps {
   bookService: Pick<BookService, 'findDuplicate' | 'create' | 'getById'>;
   eventHistory: { create: (event: AddBookEvent) => Promise<unknown> };
   /** Only the `resolve: 'required'` arm reads it, and only when the operator configured one. */
   resolver?: Pick<MetadataService, 'resolveBook'> | undefined;
+  /** Supplied only by `ImportListService`: the manual add surfaces stay ungated, so an operator
+   * can still add an excluded book by hand (#2305). */
+  exclusions?: ExclusionGate | undefined;
 }
 
 export type AddBookResult =
@@ -118,9 +130,24 @@ export type AddBookResult =
   | { outcome: 'owned-race'; existingBookId: number; bookTitle: string; book: BookDetail | null }
   // authorName is the primary author the row was created under, which under `adopt` is the resolved
   // one rather than anything the caller holds — and what its own search trigger must key on.
-  | { outcome: 'created'; book: BookDetail; authorName: string | null };
+  | { outcome: 'created'; book: BookDetail; authorName: string | null }
+  // Reachable only for a caller that supplied `AddBookDeps.exclusions`; carries the row that refused.
+  | { outcome: 'excluded'; exclusionId: number };
 
 type DuplicateResult = Extract<AddBookResult, { outcome: 'duplicate' }>;
+
+type ExcludedResult = Extract<AddBookResult, { outcome: 'excluded' }>;
+
+/**
+ * What a caller with no exclusion port does with the arm it cannot receive. Throwing keeps the
+ * unreachability an assertion: a future wiring change surfaces here instead of being silently
+ * reported as some other disposition.
+ */
+export function unreachableExclusion(result: ExcludedResult): never {
+  throw new Error(
+    `addBook reported outcome 'excluded' (exclusion #${result.exclusionId}) for an add surface with no exclusion port`,
+  );
+}
 
 /** The single place the decision half is derived from the write item. Undefined values survive as
  * undefined: `buildDuplicateCandidate` is what turns them back into omitted keys. */
@@ -299,6 +326,26 @@ async function createAndAnnounce(
   return { outcome: 'created', book, authorName: primaryAuthorOf(item) };
 }
 
+/** The refusal, or null to carry on to the duplicate decision. */
+async function refuseExcluded(
+  deps: AddBookDeps,
+  item: AddBookItem,
+  log: FastifyBaseLogger,
+): Promise<ExcludedResult | null> {
+  if (!deps.exclusions) return null;
+  const match = await deps.exclusions.isExcluded({
+    title: item.title,
+    asin: item.asin,
+    authorName: primaryAuthorOf(item),
+  });
+  if (!match) return null;
+  log.info(
+    { title: item.title, asin: item.asin, exclusionId: match.id },
+    'Import list item refused: book is excluded',
+  );
+  return { outcome: 'excluded', exclusionId: match.id };
+}
+
 /** The write item, resolved against the provider first when the caller holds only a seed. */
 async function toWriteItem(deps: AddBookDeps, request: AddBookRequest, log: FastifyBaseLogger): Promise<AddBookItem> {
   if (request.resolve === 'skip') return request.item;
@@ -333,6 +380,11 @@ export async function addBook(
   const productionType = item.formatType === undefined
     ? item.productionType
     : normalizeProductionType(item.formatType);
+
+  // After the enrichment for the same reason the duplicate decision is: the exclusion keys on the
+  // ASIN the row would have carried, not the one the provider item arrived with (#2249).
+  const excluded = await refuseExcluded(deps, item, log);
+  if (excluded) return excluded;
 
   const decision = await decideIntake(deps, { item: toIntakeItem(item, productionType) });
   const refusal = refuseDuplicate(decision, request.onReview, item, log);

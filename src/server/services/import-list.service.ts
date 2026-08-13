@@ -9,6 +9,7 @@ import { encryptFields, decryptFields, getKey } from '../utils/secret-codec.js';
 import { resolveAndEncryptSettings, resolveSettings } from '../utils/sentinel-resolver.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import type { BookService } from './book.service.js';
+import type { ImportListExclusionService } from './import-list-exclusion.service.js';
 import { addBook, type AddBookDeps, type AddBookEvent } from './book-intake/index.js';
 import type { ImportListType } from '@shared/import-list-registry.js';
 import { importListSettingsSchemas, type ImportListSettings } from '@shared/schemas/import-list.js';
@@ -20,8 +21,8 @@ const MS_PER_MINUTE = 60_000;
 
 type NewImportList = typeof importLists.$inferInsert;
 
-/** Per-item result used to report created versus review-held counts (#1735). */
-type ItemOutcome = 'created' | 'held_review' | 'skipped';
+/** Per-item result used to report created versus review-held versus excluded counts (#1735, #2305). */
+type ItemOutcome = 'created' | 'held_review' | 'skipped' | 'excluded';
 
 /** A created book carries the payload its search will key on; every other outcome carries none. */
 interface ItemResult {
@@ -32,6 +33,8 @@ interface ItemResult {
 interface SyncCounts {
   createdCount: number;
   heldReviewCount: number;
+  /** Items the operator already deleted once; disjoint from the other two counters. */
+  excludedCount: number;
 }
 
 /** Normalize legacy Hardcover `shelfId: ''` before strict per-provider schema parsing. */
@@ -50,6 +53,7 @@ export class ImportListService {
     private bookService: BookService,
     private metadata?: MetadataService,
     private searchDeps?: ImmediateSearchDeps,
+    private exclusions?: ImportListExclusionService,
   ) {}
 
   private decryptRow(row: ImportListRow): ImportListRow {
@@ -164,7 +168,13 @@ export class ImportListService {
           .set({ lastRunAt: now, nextRunAt, lastSyncError: null })
           .where(eq(importLists.id, list.id));
         this.log.info(
-          { id: list.id, name: list.name, createdCount: counts.createdCount, heldReviewCount: counts.heldReviewCount },
+          {
+            id: list.id,
+            name: list.name,
+            createdCount: counts.createdCount,
+            heldReviewCount: counts.heldReviewCount,
+            excludedCount: counts.excludedCount,
+          },
           'Import list sync completed',
         );
       } catch (error: unknown) {
@@ -192,7 +202,7 @@ export class ImportListService {
 
     const qualitySettings = this.searchDeps ? await this.searchDeps.settingsService.get('quality') : undefined;
 
-    const counts: SyncCounts = { createdCount: 0, heldReviewCount: 0 };
+    const counts: SyncCounts = { createdCount: 0, heldReviewCount: 0, excludedCount: 0 };
     const pendingSearches: ImmediateSearchBook[] = [];
     for (const item of items) {
       if (!item.title?.trim()) {
@@ -206,6 +216,7 @@ export class ImportListService {
           counts.createdCount++;
           if (result.search) pendingSearches.push(result.search);
         } else if (result.outcome === 'held_review') counts.heldReviewCount++;
+        else if (result.outcome === 'excluded') counts.excludedCount++;
       } catch (error: unknown) {
         this.log.warn({ listId: list.id, title: item.title, error: getErrorMessage(error) }, 'Failed to process import list item');
       }
@@ -230,6 +241,9 @@ export class ImportListService {
       bookService: this.bookService,
       eventHistory: { create: (event: AddBookEvent) => Promise.resolve(this.db.insert(bookEvents).values(event)) },
       resolver: this.metadata,
+      // The only surface that gates on exclusions: a list re-adding a deleted book is the loop the
+      // exclusion exists to break, and no manual add has one.
+      exclusions: this.exclusions,
     };
   }
 
@@ -245,6 +259,7 @@ export class ImportListService {
       },
     }, this.log);
 
+    if (result.outcome === 'excluded') return { outcome: 'excluded' };
     if (result.outcome === 'owned-race') return { outcome: 'skipped' };
     if (result.outcome === 'duplicate') return { outcome: result.verdict === 'review' ? 'held_review' : 'skipped' };
 

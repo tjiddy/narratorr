@@ -17,6 +17,7 @@ export const idParamSchema = z.object({
 export const DEFAULT_LIMITS = {
   books: 120,
   blacklist: 100,
+  importListExclusions: 100,
   activity: 50,
   eventHistory: 50,
 } as const;

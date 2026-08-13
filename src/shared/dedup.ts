@@ -63,9 +63,19 @@ export interface DedupIdentity {
   authorName?: string | null | undefined;
 }
 
-function resolveAuthorSlug(id: DedupIdentity): string | null {
+/**
+ * The one author-slug rule the identity predicate keys on; exported so a caller narrowing rows
+ * for `matchesLibraryIdentity` derives the same slug the match will compare.
+ *
+ * A DERIVED slug that comes out empty is `null`, not `''`. `slugify` strips everything that is not
+ * a word character, so a whitespace- or punctuation-only author name slugs to `''` — which reads as
+ * authorless everywhere here (every branch below is a truthiness test) but is a distinct value to a
+ * persisted column. A caller that stores this result and later queries `author_slug IS NULL` on it
+ * would write a row it can never fetch again (#2305).
+ */
+export function resolveAuthorSlug(id: DedupIdentity): string | null {
   if (typeof id.authorSlug === 'string') return id.authorSlug.length > 0 ? id.authorSlug : null;
-  if (typeof id.authorName === 'string' && id.authorName.length > 0) return slugify(id.authorName);
+  if (typeof id.authorName === 'string' && id.authorName.length > 0) return slugify(id.authorName) || null;
   return null;
 }
 

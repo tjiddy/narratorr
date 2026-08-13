@@ -162,6 +162,22 @@ describe('Series card Add All, E2E (#2200)', () => {
     }
   });
 
+  // AC4 of #2305: only ImportListService supplies the exclusion port, so a card member the
+  // operator once deleted from an import list is still addable here.
+  it('adds a member that an import-list exclusion covers — Add All is deliberately ungated', async () => {
+    const anchor = await seedBook('Leviathan Wakes', 'The Expanse', 1);
+    await e2e.services.importListExclusion.recordExclusion(
+      { title: "Caliban's War", asin: 'B_CALIBAN', authorName: AUTHOR },
+      { importListId: null, importListName: 'NYT Bestsellers' },
+    );
+    mockHardcover();
+
+    const res = await addAll(anchor);
+
+    expect(res.json()).toMatchObject({ requested: 2, created: 2, failed: 0 });
+    expect(await titlesIn()).toEqual(["Abaddon's Gate", "Caliban's War", 'Leviathan Wakes']);
+  });
+
   it('records the series author as the created row\'s primary author', async () => {
     const anchor = await seedBook('Leviathan Wakes', 'The Expanse', 1);
     mockHardcover();
