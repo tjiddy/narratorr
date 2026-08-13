@@ -157,21 +157,28 @@ export interface NotifierDeliveryHealth {
 /** Map delivery state onto the existing three-value HealthState; no new literal is introduced. */
 export function describeNotifierDelivery(snapshot: NotifierFailureSnapshot): NotifierDeliveryHealth {
   const { suppressedCount, suppressedSince } = snapshot;
+  // suppressedCount is the delivery observable: how much was lost, not merely that the
+  // channel is unwell. It rides EVERY state — a one- or two-failure streak is still
+  // `healthy` by AC6, but the notifications it dropped have to be visible on the card.
   const suppressed = suppressedCount > 0 && suppressedSince !== null
-    ? ` ${suppressedCount} notification${suppressedCount === 1 ? '' : 's'} suppressed since ${new Date(suppressedSince).toISOString()}.`
+    ? `${suppressedCount} notification${suppressedCount === 1 ? '' : 's'} suppressed since ${new Date(suppressedSince).toISOString()}.`
     : '';
 
   if (snapshot.state === 'stopped') {
     return {
       state: 'error',
-      message: `Delivery stopped: ${snapshot.reason ?? 'the notifier failed permanently'}.${suppressed}`,
+      message: join(`Delivery stopped: ${snapshot.reason ?? 'the notifier failed permanently'}.`, suppressed),
     };
   }
   if (snapshot.consecutiveFailures >= NOTIFIER_WARN_AFTER_CONSECUTIVE_FAILURES) {
     return {
       state: 'warning',
-      message: `${snapshot.consecutiveFailures} consecutive delivery failures: ${snapshot.reason ?? 'delivery is failing'}.${suppressed}`,
+      message: join(`${snapshot.consecutiveFailures} consecutive delivery failures: ${snapshot.reason ?? 'delivery is failing'}.`, suppressed),
     };
   }
-  return { state: 'healthy' };
+  return suppressed ? { state: 'healthy', message: suppressed } : { state: 'healthy' };
+}
+
+function join(...parts: string[]): string {
+  return parts.filter(Boolean).join(' ');
 }

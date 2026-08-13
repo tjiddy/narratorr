@@ -1020,6 +1020,26 @@ describe('NotifierService', () => {
         factory.mockRestore();
       });
 
+      it('names the dropped notifications on the health entry while still below the warn threshold', async () => {
+        const send = vi.fn().mockResolvedValue(TRANSIENT);
+        const factory = installAdapter(send);
+
+        await service.notify('on_grab', { event: 'on_grab' });
+        const suppressedAt = clock.now;
+        for (let i = 0; i < 3; i += 1) await service.notify('on_grab', { event: 'on_grab' });
+
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(service.getFailureSnapshot(1).suppressedCount).toBe(3);
+
+        // One failure is below the warn threshold, so the card stays healthy — but the three
+        // notifications it dropped are the AC8 delivery observable and must be named.
+        const entry = describeNotifierDelivery(service.getFailureSnapshot(1));
+        expect(entry.state).toBe('healthy');
+        expect(entry.message).toBe(`3 notifications suppressed since ${new Date(suppressedAt).toISOString()}.`);
+
+        factory.mockRestore();
+      });
+
       it('surfaces the suppressed count on the health entry once the streak warns', async () => {
         const send = vi.fn().mockResolvedValue(TRANSIENT);
         const factory = installAdapter(send);

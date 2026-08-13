@@ -1915,6 +1915,25 @@ describe('HealthCheckService', () => {
         expect(results.find((r) => r.checkName === 'notifier:Email')).toMatchObject({ state: 'healthy' });
       });
 
+      it('stays healthy below the threshold but names the notifications it dropped', async () => {
+        const suppressedSince = Date.UTC(2026, 7, 13, 9, 30, 0);
+        const { service } = withNotifiers([EMAIL], {
+          7: pristineSnapshot({
+            state: 'backing-off',
+            consecutiveFailures: 1,
+            reason: 'the server reported a temporary error',
+            suppressedCount: 3,
+            suppressedSince,
+          }),
+        });
+
+        const results = await service.runAllChecks();
+        const check = results.find((r) => r.checkName === 'notifier:Email');
+
+        expect(check).toMatchObject({ state: 'healthy', target: { kind: 'notifier', id: 7 } });
+        expect(check?.message).toBe(`3 notifications suppressed since ${new Date(suppressedSince).toISOString()}.`);
+      });
+
       it('warns at exactly the warn threshold', async () => {
         const { service } = withNotifiers([EMAIL], {
           7: pristineSnapshot({

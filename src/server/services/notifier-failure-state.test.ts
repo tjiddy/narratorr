@@ -290,6 +290,39 @@ describe('describeNotifierDelivery (#2312 AC6)', () => {
     expect(describeNotifierDelivery(tracker.get(1)).state).toBe('healthy');
   });
 
+  // AC8: suppressedCount is the delivery observable in EVERY state. A below-threshold streak
+  // is still healthy, but the notifications it dropped must be visible on the card.
+  it('names the suppressed notifications while still below the warn threshold', () => {
+    const { tracker, clock } = makeTracker();
+    tracker.recordTransientFailure(1, 'the server reported a temporary error');
+    const suppressedAt = clock.now;
+    for (let i = 0; i < 3; i += 1) tracker.reserveAttempt(1);
+
+    const entry = describeNotifierDelivery(tracker.get(1));
+
+    expect(entry.state).toBe('healthy');
+    expect(entry.message).toBe(`3 notifications suppressed since ${new Date(suppressedAt).toISOString()}.`);
+  });
+
+  it('reports no message for a healthy notifier that has dropped nothing', () => {
+    const tracker = streak(NOTIFIER_WARN_AFTER_CONSECUTIVE_FAILURES - 1);
+    expect(describeNotifierDelivery(tracker.get(1)).message).toBeUndefined();
+  });
+
+  it('keeps the warning reason and the suppression count in one message', () => {
+    const { tracker, clock } = makeTracker();
+    for (let i = 0; i < NOTIFIER_WARN_AFTER_CONSECUTIVE_FAILURES; i += 1) {
+      tracker.recordTransientFailure(1, 'the server reported a temporary error');
+    }
+    const suppressedAt = clock.now;
+    tracker.reserveAttempt(1);
+
+    expect(describeNotifierDelivery(tracker.get(1)).message).toBe(
+      `3 consecutive delivery failures: the server reported a temporary error. `
+      + `1 notification suppressed since ${new Date(suppressedAt).toISOString()}.`,
+    );
+  });
+
   it('warns at exactly the warn threshold, naming the streak and the reason', () => {
     const tracker = streak(NOTIFIER_WARN_AFTER_CONSECUTIVE_FAILURES);
     const entry = describeNotifierDelivery(tracker.get(1));
@@ -318,7 +351,9 @@ describe('describeNotifierDelivery (#2312 AC6)', () => {
     for (let i = 0; i < 4; i += 1) tracker.reserveAttempt(1);
 
     const entry = describeNotifierDelivery(tracker.get(1));
-    expect(entry.message).toContain(`4 notifications suppressed since ${new Date(suppressedAt).toISOString()}`);
+    expect(entry.message).toBe(
+      `Delivery stopped: nope. 4 notifications suppressed since ${new Date(suppressedAt).toISOString()}.`,
+    );
   });
 
   it('uses the singular for a single suppressed notification', () => {
