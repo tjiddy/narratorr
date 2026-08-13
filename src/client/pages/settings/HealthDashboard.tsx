@@ -33,6 +33,8 @@ function targetToHref(target: HealthCheckTarget): string {
       return `/settings/indexers?edit=${target.id}`;
     case 'download-client':
       return `/settings/download-clients?edit=${target.id}`;
+    case 'notifier':
+      return `/settings/notifications?edit=${target.id}`;
     case 'settings':
       return `/settings/${target.path}`;
     case 'route':
@@ -43,7 +45,7 @@ function targetToHref(target: HealthCheckTarget): string {
 // Server trackingKey collides for singleton route checks; checkName stays unique.
 function cardKey(check: HealthCheckResult): string {
   const target = check.target;
-  if (target?.kind === 'indexer' || target?.kind === 'download-client') {
+  if (target?.kind === 'indexer' || target?.kind === 'download-client' || target?.kind === 'notifier') {
     return `${target.kind}:${target.id}`;
   }
   return check.checkName;

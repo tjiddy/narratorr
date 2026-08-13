@@ -4,7 +4,10 @@ import type { FastifyBaseLogger } from 'fastify';
 import { notifiers } from '@db/schema.js';
 import {
   ADAPTER_FACTORIES,
+  classifyFailure,
+  describeTransportError,
   type NotifierAdapter,
+  type NotifierResult,
   type NotificationEvent,
   type EventPayload,
 } from '@core/index.js';
@@ -16,14 +19,38 @@ import { resolveAndEncryptSettings, resolveSettings } from '../utils/sentinel-re
 import { AdapterCache } from '../utils/adapter-cache.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { NotifierRow } from './types.js';
+import { NotifierFailureTracker, type NotifierFailureSnapshot } from './notifier-failure-state.js';
 
 
 type NewNotifier = typeof notifiers.$inferInsert;
 
+export interface NotifyOptions {
+  /** Suppress one recipient for this dispatch only — see AC14 in #2312. */
+  excludeNotifierId?: number;
+}
+
+/** Key-order-independent comparison, so a re-serialised settings object is not a change. */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(',')}}`;
+}
+
 export class NotifierService {
   private adapters = new AdapterCache<NotifierAdapter>();
+  private failures: NotifierFailureTracker;
 
-  constructor(private db: Db, private log: FastifyBaseLogger) {}
+  constructor(private db: Db, private log: FastifyBaseLogger, clock: () => number = Date.now) {
+    this.failures = new NotifierFailureTracker(clock);
+  }
+
+  /** Observed delivery state for the health roster; never probes the adapter. */
+  getFailureSnapshot(id: number): NotifierFailureSnapshot {
+    return this.failures.get(id);
+  }
 
   // Every adapter-construction path must decrypt settings first.
   private decryptRow(row: NotifierRow): NotifierRow {
@@ -54,10 +81,12 @@ export class NotifierService {
   }
 
   async update(id: number, data: Partial<NewNotifier>): Promise<NotifierRow | null> {
+    const existingRows = await this.db.select().from(notifiers).where(eq(notifiers.id, id)).limit(1);
+    const existing = existingRows[0];
+
     const toUpdate = { ...data };
     if (toUpdate.settings) {
-      const existing = await this.db.select().from(notifiers).where(eq(notifiers.id, id)).limit(1);
-      toUpdate.settings = resolveAndEncryptSettings('notifier', toUpdate.settings as Record<string, unknown>, existing[0]?.settings as Record<string, unknown> | undefined);
+      toUpdate.settings = resolveAndEncryptSettings('notifier', toUpdate.settings as Record<string, unknown>, existing?.settings as Record<string, unknown> | undefined);
     }
     const result = await this.db
       .update(notifiers)
@@ -65,10 +94,29 @@ export class NotifierService {
       .where(eq(notifiers.id, id))
       .returning();
 
+    // Adapter eviction stays unconditional; failure-state invalidation is conditional, so a
+    // rename cannot reset a streak or re-fire a health transition that already fired.
     this.adapters.delete(id);
+    if (this.isRepair(data, existing)) this.failures.clear(id);
+
     this.log.info({ id }, 'Notifier updated');
     const row = result[0] || null;
     return row ? this.decryptRow(row) : null;
+  }
+
+  /** Only a change that could plausibly fix delivery clears the failure state. */
+  private isRepair(data: Partial<NewNotifier>, existing: NotifierRow | undefined): boolean {
+    if (!existing) return false;
+    if (data.type !== undefined && data.type !== existing.type) return true;
+    if (data.enabled !== undefined && data.enabled !== existing.enabled) return true;
+    if (!data.settings) return false;
+
+    // Compare RESOLVED PLAINTEXT, never the stored column: encrypt() re-randomises its IV per
+    // call, so two encryptions of the same value are never byte-equal. Masked sentinels
+    // resolve against the stored value first, so an untouched secret compares equal.
+    const stored = this.decryptRow(existing).settings as Record<string, unknown> | null;
+    const incoming = resolveSettings('notifier', { ...(data.settings as Record<string, unknown>) }, stored ?? undefined);
+    return stableStringify(incoming) !== stableStringify(stored);
   }
 
   async delete(id: number): Promise<boolean> {
@@ -77,18 +125,24 @@ export class NotifierService {
 
     await this.db.delete(notifiers).where(eq(notifiers.id, id));
     this.adapters.delete(id);
+    // AUTOINCREMENT never reissues an id, so a recreated notifier cannot inherit this state.
+    this.failures.clear(id);
     this.log.info({ id }, 'Notifier deleted');
     return true;
   }
 
   /** Isolate and log adapter failures across all matching enabled notifiers. */
-  async notify(event: NotificationEvent, payload: EventPayload): Promise<void> {
+  async notify(event: NotificationEvent, payload: EventPayload, options?: NotifyOptions): Promise<void> {
     const enabledNotifiers = await this.db
       .select()
       .from(notifiers)
       .where(eq(notifiers.enabled, true));
 
     const matching = enabledNotifiers.filter((n) => {
+      // AC14: exclude at recipient selection, before the attempt gate, so a health
+      // announcement about a notifier is never an attempt through it — it cannot commit an
+      // outcome, and it cannot inflate that notifier's suppressedCount.
+      if (options?.excludeNotifierId === n.id) return false;
       const events = Array.isArray(n.events) ? n.events : [];
       return events.includes(event);
     });
@@ -102,19 +156,49 @@ export class NotifierService {
 
     await Promise.allSettled(
       matching.map(async (notifier) => {
+        // Gate and reserve BEFORE the first await: a concurrent caller at a reopened gate
+        // must fail its own check rather than double-send.
+        if (!this.failures.reserveAttempt(notifier.id)) {
+          this.log.debug(
+            { notifier: notifier.name, notifierType: notifier.type, event, deliveryState: this.failures.get(notifier.id).state },
+            'Notification suppressed',
+          );
+          return;
+        }
+
         try {
           const adapter = this.getAdapter(notifier);
           const result = await adapter.send(event, payload);
-          if (!result.success) {
-            this.log.warn({ notifier: notifier.name, notifierType: notifier.type, event, message: result.message }, 'Notification failed');
-          } else {
-            this.log.debug({ notifier: notifier.name, notifierType: notifier.type, event }, 'Notification sent');
-          }
+          this.recordOutcome(notifier, event, result);
         } catch (error: unknown) {
+          this.commitFailure(notifier.id, describeTransportError(error));
           this.log.warn({ notifier: notifier.name, notifierType: notifier.type, event, error: serializeError(error) }, 'Notification error');
         }
       }),
     );
+  }
+
+  private recordOutcome(notifier: NotifierRow, event: NotificationEvent, result: NotifierResult): void {
+    const context = { notifier: notifier.name, notifierType: notifier.type, event };
+
+    if (result.success) {
+      this.failures.recordSuccess(notifier.id);
+      this.log.debug(context, 'Notification sent');
+      return;
+    }
+
+    const verdict = this.commitFailure(notifier.id, result.failure);
+    this.log.warn(
+      { ...context, message: result.message, reason: verdict.reason },
+      verdict.terminal ? 'Notification failed permanently — delivery stopped' : 'Notification failed',
+    );
+  }
+
+  private commitFailure(id: number, failure: NotifierResult['failure']) {
+    const verdict = classifyFailure(failure);
+    if (verdict.terminal) this.failures.recordTerminalFailure(id, verdict.reason);
+    else this.failures.recordTransientFailure(id, verdict.reason);
+    return verdict;
   }
 
   async test(id: number): Promise<{ success: boolean; message?: string }> {
@@ -202,5 +286,6 @@ export class NotifierService {
 
   clearAdapterCache(): void {
     this.adapters.clear();
+    this.failures.clearAll();
   }
 }

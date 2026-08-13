@@ -5,6 +5,7 @@ export type HealthState = 'healthy' | 'warning' | 'error';
 export type HealthCheckTarget =
   | { kind: 'indexer'; id: number }
   | { kind: 'download-client'; id: number }
+  | { kind: 'notifier'; id: number }
   | { kind: 'settings'; path: string }
   | { kind: 'route'; path: string };
 

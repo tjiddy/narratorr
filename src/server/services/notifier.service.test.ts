@@ -5,6 +5,7 @@ import { initializeKey, _resetKey, encrypt, isEncrypted } from '../utils/secret-
 import { ADAPTER_FACTORIES, type NotifierAdapter } from '@core/index.js';
 
 import { createMockDbNotifier } from '../__tests__/factories.js';
+import { NOTIFIER_BACKOFF_BASE_MS } from './notifier-failure-state.js';
 
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 
@@ -22,12 +23,16 @@ describe('NotifierService', () => {
   let db: ReturnType<typeof createMockDb>;
   let log: ReturnType<typeof createMockLogger>;
   let service: NotifierService;
+  // Hand-driven clock: the #2312 backoff gate is computed arithmetic, so advancing this is
+  // both deterministic and the only way to reopen a gate without fake timers.
+  let clock: { now: number };
 
   beforeEach(() => {
     initializeKey(TEST_KEY);
     db = createMockDb();
     log = createMockLogger();
-    service = new NotifierService(db as never, log as never);
+    clock = { now: 1_700_000_000_000 };
+    service = new NotifierService(db as never, log as never, () => clock.now);
   });
 
   afterEach(() => {
@@ -902,6 +907,9 @@ describe('NotifierService', () => {
       await expect(service.notify('on_grab', { event: 'on_grab' })).resolves.toBeUndefined();
       expect(factorySpy).toHaveBeenCalledTimes(1);
 
+      // A throw with no structural code is transient, so the gate closes for a minute; step
+      // past it so this test still measures the cache rather than the backoff.
+      clock.now += NOTIFIER_BACKOFF_BASE_MS;
       await service.notify('on_grab', { event: 'on_grab' });
       expect(factorySpy).toHaveBeenCalledTimes(2);
       expect(goodAdapter.send).toHaveBeenCalledTimes(1);
