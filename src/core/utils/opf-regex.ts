@@ -7,6 +7,14 @@ export const OPF_FILENAME = 'metadata.opf';
 export const OPF_FILE_REGEX = /^metadata\.opf$/i;
 
 /**
+ * The one-generation rolling snapshot of the sidecar a divergent import replaced (#2297). Never
+ * read as a sidecar and never itself backed up; deleted with the book when it carries the marker.
+ */
+export const OPF_BACKUP_FILENAME = 'metadata.opf.bak';
+
+export const OPF_BACKUP_FILE_REGEX = /^metadata\.opf\.bak$/i;
+
+/**
  * Filename cannot prove ownership because ABS and Calibre also use `metadata.opf`. This inert,
  * namespaced meta tag marks files Narratorr may overwrite or delete; ABS ignores unknown meta names.
  */

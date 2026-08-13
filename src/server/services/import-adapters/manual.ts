@@ -168,6 +168,8 @@ export class ManualImportAdapter implements ImportAdapter {
       await writeOpfForImport({
         enabled: taggingSettings.writeOpf, bookService: this.deps.bookService,
         bookId, bookFolder: finalPath, log,
+        // Unattended: the DB may be wrong, so a diverged sidecar is preserved before replacement.
+        preserve: { source: 'manual', eventHistory: this.deps.eventHistory },
       });
     } catch (opfError: unknown) {
       log.warn({ error: serializeError(opfError), bookId }, 'OPF write failed during manual import — continuing');

@@ -14,6 +14,8 @@ import { assertRealPathInsideLibrary, cleanEmptyParents, planFileRenames, rename
 import { toNamingOptions } from '@core/utils/naming.js';
 import { computeFolderTarget, toLibraryRelative } from '../utils/rename-target.js';
 import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
+import { sidecarLockKey } from '../utils/opf-writer.js';
+import { withPathWriteLock } from '../utils/path-write-lock.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 
@@ -241,8 +243,15 @@ export class RenameService {
       if ((error as NodeJS.ErrnoException).code === 'EXDEV') {
         this.log.info({ oldPath, newPath }, 'Cross-volume move — falling back to copy+delete');
         await mkdir(newPath, { recursive: true });
-        await cp(oldPath, newPath, { recursive: true });
-        await rm(oldPath, { recursive: true, force: true });
+        // `rename(2)` above moves metadata.opf and metadata.opf.bak together or not at all; this
+        // fallback walks entries one at a time and can copy the backup at generation N−1, let the
+        // sidecar writer advance both, copy the sidecar at N+1, then delete the only copy of N.
+        // Hold the OLD sidecar key across the whole reproduction — released before the books.path
+        // commit, so a queued writer targets the vacated folder and fails rather than splitting it.
+        await withPathWriteLock(sidecarLockKey(oldPath), async () => {
+          await cp(oldPath, newPath, { recursive: true });
+          await rm(oldPath, { recursive: true, force: true });
+        });
       } else {
         throw error;
       }

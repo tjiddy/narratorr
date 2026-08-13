@@ -1,14 +1,14 @@
-import { eq, desc, like, and, lt, count as countFn, inArray } from 'drizzle-orm';
+import { eq, desc, like, and, lt, count as countFn, getTableColumns, inArray } from 'drizzle-orm';
 import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { bookEvents, downloads } from '@db/schema.js';
+import { bookEvents, books, downloads } from '@db/schema.js';
 import { type BlacklistService } from './blacklist.service.js';
 import { type BookService } from './book.service.js';
 import { actionableEventTypes, type EventType, type EventSource } from '@shared/schemas/event-history.js';
 import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 import { WireOnce } from './wire-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
-import type { BookEventRow } from './types.js';
+import type { BookEventRow, BookEventWithPath } from './types.js';
 
 export class EventHistoryServiceError extends Error {
   constructor(
@@ -30,6 +30,13 @@ export interface CreateEventInput {
   source: EventSource;
   reason?: Record<string, unknown> | null | undefined;
 }
+
+/**
+ * Every listed event carries the book's current folder. A `sidecar_diverged` card needs it to
+ * point at `metadata.opf.bak`, and a stored path on an append-only row would go stale on the
+ * first rename with nothing to update it. The join is left, so a deleted book reads `null`.
+ */
+const withCurrentBookPath = { ...getTableColumns(bookEvents), bookPath: books.path };
 
 export interface EventHistoryServiceWireDeps {
   retrySearchDeps: RetrySearchDeps;
@@ -69,7 +76,7 @@ export class EventHistoryService {
   async getAll(
     filters?: { eventType?: EventType[]; search?: string },
     pagination?: { limit?: number; offset?: number },
-  ): Promise<{ data: BookEventRow[]; total: number }> {
+  ): Promise<{ data: BookEventWithPath[]; total: number }> {
     const conditions = [];
 
     if (filters?.eventType && filters.eventType.length > 0) {
@@ -94,8 +101,9 @@ export class EventHistoryService {
       .where(where);
 
     let query = this.db
-      .select()
+      .select(withCurrentBookPath)
       .from(bookEvents)
+      .leftJoin(books, eq(bookEvents.bookId, books.id))
       .where(where)
       .orderBy(desc(bookEvents.createdAt), desc(bookEvents.id));
 
@@ -110,10 +118,11 @@ export class EventHistoryService {
     return { data, total };
   }
 
-  async getByBookId(bookId: number): Promise<BookEventRow[]> {
+  async getByBookId(bookId: number): Promise<BookEventWithPath[]> {
     return this.db
-      .select()
+      .select(withCurrentBookPath)
       .from(bookEvents)
+      .leftJoin(books, eq(bookEvents.bookId, books.id))
       .where(eq(bookEvents.bookId, bookId))
       .orderBy(desc(bookEvents.createdAt));
   }

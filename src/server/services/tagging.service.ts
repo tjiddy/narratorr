@@ -17,7 +17,7 @@ import {
   TAGGABLE_EXTENSIONS,
 } from './mutagen-tag-payload.js';
 import { writeTagsWithMutagen } from './mutagen-tag-writer.js';
-import { withTagWriteLock } from './tag-write-lock.js';
+import { withPathWriteLock } from '../utils/path-write-lock.js';
 import {
   readExistingTags,
   resolveTags,
@@ -115,7 +115,7 @@ export async function tagFile(
   // The write is in place — no second file is ever created, so #1852 AC9's hazard (a library scan
   // ingesting the born-hidden temp file before the atomic rename) cannot occur and the temp+rename
   // it guarded is gone. The lock covers the save *and* the helper's read-back verification.
-  const result = await withTagWriteLock(filePath, () => writeTagsWithMutagen(mutagenPython, request));
+  const result = await withPathWriteLock(filePath, () => writeTagsWithMutagen(mutagenPython, request));
 
   const sizes = {
     ...(result.sizeBefore !== undefined && { sizeBefore: result.sizeBefore }),

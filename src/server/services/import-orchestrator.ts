@@ -138,6 +138,8 @@ export class ImportOrchestrator {
         await writeOpfForImport({
           enabled: taggingSettings.writeOpf, bookService: this.bookService,
           bookId: ctx.bookId, bookFolder: result.targetPath, log: this.log,
+          // Unattended: the DB may be wrong, so a diverged sidecar is preserved before replacement.
+          preserve: { source: 'auto', ...(this.eventHistory && { eventHistory: this.eventHistory }) },
         });
       }
     } catch (opfError: unknown) {
