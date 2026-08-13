@@ -853,6 +853,27 @@ describe('books routes', () => {
       expect(services.downloadOrchestrator.grab).toHaveBeenCalled();
     });
 
+    // #2304 made the import-list batch caller await its searches; this single-add route must not
+    // follow. A call-count assertion stays green if someone adds an `await`, so the observable is
+    // the reply landing while the search is parked on its first read.
+    it('replies 201 while the immediate search is still outstanding (AC6, #2304)', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
+      (services.book.create as Mock).mockResolvedValue(mockBook);
+      (services.settings.get as Mock).mockReturnValue(new Promise(() => {}));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], searchImmediately: true },
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(JSON.parse(res.payload)).toEqual(expect.objectContaining({ id: mockBook.id }));
+      // Still parked on the settings read, so the reply overtook the search rather than racing it.
+      expect(services.settings.get).toHaveBeenCalledWith('quality');
+      expect(services.indexerSearch.searchAllStreaming).not.toHaveBeenCalled();
+    });
+
     it('fire-and-forget search excludes results matching reject words', async () => {
       (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(mockBook);
