@@ -180,10 +180,13 @@ function markedDoc(inner: string): string {
   ].join('\n');
 }
 
-// The book whose generated document recovers no metadata at all: `title` passes
-// `z.string().trim().min(1)` but `escapeXml` strips the control, so `<dc:title>` is empty.
+// The book whose generated document recovers no metadata at all. A lone U+0001 title is a
+// state the app really accepts — `String.fromCharCode(1).trim().length === 1` satisfies
+// `z.string().trim().min(1)` — and `escapeXml` strips it, so `<dc:title>` serializes empty and
+// parses back to null. Written as an escape, not a raw control byte: #2181 removed those from
+// opf-reader.test.ts because they are invisible in diffs and hide the file from grep.
 const unparseableBook = (path: string) => makeBook(path, {
-  title: '', authors: [], narrators: [], genres: null,
+  title: '\u0001', authors: [], narrators: [], genres: null,
 } as Partial<BookWithAuthor>);
 
 describe('writeOpfSidecar — divergence preservation (#2297)', () => {

@@ -330,8 +330,27 @@ describe('deleteManagedBookFiles', () => {
   }));
 });
 
+/**
+ * These AC13 cases need a FILE symlink, which Windows refuses with EPERM unless Developer Mode
+ * is on — unlike the directory symlinks above, which fall back to junctions. Probe the
+ * capability rather than the platform: these guard a security property (never read through an
+ * operator's link to decide ownership), so they are worth skipping as rarely as possible.
+ */
+const CAN_SYMLINK = await (async () => {
+  const probe = mkdtempSync(join(tmpdir(), 'narratorr-symlink-probe-'));
+  try {
+    const target = join(probe, 't');
+    await writeFile(target, '');
+    await symlink(target, join(probe, 'l'));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await rm(probe, { recursive: true, force: true }).catch(() => { /* tolerant */ });
+  }
+})();
+
 describe('deleteManagedBookFiles — the rolling sidecar backup (#2297 AC13)', () => {
-  const CAN_SYMLINK = process.platform !== 'win32';
 
   it('deletes a marked metadata.opf.bak alongside the sidecar and then removes the empty folder', withTmp(async (root) => {
     const book = join(root, 'Author', 'Book');

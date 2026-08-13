@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { formatBytes } from '@/lib/api';
 import { capitalize } from '@/lib/eventReasonHelpers';
 import { qualityGateReasonSchema } from '@shared/schemas.js';
+import { OPF_BACKUP_FILENAME } from '@core/utils/opf-regex.js';
 import { QualityComparisonPanel } from '@/pages/activity/QualityComparisonPanel';
 import { AlertCircleIcon } from '@/components/icons';
 
@@ -164,10 +165,11 @@ function SidecarDivergedDetails({ reason, bookPath }: { reason: Record<string, u
           ))}
         </>
       )}
-      {/* Composed from the book's current folder, not a stored path: events are append-only, so a
-          path recorded at write time would go stale on the first rename. */}
+      {/* Composed from the book's current folder plus the writer's own filename constant, not a
+          stored path: events are append-only, so a path recorded at write time would go stale on
+          the first rename, and a second literal here could drift from where the writer puts it. */}
       {bookPath ? (
-        <KeyValueRow label="Backup" value={`${bookPath}/metadata.opf.bak`} />
+        <KeyValueRow label="Backup" value={`${bookPath}/${OPF_BACKUP_FILENAME}`} />
       ) : (
         <p className="text-xs text-muted-foreground">
           This book is no longer in the library, so its backup file location is gone.

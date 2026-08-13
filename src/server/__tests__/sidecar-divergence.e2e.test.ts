@@ -192,4 +192,38 @@ describe('Sidecar divergence E2E (#2297)', () => {
     expect(orphaned.bookPath).toBeNull();
     expect(orphaned.bookTitle).toBe('Path Tracking');
   });
+
+  // The book-scoped endpoint feeds the Activity cards on a book's detail page and projects the
+  // path through its own query, so the all-events lifecycle above cannot stand in for it.
+  it('projects the current folder on the BOOK-SCOPED event query too, following renames', async () => {
+    const bookRes = await e2e.app.inject({
+      method: 'POST', url: '/api/books', payload: { title: 'Book Scoped', authors: [{ name: 'Tester' }] },
+    });
+    const bookId = bookRes.json().id as number;
+    await e2e.db.update(books).set({ path: '/library/Tester/Scoped Before' }).where(eq(books.id, bookId));
+    await e2e.services.eventHistory.create({
+      bookId, bookTitle: 'Book Scoped', eventType: 'sidecar_diverged', source: 'auto',
+      reason: { changed_fields: ['seriesName'], previous: { seriesName: 'Discworld' } },
+    });
+
+    const readBack = async () => {
+      const res = await e2e.app.inject({ method: 'GET', url: `/api/event-history/books/${bookId}` });
+      expect(res.statusCode).toBe(200);
+      return res.json() as Array<Record<string, unknown>>;
+    };
+
+    const [event] = await readBack();
+    // Deleting the join or the projection from getByBookId leaves this undefined, and the
+    // book-detail card then tells the operator the backup location is gone.
+    expect(event!.bookPath).toBe('/library/Tester/Scoped Before');
+    expect(event!.eventType).toBe('sidecar_diverged');
+    expect(event!.reason).toEqual({ changed_fields: ['seriesName'], previous: { seriesName: 'Discworld' } });
+
+    await e2e.db.update(books).set({ path: '/library/Tester/Scoped After' }).where(eq(books.id, bookId));
+    expect((await readBack())[0]!.bookPath).toBe('/library/Tester/Scoped After');
+
+    // Deleting the book nulls the FK, so the event leaves this endpoint's scope entirely.
+    await e2e.db.delete(books).where(eq(books.id, bookId));
+    expect(await readBack()).toEqual([]);
+  });
 });
