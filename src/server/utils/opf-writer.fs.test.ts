@@ -912,3 +912,59 @@ describe('writeOpfSidecar — row-owns-folder and serialization (#2297 AC11)', (
     expect(create.mock.calls[0]![0].reason.previous).toEqual({ publisher: 'Operator Press' });
   });
 });
+
+describe('the divergence guard is opt-in at the call site (#2297 AC9)', () => {
+  const divergentBook = () => makeBook(folder, { publisher: 'Corgi' });
+
+  async function seedCurated(): Promise<string> {
+    const curated = generateOpf(makeBook(folder, { publisher: 'Gollancz' }));
+    await actualFs.writeFile(opfPath, curated, 'utf-8');
+    return curated;
+  }
+
+  it('refreshOpfForBook overwrites a diverged marked sidecar with no backup and no record', async () => {
+    await seedCurated();
+    const book = divergentBook();
+
+    const outcome = await refreshOpfForBook({
+      settingsService: { get: vi.fn().mockResolvedValue({ writeOpf: true }) } as unknown as SettingsService,
+      bookService: makeBookService(book), bookId: 1, bookFolder: folder, log: makeLog(),
+    });
+
+    // The operator just authored this value; a sidecar that stops following the edit — or a .bak
+    // beside every book — is the worse failure here.
+    expect(outcome).toBe('written');
+    expect(await read(opfPath)).toBe(generateOpf(book));
+    expect(await exists(bakPath)).toBe(false);
+  });
+
+  it('reconcileBookSidecars writes each diverged sidecar with no artifacts and an unchanged success verdict', async () => {
+    await seedCurated();
+    const book = divergentBook();
+
+    const outcome = await reconcileBookSidecars({
+      bookId: 1, title: 'Mort', bookFolder: folder, coverUrl: null,
+      bookService: makeBookService(book), db: {} as Db, log: makeLog(),
+    });
+
+    expect(outcome).toEqual({ failed: false });
+    expect(await read(opfPath)).toBe(generateOpf(book));
+    expect(await exists(bakPath)).toBe(false);
+  });
+});
+
+describe('the backup is a rolling one-generation snapshot (#2297 AC12)', () => {
+  it('two consecutive diverging imports leave ONE backup holding the most recent bytes, and TWO events', async () => {
+    const first = generateOpf(makeBook(folder, { publisher: 'First' }));
+    await actualFs.writeFile(opfPath, first, 'utf-8');
+    const { service, create } = makeEventHistory();
+
+    await runWrite({ book: makeBook(folder, { publisher: 'Second' }), eventHistory: service });
+    await runWrite({ book: makeBook(folder, { publisher: 'Third' }), eventHistory: service });
+
+    expect(await read(bakPath)).toBe(generateOpf(makeBook(folder, { publisher: 'Second' })));
+    expect(await exists(`${bakPath}.bak`)).toBe(false);
+    expect((await actualFs.readdir(folder)).sort()).toEqual([OPF_FILENAME, OPF_BACKUP_FILENAME].sort());
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+});
