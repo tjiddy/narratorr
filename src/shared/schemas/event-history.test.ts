@@ -34,6 +34,12 @@ describe('eventHistoryQuerySchema — comma-separated eventType', () => {
     expect(result.eventType).toEqual(['book_added', 'imported']);
   });
 
+  it('accepts sidecar_diverged and still rejects an unknown literal (#2297 AC14)', () => {
+    expect(eventTypeSchema.parse('sidecar_diverged')).toBe('sidecar_diverged');
+    expect(eventTypeSchema.safeParse('sidecar_reverted').success).toBe(false);
+    expect(eventHistoryQuerySchema.parse({ eventType: 'sidecar_diverged' }).eventType).toEqual(['sidecar_diverged']);
+  });
+
   it('deduplicates repeated types (grabbed,grabbed) to single-element array', () => {
     const result = eventHistoryQuerySchema.parse({ eventType: 'grabbed,grabbed' });
     expect(result.eventType).toEqual(['grabbed']);

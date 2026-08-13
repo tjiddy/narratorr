@@ -4,8 +4,7 @@ import { join } from 'node:path';
 import { mkdtemp, mkdir, writeFile, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { eq } from 'drizzle-orm';
-import { bookEvents } from '@db/schema.js';
-import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
+import { bookEvents, books } from '@db/schema.js';
 import { NARRATORR_OPF_MARKER } from '@core/utils/opf-regex.js';
 import { createE2EApp, seedBookAndDownload, type E2EApp } from './e2e-helpers.js';
 import { QB_BASE, TORRENT_HASH, qbLoginHandler, qbGetTorrentHandler } from './msw-handlers.js';
@@ -162,5 +161,35 @@ describe('Sidecar divergence E2E (#2297)', () => {
     });
     await e2e.app.inject({ method: 'DELETE', url: '/api/event-history' });
     expect(await e2e.services.eventHistory.getById(clearAll.id)).toBeNull();
+  });
+
+  // F36: the renderer composes the backup location from this, so it must track the book, not the row.
+  it('projects the CURRENT book folder onto the event, following renames and going null on delete', async () => {
+    const bookRes = await e2e.app.inject({
+      method: 'POST', url: '/api/books', payload: { title: 'Path Tracking', authors: [{ name: 'Tester' }] },
+    });
+    const bookId = bookRes.json().id as number;
+    await e2e.db.update(books).set({ path: '/library/Tester/Before' }).where(eq(books.id, bookId));
+    await e2e.services.eventHistory.create({
+      bookId, bookTitle: 'Path Tracking', eventType: 'sidecar_diverged', source: 'auto',
+      reason: { changed_fields: ['publisher'], previous: { publisher: 'Gollancz' } },
+    });
+
+    const readBack = async () => {
+      const res = await e2e.app.inject({ method: 'GET', url: '/api/event-history?eventType=sidecar_diverged' });
+      return (res.json() as { data: Array<Record<string, unknown>> }).data[0]!;
+    };
+
+    expect((await readBack()).bookPath).toBe('/library/Tester/Before');
+
+    await e2e.db.update(books).set({ path: '/library/Tester/After' }).where(eq(books.id, bookId));
+    // A path stored on the append-only row would still say "Before" here.
+    expect((await readBack()).bookPath).toBe('/library/Tester/After');
+
+    await e2e.db.delete(books).where(eq(books.id, bookId));
+    const orphaned = await readBack();
+    expect(orphaned.bookId).toBeNull();
+    expect(orphaned.bookPath).toBeNull();
+    expect(orphaned.bookTitle).toBe('Path Tracking');
   });
 });
