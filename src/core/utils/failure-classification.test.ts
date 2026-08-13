@@ -103,6 +103,26 @@ describe('classifyFailure — structural error codes (#2312 AC3/AC5)', () => {
   );
 });
 
+describe('classifyFailure — named transient reasons (#2312)', () => {
+  it.each(['ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT'])(
+    'names %s as a timeout rather than the generic fallback',
+    (errorCode) => {
+      expect(classifyFailure({ errorCode })).toEqual({ terminal: false, reason: 'the request timed out' });
+    },
+  );
+
+  it('gives a socket timeout the same operator reason as an HTTP 408', () => {
+    expect(classifyFailure({ errorCode: 'ETIMEDOUT' }).reason).toBe(classifyFailure({ httpStatus: 408 }).reason);
+  });
+
+  it('leaves an unnamed transient code on the generic fallback', () => {
+    expect(classifyFailure({ errorCode: 'ECONNRESET' })).toEqual({
+      terminal: false,
+      reason: 'the notifier could not be reached',
+    });
+  });
+});
+
 describe('classifyFailure — the transient default (#2312 AC5)', () => {
   it('classifies an unlisted error code as transient', () => {
     expect(classifyFailure({ errorCode: 'EWHATEVER' }).terminal).toBe(false);

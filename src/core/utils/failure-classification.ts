@@ -61,6 +61,16 @@ const TERMINAL_ERROR_CODES: Record<string, string> = {
   EURLACCESS: MISCONFIGURED,
 };
 
+// Transient codes worth naming precisely. A socket-level timeout is the same story to an
+// operator as an HTTP 408, so it gets the same reason rather than the generic fallback —
+// which also means losing the descriptor visibly degrades the message, not just the field.
+const TRANSIENT_ERROR_REASONS: Record<string, string> = {
+  ETIMEDOUT: TRANSIENT_TIMEOUT,
+  UND_ERR_CONNECT_TIMEOUT: TRANSIENT_TIMEOUT,
+  UND_ERR_HEADERS_TIMEOUT: TRANSIENT_TIMEOUT,
+  UND_ERR_BODY_TIMEOUT: TRANSIENT_TIMEOUT,
+};
+
 // RFC 5321's own permanent/transient split, plus the reply codes worth naming precisely.
 const SMTP_PERMANENT_REASONS: Record<number, string> = {
   530: AUTH_REJECTED,
@@ -107,7 +117,8 @@ export function classifyFailure(descriptor?: FailureDescriptor | null): FailureV
   if (typeof descriptor.httpStatus === 'number') return classifyHttpStatus(descriptor.httpStatus);
   if (typeof descriptor.errorCode === 'string') {
     const reason = TERMINAL_ERROR_CODES[descriptor.errorCode];
-    return reason ? terminal(reason) : transient(TRANSIENT_UNREACHABLE);
+    if (reason) return terminal(reason);
+    return transient(TRANSIENT_ERROR_REASONS[descriptor.errorCode] ?? TRANSIENT_UNREACHABLE);
   }
   return transient(TRANSIENT_UNREACHABLE);
 }

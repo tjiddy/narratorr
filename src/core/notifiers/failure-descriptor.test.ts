@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ADAPTER_FACTORIES } from './registry.js';
 import { NOTIFIER_TYPES, type NotifierType } from '@shared/notifier-registry.js';
+import { classifyFailure } from '../utils/failure-classification.js';
 import type { NotifierSettings } from '@shared/schemas/notifier.js';
 import type { NotifierResult } from './types.js';
 
@@ -54,6 +55,9 @@ const FAILURE_CASES: Record<NotifierType, { arrange: () => void; expected: Recor
     expected: { exitCode: 3 },
   },
 };
+
+/** The fetch-based subset of the registry — every type whose failures come off a Response. */
+const FETCH_TYPES = ['webhook', 'discord', 'telegram', 'slack', 'pushover', 'ntfy', 'gotify'] as const;
 
 function arrangeHttp(status: number): void {
   vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('nope', { status, statusText: 'Unauthorized' }));
@@ -110,7 +114,7 @@ describe('notifier failure descriptors (#2312 AC4)', () => {
 
   // Discord's webhook legitimately answers 204. `response.ok` (200-299) stays the acceptance
   // rule for every HTTP adapter; a future "exactly 200" narrowing must red here.
-  it.each(['webhook', 'discord', 'telegram', 'slack', 'pushover', 'ntfy', 'gotify'] as const)(
+  it.each(FETCH_TYPES)(
     '%s treats a 204 as success with no descriptor',
     async (type) => {
       vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
@@ -135,13 +139,37 @@ describe('notifier failure descriptors (#2312 AC4)', () => {
     expect(result.failure).toEqual({ killed: true });
   });
 
-  it('an HTTP adapter reports the transport code when the request never completes', async () => {
-    const cause = Object.assign(new Error('getaddrinfo ENOTFOUND hooks.test'), { code: 'ENOTFOUND' });
-    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('fetch failed', { cause }));
+  // Every fetch adapter adds `failure: describeTransportError(error)` in its own catch, so
+  // each one needs its own row: a single webhook case leaves the other six deletion-proof.
+  describe.each(FETCH_TYPES)('%s — transport throws', (type) => {
+    it('carries the structural code when the request never completes', async () => {
+      const cause = Object.assign(new Error('getaddrinfo ENOTFOUND hooks.test'), { code: 'ENOTFOUND' });
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('fetch failed', { cause }));
 
-    const result = await send('webhook');
+      const result = await send(type);
 
-    expect(result.success).toBe(false);
-    expect(result.failure).toEqual({ errorCode: 'ENOTFOUND' });
+      expect(result.success).toBe(false);
+      expect(result.failure).toEqual({ errorCode: 'ENOTFOUND' });
+    });
+
+    it('carries ETIMEDOUT when the request times out', async () => {
+      // fetchWithTimeout maps AbortSignal.timeout's DOMException through mapNetworkError, so
+      // the adapter receives a plain Error carrying `code`, not the DOMException itself.
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(new DOMException('The operation was aborted', 'TimeoutError'));
+
+      const result = await send(type);
+
+      expect(result.success).toBe(false);
+      expect(result.message).toBe('Request timed out');
+      expect(result.failure).toEqual({ errorCode: 'ETIMEDOUT' });
+    });
+
+    it('classifies its timeout as transient rather than stopping the channel', async () => {
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(new DOMException('The operation was aborted', 'TimeoutError'));
+
+      const result = await send(type);
+
+      expect(classifyFailure(result.failure)).toEqual({ terminal: false, reason: 'the request timed out' });
+    });
   });
 });
