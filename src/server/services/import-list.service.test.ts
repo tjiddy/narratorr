@@ -11,6 +11,7 @@ import { initializeKey, _resetKey, encrypt, getKey } from '../utils/secret-codec
 import { randomBytes } from 'node:crypto';
 import { mockDbChain, createMockDb, createMockLogger, inject } from '../__tests__/helpers.js';
 import type { ImmediateSearchDeps } from './trigger-immediate-search.js';
+import type { ImportListExclusionService } from './import-list-exclusion.service.js';
 
 vi.mock('@core/import-lists/index.js', () => ({
   IMPORT_LIST_ADAPTER_FACTORIES: {
@@ -2229,3 +2230,233 @@ function makeSearchDeps(quality: { searchImmediately?: boolean } = {}) {
     eventBroadcaster: {},
   });
 }
+
+/**
+ * AC6 — an excluded item is reported distinguishably. `syncDueLists` returns void and `syncList` is
+ * private, so the counters are observed on the completion log, as the existing count tests do.
+ */
+describe('ImportListService — import-list exclusions (#2305)', () => {
+  const dueList = (overrides: Record<string, unknown> = {}) => ({
+    id: 1, name: 'My NYT', type: 'nyt', enabled: true,
+    settings: { apiKey: 'key', list: 'audio-fiction' },
+    syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
+    lastSyncError: null, createdAt: new Date(),
+    ...overrides,
+  });
+
+  const madeBook = (id: number, title: string): BookWithAuthor => ({
+    id, publicId: 'bk_test', title,
+    subtitle: null, description: null, publisher: null, coverUrl: null,
+    asin: null, isbn: null, seriesName: null, seriesPosition: null,
+    duration: null, publishedDate: null, genres: null,
+    status: 'wanted', enrichmentStatus: 'pending', productionType: 'unknown', editionLabel: null,
+    enrichmentAttempts: 0, path: null, size: null,
+    audioCodec: null, audioBitrate: null, audioSampleRate: null,
+    audioChannels: null, audioBitrateMode: null, audioFileFormat: null,
+    audioFileCount: null, topLevelAudioFileCount: null, audioTotalSize: null,
+    audioDuration: null, lastGrabGuid: null, lastGrabInfoHash: null,
+    importListId: null, createdAt: new Date(), updatedAt: new Date(),
+    authors: [], narrators: [], importListName: null,
+  });
+
+  /** `syncList`'s first act is `decryptRow` → `getKey()`; without a key the per-list catch swallows
+   * the throw and the sync reads as a legitimately empty run (#2311). */
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRunImmediateSearch.mockReset();
+    mockSearchAndGrabForBook.mockReset();
+    _resetKey();
+    initializeKey(randomBytes(32));
+  });
+
+  function setup(opts: {
+    items: { title: string; author?: string }[];
+    isExcluded: ReturnType<typeof vi.fn>;
+    findDuplicate?: ReturnType<typeof vi.fn>;
+    create?: ReturnType<typeof vi.fn>;
+    searchImmediately?: boolean;
+    list?: Record<string, unknown>;
+  }) {
+    mockFactories.nyt!.mockReturnValue({ fetchItems: vi.fn().mockResolvedValue(opts.items), test: vi.fn() });
+
+    const db = createMockDb();
+    db.select.mockReturnValue(mockDbChain([dueList(opts.list)]));
+    db.insert.mockReturnValue(mockDbChain([]));
+    db.update.mockReturnValue(mockDbChain([]));
+
+    const create = opts.create ?? vi.fn().mockResolvedValue(madeBook(70, 'Fresh Book'));
+    const bookService = makeBookService({
+      ...(opts.findDuplicate && { findDuplicate: opts.findDuplicate }),
+      create,
+    });
+    const exclusions = inject<ImportListExclusionService>({ isExcluded: opts.isExcluded });
+    const searchDeps = opts.searchImmediately === undefined
+      ? undefined
+      : makeSearchDeps({ searchImmediately: opts.searchImmediately });
+
+    const service = new ImportListService(
+      inject<Db>(db), mockLog, bookService, undefined, searchDeps, exclusions,
+    );
+    return { service, create, exclusions };
+  }
+
+  it('does not create an excluded book and reports excludedCount on the completion log', async () => {
+    const { service, create } = setup({
+      items: [{ title: 'Excluded Book', author: 'Author One' }],
+      isExcluded: vi.fn().mockResolvedValue({ id: 42 }),
+    });
+
+    await service.syncDueLists();
+
+    expect(create).not.toHaveBeenCalled();
+    expect(mockLog.info).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 1, createdCount: 0, heldReviewCount: 0, excludedCount: 1 }),
+      'Import list sync completed',
+    );
+  });
+
+  it('reports zero excludedCount when the exclusion table matches nothing', async () => {
+    const { service, create } = setup({
+      items: [{ title: 'Fresh Book', author: 'Author One' }],
+      isExcluded: vi.fn().mockResolvedValue(null),
+    });
+
+    await service.syncDueLists();
+
+    expect(create).toHaveBeenCalled();
+    expect(mockLog.info).toHaveBeenCalledWith(
+      expect.objectContaining({ createdCount: 1, heldReviewCount: 0, excludedCount: 0 }),
+      'Import list sync completed',
+    );
+  });
+
+  it('keeps the three counters disjoint across an excluded, a held and a created item', async () => {
+    const { service } = setup({
+      items: [
+        { title: 'Excluded Book', author: 'Author One' },
+        { title: 'Held Book', author: 'Author Two' },
+        { title: 'Fresh Book', author: 'Author Three' },
+      ],
+      isExcluded: vi.fn()
+        .mockResolvedValueOnce({ id: 42 })
+        .mockResolvedValue(null),
+      findDuplicate: vi.fn()
+        .mockResolvedValueOnce({ verdict: 'review', book: { id: 555, title: 'Owned' }, hasIncumbent: true })
+        .mockResolvedValue({ verdict: 'different-recording', book: null, hasIncumbent: false }),
+    });
+
+    await service.syncDueLists();
+
+    expect(mockLog.info).toHaveBeenCalledWith(
+      expect.objectContaining({ createdCount: 1, heldReviewCount: 1, excludedCount: 1 }),
+      'Import list sync completed',
+    );
+  });
+
+  it('still skips an empty-title item and miscounts neither it nor the excluded one', async () => {
+    const { service } = setup({
+      items: [{ title: '   ' }, { title: 'Excluded Book', author: 'Author One' }],
+      isExcluded: vi.fn().mockResolvedValue({ id: 42 }),
+    });
+
+    await service.syncDueLists();
+
+    expect(mockLog.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ listId: 1 }),
+      'Skipping item with empty/null title',
+    );
+    expect(mockLog.info).toHaveBeenCalledWith(
+      expect.objectContaining({ createdCount: 0, heldReviewCount: 0, excludedCount: 1 }),
+      'Import list sync completed',
+    );
+  });
+
+  it('contributes nothing to the immediate-search batch for an excluded item', async () => {
+    const { service } = setup({
+      items: [
+        { title: 'Excluded Book', author: 'Author One' },
+        { title: 'Fresh Book', author: 'Author Two' },
+      ],
+      isExcluded: vi.fn().mockResolvedValueOnce({ id: 42 }).mockResolvedValue(null),
+      create: vi.fn().mockResolvedValue(madeBook(70, 'Fresh Book')),
+      searchImmediately: true,
+    });
+
+    await service.syncDueLists();
+
+    expect(mockRunImmediateSearch).toHaveBeenCalledTimes(1);
+    expect(mockRunImmediateSearch).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 70, title: 'Fresh Book' }),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it('contains an exclusion-read failure to its own item and still creates the other', async () => {
+    const { service, create } = setup({
+      items: [
+        { title: 'Broken Read', author: 'Author One' },
+        { title: 'Fresh Book', author: 'Author Two' },
+      ],
+      isExcluded: vi.fn()
+        .mockRejectedValueOnce(new Error('exclusions table locked'))
+        .mockResolvedValue(null),
+    });
+
+    await service.syncDueLists();
+
+    expect(mockLog.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ listId: 1, title: 'Broken Read', error: 'exclusions table locked' }),
+      'Failed to process import list item',
+    );
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(mockLog.info).toHaveBeenCalledWith(
+      expect.objectContaining({ createdCount: 1, excludedCount: 0 }),
+      'Import list sync completed',
+    );
+  });
+
+  it('gates every list, not just the one that recorded the exclusion', async () => {
+    const isExcluded = vi.fn().mockResolvedValue({ id: 42 });
+    const { service } = setup({
+      items: [{ title: 'Excluded Book', author: 'Author One' }],
+      isExcluded,
+      list: { id: 77, name: 'A Different Hardcover List', type: 'hardcover', settings: { apiKey: 'k' } },
+    });
+    mockFactories.hardcover!.mockReturnValue({
+      fetchItems: vi.fn().mockResolvedValue([{ title: 'Excluded Book', author: 'Author One' }]),
+      test: vi.fn(),
+    });
+
+    await service.syncDueLists();
+
+    expect(isExcluded).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Excluded Book', authorName: 'Author One' }),
+    );
+    expect(mockLog.info).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 77, excludedCount: 1 }),
+      'Import list sync completed',
+    );
+  });
+
+  it('behaves byte-identically to today when no exclusion service is wired', async () => {
+    mockFactories.nyt!.mockReturnValue({
+      fetchItems: vi.fn().mockResolvedValue([{ title: 'Fresh Book', author: 'Author One' }]),
+      test: vi.fn(),
+    });
+    const db = createMockDb();
+    db.select.mockReturnValue(mockDbChain([dueList()]));
+    db.insert.mockReturnValue(mockDbChain([]));
+    db.update.mockReturnValue(mockDbChain([]));
+    const create = vi.fn().mockResolvedValue(madeBook(70, 'Fresh Book'));
+
+    const service = new ImportListService(inject<Db>(db), mockLog, makeBookService({ create }));
+    await service.syncDueLists();
+
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(mockLog.info).toHaveBeenCalledWith(
+      expect.objectContaining({ createdCount: 1, excludedCount: 0 }),
+      'Import list sync completed',
+    );
+  });
+});

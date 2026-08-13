@@ -22,6 +22,7 @@ vi.mock('./client.js', () => ({
 import { activityApi } from './activity.js';
 import { authApi } from './auth.js';
 import { blacklistApi } from './blacklist.js';
+import { importListExclusionsApi } from './import-list-exclusions.js';
 import { booksApi } from './books.js';
 import { downloadClientsApi } from './download-clients.js';
 import { filesystemApi } from './filesystem.js';
@@ -197,6 +198,30 @@ describe('blacklistApi', () => {
       method: 'PATCH',
       body: JSON.stringify({ blacklistType: 'temporary' }),
     }));
+  });
+});
+
+describe('importListExclusionsApi', () => {
+  it('getImportListExclusions → GET /import-list-exclusions', async () => {
+    await importListExclusionsApi.getImportListExclusions();
+    expect(mockFetchApi).toHaveBeenCalledWith('/import-list-exclusions');
+  });
+
+  it('getImportListExclusions with pagination → GET /import-list-exclusions?limit=100&offset=200', async () => {
+    await importListExclusionsApi.getImportListExclusions({ limit: 100, offset: 200 });
+    expect(mockFetchApi).toHaveBeenCalledWith('/import-list-exclusions?limit=100&offset=200');
+  });
+
+  it('removeImportListExclusion → DELETE /import-list-exclusions/:id', async () => {
+    await importListExclusionsApi.removeImportListExclusion(7);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import-list-exclusions/7', expect.objectContaining({ method: 'DELETE' }));
+  });
+
+  // AC7: exclusions are written only by deleting an import-list book, so the client module
+  // deliberately exposes no create method.
+  it('exposes exactly the list and remove methods — no create', () => {
+    expect(Object.keys(importListExclusionsApi).sort())
+      .toEqual(['getImportListExclusions', 'removeImportListExclusion']);
   });
 });
 
