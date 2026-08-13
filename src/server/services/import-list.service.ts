@@ -13,7 +13,8 @@ import { addBook, type AddBookDeps, type AddBookEvent } from './book-intake/inde
 import type { ImportListType } from '@shared/import-list-registry.js';
 import { importListSettingsSchemas, type ImportListSettings } from '@shared/schemas/import-list.js';
 import type { ImportListRow } from './types.js';
-import { runImmediateSearch, type ImmediateSearchBook, type ImmediateSearchDeps } from './trigger-immediate-search.js';
+import type { ImmediateSearchBook, ImmediateSearchDeps } from './trigger-immediate-search.js';
+import { runImmediateSearchChain } from './immediate-search-chain.js';
 
 const MS_PER_MINUTE = 60_000;
 
@@ -211,22 +212,12 @@ export class ImportListService {
     }
 
     if (this.searchDeps && qualitySettings?.searchImmediately) {
-      await this.runSearchChain(pendingSearches, this.searchDeps);
+      // Awaited, unlike the other batch caller: `TaskRegistry.executeTracked` holds `running`
+      // across this callback, so awaiting is what keeps the `import-list-sync` cron guard honest
+      // for the cycle the searches belong to — no admission state of its own is needed.
+      await runImmediateSearchChain(pendingSearches, this.searchDeps, this.log);
     }
     return counts;
-  }
-
-  /**
-   * Serial and awaited (#2304): a detached search per created book put ~109 multi-indexer searches
-   * in flight on one sync, which MAM answered with HTTP 429 and Prowlarr with timeouts. Awaiting
-   * also keeps the `import-list-sync` task guard held for the cycle it covers, so no admission
-   * state of its own is needed. Nothing else is awaited here — no timer, retry, or deadline — so
-   * each book's search terminates exactly as it does in the scheduled cycle.
-   */
-  private async runSearchChain(books: readonly ImmediateSearchBook[], deps: ImmediateSearchDeps): Promise<void> {
-    for (const book of books) {
-      await runImmediateSearch(book, deps, this.log);
-    }
   }
 
   /**
