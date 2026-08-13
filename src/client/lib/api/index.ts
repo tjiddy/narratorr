@@ -11,6 +11,7 @@ export type { DownloadClient } from './download-clients.js';
 export type { Notifier } from './notifiers.js';
 export type { Connector, ConnectorTarget, ConnectorTestResult, ConnectorTargetsResponse } from './connectors.js';
 export type { BlacklistEntry } from './blacklist.js';
+export type { ImportListExclusion, ImportListExclusionListParams } from './import-list-exclusions.js';
 export type { Settings, TestResult, ProxyTestResult, HardcoverTestResult } from './settings.js';
 export type { AuthStatus, AuthConfig, StreamToken } from './auth.js';
 export type { DiscoveredBook, ScanResult, ImportConfirmItem, ImportMode, Confidence, MatchCandidate, MatchResult, MatchJobStatus, RescanResult, HeldReviewItem, DurationCorroborationResult } from './library-scan.js';
@@ -38,6 +39,7 @@ import { downloadClientsApi } from './download-clients.js';
 import { notifiersApi } from './notifiers.js';
 import { connectorsApi } from './connectors.js';
 import { blacklistApi } from './blacklist.js';
+import { importListExclusionsApi } from './import-list-exclusions.js';
 import { settingsApi } from './settings.js';
 import { libraryScanApi } from './library-scan.js';
 import { systemApi } from './system.js';
@@ -66,6 +68,7 @@ export const apiModules = [
   { name: 'notifiersApi', api: notifiersApi },
   { name: 'connectorsApi', api: connectorsApi },
   { name: 'blacklistApi', api: blacklistApi },
+  { name: 'importListExclusionsApi', api: importListExclusionsApi },
   { name: 'settingsApi', api: settingsApi },
   { name: 'libraryScanApi', api: libraryScanApi },
   { name: 'systemApi', api: systemApi },

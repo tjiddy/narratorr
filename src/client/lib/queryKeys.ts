@@ -2,6 +2,7 @@ import type { BookListParams, LibraryBookListParams, RetagOverrides } from './ap
 import type { ActivityListParams } from './api/activity.js';
 import type { EventHistoryParams } from './api/event-history.js';
 import type { BlacklistListParams } from './api/blacklist.js';
+import type { ImportListExclusionListParams } from './api/import-list-exclusions.js';
 
 export const queryKeys = {
   books: (params?: BookListParams) => params ? ['books', params] as const : ['books'] as const,
@@ -46,6 +47,8 @@ export const queryKeys = {
   connectors: () => ['connectors'] as const,
   importLists: () => ['importLists'] as const,
   blacklist: (params?: BlacklistListParams) => params ? ['blacklist', params] as const : ['blacklist'] as const,
+  importListExclusions: (params?: ImportListExclusionListParams) =>
+    params ? ['importListExclusions', params] as const : ['importListExclusions'] as const,
   remotePathMappings: (clientId?: number) =>
     clientId !== undefined
       ? (['remotePathMappings', clientId] as const)

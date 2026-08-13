@@ -1,0 +1,290 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import type { FastifyBaseLogger } from 'fastify';
+import { createDb, runMigrations, type Db } from '@db/index.js';
+import { importListExclusions, importLists } from '@db/schema.js';
+import { NestedTransactionError } from '@db/serial-transactions.js';
+import { ImportListExclusionService } from './import-list-exclusion.service.js';
+import { createMockLogger } from '../__tests__/helpers.js';
+
+// Real libSQL throughout: the SQL narrowing must be a superset of `matchesLibraryIdentity`, and a
+// mocked db cannot fail that way — the predicate alone always says yes.
+
+const NO_PROVENANCE = { importListId: null, importListName: null };
+
+describe('ImportListExclusionService (DB-backed, #2305)', () => {
+  let dir: string;
+  let db: Db;
+  let log: ReturnType<typeof createMockLogger>;
+  let service: ImportListExclusionService;
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'excl-svc-'));
+    const dbFile = join(dir, 'narratorr.db');
+    await runMigrations(dbFile);
+    db = createDb(dbFile);
+    log = createMockLogger();
+    service = new ImportListExclusionService(db, log as unknown as FastifyBaseLogger);
+  });
+
+  afterEach(() => {
+    db.$client.close();
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // libsql can retain Windows handles; cleanup is best-effort.
+    }
+  });
+
+  const exclude = (identity: { title: string; asin?: string | null; authorName?: string | null }) =>
+    service.recordExclusion(identity, NO_PROVENANCE);
+
+  describe('identity — the ASIN arm', () => {
+    it('refuses a candidate whose ASIN differs only by case and padding', async () => {
+      await exclude({ title: 'Stored Title', asin: 'B0ABC12345', authorName: 'Jane Doe' });
+
+      const match = await service.isExcluded({ title: 'Anything Else', asin: ' b0abc12345 ' });
+
+      expect(match?.title).toBe('Stored Title');
+    });
+
+    it('admits a candidate carrying a different ASIN and no other shared identity', async () => {
+      await exclude({ title: 'Stored Title', asin: 'B0ABC12345', authorName: 'Jane Doe' });
+
+      expect(await service.isExcluded({ title: 'Other Book', asin: 'B0ZZZ99999', authorName: 'Someone Else' })).toBeNull();
+    });
+  });
+
+  describe('identity — the author + title fall-through', () => {
+    it('refuses a DIFFERENT-ASIN re-narration by the same author: an ASIN miss does not short-circuit', async () => {
+      await exclude({ title: 'The Reckoning', asin: 'B0AAA11111', authorName: 'Jane Doe' });
+
+      const match = await service.isExcluded({
+        title: 'The Reckoning',
+        asin: 'B0BBB22222',
+        authorName: 'Jane Doe',
+      });
+
+      expect(match?.asin).toBe('B0AAA11111');
+    });
+
+    it('refuses the subtitle-stripped form of an excluded title by the same author', async () => {
+      await exclude({ title: 'Foo: The Reckoning', authorName: 'Jane Doe' });
+
+      expect(await service.isExcluded({ title: 'Foo', authorName: 'Jane Doe' })).not.toBeNull();
+    });
+
+    it('admits when BOTH sides stripped a subtitle — the title rule is non-transitive', async () => {
+      await exclude({ title: 'Foo: The Reckoning', authorName: 'Jane Doe' });
+
+      expect(await service.isExcluded({ title: 'Foo: A Different Story', authorName: 'Jane Doe' })).toBeNull();
+    });
+
+    it('admits a genuinely different title by the same primary author', async () => {
+      await exclude({ title: 'The Reckoning', authorName: 'Jane Doe' });
+
+      expect(await service.isExcluded({ title: 'The Awakening', authorName: 'Jane Doe' })).toBeNull();
+    });
+
+    it('admits the same title by a different author', async () => {
+      await exclude({ title: 'The Reckoning', authorName: 'Jane Doe' });
+
+      expect(await service.isExcluded({ title: 'The Reckoning', authorName: 'John Roe' })).toBeNull();
+    });
+
+  });
+
+  describe('identity — one-sided and absent authors', () => {
+    it('admits an authored candidate against an authorless exclusion', async () => {
+      await exclude({ title: 'The Reckoning' });
+
+      expect(await service.isExcluded({ title: 'The Reckoning', authorName: 'Jane Doe' })).toBeNull();
+    });
+
+    it('admits an authorless candidate against an authored exclusion', async () => {
+      await exclude({ title: 'The Reckoning', authorName: 'Jane Doe' });
+
+      expect(await service.isExcluded({ title: 'The Reckoning' })).toBeNull();
+    });
+
+    it('refuses an authorless candidate on exact title when both sides lack an author', async () => {
+      await exclude({ title: 'The Reckoning' });
+
+      expect(await service.isExcluded({ title: 'The Reckoning' })).not.toBeNull();
+    });
+
+    it('admits an authorless candidate whose title differs by one character', async () => {
+      await exclude({ title: 'The Reckoning' });
+
+      expect(await service.isExcluded({ title: 'The Reckonings' })).toBeNull();
+    });
+
+    it('refuses an authorless candidate with a DIFFERENT ASIN and an equal title (the candidate-read divergence)', async () => {
+      // A `gatherIncumbentIds`-shaped `!canonicalAsin` gate would suppress the authorless-title
+      // query because the candidate carries an ASIN, never fetch this row, and admit the item.
+      await exclude({ title: 'The Reckoning', asin: 'B0AAA11111' });
+
+      const match = await service.isExcluded({ title: 'The Reckoning', asin: 'B0BBB22222' });
+
+      expect(match?.asin).toBe('B0AAA11111');
+    });
+
+    it('fetches both the ASIN arm and the authorless-title arm for one authorless candidate', async () => {
+      const byAsin = await exclude({ title: 'Unrelated Title', asin: 'B0AAA11111' });
+      await exclude({ title: 'The Reckoning', asin: 'B0CCC33333' });
+
+      // Same query, two contributing disjuncts: the ASIN hit wins on the first arm.
+      expect((await service.isExcluded({ title: 'The Reckoning', asin: 'B0AAA11111' }))?.id).toBe(byAsin.id);
+      expect((await service.isExcluded({ title: 'The Reckoning', asin: 'B0DDD44444' }))?.title).toBe('The Reckoning');
+    });
+
+    it('admits everything when the table is empty', async () => {
+      expect(await service.isExcluded({ title: 'Anything', asin: 'B0ABC12345', authorName: 'Jane Doe' })).toBeNull();
+    });
+  });
+
+  describe('recordExclusion — stored shape', () => {
+    it('canonicalizes the ASIN and derives the author slug', async () => {
+      const row = await exclude({ title: 'The Reckoning', asin: ' b0abc12345 ', authorName: 'Jane Doe' });
+
+      expect(row.asin).toBe('B0ABC12345');
+      expect(row.authorName).toBe('Jane Doe');
+      expect(row.authorSlug).toBe('jane-doe');
+    });
+
+    it('stores a whitespace-only ASIN as null rather than an empty string', async () => {
+      const row = await exclude({ title: 'The Reckoning', asin: '   ' });
+
+      expect(row.asin).toBeNull();
+    });
+
+    it('stores null author columns for an authorless book without crashing', async () => {
+      const row = await exclude({ title: 'The Reckoning', authorName: null });
+
+      expect(row.authorName).toBeNull();
+      expect(row.authorSlug).toBeNull();
+    });
+
+    it('populates createdAt from the database rather than the caller', async () => {
+      const row = await exclude({ title: 'The Reckoning' });
+
+      expect(row.createdAt).toBeInstanceOf(Date);
+      expect(row.createdAt.getTime()).toBeGreaterThan(0);
+    });
+
+    it('records the originating list for display', async () => {
+      const [list] = await db.insert(importLists).values({ name: 'Bestsellers', type: 'nyt', settings: {} }).returning();
+
+      const row = await service.recordExclusion(
+        { title: 'The Reckoning', authorName: 'Jane Doe' },
+        { importListId: list!.id, importListName: 'Bestsellers' },
+      );
+
+      expect(row.importListId).toBe(list!.id);
+      expect(row.importListName).toBe('Bestsellers');
+    });
+  });
+
+  describe('recordExclusion — convergence', () => {
+    it('returns the pre-existing row and inserts nothing for an already-covered identity', async () => {
+      const first = await exclude({ title: 'The Reckoning', asin: 'B0AAA11111', authorName: 'Jane Doe' });
+
+      const insertSpy = vi.spyOn(db, 'insert');
+      const second = await exclude({ title: 'The Reckoning', asin: 'B0BBB22222', authorName: 'Jane Doe' });
+
+      expect(second.id).toBe(first.id);
+      expect(insertSpy).not.toHaveBeenCalled();
+      expect(await db.select().from(importListExclusions)).toHaveLength(1);
+    });
+
+    it('converges two concurrent recordExclusion calls on one row and one id', async () => {
+      const identity = { title: 'The Reckoning', asin: 'B0AAA11111', authorName: 'Jane Doe' };
+
+      const [a, b] = await Promise.all([
+        service.recordExclusion(identity, NO_PROVENANCE),
+        service.recordExclusion(identity, NO_PROVENANCE),
+      ]);
+
+      expect(a.id).toBe(b.id);
+      expect(await db.select().from(importListExclusions)).toHaveLength(1);
+    });
+
+    it('converges with the completion order reversed', async () => {
+      const identity = { title: 'The Reckoning', authorName: 'Jane Doe' };
+
+      const second = service.recordExclusion(identity, NO_PROVENANCE);
+      const first = service.recordExclusion(identity, NO_PROVENANCE);
+      const [b, a] = await Promise.all([second, first]);
+
+      expect(a.id).toBe(b.id);
+      expect(await db.select().from(importListExclusions)).toHaveLength(1);
+    });
+
+    it('rejects with NestedTransactionError when called inside an open transaction', async () => {
+      await expect(
+        db.transaction(async () => {
+          await service.recordExclusion({ title: 'The Reckoning' }, NO_PROVENANCE);
+        }),
+      ).rejects.toBeInstanceOf(NestedTransactionError);
+    });
+  });
+
+  describe('getAll / getById / delete', () => {
+    async function seedAt(title: string, createdAt: Date): Promise<number> {
+      const [row] = await db.insert(importListExclusions).values({ title, createdAt }).returning();
+      return row!.id;
+    }
+
+    it('orders newest first and breaks a shared timestamp by descending id', async () => {
+      const shared = new Date(1_700_000_000_000);
+      const older = await seedAt('Older', new Date(1_699_000_000_000));
+      const tieLow = await seedAt('Tie Low', shared);
+      const tieHigh = await seedAt('Tie High', shared);
+
+      const { data } = await service.getAll();
+
+      expect(data.map((r) => r.id)).toEqual([tieHigh, tieLow, older]);
+    });
+
+    it('returns a full page with the true total at exactly the limit', async () => {
+      for (const title of ['A', 'B', 'C']) await exclude({ title });
+
+      const { data, total } = await service.getAll({ limit: 2, offset: 0 });
+
+      expect(data).toHaveLength(2);
+      expect(total).toBe(3);
+    });
+
+    it('returns an empty page with the true total when offset is past the end', async () => {
+      for (const title of ['A', 'B', 'C']) await exclude({ title });
+
+      const { data, total } = await service.getAll({ limit: 2, offset: 10 });
+
+      expect(data).toEqual([]);
+      expect(total).toBe(3);
+    });
+
+    it('getById returns null for an unknown id', async () => {
+      expect(await service.getById(4242)).toBeNull();
+    });
+
+    it('delete removes the row and reports true; a second delete reports false', async () => {
+      const row = await exclude({ title: 'The Reckoning', authorName: 'Jane Doe' });
+
+      expect(await service.delete(row.id)).toBe(true);
+      expect(await service.delete(row.id)).toBe(false);
+      expect(await db.select().from(importListExclusions)).toHaveLength(0);
+    });
+
+    it('stops refusing the item once its exclusion is deleted', async () => {
+      const row = await exclude({ title: 'The Reckoning', authorName: 'Jane Doe' });
+      expect(await service.isExcluded({ title: 'The Reckoning', authorName: 'Jane Doe' })).not.toBeNull();
+
+      await service.delete(row.id);
+
+      expect(await service.isExcluded({ title: 'The Reckoning', authorName: 'Jane Doe' })).toBeNull();
+    });
+  });
+});

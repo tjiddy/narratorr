@@ -9,6 +9,7 @@ import {
   ShieldIcon,
   HardDriveIcon,
   ListIcon,
+  XCircleIcon,
   ZapIcon,
   RefreshIcon,
   HeadphonesIcon,
@@ -24,6 +25,7 @@ import { ConnectorsSettings } from './ConnectorsSettings.js';
 import { BlacklistSettings } from './BlacklistSettings.js';
 import { SecuritySettings } from './SecuritySettings.js';
 import { ImportListsSettings } from './ImportListsSettings.js';
+import { ImportListExclusionsSettings } from './ImportListExclusionsSettings.js';
 import { SystemSettings } from './SystemSettings.js';
 
 export interface SettingsPageEntry {
@@ -48,5 +50,6 @@ export const settingsPageRegistry: readonly SettingsPageEntry[] = [
   { path: 'blacklist', label: 'Blacklist', icon: ShieldBanIcon, component: BlacklistSettings },
   { path: 'security', label: 'Security', icon: ShieldIcon, component: SecuritySettings },
   { path: 'import-lists', label: 'Import Lists', icon: ListIcon, component: ImportListsSettings },
+  { path: 'import-list-exclusions', label: 'List Exclusions', icon: XCircleIcon, component: ImportListExclusionsSettings },
   { path: 'system', label: 'System', icon: HardDriveIcon, component: SystemSettings },
 ];
