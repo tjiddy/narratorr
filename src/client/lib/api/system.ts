@@ -1,21 +1,8 @@
 import { fetchApi } from './client.js';
 
-export type HealthState = 'healthy' | 'warning' | 'error';
+import type { HealthState, HealthCheckResult } from '@shared/health-types.js';
 
-export type HealthCheckTarget =
-  | { kind: 'indexer'; id: number }
-  | { kind: 'download-client'; id: number }
-  | { kind: 'notifier'; id: number }
-  | { kind: 'settings'; path: string }
-  | { kind: 'route'; path: string };
-
-export interface HealthCheckResult {
-  checkName: string;
-  state: HealthState;
-  message?: string;
-  target?: HealthCheckTarget;
-  link?: { url: string; label: string };
-}
+export type { HealthState, HealthCheckTarget, HealthCheckResult } from '@shared/health-types.js';
 
 export interface HealthSummary {
   state: HealthState;

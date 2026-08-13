@@ -7,6 +7,7 @@ import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
 import { describeNotifierDelivery } from './notifier-failure-state.js';
 import type { EventPayload } from '@core/index.js';
+import type { HealthState, HealthCheckTarget, HealthCheckResult } from '@shared/health-types.js';
 import { inProgressDownloadCondition } from '../utils/download-state.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { mapHardcoverError } from '../utils/hardcover-error.js';
@@ -18,22 +19,9 @@ import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
 import { resolveMutagenDetection } from '@core/utils/mutagen-resolver.js';
 
 
-export type HealthState = 'healthy' | 'warning' | 'error';
-
-export type HealthCheckTarget =
-  | { kind: 'indexer'; id: number }
-  | { kind: 'download-client'; id: number }
-  | { kind: 'notifier'; id: number }
-  | { kind: 'settings'; path: string }
-  | { kind: 'route'; path: string };
-
-export interface HealthCheckResult {
-  checkName: string;
-  state: HealthState;
-  message?: string | undefined;
-  target?: HealthCheckTarget | undefined;
-  link?: { url: string; label: string } | undefined;
-}
+// One definition, in @shared, so a new target arm cannot reach the wire without the
+// dashboard's exhaustive switch failing to compile.
+export type { HealthState, HealthCheckTarget, HealthCheckResult } from '@shared/health-types.js';
 
 export interface SystemDeps {
   fsAccess: (path: string, mode?: number) => Promise<void>;
