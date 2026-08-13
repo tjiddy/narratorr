@@ -140,6 +140,37 @@ describe('ImportListExclusionService (DB-backed, #2305)', () => {
       expect((await service.isExcluded({ title: 'The Reckoning', asin: 'B0DDD44444' }))?.title).toBe('The Reckoning');
     });
 
+    it('refuses a whitespace-only-author book carrying a DIFFERENT ASIN', async () => {
+      // `slugify('   ')` is `''`, and an empty derived slug must reach the DB as NULL: stored as
+      // `''` the row sits outside the `author_slug IS NULL` disjunct the same identity queries on,
+      // so the exclusion would be written and then never fetched again.
+      await exclude({ title: 'The Reckoning', asin: 'B0AAA11111', authorName: '   ' });
+
+      const match = await service.isExcluded({ title: 'The Reckoning', asin: 'B0BBB22222', authorName: '   ' });
+
+      expect(match?.asin).toBe('B0AAA11111');
+    });
+
+    it('refuses a whitespace-only-author book carrying no ASIN on either side', async () => {
+      await exclude({ title: 'The Reckoning', authorName: '   ' });
+
+      expect(await service.isExcluded({ title: 'The Reckoning', authorName: '   ' })).not.toBeNull();
+    });
+
+    it('refuses a punctuation-only-author book, which also slugs to an empty string', async () => {
+      await exclude({ title: 'The Reckoning', authorName: '???' });
+
+      expect(await service.isExcluded({ title: 'The Reckoning', authorName: '!!!' })).not.toBeNull();
+    });
+
+    it('stores NULL, not an empty string, for an author name that slugs to nothing', async () => {
+      const row = await exclude({ title: 'The Reckoning', authorName: '   ' });
+
+      expect(row.authorSlug).toBeNull();
+      // The raw name is still kept for display; only the derived key is normalized.
+      expect(row.authorName).toBe('   ');
+    });
+
     it('admits everything when the table is empty', async () => {
       expect(await service.isExcluded({ title: 'Anything', asin: 'B0ABC12345', authorName: 'Jane Doe' })).toBeNull();
     });
