@@ -42,6 +42,16 @@ describe('ProcessingSettingsSection', () => {
     expect(screen.getByLabelText('Post-processing script')).toBeInTheDocument();
   });
 
+  // An operator who reads only the UI must not believe the Activity record is a permanent archive.
+  it('tells the operator where a replaced sidecar goes and which half retention reaches (#2297 AC17)', async () => {
+    renderWithProviders(<ProcessingSettingsSection />);
+    await waitFor(() => expect(screen.getByLabelText('OPF metadata sidecar')).toBeInTheDocument());
+
+    expect(screen.getByText('metadata.opf.bak')).toBeInTheDocument();
+    expect(screen.getByText(/Activity . Needs Review/)).toBeInTheDocument();
+    expect(screen.getByText(/housekeeping retention setting; the backup file on disk is not/)).toBeInTheDocument();
+  });
+
   it('enables both automations and shows the Audio Tools breadcrumb when both binaries are detected', async () => {
     renderWithProviders(<ProcessingSettingsSection />);
     await waitFor(() => expect(screen.getByLabelText(/Auto-merge multi-file downloads/)).toBeEnabled());

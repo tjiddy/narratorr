@@ -59,6 +59,18 @@ describe('readOpfMetadata (AC6)', () => {
     return dir;
   }
 
+  // The rolling backup shares the folder and the marker; only the exact filename may be read.
+  it('never picks up metadata.opf.bak as a sidecar (#2297 AC12)', async () => {
+    const dir = await seedFolder();
+    await actualFs.writeFile(
+      join(dir, 'metadata.opf.bak'),
+      '<?xml version="1.0"?><package><metadata><dc:title>Previous Generation</dc:title></metadata></package>',
+      'utf-8',
+    );
+
+    expect(await readOpfMetadata(dir, log)).toBeNull();
+  });
+
   it('ENOENT → null, no warn, one debug', async () => {
     const dir = await seedFolder();
 
