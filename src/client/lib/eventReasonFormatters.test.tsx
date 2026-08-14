@@ -186,6 +186,32 @@ describe('EventReasonDetails', () => {
     expect(screen.getByText('My.Book.MP3')).toBeInTheDocument();
     expect(screen.getByText('Connection refused')).toBeInTheDocument();
   });
+
+  it('grab_blocked_unsatisfied — names the indexer, the counts and the withheld release', () => {
+    render(<EventReasonDetails
+      eventType="grab_blocked_unsatisfied"
+      reason={{ indexer: 'MyAnonamouse', count: 150, limit: 150, release_title: 'The Churn: An Expanse Novella' }}
+      indexerMap={emptyMap}
+    />);
+
+    expect(screen.getByText('Indexer:')).toBeInTheDocument();
+    expect(screen.getByText('MyAnonamouse')).toBeInTheDocument();
+    expect(screen.getByText('Unsatisfied:')).toBeInTheDocument();
+    expect(screen.getByText('150 of 150')).toBeInTheDocument();
+    expect(screen.getByText('Withheld release:')).toBeInTheDocument();
+    expect(screen.getByText('The Churn: An Expanse Novella')).toBeInTheDocument();
+  });
+
+  // GenericDetails would print the raw snake_case keys instead of these labels.
+  it('grab_blocked_unsatisfied — does not fall through to the generic renderer', () => {
+    render(<EventReasonDetails
+      eventType="grab_blocked_unsatisfied"
+      reason={{ indexer: 'MyAnonamouse', count: 150, limit: 150, release_title: 'Withheld' }}
+      indexerMap={emptyMap}
+    />);
+
+    expect(screen.queryByText(/release_title/)).not.toBeInTheDocument();
+  });
 });
 
 describe('EventReasonDetails — held_for_review schema gate (#1305)', () => {

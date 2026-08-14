@@ -192,8 +192,9 @@ describe('EventHistorySection', () => {
       );
     });
 
-    // Keep search_relaxed_held and sidecar_diverged reachable through Needs Review, not only All.
-    it('Needs Review chip sends held_for_review, recording_review_skipped, search_relaxed_held AND sidecar_diverged', async () => {
+    // Keep search_relaxed_held, sidecar_diverged and grab_blocked_unsatisfied reachable through
+    // Needs Review, not only All.
+    it('Needs Review chip sends held_for_review, recording_review_skipped, search_relaxed_held, sidecar_diverged AND grab_blocked_unsatisfied', async () => {
       const user = userEvent.setup();
       mockDefaultHook();
 
@@ -201,7 +202,9 @@ describe('EventHistorySection', () => {
       await user.click(screen.getByText('Needs Review'));
 
       expect(mockUseEventHistory).toHaveBeenCalledWith(
-        expect.objectContaining({ eventType: 'held_for_review,recording_review_skipped,search_relaxed_held,sidecar_diverged' }),
+        expect.objectContaining({
+          eventType: 'held_for_review,recording_review_skipped,search_relaxed_held,sidecar_diverged,grab_blocked_unsatisfied',
+        }),
       );
     });
 

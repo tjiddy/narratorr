@@ -111,6 +111,22 @@ function SearchRelaxedHeldDetails({ reason }: { reason: Record<string, unknown> 
   );
 }
 
+function GrabBlockedUnsatisfiedDetails({ reason }: { reason: Record<string, unknown> }) {
+  const indexer = reason.indexer as string | undefined;
+  const count = reason.count as number | undefined;
+  const limit = reason.limit as number | undefined;
+  const releaseTitle = reason.release_title as string | undefined;
+  return (
+    <div className="space-y-1">
+      {indexer && <KeyValueRow label="Indexer" value={indexer} />}
+      {count !== undefined && limit !== undefined && (
+        <KeyValueRow label="Unsatisfied" value={`${count} of ${limit}`} />
+      )}
+      {releaseTitle && <KeyValueRow label="Withheld release" value={releaseTitle} />}
+    </div>
+  );
+}
+
 const OPF_FIELD_LABELS: Record<string, string> = {
   title: 'Title', subtitle: 'Subtitle', authors: 'Authors', narrators: 'Narrators',
   description: 'Description', publisher: 'Publisher', publishedDate: 'Published',
@@ -216,6 +232,7 @@ const DETAIL_RENDERERS: Record<string, React.FC<DetailRendererProps>> = {
   grab_failed: ({ reason }) => <GrabFailedDetails reason={reason} />,
   search_relaxed_held: ({ reason }) => <SearchRelaxedHeldDetails reason={reason} />,
   sidecar_diverged: ({ reason, bookPath }) => <SidecarDivergedDetails reason={reason} bookPath={bookPath} />,
+  grab_blocked_unsatisfied: ({ reason }) => <GrabBlockedUnsatisfiedDetails reason={reason} />,
 };
 
 export function EventReasonDetails({ eventType, reason, indexerMap, bookPath = null }: {

@@ -30,7 +30,12 @@ export function isAtUnsatisfiedLimit(status: UnsatisfiedStatus | null | undefine
   return status != null && status.count >= status.limit;
 }
 
-/** Only the MAM adapter annotates results, so an unannotated result can never be blocked. */
-export function isResultAtUnsatisfiedLimit(result: { unsatisfied?: UnsatisfiedStatus | undefined }): boolean {
+/**
+ * Only the MAM adapter annotates results, so an unannotated result can never be blocked. Narrows,
+ * so a caller acting on a blocked release holds the pair without re-checking for it.
+ */
+export function isResultAtUnsatisfiedLimit<T extends { unsatisfied?: UnsatisfiedStatus | undefined }>(
+  result: T,
+): result is T & { unsatisfied: UnsatisfiedStatus } {
   return isAtUnsatisfiedLimit(result.unsatisfied);
 }
