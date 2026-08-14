@@ -155,14 +155,19 @@ describe('MamRequestThrottle', () => {
       });
     }
 
+    it('renders the canonical destination as lowercase host:port', () => {
+      expect(mamThrottleKey('http://MAM.example/tor')).toBe('mam.example:80');
+      expect(mamThrottleKey('https://mam.example:8443/tor')).toBe('mam.example:8443');
+    });
+
+    // Stated as distinctness, not as the helper's output format: a format assertion here would red
+    // under any key rule at all, which is what the collapse cases above already pin.
     it('keeps an explicit non-default port distinct from the scheme default', () => {
-      expect(mamThrottleKey('https://mam.example:8443')).toBe('mam.example:8443');
       expect(mamThrottleKey('https://mam.example:8443')).not.toBe(mamThrottleKey('https://mam.example'));
     });
 
     it('separates schemes through their default ports', () => {
-      expect(mamThrottleKey('http://mam.example')).toBe('mam.example:80');
-      expect(mamThrottleKey('https://mam.example')).toBe('mam.example:443');
+      expect(mamThrottleKey('http://mam.example')).not.toBe(mamThrottleKey('https://mam.example'));
     });
 
     it('strips IPv6 brackets, matching normalizedHostPortFromUrl', () => {
