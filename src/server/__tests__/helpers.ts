@@ -247,6 +247,11 @@ export function createMockServices(overrides?: Partial<Record<keyof Services, Re
         hostname: new Set<string>(),
       });
     }
+    if (name === 'bookDeletion') {
+      // An empty sweep, so a test that reaches DELETE /api/books/missing without configuring it
+      // sees the no-op rather than a 500 from the rejecting default.
+      presets.deleteMissingBooks = vi.fn().mockResolvedValue({ deleted: 0, failed: 0 });
+    }
     services[name] = new Proxy({ ...presets, ...overrides?.[name] } as Record<string | symbol, unknown>, {
       get(target, prop) {
         if (prop in target) return target[prop];
@@ -280,6 +285,8 @@ export function resetMockServices(services: Services) {
         // Reapply the production-graph allowlist preset.
         if (serviceName === 'indexer' && methodName === 'getLanAllowlist') {
           mock.mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() });
+        } else if (serviceName === 'bookDeletion' && methodName === 'deleteMissingBooks') {
+          mock.mockResolvedValue({ deleted: 0, failed: 0 });
         } else {
           mock.mockRejectedValue(new Error(`mock not configured: ${serviceName}.${methodName}`));
         }

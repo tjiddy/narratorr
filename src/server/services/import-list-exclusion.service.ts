@@ -7,6 +7,12 @@ import { matchesLibraryIdentity, resolveAuthorSlug, type DedupIdentity } from '@
 import type { PaginatedResponse } from '@shared/schemas/common.js';
 import type { ImportListExclusionRow } from './types.js';
 
+/** What `recordExclusion` landed: `inserted` false means an existing row already covered the identity. */
+export interface ExclusionRecordResult {
+  row: ImportListExclusionRow;
+  inserted: boolean;
+}
+
 /** Which list introduced the book. Display only — an exclusion applies to every list. */
 export interface ExclusionProvenance {
   importListId: number | null;
@@ -111,13 +117,19 @@ export class ImportListExclusionService {
    * The candidate read and the conditional insert share ONE transaction: split across two
    * statements, two concurrent deletes of the same book both observe no match and both insert.
    * Serialization is automatic — `createDb` routes every `db.transaction` through
-   * `runSerializedTransaction` — so this must not be called from inside an already-open
-   * transaction, which would throw `NestedTransactionError`.
+   * `runSerializedTransaction` — so with no `tx` this must not be called from inside an
+   * already-open transaction, which would throw `NestedTransactionError`.
+   *
+   * `tx` joins the caller's transaction instead, which is what keeps the read and the insert
+   * together when the exclusion has to commit atomically with a book deletion. That arm is
+   * side-effect-free because the owner may still roll back; it hands the outcome back so the owner
+   * can call {@link logRecorded} after its commit.
    */
   async recordExclusion(
     identity: DedupIdentity,
     provenance: ExclusionProvenance,
-  ): Promise<ImportListExclusionRow> {
+    tx?: DbOrTx,
+  ): Promise<ExclusionRecordResult> {
     const values = {
       asin: canonicalizeAsin(identity.asin),
       title: identity.title,
@@ -127,13 +139,23 @@ export class ImportListExclusionService {
       importListName: provenance.importListName,
     };
 
-    const { row, inserted } = await this.db.transaction(async (tx) => {
-      const existing = await this.findMatch(tx, identity);
+    const record = async (executor: DbOrTx): Promise<ExclusionRecordResult> => {
+      const existing = await this.findMatch(executor, identity);
       if (existing) return { row: existing, inserted: false };
-      const created = await tx.insert(importListExclusions).values(values).returning();
+      const created = await executor.insert(importListExclusions).values(values).returning();
       return { row: created[0]!, inserted: true };
-    });
+    };
 
+    if (tx) return record(tx);
+
+    const result = await this.db.transaction(record);
+    this.logRecorded(result);
+    return result;
+  }
+
+  /** Post-commit half of `recordExclusion(..., tx)` — the records this service would have written
+   * itself. The converged case stays at `debug`: it reports that nothing was inserted. */
+  logRecorded({ row, inserted }: ExclusionRecordResult): void {
     if (inserted) {
       this.log.info(
         { id: row.id, title: row.title, asin: row.asin, authorSlug: row.authorSlug },
@@ -142,7 +164,6 @@ export class ImportListExclusionService {
     } else {
       this.log.debug({ id: row.id, title: row.title }, 'Import list exclusion already recorded');
     }
-    return row;
   }
 
   /** Narrow in SQL, then apply the shared predicate in memory — the tolerant title arm has no

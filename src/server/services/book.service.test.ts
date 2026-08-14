@@ -50,11 +50,13 @@ function setupGetById(db: ReturnType<typeof createMockDb>, opts?: {
 
 describe('BookService', () => {
   let db: ReturnType<typeof createMockDb>;
+  let log: ReturnType<typeof createMockLogger>;
   let service: BookService;
 
   beforeEach(() => {
     db = createMockDb();
-    service = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()));
+    log = createMockLogger();
+    service = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(log));
   });
 
   describe('getById', () => {
@@ -1163,19 +1165,34 @@ describe('BookService', () => {
     });
   });
 
-  describe('deleteByStatus', () => {
-    it('deletes all matching books and returns count', async () => {
-      db.delete.mockReturnValue(mockDbChain([{ id: 1 }, { id: 2 }, { id: 3 }]));
+  describe('findIdsByStatus', () => {
+    it('returns the ids of the rows the status filter selected', async () => {
+      db.select.mockReturnValue(mockDbChain([{ id: 4 }, { id: 9 }]));
 
-      const result = await service.deleteByStatus('missing');
-      expect(result).toBe(3);
+      const result = await service.findIdsByStatus('missing');
+
+      expect(result).toEqual([4, 9]);
+      expect(db.select).toHaveBeenCalledWith({ id: books.id });
     });
 
-    it('returns 0 when no books match status', async () => {
-      db.delete.mockReturnValue(mockDbChain([]));
+    it('returns an empty array when no book holds the status', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
 
-      const result = await service.deleteByStatus('missing');
-      expect(result).toBe(0);
+      expect(await service.findIdsByStatus('missing')).toEqual([]);
+    });
+  });
+
+  describe('getStatusById', () => {
+    it('returns the row status', async () => {
+      db.select.mockReturnValue(mockDbChain([{ status: 'imported' }]));
+
+      expect(await service.getStatusById(1)).toBe('imported');
+    });
+
+    it('returns null when the row no longer exists', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      expect(await service.getStatusById(1)).toBeNull();
     });
   });
 
@@ -1195,6 +1212,30 @@ describe('BookService', () => {
       const result = await service.delete(999);
       expect(result).toBe(false);
       expect(db.delete).not.toHaveBeenCalled();
+    });
+
+    it('logs Book removed on the self-managed arm', async () => {
+      setupGetById(db);
+      db.delete.mockReturnValue(mockDbChain());
+
+      await service.delete(1);
+
+      expect(log.info).toHaveBeenCalledWith({ id: 1, title: mockBook.title }, 'Book removed');
+    });
+
+    it('runs every statement on the caller-owned executor and stays side-effect-free', async () => {
+      const tx = createMockDb();
+      setupGetById(tx);
+      tx.delete.mockReturnValue(mockDbChain());
+
+      const result = await service.delete(1, inject<DbOrTx>(tx));
+
+      expect(result).toBe(true);
+      expect(tx.delete).toHaveBeenCalled();
+      // The owner may still roll back, so nothing may claim the row is gone yet.
+      expect(db.delete).not.toHaveBeenCalled();
+      expect(db.select).not.toHaveBeenCalled();
+      expect(log.info).not.toHaveBeenCalledWith(expect.anything(), 'Book removed');
     });
   });
 

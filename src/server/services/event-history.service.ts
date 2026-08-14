@@ -1,5 +1,5 @@
 import { eq, desc, like, and, lt, count as countFn, getTableColumns, inArray } from 'drizzle-orm';
-import type { Db } from '@db/index.js';
+import type { Db, DbOrTx } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { bookEvents, books, downloads } from '@db/schema.js';
 import { type BlacklistService } from './blacklist.service.js';
@@ -59,8 +59,12 @@ export class EventHistoryService {
     this.wired.set(deps);
   }
 
-  async create(input: CreateEventInput): Promise<BookEventRow> {
-    const result = await this.db.insert(bookEvents).values({
+  /**
+   * `tx` is a caller-owned transaction; that arm is side-effect-free because the owner may still
+   * roll back. It hands the row back so the owner can call {@link logRecorded} after its commit.
+   */
+  async create(input: CreateEventInput, tx?: DbOrTx): Promise<BookEventRow> {
+    const result = await (tx ?? this.db).insert(bookEvents).values({
       bookId: input.bookId ?? null,
       bookTitle: input.bookTitle,
       authorName: input.authorName ?? null,
@@ -71,8 +75,13 @@ export class EventHistoryService {
       reason: input.reason ?? null,
     }).returning();
 
-    this.log.info({ bookId: input.bookId, eventType: input.eventType, bookTitle: input.bookTitle }, 'Event recorded');
+    if (!tx) this.logRecorded(result[0]!);
     return result[0]!;
+  }
+
+  /** Post-commit half of `create(input, tx)` — the record this service would have written itself. */
+  logRecorded(event: BookEventRow): void {
+    this.log.info({ bookId: event.bookId, eventType: event.eventType, bookTitle: event.bookTitle }, 'Event recorded');
   }
 
   async getAll(

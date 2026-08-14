@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
-import { createMockLogger, inject } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, inject } from '../__tests__/helpers.js';
 import { createMockDbBook } from '../__tests__/factories.js';
 import { BookDeletionService } from './book-deletion.service.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
@@ -10,6 +10,7 @@ import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { ImportListExclusionService } from './import-list-exclusion.service.js';
 import type { FastifyBaseLogger } from 'fastify';
+import type { Db } from '@db/index.js';
 
 vi.mock('../utils/cover-cache.js', () => ({
   cleanCoverCache: vi.fn().mockResolvedValue(undefined),
@@ -28,6 +29,7 @@ const deletableBook = {
 };
 
 function createService(opts?: {
+  db?: ReturnType<typeof createMockDb>;
   bookService?: Partial<BookService>;
   downloadService?: Partial<DownloadService>;
   downloadOrchestrator?: Partial<DownloadOrchestrator>;
@@ -38,8 +40,13 @@ function createService(opts?: {
   exclusions?: Partial<ImportListExclusionService> | null;
 }) {
   const log = createMockLogger();
+  // `createMockDb` hands the same object back as the transaction handle, so the tx a collaborator
+  // receives is identifiable — that is what the "ran on the caller's handle" assertions key on.
+  const db = opts?.db ?? createMockDb();
   const bookService = inject<BookService>({
     getById: vi.fn().mockResolvedValue(deletableBook),
+    findIdsByStatus: vi.fn().mockResolvedValue([]),
+    getStatusById: vi.fn().mockResolvedValue('missing'),
     delete: vi.fn().mockResolvedValue(true),
     deleteBookFiles: vi.fn().mockResolvedValue({ deletedManaged: [], preservedForeign: [], failedManaged: [] }),
     ...opts?.bookService,
@@ -58,16 +65,22 @@ function createService(opts?: {
   });
   const eventHistory = opts?.eventHistory === null
     ? undefined
-    : inject<EventHistoryService>({ create: vi.fn().mockResolvedValue({}), ...opts?.eventHistory });
+    : inject<EventHistoryService>({
+      create: vi.fn().mockResolvedValue({ id: 7, bookId: 1, eventType: 'deleted', bookTitle: 'The Way of Kings' }),
+      logRecorded: vi.fn(),
+      ...opts?.eventHistory,
+    });
 
   const exclusions = opts?.exclusions === null
     ? undefined
     : inject<ImportListExclusionService>({
-      recordExclusion: vi.fn().mockResolvedValue({ id: 99 }),
+      recordExclusion: vi.fn().mockResolvedValue({ row: { id: 99 }, inserted: true }),
+      logRecorded: vi.fn(),
       ...opts?.exclusions,
     });
 
   const service = new BookDeletionService(
+    inject<Db>(db),
     bookService,
     downloadService,
     downloadOrchestrator,
@@ -77,7 +90,7 @@ function createService(opts?: {
     exclusions,
   );
 
-  return { service, log, bookService, downloadService, downloadOrchestrator, settingsService, eventHistory, exclusions };
+  return { service, log, db, bookService, downloadService, downloadOrchestrator, settingsService, eventHistory, exclusions };
 }
 
 describe('BookDeletionService', () => {
@@ -114,6 +127,7 @@ describe('BookDeletionService', () => {
           eventType: 'deleted',
           source: 'manual',
         }),
+        expect.anything(),
       );
     });
   });
@@ -140,18 +154,83 @@ describe('BookDeletionService', () => {
       expect(bookService.deleteBookFiles).toHaveBeenCalledWith('/audiobooks/Sanderson/Way of Kings', '/audiobooks');
     });
 
-    it('cancels active downloads BEFORE the DB delete', async () => {
+    it('cancels active downloads AFTER the commit, from the rows read inside it', async () => {
+      // `downloads.book_id` is ON DELETE SET NULL, so a post-commit lookup would find nothing and
+      // the torrent would never be cancelled — the rows must be captured inside the transaction.
       const cancel = vi.fn().mockResolvedValue(true);
-      const { service, bookService } = createService({
-        downloadService: { getActiveByBookId: vi.fn().mockResolvedValue([{ id: 10 }]) },
+      const getActiveByBookId = vi.fn().mockResolvedValue([{ id: 10 }]);
+      const { service, db, bookService } = createService({
+        downloadService: { getActiveByBookId },
         downloadOrchestrator: { cancel },
       });
 
       await service.deleteBook(1, { deleteFiles: false });
 
-      const cancelOrder = cancel.mock.invocationCallOrder[0]!;
+      const lookupOrder = getActiveByBookId.mock.invocationCallOrder[0]!;
       const deleteOrder = (bookService.delete as Mock).mock.invocationCallOrder[0]!;
-      expect(cancelOrder).toBeLessThan(deleteOrder);
+      const cancelOrder = cancel.mock.invocationCallOrder[0]!;
+      expect(lookupOrder).toBeLessThan(deleteOrder);
+      expect(deleteOrder).toBeLessThan(cancelOrder);
+      expect(cancel).toHaveBeenCalledWith(10);
+      expect(getActiveByBookId).toHaveBeenCalledWith(1, db);
+    });
+
+    it('runs the exclusion, the lookup, the event and the row delete on one transaction handle', async () => {
+      const { service, db, bookService, eventHistory, downloadService } = createService({
+        bookService: { getById: vi.fn().mockResolvedValue({ ...deletableBook, importListId: 5, importListName: 'NYT' }) },
+      });
+
+      await service.deleteBook(1, { deleteFiles: false });
+
+      expect(db.transaction).toHaveBeenCalledTimes(1);
+      expect(bookService.delete).toHaveBeenCalledWith(1, db);
+      expect(downloadService.getActiveByBookId).toHaveBeenCalledWith(1, db);
+      expect(eventHistory!.create).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'deleted' }), db);
+    });
+  });
+
+  describe('post-commit logging hand-back', () => {
+    it('emits the exclusion and event records only after the transaction resolves', async () => {
+      const order: string[] = [];
+      const db = createMockDb();
+      db.transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+        const result = await cb(db);
+        order.push('tx-committed');
+        return result;
+      });
+      const exclusionLog = vi.fn(() => { order.push('exclusion-log'); });
+      const eventLog = vi.fn(() => { order.push('event-log'); });
+      const { service } = createService({
+        db,
+        bookService: { getById: vi.fn().mockResolvedValue({ ...deletableBook, importListId: 5, importListName: 'NYT' }) },
+        exclusions: { logRecorded: exclusionLog },
+        eventHistory: { logRecorded: eventLog },
+      });
+
+      await service.deleteBook(1, { deleteFiles: false });
+
+      expect(order).toEqual(['tx-committed', 'exclusion-log', 'event-log']);
+      expect(exclusionLog).toHaveBeenCalledWith({ row: { id: 99 }, inserted: true });
+    });
+
+    it('emits none of the success records when the transaction rolls back', async () => {
+      const exclusionLog = vi.fn();
+      const eventLog = vi.fn();
+      const { service, log } = createService({
+        bookService: {
+          getById: vi.fn().mockResolvedValue({ ...deletableBook, importListId: 5, importListName: 'NYT' }),
+          delete: vi.fn().mockRejectedValue(new Error('books table locked')),
+        },
+        exclusions: { logRecorded: exclusionLog },
+        eventHistory: { logRecorded: eventLog },
+      });
+
+      await expect(service.deleteBook(1, { deleteFiles: false })).rejects.toThrow('books table locked');
+
+      expect(exclusionLog).not.toHaveBeenCalled();
+      expect(eventLog).not.toHaveBeenCalled();
+      expect(log.info).not.toHaveBeenCalledWith(expect.anything(), 'Recorded import list exclusion for deleted book');
+      expect(log.info).not.toHaveBeenCalledWith(expect.anything(), 'Book deleted');
     });
   });
 
@@ -182,7 +261,7 @@ describe('BookDeletionService', () => {
       expect(cancel).toHaveBeenCalledWith(10);
       expect(cancel).toHaveBeenCalledWith(11);
       expect(cancel).toHaveBeenCalledTimes(2);
-      expect(bookService.delete).toHaveBeenCalledWith(1);
+      expect(bookService.delete).toHaveBeenCalledWith(1, expect.anything());
       expect(result).toEqual({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
     });
 
@@ -277,7 +356,7 @@ describe('BookDeletionService', () => {
         bookTitle: 'The Way of Kings',
         fileSummary: { deletedManaged: 2, preservedForeign: ['book.epub', 'notes.pdf'] },
       });
-      expect(bookService.delete).toHaveBeenCalledWith(1);
+      expect(bookService.delete).toHaveBeenCalledWith(1, expect.anything());
     });
 
     it('omits fileSummary when deleteFiles is false (no on-disk delete)', async () => {
@@ -333,7 +412,7 @@ describe('BookDeletionService', () => {
       const result = await service.deleteBook(1, { deleteFiles: true });
 
       expect(bookService.deleteBookFiles).not.toHaveBeenCalled();
-      expect(bookService.delete).toHaveBeenCalledWith(1);
+      expect(bookService.delete).toHaveBeenCalledWith(1, expect.anything());
       expect(result).toEqual({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
     });
 
@@ -374,7 +453,7 @@ describe('BookDeletionService — the import-list exclusion (#2305)', () => {
   });
 
   it('records an exclusion for an import-list book with its identity and provenance', async () => {
-    const { service, exclusions } = createService({
+    const { service, exclusions, db } = createService({
       bookService: { getById: vi.fn().mockResolvedValue(importedBook) },
     });
 
@@ -383,6 +462,7 @@ describe('BookDeletionService — the import-list exclusion (#2305)', () => {
     expect(exclusions!.recordExclusion).toHaveBeenCalledWith(
       { title: 'The Way of Kings', asin: 'B0ABC12345', authorName: 'Brandon Sanderson' },
       { importListId: 5, importListName: 'NYT Bestsellers' },
+      db,
     );
   });
 
@@ -401,6 +481,7 @@ describe('BookDeletionService — the import-list exclusion (#2305)', () => {
     expect(exclusions!.recordExclusion).toHaveBeenCalledWith(
       expect.objectContaining({ authorName: 'Brandon Sanderson' }),
       expect.anything(),
+      expect.anything(),
     );
   });
 
@@ -414,6 +495,7 @@ describe('BookDeletionService — the import-list exclusion (#2305)', () => {
     expect(exclusions!.recordExclusion).toHaveBeenCalledWith(
       expect.objectContaining({ authorName: null }),
       expect.anything(),
+      expect.anything(),
     );
   });
 
@@ -424,7 +506,7 @@ describe('BookDeletionService — the import-list exclusion (#2305)', () => {
 
     expect(result).toEqual({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
     expect(exclusions!.recordExclusion).not.toHaveBeenCalled();
-    expect(bookService.delete).toHaveBeenCalledWith(1);
+    expect(bookService.delete).toHaveBeenCalledWith(1, expect.anything());
   });
 
   it('records NO exclusion when the import list was deleted first and nulled the provenance', async () => {
@@ -531,6 +613,178 @@ describe('BookDeletionService — the import-list exclusion (#2305)', () => {
     const result = await service.deleteBook(1, { deleteFiles: false });
 
     expect(result).toEqual({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
-    expect(bookService.delete).toHaveBeenCalledWith(1);
+    expect(bookService.delete).toHaveBeenCalledWith(1, expect.anything());
+  });
+});
+
+/**
+ * The bulk sweep. It owns enumeration, the delete-time membership re-check and the counters —
+ * nothing else. Every durable decision belongs to `deleteBook`, which is why these cases assert
+ * delegation and isolation rather than re-testing the exclusion policy.
+ */
+describe('BookDeletionService.deleteMissingBooks — the sweep (#2329)', () => {
+  const missingBook = (id: number, overrides: Record<string, unknown> = {}) => ({
+    ...createMockDbBook({ id, title: `Book ${id}`, status: 'missing', importListId: 5 }),
+    importListName: 'NYT Bestsellers',
+    authors: [{ name: 'Jane Doe' }],
+    narrators: [],
+    ...overrides,
+  });
+
+  function sweep(ids: number[], opts?: Parameters<typeof createService>[0]) {
+    return createService({
+      ...opts,
+      bookService: {
+        findIdsByStatus: vi.fn().mockResolvedValue(ids),
+        getStatusById: vi.fn().mockResolvedValue('missing'),
+        getById: vi.fn().mockImplementation(async (id: number) => missingBook(id)),
+        delete: vi.fn().mockResolvedValue(true),
+        ...opts?.bookService,
+      },
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('deletes every enumerated missing book and counts them', async () => {
+    const { service, bookService } = sweep([1, 2, 3]);
+
+    const result = await service.deleteMissingBooks();
+
+    expect(result).toEqual({ deleted: 3, failed: 0 });
+    expect(bookService.findIdsByStatus).toHaveBeenCalledWith('missing');
+    expect((bookService.delete as Mock).mock.calls.map((c) => c[0])).toEqual([1, 2, 3]);
+  });
+
+  it('reports an empty sweep without opening a transaction', async () => {
+    const { service, db } = sweep([]);
+
+    expect(await service.deleteMissingBooks()).toEqual({ deleted: 0, failed: 0 });
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it('routes through the shared single-book routine, never touching disk', async () => {
+    const { service } = sweep([1, 2]);
+    const deleteBook = vi.spyOn(service, 'deleteBook');
+
+    await service.deleteMissingBooks();
+
+    expect(deleteBook).toHaveBeenCalledTimes(2);
+    expect(deleteBook).toHaveBeenNthCalledWith(1, 1, { deleteFiles: false });
+    expect(deleteBook).toHaveBeenNthCalledWith(2, 2, { deleteFiles: false });
+  });
+
+  it('opens one transaction per book and none of its own', async () => {
+    const { service, db } = sweep([1, 2, 3]);
+
+    await service.deleteMissingBooks();
+
+    expect(db.transaction).toHaveBeenCalledTimes(3);
+  });
+
+  it('runs the per-book deletions sequentially', async () => {
+    const started: number[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const db = createMockDb();
+    db.transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+      started.push(started.length + 1);
+      if (started.length === 1) await gate;
+      return cb(db);
+    });
+    const { service } = sweep([1, 2], { db });
+
+    const run = service.deleteMissingBooks();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(started).toEqual([1]);
+
+    release();
+    expect(await run).toEqual({ deleted: 2, failed: 0 });
+    expect(started).toEqual([1, 2]);
+  });
+
+  describe('per-book failure isolation', () => {
+    const rejectDeleteOf = (target: number) =>
+      vi.fn().mockImplementation(async (id: number) => {
+        if (id === target) throw new Error(`row ${id} locked`);
+        return true;
+      });
+
+    it('leaves the failing book behind, deletes the rest, and counts it failed', async () => {
+      const { service, log, bookService } = sweep([1, 2, 3], { bookService: { delete: rejectDeleteOf(1) } });
+
+      const result = await service.deleteMissingBooks();
+
+      expect(result).toEqual({ deleted: 2, failed: 1 });
+      expect((bookService.delete as Mock).mock.calls.map((c) => c[0])).toEqual([1, 2, 3]);
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1, error: expect.objectContaining({ message: 'row 1 locked' }) }),
+        'Failed to delete missing book',
+      );
+    });
+
+    it('isolates a failure on the LAST book of the batch', async () => {
+      const { service } = sweep([1, 2, 3], { bookService: { delete: rejectDeleteOf(3) } });
+
+      expect(await service.deleteMissingBooks()).toEqual({ deleted: 2, failed: 1 });
+    });
+
+    it('counts a rejected delete-time status read as failed and keeps sweeping', async () => {
+      const getStatusById = vi.fn().mockImplementation(async (id: number) => {
+        if (id === 2) throw new Error('status read failed');
+        return 'missing';
+      });
+      const { service, bookService } = sweep([1, 2, 3], { bookService: { getStatusById } });
+
+      const result = await service.deleteMissingBooks();
+
+      expect(result).toEqual({ deleted: 2, failed: 1 });
+      expect((bookService.delete as Mock).mock.calls.map((c) => c[0])).toEqual([1, 3]);
+    });
+
+    it('propagates a rejected enumeration — there is no sweep to isolate', async () => {
+      const { service, db } = sweep([], {
+        bookService: { findIdsByStatus: vi.fn().mockRejectedValue(new Error('DB error')) },
+      });
+
+      await expect(service.deleteMissingBooks()).rejects.toThrow('DB error');
+      expect(db.transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('the delete-time membership re-check', () => {
+    it('skips a book a concurrent scan restored, counting it in neither bucket', async () => {
+      const getStatusById = vi.fn().mockImplementation(async (id: number) => (id === 2 ? 'imported' : 'missing'));
+      const { service, bookService, log } = sweep([1, 2], { bookService: { getStatusById } });
+
+      const result = await service.deleteMissingBooks();
+
+      expect(result).toEqual({ deleted: 1, failed: 0 });
+      expect((bookService.delete as Mock).mock.calls.map((c) => c[0])).toEqual([1]);
+      expect(log.info).toHaveBeenCalledWith({ bookId: 2, status: 'imported' }, 'Skipped book that is no longer missing');
+    });
+
+    it('skips a row that vanished before its turn, counting it in neither bucket', async () => {
+      const getStatusById = vi.fn().mockImplementation(async (id: number) => (id === 2 ? null : 'missing'));
+      const { service, bookService } = sweep([1, 2], { bookService: { getStatusById } });
+
+      const result = await service.deleteMissingBooks();
+
+      expect(result).toEqual({ deleted: 1, failed: 0 });
+      expect((bookService.delete as Mock).mock.calls.map((c) => c[0])).toEqual([1]);
+    });
+
+    it('counts a not_found race in neither bucket', async () => {
+      // The row survived the re-check and hydration, then vanished before the transaction's delete.
+      const del = vi.fn().mockImplementation(async (id: number) => id !== 2);
+      const { service, log } = sweep([1, 2], { bookService: { delete: del } });
+
+      const result = await service.deleteMissingBooks();
+
+      expect(result).toEqual({ deleted: 1, failed: 0 });
+      expect(log.debug).toHaveBeenCalledWith({ bookId: 2 }, 'Missing book vanished before the sweep deleted it');
+    });
   });
 });

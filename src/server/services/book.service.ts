@@ -399,18 +399,30 @@ export class BookService {
     return this.update(id, { status });
   }
 
-  async deleteByStatus(status: BookRow['status']): Promise<number> {
-    const result = await this.db.delete(books).where(eq(books.status, status)).returning();
-    this.log.info({ status, count: result.length }, 'Deleted books by status');
-    return result.length;
+  /** Ids only: a bulk sweep enumerates first and hydrates per book, so the list shape would be waste. */
+  async findIdsByStatus(status: BookRow['status']): Promise<number[]> {
+    const rows = await this.db.select({ id: books.id }).from(books).where(eq(books.status, status));
+    return rows.map((row) => row.id);
   }
 
-  async delete(id: number): Promise<boolean> {
-    const existing = await this.getById(id);
+  /** Narrow read for a delete-time membership re-check; null when the row is gone entirely. */
+  async getStatusById(id: number): Promise<BookRow['status'] | null> {
+    const rows = await this.db.select({ status: books.status }).from(books).where(eq(books.id, id)).limit(1);
+    return rows[0]?.status ?? null;
+  }
+
+  /**
+   * `tx` is a caller-owned transaction; that arm is deliberately side-effect-free because the owner
+   * may still roll back, so it emits no `Book removed` record — `BookDeletionService` logs the
+   * committed deletion instead, and its `Book deleted` record carries the same id and title.
+   */
+  async delete(id: number, tx?: DbOrTx): Promise<boolean> {
+    const executor = tx ?? this.db;
+    const existing = await this.getById(id, executor);
     if (!existing) return false;
 
-    await this.db.delete(books).where(eq(books.id, id));
-    this.log.info({ id, title: existing.title }, 'Book removed');
+    await executor.delete(books).where(eq(books.id, id));
+    if (!tx) this.log.info({ id, title: existing.title }, 'Book removed');
     return true;
   }
 

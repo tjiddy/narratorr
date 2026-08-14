@@ -1,10 +1,12 @@
 import type { FastifyBaseLogger } from 'fastify';
+import type { Db, DbOrTx } from '@db/index.js';
 import type { BookService, BookWithAuthor } from './book.service.js';
-import type { DownloadService } from './download.service.js';
+import type { DownloadService, DownloadWithBook } from './download.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
-import type { ImportListExclusionService } from './import-list-exclusion.service.js';
+import type { ImportListExclusionService, ExclusionRecordResult } from './import-list-exclusion.service.js';
+import type { BookEventRow } from './types.js';
 import { basename } from 'node:path';
 import { PathOutsideLibraryError } from '../utils/paths.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
@@ -29,13 +31,35 @@ export interface DeleteBookOptions {
   deleteFiles: boolean;
 }
 
+/** Counts for an operator-initiated sweep; the two skip classes are logged rather than counted. */
+export interface BulkDeletionSummary {
+  deleted: number;
+  failed: number;
+}
+
+/** What the deletion transaction landed, handed back so their effects and logs run after commit. */
+interface CommittedDeletion {
+  exclusion: ExclusionRecordResult | null;
+  event: BookEventRow | null;
+  activeDownloads: DownloadWithBook[];
+}
+
 /**
- * Disk deletion must succeed before DB mutation, and the import-list exclusion before every other
- * side effect. Download cancellation and event/cache side effects are best-effort; record the event
- * before DB deletion to preserve its snapshot.
+ * Rolls the deletion transaction back when the row vanished between hydration and the delete.
+ * Never escapes `deleteBook`, which maps it to the `not_found` arm.
+ */
+class BookRowVanishedError extends Error {}
+
+/**
+ * Disk deletion must succeed before DB mutation. Every durable artifact — the import-list
+ * exclusion, the `deleted` event and the row itself — then commits together or not at all, so a
+ * failure can never strand an exclusion or an Activity entry describing a book that is still here.
+ * Download cancellation and cover-cache cleanup are network/filesystem work and stay best-effort,
+ * after the commit.
  */
 export class BookDeletionService {
   constructor(
+    private db: Db,
     private bookService: BookService,
     private downloadService: DownloadService,
     private downloadOrchestrator: DownloadOrchestrator,
@@ -59,24 +83,96 @@ export class BookDeletionService {
       }
     }
 
-    // Immediately after the disk step and before every other side effect. Later, a rejection would
-    // leave the book present with its downloads already cancelled and a `deleted` event already in
-    // Activity; earlier, a disk failure would permanently exclude a book still in the library.
-    await this.recordImportListExclusion(book);
+    let committed: CommittedDeletion;
+    try {
+      committed = await this.commitDeletion(id, book);
+    } catch (error: unknown) {
+      if (error instanceof BookRowVanishedError) return { outcome: 'not_found' };
+      throw error;
+    }
 
-    await this.cancelActiveDownloads(id);
-
-    this.recordDeletedEvent(id, book);
-
-    const deleted = await this.bookService.delete(id);
-    if (!deleted) return { outcome: 'not_found' };
+    this.reportCommitted(id, committed);
+    await this.cancelDownloads(id, committed.activeDownloads);
 
     cleanCoverCache(id, config.configPath, this.log).catch((error: unknown) => {
       this.log.warn({ bookId: id, error: serializeError(error) }, 'Failed to clean cover cache during deletion');
     });
 
-    this.log.info({ id, deleteFiles }, 'Book deleted');
+    this.log.info({ id, deleteFiles, title: book?.title ?? null }, 'Book deleted');
     return { outcome: 'deleted', bookTitle: book?.title ?? '', ...(fileSummary ? { fileSummary } : {}) };
+  }
+
+  /**
+   * Delete every book still holding `missing` at its turn, through the single-book routine so the
+   * exclusion decision, the `deleted` event, cancellation and cache cleanup have exactly one
+   * implementation. Sequential and transaction-free: `deleteBook` owns one transaction per book,
+   * and a wrapping one would nest and throw.
+   *
+   * `deleteFiles: false` is load-bearing — a `missing` book's files are already gone from disk.
+   */
+  async deleteMissingBooks(): Promise<BulkDeletionSummary> {
+    // The one batch-level operation: with no list of ids there is no sweep to isolate failures in.
+    const ids = await this.bookService.findIdsByStatus('missing');
+    const summary: BulkDeletionSummary = { deleted: 0, failed: 0 };
+
+    for (const id of ids) {
+      try {
+        // A concurrent library scan legitimately restores `missing → imported` when the path
+        // reappears; deleting that book would drop a row whose files are back AND exclude it.
+        const status = await this.bookService.getStatusById(id);
+        if (status !== 'missing') {
+          this.log.info({ bookId: id, status }, 'Skipped book that is no longer missing');
+          continue;
+        }
+        this.countOutcome(id, await this.deleteBook(id, { deleteFiles: false }), summary);
+      } catch (error: unknown) {
+        summary.failed++;
+        this.log.error({ bookId: id, error: serializeError(error) }, 'Failed to delete missing book');
+      }
+    }
+
+    return summary;
+  }
+
+  /** Only an operational failure counts; a book that vanished on its own was never this sweep's work. */
+  private countOutcome(id: number, result: BookDeletionResult, summary: BulkDeletionSummary): void {
+    if (result.outcome === 'deleted') {
+      summary.deleted++;
+    } else if (result.outcome === 'not_found') {
+      this.log.debug({ bookId: id }, 'Missing book vanished before the sweep deleted it');
+    } else {
+      // Unreachable with deleteFiles: false — the disk arm never runs. Counted rather than ignored.
+      summary.failed++;
+      this.log.warn({ bookId: id, outcome: result.outcome }, 'Unexpected disk outcome sweeping missing books');
+    }
+  }
+
+  /**
+   * The exclusion write comes first so a rejection aborts the deletion having done nothing else,
+   * and the event insert precedes the row delete because `book_events.book_id` is ON DELETE SET
+   * NULL — inserted afterwards it would violate the foreign key. The active-download lookup is an
+   * ordinary read and belongs here; the cancellations it feeds are network I/O and do not.
+   */
+  private async commitDeletion(id: number, book: BookWithAuthor | null): Promise<CommittedDeletion> {
+    return this.db.transaction(async (tx) => {
+      const exclusion = await this.recordImportListExclusion(book, tx);
+      const activeDownloads = await this.downloadService.getActiveByBookId(id, tx);
+      const event = await this.recordDeletedEvent(id, book, tx);
+
+      const deleted = await this.bookService.delete(id, tx);
+      if (!deleted) throw new BookRowVanishedError();
+
+      return { exclusion, event, activeDownloads };
+    });
+  }
+
+  /** The post-commit half of every side-effect-free arm inside the transaction. */
+  private reportCommitted(id: number, committed: CommittedDeletion): void {
+    if (committed.exclusion && this.exclusions) {
+      this.exclusions.logRecorded(committed.exclusion);
+      this.log.info({ bookId: id, exclusionId: committed.exclusion.row.id }, 'Recorded import list exclusion for deleted book');
+    }
+    if (committed.event && this.eventHistory) this.eventHistory.logRecorded(committed.event);
   }
 
   /** Managed-file failures are fatal; foreign files are preserved and reported by basename. */
@@ -108,8 +204,7 @@ export class BookDeletionService {
   }
 
   /** Attempt every active cancellation, logging individual failures. */
-  private async cancelActiveDownloads(id: number): Promise<void> {
-    const activeDownloads = await this.downloadService.getActiveByBookId(id);
+  private async cancelDownloads(id: number, activeDownloads: DownloadWithBook[]): Promise<void> {
     for (const download of activeDownloads) {
       try {
         await this.downloadOrchestrator.cancel(download.id);
@@ -132,23 +227,34 @@ export class BookDeletionService {
    * `onDelete: 'set null'`, so deleting the LIST first erases the provenance and a later book
    * delete records nothing.
    */
-  private async recordImportListExclusion(book: BookWithAuthor | null): Promise<void> {
-    if (!book || !this.exclusions || book.importListId === null) return;
-    const exclusion = await this.exclusions.recordExclusion(
+  private async recordImportListExclusion(
+    book: BookWithAuthor | null,
+    tx: DbOrTx,
+  ): Promise<ExclusionRecordResult | null> {
+    if (!book || !this.exclusions || book.importListId === null) return null;
+    return this.exclusions.recordExclusion(
       { title: book.title, asin: book.asin, authorName: book.authors[0]?.name ?? null },
       { importListId: book.importListId, importListName: book.importListName ?? null },
+      tx,
     );
-    this.log.info({ bookId: book.id, exclusionId: exclusion.id }, 'Recorded import list exclusion for deleted book');
   }
 
-  /** Start the event write without blocking deletion; log rejection. */
-  private recordDeletedEvent(id: number, book: BookWithAuthor | null): void {
-    if (!book || !this.eventHistory) return;
-    this.eventHistory.create({
+  /** The one arm that must not roll the transaction back: awaited so its row commits with the
+   * deletion, caught so a failed event write still lets the deletion land. */
+  private async recordDeletedEvent(
+    id: number,
+    book: BookWithAuthor | null,
+    tx: DbOrTx,
+  ): Promise<BookEventRow | null> {
+    if (!book || !this.eventHistory) return null;
+    return this.eventHistory.create({
       bookId: id,
       ...snapshotBookForEvent(book),
       eventType: 'deleted',
       source: 'manual',
-    }).catch((err: unknown) => this.log.warn({ error: serializeError(err) }, 'Failed to record deleted event'));
+    }, tx).catch((err: unknown) => {
+      this.log.warn({ error: serializeError(err) }, 'Failed to record deleted event');
+      return null;
+    });
   }
 }
