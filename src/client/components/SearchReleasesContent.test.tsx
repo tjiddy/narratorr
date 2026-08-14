@@ -8,6 +8,8 @@ import { createMockBook } from '@/__tests__/factories';
 import type { SearchResult } from '@/lib/api';
 import type { SearchResponse } from '@/lib/api/search';
 import type { IndexerState } from '@/hooks/useSearchStream';
+import { searchDropReasonSchema } from '@shared/schemas/search-stream.js';
+import { DROP_REASON_LABELS } from '@/lib/searchDropReasonCopy';
 
 vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual('@/lib/api');
@@ -237,5 +239,89 @@ describe('SearchReleasesContent — no relaxed-query banner (superseded disclosu
 
     expect(screen.queryByText(/matched on relaxed query/i)).not.toBeInTheDocument();
     expect(screen.queryByText('star wars haunted starlight')).not.toBeInTheDocument();
+  });
+});
+
+describe('SearchReleasesContent — quality-filtered empty state (#2325)', () => {
+  const filteredResponse = (filteredOut: SearchResponse['filteredOut'], overrides: Partial<SearchResponse> = {}): SearchResponse => ({
+    results: [],
+    durationUnknown: false,
+    unsupportedResults: { count: 0, titles: [] },
+    ...(filteredOut && { filteredOut }),
+    ...overrides,
+  });
+
+  it('names the dominant reason with its threshold and lists the remaining reasons', () => {
+    renderContent({
+      phase: 'results',
+      searchResponse: filteredResponse({
+        total: 4,
+        reasons: [
+          { reason: 'below-min-size', count: 3, threshold: '50 MB' },
+          { reason: 'below-min-seeders', count: 1, threshold: '5 seeders' },
+        ],
+      }),
+    });
+
+    expect(screen.getByText(/below your minimum size \(50 MB\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/below your minimum seeder count \(5 seeders\)/i)).toBeInTheDocument();
+    expect(screen.queryByText('No releases found')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the plain empty state when filteredOut is absent', () => {
+    renderContent({ phase: 'results', searchResponse: filteredResponse(undefined) });
+
+    expect(screen.getByText('No releases found')).toBeInTheDocument();
+  });
+
+  it('falls back to the plain empty state when filteredOut reports nothing dropped', () => {
+    renderContent({ phase: 'results', searchResponse: filteredResponse({ total: 0, reasons: [] }) });
+
+    expect(screen.getByText('No releases found')).toBeInTheDocument();
+  });
+
+  it('renders a threshold-less reason without a dangling qualifier', () => {
+    const { container } = renderContent({
+      phase: 'results',
+      searchResponse: filteredResponse({ total: 2, reasons: [{ reason: 'reject-word-match', count: 2 }] }),
+    });
+
+    expect(screen.getByText(/matched one of your reject words/i)).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/undefined|\(\)/);
+    expect(screen.queryByText('No releases found')).not.toBeInTheDocument();
+  });
+
+  it('renders neither empty state when results are present alongside filteredOut', () => {
+    renderContent({
+      phase: 'results',
+      resultKeys: ['key-0'],
+      searchResponse: filteredResponse(
+        { total: 1, reasons: [{ reason: 'below-min-size', count: 1, threshold: '50 MB' }] },
+        { results: [mockResult] },
+      ),
+    });
+
+    expect(screen.queryByText('No releases found')).not.toBeInTheDocument();
+    expect(screen.queryByText(/quality filters/i)).not.toBeInTheDocument();
+    expect(screen.getByText('Found 1 release')).toBeInTheDocument();
+  });
+
+  it('still renders the unsupported-format section beneath the quality-filtered empty state', () => {
+    renderContent({
+      phase: 'results',
+      searchResponse: filteredResponse(
+        { total: 1, reasons: [{ reason: 'below-min-size', count: 1, threshold: '50 MB' }] },
+        { unsupportedResults: { count: 2, titles: ['Part 1', 'Part 2'] } },
+      ),
+    });
+
+    expect(screen.getByText(/below your minimum size/i)).toBeInTheDocument();
+    expect(screen.getByText(/unsupported format \(2\)/i)).toBeInTheDocument();
+  });
+
+  it('maps every reason in the closed vocabulary to non-empty copy', () => {
+    for (const reason of searchDropReasonSchema.options) {
+      expect(DROP_REASON_LABELS[reason].trim().length).toBeGreaterThan(0);
+    }
   });
 });

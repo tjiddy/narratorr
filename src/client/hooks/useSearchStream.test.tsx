@@ -218,6 +218,49 @@ describe('useSearchStream', () => {
     expect(result.current.state.results?.relaxedQuery).toBe('star wars haunted starlight');
   });
 
+  // Same runtime guard as relaxedQuery: Zod must not strip filteredOut on the way into state (#2325).
+  it('carries filteredOut from the search-complete payload into state', async () => {
+    const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
+
+    await waitForAuth(result);
+    act(() => {
+      result.current.actions.start();
+    });
+
+    act(() => {
+      MockEventSource.instances[0]!.emit('search-complete', {
+        results: [],
+        durationUnknown: false,
+        unsupportedResults: { count: 0, titles: [] },
+        filteredOut: { total: 3, reasons: [{ reason: 'below-min-size', count: 3, threshold: '50 MB' }] },
+      });
+    });
+
+    expect(result.current.state.results?.filteredOut).toEqual({
+      total: 3,
+      reasons: [{ reason: 'below-min-size', count: 3, threshold: '50 MB' }],
+    });
+  });
+
+  it('leaves filteredOut undefined when the payload omits it', async () => {
+    const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
+
+    await waitForAuth(result);
+    act(() => {
+      result.current.actions.start();
+    });
+
+    act(() => {
+      MockEventSource.instances[0]!.emit('search-complete', {
+        results: [{ title: 'Book', indexer: 'ABB', protocol: 'torrent' as const }],
+        durationUnknown: false,
+        unsupportedResults: { count: 0, titles: [] },
+      });
+    });
+
+    expect(result.current.state.results).not.toHaveProperty('filteredOut');
+  });
+
   it('leaves relaxedQuery undefined when the payload omits it', async () => {
     const { result } = renderHook(() => useSearchStream('test query'), { wrapper: createWrapper() });
 

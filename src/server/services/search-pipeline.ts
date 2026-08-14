@@ -22,6 +22,8 @@ import { ensureError } from '../utils/ensure-error.js';
 import { buildGrabPayload } from './grab-payload.js';
 import { parseWordList, matchesWord } from '@shared/parse-word-list.js';
 import { BYTES_PER_GB, BYTES_PER_MB } from '@shared/constants.js';
+import type { SearchDropReason, SearchDropSummary } from '@shared/schemas/search-stream.js';
+import { summarizeDrops, withBlacklistDrops, describeEmptiedSet, type SearchDropCounts } from './search-drop-summary.js';
 /** Compatibility re-export; the ladder imports indexer-query directly to avoid a cycle. */
 export { buildSearchQuery } from './indexer-query.js';
 
@@ -50,7 +52,7 @@ export interface SearchFilterOptions {
 type GateVerdict = { keep: true } | { keep: false; logFields?: Record<string, unknown> };
 
 type Gate = {
-  reason: string;
+  reason: SearchDropReason;
   enabled: boolean;
   evaluate: (r: SearchResult) => GateVerdict;
 };
@@ -151,10 +153,12 @@ export function filterAndRankResults(
   bookDurationSeconds: number | undefined,
   options: SearchFilterOptions,
   log?: FastifyBaseLogger,
-): { results: SearchResult[]; durationUnknown: boolean } {
+): { results: SearchResult[]; durationUnknown: boolean; dropSummary: SearchDropSummary } {
   const { protocolPreference, languages, narratorPriority } = options;
   const durationUnknown = !bookDurationSeconds || bookDurationSeconds <= 0;
 
+  // Gates run sequentially over the survivors, so each drop is attributed to the first gate that saw it.
+  const dropCounts: SearchDropCounts = {};
   const gates = buildQualityGates(bookDurationSeconds, durationUnknown, options);
   let filtered = results;
   for (const gate of gates) {
@@ -162,6 +166,7 @@ export function filterAndRankResults(
     filtered = filtered.filter((r) => {
       const verdict = gate.evaluate(r);
       if (verdict.keep) return true;
+      dropCounts[gate.reason] = (dropCounts[gate.reason] ?? 0) + 1;
       log?.debug({ title: r.title, ...verdict.logFields, dropped: true, reason: gate.reason }, 'Quality filter dropped result');
       return false;
     });
@@ -169,6 +174,7 @@ export function filterAndRankResults(
 
   const langs = languages ?? [];
   const langPartition = filterByLanguage(filtered, langs);
+  if (langPartition.dropped.length > 0) dropCounts['language-mismatch'] = langPartition.dropped.length;
   if (log) {
     for (const r of langPartition.dropped) {
       log.debug({ title: r.title, detectedLanguage: r.language, allowedLanguages: langs, dropped: true, reason: 'language-mismatch' }, 'Language filter dropped result');
@@ -181,7 +187,7 @@ export function filterAndRankResults(
 
   filtered.sort((a, b) => canonicalCompare(a, b, bookDurationSeconds, durationUnknown, protocolPreference, langs, narratorPriority));
 
-  return { results: filtered, durationUnknown };
+  return { results: filtered, durationUnknown, dropSummary: summarizeDrops(dropCounts, options) };
 }
 
 /** Shared settings mapper; omit narratorPriority rather than assigning undefined. */
@@ -224,6 +230,7 @@ export function applyMultiPartFilterAndRank(
   results: SearchResult[];
   durationUnknown: boolean;
   multipartRejections: Array<{ title: string; matchedPattern: string }>;
+  dropSummary: SearchDropSummary;
 } {
   const { filtered, rejectedTitles } = filterMultiPartUsenet(results);
   for (const r of rejectedTitles) {
@@ -236,8 +243,12 @@ export function applyMultiPartFilterAndRank(
   if (ranked.results.length < inputCount) {
     log?.debug({ inputCount, outputCount: ranked.results.length }, 'Quality gate filtering applied');
   }
+  // The one signal every search surface shares: results existed, and the operator sees none of them.
+  if (inputCount > 0 && ranked.results.length === 0) {
+    log?.info(describeEmptiedSet(ranked.dropSummary, inputCount), 'All search results removed by quality filters');
+  }
 
-  return { results: ranked.results, durationUnknown: ranked.durationUnknown, multipartRejections: rejectedTitles };
+  return { results: ranked.results, durationUnknown: ranked.durationUnknown, multipartRejections: rejectedTitles, dropSummary: ranked.dropSummary };
 }
 
 export async function filterBlacklistedResults(
@@ -278,8 +289,11 @@ export async function postProcessSearchResults(
   results: SearchResult[];
   durationUnknown: boolean;
   unsupportedResults: { count: number; titles: string[] };
+  filteredOut?: SearchDropSummary | undefined;
 }> {
   const filteredResults = await filterBlacklistedResults(allResults, blacklistService, logger);
+  // The blacklist gate keeps its signature; a length delta is exact and costs nothing.
+  const blacklistedCount = allResults.length - filteredResults.length;
 
   // Forward the configured private-indexer allowlist; this interactive path intentionally has no phase-2 cap.
   const lanAllowlist = await indexerService.getLanAllowlist();
@@ -287,12 +301,14 @@ export async function postProcessSearchResults(
 
   const qualitySettings = await settingsService.get('quality');
   const metadataSettings = await settingsService.get('metadata');
-  const { results, durationUnknown, multipartRejections } = applyMultiPartFilterAndRank(
+  const filterOptions = buildSearchFilterOptions(qualitySettings, metadataSettings);
+  const { results, durationUnknown, multipartRejections, dropSummary } = applyMultiPartFilterAndRank(
     filteredResults,
     bookDuration,
-    buildSearchFilterOptions(qualitySettings, metadataSettings),
+    filterOptions,
     logger,
   );
+  const filteredOut = withBlacklistDrops(dropSummary, blacklistedCount, filterOptions);
 
   // Preserve the legacy titles-only API; matchedPattern remains internal.
   const unsupportedTitles = multipartRejections.map((r) => r.title);
@@ -300,6 +316,8 @@ export async function postProcessSearchResults(
     results,
     durationUnknown,
     unsupportedResults: { count: unsupportedTitles.length, titles: unsupportedTitles },
+    // Omitted when nothing was dropped, so every caller sees the same absence — including v1, which ignores it.
+    ...(filteredOut.total > 0 && { filteredOut }),
   };
 }
 

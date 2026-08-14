@@ -122,6 +122,55 @@ describe('searchResponseSchema', () => {
   });
 });
 
+describe('searchResponseSchema — filteredOut (#2325)', () => {
+  const base = { results: [], durationUnknown: false, unsupportedResults: { count: 0, titles: [] } };
+
+  it('accepts and round-trips a well-formed filteredOut summary', () => {
+    const filteredOut = {
+      total: 4,
+      reasons: [
+        { reason: 'below-min-size', count: 3, threshold: '50 MB' },
+        { reason: 'reject-word-match', count: 1 },
+      ],
+    };
+
+    const result = searchResponseSchema.safeParse({ ...base, filteredOut });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.filteredOut).toEqual(filteredOut);
+  });
+
+  it('accepts a payload without the key and leaves it off the parsed output', () => {
+    const result = searchResponseSchema.safeParse(base);
+
+    expect(result.success).toBe(true);
+    expect(result.data).not.toHaveProperty('filteredOut');
+  });
+
+  it('rejects a reason outside the closed vocabulary', () => {
+    const result = searchResponseSchema.safeParse({
+      ...base,
+      filteredOut: { total: 1, reasons: [{ reason: 'multi-part-detected', count: 1 }] },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a non-numeric count and a missing total', () => {
+    expect(searchResponseSchema.safeParse({
+      ...base,
+      filteredOut: { total: 1, reasons: [{ reason: 'below-min-size', count: '1' }] },
+    }).success).toBe(false);
+    expect(searchResponseSchema.safeParse({
+      ...base,
+      filteredOut: { reasons: [{ reason: 'below-min-size', count: 1 }] },
+    }).success).toBe(false);
+  });
+
+  it('rejects a null filteredOut — the contract is .optional(), not .nullish()', () => {
+    expect(searchResponseSchema.safeParse({ ...base, filteredOut: null }).success).toBe(false);
+  });
+});
+
 describe('searchResultSchema — rawSize (#2316)', () => {
   const base = { title: 'Play of Shadows', protocol: 'torrent', indexer: 'MAM' };
 
