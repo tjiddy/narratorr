@@ -20,7 +20,7 @@ export type { RemotePathMapping } from './remote-path-mappings.js';
 export type { BookEvent, EventHistoryParams } from './event-history.js';
 export type { BackupMetadata, RestoreValidation, BackupJobResult } from './backups.js';
 export type { HealthState, HealthCheckResult, HealthCheckTarget, HealthSummary, TaskMetadata, SystemInfo, SystemStatus, ThirdPartyNotices } from './system.js';
-export type { ImportList, ImportListItem, ImportListPreview } from './import-lists.js';
+export type { ImportList, ImportListItem, ImportListPreview, RunImportListResult } from './import-lists.js';
 export type { SuggestionRow, MarkAddedResult, RefreshResult } from './discover.js';
 export type { BulkOpType, BulkJobStatus, BulkJobFailure, BulkRenamePreview, BulkRenamePreviewItem } from './bulk-operations.js';
 export type { ImportJobWithBook, ImportJobBook, ImportJobsParams } from './import-jobs.js';

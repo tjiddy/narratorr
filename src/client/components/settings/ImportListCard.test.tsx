@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { queryKeys } from '@/lib/queryKeys';
 import { foreignRegistryKeys } from '@/__tests__/registry-foreign-keys';
 import { ImportListCard } from './ImportListCard';
 import { IMPORT_LIST_REGISTRY, IMPORT_LIST_TYPES, type ImportListType } from '@shared/import-list-registry.js';
@@ -12,19 +14,23 @@ import type { Mock } from 'vitest';
 const foreignImportListKeys = (ownType: ImportListType): string[] =>
   foreignRegistryKeys(ownType, IMPORT_LIST_TYPES, IMPORT_LIST_REGISTRY);
 
-vi.mock('@/lib/api', () => ({
+// Spread the real barrel: the card imports `ApiError` at RUNTIME to classify a 409, and a
+// replacing factory would land it as `undefined` — visible only on the error path.
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api')>()),
   api: {
     updateImportList: vi.fn(),
     previewImportList: vi.fn(),
+    runImportList: vi.fn(),
     getImportLists: vi.fn().mockResolvedValue([]),
   },
 }));
 
 vi.mock('sonner', () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { toast } from 'sonner';
 
 const mockList: ImportList = {
@@ -153,6 +159,142 @@ describe('ImportListCard', () => {
       expect(deleteBtn).toBeDefined();
       await user.click(deleteBtn!);
       expect(onDelete).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('Run control (#2306)', () => {
+    const okCounts = { success: true as const, createdCount: 2, heldReviewCount: 1, excludedCount: 3 };
+
+    function renderRow(list: ImportList = mockList) {
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const invalidateQueries = vi.spyOn(client, 'invalidateQueries');
+      const utils = renderWithProviders(
+        <ImportListCard list={list} mode="view" onSubmit={noop} />,
+        { queryClient: client },
+      );
+      return { ...utils, client, invalidateQueries };
+    }
+
+    const runButton = () => screen.getByRole('button', { name: /^Run$/ });
+
+    const expectListsInvalidated = (invalidateQueries: ReturnType<typeof vi.spyOn>) =>
+      expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.importLists() });
+
+    it('syncs this list exactly once when clicked', async () => {
+      const user = userEvent.setup();
+      (api.runImportList as Mock).mockResolvedValue(okCounts);
+      renderRow();
+
+      await user.click(runButton());
+
+      await waitFor(() => expect(api.runImportList).toHaveBeenCalledWith(1));
+      expect(api.runImportList).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports the created / held / excluded counts on success and raises no error or info', async () => {
+      const user = userEvent.setup();
+      (api.runImportList as Mock).mockResolvedValue(okCounts);
+      const { invalidateQueries } = renderRow();
+
+      await user.click(runButton());
+
+      await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(1));
+      const message = (toast.success as Mock).mock.calls[0]![0] as string;
+      expect(message).toContain('2');
+      expect(message).toContain('1');
+      expect(message).toContain('3');
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(toast.info).not.toHaveBeenCalled();
+      expectListsInvalidated(invalidateQueries);
+    });
+
+    it('reports a sync that failed server-side as an error, not as info', async () => {
+      const user = userEvent.setup();
+      (api.runImportList as Mock).mockResolvedValue({ success: false, message: 'Connection timeout' });
+      const { invalidateQueries } = renderRow();
+
+      await user.click(runButton());
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Connection timeout'));
+      expect(toast.info).not.toHaveBeenCalled();
+      expect(toast.success).not.toHaveBeenCalled();
+      expectListsInvalidated(invalidateQueries);
+    });
+
+    it('reports a 409 refusal as info carrying the server message, not as an error', async () => {
+      const user = userEvent.setup();
+      (api.runImportList as Mock).mockRejectedValue(
+        new ApiError(409, { error: 'Task "import-list-sync" is already running' }),
+      );
+      const { invalidateQueries } = renderRow();
+
+      await user.click(runButton());
+
+      await waitFor(() => expect(toast.info).toHaveBeenCalledWith('Task "import-list-sync" is already running'));
+      expect(toast.error).not.toHaveBeenCalled();
+      expectListsInvalidated(invalidateQueries);
+    });
+
+    it.each([404, 500])('reports an ApiError(%i) as an error, never as info', async (status) => {
+      const user = userEvent.setup();
+      (api.runImportList as Mock).mockRejectedValue(new ApiError(status, { error: `boom ${status}` }));
+      const { invalidateQueries } = renderRow();
+
+      await user.click(runButton());
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith(`boom ${status}`));
+      expect(toast.info).not.toHaveBeenCalled();
+      expectListsInvalidated(invalidateQueries);
+    });
+
+    it('reports a status-less network failure as an error without crashing', async () => {
+      const user = userEvent.setup();
+      (api.runImportList as Mock).mockRejectedValue(new Error('Network down'));
+      const { invalidateQueries } = renderRow();
+
+      await user.click(runButton());
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Network down'));
+      expect(toast.info).not.toHaveBeenCalled();
+      expect(screen.getByText('My NYT List')).toBeInTheDocument();
+      expectListsInvalidated(invalidateQueries);
+    });
+
+    it('disables the control while the run is in flight and swallows a second click', async () => {
+      const user = userEvent.setup();
+      let settle!: (value: unknown) => void;
+      (api.runImportList as Mock).mockReturnValue(new Promise((resolve) => { settle = resolve; }));
+      renderRow();
+
+      await user.click(runButton());
+
+      await waitFor(() => expect(runButton()).toBeDisabled());
+      expect(runButton().querySelector('[data-testid="loading-spinner"]')).not.toBeNull();
+
+      await user.click(runButton());
+      expect(api.runImportList).toHaveBeenCalledTimes(1);
+
+      settle(okCounts);
+      await waitFor(() => expect(runButton()).toBeEnabled());
+    });
+
+    it.each([
+      ['a 409 refusal', () => Promise.reject(new ApiError(409, { error: 'already running' }))],
+      ['a genuine failure', () => Promise.reject(new Error('Network down'))],
+    ])('re-enables the control after %s', async (_label, reject) => {
+      const user = userEvent.setup();
+      (api.runImportList as Mock).mockImplementation(reject);
+      renderRow();
+
+      await user.click(runButton());
+
+      await waitFor(() => expect(runButton()).toBeEnabled());
+    });
+
+    it('offers an enabled Run control for a disabled list (Decision 3)', () => {
+      renderRow({ ...mockList, enabled: false });
+
+      expect(runButton()).toBeEnabled();
     });
   });
 

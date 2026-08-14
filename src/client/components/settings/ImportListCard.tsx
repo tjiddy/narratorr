@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api, type ImportList, type ImportListItem, type TestResult } from '@/lib/api';
+import { api, ApiError, type ImportList, type ImportListItem, type TestResult } from '@/lib/api';
+import { getErrorMessage } from '@/lib/error-message.js';
 import { compactInputClass as inputClass, btnSecondary } from '@/components/settings/formStyles';
 import { importListItemKey, deduplicateKeys } from '@/lib/stableKeys.js';
 import { queryKeys } from '@/lib/queryKeys';
@@ -12,6 +13,8 @@ import {
   AlertCircleIcon,
   EyeIcon,
   TrashIcon,
+  ZapIcon,
+  LoadingSpinner,
 } from '@/components/icons';
 import { IMPORT_LIST_REGISTRY } from '@shared/import-list-registry.js';
 import { ProviderSettings } from '../../pages/settings/ImportListProviderSettings.js';
@@ -268,11 +271,15 @@ function ImportListRow({
   onToggle,
   onEdit,
   onDelete,
+  onRun,
+  running,
 }: {
   list: ImportList;
   onToggle: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onRun: () => void;
+  running: boolean;
 }) {
   return (
     <div className="flex items-center justify-between">
@@ -295,6 +302,15 @@ function ImportListRow({
         </div>
       </div>
       <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onRun}
+          disabled={running}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-muted rounded-lg hover:bg-muted/80 disabled:opacity-50 transition-colors"
+        >
+          {running ? <LoadingSpinner className="w-3.5 h-3.5" /> : <ZapIcon className="w-3.5 h-3.5" />}
+          Run
+        </button>
         <button type="button" onClick={onEdit} className="px-3 py-1.5 text-sm bg-muted rounded-lg hover:bg-muted/80 transition-colors">
           Edit
         </button>
@@ -322,6 +338,27 @@ export function ImportListCard(props: ImportListCardProps) {
     onError: () => toast.error('Failed to toggle import list'),
   });
 
+  const runMutation = useMutation({
+    mutationFn: (id: number) => api.runImportList(id),
+    onSuccess: (result) => {
+      if (result.success) {
+        toast.success(
+          `Sync complete — ${result.createdCount} added, ${result.heldReviewCount} held for review, ${result.excludedCount} excluded`,
+        );
+      } else {
+        toast.error(result.message);
+      }
+    },
+    onError: (err) => {
+      // A 409 means the scheduled cycle holds the task-wide guard, so the run was refused rather
+      // than broken — informational, per #2221. The rule keys on 409 exactly, not on any ApiError.
+      if (err instanceof ApiError && err.status === 409) toast.info(err.message);
+      else toast.error(getErrorMessage(err));
+    },
+    // Every outcome moves lastRunAt or lastSyncError, and a refusal means the cron is moving them.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.importLists() }),
+  });
+
   if (mode === 'view' && list) {
     return (
       <div
@@ -333,6 +370,8 @@ export function ImportListCard(props: ImportListCardProps) {
           onToggle={() => toggleMutation.mutate({ id: list.id, enabled: !list.enabled })}
           onEdit={() => onEdit?.()}
           onDelete={() => onDelete?.()}
+          onRun={() => runMutation.mutate(list.id)}
+          running={runMutation.isPending}
         />
       </div>
     );

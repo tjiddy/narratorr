@@ -16,11 +16,12 @@ vi.mock('@/lib/api', async (importOriginal) => ({
     testImportListConfig: vi.fn(),
     testImportList: vi.fn(),
     previewImportList: vi.fn(),
+    runImportList: vi.fn(),
   },
 }));
 
 vi.mock('sonner', () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
 import { api } from '@/lib/api';

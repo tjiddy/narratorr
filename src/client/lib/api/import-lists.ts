@@ -26,6 +26,11 @@ export interface ImportListPreview {
   total: number;
 }
 
+/** A manual run answers with either the sync's counts or the message its failure recorded. */
+export type RunImportListResult =
+  | { success: true; createdCount: number; heldReviewCount: number; excludedCount: number }
+  | { success: false; message: string };
+
 type ImportListInput = Omit<ImportList, 'id' | 'createdAt' | 'lastRunAt' | 'nextRunAt' | 'lastSyncError'>;
 
 export const importListsApi = {
@@ -44,6 +49,8 @@ export const importListsApi = {
     fetchApi<{ success: boolean }>(`/import-lists/${id}`, { method: 'DELETE' }),
   testImportList: (id: number) =>
     fetchApi<TestResult>(`/import-lists/${id}/test`, { method: 'POST' }),
+  runImportList: (id: number) =>
+    fetchApi<RunImportListResult>(`/import-lists/${id}/run`, { method: 'POST' }),
   testImportListConfig: (data: ImportListInput) =>
     fetchApi<TestResult>('/import-lists/test', {
       method: 'POST',
