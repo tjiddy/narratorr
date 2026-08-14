@@ -2903,3 +2903,29 @@ Once the timeout promise is settled the race's outcome is fixed and any later le
 **This is live, not theoretical, wherever leaves follow [[abort-verdict-not-error-shape]]** — that pattern's whole point is `if (signal?.aborted) throw error`, i.e. rejecting in response to the abort. The connector queue is currently only latent because its leaves are undici fetches that reject asynchronously from the fetch promise rather than from a synchronous listener.
 
 **Testing it:** the counterfactual is the whole justification for the ordering, so write it — a leaf that registers `signal.addEventListener('abort', () => reject(distinctLeafError))` and never otherwise settles, then assert the caller still receives the canonical error. Swapping the production order back must red exactly that one case. Because this is a hand-rolled `AbortController` + `setTimeout` rather than `AbortSignal.timeout`, `vi.spyOn(globalThis, 'setTimeout')` DOES capture the timer — the stated exception in [[abortsignal-timeout-native-timer-retry-tests]] — so the budget can be asserted exactly and the callback fired on demand with no fake-timer interleaving.
+
+
+## interval-gate-fifo-chain-not-timestamp-compare
+
+**source:** #2309, #2345  
+**added:** 2026-08-14  
+**files:** src/core/utils/interval-gate.ts, src/core/indexers/mam-throttle.ts, src/server/services/metadata.service.ts  
+**tags:** rate-limiting, concurrency, abortsignal, fake-timers
+
+---
+
+**A read-sleep-restamp throttle does not enforce an interval under concurrency.** The shape `const elapsed = Date.now() - lastRequest; if (elapsed < min) await sleep(min - elapsed); lastRequest = Date.now();` spaces only strictly sequential callers: N simultaneous `acquire()` calls read one stamp, sleep the same amount, and dispatch together — the exact burst the floor exists to prevent. A two-sequential-acquires test passes against it, which is why it stays invisible; the observation point that sees it is three CONCURRENT acquires recorded into a shared resolve-order array (see [[vacuous-assertion-observation-points]]).
+
+**Use `IntervalGate` (`src/core/utils/interval-gate.ts`); do not hand-roll a third one.** It was the MAM adapter's floor in #2309 and absorbed MetadataService's provider floor in #2345, which is the only reason no read-sleep-restamp throttle remains in the tree. `MamRequestThrottle` (`src/core/indexers/mam-throttle.ts`) is the model for a caller: it owns only its destination-key rule and its reset reason, and delegates every scheduling decision. Note the layer boundary — `src/core/**` cannot import `src/server/**`, so a shared gate has to live in core.
+
+The shape, if you ever need to reason about it: per-key `{ waiters, nextAllowedAt, timer }` plus a `pump()` loop that dispatches the head only when the remaining wait is `<= 0`, stamps `nextAllowedAt = Date.now() + intervalMs` on each dispatch, and otherwise arms exactly one `setTimeout` that re-enters `pump`.
+
+**Release on the interval, never on the caller's completion.** A slot freed by the timer means a request that hangs for its full timeout, throws, or is aborted delays nothing but itself — and no `try/finally` release bookkeeping is required. If an implementation grows one, the design has drifted. (`Semaphore` in `src/server/utils/semaphore.ts` is the opposite contract: it bounds concurrency and hands off on explicit release, so it is not a substitute.)
+
+**A wall-clock wait needs an explicit answer for BOTH directions of a clock step, and the backwards one must repair the stamp.** Clamping only the returned wait is insufficient: the stale `nextAllowedAt` survives, the timer fires, the remainder is still huge, and the queue re-arms forever. Rewrite the stamp itself — `if (remaining > intervalMs) { queue.nextAllowedAt = Date.now() + intervalMs; return intervalMs; }` — and return 0 for any non-finite or non-positive remainder (the `Number.isFinite` guard is the same fail-open trap as [[rate-limit-gate-fails-open-on-nan-window]]). A forward step yields a zero wait and lets one early request through; that is a decision — assert the bound, not the absence of the step.
+
+**The fake-timer trap that follows from it:** the armed timer must dispatch directly, not re-read the clock and recompute. Under this repo's `vi.useFakeTimers({ toFake: ['Date','setTimeout','clearTimeout'] })` harness the clock is frozen while timers still run, so a callback that recomputes the remainder finds it unchanged and re-arms forever. See the comment in `IntervalGate.pump`.
+
+**Cancellation:** `acquire` takes an optional `AbortSignal`, rejects with `signal.reason` verbatim (never on an error shape — see [[abort-verdict-not-error-shape]]), removes the waiter from the queue, and leaves `nextAllowedAt` untouched. Immediate queue hand-off is not immediate dispatch: the successor becomes head at once but still owes whatever remains of the floor. Every downstream catch-and-degrade on that path needs `if (signal?.aborted) throw error;` first, or the rejection reads as a legitimate empty answer.
+
+**Module-level state, module-level reset.** Adapter instances are cached and evicted (`indexer.service.ts`), so the floor belongs to the destination, not the object — key it by canonical `host:port` via `normalizedHostPortFromUrl`. `reset` must clear stamps, cancel timers, detach abort listeners AND reject queued waiters; a bare `Map.clear()` leaves timer closures armed and promises permanently pending, which surfaces later as flake (see [[shared-suite-state-inflates-counterfactual]]).
