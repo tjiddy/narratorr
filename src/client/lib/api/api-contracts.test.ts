@@ -37,6 +37,15 @@ import { eventHistoryApi } from './event-history.js';
 import { systemApi } from './system.js';
 import { submissionsApi } from './submissions.js';
 import { companionEbookApi } from './companion-ebook.js';
+import { importListsApi } from './import-lists.js';
+
+const LIST_INPUT = {
+  name: 'My NYT List',
+  type: 'nyt' as const,
+  enabled: true,
+  syncIntervalMinutes: 1440,
+  settings: { apiKey: 'key', list: 'audio-fiction' },
+};
 
 beforeEach(() => {
   mockFetchApi.mockClear();
@@ -905,5 +914,61 @@ describe('companionEbookApi', () => {
       method: 'PUT',
       body: JSON.stringify({ index: 2 }),
     });
+  });
+});
+
+describe('importListsApi', () => {
+  it('getImportLists → GET /import-lists', async () => {
+    await importListsApi.getImportLists();
+    expect(mockFetchApi).toHaveBeenCalledWith('/import-lists');
+  });
+
+  it('createImportList → POST /import-lists with the list body', async () => {
+    await importListsApi.createImportList(LIST_INPUT);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import-lists', {
+      method: 'POST',
+      body: JSON.stringify(LIST_INPUT),
+    });
+  });
+
+  it('updateImportList → PUT /import-lists/4 with the partial body', async () => {
+    await importListsApi.updateImportList(4, { enabled: false });
+    expect(mockFetchApi).toHaveBeenCalledWith('/import-lists/4', {
+      method: 'PUT',
+      body: JSON.stringify({ enabled: false }),
+    });
+  });
+
+  it('deleteImportList → DELETE /import-lists/4', async () => {
+    await importListsApi.deleteImportList(4);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import-lists/4', { method: 'DELETE' });
+  });
+
+  it('testImportList → POST /import-lists/4/test', async () => {
+    await importListsApi.testImportList(4);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import-lists/4/test', { method: 'POST' });
+  });
+
+  it('testImportListConfig → POST /import-lists/test with the config body', async () => {
+    await importListsApi.testImportListConfig(LIST_INPUT);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import-lists/test', {
+      method: 'POST',
+      body: JSON.stringify(LIST_INPUT),
+    });
+  });
+
+  it('previewImportList → POST /import-lists/preview with the config body', async () => {
+    await importListsApi.previewImportList({ ...LIST_INPUT, id: 4 });
+    expect(mockFetchApi).toHaveBeenCalledWith('/import-lists/preview', {
+      method: 'POST',
+      body: JSON.stringify({ ...LIST_INPUT, id: 4 }),
+    });
+  });
+
+  // The manual-run seam (#2306): the component suite replaces this method wholesale and the
+  // server suite starts at Fastify, so this is the only place the URL and verb are observed.
+  it('runImportList → POST /import-lists/4/run', async () => {
+    await importListsApi.runImportList(4);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import-lists/4/run', { method: 'POST' });
   });
 });
