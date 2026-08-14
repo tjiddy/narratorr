@@ -2671,3 +2671,235 @@ Verify a claim like this with a fixture rather than reasoning about it; see
 `eslint-rules/config-import-bans.test.js` for the harness, and
 [[eslint-linttext-project-service-cost]] for the ESLint instance that makes such fixtures cheap and
 non-vacuous.
+
+
+## staged-item-mirrors-provider-proposal
+
+**source:** #2296  
+**added:** 2026-08-13  
+**files:** src/server/services/import-opf-overlay.ts  
+**tags:** import-staging, opf-overlay, field-precedence
+
+---
+
+**A staged import item carries a copy of the provider's proposal at the TOP LEVEL, and the top level wins.** For an untouched scan row the client replaces `edited` wholesale from the best match (`mergeMatchIntoRow` → `buildEditedFromBestMatch`, gated on `!row.userEdited && row.edited.metadata === undefined`) and `toConfirmItem` emits the result as top-level `item.seriesName`/`item.seriesPosition`/`item.narrators` ALONGSIDE `item.metadata`. Server-side, `resolveImportSeries` (`src/server/services/resolve-import-series.ts:21-29`) returns on a nonblank `item.seriesName` before it consults `metadata.seriesPrimary`, and the narrator path behaves the same way.
+
+Consequence: **any rule about who wins a staged field has two write sites, not one.** A fix applied only to the metadata overlay is inert for every bulk re-import — the user-visible outcome is unchanged while every metadata-level assertion turns green. This has now bitten twice: #2158 (narrators) and #2296 (series).
+
+The established shape, both in `src/server/services/import-opf-overlay.ts`:
+- A named predicate classifies the top-level value as an untouched provider mirror by exact-after-**trim**, case-**sensitive** equality (`sameNarrators`, `mirrorsProviderSeries`). Case-insensitive or normalized comparison is NOT the convention here.
+- **Identity is the name alone for series.** `buildEditedFromBestMatch` sets `seriesPosition: primary?.position ?? fallback.seriesPosition`, so a mirrored row can legitimately carry the provider's NAME with the FOLDER's position. Requiring the whole pair to match misreads that hybrid as curation and leaves the bug live for every provider series with no index.
+- **Classify BEFORE the metadata overlay runs.** `overlayOntoMatch` reassigns `metadata.seriesPrimary`; comparing against the post-overlay value makes every item look non-mirrored. This is the single most likely way to ship a green-but-inert fix, and it is invisible to metadata-level tests.
+- **Delete, don't blank.** `ImportConfirmItem.seriesPosition` is `number | undefined` (`library-scan.service.ts:58-70`); when the replacement has no index, remove the key rather than leaving the old number. Assert with `not.toHaveProperty`, not `toEqual` — see [[key-absence-needs-tohaveproperty]].
+
+**Accepted ambiguity, deliberately:** when a folder or user genuinely asserts the same value the provider returned, it is indistinguishable from the mirror on the wire and the sidecar wins. Resolving it exactly would need a provenance discriminator on `stagedImportItemSchema`, which is `.strict()` and whose payloads are persisted in `import_submission_items.item_payload` — rejected as disproportionate in #2296.
+
+**Fixture rule:** write the regression in the shape the client actually submits (top-level pair present AND equal to the provider's), and corroborate that shape with a client-seam test through the real `mergeMatchIntoRow`/`buildEditedFromBestMatch`/`toConfirmItem` — otherwise the server fixture asserts a payload nobody has proven the client produces. An instance of [[vacuous-assertion-observation-points]]; see also [[staged-metadata-authors-min-one]] for the companion fixture trap on the metadata side.
+
+
+## utf8-readfile-not-byte-preserving
+
+**source:** #2297  
+**added:** 2026-08-13  
+**files:** src/server/utils/opf-entry-policy.ts  
+**tags:** node-fs, encoding, file-copy
+
+---
+
+`fs.readFile(path, 'utf-8')` is NOT byte-preserving: each maximal invalid UTF-8 subsequence decodes to U+FFFD, which re-encodes to 3 bytes. Measured on Node 24, the 10-byte buffer `41 42 C3 28 A0 A1 43 44 45 46` comes back as 16 bytes after a `Buffer.from(buf.toString('utf-8'), 'utf-8')` round trip. Any backup, copy, or archive path that decodes to a string and writes the string back silently produces a file that never existed — and it does so specifically for truncated/malformed inputs, which are usually the ones worth preserving.
+
+Pattern: read once with **no encoding**, derive the string from the Buffer for whatever inspection the code needs, and write the **Buffer**. This costs no extra syscall. Prior art: `readOpfEntry` in `src/server/utils/opf-entry-policy.ts` returns `{ bytes, text: bytes.toString('utf-8') }`; the text feeds the marker check and both parses, the Buffer feeds `metadata.opf.bak` and nothing else.
+
+The write-side sibling: `copyFile` opens the destination `O_TRUNC` and writes through to the existing inode, so a hard-linked peer of the destination is rewritten. Use a born-hidden sibling temp + `rename` (`replaceFileAtomically`, `src/server/utils/atomic-file-replace.ts`) whenever the destination may already exist — rename swaps the directory entry, so other names for the old inode keep their bytes.
+
+Both properties need byte-level counterfactuals; a string comparison or a call-count assertion passes against the broken implementation. See `src/server/utils/opf-writer.fs.test.ts` ('backs up BYTES, not a decoded string' and 'replaces a hard-linked metadata.opf.bak rather than writing through it', the latter gated on a `link()` capability probe per `windows-hostile-test-primitives`).
+
+
+## import-list-sync-swallows-setup-errors
+
+**source:** #2304  
+**added:** 2026-08-13  
+**files:** src/server/services/import-list.service.ts  
+**tags:** import-list, secret-codec, test-observability
+
+---
+
+`ImportListService.syncDueLists` catches per list and only logs (src/server/services/import-list.service.ts:156-175), so a test-harness setup error is indistinguishable from an empty sync: no provider fetch, no rows, no throw.
+
+The specific trap: `syncList` starts with `decryptRow`, which calls `getKey()` (src/server/utils/secret-codec.ts). `getKey()` throws unless `initializeKey` has run, so any suite constructing a real `ImportListService` needs `_resetKey(); initializeKey(randomBytes(32));` in `beforeEach`. `import-list.service.test.ts:90-96` does this; `routes/health.test.ts` added it for the #2304 manual-run tests.
+
+General rule for any service with a per-item containment catch: when a run produces nothing, assert on the mocked logger's `error`/`warn` calls before re-reading production code — the contained message names the cause that the return value cannot.
+
+
+## map-network-error-drops-transport-code
+
+**source:** #2312  
+**added:** 2026-08-13  
+**files:** src/core/utils/map-network-error.ts  
+**tags:** undici, network-service, error-classification
+
+---
+
+**Current state (since #2312): the error `mapNetworkError` returns carries `code`** — via a `withCode()` `Object.assign` — and its timeout/abort arm is tagged `ETIMEDOUT`. Do not re-derive this as a bug; it is fixed.
+
+The history is the reason the rules below exist. `mapNetworkError` (`src/core/utils/map-network-error.ts`) sits on the throw path of every `fetchWithTimeout` caller, and it previously returned a code-less `new Error(friendlyMessage)`: it read `cause.code` only to pick the message from `CODE_MAP`, then discarded it, and its DOMException arm returned a bare `Error('Request timed out')`. No consumer downstream could then classify a network failure by structure — the only identity left was the message text, which is exactly what a structural classifier must not key on (see `abort-verdict-not-error-shape`).
+
+Two rules follow:
+
+- **Read the code, not the message,** when deciding anything about a network failure. `describeTransportError` in `src/core/utils/failure-classification.ts` is the canonical extractor: own `.code` first, then `.cause.code` (undici wraps real failures in `TypeError: fetch failed`), then the DOMException name.
+- **Any future rewrite of an error inside a shared helper must preserve `code`.** The loss is silent — the resulting error reads perfectly well in a log line, so a classifier degrading to its default is indistinguishable from a failure that genuinely had no identity. Pinned by the `structural code preservation` block in `map-network-error.test.ts`; mutation-check it by deleting the `withCode` call and confirming `failure-descriptor.test.ts`'s transport-code case reds.
+
+
+## derived-empty-key-must-be-null
+
+**source:** #2305  
+**added:** 2026-08-13  
+**files:** src/shared/dedup.ts  
+**tags:** dedup, slugify, drizzle, sqlite, identity
+
+---
+
+**When a derivation's output is BOTH persisted to a nullable column and used to build the query that reads it back, its 'no value' result must be `null`, not `''`.** In-memory predicate code almost always tests the key with truthiness, so `''` and `null` are indistinguishable there and the logic reads correct. A database does distinguish them: a row stored with `''` is invisible to `WHERE col IS NULL`, so the write path and the read path silently disagree and the record is written once and never found again.
+
+Concrete instance (#2305): `resolveAuthorSlug` (`src/shared/dedup.ts`) returned `slugify(authorName)` for any non-empty name, and `slugify` (`src/shared/utils.ts`) reduces whitespace-only or punctuation-only names to `''`. `ImportListExclusionService.recordExclusion` stored that `''` in `import_list_exclusions.author_slug`; `candidateFilter` in the same service saw the same falsy value and narrowed on `author_slug IS NULL AND title = ?`. `matchesLibraryIdentity` would have matched the pair, but the row was never fetched, so a deleted import-list book with such an author came back on every subsequent sync. Fixed with `slugify(name) || null`.
+
+Two checks worth running whenever a shared derivation gains a persisting caller:
+1. Does the function have more than one 'absent' representation? Grep its branches — here the explicit-`authorSlug` branch already normalized `'' → null` and only the derived branch did not, which is the asymmetry that hid the bug.
+2. Is there a `WHERE <col> IS NULL` (Drizzle `isNull(...)`) anywhere keyed on the same derivation? If so, the write must produce `NULL` for exactly the inputs the read treats as null.
+
+A mocked-DB test cannot catch this — the predicate alone always answers correctly. It needs a real migrated database that round-trips the value. Related: [[sqlite-libsql-engine-facts]] (a different NULL mechanism — uniqueness), [[migrated-db-assertions-through-drizzle]] (why the real-DB round trip is the only observation point that works).
+
+
+## parsefloat-grouped-number-truncation
+
+**source:** #2316  
+**added:** 2026-08-14  
+**files:** src/core/indexers/mam-helpers.ts  
+**tags:** indexers, number-parsing, mam
+
+---
+
+`parseFloat` parses the longest valid numeric prefix and stops silently at the first invalid character: `parseFloat('1,008.8') === 1`. Any provider value rendered for humans may carry thousands separators, so parsing it with bare `parseFloat` yields a number ~1000x too small with no error — and a downstream threshold then discards it while behaving perfectly correctly on the wrong input. #2316: every MAM size in the 1,000.0–1,023.9 MiB band parsed to ~1/1000th and was dropped by the `below-min-size` gate (src/server/services/search-pipeline.ts:127-133) under the default 50 MB minimum, surfacing to the operator as an ordinary 'No releases found'.
+
+The fix has three parts, and the middle one is the non-obvious one:
+
+1. **Validate the grouping before stripping it.** Unconditional `.replace(/,/g, '')` turns a decimal comma `'1,5 GiB'` into 15 GiB — tenfold wrong, in the opposite direction. Require a well-formed English grouping: `/^\d{1,3}(?:,\d{3})*(?:\.\d+)?$/`.
+
+2. **Gate that validation on the separator's presence, not on every token.**
+
+   ```ts
+   if (!token.includes(',')) return token;   // byte-identical to the pre-fix path
+   return ENGLISH_GROUPED.test(token) ? token.replace(/,/g, '') : undefined;
+   ```
+
+   Testing the regex against every token also rejects inputs the old parser accepted loosely — `'-5 MiB'` (`-5`) and `'1.5abc MiB'` (`1.5`) — which are unrelated to the bug and fail open at the size gates either way. Tightening them is a separate change with its own blast radius. The `includes` guard makes 'no comma-free input changes behaviour' a structural property of the code rather than something only the test suite asserts; `mam-helpers.test.ts` pins both loose values specifically so a future unconditional-validation rewrite reds.
+
+3. **Return `undefined`, never `0`, for anything unparseable.** Both size gates short-circuit on `!r.size || r.size <= 0` and keep the result, so an absent size fails open. A wrong positive number does not.
+
+Keep this provider-scoped — MAM renders English-locale numbers (`,` groups, `.` is the decimal point). Do not generalize it into a locale-aware parser.
+
+Audited at the time: `parseSize` (src/core/indexers/abb.ts:355) is the only other human-readable size parser, and its upstream regex `([\d.]+)` at abb.ts:326 cannot match a comma, so ABB already yields no size and fails open. Newznab/Torznab transport bytes numerically. Related: when a parse can silently mangle a value, carry the provider's raw string into the diagnostic log next to the parsed number (`SearchResult.rawSize`, added in the same issue) — without it, diagnosing this required a screenshot of the provider's web UI to establish what the API had returned.
+
+
+## mock-db-tx-handle-is-the-db
+
+**source:** #2329  
+**added:** 2026-08-14  
+**files:** src/server/__tests__/helpers.ts  
+**tags:** drizzle, test-doubles, test-observability, transactions
+
+---
+
+`createMockDb()` (`src/server/__tests__/helpers.ts`) implements `transaction` as `async (cb) => cb(db)`, so the `tx` a collaborator receives IS the db object. Any assertion of the form `expect(dep.method).toHaveBeenCalledWith(id, db)` therefore cannot distinguish "ran inside the caller's transaction" from "ran directly on this.db", and stays green after the transaction is deleted.
+
+Measured on #2329: removing `this.db.transaction(...)` from `BookDeletionService.commitDeletion` reds four tests — two `expect(db.transaction).toHaveBeenCalledTimes(N)` assertions, a post-commit ordering test, and a sequencing test — while the executor-identity assertions on the very same lines stay green.
+
+What to use instead, in increasing strength:
+1. **Transaction call counts.** N items must open N transactions, and a loop that wraps them opens N+1 — this is also how AC13-style "the loop opens no transaction of its own" claims are pinned (a nested one would throw `NestedTransactionError` against a real connection, but not against the mock).
+2. **Resolution-ordering.** `db.transaction.mockImplementation(async (cb) => { const r = await cb(db); order.push('tx-committed'); return r })`, then assert `['tx-committed', 'effect']` — the shape [[caller-owned-tx-drops-post-commit-effects]] prescribes for deferred effects.
+3. **A DB-backed suite for rollback.** No mock can observe a rollback; it records that a statement was issued, not whether it survived. `src/server/services/book-deletion.service.integration.test.ts` is the reference — real migrated libSQL, assertions on committed rows.
+
+Keep the identity assertion if you like — it documents intent — but never let it be the only thing standing between the suite and a deleted transaction. Related: [[drizzle-tx-statements-bypass-client-spy]] (same blind spot, real connection), [[observation-points-server-writes-and-routes]] (issuance ≠ persistence), [[shared-test-double-defaults]].
+
+
+## posix-resolve-ignores-backslash
+
+**source:** #2301  
+**added:** 2026-08-14  
+**files:** src/server/utils/path-identity.ts, src/server/utils/path-write-lock.ts, src/server/utils/claim-lock.ts  
+**tags:** node-path, path-normalization, windows, cross-platform, locking
+
+---
+
+`path.resolve` treats `\` as an ordinary character on POSIX, so it cannot collapse `..` segments spelled with backslashes: on Linux `resolve('/library\A\..\Y')` returns the input unchanged, while `resolve('/library/A/../Y')` returns `/library/Y`.
+
+**Rule: fold separators BEFORE resolving.** The canonical transform for path identity in this repo is
+
+```ts
+normalize(resolve(p.split('\\').join('/'))).split('\\').join('/')
+```
+
+fold → resolve → fold. The trailing fold only makes the output platform-stable for messages and logs (`resolve` emits backslashes on Windows); equality holds either way once both sides go through the same function. `computeFolderTarget` (`src/server/utils/rename-target.ts:30`) already used this order; `canonicalPath` (`src/server/utils/path-identity.ts`) is the shared implementation and `claimLockKey` (`src/server/utils/claim-lock.ts`) is exactly it — ownership identity and lock identity must be the same function, or two operations the ownership check says contend can enter separate critical sections.
+
+**`withPathWriteLock` canonicalizes its own key**, so that property now holds by construction rather than by every caller remembering. It did not originally: it keyed on the exact string handed to it while three spellings of one file reached it (`claimLockKey`, `sidecarLockKey`'s bare `resolve(join())`, and tagging's raw `books.path`), which gave one file two chains and silently disabled mutual exclusion — visible only on Windows, where the spellings stop coinciding. `withPathWriteLocks` canonicalizes *before* its dedup and sort, or two callers spelling one pair differently sort into opposite acquisition orders and deadlock. Do not add a fourth key transform; call the primitive with whatever you have.
+
+**Testing it is not obvious.** A `/library/A/../Y` fixture is vacuous for this property: plain `resolve` already collapses it on POSIX. Only the backslash-plus-parent form (`/library\A\..\Y`) reds against fold-after-resolve — pinned in `src/server/utils/path-identity.test.ts` and the legacy-spelling table in `rename.service.test.ts`. And a backslash is a legal POSIX filename character but one of the nine illegal Windows ones, so a fixture that needs a real on-disk directory carrying one must gate on a capability probe rather than a platform check (see `claim-lock-protocol.integration.test.ts`); cf. [[windows-hostile-test-primitives]].
+
+Stated limit: the transform is lexical plus `resolve` and does NOT fold case, so on a case-insensitive filesystem `/library/Y` and `/library/y` still read as two claims.
+
+
+## loading-assertion-vacuous-at-mount
+
+**source:** #2320  
+**added:** 2026-08-14  
+**files:** src/client/pages/settings/SecuritySettings.test.tsx  
+**tags:** react-query, test-observability, loading-state
+
+---
+
+The pending-side companion to [[observation-points-react-query-error-state]]; read [[vacuous-assertion-observation-points]] first for the general rule.
+
+**A loading-state assertion is satisfied at t=0 by every implementation.** `await waitFor(() => expect(screen.getByTestId('loading-spinner')).toBeInTheDocument())` resolves on the first tick, before any query has settled, so it passes against the broken code as readily as the fixed code. Unlike the error side, nothing is being withheld — the observable is simply already true, which is why this reads like the obvious positive assertion and slips through review.
+
+**When the gate under test composes N queries, the observation point is the OTHER query's terminal state.** Settle it, then assert synchronously:
+
+```ts
+await waitFor(() => expect(client.getQueryState(queryKeys.auth.config())?.status).toBe('success'));
+expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
+expect(screen.queryByLabelText('Forms (Login Page)')).not.toBeInTheDocument(); // no posture claim
+```
+
+Always pair the positive with the negative: assert the misleading state is ABSENT, not just that the spinner is present. Drive the pending side with a held promise — `mock.mockReturnValue(new Promise(() => {}))` to never settle, or capture `resolve` when the test settles it later. Never `vi.useFakeTimers()`; see [[vitest-faketimers-react-query]].
+
+Why it matters: `SecuritySettings.tsx` gated on `isLoading || !authConfig` from one of two independent auth reads and folded the other into `authStatus?.hasUser ?? false`. For the whole ordinary success/pending window — and permanently on failure — it told the operator no credentials existed and disabled the forms/basic radios: the exact page state of an unprotected install. #2320 replaced it with an error-first policy over the full 3x3 status product; the nine-row table at `src/client/pages/settings/SecuritySettings.test.tsx:961` and its `awaitSettled` helper are the reference shape.
+
+Counterfactual that proves the observation point, not just the branch: restore the single-query gate with the error branch left intact. Exactly the pending rows must red while every error row stays green — a gate reading one query satisfies all five failure combinations and still renders the false posture.
+
+
+## race-timeout-reject-before-abort
+
+**source:** #2310  
+**added:** 2026-08-14  
+**files:** src/server/services/search-deadline.ts  
+**tags:** abortcontroller, promise-race, timeout
+
+---
+
+`AbortSignal` fires its `abort` listeners SYNCHRONOUSLY during `controller.abort()`. So in a `Promise.race([work, timeout])` deadline, the timer callback must **reject the timeout branch BEFORE calling `controller.abort()`**. With the opposite order — `controller.abort()` then `reject(...)`, which is what `ConnectorRefreshQueue.withTimeout` does at `src/server/services/connector-refresh-queue.ts:312-313` — a leaf that rejects from its own abort listener queues its rejection reaction on the race before the timeout promise settles, wins the race, and delivers a LEAF error where the caller must see the canonical timeout error. Every downstream branch that discriminates an expiry from an ordinary failure (log message, HTTP status, counter arm) then takes the wrong path.
+
+`src/server/services/search-deadline.ts` is the correct shape:
+
+```ts
+timer = setTimeout(() => {
+  expired = true;
+  reject(new SearchDeadlineError(budgetMs, bookId));  // settle the race FIRST
+  controller.abort();                                  // then stop the work
+}, budgetMs);
+timer.unref();
+```
+
+Once the timeout promise is settled the race's outcome is fixed and any later leaf settlement is ignored.
+
+**This is live, not theoretical, wherever leaves follow [[abort-verdict-not-error-shape]]** — that pattern's whole point is `if (signal?.aborted) throw error`, i.e. rejecting in response to the abort. The connector queue is currently only latent because its leaves are undici fetches that reject asynchronously from the fetch promise rather than from a synchronous listener.
+
+**Testing it:** the counterfactual is the whole justification for the ordering, so write it — a leaf that registers `signal.addEventListener('abort', () => reject(distinctLeafError))` and never otherwise settles, then assert the caller still receives the canonical error. Swapping the production order back must red exactly that one case. Because this is a hand-rolled `AbortController` + `setTimeout` rather than `AbortSignal.timeout`, `vi.spyOn(globalThis, 'setTimeout')` DOES capture the timer — the stated exception in [[abortsignal-timeout-native-timer-retry-tests]] — so the budget can be asserted exactly and the callback fired on demand with no fake-timer interleaving.
