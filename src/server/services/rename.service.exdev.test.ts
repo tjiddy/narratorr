@@ -23,7 +23,8 @@ vi.mock('node:fs/promises', async (importOriginal) => ({
 import { cp, rename } from 'node:fs/promises';
 import { RenameService } from './rename.service.js';
 import { sidecarLockKey, writeOpfSidecar } from '../utils/opf-writer.js';
-import { withPathWriteLock } from '../utils/path-write-lock.js';
+import { hasPendingPathWrite, withPathWriteLock } from '../utils/path-write-lock.js';
+import { claimLockKey } from '../utils/claim-lock.js';
 
 function markedOpf(generation: string): string {
   return [
@@ -194,5 +195,20 @@ describe('RenameService cross-volume fallback vs the sidecar writer (#2297 AC11)
 
     held.resolve();
     await blocking;
+  });
+
+  it('nests the sidecar file key inside both claim keys without deadlocking, and leaks neither (#2301)', async () => {
+    (rename as Mock).mockImplementationOnce(() => Promise.reject(Object.assign(new Error('EXDEV'), { code: 'EXDEV' })));
+
+    // A deadlock here hangs the suite, so the assertion is bounded rather than a bare await.
+    await expect(Promise.race([service.renameBook(1), sleep(500).then(() => 'timed-out')]))
+      .resolves.not.toBe('timed-out');
+
+    // sidecarLockKey appends metadata.opf, so it can never equal the claim key it nests inside.
+    expect(sidecarLockKey(oldFolder)).not.toBe(claimLockKey(oldFolder));
+    await sleep(0);
+    for (const key of [claimLockKey(oldFolder), claimLockKey(newFolder), sidecarLockKey(oldFolder)]) {
+      expect(hasPendingPathWrite(key)).toBe(false);
+    }
   });
 });

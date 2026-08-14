@@ -27,6 +27,8 @@ function createTestApp() {
 
   app.get('/throw-rename-not-found', async () => { throw new RenameError('Book not found', 'NOT_FOUND'); });
   app.get('/throw-rename-no-path', async () => { throw new RenameError('No path set', 'NO_PATH'); });
+  app.get('/throw-rename-target-occupied', async () => { throw new RenameError('Target path "/library/Y" is a non-empty directory', 'TARGET_OCCUPIED'); });
+  app.get('/throw-rename-stale-path', async () => { throw new RenameError('Book path changed to "/library/Z"', 'STALE_PATH'); });
   app.get('/throw-retag-not-found', async () => { throw new RetagError('NOT_FOUND', 'Book not found'); });
   app.get('/throw-retag-mutagen', async () => { throw new RetagError('MUTAGEN_NOT_CONFIGURED', 'mutagen not installed'); });
   app.get('/throw-restore-invalid', async () => { throw new RestoreUploadError('Not a valid zip', 'INVALID_ZIP'); });
@@ -110,6 +112,20 @@ describe('error-handler plugin', () => {
       const res = await app.inject({ method: 'GET', url: '/throw-rename-no-path' });
       expect(res.statusCode).toBe(400);
       expect(JSON.parse(res.payload)).toEqual({ error: 'No path set' });
+    });
+
+    // Drop either code from the RenameError entry in the registry and these fall through the
+    // coded lookup to a generic 500 — the exact trap the entry exists to pin.
+    it('maps RenameError TARGET_OCCUPIED to 409, not 500', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-rename-target-occupied' });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Target path "/library/Y" is a non-empty directory' });
+    });
+
+    it('maps RenameError STALE_PATH to 409, not 500', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-rename-stale-path' });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Book path changed to "/library/Z"' });
     });
 
     it('maps RetagError NOT_FOUND to 404', async () => {

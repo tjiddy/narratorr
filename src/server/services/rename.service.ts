@@ -1,9 +1,7 @@
-import { mkdir, rename, cp, rm, stat } from 'node:fs/promises';
-import { dirname, normalize, resolve } from 'node:path';
-import { and, eq, ne } from 'drizzle-orm';
+import { mkdir, rename, cp, rm } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@db/index.js';
-import { books } from '@db/schema.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
@@ -12,11 +10,17 @@ import { fireAndForget } from '../utils/fire-and-forget.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { assertRealPathInsideLibrary, cleanEmptyParents, planFileRenames, renameFilesWithTemplate } from '../utils/paths.js';
 import { toNamingOptions } from '@core/utils/naming.js';
-import { computeFolderTarget, toLibraryRelative } from '../utils/rename-target.js';
+import { computeFolderTarget, toLibraryRelative, type LibraryFolderSettings } from '../utils/rename-target.js';
 import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
 import { sidecarLockKey } from '../utils/opf-writer.js';
-import { withPathWriteLock } from '../utils/path-write-lock.js';
+import { withPathWriteLock, withPathWriteLocks } from '../utils/path-write-lock.js';
+import { claimLockKey } from '../utils/claim-lock.js';
+import { assertNoOtherOwner, classifyTargetOccupancy, clearVerifiedEmptyTarget, type TargetOccupancy } from '../utils/rename-target-guard.js';
+import { RenameError } from '../utils/rename-error.js';
 import { serializeError } from '../utils/serialize-error.js';
+
+export { RenameError } from '../utils/rename-error.js';
+export type { RenameErrorDetails } from '../utils/rename-error.js';
 
 
 export interface RenameResult {
@@ -91,8 +95,11 @@ export class RenameService {
 
     const oldPath = book.path;
 
+    // Advisory only, and deliberately lock-free: the apply path re-checks under the lock, which is
+    // the check that decides. This is what lets the modal warn before the operator commits.
     if (pathChanged) {
-      await this.checkConflict(targetPath, bookId);
+      await assertNoOtherOwner(this.db, targetPath, bookId);
+      await classifyTargetOccupancy(targetPath);
     }
 
     const folderMove = pathChanged
@@ -123,7 +130,24 @@ export class RenameService {
     };
   }
 
+  /**
+   * The claim span opens BEFORE `recoverInterruptedCommit`, not at the conflict check: recovery is
+   * not a read — with no marker present it recursively deletes the target's staging and backup
+   * siblings, and with one present it restores a backup into the target. Starting later would
+   * leave rename's single most destructive step unserialized against a second rename of the book.
+   *
+   * Source and target are taken in one sorted acquisition, so two renames with mirrored
+   * source/target cannot deadlock.
+   */
   async renameBook(bookId: number): Promise<RenameResult> {
+    const ctx = await this.planApply(bookId);
+    const keys = ctx.pathChanged
+      ? [claimLockKey(ctx.oldPath), claimLockKey(ctx.targetPath)]
+      : [claimLockKey(ctx.oldPath)];
+    return withPathWriteLocks(keys, () => this.applyRename(ctx));
+  }
+
+  private async planApply(bookId: number): Promise<ApplyContext> {
     const book = await this.bookService.getById(bookId);
     if (!book) {
       throw new RenameError('Book not found', 'NOT_FOUND');
@@ -134,7 +158,6 @@ export class RenameService {
 
     const librarySettings = await this.settingsService.get('library');
     const namingOptions = toNamingOptions(librarySettings);
-
     const authorName = book.authors?.[0]?.name ?? null;
     const { targetPath, changed: pathChanged } = computeFolderTarget(
       { ...book, path: book.path },
@@ -143,7 +166,15 @@ export class RenameService {
       namingOptions,
     );
 
-    const oldPath = book.path;
+    return { bookId, book, librarySettings, namingOptions, authorName, oldPath: book.path, targetPath, pathChanged };
+  }
+
+  private async applyRename(ctx: ApplyContext): Promise<RenameResult> {
+    const { bookId, book, librarySettings, namingOptions, authorName, oldPath, targetPath, pathChanged } = ctx;
+
+    // The row was read before the lock — that read is what produced the plan and therefore the key
+    // — so a queued rename can wake behind a completed rename, deletion or rejection.
+    await this.assertPlanStillFresh(bookId, oldPath);
 
     // Reject corrupt/escaped paths before recovery, moves, EXDEV deletion, or in-place renames.
     // This is realpath-aware for symlinks but leaves missing paths to the existing recovery surface.
@@ -154,19 +185,14 @@ export class RenameService {
     await recoverInterruptedCommit(oldPath, librarySettings.path, this.log);
 
     if (pathChanged) {
-      await this.checkConflict(targetPath, bookId);
-    }
-
-    if (pathChanged) {
-      await this.moveBookFolder(oldPath, targetPath);
+      await assertNoOtherOwner(this.db, targetPath, bookId);
+      const occupancy = await classifyTargetOccupancy(targetPath);
+      await this.moveBookFolder(oldPath, targetPath, occupancy);
+      // Persist the move before file renames so a rename failure cannot desynchronize book.path.
+      await this.bookService.update(bookId, { path: targetPath });
     }
 
     const currentPath = pathChanged ? targetPath : oldPath;
-
-    // Persist the folder move before file renames so a rename failure cannot desynchronize book.path.
-    if (pathChanged) {
-      await this.bookService.update(bookId, { path: targetPath });
-    }
 
     let filesRenamed = 0;
     if (librarySettings.fileFormat) {
@@ -203,38 +229,33 @@ export class RenameService {
     };
   }
 
-  private async checkConflict(targetPath: string, bookId: number): Promise<void> {
-    let exists = false;
-    try {
-      await stat(targetPath);
-      exists = true;
-    } catch {
-      // A missing target cannot conflict.
+  /**
+   * Every arm aborts with no disk and no DB mutation. The three codes are deliberately distinct:
+   * a deleted book keeps the pre-lock read's 404 and a pathless one its 400, so `STALE_PATH` means
+   * only "the plan was built against a path this row no longer holds". Rename does not re-acquire
+   * on the new path — a changed row means a changed plan, and the operator re-runs it.
+   */
+  private async assertPlanStillFresh(bookId: number, oldPath: string): Promise<void> {
+    const fresh = await this.bookService.getById(bookId);
+    if (!fresh) {
+      throw new RenameError('Book not found', 'NOT_FOUND');
     }
-
-    if (!exists) return;
-
-    const normalizedTarget = normalize(resolve(targetPath));
-    const conflicting = await this.db
-      .select({ id: books.id, title: books.title, path: books.path })
-      .from(books)
-      .where(and(
-        ne(books.id, bookId),
-        eq(books.path, normalizedTarget),
-      ))
-      .limit(1);
-
-    if (conflicting.length > 0) {
-      const other = conflicting[0]!;
+    if (!fresh.path) {
+      throw new RenameError('Book has no path — not imported yet', 'NO_PATH');
+    }
+    if (resolve(fresh.path) !== resolve(oldPath)) {
       throw new RenameError(
-        `Target path already belongs to "${other.title}" (book #${other.id})`,
-        'CONFLICT',
-        { conflictingBook: { id: other.id, title: other.title } },
+        `Book path changed to "${fresh.path}" while the rename was queued`,
+        'STALE_PATH',
       );
     }
   }
 
-  private async moveBookFolder(oldPath: string, newPath: string): Promise<void> {
+  private async moveBookFolder(oldPath: string, newPath: string, occupancy: TargetOccupancy): Promise<void> {
+    // POSIX rename(2) replaces an existing empty directory and Windows' MoveFileEx does not, so
+    // clear it here — inside the same held claim — rather than depending on the platform.
+    if (occupancy === 'empty-directory') await clearVerifiedEmptyTarget(newPath);
+
     await mkdir(dirname(newPath), { recursive: true });
 
     try {
@@ -260,17 +281,14 @@ export class RenameService {
 
 }
 
-export interface RenameErrorDetails {
-  conflictingBook: { id: number; title: string };
-}
-
-export class RenameError extends Error {
-  constructor(
-    message: string,
-    public code: 'NOT_FOUND' | 'NO_PATH' | 'CONFLICT',
-    public details?: RenameErrorDetails,
-  ) {
-    super(message);
-    this.name = 'RenameError';
-  }
+/** The plan built from the pre-lock row read, re-verified once the claim keys are held. */
+interface ApplyContext {
+  bookId: number;
+  book: Awaited<ReturnType<BookService['getById']>> & object;
+  librarySettings: LibraryFolderSettings & { fileFormat: string };
+  namingOptions: ReturnType<typeof toNamingOptions>;
+  authorName: string | null;
+  oldPath: string;
+  targetPath: string;
+  pathChanged: boolean;
 }

@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { deriveImportSiblings } from '../utils/import-sibling-paths.js';
+import { inject, mockDbChain } from '../__tests__/helpers.js';
+import { claimLockKey } from '../utils/claim-lock.js';
+import { hasPendingPathWrite } from '../utils/path-write-lock.js';
+import type { Db } from '@db/index.js';
 
 // Mutable arrow mock survives clearAllMocks; flip false for the unavailable test.
 const { ffmpegState, mutagenState } = vi.hoisted(() => ({
@@ -548,6 +552,9 @@ describe('recordImportEvent', () => {
 });
 
 describe('cleanupOldBookPath', () => {
+  const ownerDb = (rows: unknown[]) => inject<Db>({ select: () => mockDbChain(rows) });
+  const noOwnerDb = () => ownerDb([]);
+
   // Reset implementations because clearAllMocks leaves persistent fs mocks intact.
   beforeEach(() => {
     vi.mocked(stat).mockReset();
@@ -575,6 +582,7 @@ describe('cleanupOldBookPath', () => {
       targetPath: '/library/Author/NewTitle',
       libraryRoot: '/library',
       log,
+      db: noOwnerDb(),
     });
     expect(rm).toHaveBeenCalledWith(expect.stringContaining('a.mp3'), { force: true });
     expect(log.info).toHaveBeenCalledWith(
@@ -590,6 +598,7 @@ describe('cleanupOldBookPath', () => {
       targetPath: '/library/Author/NewTitle',
       libraryRoot: '/library',
       log,
+      db: noOwnerDb(),
     });
     expect(rm).not.toHaveBeenCalled();
     expect(log.error).toHaveBeenCalledWith(
@@ -605,6 +614,7 @@ describe('cleanupOldBookPath', () => {
       targetPath: '/library/Author/NewTitle',
       libraryRoot: '/library',
       log,
+      db: noOwnerDb(),
     })).resolves.toBeUndefined();
   });
 
@@ -617,6 +627,7 @@ describe('cleanupOldBookPath', () => {
       targetPath: '/library/Author/NewTitle',
       libraryRoot: '/library',
       log,
+      db: noOwnerDb(),
     });
     expect(rm).not.toHaveBeenCalled();
     expect(log.error).toHaveBeenCalledWith(
@@ -632,6 +643,7 @@ describe('cleanupOldBookPath', () => {
       targetPath: '/library/Author/NewTitle',
       libraryRoot: '/library',
       log,
+      db: noOwnerDb(),
     });
     expect(rm).not.toHaveBeenCalled();
   });
@@ -643,6 +655,7 @@ describe('cleanupOldBookPath', () => {
       targetPath: '/library/Author/Title',
       libraryRoot: '/library',
       log,
+      db: noOwnerDb(),
     });
     expect(rm).not.toHaveBeenCalled();
   });
@@ -655,9 +668,73 @@ describe('cleanupOldBookPath', () => {
       targetPath: '/library/Author/NewTitle',
       libraryRoot: '/library',
       log,
+      db: noOwnerDb(),
     })).resolves.toBeUndefined();
     expect(log.warn).toHaveBeenCalled();
     expect(log.error).not.toHaveBeenCalled();
+  });
+
+  it('refuses the sweep and logs when a different row owns the old folder', async () => {
+    const log = createMockLog();
+    await cleanupOldBookPath({
+      bookPath: '/library/Author/OldTitle',
+      targetPath: '/library/Author/NewTitle',
+      libraryRoot: '/library',
+      log,
+      db: ownerDb([{ id: 42, title: 'Someone Else', path: '/library/Author/OldTitle' }]),
+    });
+    expect(rm).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ ownerBookId: 42 }),
+      expect.stringMatching(/another book owns this folder/i),
+    );
+  });
+
+  it('recognises an owner stored under a different spelling of the same folder', async () => {
+    const log = createMockLog();
+    await cleanupOldBookPath({
+      bookPath: '/library/Author/OldTitle',
+      targetPath: '/library/Author/NewTitle',
+      libraryRoot: '/library',
+      log,
+      // A row a plain string comparison — or `eq(books.path, …)` — would miss entirely.
+      db: ownerDb([{ id: 7, title: 'Legacy Spelling', path: '/library/Author/Other/../OldTitle/' }]),
+    });
+    expect(rm).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ ownerBookId: 7 }),
+      expect.stringMatching(/another book owns this folder/i),
+    );
+  });
+
+  it('never throws into the import when the ownership lookup itself fails', async () => {
+    const log = createMockLog();
+    await expect(cleanupOldBookPath({
+      bookPath: '/library/Author/OldTitle',
+      targetPath: '/library/Author/NewTitle',
+      libraryRoot: '/library',
+      log,
+      db: inject<Db>({ select: () => mockDbChain([], { error: new Error('db down') }) }),
+    })).rejects.toThrow('db down');
+  });
+
+  it('holds the old path under its claim key for the duration of the sweep', async () => {
+    const log = createMockLog();
+    const key = claimLockKey('/library/Author/OldTitle');
+    let heldDuringSweep = false;
+    vi.mocked(rm).mockImplementationOnce(async () => { heldDuringSweep = hasPendingPathWrite(key); });
+
+    await cleanupOldBookPath({
+      bookPath: '/library/Author/OldTitle',
+      targetPath: '/library/Author/NewTitle',
+      libraryRoot: '/library',
+      log,
+      db: noOwnerDb(),
+    });
+
+    expect(heldDuringSweep).toBe(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(hasPendingPathWrite(key)).toBe(false);
   });
 });
 

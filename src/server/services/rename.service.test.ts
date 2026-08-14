@@ -4,12 +4,14 @@ import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js'
 import { RenameService, RenameError } from './rename.service.js';
 import { renameFilesWithTemplate, PathOutsideLibraryError } from '../utils/paths.js';
 import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
+import { claimLockKey } from '../utils/claim-lock.js';
+import { hasPendingPathWrite } from '../utils/path-write-lock.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { rename, readdir, mkdir, stat, rm, cp, realpath } from 'node:fs/promises';
+import { rename, readdir, mkdir, stat, lstat, rmdir, rm, cp, realpath } from 'node:fs/promises';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
@@ -20,6 +22,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     mkdir: vi.fn(),
     rmdir: vi.fn(),
     stat: vi.fn(),
+    lstat: vi.fn(),
     rm: vi.fn(),
     cp: vi.fn(),
     realpath: vi.fn(),
@@ -77,6 +80,10 @@ describe('RenameService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (stat as Mock).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    // The occupancy classifier calls lstat, not stat; leaving it unmocked would silently exercise
+    // the real filesystem, and a blanket resolve would make every synthetic target read as
+    // occupied (the mocked readdir is armed per test).
+    (lstat as Mock).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
     (readdir as Mock).mockResolvedValue([]);
     (rename as Mock).mockResolvedValue(undefined);
     (mkdir as Mock).mockResolvedValue(undefined);
@@ -540,13 +547,14 @@ describe('RenameService', () => {
     });
   });
 
-  describe('checkConflict optimization', () => {
-    it('uses targeted DB query instead of bookService.getAll()', async () => {
+  describe('ownership fence', () => {
+    const otherOwner = [{ id: 2, title: 'Someone Else', path: '/library/Brandon Sanderson/The Way of Kings' }];
+
+    it('uses a targeted DB query instead of bookService.getAll()', async () => {
       const { service, db, bookService } = createService();
       const book = { ...mockBook, id: 1, path: '/library/wrong/path' };
       bookService.getById.mockResolvedValue(book);
       bookService.update.mockResolvedValue({ ...book, path: '/library/Brandon Sanderson/The Way of Kings' });
-      (stat as Mock).mockResolvedValue({ isFile: () => false, isDirectory: () => true });
       db.select.mockReturnValue(mockDbChain([]));
 
       await service.renameBook(1);
@@ -555,17 +563,281 @@ describe('RenameService', () => {
       expect(db.select).toHaveBeenCalled();
     });
 
-    it('does not query DB when target path does not exist on disk', async () => {
+    // The inversion of the test that pinned the defect: the ownership lookup used to be gated on
+    // the target existing on disk, so a path another row owned but that was absent from disk was
+    // never checked at all.
+    it('queries the DB even when the target is absent from disk', async () => {
       const { service, db, bookService } = createService();
       const book = { ...mockBook, id: 1, path: '/library/wrong/path' };
       bookService.getById.mockResolvedValue(book);
       bookService.update.mockResolvedValue(book);
-      (stat as Mock).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      db.select.mockReturnValue(mockDbChain([]));
 
       await service.renameBook(1);
 
       expect(bookService.getAll).not.toHaveBeenCalled();
+      expect(db.select).toHaveBeenCalled();
+    });
+
+    it('refuses a target owned by another row with nothing at that path on disk, mutating nothing', async () => {
+      const { service, db, bookService } = createService();
+      const book = { ...mockBook, id: 1, path: '/library/Wrong/Old' };
+      bookService.getById.mockResolvedValue(book);
+      db.select.mockReturnValue(mockDbChain(otherOwner));
+
+      const error = await service.renameBook(1).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(RenameError);
+      expect((error as RenameError).code).toBe('CONFLICT');
+      expect((error as RenameError).details).toEqual({ conflictingBook: { id: 2, title: 'Someone Else' } });
+      expect(rename).not.toHaveBeenCalled();
+      expect(mkdir).not.toHaveBeenCalled();
+      expect(cp).not.toHaveBeenCalled();
+      expect(bookService.update).not.toHaveBeenCalled();
+    });
+
+    it('surfaces the same absent-on-disk conflict through planRename with structured details', async () => {
+      const { service, db, bookService } = createService();
+      bookService.getById.mockResolvedValue({ ...mockBook, id: 1, path: '/library/Wrong/Old' });
+      db.select.mockReturnValue(mockDbChain(otherOwner));
+
+      const error = await service.planRename(1).catch((e: unknown) => e);
+
+      expect((error as RenameError).code).toBe('CONFLICT');
+      expect((error as RenameError).details).toEqual({ conflictingBook: { id: 2, title: 'Someone Else' } });
+    });
+
+    it.each([
+      ['/library/Brandon Sanderson/The Way of Kings/', 'trailing separator'],
+      ['/library/Brandon Sanderson//The Way of Kings', 'repeated separator'],
+      ['/library/Brandon Sanderson/./The Way of Kings', 'dot segment'],
+      ['/library/Brandon Sanderson/X/../The Way of Kings', 'parent segment'],
+      ['/library\\Brandon Sanderson\\X\\..\\The Way of Kings', 'backslashes plus a parent segment'],
+    ])('recognises a legacy spelling stored as %s (%s) as the same claim', async (storedPath) => {
+      const { service, db, bookService } = createService();
+      bookService.getById.mockResolvedValue({ ...mockBook, id: 1, path: '/library/Wrong/Old' });
+      db.select.mockReturnValue(mockDbChain([{ id: 2, title: 'Someone Else', path: storedPath }]));
+
+      const error = await service.renameBook(1).catch((e: unknown) => e);
+
+      expect((error as RenameError).code).toBe('CONFLICT');
+      expect(rename).not.toHaveBeenCalled();
+    });
+
+    it.each(['/library/Brandon Sanderson/The Way of Kings 2', '/library/Brandon Sanderson/The Way of Kings/sub', '/library/Brandon Sanderson/The Way of KingsX'])(
+      'does not conflict against a merely adjacent path %s',
+      async (storedPath) => {
+        const { service, db, bookService } = createService();
+        const book = { ...mockBook, id: 1, path: '/library/Wrong/Old' };
+        bookService.getById.mockResolvedValue(book);
+        bookService.update.mockResolvedValue(book);
+        db.select.mockReturnValue(mockDbChain([{ id: 2, title: 'Someone Else', path: storedPath }]));
+
+        await expect(service.renameBook(1)).resolves.toMatchObject({ filesRenamed: expect.any(Number) });
+        expect(rename).toHaveBeenCalled();
+      },
+    );
+
+    it('names the lowest-id owner when a pre-existing duplicate-path pair both match', async () => {
+      const { service, db, bookService } = createService();
+      bookService.getById.mockResolvedValue({ ...mockBook, id: 1, path: '/library/Wrong/Old' });
+      db.select.mockReturnValue(mockDbChain([
+        { id: 9, title: 'Higher Id Owner', path: '/library/Brandon Sanderson/The Way of Kings/' },
+        { id: 4, title: 'Lower Id Owner', path: '/library/Brandon Sanderson/X/../The Way of Kings' },
+      ]));
+
+      const error = await service.renameBook(1).catch((e: unknown) => e);
+
+      expect((error as RenameError).details).toEqual({ conflictingBook: { id: 4, title: 'Lower Id Owner' } });
+    });
+
+    it('rewrites no other row while refusing — this issue reads stored paths, it does not repair them', async () => {
+      const { service, db, bookService } = createService();
+      bookService.getById.mockResolvedValue({ ...mockBook, id: 1, path: '/library/Wrong/Old' });
+      db.select.mockReturnValue(mockDbChain(otherOwner));
+
+      await service.renameBook(1).catch(() => undefined);
+
+      expect(db.update).not.toHaveBeenCalled();
+      expect(bookService.update).not.toHaveBeenCalled();
+    });
+
+    it('takes only the source claim key and runs no ownership query when the path is unchanged', async () => {
+      const { service, db, bookService } = createService();
+      const book = { ...mockBook, path: '/library/Brandon Sanderson/The Way of Kings' };
+      bookService.getById.mockResolvedValue(book);
+      (readdir as Mock).mockResolvedValue([{ name: 'old.m4b', isFile: () => true }]);
+
+      const result = await service.renameBook(1);
+
       expect(db.select).not.toHaveBeenCalled();
+      expect(result.filesRenamed).toBe(1);
+      expect(hasPendingPathWrite(claimLockKey('/library/Brandon Sanderson/The Way of Kings'))).toBe(false);
+    });
+  });
+
+  describe('target occupancy', () => {
+    const seedMisplacedBook = (bookService: { getById: Mock; update: Mock }) => {
+      const book = { ...mockBook, id: 1, path: '/library/Wrong/Old' };
+      bookService.getById.mockResolvedValue(book);
+      bookService.update.mockResolvedValue(book);
+      return book;
+    };
+
+    it('proceeds when the target is absent from disk', async () => {
+      const { service, bookService } = createService();
+      seedMisplacedBook(bookService);
+
+      await service.renameBook(1);
+
+      expect(rename).toHaveBeenCalled();
+      // cleanEmptyParents legitimately rmdirs vacated parents; nothing touches the target itself.
+      expect(rmdir).not.toHaveBeenCalledWith(expect.stringContaining('The Way of Kings'));
+    });
+
+    it('refuses an unowned directory holding an entry, moving nothing and leaving books.path alone', async () => {
+      const { service, bookService } = createService();
+      seedMisplacedBook(bookService);
+      (lstat as Mock).mockResolvedValue({ isDirectory: () => true, isSymbolicLink: () => false });
+      (readdir as Mock).mockResolvedValue(['stranger.m4b']);
+
+      const error = await service.renameBook(1).catch((e: unknown) => e);
+
+      expect((error as RenameError).code).toBe('TARGET_OCCUPIED');
+      expect((error as Error).message).toContain('The Way of Kings');
+      expect(rename).not.toHaveBeenCalled();
+      expect(bookService.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a regular file at the target without letting ENOTDIR escape', async () => {
+      const { service, bookService } = createService();
+      seedMisplacedBook(bookService);
+      (lstat as Mock).mockResolvedValue({ isDirectory: () => false, isSymbolicLink: () => false });
+
+      const error = await service.renameBook(1).catch((e: unknown) => e);
+
+      expect((error as RenameError).code).toBe('TARGET_OCCUPIED');
+      expect((error as Error).message).not.toContain('ENOTDIR');
+      expect(rename).not.toHaveBeenCalled();
+    });
+
+    it('refuses a symlink at the target even when it points at an empty directory', async () => {
+      const { service, bookService } = createService();
+      seedMisplacedBook(bookService);
+      (lstat as Mock).mockResolvedValue({ isDirectory: () => false, isSymbolicLink: () => true });
+      (readdir as Mock).mockResolvedValue([]);
+
+      const error = await service.renameBook(1).catch((e: unknown) => e);
+
+      expect((error as RenameError).code).toBe('TARGET_OCCUPIED');
+      expect(rename).not.toHaveBeenCalled();
+    });
+
+    it('removes a verified-empty target before the move rather than relying on POSIX rename(2)', async () => {
+      const { service, bookService } = createService();
+      seedMisplacedBook(bookService);
+      (lstat as Mock).mockResolvedValue({ isDirectory: () => true, isSymbolicLink: () => false });
+      (readdir as Mock).mockResolvedValue([]);
+      (rmdir as Mock).mockResolvedValue(undefined);
+
+      await service.renameBook(1);
+
+      expect(rmdir).toHaveBeenCalledWith(expect.stringContaining('The Way of Kings'));
+      const rmdirOrder = (rmdir as Mock).mock.invocationCallOrder[0]!;
+      const renameOrder = (rename as Mock).mock.invocationCallOrder[0]!;
+      expect(rmdirOrder).toBeLessThan(renameOrder);
+    });
+
+    it('refuses when the verified-empty target gained an entry before the move', async () => {
+      const { service, bookService } = createService();
+      seedMisplacedBook(bookService);
+      (lstat as Mock).mockResolvedValue({ isDirectory: () => true, isSymbolicLink: () => false });
+      (readdir as Mock).mockResolvedValue([]);
+      (rmdir as Mock).mockRejectedValue(Object.assign(new Error('ENOTEMPTY'), { code: 'ENOTEMPTY' }));
+
+      const error = await service.renameBook(1).catch((e: unknown) => e);
+
+      expect((error as RenameError).code).toBe('TARGET_OCCUPIED');
+      expect(rename).not.toHaveBeenCalled();
+      expect(bookService.update).not.toHaveBeenCalled();
+    });
+
+    it('classifies before the ownership question is settled only — an owned target still reports CONFLICT', async () => {
+      const { service, db, bookService } = createService();
+      seedMisplacedBook(bookService);
+      (lstat as Mock).mockResolvedValue({ isDirectory: () => false, isSymbolicLink: () => false });
+      db.select.mockReturnValue(mockDbChain([{ id: 2, title: 'Someone Else', path: '/library/Brandon Sanderson/The Way of Kings' }]));
+
+      const error = await service.renameBook(1).catch((e: unknown) => e);
+
+      expect((error as RenameError).code).toBe('CONFLICT');
+    });
+
+    it('surfaces an occupied unowned target through planRename too', async () => {
+      const { service, bookService } = createService();
+      bookService.getById.mockResolvedValue({ ...mockBook, id: 1, path: '/library/Wrong/Old' });
+      (lstat as Mock).mockResolvedValue({ isDirectory: () => true, isSymbolicLink: () => false });
+      (readdir as Mock).mockResolvedValue(['stranger.m4b']);
+
+      const error = await service.planRename(1).catch((e: unknown) => e);
+
+      expect((error as RenameError).code).toBe('TARGET_OCCUPIED');
+      expect((error as RenameError).details).toBeUndefined();
+    });
+  });
+
+  describe('post-lock re-verification', () => {
+    /** Gate the settings read, which happens after the pre-lock row read and before the lock. */
+    const raceRow = (bookService: { getById: Mock }, planned: unknown, fresh: unknown) => {
+      bookService.getById.mockResolvedValueOnce(planned).mockResolvedValue(fresh);
+    };
+
+    const assertNothingMutated = (bookService: { update: Mock }) => {
+      expect(rename).not.toHaveBeenCalled();
+      expect(mkdir).not.toHaveBeenCalled();
+      expect(cp).not.toHaveBeenCalled();
+      expect(rm).not.toHaveBeenCalled();
+      expect(bookService.update).not.toHaveBeenCalled();
+    };
+
+    it('reports NOT_FOUND when the row vanished inside the lock', async () => {
+      const { service, bookService } = createService();
+      raceRow(bookService, { ...mockBook, id: 1, path: '/library/Wrong/Old' }, null);
+
+      const error = await service.renameBook(1).catch((e: unknown) => e);
+
+      expect((error as RenameError).code).toBe('NOT_FOUND');
+      assertNothingMutated(bookService);
+    });
+
+    it('reports NO_PATH when the row lost its path inside the lock', async () => {
+      const { service, bookService } = createService();
+      raceRow(bookService, { ...mockBook, id: 1, path: '/library/Wrong/Old' }, { ...mockBook, id: 1, path: null });
+
+      const error = await service.renameBook(1).catch((e: unknown) => e);
+
+      expect((error as RenameError).code).toBe('NO_PATH');
+      assertNothingMutated(bookService);
+    });
+
+    it('reports STALE_PATH when the row moved inside the lock', async () => {
+      const { service, bookService } = createService();
+      raceRow(bookService, { ...mockBook, id: 1, path: '/library/Wrong/Old' }, { ...mockBook, id: 1, path: '/library/Wrong/Moved' });
+
+      const error = await service.renameBook(1).catch((e: unknown) => e);
+
+      expect((error as RenameError).code).toBe('STALE_PATH');
+      expect((error as Error).message).toContain('/library/Wrong/Moved');
+      assertNothingMutated(bookService);
+    });
+
+    it('proceeds when the fresh path differs only in spelling', async () => {
+      const { service, bookService } = createService();
+      raceRow(bookService, { ...mockBook, id: 1, path: '/library/Wrong/Old' }, { ...mockBook, id: 1, path: '/library/Wrong/X/../Old' });
+      bookService.update.mockResolvedValue(undefined);
+
+      await expect(service.renameBook(1)).resolves.toMatchObject({ oldPath: '/library/Wrong/Old' });
+      expect(rename).toHaveBeenCalled();
     });
   });
 

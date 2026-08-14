@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { RenamePreviewModal } from './RenamePreviewModal';
-import { api, RenameConflictError, type RenamePreviewResult } from '@/lib/api';
+import { api, ApiError, RenameConflictError, type RenamePreviewResult } from '@/lib/api';
 
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>();
@@ -140,6 +140,18 @@ describe('RenamePreviewModal', () => {
     expect(await screen.findByRole('alert')).toBeInTheDocument();
     const link = screen.getByRole('link', { name: 'Conflicting Book' });
     expect(link).toHaveAttribute('href', '/books/99');
+    expect(screen.queryByRole('button', { name: 'Rename' })).not.toBeInTheDocument();
+  });
+
+  it('renders a TARGET_OCCUPIED refusal through the generic alert, with no Rename action', async () => {
+    vi.mocked(api.getBookRenamePreview).mockRejectedValue(
+      new ApiError(409, { error: 'Target path "/library/Y" is a non-empty directory' }),
+    );
+    renderModal();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Target path "/library/Y" is a non-empty directory');
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Rename' })).not.toBeInTheDocument();
   });
 

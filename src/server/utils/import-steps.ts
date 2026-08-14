@@ -5,8 +5,11 @@ import { pipeline } from 'node:stream/promises';
 import type { Stats } from 'node:fs';
 import { join, extname, basename, normalize } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '@db/index.js';
+import type { Db, DbOrTx } from '@db/index.js';
 import { transitionDownloadState } from './download-state.js';
+import { withPathWriteLock } from './path-write-lock.js';
+import { claimLockKey } from './claim-lock.js';
+import { findOtherPathOwner } from './path-identity.js';
 import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/index.js';
 import { getErrorMessage } from './error-message.js';
 import type { TaggingService } from '../services/tagging.service.js';
@@ -212,12 +215,27 @@ export interface CleanupOldBookPathArgs {
   targetPath: string;
   libraryRoot: string;
   log: FastifyBaseLogger;
+  db: DbOrTx;
 }
 
 // Delete managed old-book files on re-import; awaited but nonfatal, foreign files preserved.
 export async function cleanupOldBookPath(args: CleanupOldBookPathArgs): Promise<void> {
-  const { bookPath, targetPath, libraryRoot, log } = args;
+  const { bookPath, targetPath, libraryRoot, log, db } = args;
   if (!bookPath || normalize(targetPath) === normalize(bookPath)) return;
+  // The sweep runs after the import's DB commit, so the book's own row already names the new
+  // target; "no OTHER row owns it" is the form with meaning here. No re-acquire arm applies —
+  // the path swept is an argument, not a row lookup.
+  await withPathWriteLock(claimLockKey(bookPath), async () => {
+    const owner = await findOtherPathOwner(db, bookPath);
+    if (owner) {
+      log.warn({ bookPath, ownerBookId: owner.id }, 'Skipped old book path cleanup — another book owns this folder');
+      return;
+    }
+    await sweepOldBookPath(bookPath, targetPath, libraryRoot, log);
+  });
+}
+
+async function sweepOldBookPath(bookPath: string, targetPath: string, libraryRoot: string, log: FastifyBaseLogger): Promise<void> {
   try {
     // Reject in-library symlinks whose real path escapes the root.
     await assertRealPathInsideLibrary(bookPath, libraryRoot);

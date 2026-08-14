@@ -1188,6 +1188,23 @@ describe('BulkOperationService — named failure details (#2159)', () => {
       ]);
     });
 
+    it.each(['TARGET_OCCUPIED', 'STALE_PATH'] as const)('degrades per book for a %s, leaving the job running', async (code) => {
+      const renameService = makeRenameService();
+      const { service, db } = createService({ renameService });
+      db.select.mockReturnValueOnce(mockDbChain([renameRow(2, 'Storm Front'), renameRow(3, 'Fool Moon')]));
+      (renameService.renameBook as Mock)
+        .mockRejectedValueOnce(new RenameError('refused', code))
+        .mockResolvedValueOnce({ oldPath: '/a', newPath: '/b', message: 'Moved', filesRenamed: 0 });
+
+      const id = await service.startRenameJob();
+      await waitForJob(service, id);
+
+      const status = service.getJob(id);
+      expect(status?.failures).toBe(1);
+      expect(status?.completed).toBe(2);
+      expect(status?.failureDetails).toEqual([{ bookId: 2, title: 'Storm Front', error: `${code}: refused` }]);
+    });
+
     it('records NOTHING for a NO_PATH skip while still ticking completed', async () => {
       const renameService = makeRenameService();
       const { service, db } = createService({ renameService });

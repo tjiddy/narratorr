@@ -41,6 +41,18 @@ export async function withPathWriteLock<T>(filePath: string, op: () => Promise<T
   return run;
 }
 
+/**
+ * Hold several keys at once through ONE canonical (lexicographically sorted) acquisition, so two
+ * callers with mirrored key sets can never deadlock. Duplicates are collapsed because the lock is
+ * not re-entrant: acquiring a key already held would await a slot only the outer holder settles.
+ */
+export async function withPathWriteLocks<T>(keys: string[], op: () => Promise<T>): Promise<T> {
+  const ordered = [...new Set(keys)].sort();
+  const acquire = async (index: number): Promise<T> =>
+    index === ordered.length ? op() : withPathWriteLock(ordered[index]!, () => acquire(index + 1));
+  return acquire(0);
+}
+
 /** Test-only: proves the key is released rather than leaked. */
 export function hasPendingPathWrite(filePath: string): boolean {
   return chains.has(filePath);

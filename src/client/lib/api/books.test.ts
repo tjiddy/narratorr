@@ -168,6 +168,19 @@ describe('booksApi.getBookRenamePreview', () => {
     expect(err).not.toBeInstanceOf(RenameConflictError);
   });
 
+  // The occupied/stale codes deliberately carry no `details`, so the preview route sends a flat
+  // `{ error }` body with no `code` — the client must NOT read them as a structured conflict.
+  it('propagates a TARGET_OCCUPIED 409 as a plain ApiError carrying its message', async () => {
+    vi.mocked(fetchApi).mockRejectedValue(
+      new ApiError(409, { error: 'Target path "/library/Y" is a non-empty directory' }),
+    );
+
+    const err = await booksApi.getBookRenamePreview(1).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).not.toBeInstanceOf(RenameConflictError);
+    expect((err as ApiError).body).toEqual({ error: 'Target path "/library/Y" is a non-empty directory' });
+  });
+
   it('propagates 409 without a CONFLICT body as a plain ApiError', async () => {
     vi.mocked(fetchApi).mockRejectedValue(new ApiError(409, { error: 'random conflict' }));
 
