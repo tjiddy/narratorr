@@ -301,4 +301,42 @@ describe('NetworkSettingsSection', () => {
       });
     });
   });
+
+  describe('when the shared settings read fails', () => {
+    beforeEach(() => {
+      // resetAllMocks, not clearAllMocks: the Retry test queues a `*Once()` rejection and
+      // clearAllMocks does not drain those queues.
+      vi.resetAllMocks();
+    });
+
+    it('reports the read failure instead of showing an empty proxy as "no proxy configured"', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
+
+      renderWithProviders(<NetworkSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load network settings.')).toBeInTheDocument();
+      });
+      // An empty Proxy URL reads as "direct connections"; that is the schema default.
+      expect(screen.queryByLabelText('Proxy URL')).not.toBeInTheDocument();
+    });
+
+    it('refetches and restores the saved proxy when the operator clicks Retry', async () => {
+      mockApi.getSettings
+        .mockRejectedValueOnce(new Error('settings unreadable'))
+        .mockResolvedValue(createMockSettings({ network: { proxyUrl: 'http://proxy.example:8080' } }));
+      const user = userEvent.setup();
+
+      renderWithProviders(<NetworkSettingsSection />);
+      await waitFor(() => expect(screen.getByText('Failed to load network settings.')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Retry loading network settings' }));
+
+      // A real URL, not the schema default empty string: only a refetch produces this.
+      await waitFor(() => expect(screen.getByLabelText('Proxy URL')).toHaveValue('http://proxy.example:8080'));
+      expect(screen.queryByText('Failed to load network settings.')).not.toBeInTheDocument();
+      expect(mockApi.getSettings).toHaveBeenCalledTimes(2);
+    });
+  });
+
 });

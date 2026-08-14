@@ -338,4 +338,42 @@ describe('FilteringSettingsSection', () => {
       expect(screen.queryByLabelText(/preferredLanguage/i)).not.toBeInTheDocument();
     });
   });
+
+  describe('when the shared settings read fails', () => {
+    beforeEach(() => {
+      // resetAllMocks, not clearAllMocks: the Retry test queues a `*Once()` rejection and
+      // clearAllMocks does not drain those queues.
+      vi.resetAllMocks();
+    });
+
+    it('reports the read failure instead of showing the defaults as saved filters', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
+
+      renderWithProviders(<FilteringSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load filtering settings.')).toBeInTheDocument();
+      });
+      // A 30 in Minimum duration reads as a chosen floor; it is the schema default.
+      expect(screen.queryByLabelText('Minimum duration')).not.toBeInTheDocument();
+    });
+
+    it('refetches and restores the saved filters when the operator clicks Retry', async () => {
+      mockApi.getSettings
+        .mockRejectedValueOnce(new Error('settings unreadable'))
+        .mockResolvedValue(createMockSettings({ metadata: { minDurationMinutes: 90 } }));
+      const user = userEvent.setup();
+
+      renderWithProviders(<FilteringSettingsSection />);
+      await waitFor(() => expect(screen.getByText('Failed to load filtering settings.')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Retry loading filtering settings' }));
+
+      // 90, not the schema default 30: only a real refetch produces this value.
+      await waitFor(() => expect(screen.getByLabelText('Minimum duration')).toHaveValue(90));
+      expect(screen.queryByText('Failed to load filtering settings.')).not.toBeInTheDocument();
+      expect(mockApi.getSettings).toHaveBeenCalledTimes(2);
+    });
+  });
+
 });

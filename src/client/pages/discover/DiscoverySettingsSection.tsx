@@ -22,7 +22,7 @@ function pickFormFields(src: typeof DEFAULT_SETTINGS.discovery): DiscoveryFormDa
 const CARD_LABEL = 'Discovery';
 
 export function DiscoverySettingsSection() {
-  const { form, mutation, onSubmit } = useSettingsForm<DiscoveryFormData>({
+  const { form, mutation, onSubmit, settingsError, refetchSettings } = useSettingsForm<DiscoveryFormData>({
     schema: discoveryFormSchema,
     defaultValues: pickFormFields(DEFAULT_SETTINGS.discovery),
     select: (s: AppSettings) => pickFormFields(s.discovery),
@@ -39,52 +39,68 @@ export function DiscoverySettingsSection() {
       title={CARD_LABEL}
       description="Configure recommendation engine settings"
     >
-      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
-        <SettingsTable>
-          <SettingsRow htmlFor="discovery-enabled" label="Enable discovery" description="Automatically generate book recommendations based on your library">
-            <ToggleSwitch id="discovery-enabled" {...register('enabled')} />
-          </SettingsRow>
-
-          <SettingsRow htmlFor="discovery-interval" label="Refresh interval" description="How often to regenerate recommendations.">
-            <NumberField
-              id="discovery-interval"
-              {...register('intervalHours', { valueAsNumber: true })}
-              step={1}
-              suffix="hours"
-              error={errors.intervalHours?.message}
-            />
-          </SettingsRow>
-
-          <SettingsRow htmlFor="discovery-max-per-author" label="Max suggestions per author" description="Cap how many recommendations any single author contributes.">
-            <NumberField
-              id="discovery-max-per-author"
-              {...register('maxSuggestionsPerAuthor', { valueAsNumber: true })}
-              step={1}
-              error={errors.maxSuggestionsPerAuthor?.message}
-            />
-          </SettingsRow>
-
-          <SettingsRow htmlFor="discovery-expiry" label="Suggestion expiry" description="Auto-expire pending suggestions older than this many days.">
-            <NumberField
-              id="discovery-expiry"
-              {...register('expiryDays', { valueAsNumber: true })}
-              step={1}
-              suffix="days"
-              error={errors.expiryDays?.message}
-            />
-          </SettingsRow>
-        </SettingsTable>
-
-        {isDirty && (
+      {/* An enabled toggle and a 24-hour refresh read as the operator's cadence; both are
+          schema defaults a failed read never observed. */}
+      {settingsError ? (
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-red-500">Failed to load discovery settings.</p>
           <button
-            type="submit"
-            disabled={mutation.isPending}
-            className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
+            type="button"
+            onClick={refetchSettings}
+            aria-label="Retry loading discovery settings"
+            className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-all focus-ring"
           >
-            {mutation.isPending ? 'Saving...' : 'Save'}
+            Retry
           </button>
-        )}
-      </form>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
+          <SettingsTable>
+            <SettingsRow htmlFor="discovery-enabled" label="Enable discovery" description="Automatically generate book recommendations based on your library">
+              <ToggleSwitch id="discovery-enabled" {...register('enabled')} />
+            </SettingsRow>
+
+            <SettingsRow htmlFor="discovery-interval" label="Refresh interval" description="How often to regenerate recommendations.">
+              <NumberField
+                id="discovery-interval"
+                {...register('intervalHours', { valueAsNumber: true })}
+                step={1}
+                suffix="hours"
+                error={errors.intervalHours?.message}
+              />
+            </SettingsRow>
+
+            <SettingsRow htmlFor="discovery-max-per-author" label="Max suggestions per author" description="Cap how many recommendations any single author contributes.">
+              <NumberField
+                id="discovery-max-per-author"
+                {...register('maxSuggestionsPerAuthor', { valueAsNumber: true })}
+                step={1}
+                error={errors.maxSuggestionsPerAuthor?.message}
+              />
+            </SettingsRow>
+
+            <SettingsRow htmlFor="discovery-expiry" label="Suggestion expiry" description="Auto-expire pending suggestions older than this many days.">
+              <NumberField
+                id="discovery-expiry"
+                {...register('expiryDays', { valueAsNumber: true })}
+                step={1}
+                suffix="days"
+                error={errors.expiryDays?.message}
+              />
+            </SettingsRow>
+          </SettingsTable>
+
+          {isDirty && (
+            <button
+              type="submit"
+              disabled={mutation.isPending}
+              className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
+            >
+              {mutation.isPending ? 'Saving...' : 'Save'}
+            </button>
+          )}
+        </form>
+      )}
     </SettingsSection>
   );
 }

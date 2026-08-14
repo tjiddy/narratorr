@@ -373,4 +373,43 @@ describe('SearchSettingsSection', () => {
       });
     });
   });
+
+  describe('when the shared settings read fails', () => {
+    beforeEach(() => {
+      // resetAllMocks, not clearAllMocks: the Retry test queues a `*Once()` rejection and
+      // clearAllMocks does not drain those queues.
+      vi.resetAllMocks();
+    });
+
+    it('reports the read failure instead of showing the defaults as the saved schedule', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
+
+      renderWithProviders(<SearchSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load search settings.')).toBeInTheDocument();
+      });
+      // An on toggle reads as "scheduled search is running"; that is the schema default.
+      expect(screen.queryByLabelText('Scheduled search')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Search interval')).not.toBeInTheDocument();
+    });
+
+    it('refetches and restores the saved schedule when the operator clicks Retry', async () => {
+      mockApi.getSettings
+        .mockRejectedValueOnce(new Error('settings unreadable'))
+        .mockResolvedValue(createMockSettings({ search: { intervalMinutes: 45 } }));
+      const user = userEvent.setup();
+
+      renderWithProviders(<SearchSettingsSection />);
+      await waitFor(() => expect(screen.getByText('Failed to load search settings.')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Retry loading search settings' }));
+
+      // 45, not the schema default 360: only a real refetch produces this value.
+      await waitFor(() => expect(screen.getByLabelText('Search interval')).toHaveValue(45));
+      expect(screen.queryByText('Failed to load search settings.')).not.toBeInTheDocument();
+      expect(mockApi.getSettings).toHaveBeenCalledTimes(2);
+    });
+  });
+
 });

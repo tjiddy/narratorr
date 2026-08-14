@@ -15,7 +15,7 @@ type ImportFormData = z.infer<typeof importFormSchema>;
 const CARD_LABEL = 'Import';
 
 export function ImportSettingsSection() {
-  const { form, mutation, onSubmit } = useSettingsForm<ImportFormData>({
+  const { form, mutation, onSubmit, settingsError, refetchSettings } = useSettingsForm<ImportFormData>({
     schema: importFormSchema,
     defaultValues: DEFAULT_SETTINGS.import,
     select: (s: AppSettings) => s.import as ImportFormData,
@@ -34,74 +34,90 @@ export function ImportSettingsSection() {
       title={CARD_LABEL}
       description="Configure post-download import behavior"
     >
-      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
-        <SettingsTable>
-          <SettingsRow htmlFor="deleteAfterImport" label="Delete after import" description="Remove torrent from download client after files are imported">
-            <ToggleSwitch id="deleteAfterImport" {...register('deleteAfterImport')} />
-          </SettingsRow>
-
-          <SettingsRow
-            htmlFor="minSeedTime"
-            label="Minimum seed time"
-            description="How long to seed before removing the torrent — applies only when delete after import is on."
-            muted={!deleteAfterImport}
-          >
-            <NumberField
-              id="minSeedTime"
-              {...register('minSeedTime', { valueAsNumber: true })}
-              disabled={!deleteAfterImport}
-              min={0}
-              step={1}
-              placeholder="60"
-              suffix="minutes"
-              error={errors.minSeedTime?.message}
-            />
-          </SettingsRow>
-
-          <SettingsRow
-            htmlFor="minSeedRatio"
-            label="Minimum seed ratio"
-            description="Minimum upload ratio before removing the torrent. Set to 0 to disable — applies only when delete after import is on."
-            muted={!deleteAfterImport}
-          >
-            <NumberField
-              id="minSeedRatio"
-              {...register('minSeedRatio', { valueAsNumber: true })}
-              disabled={!deleteAfterImport}
-              min={0}
-              step={0.1}
-              placeholder="0"
-              error={errors.minSeedRatio?.message}
-            />
-          </SettingsRow>
-
-          <SettingsRow htmlFor="redownloadFailed" label="Redownload failed" description="Automatically search for and attempt to download a different release when a download fails">
-            <ToggleSwitch id="redownloadFailed" {...register('redownloadFailed')} />
-          </SettingsRow>
-
-          <SettingsRow htmlFor="minFreeSpaceGB" label="Minimum free space" description="Block imports when free disk space is below this threshold. Set to 0 to disable.">
-            <NumberField
-              id="minFreeSpaceGB"
-              {...register('minFreeSpaceGB', { valueAsNumber: true })}
-              min={0}
-              step="any"
-              placeholder="5"
-              suffix="GB"
-              error={errors.minFreeSpaceGB?.message}
-            />
-          </SettingsRow>
-        </SettingsTable>
-
-        {isDirty && (
+      {/* An off Delete after import reads as a deliberate seeding policy, and the seed
+          time and free-space floor as chosen thresholds — all are schema defaults. */}
+      {settingsError ? (
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-red-500">Failed to load import settings.</p>
           <button
-            type="submit"
-            disabled={mutation.isPending}
-            className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
+            type="button"
+            onClick={refetchSettings}
+            aria-label="Retry loading import settings"
+            className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-all focus-ring"
           >
-            {mutation.isPending ? 'Saving...' : 'Save'}
+            Retry
           </button>
-        )}
-      </form>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
+          <SettingsTable>
+            <SettingsRow htmlFor="deleteAfterImport" label="Delete after import" description="Remove torrent from download client after files are imported">
+              <ToggleSwitch id="deleteAfterImport" {...register('deleteAfterImport')} />
+            </SettingsRow>
+
+            <SettingsRow
+              htmlFor="minSeedTime"
+              label="Minimum seed time"
+              description="How long to seed before removing the torrent — applies only when delete after import is on."
+              muted={!deleteAfterImport}
+            >
+              <NumberField
+                id="minSeedTime"
+                {...register('minSeedTime', { valueAsNumber: true })}
+                disabled={!deleteAfterImport}
+                min={0}
+                step={1}
+                placeholder="60"
+                suffix="minutes"
+                error={errors.minSeedTime?.message}
+              />
+            </SettingsRow>
+
+            <SettingsRow
+              htmlFor="minSeedRatio"
+              label="Minimum seed ratio"
+              description="Minimum upload ratio before removing the torrent. Set to 0 to disable — applies only when delete after import is on."
+              muted={!deleteAfterImport}
+            >
+              <NumberField
+                id="minSeedRatio"
+                {...register('minSeedRatio', { valueAsNumber: true })}
+                disabled={!deleteAfterImport}
+                min={0}
+                step={0.1}
+                placeholder="0"
+                error={errors.minSeedRatio?.message}
+              />
+            </SettingsRow>
+
+            <SettingsRow htmlFor="redownloadFailed" label="Redownload failed" description="Automatically search for and attempt to download a different release when a download fails">
+              <ToggleSwitch id="redownloadFailed" {...register('redownloadFailed')} />
+            </SettingsRow>
+
+            <SettingsRow htmlFor="minFreeSpaceGB" label="Minimum free space" description="Block imports when free disk space is below this threshold. Set to 0 to disable.">
+              <NumberField
+                id="minFreeSpaceGB"
+                {...register('minFreeSpaceGB', { valueAsNumber: true })}
+                min={0}
+                step="any"
+                placeholder="5"
+                suffix="GB"
+                error={errors.minFreeSpaceGB?.message}
+              />
+            </SettingsRow>
+          </SettingsTable>
+
+          {isDirty && (
+            <button
+              type="submit"
+              disabled={mutation.isPending}
+              className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
+            >
+              {mutation.isPending ? 'Saving...' : 'Save'}
+            </button>
+          )}
+        </form>
+      )}
     </SettingsSection>
   );
 }
