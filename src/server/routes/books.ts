@@ -178,11 +178,11 @@ async function registerAddBookRoute(app: FastifyInstance, deps: BookRouteDeps) {
   );
 }
 
-async function registerDeleteMissingRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService'>) {
+async function registerDeleteMissingRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookDeletionService'>) {
   app.delete('/api/books/missing', async (request) => {
-    const deleted = await deps.bookService.deleteByStatus('missing');
-    request.log.info({ deleted }, 'Batch deleted missing books');
-    return { deleted };
+    const summary = await deps.bookDeletionService.deleteMissingBooks();
+    request.log.info(summary, 'Batch deleted missing books');
+    return summary;
   });
 }
 

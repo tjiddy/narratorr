@@ -38,8 +38,8 @@ describe('ImportListExclusionService (DB-backed, #2305)', () => {
     }
   });
 
-  const exclude = (identity: { title: string; asin?: string | null; authorName?: string | null }) =>
-    service.recordExclusion(identity, NO_PROVENANCE);
+  const exclude = async (identity: { title: string; asin?: string | null; authorName?: string | null }) =>
+    (await service.recordExclusion(identity, NO_PROVENANCE)).row;
 
   describe('identity — the ASIN arm', () => {
     it('refuses a candidate whose ASIN differs only by case and padding', async () => {
@@ -208,7 +208,7 @@ describe('ImportListExclusionService (DB-backed, #2305)', () => {
     it('records the originating list for display', async () => {
       const [list] = await db.insert(importLists).values({ name: 'Bestsellers', type: 'nyt', settings: {} }).returning();
 
-      const row = await service.recordExclusion(
+      const { row } = await service.recordExclusion(
         { title: 'The Reckoning', authorName: 'Jane Doe' },
         { importListId: list!.id, importListName: 'Bestsellers' },
       );
@@ -238,7 +238,7 @@ describe('ImportListExclusionService (DB-backed, #2305)', () => {
         service.recordExclusion(identity, NO_PROVENANCE),
       ]);
 
-      expect(a.id).toBe(b.id);
+      expect(a.row.id).toBe(b.row.id);
       expect(await db.select().from(importListExclusions)).toHaveLength(1);
     });
 
@@ -249,7 +249,7 @@ describe('ImportListExclusionService (DB-backed, #2305)', () => {
       const first = service.recordExclusion(identity, NO_PROVENANCE);
       const [b, a] = await Promise.all([second, first]);
 
-      expect(a.id).toBe(b.id);
+      expect(a.row.id).toBe(b.row.id);
       expect(await db.select().from(importListExclusions)).toHaveLength(1);
     });
 

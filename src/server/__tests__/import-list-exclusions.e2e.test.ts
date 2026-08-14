@@ -90,6 +90,57 @@ describe('import-list exclusions — the delete/re-add loop, end to end (#2305)'
     expect(await titlesInLibrary()).toEqual(['The Reckoning']);
   });
 
+  it('bulk-deletes a missing book, keeps it deleted across syncs, and brings it back once undone (#2329)', async () => {
+    await sync();
+    const [created] = await e2e.db.select().from(books);
+    await e2e.db.update(books).set({ status: 'missing' }).where(eq(books.id, created!.id));
+
+    const deleteRes = await e2e.app.inject({ method: 'DELETE', url: '/api/books/missing' });
+    expect(deleteRes.statusCode).toBe(200);
+    expect(deleteRes.json()).toEqual({ deleted: 1, failed: 0 });
+    expect(await titlesInLibrary()).toEqual([]);
+
+    const { data, total } = await listExclusions();
+    expect(total).toBe(1);
+    expect(data[0]).toMatchObject({
+      title: 'The Reckoning',
+      authorName: 'Jane Doe',
+      importListName: 'NYT Bestsellers',
+    });
+
+    // `syncDueLists` returns void, so the refusal is counted on the completion log — the same
+    // observation point `import-list.service.test.ts` uses for these counters.
+    const info = vi.spyOn(e2e.app.log, 'info');
+    await sync();
+    expect(await titlesInLibrary()).toEqual([]);
+    expect(info).toHaveBeenCalledWith(expect.objectContaining({ excludedCount: 1 }), 'Import list sync completed');
+
+    const undoRes = await e2e.app.inject({
+      method: 'DELETE',
+      url: `/api/import-list-exclusions/${data[0]!.id}`,
+    });
+    expect(undoRes.statusCode).toBe(200);
+
+    await sync();
+    expect(await titlesInLibrary()).toEqual(['The Reckoning']);
+  });
+
+  it('records no exclusion when a bulk-deleted missing book was added by hand (#2329)', async () => {
+    const res = await e2e.app.inject({
+      method: 'POST',
+      url: '/api/books',
+      payload: { title: 'Hand Added', authors: [{ name: 'Jane Doe' }] },
+    });
+    const bookId = res.json().id as number;
+    await e2e.db.update(books).set({ status: 'missing' }).where(eq(books.id, bookId));
+
+    const deleteRes = await e2e.app.inject({ method: 'DELETE', url: '/api/books/missing' });
+
+    expect(deleteRes.json()).toEqual({ deleted: 1, failed: 0 });
+    expect(await titlesInLibrary()).toEqual([]);
+    expect((await listExclusions()).total).toBe(0);
+  });
+
   it('refuses the same book from a second list of a different provider type', async () => {
     await sync();
     const [created] = await e2e.db.select().from(books);

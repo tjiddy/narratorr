@@ -193,7 +193,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
     settingsService: settings,
   });
   const bookRejection = new BookRejectionService(db, log, book, blacklistService, settings, eventHistory, retrySearchDeps, companionEbook);
-  const bookDeletion = new BookDeletionService(book, download, downloadOrchestrator, settings, log, eventHistory, importListExclusion);
+  const bookDeletion = new BookDeletionService(db, book, download, downloadOrchestrator, settings, log, eventHistory, importListExclusion);
 
   // Wire after every instance exists; WireOnce rejects use-before-wire and duplicate wiring.
   download.wire({ retrySearchDeps, indexerService: indexer });

@@ -1853,27 +1853,38 @@ describe('books routes', () => {
   });
 
   describe('DELETE /api/books/missing', () => {
-    it('deletes all missing books and returns count', async () => {
-      (services.book.deleteByStatus as Mock).mockResolvedValue(3);
+    it('delegates the sweep to the deletion service and returns both counters', async () => {
+      (services.bookDeletion.deleteMissingBooks as Mock).mockResolvedValue({ deleted: 3, failed: 0 });
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/missing' });
 
       expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual({ deleted: 3 });
-      expect(services.book.deleteByStatus).toHaveBeenCalledWith('missing');
+      expect(JSON.parse(res.payload)).toEqual({ deleted: 3, failed: 0 });
+      expect(services.bookDeletion.deleteMissingBooks).toHaveBeenCalledWith();
+      // The single-homing this issue exists for: the route owns no delete primitive of its own.
+      expect(services.book.delete).not.toHaveBeenCalled();
     });
 
-    it('returns deleted: 0 when no missing books exist', async () => {
-      (services.book.deleteByStatus as Mock).mockResolvedValue(0);
+    it('reports per-book failures alongside the deletions with a 200', async () => {
+      (services.bookDeletion.deleteMissingBooks as Mock).mockResolvedValue({ deleted: 2, failed: 1 });
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/missing' });
 
       expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual({ deleted: 0 });
+      expect(JSON.parse(res.payload)).toEqual({ deleted: 2, failed: 1 });
     });
 
-    it('returns 500 when service throws', async () => {
-      (services.book.deleteByStatus as Mock).mockRejectedValue(new Error('DB error'));
+    it('returns zeroed counters when no missing books exist', async () => {
+      (services.bookDeletion.deleteMissingBooks as Mock).mockResolvedValue({ deleted: 0, failed: 0 });
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/books/missing' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ deleted: 0, failed: 0 });
+    });
+
+    it('returns 500 when the sweep itself throws (a rejected enumeration)', async () => {
+      (services.bookDeletion.deleteMissingBooks as Mock).mockRejectedValue(new Error('DB error'));
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/missing' });
 

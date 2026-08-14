@@ -1,5 +1,5 @@
 import { eq, desc, and, or, count, sql } from 'drizzle-orm';
-import { type Db } from '@db/index.js';
+import { type Db, type DbOrTx } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, indexers } from '@db/schema.js';
 import type { DownloadProtocol } from '@core/index.js';
@@ -183,8 +183,10 @@ export class DownloadService {
     return { active, completed };
   }
 
-  async getActiveByBookId(bookId: number): Promise<DownloadWithBook[]> {
-    const results = await this.db
+  /** `executor` lets a caller read the rows inside its own transaction — `downloads.book_id` is
+   * ON DELETE SET NULL, so once the book row is gone this lookup can no longer find them. */
+  async getActiveByBookId(bookId: number, executor: DbOrTx = this.db): Promise<DownloadWithBook[]> {
+    const results = await executor
       .select({
         download: downloads,
         book: books,
