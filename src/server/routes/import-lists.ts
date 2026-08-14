@@ -1,5 +1,5 @@
 import { type FastifyInstance } from 'fastify';
-import { z } from 'zod';
+import type { z } from 'zod';
 import type { ImportListService } from '../services/import-list.service.js';
 import type { TaskRegistry } from '../services/task-registry.js';
 import { createImportListSchema, updateImportListSchema, previewImportListSchema, idParamSchema } from '@shared/schemas.js';
