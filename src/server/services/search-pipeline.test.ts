@@ -3960,3 +3960,351 @@ describe('searchAndGrabForBook — query ladder on the broadcaster path (#2104)'
     expect(new Set(seen).size).toBe(1);
   });
 });
+
+describe('filterAndRankResults — drop accounting (#2325)', () => {
+  const base = { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' };
+
+  it('reports the gate that emptied the set with its threshold', () => {
+    const { results, dropSummary } = filterAndRankResults(
+      [makeResult({ title: 'Tracker test', size: 5 * MB })],
+      3600,
+      { ...base, minDownloadSize: 50 },
+    );
+
+    expect(results).toHaveLength(0);
+    expect(dropSummary.total).toBe(1);
+    expect(dropSummary.reasons[0]).toEqual({ reason: 'below-min-size', count: 1, threshold: '50 MB' });
+  });
+
+  it('attributes a doubly-failing result to the earlier gate only (AC3)', () => {
+    const { dropSummary } = filterAndRankResults(
+      [makeResult({ title: 'German Sample', size: 5 * MB })],
+      3600,
+      { ...base, rejectWords: 'german', minDownloadSize: 50 },
+    );
+
+    expect(dropSummary.total).toBe(1);
+    expect(dropSummary.reasons).toEqual([{ reason: 'reject-word-match', count: 1 }]);
+  });
+
+  it('counts nothing for results sitting exactly on each inclusive threshold', () => {
+    const { results, dropSummary } = filterAndRankResults(
+      [
+        makeResult({ title: 'At min size', size: 50 * MB, seeders: 5 }),
+        makeResult({ title: 'At max size', size: 2 * GB, seeders: 5 }),
+      ],
+      3600,
+      { ...base, minSeeders: 5, grabFloor: 50, minDownloadSize: 50, maxDownloadSize: 2 },
+    );
+
+    expect(results).toHaveLength(2);
+    expect(dropSummary).toEqual({ total: 0, reasons: [] });
+  });
+
+  it('counts nothing when size or seeders are missing or zero', () => {
+    const { results, dropSummary } = filterAndRankResults(
+      [
+        makeResult({ title: 'No size', size: undefined }),
+        makeResult({ title: 'Zero size', size: 0 }),
+        makeResult({ title: 'No seeders', seeders: undefined }),
+      ],
+      3600,
+      { ...base, minSeeders: 5, minDownloadSize: 50, maxDownloadSize: 2 },
+    );
+
+    expect(results).toHaveLength(3);
+    expect(dropSummary).toEqual({ total: 0, reasons: [] });
+  });
+
+  it('never reports below-grab-floor when the book duration is unknown', () => {
+    const { results, dropSummary } = filterAndRankResults(
+      [makeResult({ title: 'Tiny bitrate', size: 5 * MB })],
+      undefined,
+      { ...base, grabFloor: 100 },
+    );
+
+    expect(results).toHaveLength(1);
+    expect(dropSummary.reasons).toEqual([]);
+  });
+
+  it('counts a language mismatch but not an undetermined language', () => {
+    const { dropSummary } = filterAndRankResults(
+      [
+        makeResult({ title: 'German edition', language: 'german' }),
+        makeResult({ title: 'Unknown language', language: undefined }),
+      ],
+      3600,
+      { ...base, languages: ['english'] },
+    );
+
+    expect(dropSummary.total).toBe(1);
+    expect(dropSummary.reasons[0]).toEqual({ reason: 'language-mismatch', count: 1, threshold: 'english' });
+  });
+
+  it('reports both size gates when one result is under and another over', () => {
+    const { dropSummary } = filterAndRankResults(
+      [
+        makeResult({ title: 'Too small', size: 5 * MB }),
+        makeResult({ title: 'Too big', size: 10 * GB }),
+      ],
+      3600,
+      { ...base, minDownloadSize: 50, maxDownloadSize: 5 },
+    );
+
+    expect(dropSummary.total).toBe(2);
+    expect(dropSummary.reasons).toEqual([
+      { reason: 'below-min-size', count: 1, threshold: '50 MB' },
+      { reason: 'over-max-size', count: 1, threshold: '5 GB' },
+    ]);
+  });
+
+  it('attributes reject-word and required-word failures to their own gates', () => {
+    const { dropSummary } = filterAndRankResults(
+      [
+        makeResult({ title: 'German Unabridged' }),
+        makeResult({ title: 'Abridged Edition' }),
+      ],
+      3600,
+      { ...base, rejectWords: 'german', requiredWords: 'unabridged' },
+    );
+
+    expect(dropSummary.total).toBe(2);
+    expect(dropSummary.reasons).toEqual([
+      { reason: 'reject-word-match', count: 1 },
+      { reason: 'required-word-missing', count: 1 },
+    ]);
+  });
+
+  it('returns an empty summary when every result survives', () => {
+    const { results, dropSummary } = filterAndRankResults(
+      [makeResult({ title: 'Keeper', size: 500 * MB })],
+      3600,
+      { ...base, minDownloadSize: 50, maxDownloadSize: 5 },
+    );
+
+    expect(results).toHaveLength(1);
+    expect(dropSummary).toEqual({ total: 0, reasons: [] });
+  });
+});
+
+describe('applyMultiPartFilterAndRank — emptied-set info log (#2325 AC6)', () => {
+  const base = { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' };
+
+  it('logs once at info with the dominant reason, its threshold, and the per-reason counts', () => {
+    const log = createMockLogger();
+
+    applyMultiPartFilterAndRank(
+      [
+        makeResult({ title: 'Tracker test', size: 5 * MB }),
+        makeResult({ title: 'Sample', size: 1 * MB }),
+        makeResult({ title: 'German edition', size: 500 * MB, language: 'german' }),
+      ],
+      3600,
+      { ...base, minDownloadSize: 50, languages: ['english'] },
+      log,
+    );
+
+    expect(log.info).toHaveBeenCalledTimes(1);
+    expect(log.info).toHaveBeenCalledWith(
+      {
+        inputCount: 3,
+        droppedCount: 3,
+        reason: 'below-min-size',
+        threshold: '50 MB',
+        dropCounts: { 'below-min-size': 2, 'language-mismatch': 1 },
+      },
+      'All search results removed by quality filters',
+    );
+  });
+
+  it('omits the threshold field when the dominant reason has none (F9)', () => {
+    const log = createMockLogger();
+
+    applyMultiPartFilterAndRank(
+      [makeResult({ title: 'German Unabridged' })],
+      3600,
+      { ...base, rejectWords: 'german' },
+      log,
+    );
+
+    expect(log.info).toHaveBeenCalledTimes(1);
+    const fields = vi.mocked(log.info).mock.calls[0]![0] as Record<string, unknown>;
+    expect(fields).not.toHaveProperty('threshold');
+    expect(fields).toEqual({
+      inputCount: 1,
+      droppedCount: 1,
+      reason: 'reject-word-match',
+      dropCounts: { 'reject-word-match': 1 },
+    });
+  });
+
+  it('does not log at info when only some results are dropped, but still logs the debug line', () => {
+    const log = createMockLogger();
+
+    applyMultiPartFilterAndRank(
+      [
+        makeResult({ title: 'Tracker test', size: 5 * MB }),
+        makeResult({ title: 'Real Book', size: 500 * MB }),
+      ],
+      3600,
+      { ...base, minDownloadSize: 50 },
+      log,
+    );
+
+    expect(log.info).not.toHaveBeenCalled();
+    expect(log.debug).toHaveBeenCalledWith({ inputCount: 2, outputCount: 1 }, 'Quality gate filtering applied');
+  });
+
+  it('does not log at info when the input set was already empty', () => {
+    const log = createMockLogger();
+
+    applyMultiPartFilterAndRank([], 3600, { ...base, minDownloadSize: 50 }, log);
+
+    expect(log.info).not.toHaveBeenCalled();
+  });
+});
+
+describe('searchAndGrabForBook — emptied-set info log reaches the auto-grab path (#2325 AC6)', () => {
+  it('logs the quality-filter line and still reports no_results', async () => {
+    const log = createMockLogger();
+    const indexerSearchService = {
+      searchAllWithStatus: vi.fn().mockResolvedValue(withStatus([makeResult({ title: 'Tracker test', size: 5 * MB })])),
+    } as unknown as IndexerSearchService;
+
+    const outcome = await searchAndGrabForBook(
+      { id: 1, title: 'The Way of Kings' },
+      {
+        indexerSearchService,
+        downloadOrchestrator: { grab: vi.fn() } as unknown as DownloadOrchestrator,
+        qualitySettings: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 50 },
+        log,
+        blacklistService: {
+          getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set<string>(), blacklistedGuids: new Set<string>() }),
+        } as unknown as BlacklistService,
+        indexerService: mockIndexer,
+        eventHistory: createMockEventHistory(),
+      },
+    );
+
+    expect(outcome).toEqual({ result: 'no_results' });
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ inputCount: 1, droppedCount: 1, reason: 'below-min-size', threshold: '50 MB' }),
+      'All search results removed by quality filters',
+    );
+  });
+});
+
+describe('postProcessSearchResults — filteredOut wire field (#2325 AC8, AC9)', () => {
+  function createSettings(qualityOverrides: Record<string, unknown> = {}, metadataOverrides: Record<string, unknown> = {}): SettingsService {
+    const qualityDefaults = { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 0, minDownloadSize: 0, rejectWords: '', requiredWords: '' };
+    return {
+      get: vi.fn().mockImplementation((cat: string) => {
+        if (cat === 'quality') return Promise.resolve({ ...qualityDefaults, ...qualityOverrides });
+        if (cat === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: [], ...metadataOverrides });
+        return Promise.resolve({});
+      }),
+    } as unknown as SettingsService;
+  }
+
+  function createBlacklist(guids: string[] = []): BlacklistService {
+    return {
+      getBlacklistedIdentifiers: vi.fn().mockResolvedValue({
+        blacklistedHashes: new Set<string>(),
+        blacklistedGuids: new Set(guids),
+      }),
+    } as unknown as BlacklistService;
+  }
+
+  beforeEach(() => {
+    mockEnrichUsenet.mockReset();
+  });
+
+  it('carries the summary when the gates empty a non-empty raw set', async () => {
+    const output = await postProcessSearchResults(
+      [makeResult({ title: 'Tracker test', size: 5 * MB })],
+      3600,
+      createBlacklist(),
+      createSettings({ minDownloadSize: 50 }),
+      mockIndexer,
+      createMockLogger(),
+    );
+
+    expect(output.results).toEqual([]);
+    expect(output.filteredOut).toEqual({
+      total: 1,
+      reasons: [{ reason: 'below-min-size', count: 1, threshold: '50 MB' }],
+    });
+  });
+
+  it('omits the key entirely when nothing was dropped', async () => {
+    const output = await postProcessSearchResults(
+      [makeResult({ title: 'Real Book', size: 500 * MB })],
+      3600,
+      createBlacklist(),
+      createSettings({ minDownloadSize: 50 }),
+      mockIndexer,
+      createMockLogger(),
+    );
+
+    expect(output.results).toHaveLength(1);
+    expect(output).not.toHaveProperty('filteredOut');
+  });
+
+  it('merges the blacklist delta with the gate counts (AC9)', async () => {
+    const output = await postProcessSearchResults(
+      [
+        makeResult({ title: 'Blacklisted A', guid: 'blk-1', size: 500 * MB }),
+        makeResult({ title: 'Blacklisted B', guid: 'blk-2', size: 500 * MB }),
+        makeResult({ title: 'Tracker test', guid: 'clean', size: 5 * MB }),
+      ],
+      3600,
+      createBlacklist(['blk-1', 'blk-2']),
+      createSettings({ minDownloadSize: 50 }),
+      mockIndexer,
+      createMockLogger(),
+    );
+
+    expect(output.results).toEqual([]);
+    expect(output.filteredOut).toEqual({
+      total: 3,
+      reasons: [
+        { reason: 'blacklist-match', count: 2 },
+        { reason: 'below-min-size', count: 1, threshold: '50 MB' },
+      ],
+    });
+  });
+
+  it('reports a wholly blacklisted set with no gate entries', async () => {
+    const output = await postProcessSearchResults(
+      [
+        makeResult({ title: 'Blacklisted A', guid: 'blk-1', size: 500 * MB }),
+        makeResult({ title: 'Blacklisted B', guid: 'blk-2', size: 500 * MB }),
+        makeResult({ title: 'Blacklisted C', guid: 'blk-3', size: 500 * MB }),
+      ],
+      3600,
+      createBlacklist(['blk-1', 'blk-2', 'blk-3']),
+      createSettings(),
+      mockIndexer,
+      createMockLogger(),
+    );
+
+    expect(output.filteredOut).toEqual({ total: 3, reasons: [{ reason: 'blacklist-match', count: 3 }] });
+  });
+
+  it('leaves filteredOut absent when only the multi-part filter emptied the set (AC7)', async () => {
+    mockEnrichUsenet.mockResolvedValue(undefined);
+
+    const output = await postProcessSearchResults(
+      [makeResult({ protocol: 'usenet', title: 'Book Title (01 of 30)', downloadUrl: 'http://nzb.test/1' })],
+      3600,
+      createBlacklist(),
+      createSettings(),
+      mockIndexer,
+      createMockLogger(),
+    );
+
+    expect(output.results).toEqual([]);
+    expect(output.unsupportedResults.count).toBe(1);
+    expect(output).not.toHaveProperty('filteredOut');
+  });
+});

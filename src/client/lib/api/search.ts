@@ -2,6 +2,7 @@ import { fetchApi } from './client.js';
 import { type Download } from './activity.js';
 import type { SearchResult } from '@core/indexers/types.js';
 import { type GrabPayload } from '@shared/schemas/search.js';
+import type { SearchDropSummary } from '@shared/schemas/search-stream.js';
 
 export type { SearchResult, DownloadProtocol } from '@core/indexers/types.js';
 
@@ -23,6 +24,8 @@ export interface SearchResponse {
    * type is kept aligned with searchResponseSchema by a compile-time test.
    */
   relaxedQuery?: string;
+  /** Why an empty result list is empty; absent when the filters removed nothing. */
+  filteredOut?: SearchDropSummary;
 }
 
 export const searchApi = {
