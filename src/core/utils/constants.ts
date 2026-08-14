@@ -22,6 +22,13 @@ export const CONNECTOR_TIMEOUT_MS = 15_000;
 export const CONNECTOR_SHUTDOWN_DRAIN_MS = 5_000;
 
 /**
+ * MyAnonamouse's documented minimum interval between requests from one client. A constant, not a
+ * setting: MAM is a private tracker with a client whitelist, and an operator-tunable value invites
+ * a too-tight one — the same reasoning `SEARCH_DEADLINE_MS` records.
+ */
+export const MAM_MIN_REQUEST_INTERVAL_MS = 250;
+
+/**
  * How long one `searchAndGrabForBook` call may hold its caller. Sized above the worst legitimate
  * run (~17.5 min: 8 ladder rungs of refresh+search, usenet enrichment, URL resolution, redirects
  * and the download client's own request graph), because a tighter number aborts searches that were

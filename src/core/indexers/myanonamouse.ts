@@ -24,6 +24,7 @@ import {
   MAM_TORRENT_SENTINEL_PREFIX,
   parseTorrentIdFromContext,
 } from './mam-wedge.js';
+import { mamThrottle } from './mam-throttle.js';
 import {
   mamSearchResponseSchema,
   mamUserStatusSchema,
@@ -281,6 +282,8 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       this.isVip = isVip;
       return { isVip, classname: data.classname, ...(unsatisfied !== null && { unsatisfied }) };
     } catch (error: unknown) {
+      // Degrading here would swallow cancellation, whose reason may be any shape the gate forwards.
+      if (signal?.aborted) throw error;
       if (error instanceof IndexerError) {
         return null;
       }
@@ -295,6 +298,9 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   }
 
   private async fetchWithCookieMeta(url: string, callerSignal?: AbortSignal): Promise<{ body: string; httpStatus: number }> {
+    // Before the timeout is armed: a queued request must not spend its own budget waiting in line,
+    // and a wait that rejects leaves no timer to leak.
+    await mamThrottle.acquire(this.baseUrl, callerSignal);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), INDEXER_TIMEOUT_MS);
     const signal = callerSignal
@@ -393,6 +399,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   /** Fetch torrent bytes as a data URI; applyWedge adds MAM's bare server-side &fl flag. */
   private async fetchTorrentAsDataUri(torrentId: number, applyWedge = false, callerSignal?: AbortSignal): Promise<string | undefined> {
     const url = `${this.baseUrl}/tor/download.php?tid=${torrentId}${applyWedge ? '&fl' : ''}`;
+    await mamThrottle.acquire(this.baseUrl, callerSignal);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), INDEXER_TIMEOUT_MS);
     const signal = callerSignal
