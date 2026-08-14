@@ -273,9 +273,11 @@ describe('MamRequestThrottle', () => {
       await flush();
       await vi.advanceTimersByTimeAsync(INTERVAL + 50);
 
-      const w2 = watch('w2', mamThrottle.acquire(DESTINATION, AbortSignal.abort(new Error('gone'))), log);
+      const aborted = AbortSignal.abort(new Error('gone'));
+      const w2 = watch('w2', mamThrottle.acquire(DESTINATION, aborted), log);
       await flush();
       expect(w2.rejected).toBe(true);
+      expect(w2.reason).toBe(aborted.reason);
 
       const w3 = watch('w3', mamThrottle.acquire(DESTINATION), log);
       await flush();
@@ -387,7 +389,9 @@ describe('MamRequestThrottle', () => {
   });
 
   describe('reset lifecycle', () => {
-    it('settles every queued waiter as rejected', async () => {
+    // Pinned by shape and message, never by class: a bare `rejected` boolean cannot see the reason,
+    // and asserting a named subclass would make a new type load-bearing, which AC14 forbids.
+    it('settles every queued waiter as rejected with a plain Error naming the reset', async () => {
       watch('w1', mamThrottle.acquire(DESTINATION), log);
       const w2 = watch('w2', mamThrottle.acquire(DESTINATION), log);
       const w3 = watch('w3', mamThrottle.acquire(DESTINATION), log);
@@ -396,8 +400,11 @@ describe('MamRequestThrottle', () => {
       _resetMamThrottleForTesting();
       await flush();
 
-      expect(w2.rejected).toBe(true);
-      expect(w3.rejected).toBe(true);
+      for (const waiter of [w2, w3]) {
+        expect(waiter.rejected).toBe(true);
+        expect(waiter.reason).toBeInstanceOf(Error);
+        expect((waiter.reason as Error).message).toBe('MAM throttle reset');
+      }
     });
 
     it('cancels the pending delay timer', async () => {
@@ -421,12 +428,14 @@ describe('MamRequestThrottle', () => {
       _resetMamThrottleForTesting();
       await flush();
       expect(w2.rejected).toBe(true);
+      expect((w2.reason as Error).message).toBe('MAM throttle reset');
       expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function));
       const settledReason = w2.reason;
 
       controller.abort(new Error('too late'));
       await flush();
 
+      // The late abort must not have swapped the reset reason for the signal's.
       expect(w2.reason).toBe(settledReason);
       expect(vi.getTimerCount()).toBe(0);
       const w3 = watch('w3', mamThrottle.acquire(DESTINATION), log);
