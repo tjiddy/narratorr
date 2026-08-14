@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@db/index.js';
 import { ImportListService } from './import-list.service.js';
@@ -46,6 +46,9 @@ const { searchAndGrabForBook } = await import('./search-pipeline.js');
 const mockSearchAndGrabForBook = searchAndGrabForBook as unknown as ReturnType<typeof vi.fn>;
 
 const mockLog = createMockLogger() as unknown as FastifyBaseLogger;
+
+/** Fixed instant for the manual-run schedule assertions, so a window becomes an equality. */
+const NOW_MS = Date.UTC(2026, 7, 14, 12, 0, 0);
 
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -2216,6 +2219,11 @@ describe('ImportListService', () => {
     });
 
     describe('runNow — the manual per-list run (#2306)', () => {
+      // Only `Date` is faked: the concurrency cases below gate on real `setImmediate` through
+      // `flush()`, which a full timer fake would stall.
+      beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'], now: NOW_MS }); });
+      afterEach(() => { vi.useRealTimers(); });
+
       interface ManualSetup {
         service: ImportListService;
         db: ReturnType<typeof createMockDb>;
@@ -2276,7 +2284,7 @@ describe('ImportListService', () => {
       it('syncs a list whose nextRunAt is still in the future, and touches no other provider', async () => {
         const { service: svc, provider } = setup({
           items: [{ title: 'Manual Book', author: 'Manual Author' }],
-          list: { id: 9, nextRunAt: new Date(Date.now() + 60 * 60_000) },
+          list: { id: 9, nextRunAt: new Date(NOW_MS + 60 * 60_000) },
         });
 
         const outcome = await svc.runNow(9);
@@ -2343,23 +2351,23 @@ describe('ImportListService', () => {
         it('writes the same success payload on both paths', async () => {
           const { scheduledSet, manualSet } = await bothPayloads();
 
-          expect(Object.keys(manualSet).sort()).toEqual(Object.keys(scheduledSet).sort());
-          expect(manualSet.lastSyncError).toBeNull();
-          expect(scheduledSet.lastSyncError).toBeNull();
-          expect(manualSet.lastRunAt).toBeInstanceOf(Date);
-          expect(manualSet.nextRunAt).toBeInstanceOf(Date);
-          const diff = (manualSet.nextRunAt as Date).getTime() - Date.now();
-          expect(diff).toBeGreaterThan(59 * 60_000);
-          expect(diff).toBeLessThan(61 * 60_000);
+          expect(manualSet).toEqual(scheduledSet);
+          expect(manualSet).toEqual({
+            lastRunAt: new Date(NOW_MS),
+            nextRunAt: new Date(NOW_MS + 60 * 60_000),
+            lastSyncError: null,
+          });
         });
 
         it('writes the same failure payload on both paths', async () => {
           const { scheduledSet, manualSet } = await bothPayloads({ providerError: new Error('Provider down') });
 
-          expect(Object.keys(manualSet).sort()).toEqual(Object.keys(scheduledSet).sort());
-          expect(manualSet.lastSyncError).toBe('Provider down');
+          expect(manualSet).toEqual(scheduledSet);
+          expect(manualSet).toEqual({
+            lastSyncError: 'Provider down',
+            nextRunAt: new Date(NOW_MS + 60 * 60_000),
+          });
           expect(manualSet).not.toHaveProperty('lastRunAt');
-          expect(manualSet.nextRunAt).toBeInstanceOf(Date);
         });
 
         it('filters the write to the run list on both paths', async () => {
@@ -2427,7 +2435,7 @@ describe('ImportListService', () => {
           expect(outcome).toEqual({ status: 'ok', counts: { createdCount: 0, heldReviewCount: 0, excludedCount: 0 } });
           const setCall = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
           expect(setCall.lastSyncError).toBeNull();
-          expect(setCall.lastRunAt).toBeInstanceOf(Date);
+          expect(setCall.lastRunAt).toEqual(new Date(NOW_MS));
         });
 
         it('counts a review-held duplicate without creating a book', async () => {
@@ -2480,9 +2488,31 @@ describe('ImportListService', () => {
           const setCall = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
           expect(setCall.lastSyncError).toBe('Connection timeout');
           expect(setCall).not.toHaveProperty('lastRunAt');
-          const diff = (setCall.nextRunAt as Date).getTime() - Date.now();
-          expect(diff).toBeGreaterThan(29 * 60_000);
-          expect(diff).toBeLessThan(31 * 60_000);
+          expect(setCall.nextRunAt).toEqual(new Date(NOW_MS + 30 * 60_000));
+        });
+
+        it('logs the caught error serialized, not the derived message string', async () => {
+          const cause = new Error('socket hang up');
+          const { service: svc } = setup({
+            providerError: new Error('Connection timeout', { cause }),
+            list: { id: 3, name: 'Failing NYT' },
+          });
+
+          await svc.runNow(3);
+
+          expect(mockLog.error).toHaveBeenCalledWith(
+            expect.objectContaining({
+              id: 3,
+              name: 'Failing NYT',
+              error: expect.objectContaining({
+                message: 'Connection timeout',
+                type: 'Error',
+                stack: expect.stringContaining('Connection timeout'),
+                cause: expect.objectContaining({ message: 'socket hang up' }),
+              }),
+            }),
+            'Import list sync failed',
+          );
         });
 
         it('contains a per-item failure and still reports ok', async () => {
@@ -2498,8 +2528,11 @@ describe('ImportListService', () => {
 
           expect(outcome).toEqual({ status: 'ok', counts: { createdCount: 1, heldReviewCount: 0, excludedCount: 0 } });
           expect(mockLog.warn).toHaveBeenCalledWith(
-            expect.objectContaining({ title: 'Boom' }),
-            expect.stringContaining('Failed to process import list item'),
+            expect.objectContaining({
+              title: 'Boom',
+              error: expect.objectContaining({ message: 'Item exploded', type: 'Error' }),
+            }),
+            'Failed to process import list item',
           );
         });
       });
@@ -2715,7 +2748,11 @@ describe('ImportListService — import-list exclusions (#2305)', () => {
     await service.syncDueLists();
 
     expect(mockLog.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ listId: 1, title: 'Broken Read', error: 'exclusions table locked' }),
+      expect.objectContaining({
+        listId: 1,
+        title: 'Broken Read',
+        error: expect.objectContaining({ message: 'exclusions table locked', type: 'Error' }),
+      }),
       'Failed to process import list item',
     );
     expect(create).toHaveBeenCalledTimes(1);

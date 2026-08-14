@@ -8,6 +8,7 @@ import type { MetadataService } from './metadata.service.js';
 import { encryptFields, decryptFields, getKey } from '../utils/secret-codec.js';
 import { resolveAndEncryptSettings, resolveSettings } from '../utils/sentinel-resolver.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { serializeError } from '../utils/serialize-error.js';
 import type { BookService } from './book.service.js';
 import type { ImportListExclusionService } from './import-list-exclusion.service.js';
 import { addBook, type AddBookDeps, type AddBookEvent } from './book-intake/index.js';
@@ -205,7 +206,9 @@ export class ImportListService {
         .update(importLists)
         .set({ lastSyncError: message, nextRunAt })
         .where(eq(importLists.id, list.id));
-      this.log.error({ id: list.id, name: list.name, error: message }, 'Import list sync failed');
+      // `message` is what the row and the manual response carry; the log keeps the caught value's
+      // stack, type and cause, which a manual failure is the only interactive way to see.
+      this.log.error({ id: list.id, name: list.name, error: serializeError(error) }, 'Import list sync failed');
       return { status: 'failed', message };
     }
   }
@@ -253,7 +256,7 @@ export class ImportListService {
         } else if (result.outcome === 'held_review') counts.heldReviewCount++;
         else if (result.outcome === 'excluded') counts.excludedCount++;
       } catch (error: unknown) {
-        this.log.warn({ listId: list.id, title: item.title, error: getErrorMessage(error) }, 'Failed to process import list item');
+        this.log.warn({ listId: list.id, title: item.title, error: serializeError(error) }, 'Failed to process import list item');
       }
     }
 

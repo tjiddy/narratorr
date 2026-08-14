@@ -6,6 +6,7 @@ import { getErrorMessage } from '@/lib/error-message.js';
 import { compactInputClass as inputClass, btnSecondary } from '@/components/settings/formStyles';
 import { importListItemKey, deduplicateKeys } from '@/lib/stableKeys.js';
 import { queryKeys } from '@/lib/queryKeys';
+import { useGenerationGuard, type GenerationContext } from '@/hooks/useGenerationGuard';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import {
@@ -338,9 +339,15 @@ export function ImportListCard(props: ImportListCardProps) {
     onError: () => toast.error('Failed to toggle import list'),
   });
 
+  // A run blocks for the whole sync, which can take minutes — long enough for the card to be
+  // deleted or navigated away from while its callbacks are still pending.
+  const { capture, isLive } = useGenerationGuard();
+
   const runMutation = useMutation({
     mutationFn: (id: number) => api.runImportList(id),
-    onSuccess: (result) => {
+    onMutate: capture,
+    onSuccess: (result, _id, context: GenerationContext) => {
+      if (!isLive(context)) return;
       if (result.success) {
         toast.success(
           `Sync complete — ${result.createdCount} added, ${result.heldReviewCount} held for review, ${result.excludedCount} excluded`,
@@ -349,13 +356,14 @@ export function ImportListCard(props: ImportListCardProps) {
         toast.error(result.message);
       }
     },
-    onError: (err) => {
+    onError: (err, _id, context: GenerationContext | undefined) => {
+      if (!isLive(context)) return;
       // A 409 means the scheduled cycle holds the task-wide guard, so the run was refused rather
       // than broken — informational, per #2221. The rule keys on 409 exactly, not on any ApiError.
       if (err instanceof ApiError && err.status === 409) toast.info(err.message);
       else toast.error(getErrorMessage(err));
     },
-    // Every outcome moves lastRunAt or lastSyncError, and a refusal means the cron is moving them.
+    // Unconditional: the list rows changed on the server whether or not this card is still mounted.
     onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.importLists() }),
   });
 

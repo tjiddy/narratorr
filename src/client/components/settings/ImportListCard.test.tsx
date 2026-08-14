@@ -198,11 +198,12 @@ describe('ImportListCard', () => {
 
       await user.click(runButton());
 
-      await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(1));
-      const message = (toast.success as Mock).mock.calls[0]![0] as string;
-      expect(message).toContain('2');
-      expect(message).toContain('1');
-      expect(message).toContain('3');
+      // Exact message, so swapping created/held/excluded reds this — the three values are
+      // distinct precisely so the label they sit behind is observable.
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith(
+        'Sync complete — 2 added, 1 held for review, 3 excluded',
+      ));
+      expect(toast.success).toHaveBeenCalledTimes(1);
       expect(toast.error).not.toHaveBeenCalled();
       expect(toast.info).not.toHaveBeenCalled();
       expectListsInvalidated(invalidateQueries);
@@ -295,6 +296,47 @@ describe('ImportListCard', () => {
       renderRow({ ...mockList, enabled: false });
 
       expect(runButton()).toBeEnabled();
+    });
+
+    describe('settlement after the card unmounts', () => {
+      /** Click Run, hold the response, then tear the card down before it settles. */
+      async function unmountMidRun(settlement: 'resolve' | 'reject') {
+        const user = userEvent.setup();
+        let settle!: (value: unknown) => void;
+        let fail!: (reason: unknown) => void;
+        (api.runImportList as Mock).mockReturnValue(new Promise((resolve, reject) => {
+          settle = resolve;
+          fail = reject;
+        }));
+        const { unmount, invalidateQueries } = renderRow();
+
+        await user.click(runButton());
+        await waitFor(() => expect(api.runImportList).toHaveBeenCalledTimes(1));
+
+        unmount();
+        if (settlement === 'resolve') settle(okCounts);
+        else fail(new Error('Network down'));
+
+        return { invalidateQueries };
+      }
+
+      it('suppresses the success toast but still reconciles the list cache', async () => {
+        const { invalidateQueries } = await unmountMidRun('resolve');
+
+        await waitFor(() => expectListsInvalidated(invalidateQueries));
+        expect(toast.success).not.toHaveBeenCalled();
+        expect(toast.error).not.toHaveBeenCalled();
+        expect(toast.info).not.toHaveBeenCalled();
+      });
+
+      it('suppresses the error toast but still reconciles the list cache', async () => {
+        const { invalidateQueries } = await unmountMidRun('reject');
+
+        await waitFor(() => expectListsInvalidated(invalidateQueries));
+        expect(toast.error).not.toHaveBeenCalled();
+        expect(toast.info).not.toHaveBeenCalled();
+        expect(toast.success).not.toHaveBeenCalled();
+      });
     });
   });
 

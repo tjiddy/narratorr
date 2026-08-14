@@ -18,6 +18,9 @@ const mockFactories = IMPORT_LIST_ADAPTER_FACTORIES as unknown as Record<string,
 
 const ITEM = { title: 'The Reckoning', author: 'Jane Doe' };
 const SYNC_INTERVAL_MINUTES = 60;
+/** Fixed instant, so the persisted schedule is an equality rather than a tolerance window. */
+const NOW_MS = Date.UTC(2026, 7, 14, 12, 0, 0);
+const NOW = new Date(NOW_MS);
 
 describe('manual import-list run, end to end (#2306)', () => {
   let e2e: E2EApp;
@@ -41,9 +44,14 @@ describe('manual import-list run, end to end (#2306)', () => {
 
     // No provider match: the created row keeps the list item's own title and author.
     vi.spyOn(e2e.services.metadata, 'resolveBook').mockResolvedValue(null);
+
+    // Installed last so migrations and service construction run on the real clock. Only `Date` is
+    // faked — libSQL and Fastify keep their own timers.
+    vi.useFakeTimers({ toFake: ['Date'], now: NOW_MS });
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
     fetchSpy.mockRestore();
     vi.restoreAllMocks();
     await e2e.cleanup();
@@ -64,7 +72,7 @@ describe('manual import-list run, end to end (#2306)', () => {
     });
     await e2e.db
       .update(importLists)
-      .set({ nextRunAt: new Date(Date.now() + 60 * 60_000) })
+      .set({ nextRunAt: new Date(NOW_MS + 60 * 60_000) })
       .where(eq(importLists.id, list.id));
     return list.id;
   }
@@ -77,9 +85,7 @@ describe('manual import-list run, end to end (#2306)', () => {
   }
 
   const expectAdvancedByOneInterval = (nextRunAt: Date | null) => {
-    const diff = nextRunAt!.getTime() - Date.now();
-    expect(diff).toBeGreaterThan((SYNC_INTERVAL_MINUTES - 1) * 60_000);
-    expect(diff).toBeLessThan((SYNC_INTERVAL_MINUTES + 1) * 60_000);
+    expect(nextRunAt).toEqual(new Date(NOW_MS + SYNC_INTERVAL_MINUTES * 60_000));
   };
 
   it('syncs a list that is not due, writes the book, and resets its schedule', async () => {
@@ -96,7 +102,7 @@ describe('manual import-list run, end to end (#2306)', () => {
     expect(rows[0]!.importListId).toBe(id);
 
     const list = await readList(id);
-    expect(list.lastRunAt).toBeInstanceOf(Date);
+    expect(list.lastRunAt).toEqual(NOW);
     expect(list.lastSyncError).toBeNull();
     expectAdvancedByOneInterval(list.nextRunAt);
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -116,7 +122,7 @@ describe('manual import-list run, end to end (#2306)', () => {
 
     const list = await readList(id);
     expect(list.enabled).toBe(false);
-    expect(list.lastRunAt).toBeInstanceOf(Date);
+    expect(list.lastRunAt).toEqual(NOW);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -163,7 +169,7 @@ describe('manual import-list run, end to end (#2306)', () => {
 
     const recovered = await e2e.app.inject({ method: 'GET', url: '/api/import-lists' });
     expect(recovered.json()[0]).toMatchObject({ id, lastSyncError: null });
-    expect(recovered.json()[0].lastRunAt).not.toBeNull();
+    expect(recovered.json()[0].lastRunAt).toBe(NOW.toISOString());
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
