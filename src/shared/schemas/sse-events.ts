@@ -195,7 +195,8 @@ export const searchGrabbedPayload = z.object({
 export const searchCompletePayload = z.object({
   book_id: z.number(),
   total_results: z.number(),
-  outcome: z.enum(['grabbed', 'no_results', 'skipped', 'grab_error']),
+  // `timed_out` is the search deadline expiring — never conflate it with an answered zero.
+  outcome: z.enum(['grabbed', 'no_results', 'skipped', 'grab_error', 'timed_out']),
   book_title: z.string().optional(),
   error_message: z.string().optional(),
   release_title: z.string().optional(),

@@ -44,13 +44,14 @@ const STATUS_LABELS: Record<string, string> = {
   no_results: 'no results',
   skipped: 'blocked',
   grab_error: 'grab failed',
+  timed_out: 'timed out',
 };
 
 export function SearchActivityCard({ state }: { state: SearchCardState }) {
   const overallStatus = state.outcome
     ? STATUS_LABELS[state.outcome] ?? state.outcome
     : 'searching';
-  const isTerminalError = state.outcome === 'grab_error' || state.outcome === 'skipped';
+  const isTerminalError = state.outcome === 'grab_error' || state.outcome === 'skipped' || state.outcome === 'timed_out';
 
   return (
     <div className="glass-card rounded-2xl p-4 sm:p-5 animate-fade-in-up border border-primary/20">
@@ -77,6 +78,9 @@ export function SearchActivityCard({ state }: { state: SearchCardState }) {
       )}
       {state.outcome === 'grab_error' && (
         <p className="text-sm text-destructive mb-2">Grab failed</p>
+      )}
+      {state.outcome === 'timed_out' && (
+        <p className="text-sm text-muted-foreground mb-2">Search took too long and was abandoned</p>
       )}
 
       <div className="space-y-1.5">

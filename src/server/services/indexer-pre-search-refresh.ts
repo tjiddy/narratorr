@@ -7,6 +7,8 @@ import type { IndexerRow } from './types.js';
 export interface PreSearchRefreshDeps {
   log: FastifyBaseLogger;
   update: (id: number, data: { settings: Record<string, unknown> }) => Promise<unknown>;
+  /** Forwarded to the adapter and consulted before degrading; see the catch below. */
+  signal?: AbortSignal | undefined;
 }
 
 /**
@@ -18,7 +20,7 @@ export async function preSearchRefresh(
   indexer: IndexerRow,
   deps: PreSearchRefreshDeps,
 ): Promise<{ skip: boolean; error?: string; unsatisfied?: UnsatisfiedStatus }> {
-  const { log, update } = deps;
+  const { log, update, signal } = deps;
 
   if (!adapter.refreshStatus) {
     return { skip: false };
@@ -26,8 +28,10 @@ export async function preSearchRefresh(
 
   let status: Awaited<ReturnType<NonNullable<IndexerAdapter['refreshStatus']>>>;
   try {
-    status = await adapter.refreshStatus();
+    status = await adapter.refreshStatus(signal);
   } catch (error: unknown) {
+    // Degrading here would swallow cancellation; key the verdict on the signal, never on the error.
+    if (signal?.aborted) throw error;
     log.debug({ indexer: indexer.name, error: serializeError(error) }, 'Pre-search status refresh failed, proceeding with stored status');
     return { skip: false };
   }

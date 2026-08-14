@@ -107,7 +107,7 @@ export interface IndexerAdapter {
    * both present or both absent; `unsatisfied` is present only as a validated pair. `null` means
    * neither group was observed.
    */
-  refreshStatus?(): Promise<{ isVip?: boolean; classname?: string; unsatisfied?: UnsatisfiedStatus } | null>;
+  refreshStatus?(signal?: AbortSignal): Promise<{ isVip?: boolean; classname?: string; unsatisfied?: UnsatisfiedStatus } | null>;
   /** Resolve an adapter sentinel to its real grab URL; MAM may also request a freeleech wedge. */
   resolveDownloadUrl?(ctx: ResolveDownloadContext): Promise<ResolveDownloadResult>;
 }

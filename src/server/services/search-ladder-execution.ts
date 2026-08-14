@@ -22,6 +22,7 @@ export async function createStreamingExecutor(
   book: SearchBook,
   indexerSearchService: IndexerSearchService,
   sink: SearchEventSink,
+  signal?: AbortSignal,
 ): Promise<(rung: Rung) => Promise<RungExecution>> {
   const enabledIndexers = await indexerSearchService.getEnabledIndexers();
   sink.searchStarted(enabledIndexers);
@@ -44,6 +45,7 @@ export async function createStreamingExecutor(
         },
         onError: (indexerId, name, error, elapsedMs) => sink.indexerError(indexerId, name, error, elapsedMs),
       },
+      signal,
     );
     return { results, succeeded };
   };
@@ -53,12 +55,15 @@ export async function createStreamingExecutor(
 export function createAggregateExecutor(
   book: SearchBook,
   indexerSearchService: IndexerSearchService,
+  signal?: AbortSignal,
 ): (rung: Rung) => Promise<RungExecution> {
   return async (rung: Rung) => {
     const { results, succeeded } = await indexerSearchService.searchAllWithStatus(rung.query, {
       title: book.title,
       author: rung.author,
       rankingAuthor: book.authors?.[0]?.name,
+      // Omitted rather than assigned undefined so callers without a deadline keep today's options.
+      ...(signal !== undefined && { signal }),
     });
     return { results, succeeded };
   };
@@ -72,6 +77,8 @@ export interface BookLadderRunDeps {
   searchLadderCooldown?: SearchLadderCooldown | undefined;
   /** `'scheduled'` consults and records the cooldown; `'always'` does neither. */
   ladderMode: 'scheduled' | 'always';
+  /** The outer search deadline; composed into every indexer leg, never substituted for one. */
+  signal?: AbortSignal | undefined;
 }
 
 /** Rung one remains the canonical query, preserving the one-query success path. */
@@ -85,8 +92,8 @@ export async function runBookQueryLadder(book: SearchBook, deps: BookLadderRunDe
   const ladder = restricted ? fullLadder.slice(0, 1) : fullLadder;
 
   const execute = deps.streaming
-    ? await createStreamingExecutor(book, indexerSearchService, sink)
-    : createAggregateExecutor(book, indexerSearchService);
+    ? await createStreamingExecutor(book, indexerSearchService, sink, deps.signal)
+    : createAggregateExecutor(book, indexerSearchService, deps.signal);
 
   const ran = await runQueryLadder(ladder, execute);
 

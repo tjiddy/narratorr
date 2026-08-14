@@ -22,7 +22,7 @@ export interface SearchEventSink {
   searchStarted(indexers: Array<{ id: number; name: string }>): void;
   indexerComplete(indexerId: number, name: string, resultCount: number, elapsedMs: number): void;
   indexerError(indexerId: number, name: string, error: string, elapsedMs: number): void;
-  searchComplete(outcome: 'no_results' | 'grabbed' | 'skipped'): void;
+  searchComplete(outcome: 'no_results' | 'grabbed' | 'skipped' | 'timed_out'): void;
   grabbed(best: SearchResult): void;
   grabError(error: Error, releaseTitle: string): void;
 }
@@ -44,6 +44,15 @@ export function createBroadcasterSink(
 ): SearchEventSink {
   let totalResults = 0;
   let indexers: Array<{ id: number; name: string }> = [];
+  // Abandoned deadline work keeps running and reaches its own terminal emission; the client's
+  // grabbed handler overwrites an outcome unconditionally, so a late event would flip a timed-out
+  // card. A no-op on every path that exists today: each arm returns right after its terminal event.
+  let terminal = false;
+  const fenced = (event: string): boolean => {
+    if (!terminal) return false;
+    log.debug({ bookId: book.id, event }, 'Search event dropped — a terminal event already fired');
+    return true;
+  };
   return {
     searchStarted(enabledIndexers) {
       indexers = enabledIndexers;
@@ -53,6 +62,7 @@ export function createBroadcasterSink(
       }, log);
     },
     indexerComplete(indexerId, name, resultCount, elapsedMs) {
+      if (fenced('search_indexer_complete')) return;
       totalResults += resultCount;
       safeEmit(broadcaster, 'search_indexer_complete', {
         book_id: book.id, indexer_id: indexerId, indexer_name: name,
@@ -60,19 +70,25 @@ export function createBroadcasterSink(
       }, log);
     },
     indexerError(indexerId, name, error, elapsedMs) {
+      if (fenced('search_indexer_error')) return;
       safeEmit(broadcaster, 'search_indexer_error', {
         book_id: book.id, indexer_id: indexerId, indexer_name: name,
         error, elapsed_ms: elapsedMs,
       }, log);
     },
     searchComplete(outcome) {
+      if (fenced('search_complete')) return;
+      terminal = true;
       safeEmit(broadcaster, 'search_complete', { book_id: book.id, total_results: totalResults, outcome }, log);
     },
     grabbed(best) {
+      if (fenced('search_grabbed')) return;
       const indexerName = indexers.find(i => i.id === best.indexerId)?.name ?? best.indexer ?? 'unknown';
       safeEmit(broadcaster, 'search_grabbed', { book_id: book.id, release_title: best.title, indexer_name: indexerName }, log);
     },
     grabError(error, releaseTitle) {
+      if (fenced('search_complete')) return;
+      terminal = true;
       const errorMessage = error.message || 'Unknown grab error';
       safeEmit(broadcaster, 'search_complete', {
         book_id: book.id,

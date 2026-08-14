@@ -6,6 +6,7 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { SearchDeadlineError } from './search-deadline.js';
 
 
 export interface ImmediateSearchDeps {
@@ -55,6 +56,11 @@ export async function runImmediateSearch(
       broadcaster: deps.eventBroadcaster,
     });
   } catch (error: unknown) {
+    // budgetMs/bookId ride as siblings: serializeError emits a fixed key set and would drop them.
+    if (error instanceof SearchDeadlineError) {
+      log.warn({ error: serializeError(error), bookId: book.id, budgetMs: error.budgetMs }, 'Search-immediately trigger abandoned at its deadline');
+      return;
+    }
     log.warn({ error: serializeError(error), bookId: book.id }, 'Search-immediately trigger failed');
   }
 }

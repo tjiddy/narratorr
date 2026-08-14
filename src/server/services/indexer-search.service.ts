@@ -18,6 +18,13 @@ import type { IndexerService } from './indexer.service.js';
 import type { IndexerRow } from './types.js';
 
 
+/** `AbortSignal.any` requires at least one input, and either side may be absent. */
+function composeSignals(a?: AbortSignal, b?: AbortSignal): AbortSignal | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return AbortSignal.any([a, b]);
+}
+
 export class IndexerSearchService {
   constructor(
     private db: Db,
@@ -26,8 +33,12 @@ export class IndexerSearchService {
     private settingsService?: SettingsService,
   ) {}
 
-  private preSearchRefreshDeps() {
-    return { log: this.log, update: (id: number, data: { settings: Record<string, unknown> }) => this.indexerService.update(id, data) };
+  private preSearchRefreshDeps(signal?: AbortSignal) {
+    return {
+      log: this.log,
+      update: (id: number, data: { settings: Record<string, unknown> }) => this.indexerService.update(id, data),
+      signal,
+    };
   }
 
   private parseReleaseNames(results: SearchResult[], indexerName?: string): void {
@@ -151,7 +162,7 @@ export class IndexerSearchService {
       enabledIndexers.map(async (indexer) => {
         const adapter = await this.indexerService.getAdapter(indexer);
 
-        const refresh = await preSearchRefresh(adapter, indexer, this.preSearchRefreshDeps());
+        const refresh = await preSearchRefresh(adapter, indexer, this.preSearchRefreshDeps(searchOptions?.signal));
         if (refresh.skip) {
           this.log.warn({ indexer: indexer.name, error: refresh.error }, 'Indexer skipped by pre-search refresh');
           throw new Error(refresh.error ?? 'Indexer skipped');
@@ -168,6 +179,13 @@ export class IndexerSearchService {
         return mapped;
       }),
     );
+
+    // Under an aborted signal every arm rejects, `succeeded` reads 0, and the ladder mistakes
+    // cancellation for an indexer outage. Key on the signal, never on the error's shape.
+    if (searchOptions?.signal?.aborted) {
+      const cancelled = settlements.find((s) => s.status === 'rejected');
+      if (cancelled) throw cancelled.reason;
+    }
 
     const perIndexerCounts: Record<string, number> = {};
     const results: SearchResult[] = [];
@@ -205,6 +223,7 @@ export class IndexerSearchService {
       onError: (indexerId: number, name: string, error: string, elapsedMs: number) => void;
       onCancelled?: (indexerId: number, name: string) => void;
     },
+    outerSignal?: AbortSignal,
   ): Promise<SearchResult[]> {
     const prep = await this.prepareSearch(query, options, 'searchAllStreaming');
     if (!prep) return [];
@@ -214,14 +233,17 @@ export class IndexerSearchService {
 
     const perIndexerResults = new Map<number, SearchResult[]>();
 
-    await Promise.allSettled(
+    const settlements = await Promise.allSettled(
       enabledIndexers.map(async (indexer) => {
         const indexerStartMs = Date.now();
         const controller = controllers.get(indexer.id);
-        const signal = controller?.signal;
+        // Compose, never substitute: the per-indexer controller stays independently cancellable
+        // and the outer deadline cannot be mistaken for one of its cancellations.
+        const perIndexerSignal = controller?.signal;
+        const signal = composeSignals(perIndexerSignal, outerSignal);
 
         // Controllers persist across ladder rungs; skip prior cancellations without another callback.
-        if (signal?.aborted) {
+        if (perIndexerSignal?.aborted) {
           this.log.debug({ indexer: indexer.name }, 'Indexer skipped — already cancelled');
           return;
         }
@@ -229,7 +251,7 @@ export class IndexerSearchService {
         try {
           const adapter = await this.indexerService.getAdapter(indexer);
 
-          const refresh = await preSearchRefresh(adapter, indexer, this.preSearchRefreshDeps());
+          const refresh = await preSearchRefresh(adapter, indexer, this.preSearchRefreshDeps(signal));
           if (refresh.skip) {
             const elapsedMs = Date.now() - indexerStartMs;
             callbacks.onError(indexer.id, indexer.name, refresh.error ?? 'Indexer skipped', elapsedMs);
@@ -248,7 +270,9 @@ export class IndexerSearchService {
           callbacks.onComplete(indexer.id, indexer.name, mapped.length, elapsedMs);
         } catch (error: unknown) {
           const elapsedMs = Date.now() - indexerStartMs;
-          if (signal?.aborted) {
+          // One catch, two verdicts: the outer deadline must propagate, a per-indexer cancel must not.
+          if (outerSignal?.aborted) throw error;
+          if (perIndexerSignal?.aborted) {
             this.log.debug({ indexer: indexer.name }, 'Indexer search cancelled');
             callbacks.onCancelled?.(indexer.id, indexer.name);
             return;
@@ -259,6 +283,10 @@ export class IndexerSearchService {
         }
       }),
     );
+
+    // Only the outer-deadline rethrow above rejects an arm; every other failure was routed to onError.
+    const cancelled = settlements.find((s) => s.status === 'rejected');
+    if (cancelled) throw cancelled.reason;
 
     const results: SearchResult[] = [];
     const perIndexerCounts: Record<string, number> = {};

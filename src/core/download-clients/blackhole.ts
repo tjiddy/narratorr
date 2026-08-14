@@ -1,4 +1,5 @@
-import { writeFile, access, constants } from 'node:fs/promises';
+import { writeFile, rename, access, constants } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import type { DownloadClientAdapter, DownloadItemInfo, DownloadArtifact, DownloadProtocol } from './types.js';
 import { createSsrfSafeDispatcher, fetchWithSsrfRedirect, mapNetworkError, redactUrlsFromMessage } from '../utils/network-service.js';
@@ -21,18 +22,29 @@ export class BlackholeClient implements DownloadClientAdapter {
     this.protocol = config.protocol;
   }
 
+  /**
+   * Write to a temp name and rename into place: a watching client must never see a partial file,
+   * and an abandoned or crash-interrupted write leaves nothing under a consumable name. The temp
+   * basename is random rather than `<final>.tmp` because the final names are millisecond-stamped
+   * and independent handoffs can run concurrently.
+   */
+  private async writeArtifactFile(finalName: string, data: Parameters<typeof writeFile>[1]): Promise<void> {
+    const finalPath = join(this.config.watchDir, finalName);
+    const tempPath = join(this.config.watchDir, `.narratorr-${randomUUID()}.part`);
+    await writeFile(tempPath, data);
+    await rename(tempPath, finalPath);
+  }
+
   async addDownload(artifact: DownloadArtifact): Promise<null> {
     const timestamp = Date.now();
 
     if (artifact.type === 'torrent-bytes') {
-      const filePath = join(this.config.watchDir, `download-${timestamp}.torrent`);
-      await writeFile(filePath, artifact.data);
+      await this.writeArtifactFile(`download-${timestamp}.torrent`, artifact.data);
       return null;
     }
 
     if (artifact.type === 'magnet-uri') {
-      const filePath = join(this.config.watchDir, `${timestamp}.magnet`);
-      await writeFile(filePath, artifact.uri);
+      await this.writeArtifactFile(`${timestamp}.magnet`, artifact.uri);
       return null;
     }
 
@@ -40,8 +52,7 @@ export class BlackholeClient implements DownloadClientAdapter {
       if (artifact.data.length === 0) {
         throw new DownloadClientError(this.name, 'Cannot add empty NZB file');
       }
-      const filePath = join(this.config.watchDir, `download-${timestamp}.nzb`);
-      await writeFile(filePath, artifact.data);
+      await this.writeArtifactFile(`download-${timestamp}.nzb`, artifact.data);
       return null;
     }
 
@@ -68,8 +79,7 @@ export class BlackholeClient implements DownloadClientAdapter {
         throw new DownloadClientError(this.name, `Failed to download file: HTTP ${response.status}`);
       }
       const buffer = Buffer.from(await response.arrayBuffer());
-      const filePath = join(this.config.watchDir, `download-${timestamp}.nzb`);
-      await writeFile(filePath, buffer);
+      await this.writeArtifactFile(`download-${timestamp}.nzb`, buffer);
 
       return null;
     } finally {
