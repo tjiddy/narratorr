@@ -707,7 +707,7 @@ describe('cleanupOldBookPath', () => {
     );
   });
 
-  it('never throws into the import when the ownership lookup itself fails', async () => {
+  it('never throws into the import when the ownership lookup itself fails, and sweeps nothing', async () => {
     const log = createMockLog();
     await expect(cleanupOldBookPath({
       bookPath: '/library/Author/OldTitle',
@@ -715,7 +715,12 @@ describe('cleanupOldBookPath', () => {
       libraryRoot: '/library',
       log,
       db: inject<Db>({ select: () => mockDbChain([], { error: new Error('db down') }) }),
-    })).rejects.toThrow('db down');
+    })).resolves.toBeUndefined();
+    expect(rm).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ bookPath: '/library/Author/OldTitle' }),
+      expect.stringMatching(/could not establish folder ownership/i),
+    );
   });
 
   it('holds the old path under its claim key for the duration of the sweep', async () => {

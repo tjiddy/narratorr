@@ -226,7 +226,15 @@ export async function cleanupOldBookPath(args: CleanupOldBookPathArgs): Promise<
   // target; "no OTHER row owns it" is the form with meaning here. No re-acquire arm applies —
   // the path swept is an argument, not a row lookup.
   await withPathWriteLock(claimLockKey(bookPath), async () => {
-    const owner = await findOtherPathOwner(db, bookPath);
+    let owner: Awaited<ReturnType<typeof findOtherPathOwner>>;
+    try {
+      owner = await findOtherPathOwner(db, bookPath);
+    } catch (lookupError: unknown) {
+      // This runs after the import's DB commit, so throwing would fail an import that succeeded.
+      // Fail closed toward not deleting: stale files are recoverable, a wrong sweep is not.
+      log.warn({ error: serializeError(lookupError), bookPath }, 'Skipped old book path cleanup — could not establish folder ownership');
+      return;
+    }
     if (owner) {
       log.warn({ bookPath, ownerBookId: owner.id }, 'Skipped old book path cleanup — another book owns this folder');
       return;

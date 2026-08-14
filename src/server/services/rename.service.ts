@@ -10,7 +10,8 @@ import { fireAndForget } from '../utils/fire-and-forget.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { assertRealPathInsideLibrary, cleanEmptyParents, planFileRenames, renameFilesWithTemplate } from '../utils/paths.js';
 import { toNamingOptions } from '@core/utils/naming.js';
-import { computeFolderTarget, toLibraryRelative, type LibraryFolderSettings } from '../utils/rename-target.js';
+import type { AppSettings } from '@shared/schemas/settings/registry.js';
+import { computeFolderTarget, toLibraryRelative } from '../utils/rename-target.js';
 import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
 import { sidecarLockKey } from '../utils/opf-writer.js';
 import { withPathWriteLock, withPathWriteLocks } from '../utils/path-write-lock.js';
@@ -284,8 +285,8 @@ export class RenameService {
 /** The plan built from the pre-lock row read, re-verified once the claim keys are held. */
 interface ApplyContext {
   bookId: number;
-  book: Awaited<ReturnType<BookService['getById']>> & object;
-  librarySettings: LibraryFolderSettings & { fileFormat: string };
+  book: NonNullable<Awaited<ReturnType<BookService['getById']>>>;
+  librarySettings: AppSettings['library'];
   namingOptions: ReturnType<typeof toNamingOptions>;
   authorName: string | null;
   oldPath: string;

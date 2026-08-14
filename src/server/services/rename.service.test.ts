@@ -646,9 +646,13 @@ describe('RenameService', () => {
         { id: 4, title: 'Lower Id Owner', path: '/library/Brandon Sanderson/X/../The Way of Kings' },
       ]));
 
-      const error = await service.renameBook(1).catch((e: unknown) => e);
+      const applyError = await service.renameBook(1).catch((e: unknown) => e);
+      const previewError = await service.planRename(1).catch((e: unknown) => e);
 
-      expect((error as RenameError).details).toEqual({ conflictingBook: { id: 4, title: 'Lower Id Owner' } });
+      // Both surfaces must name the same row, or the conflict banner changes between preview and
+      // apply. The rows are handed back highest-id first so "first match" cannot pass this.
+      expect((applyError as RenameError).details).toEqual({ conflictingBook: { id: 4, title: 'Lower Id Owner' } });
+      expect((previewError as RenameError).details).toEqual({ conflictingBook: { id: 4, title: 'Lower Id Owner' } });
     });
 
     it('rewrites no other row while refusing — this issue reads stored paths, it does not repair them', async () => {

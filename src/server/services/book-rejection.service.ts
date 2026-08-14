@@ -149,13 +149,15 @@ export class BookRejectionService {
   private async sweepClaimedFolder(bookId: number, lockedPath: string | null): Promise<void> {
     if (!lockedPath) return;
 
-    const owner = await findOtherPathOwner(this.db, lockedPath, bookId);
-    if (owner) {
-      this.log.warn({ bookId, path: lockedPath, ownerBookId: owner.id }, 'Wrong release: another book owns this folder — skipping file deletion (continuing)');
-      return;
-    }
-
     try {
+      // Inside the same catch as the sweep: an ownership lookup that fails must be as nonfatal as
+      // a file that will not delete, and it fails toward not deleting.
+      const owner = await findOtherPathOwner(this.db, lockedPath, bookId);
+      if (owner) {
+        this.log.warn({ bookId, path: lockedPath, ownerBookId: owner.id }, 'Wrong release: another book owns this folder — skipping file deletion (continuing)');
+        return;
+      }
+
       await preserveBookCover(lockedPath, bookId, config.configPath, this.log);
       const librarySettings = await this.settingsService.get('library');
       const result = await this.bookService.deleteBookFiles(lockedPath, librarySettings.path);
