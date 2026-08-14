@@ -68,7 +68,8 @@ describe('classifyTargetOccupancy', () => {
     const error = await classifyTargetOccupancy(target).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(RenameError);
     expect((error as RenameError).code).toBe('TARGET_OCCUPIED');
-    expect((error as RenameError).message).toContain(target.split('\\').join('/'));
+    // Normalize the ACTUAL: the message interpolates the raw target, which carries backslashes here.
+    expect((error as RenameError).message.split('\\').join('/')).toContain(target.split('\\').join('/'));
   });
 
   it('refuses a regular file at the target without letting ENOTDIR escape', async () => {
