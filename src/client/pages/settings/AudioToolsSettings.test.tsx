@@ -139,4 +139,68 @@ describe('AudioToolsSettings', () => {
       maxConcurrentProcessing: 1,
     });
   });
+
+  describe('when the shared settings read fails', () => {
+    beforeEach(() => {
+      // resetAllMocks, not clearAllMocks: the Retry test queues a `*Once()` rejection and
+      // clearAllMocks does not drain those queues.
+      vi.resetAllMocks();
+      mockApi.getFfmpegStatus.mockResolvedValue({ detected: true, version: '8.0.1', path: '/usr/bin/ffmpeg' });
+    });
+
+    it('reports the read failure instead of showing the schema defaults as the saved encoder setup', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
+
+      renderWithProviders(<AudioToolsSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load merge and convert settings.')).toBeInTheDocument();
+      });
+      // M4B in Output format reads as a chosen container; it is the schema default.
+      expect(screen.queryByLabelText('Output format')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Keep original bitrate')).not.toBeInTheDocument();
+    });
+
+    it('keeps the independently-read ffmpeg status visible beside the error affordance', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
+
+      renderWithProviders(<AudioToolsSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load merge and convert settings.')).toBeInTheDocument();
+      });
+      // A failed settings read is no reason to hide an ffmpeg status that was read fine.
+      expect(screen.getByText('Detected · v8.0.1')).toBeInTheDocument();
+      expect(screen.queryByLabelText('Output format')).not.toBeInTheDocument();
+    });
+
+    it('leaves the form alone when only the ffmpeg status query fails', async () => {
+      mockApi.getSettings.mockResolvedValue(settings);
+      mockApi.getFfmpegStatus.mockRejectedValue(new Error('network down'));
+
+      renderWithProviders(<AudioToolsSettings />);
+
+      await waitFor(() => expect(screen.getByText(/Unable to check ffmpeg status/)).toBeInTheDocument());
+      expect(screen.getByLabelText('Output format')).toBeInTheDocument();
+      expect(screen.queryByText('Failed to load merge and convert settings.')).not.toBeInTheDocument();
+    });
+
+    it('refetches and restores the encoder fields when the operator clicks Retry', async () => {
+      mockApi.getSettings
+        .mockRejectedValueOnce(new Error('settings unreadable'))
+        .mockResolvedValue(createMockSettings({ processing: { outputFormat: 'mp3', maxConcurrentProcessing: 4 } }));
+      const user = userEvent.setup();
+
+      renderWithProviders(<AudioToolsSettings />);
+      await waitFor(() => expect(screen.getByText('Failed to load merge and convert settings.')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Retry loading merge and convert settings' }));
+
+      // mp3 / 4, not the schema defaults m4b / 1: only a real refetch produces these.
+      await waitFor(() => expect(screen.getByLabelText('Output format')).toHaveValue('mp3'));
+      expect(screen.getByLabelText('Max concurrent jobs')).toHaveValue(4);
+      expect(screen.queryByText('Failed to load merge and convert settings.')).not.toBeInTheDocument();
+      expect(mockApi.getSettings).toHaveBeenCalledTimes(2);
+    });
+  });
 });
