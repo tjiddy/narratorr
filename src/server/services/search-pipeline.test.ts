@@ -4575,10 +4575,19 @@ describe('#2310 search deadline', () => {
       expect(downloadService.grab).not.toHaveBeenCalled();
     });
 
-    it('hands the download client no signal — cancelling a handoff would tear it', async () => {
+    // AC8's exclusions, pinned so a later widening is a visible contract change. Cancelling a
+    // handoff or an enrichment fetch buys nothing the race does not already deliver.
+    it('threads no signal into the grab payload or the usenet enrichment', async () => {
+      mockEnrichUsenet.mockReset();
+
       await searchAndGrabForBook(book, baseDeps());
+
       const payload = vi.mocked(downloadService.grab).mock.calls[0]![0] as unknown as Record<string, unknown>;
       expect(payload).not.toHaveProperty('signal');
+
+      const enrichArgs = mockEnrichUsenet.mock.calls[0]!;
+      expect(enrichArgs).toHaveLength(4);
+      expect(enrichArgs[3]).not.toHaveProperty('signal');
     });
   });
 
