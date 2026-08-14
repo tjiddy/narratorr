@@ -22,28 +22,28 @@ const mockBackups: BackupMetadata[] = [
 describe('BackupTable', () => {
   it('renders loading spinner when isLoading is true', () => {
     renderWithProviders(
-      <BackupTable backups={undefined} isLoading={true} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={vi.fn()} />,
+      <BackupTable backups={undefined} isLoading={true} isError={false} onRetry={vi.fn()} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={vi.fn()} />,
     );
     expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
   });
 
   it('renders empty state when backups array is empty', () => {
     renderWithProviders(
-      <BackupTable backups={[]} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={vi.fn()} />,
+      <BackupTable backups={[]} isLoading={false} isError={false} onRetry={vi.fn()} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={vi.fn()} />,
     );
     expect(screen.getByText(/no backups yet/i)).toBeInTheDocument();
   });
 
   it('renders empty state when backups is undefined', () => {
     renderWithProviders(
-      <BackupTable backups={undefined} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={vi.fn()} />,
+      <BackupTable backups={undefined} isLoading={false} isError={false} onRetry={vi.fn()} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={vi.fn()} />,
     );
     expect(screen.getByText(/no backups yet/i)).toBeInTheDocument();
   });
 
   it('renders backup rows with filename and size', () => {
     renderWithProviders(
-      <BackupTable backups={mockBackups} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={vi.fn()} />,
+      <BackupTable backups={mockBackups} isLoading={false} isError={false} onRetry={vi.fn()} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={vi.fn()} />,
     );
     expect(screen.getByText('narratorr-backup-20260101T000000000Z.zip')).toBeInTheDocument();
     expect(screen.getByText('narratorr-backup-20260102T000000000Z.zip')).toBeInTheDocument();
@@ -56,7 +56,7 @@ describe('BackupTable', () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <BackupTable backups={[mockBackups[0]!]} isLoading={false} onDownload={onDownload} onRestore={vi.fn()} onDelete={vi.fn()} />,
+      <BackupTable backups={[mockBackups[0]!]} isLoading={false} isError={false} onRetry={vi.fn()} onDownload={onDownload} onRestore={vi.fn()} onDelete={vi.fn()} />,
     );
 
     const downloadButton = screen.getByTitle('Download backup');
@@ -67,7 +67,7 @@ describe('BackupTable', () => {
 
   it('renders restore icon button per backup row alongside download', () => {
     renderWithProviders(
-      <BackupTable backups={mockBackups} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={vi.fn()} />,
+      <BackupTable backups={mockBackups} isLoading={false} isError={false} onRetry={vi.fn()} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={vi.fn()} />,
     );
 
     const restoreButtons = screen.getAllByTitle('Restore backup');
@@ -81,7 +81,7 @@ describe('BackupTable', () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <BackupTable backups={[mockBackups[0]!]} isLoading={false} onDownload={vi.fn()} onRestore={onRestore} onDelete={vi.fn()} />,
+      <BackupTable backups={[mockBackups[0]!]} isLoading={false} isError={false} onRetry={vi.fn()} onDownload={vi.fn()} onRestore={onRestore} onDelete={vi.fn()} />,
     );
 
     const restoreButton = screen.getByTitle('Restore backup');
@@ -92,7 +92,7 @@ describe('BackupTable', () => {
 
   it('renders a Delete button per backup row with destructive hover styling', () => {
     renderWithProviders(
-      <BackupTable backups={mockBackups} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={vi.fn()} />,
+      <BackupTable backups={mockBackups} isLoading={false} isError={false} onRetry={vi.fn()} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={vi.fn()} />,
     );
 
     const deleteButtons = screen.getAllByTitle('Delete backup');
@@ -106,7 +106,7 @@ describe('BackupTable', () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <BackupTable backups={[mockBackups[0]!]} isLoading={false} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={onDelete} />,
+      <BackupTable backups={[mockBackups[0]!]} isLoading={false} isError={false} onRetry={vi.fn()} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={onDelete} />,
     );
 
     const deleteButton = screen.getByTitle('Delete backup');
@@ -120,7 +120,7 @@ describe('BackupTable', () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <BackupTable backups={mockBackups} isLoading={false} onDownload={vi.fn()} onRestore={onRestore} onDelete={vi.fn()} />,
+      <BackupTable backups={mockBackups} isLoading={false} isError={false} onRetry={vi.fn()} onDownload={vi.fn()} onRestore={onRestore} onDelete={vi.fn()} />,
     );
 
     const restoreButtons = screen.getAllByTitle('Restore backup');
@@ -131,5 +131,47 @@ describe('BackupTable', () => {
     await user.click(restoreButtons[1]!);
     expect(onRestore).toHaveBeenCalledWith(mockBackups[1]);
     expect(onRestore).toHaveBeenCalledTimes(2);
+  });
+  describe('when the backup read fails', () => {
+    it('reports the read failure instead of claiming there are no backups', () => {
+      renderWithProviders(
+        <BackupTable backups={undefined} isLoading={false} isError={true} onRetry={vi.fn()} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={vi.fn()} />,
+      );
+
+      expect(screen.getByText('Failed to load backups.')).toBeInTheDocument();
+      // The distinction the operator needs: a failed read is not an empty backup directory.
+      expect(screen.queryByText(/no backups yet/i)).not.toBeInTheDocument();
+    });
+
+    it('reports the failure ahead of a stale list the failed read could not confirm', () => {
+      renderWithProviders(
+        <BackupTable backups={mockBackups} isLoading={false} isError={true} onRetry={vi.fn()} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={vi.fn()} />,
+      );
+
+      expect(screen.getByText('Failed to load backups.')).toBeInTheDocument();
+      expect(screen.queryByText('narratorr-backup-20260101T000000000Z.zip')).not.toBeInTheDocument();
+    });
+
+    it('calls onRetry when the operator clicks the surface-named Retry control', async () => {
+      const onRetry = vi.fn();
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <BackupTable backups={undefined} isLoading={false} isError={true} onRetry={onRetry} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={vi.fn()} />,
+      );
+
+      await user.click(screen.getByRole('button', { name: 'Retry loading backups' }));
+
+      expect(onRetry).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the loading spinner ahead of the error while the first read is still in flight', () => {
+      renderWithProviders(
+        <BackupTable backups={undefined} isLoading={true} isError={false} onRetry={vi.fn()} onDownload={vi.fn()} onRestore={vi.fn()} onDelete={vi.fn()} />,
+      );
+
+      expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
+      expect(screen.queryByText('Failed to load backups.')).not.toBeInTheDocument();
+    });
   });
 });

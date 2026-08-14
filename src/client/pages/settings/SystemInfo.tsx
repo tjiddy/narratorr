@@ -10,7 +10,7 @@ function InfoValue({ value, mono = false }: { value: React.ReactNode; mono?: boo
 }
 
 export function SystemInfo() {
-  const { data: info, isLoading } = useQuery({
+  const { data: info, isLoading, isError, refetch } = useQuery({
     queryKey: queryKeys.systemInfo(),
     queryFn: api.getSystemInfo,
   });
@@ -25,6 +25,23 @@ export function SystemInfo() {
         <div className="flex items-center gap-2 text-muted-foreground text-sm">
           <LoadingSpinner className="w-4 h-4" />
           Loading system info...
+        </div>
+      )}
+
+      {/* Without this the failed read renders as a heading over nothing — a blank card the
+          operator cannot tell from a server that reported no details. The Retry name is
+          surface-specific because SystemSettings composes three failable sections. */}
+      {isError && (
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-red-500">Failed to load system information.</p>
+          <button
+            type="button"
+            onClick={() => { void refetch(); }}
+            aria-label="Retry loading system information"
+            className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-all focus-ring"
+          >
+            Retry
+          </button>
         </div>
       )}
 

@@ -75,7 +75,7 @@ export function SystemSettings() {
     appMigrationCount?: number | undefined;
   } | null>(null);
 
-  const { data: backups, isLoading } = useQuery({
+  const { data: backups, isLoading, isError, refetch: refetchBackups } = useQuery({
     queryKey: queryKeys.backups(),
     queryFn: api.getBackups,
   });
@@ -209,7 +209,7 @@ export function SystemSettings() {
           <input ref={fileInputRef} type="file" accept=".zip" onChange={handleFileSelect} className="hidden" />
         </div>
 
-        <BackupTable backups={backups} isLoading={isLoading} onDownload={handleDownload} onRestore={handleRestore} onDelete={setDeleteTarget} />
+        <BackupTable backups={backups} isLoading={isLoading} isError={isError} onRetry={() => { void refetchBackups(); }} onDownload={handleDownload} onRestore={handleRestore} onDelete={setDeleteTarget} />
       </SettingsSection>
 
       <GeneralSettingsForm />

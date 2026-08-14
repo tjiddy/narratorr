@@ -860,4 +860,78 @@ describe('useSettingsForm', () => {
       expect(result.current.form.form.getValues().value).toBe(99);
     });
   });
+
+  // Ebooks needs the shared read's failure to reach a consumer; the other 15 call sites must
+  // keep compiling and behaving exactly as before, so the surface only grows.
+  describe('settings read failure', () => {
+    it('reports settingsError once the shared settings read fails', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
+
+      const { result } = renderHook(
+        () => useSettingsForm(hookConfig()),
+        { wrapper: createWrapper(queryClient) },
+      );
+
+      // Watch the query state, not the mock's call count: react-query withholds the error
+      // until its retry ladder ends.
+      await waitFor(() => {
+        expect(queryClient.getQueryState(['settings'])?.status).toBe('error');
+      });
+      await waitFor(() => expect(result.current.settingsError).toBe(true));
+    });
+
+    it('reports no settingsError while the read is pending or has succeeded', async () => {
+      mockApi.getSettings.mockResolvedValue(fullSettings);
+
+      const { result } = renderHook(
+        () => useSettingsForm(hookConfig()),
+        { wrapper: createWrapper(queryClient) },
+      );
+
+      expect(result.current.settingsError).toBe(false);
+
+      await waitFor(() => expect(result.current.form.getValues().value).toBe(42));
+      expect(result.current.settingsError).toBe(false);
+    });
+
+    it('refetchSettings re-reads the settings and clears the error on success', async () => {
+      mockApi.getSettings
+        .mockRejectedValueOnce(new Error('settings unreadable'))
+        .mockResolvedValue(fullSettings);
+
+      const { result } = renderHook(
+        () => useSettingsForm(hookConfig()),
+        { wrapper: createWrapper(queryClient) },
+      );
+
+      await waitFor(() => expect(result.current.settingsError).toBe(true));
+
+      await act(async () => { result.current.refetchSettings(); });
+
+      await waitFor(() => expect(result.current.settingsError).toBe(false));
+      expect(mockApi.getSettings).toHaveBeenCalledTimes(2);
+      // The recovered read still hydrates the form, exactly as a first successful read does.
+      await waitFor(() => expect(result.current.form.getValues().value).toBe(42));
+    });
+
+    it('keeps form, mutation and onSubmit working through a failed read', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
+      mockApi.updateSettings.mockResolvedValue(fullSettings);
+
+      const { result } = renderHook(
+        () => useSettingsForm(hookConfig()),
+        { wrapper: createWrapper(queryClient) },
+      );
+
+      await waitFor(() => expect(result.current.settingsError).toBe(true));
+
+      expect(result.current.form.getValues()).toEqual(testDefaults);
+
+      await act(async () => { result.current.onSubmit({ enabled: true, value: 5 }); });
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith({ testSection: { enabled: true, value: 5 } });
+      });
+    });
+  });
 });

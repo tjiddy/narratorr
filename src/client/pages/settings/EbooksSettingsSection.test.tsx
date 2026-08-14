@@ -213,4 +213,41 @@ describe('EbooksSettingsSection', () => {
       expect(accessibleNames.toLowerCase()).not.toContain('companion');
     });
   });
+
+  describe('when the shared settings read fails', () => {
+    beforeEach(() => {
+      // resetAllMocks, not clearAllMocks: the Retry test queues a `*Once()` rejection and
+      // clearAllMocks does not drain those queues.
+      vi.resetAllMocks();
+    });
+
+    it('reports the read failure instead of showing the toggle off as a saved value', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
+
+      renderWithProviders(<EbooksSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load ebook settings.')).toBeInTheDocument();
+      });
+      // An unchecked toggle reads as "ebook support is off"; that is the schema default,
+      // not anything this page read from the server.
+      expect(screen.queryByLabelText('Enable ebook support')).not.toBeInTheDocument();
+    });
+
+    it('refetches and restores the toggle when the operator clicks Retry', async () => {
+      mockApi.getSettings
+        .mockRejectedValueOnce(new Error('settings unreadable'))
+        .mockResolvedValue(createMockSettings({ companionEpub: { enabled: true } }));
+      const user = userEvent.setup();
+
+      renderWithProviders(<EbooksSettingsSection />);
+      await waitFor(() => expect(screen.getByText('Failed to load ebook settings.')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Retry loading ebook settings' }));
+
+      await waitFor(() => expect(screen.getByLabelText('Enable ebook support')).toBeChecked());
+      expect(screen.queryByText('Failed to load ebook settings.')).not.toBeInTheDocument();
+      expect(mockApi.getSettings).toHaveBeenCalledTimes(2);
+    });
+  });
 });

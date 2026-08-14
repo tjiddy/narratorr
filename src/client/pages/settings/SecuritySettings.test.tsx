@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { queryKeys } from '@/lib/queryKeys';
+import type { AuthAdminStatus } from '@/lib/api/auth';
 import { SecuritySettings } from './SecuritySettings';
 import { toast } from 'sonner';
 
@@ -918,5 +921,121 @@ describe('SecuritySettings', () => {
         expect(confirmBtn).toBeDisabled();
       });
     });
+  });
+});
+
+// Both auth reads settle independently and neither alone can decide what this page may claim:
+// `getAuthConfig` carries the mode/key, `getAuthAdminStatus` carries whether credentials exist.
+// The gate is therefore a policy over the full 3x3 product of their statuses.
+describe('read-state gate over both auth queries', () => {
+  type Settle = 'pending' | 'success' | 'error';
+
+  function arrange(mock: ReturnType<typeof vi.fn>, settle: Settle, value: unknown) {
+    if (settle === 'pending') mock.mockReturnValue(new Promise(() => {}));
+    else if (settle === 'success') mock.mockResolvedValue(value);
+    else mock.mockRejectedValue(new Error('auth read failed'));
+  }
+
+  /**
+   * Observation point: assert only once every non-pending query has reached its terminal
+   * state. A spinner is on screen at t=0 under any implementation, so asserting earlier
+   * would pass against a gate that reads `authConfig` alone.
+   */
+  async function awaitSettled(client: QueryClient, config: Settle, status: Settle) {
+    if (config !== 'pending') {
+      await waitFor(() => expect(client.getQueryState(queryKeys.auth.config())?.status).toBe(config));
+    }
+    if (status !== 'pending') {
+      await waitFor(() => expect(client.getQueryState(queryKeys.auth.adminStatus())?.status).toBe(status));
+    }
+  }
+
+  function expectNoPostureClaim() {
+    // The page must not state that no credentials exist, nor offer the mode choice that
+    // conclusion gates — those are the claims a genuinely unprotected install renders.
+    expect(screen.queryByRole('button', { name: /create credentials/i })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Forms (Login Page)')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Basic (Browser Prompt)')).not.toBeInTheDocument();
+  }
+
+  const MATRIX: { config: Settle; status: Settle; renders: 'error' | 'spinner' | 'sections' }[] = [
+    { config: 'error', status: 'error', renders: 'error' },
+    { config: 'error', status: 'success', renders: 'error' },
+    { config: 'error', status: 'pending', renders: 'error' },
+    { config: 'success', status: 'error', renders: 'error' },
+    { config: 'pending', status: 'error', renders: 'error' },
+    { config: 'pending', status: 'pending', renders: 'spinner' },
+    { config: 'pending', status: 'success', renders: 'spinner' },
+    { config: 'success', status: 'pending', renders: 'spinner' },
+    { config: 'success', status: 'success', renders: 'sections' },
+  ];
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it.each(MATRIX)(
+    'renders the $renders state when getAuthConfig is $config and getAuthAdminStatus is $status',
+    async ({ config, status, renders }) => {
+      arrange(api.getAuthConfig as ReturnType<typeof vi.fn>, config, mockConfig);
+      arrange(api.getAuthAdminStatus as ReturnType<typeof vi.fn>, status, mockStatus);
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+      renderWithProviders(<SecuritySettings />, { queryClient: client });
+      await awaitSettled(client, config, status);
+
+      if (renders === 'error') {
+        await waitFor(() => expect(screen.getByText('Failed to load security settings.')).toBeInTheDocument());
+        expect(screen.queryByTestId('loading-spinner')).not.toBeInTheDocument();
+        expectNoPostureClaim();
+      } else if (renders === 'spinner') {
+        expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
+        expect(screen.queryByText('Failed to load security settings.')).not.toBeInTheDocument();
+        expectNoPostureClaim();
+      } else {
+        await waitFor(() => expect(screen.getByLabelText('Forms (Login Page)')).toBeInTheDocument());
+        expect(screen.getByText('test-api-key-12345')).toBeInTheDocument();
+        expect(screen.queryByText('Failed to load security settings.')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('loading-spinner')).not.toBeInTheDocument();
+      }
+    },
+  );
+
+  it('renders the settled sections once a slow getAuthAdminStatus finally arrives', async () => {
+    let resolveStatus!: (value: AuthAdminStatus) => void;
+    (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue(mockConfig);
+    (api.getAuthAdminStatus as ReturnType<typeof vi.fn>).mockReturnValue(
+      new Promise<AuthAdminStatus>((resolve) => { resolveStatus = resolve; }),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    renderWithProviders(<SecuritySettings />, { queryClient: client });
+    await waitFor(() => expect(client.getQueryState(queryKeys.auth.config())?.status).toBe('success'));
+    expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
+
+    resolveStatus({ ...mockStatus, hasUser: true, username: 'todd' });
+
+    await waitFor(() => expect(screen.getByLabelText('Forms (Login Page)')).toBeInTheDocument());
+    expect(screen.getByLabelText('Forms (Login Page)')).not.toBeDisabled();
+  });
+
+  it('refetches both auth queries from one Retry, even though only one of them failed', async () => {
+    (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue(mockConfig);
+    (api.getAuthAdminStatus as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error('auth read failed'))
+      .mockResolvedValue({ ...mockStatus, hasUser: true, username: 'todd' });
+    const user = userEvent.setup();
+
+    renderWithProviders(<SecuritySettings />);
+    await waitFor(() => expect(screen.getByText('Failed to load security settings.')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Retry loading security settings' }));
+
+    await waitFor(() => expect(screen.getByLabelText('Forms (Login Page)')).toBeInTheDocument());
+    expect(screen.queryByText('Failed to load security settings.')).not.toBeInTheDocument();
+    // The succeeded query is refetched too: a Retry that only re-ran the failed read would
+    // leave the page composing a fresh status against a config read at an unknown time.
+    expect(api.getAuthConfig).toHaveBeenCalledTimes(2);
+    expect(api.getAuthAdminStatus).toHaveBeenCalledTimes(2);
   });
 });
