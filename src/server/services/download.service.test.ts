@@ -2212,6 +2212,18 @@ describe('DownloadService', () => {
         expect.stringContaining('staged'),
       );
     });
+
+    it('claims no delivery at all when the publish fails after the record landed', async () => {
+      const log = createMockLogger();
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+      const handoff = { commit: vi.fn().mockRejectedValue(new Error('EXDEV')), abort: vi.fn().mockResolvedValue(undefined) };
+      primeGrab(stagingAdapter({ stageDownload: vi.fn().mockResolvedValue(handoff) }));
+
+      await expect(svc.grab({ downloadUrl: MAGNET_URL, title: 'Test', skipDuplicateCheck: true })).rejects.toThrow('EXDEV');
+
+      expect(log.debug).not.toHaveBeenCalledWith(expect.anything(), 'Download sent to client');
+      expect(log.info).not.toHaveBeenCalledWith(expect.anything(), 'Download initiated');
+    });
   });
 
   describe('logging improvements (#229)', () => {

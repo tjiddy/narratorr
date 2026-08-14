@@ -15,6 +15,8 @@ import { SearchDeadlineError, _resetSearchRegistryForTesting } from './search-de
 import { SEARCH_DEADLINE_MS } from '@core/utils/constants.js';
 import { BlackholeClient } from '@core/download-clients/blackhole.js';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 
 /**
  * #2310 AC6/AC8 at the service-integration layer. The unit suite in `search-pipeline.test.ts`
@@ -75,6 +77,7 @@ describe('#2310 grab integrity and excluded surfaces — real download chain', (
   let db: ReturnType<typeof createMockDb>;
   let log: FastifyBaseLogger;
   let addDownload: Mock;
+  let stageDownload: Mock;
   let removeDownload: Mock;
   let getAdapter: Mock;
   let orchestrator: DownloadOrchestrator;
@@ -140,6 +143,14 @@ describe('#2310 grab integrity and excluded surfaces — real download chain', (
     return new DownloadOrchestrator(service, db as unknown as Db, log);
   }
 
+  const stagedDouble = () => ({ commit: vi.fn().mockResolvedValue(undefined), abort: vi.fn().mockResolvedValue(undefined) });
+
+  /** Swap in the staging capability and rebuild the graph that captured the previous adapter. */
+  function useStagingAdapter() {
+    getAdapter.mockResolvedValue({ addDownload, stageDownload, removeDownload });
+    orchestrator = buildOrchestrator();
+  }
+
   const deps = () => ({
     indexerSearchService,
     downloadOrchestrator: orchestrator,
@@ -161,7 +172,9 @@ describe('#2310 grab integrity and excluded surfaces — real download chain', (
     db = createMockDb();
     primeDb();
     addDownload = vi.fn().mockResolvedValue(null);
+    stageDownload = vi.fn();
     removeDownload = vi.fn().mockResolvedValue(undefined);
+    // Default to the no-capability adapter: absence of `stageDownload` is what the grab path keys on.
     getAdapter = vi.fn().mockResolvedValue({ addDownload, removeDownload });
     orchestrator = buildOrchestrator();
     indexerSearchService = inject<IndexerSearchService>({
@@ -215,11 +228,15 @@ describe('#2310 grab integrity and excluded surfaces — real download chain', (
       ['with the deadline idle', false],
       ['with the deadline already expired', true],
     ])('%s', (_label, expire) => {
-      it('runs NO compensation for a Blackhole handoff whose insert fails — there is no external id', async () => {
-        addDownload.mockImplementation(async () => {
-          if (!expire) return null;
-          return new Promise<null>((resolve) => { setTimeout(() => resolve(null), 0); });
+      // #2341 rewrote the verdict this control pins: the handoff is staged, so a failed insert
+      // now has something to discard. There is still no external id and still no control channel.
+      it('discards the staged Blackhole handoff whose insert fails, publishing and compensating nothing', async () => {
+        const handoff = stagedDouble();
+        stageDownload.mockImplementation(async () => {
+          if (expire) await new Promise((resolve) => { setTimeout(resolve, 0); });
+          return handoff;
         });
+        useStagingAdapter();
         db.insert.mockReturnValue(mockDbChain([], { error: new Error('SQLITE_FULL') }));
 
         const running = searchAndGrabForBook(book, deps());
@@ -232,8 +249,38 @@ describe('#2310 grab integrity and excluded surfaces — real download chain', (
           await expect(running).resolves.toEqual({ result: 'grab_error', error: expect.any(Error) });
         }
 
+        await vi.waitFor(() => expect(handoff.abort).toHaveBeenCalledTimes(1));
+        expect(handoff.commit).not.toHaveBeenCalled();
+        expect(addDownload).not.toHaveBeenCalled();
         expect(removeDownload).not.toHaveBeenCalled();
         expect(log.warn).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining('orphaned external download'));
+      });
+
+      // The AC6 claim survives the reordering: an abandoned chain still reaches its insert AND
+      // its publish, which is now the step after it.
+      it('publishes the staged handoff only once the insert has landed, never before', async () => {
+        const handoff = stagedDouble();
+        stageDownload.mockResolvedValue(handoff);
+        useStagingAdapter();
+        let releaseInsert!: () => void;
+        const insertGate = new Promise<void>((resolve) => { releaseInsert = resolve; });
+        db.insert.mockReturnValue({
+          values: vi.fn().mockReturnValue({ returning: vi.fn().mockImplementation(() => insertGate.then(() => [{ id: 1 }])) }),
+        } as never);
+
+        const running = searchAndGrabForBook(book, deps());
+        await vi.waitFor(() => expect(db.insert).toHaveBeenCalled());
+        expect(handoff.commit).not.toHaveBeenCalled();
+
+        if (expire) {
+          armed[0]!();
+          await expect(running).rejects.toBeInstanceOf(SearchDeadlineError);
+        }
+        releaseInsert();
+        if (!expire) await expect(running).resolves.toMatchObject({ result: 'grabbed' });
+
+        await vi.waitFor(() => expect(handoff.commit).toHaveBeenCalledTimes(1));
+        expect(handoff.abort).not.toHaveBeenCalled();
       });
 
       it('logs the documented orphan warning when an external-id insert fails and the compensation adapter is gone', async () => {
@@ -258,6 +305,43 @@ describe('#2310 grab integrity and excluded surfaces — real download chain', (
         ));
         expect(removeDownload).not.toHaveBeenCalled();
       });
+    });
+  });
+
+  // #2341 AC9: the guarantee is about what the watch DIRECTORY holds, which no adapter double can
+  // show. The real Blackhole client runs against a real directory through the real grab chain.
+  describe('#2341 — no consumable artifact survives a failed insert', () => {
+    let watchDir: string;
+
+    beforeEach(async () => {
+      watchDir = await mkdtemp(join(tmpdir(), 'grab-integrity-'));
+    });
+
+    afterEach(async () => {
+      try {
+        await rm(watchDir, { recursive: true, force: true });
+      } catch { /* a leaked tmpdir is cheaper than a red suite on Windows */ }
+    });
+
+    it('leaves the watch directory empty when the download row cannot be written', async () => {
+      getAdapter = vi.fn().mockResolvedValue(new BlackholeClient({ watchDir, protocol: 'torrent' }));
+      orchestrator = buildOrchestrator();
+      db.insert.mockReturnValue(mockDbChain([], { error: new Error('SQLITE_FULL') }));
+
+      await expect(searchAndGrabForBook(book, deps())).resolves.toEqual({ result: 'grab_error', error: expect.any(Error) });
+
+      expect(await readdir(watchDir)).toEqual([]);
+    });
+
+    it('publishes exactly one consumable artifact when the row does land', async () => {
+      getAdapter = vi.fn().mockResolvedValue(new BlackholeClient({ watchDir, protocol: 'torrent' }));
+      orchestrator = buildOrchestrator();
+
+      await expect(searchAndGrabForBook(book, deps())).resolves.toMatchObject({ result: 'grabbed' });
+
+      const names = await readdir(watchDir);
+      expect(names).toHaveLength(1);
+      expect(names[0]).toMatch(/^\d+\.magnet$/);
     });
   });
 
