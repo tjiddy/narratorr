@@ -12,6 +12,8 @@ import { MergeError } from '../services/merge.service.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { BookRejectionError } from '../services/book-rejection.service.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
+import { SEARCH_DEADLINE_MS } from '@core/utils/constants.js';
+import { _resetSearchRegistryForTesting } from '../services/search-deadline.js';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
@@ -2395,6 +2397,38 @@ describe('books routes', () => {
       const body = JSON.parse(res.payload);
       expect(body.result).toBe('skipped');
       expect(body.reason).toBe('grab_blocked');
+    });
+
+    // #2310 AC12: the route propagates the expiry rather than answering 200 with a genuine miss.
+    it('surfaces a search deadline expiry as a 500, never as no_results', async () => {
+      _resetSearchRegistryForTesting();
+      const armed: Array<() => void> = [];
+      const original = globalThis.setTimeout;
+      vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, delay?: number, ...rest: unknown[]) => {
+        if (delay !== SEARCH_DEADLINE_MS) return original(fn as never, delay as never, ...rest as never[]);
+        armed.push(fn);
+        const parked = original(() => { /* never fires */ }, 2 ** 30);
+        parked.unref();
+        return parked;
+      }) as never);
+
+      try {
+        (services.book.getById as Mock).mockResolvedValue(mockBook);
+        (services.settings.get as Mock).mockResolvedValue(qualitySettings);
+        (services.indexerSearch.getEnabledIndexers as Mock).mockResolvedValue([{ id: 1, name: 'indexer-1' }]);
+        (services.indexerSearch.searchAllStreaming as Mock).mockImplementation(() => new Promise(() => { /* stalled leaf */ }));
+
+        const pending = app.inject({ method: 'POST', url: '/api/books/1/search' });
+        await vi.waitFor(() => expect(armed).toHaveLength(1));
+        armed[0]!();
+        const res = await pending;
+
+        expect(res.statusCode).toBe(500);
+        expect(res.payload).not.toContain('no_results');
+      } finally {
+        vi.mocked(globalThis.setTimeout).mockRestore?.();
+        _resetSearchRegistryForTesting();
+      }
     });
 
     it('returns 404 when book ID does not exist', async () => {

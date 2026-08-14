@@ -21,6 +21,7 @@ import { withBookAdmissionLock } from './book-admission.js';
 import { BlackholeClient } from '@core/download-clients/blackhole.js';
 import { fetchWithSsrfRedirect } from '@core/utils/network-service.js';
 import { tmpdir } from 'node:os';
+import { runImmediateSearchChain } from './immediate-search-chain.js';
 
 // Passthrough mocks: only the #2310 stall-class cases override these, so every other test in this
 // file keeps the real implementations.
@@ -4576,7 +4577,7 @@ describe('#2310 search deadline', () => {
 
     it('hands the download client no signal — cancelling a handoff would tear it', async () => {
       await searchAndGrabForBook(book, baseDeps());
-      const payload = vi.mocked(downloadService.grab).mock.calls[0]![0] as Record<string, unknown>;
+      const payload = vi.mocked(downloadService.grab).mock.calls[0]![0] as unknown as Record<string, unknown>;
       expect(payload).not.toHaveProperty('signal');
     });
   });
@@ -4766,5 +4767,67 @@ describe('#2310 search deadline', () => {
       expect(emitsOf('search_complete')).toHaveLength(1);
       expect(emitsOf('search_complete')[0]![1]).toMatchObject({ outcome: 'timed_out' });
     });
+  });
+});
+
+/**
+ * #2310 AC15 — the narrowing of #2304's single-flight wording, driven through the REAL
+ * `runImmediateSearch` (the #2304 suites mock it at module level and never fire a deadline, so
+ * they do not exercise this).
+ */
+describe('#2310 AC15 — the immediate-search chain advances past an expired book', () => {
+  beforeEach(() => { _resetSearchRegistryForTesting(); });
+  afterEach(() => { vi.restoreAllMocks(); _resetSearchRegistryForTesting(); });
+
+  it('starts book 2 after book 1 expires, and book 1\'s indexer leg is left aborted', async () => {
+    const armed: Array<() => void> = [];
+    const original = globalThis.setTimeout;
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, delay?: number, ...rest: unknown[]) => {
+      if (delay !== SEARCH_DEADLINE_MS) return original(fn as never, delay as never, ...rest as never[]);
+      armed.push(fn);
+      const parked = original(() => { /* never fires */ }, 2 ** 30);
+      parked.unref();
+      return parked;
+    }) as never);
+
+    const signals: Array<AbortSignal | undefined> = [];
+    const searchAllWithStatus = vi.fn().mockImplementation((_q: string, options?: { signal?: AbortSignal }) => {
+      signals.push(options?.signal);
+      // Only the first book stalls; the second answers normally.
+      return signals.length === 1 ? new Promise(() => { /* stalled */ }) : Promise.resolve(withStatus([makeResult()]));
+    });
+
+    const log = createMockLogger();
+    const deps = {
+      indexerSearchService: { searchAllWithStatus } as unknown as IndexerSearchService,
+      indexerService: mockIndexer,
+      downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 1 }) } as unknown as DownloadOrchestrator,
+      settingsService: { get: vi.fn().mockResolvedValue({ ...defaultQualitySettings, languages: [], searchPriority: 'relevance' }) } as unknown as SettingsService,
+      blacklistService: {
+        getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set<string>(), blacklistedGuids: new Set<string>() }),
+      } as unknown as BlacklistService,
+      eventHistory: createMockEventHistory(),
+    };
+
+    const chain = runImmediateSearchChain(
+      [{ id: 101, title: 'Stalled Book' }, { id: 102, title: 'Next Book' }],
+      deps,
+      log,
+    );
+
+    await vi.waitFor(() => expect(armed).toHaveLength(1));
+    expect(searchAllWithStatus).toHaveBeenCalledTimes(1);
+    armed[0]!();
+
+    await chain;
+
+    expect(searchAllWithStatus).toHaveBeenCalledTimes(2);
+    // The abandoned run issues no further indexer requests — the #2304 property that mattered.
+    expect(signals[0]!.aborted).toBe(true);
+    expect(signals[1]!.aborted).toBe(false);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 101, budgetMs: SEARCH_DEADLINE_MS }),
+      'Search-immediately trigger abandoned at its deadline',
+    );
   });
 });

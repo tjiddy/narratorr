@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import { createMockLogger, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { runSearchJob, searchAllWanted } from './search.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -1134,7 +1134,7 @@ describe('search deadline expiry (#2310)', () => {
     armed[0]!();
     await running;
 
-    const call = log.warn.mock.calls.find(([, message]) => message === 'Search abandoned at its deadline');
+    const call = ((log.warn as Mock).mock.calls as unknown[][]).find((c) => c[1] === 'Search abandoned at its deadline');
     expect(call).toBeDefined();
     const fields = call![0] as Record<string, unknown>;
     expect(fields).toMatchObject({ bookId: 8, title: 'Stalled', budgetMs: SEARCH_DEADLINE_MS });
@@ -1153,7 +1153,7 @@ describe('search deadline expiry (#2310)', () => {
 
     await runSearchJob(settings, bookList, indexer, createMockDownloadOrchestrator(), inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
-    const call = log.warn.mock.calls.find(([, message]) => message === 'Search failed for book');
+    const call = ((log.warn as Mock).mock.calls as unknown[][]).find((c) => c[1] === 'Search failed for book');
     expect(call).toBeDefined();
     expect(call![0]).not.toHaveProperty('budgetMs');
   });
@@ -1189,7 +1189,7 @@ describe('search deadline expiry (#2310)', () => {
     armed[0]!();
     await running;
 
-    const call = log.warn.mock.calls.find(([, message]) => message === 'Search abandoned at its deadline');
+    const call = ((log.warn as Mock).mock.calls as unknown[][]).find((c) => c[1] === 'Search abandoned at its deadline');
     expect(call).toBeDefined();
     expect(call![0]).toMatchObject({ bookId: 21, budgetMs: SEARCH_DEADLINE_MS });
   });
@@ -1202,7 +1202,7 @@ describe('search deadline expiry (#2310)', () => {
 
     await searchAllWanted(createMockSettingsService(), bookList, indexer, createMockDownloadOrchestrator(), inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
 
-    const call = log.warn.mock.calls.find(([, message]) => message === 'Search failed for book');
+    const call = ((log.warn as Mock).mock.calls as unknown[][]).find((c) => c[1] === 'Search failed for book');
     expect(call).toBeDefined();
     expect(call![0]).not.toHaveProperty('budgetMs');
   });
