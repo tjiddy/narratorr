@@ -193,8 +193,30 @@ export function scheduleCron(reg: TaskRegistry, name: string, expression: string
   return job;
 }
 
+/** Node clamps a delay above this — like a 30-day backup interval — to 1 ms, not to the ceiling. */
+export const TIMEOUT_MAX_MS = 2_147_483_647;
+/** Shared by the unusable-interval arm and the failed-read catch arm. */
+export const INTERVAL_RETRY_MS = 5 * 60 * 1000;
+
+export type NormalizedInterval =
+  | { kind: 'ok'; delayMs: number }
+  | { kind: 'clamped'; delayMs: number }
+  | { kind: 'invalid' };
+
+// Classify the PRODUCT, never the operand: a finite `intervalMinutes` still overflows to Infinity
+// after ×60000, and a null read multiplies to 0 rather than NaN. Everything Node either rejects or
+// rounds up to a 1 ms re-arm is 'invalid'.
+export function normalizeIntervalMs(intervalMinutes: number): NormalizedInterval {
+  const delayMs = intervalMinutes * 60 * 1000;
+  if (!Number.isFinite(delayMs) || delayMs < 1) return { kind: 'invalid' };
+  if (delayMs > TIMEOUT_MAX_MS) return { kind: 'clamped', delayMs: TIMEOUT_MAX_MS };
+  return { kind: 'ok', delayMs };
+}
+
 // stop() blocks pending or queued ticks from firing or rearming. unref() keeps
 // either timer path from pinning process shutdown.
+// nextRun holds a real future firing time or null — never a stale or Invalid Date — for as long as
+// the loop is running; stop() cancels timers and leaves the last published value on display.
 function scheduleTimeoutLoop(
   reg: TaskRegistry,
   name: string,
@@ -213,8 +235,24 @@ function scheduleTimeoutLoop(
     if (stopped) return;
     try {
       const intervalMinutes = await getIntervalMinutes();
-      const intervalMs = intervalMinutes * 60 * 1000;
+      const normalized = normalizeIntervalMs(intervalMinutes);
       if (stopped) return; // stop may run during the interval read
+
+      if (normalized.kind === 'invalid') {
+        // String(): pino serialises NaN and Infinity to null, which reads as a MISSING field.
+        log.warn({ job: name, intervalMinutes: String(intervalMinutes) }, `Unusable ${name} interval, retrying in 5 minutes`);
+        reg.setNextRun(name, null);
+        arm(scheduleNext, INTERVAL_RETRY_MS);
+        return;
+      }
+
+      const intervalMs = normalized.delayMs;
+      if (normalized.kind === 'clamped') {
+        log.warn(
+          { job: name, configuredDelayMs: String(intervalMinutes * 60 * 1000), effectiveDelayMs: intervalMs },
+          `${name} interval exceeds the maximum timer delay, firing early instead`,
+        );
+      }
       reg.setNextRun(name, new Date(Date.now() + intervalMs));
 
       arm(async () => {
@@ -229,7 +267,9 @@ function scheduleTimeoutLoop(
     } catch (error: unknown) {
       log.error({ error: serializeError(error) }, `Failed to read ${name} interval, retrying in 5 minutes`);
       if (stopped) return;
-      arm(scheduleNext, 5 * 60 * 1000);
+      // A run time we can no longer confirm must not stay on display.
+      reg.setNextRun(name, null);
+      arm(scheduleNext, INTERVAL_RETRY_MS);
     }
   }
 
