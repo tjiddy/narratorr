@@ -52,6 +52,18 @@ describe('IndexerSearchService', () => {
       expect(result.map((i: { name: string }) => i.name)).toEqual(['Newznab', 'Torznab']);
     });
 
+    // #2322 AC5: the unsatisfied guard is unreachable from runRssJob because no MAM row can be an
+    // RSS source. Pin the exclusion rather than write an RSS test that could only pass vacuously.
+    it('excludes a myanonamouse row, so no RSS candidate can come from MAM', async () => {
+      const mam = createMockDbIndexer({ id: 4, name: 'MAM', type: 'myanonamouse', enabled: true });
+      const torznab = createMockDbIndexer({ id: 5, name: 'Torznab', type: 'torznab', enabled: true });
+      db.select.mockReturnValue(mockDbChain([mam, torznab]));
+
+      const result = await searchService.getRssCapableIndexers();
+
+      expect(result.map((i: { name: string }) => i.name)).toEqual(['Torznab']);
+    });
+
     it('returns empty array when no RSS-capable indexers are enabled', async () => {
       const abb = createMockDbIndexer({ id: 1, name: 'ABB', type: 'abb', enabled: true });
       db.select.mockReturnValue(mockDbChain([abb]));

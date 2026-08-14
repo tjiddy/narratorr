@@ -400,6 +400,7 @@ export const bookEvents = sqliteTable('book_events', {
       'recording_review_skipped',
       'search_relaxed_held',
       'sidecar_diverged',
+      'grab_blocked_unsatisfied',
     ],
   }).notNull(),
   source: text('source', {

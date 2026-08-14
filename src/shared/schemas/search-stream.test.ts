@@ -143,6 +143,27 @@ describe('searchResultSchema — rawSize (#2316)', () => {
   });
 });
 
+describe('searchResultSchema — unsatisfied (#2322)', () => {
+  const base = { title: 'Play of Shadows', protocol: 'torrent', indexer: 'MAM' };
+
+  it('accepts and round-trips the observed pair', () => {
+    const result = searchResultSchema.safeParse({ ...base, unsatisfied: { count: 150, limit: 150 } });
+    expect(result.success).toBe(true);
+    expect(result.data?.unsatisfied).toEqual({ count: 150, limit: 150 });
+  });
+
+  it('accepts a result carrying nothing — absence is the fail-open default', () => {
+    const result = searchResultSchema.safeParse(base);
+    expect(result.success).toBe(true);
+    expect(result.data).not.toHaveProperty('unsatisfied');
+  });
+
+  it('rejects a partial pair, so no consumer sees a half-observed object', () => {
+    expect(searchResultSchema.safeParse({ ...base, unsatisfied: { count: 150 } }).success).toBe(false);
+    expect(searchResultSchema.safeParse({ ...base, unsatisfied: { limit: 150 } }).success).toBe(false);
+  });
+});
+
 // Normalize Zod's ?: T | undefined before comparing exact-optional DTOs.
 type TightenOptional<T> = {
   [K in keyof T as undefined extends T[K] ? never : K]: T[K];

@@ -1,5 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { IndexerAdapter } from '@core/index.js';
+import type { UnsatisfiedStatus } from '@core/utils/mam-unsatisfied.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { IndexerRow } from './types.js';
 
@@ -8,18 +9,22 @@ export interface PreSearchRefreshDeps {
   update: (id: number, data: { settings: Record<string, unknown> }) => Promise<unknown>;
 }
 
+/**
+ * The unsatisfied observation is returned, never persisted: it is telemetry about this one search,
+ * so it travels with that search's results rather than outliving them in `settings` or a cache.
+ */
 export async function preSearchRefresh(
   adapter: IndexerAdapter,
   indexer: IndexerRow,
   deps: PreSearchRefreshDeps,
-): Promise<{ skip: boolean; error?: string }> {
+): Promise<{ skip: boolean; error?: string; unsatisfied?: UnsatisfiedStatus }> {
   const { log, update } = deps;
 
   if (!adapter.refreshStatus) {
     return { skip: false };
   }
 
-  let status: { isVip: boolean; classname: string } | null;
+  let status: Awaited<ReturnType<NonNullable<IndexerAdapter['refreshStatus']>>>;
   try {
     status = await adapter.refreshStatus();
   } catch (error: unknown) {
@@ -31,7 +36,13 @@ export async function preSearchRefresh(
     return { skip: false };
   }
 
+  const observed = status.unsatisfied !== undefined ? { unsatisfied: status.unsatisfied } : {};
   const existingSettings = (indexer.settings ?? {}) as Record<string, unknown>;
+
+  // isVip and classname derive from one MAM field, so the class arms run only when both arrived.
+  if (status.classname === undefined || status.isVip === undefined) {
+    return { skip: false, ...observed };
+  }
 
   if (status.classname === 'Mouse') {
     try {
@@ -52,5 +63,5 @@ export async function preSearchRefresh(
     }
   }
 
-  return { skip: false };
+  return { skip: false, ...observed };
 }

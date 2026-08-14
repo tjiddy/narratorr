@@ -13,6 +13,7 @@ import { IndexerAuthError, IndexerError, ProxyError } from './errors.js';
 import { createProxyAgent, resolveProxyIp } from './proxy.js';
 import { fetchWithOptionalDispatcher, type DispatcherFetchInit } from '../utils/network-service.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
+import { readUnsatisfiedStatus, type UnsatisfiedStatus } from '../utils/mam-unsatisfied.js';
 import { MAM_LANGUAGES } from '@shared/indexer-registry.js';
 import { getUserAgent } from '@shared/user-agent.js';
 import type { WedgeMode } from '@shared/schemas/indexer.js';
@@ -217,7 +218,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
 
   async test(): Promise<{ success: boolean; message?: string; ip?: string; warning?: string; metadata?: Record<string, unknown> }> {
     try {
-      const body = await this.fetchWithCookie(`${this.baseUrl}/jsonLoad.php`);
+      const body = await this.fetchWithCookie(`${this.baseUrl}/jsonLoad.php?snatch_summary`);
       if (body.includes('Error, you are not signed in')) {
         return { success: false, message: 'Authentication failed — check your MAM ID' };
       }
@@ -269,14 +270,16 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     return result;
   }
 
-  async refreshStatus(): Promise<{ isVip: boolean; classname: string } | null> {
+  /** Class and unsatisfied are observed independently; a classname-less response still delivers the pair. */
+  async refreshStatus(): Promise<{ isVip?: boolean; classname?: string; unsatisfied?: UnsatisfiedStatus } | null> {
     try {
-      const body = await this.fetchWithCookie(`${this.baseUrl}/jsonLoad.php`);
+      const body = await this.fetchWithCookie(`${this.baseUrl}/jsonLoad.php?snatch_summary`);
       const data = this.parseUserStatusBody(body);
-      if (!data.classname) return null;
+      const unsatisfied = readUnsatisfiedStatus(data.unsat);
+      if (!data.classname) return unsatisfied ? { unsatisfied } : null;
       const isVip = data.classname === 'VIP' || data.classname === 'Elite VIP';
       this.isVip = isVip;
-      return { isVip, classname: data.classname };
+      return { isVip, classname: data.classname, ...(unsatisfied !== null && { unsatisfied }) };
     } catch (error: unknown) {
       if (error instanceof IndexerError) {
         return null;

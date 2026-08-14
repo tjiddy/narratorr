@@ -56,6 +56,9 @@ export const searchResultSchema = z.object({
   isFreeleech: z.boolean().optional(),
   isVipOnly: z.boolean().optional(),
   format: z.string().optional(),
+  // A contract we own, so .optional() is correct here; the tolerant .nullish() belongs to the
+  // MAM response schema. Both halves are required together — a partial pair has no meaning.
+  unsatisfied: z.object({ count: z.number(), limit: z.number() }).optional(),
 });
 
 export const searchResponseSchema = z.object({

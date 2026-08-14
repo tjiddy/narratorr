@@ -223,3 +223,37 @@ export function recordSearchRelaxedHeldEvent(args: RecordSearchRelaxedHeldEventA
     reason: { relaxed_query: relaxedQuery, variant_tag: variantTag, release_title: releaseTitle },
   }).catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record search_relaxed_held event'));
 }
+
+export interface RecordGrabBlockedUnsatisfiedEventArgs {
+  eventHistory: EventHistoryService;
+  book: {
+    id: number;
+    title: string;
+    authors?: Array<{ name: string }> | null;
+    narrators?: Array<{ name: string }> | null;
+  };
+  /** The release the selector would have grabbed; every reason field is read off it. */
+  release: { title: string; indexer: string; unsatisfied: { count: number; limit: number } };
+  attempt?: number;
+  log: FastifyBaseLogger;
+}
+
+// Once per book per blocked search, never once per discarded release; the operator needs to see
+// why nothing was grabbed, so a scheduled cycle's silence is the failure mode to avoid.
+export function recordGrabBlockedUnsatisfiedEvent(args: RecordGrabBlockedUnsatisfiedEventArgs): void {
+  const { eventHistory, book, release, attempt, log } = args;
+  const { count, limit } = release.unsatisfied;
+  log.info({
+    bookId: book.id, title: book.title, ...(attempt !== undefined && { attempt }),
+    indexer: release.indexer, count, limit, releaseTitle: release.title,
+  }, 'Auto-grab withheld — indexer is at its unsatisfied limit');
+  eventHistory.create({
+    bookId: book.id,
+    bookTitle: book.title,
+    authorName: book.authors?.[0]?.name ?? null,
+    narratorName: book.narrators?.[0]?.name ?? null,
+    eventType: 'grab_blocked_unsatisfied',
+    source: 'auto',
+    reason: { indexer: release.indexer, count, limit, release_title: release.title },
+  }).catch((err: unknown) => log.warn({ error: serializeError(err) }, 'Failed to record grab_blocked_unsatisfied event'));
+}

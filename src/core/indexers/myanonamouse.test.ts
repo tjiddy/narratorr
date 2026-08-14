@@ -1665,6 +1665,118 @@ describe('MyAnonamouseIndexer', () => {
     });
   });
 
+  describe('#2322 — snatch_summary unsatisfied allowance', () => {
+    /** MSW matches jsonLoad.php regardless of query string, so the param must be asserted explicitly. */
+    function captureUserStatusUrl(body: Record<string, unknown>): { url: () => string } {
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json(body);
+        }),
+      );
+      return { url: () => capturedUrl };
+    }
+
+    it('test() requests jsonLoad.php with the snatch_summary parameter', async () => {
+      const captured = captureUserStatusUrl({ username: 'testuser', classname: 'VIP' });
+      await indexer.test();
+      expect(new URL(captured.url()).searchParams.has('snatch_summary')).toBe(true);
+    });
+
+    it('refreshStatus() requests jsonLoad.php with the snatch_summary parameter', async () => {
+      const captured = captureUserStatusUrl({ username: 'testuser', classname: 'VIP' });
+      await indexer.refreshStatus();
+      expect(new URL(captured.url()).searchParams.has('snatch_summary')).toBe(true);
+    });
+
+    it('test() reports the same success message and metadata keys on the wider response', async () => {
+      captureUserStatusUrl({
+        username: 'testuser', classname: 'VIP', wedges: 7,
+        unsat: { count: 139, limit: 150, size: 73954762929, red: false },
+        sSat: { count: 578, red: false, size: 459359749269 },
+      });
+
+      const result = await indexer.test();
+
+      expect(result.success).toBe(true);
+      expect(result.message).toBe('Connected as testuser');
+      expect(result.metadata).toEqual({ username: 'testuser', classname: 'VIP', isVip: true, wedges: 7 });
+    });
+
+    it('reports the observed pair alongside the class fields', async () => {
+      captureUserStatusUrl({ username: 'testuser', classname: 'VIP', unsat: { count: 139, limit: 150, red: false } });
+
+      expect(await indexer.refreshStatus()).toEqual({
+        isVip: true, classname: 'VIP', unsatisfied: { count: 139, limit: 150 },
+      });
+    });
+
+    it('reports the observed pair alone when classname is absent', async () => {
+      captureUserStatusUrl({ username: 'testuser', unsat: { count: 150, limit: 150 } });
+
+      const result = await indexer.refreshStatus();
+
+      expect(result).toEqual({ unsatisfied: { count: 150, limit: 150 } });
+      expect(result).not.toHaveProperty('classname');
+      expect(result).not.toHaveProperty('isVip');
+    });
+
+    it('returns null when neither group was observed', async () => {
+      captureUserStatusUrl({ username: 'testuser', unsat: { count: 5 } });
+
+      expect(await indexer.refreshStatus()).toBeNull();
+    });
+
+    describe('a non-valid unsat leaves the class fields untouched and reports no pair', () => {
+      const cases: Array<{ name: string; unsat: unknown }> = [
+        { name: 'absent', unsat: undefined },
+        { name: 'null', unsat: null },
+        { name: 'a string', unsat: '139/150' },
+        { name: 'missing limit', unsat: { count: 5 } },
+        { name: 'a zero limit', unsat: { count: 0, limit: 0 } },
+        { name: 'a negative limit', unsat: { count: 5, limit: -1 } },
+        { name: 'a null count', unsat: { count: null, limit: 150 } },
+        { name: 'a fractional count', unsat: { count: 1.5, limit: 150 } },
+      ];
+
+      for (const { name, unsat } of cases) {
+        it(`reports class fields only when unsat is ${name}`, async () => {
+          captureUserStatusUrl({ username: 'testuser', classname: 'Power User', ...(unsat !== undefined && { unsat }) });
+
+          const result = await indexer.refreshStatus();
+
+          expect(result).toEqual({ isVip: false, classname: 'Power User' });
+          expect(result).not.toHaveProperty('unsatisfied');
+        });
+      }
+    });
+
+    it('never synthesizes one class field without the other', async () => {
+      const bodies: Array<Record<string, unknown>> = [
+        { username: 'u', classname: 'VIP', unsat: { count: 1, limit: 150 } },
+        { username: 'u', unsat: { count: 1, limit: 150 } },
+        { username: 'u', classname: 'Mouse' },
+        { username: 'u' },
+      ];
+
+      for (const body of bodies) {
+        const idx = new MyAnonamouseIndexer({ mamId: 'test-mam-id', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 'active' });
+        captureUserStatusUrl(body);
+        const result = await idx.refreshStatus();
+        expect(('classname' in (result ?? {}))).toBe('isVip' in (result ?? {}));
+      }
+    });
+
+    it('still reports the Mouse class together with a valid pair', async () => {
+      captureUserStatusUrl({ username: 'u', classname: 'Mouse', unsat: { count: 150, limit: 150 } });
+
+      expect(await indexer.refreshStatus()).toEqual({
+        isVip: false, classname: 'Mouse', unsatisfied: { count: 150, limit: 150 },
+      });
+    });
+  });
+
   describe('#372 — test() Mouse warning', () => {
     it('returns success with warning when classname is Mouse', async () => {
       server.use(

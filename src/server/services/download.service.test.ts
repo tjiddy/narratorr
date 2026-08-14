@@ -1324,6 +1324,9 @@ describe('DownloadService', () => {
         bookService: { getById: ReturnType<typeof vi.fn> };
         settingsService: ReturnType<typeof createMockSettingsService>;
         retryBudget: unknown;
+        // retrySearch records held/blocked events through this; omitting it makes the recorder
+        // throw and every such outcome surface as retry_error instead.
+        eventHistory: { create: ReturnType<typeof vi.fn> };
         log: ReturnType<typeof createMockLogger>;
       };
 
@@ -1343,6 +1346,7 @@ describe('DownloadService', () => {
           bookService: { getById: vi.fn().mockResolvedValue({ id: 1, title: 'The Way of Kings', duration: 3600, path: null, author: { name: 'Sanderson' } }) },
           settingsService: createMockSettingsService(),
           retryBudget,
+          eventHistory: { create: vi.fn().mockResolvedValue({ id: 1 }) },
           log: retryLog,
         };
         retryServiceLog = createMockLogger();
@@ -1377,6 +1381,26 @@ describe('DownloadService', () => {
 
         expect(result.status).toBe('no_candidates');
         expect(chain.set).toHaveBeenCalledWith({ errorMessage: 'No viable candidates' });
+      });
+
+      // #2322 introduces no new RetryOutcome variant, so no new status can leak to routes/activity.
+      it('returns no_candidates and the existing errorMessage when every candidate is at the unsatisfied limit', async () => {
+        const failedDownload = { ...mockDownload, id: 1, clientStatus: 'failed' as const, pipelineStage: 'idle' as const };
+        const atLimit = {
+          title: 'MAM Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:00000000000000000000000000000000000000ff',
+          infoHash: 'mam123', size: 500000000, seeders: 5, indexer: 'MyAnonamouse', unsatisfied: { count: 150, limit: 150 },
+        };
+        mockRetryDeps.indexerSearchService.searchAllWithStatus.mockResolvedValue({ results: [atLimit], succeeded: 1, failed: 0 });
+
+        db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
+        const chain = mockDbChain();
+        db.update.mockReturnValue(chain);
+
+        const result = await retryService.retry(1);
+
+        expect(result.status).toBe('no_candidates');
+        expect(chain.set).toHaveBeenCalledWith({ errorMessage: 'No viable candidates' });
+        expect(mockRetryDeps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
       });
 
       // Any grab blocker maps to already_active without deleting or rewriting the failed row (#1857, #1861).
