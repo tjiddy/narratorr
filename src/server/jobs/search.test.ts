@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createMockLogger, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { runSearchJob, searchAllWanted } from './search.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -13,6 +13,8 @@ import { DuplicateDownloadError } from '../services/download.service.js';
 import { BYTES_PER_GB } from '@shared/constants.js';
 import { SearchLadderCooldown } from '../services/search-ladder-cooldown.js';
 import { RetryBudget } from '../services/retry-budget.js';
+import { SEARCH_DEADLINE_MS } from '@core/utils/constants.js';
+import { withSearchDeadline, _resetSearchRegistryForTesting } from '../services/search-deadline.js';
 
 vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
   ...(await importActual<typeof import('../utils/enrich-usenet-languages.js')>()),
@@ -1063,5 +1065,158 @@ describe('runSearchJob — #2322 unsatisfied limit', () => {
 
     expect(result.grabbed).toBe(1);
     expect(eventHistory.create).not.toHaveBeenCalled();
+  });
+});
+
+// #2310: the shared entry now bounds its own duration. These drive the real deadline by capturing
+// the timer it arms (a hand-rolled setTimeout, so a globalThis spy does see it).
+describe('search deadline expiry (#2310)', () => {
+  const NEVER = () => new Promise<never>(() => { /* the stalled leaf */ });
+
+  function captureDeadlineTimers() {
+    const armed: Array<() => void> = [];
+    const original = globalThis.setTimeout;
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, delay?: number, ...rest: unknown[]) => {
+      if (delay !== SEARCH_DEADLINE_MS) return original(fn as never, delay as never, ...rest as never[]);
+      armed.push(fn);
+      // A real, never-firing handle so the production clearTimeout stays valid.
+      const parked = original(() => { /* parked */ }, 2 ** 30);
+      parked.unref();
+      return parked;
+    }) as never);
+    return armed;
+  }
+
+  const fourBooks = () => [1, 2, 3, 4].map((id) => ({ id, title: `Book ${id}`, authors: [{ name: 'Author' }] }));
+  const hit = () => withStatus([mockResult(10, 'magnet:?xt=urn:btih:aaa')]);
+
+  beforeEach(() => {
+    _resetSearchRegistryForTesting();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    // The abandoned operations never settle, so their slots would leak into later suites.
+    _resetSearchRegistryForTesting();
+  });
+
+  it('lets runSearchJob reach books 3 and 4 after book 2 expires, counting neither searched nor grabbed for it', async () => {
+    const armed = captureDeadlineTimers();
+    const log = createMockLogger();
+    const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
+    const bookList = createMockBookListService(fourBooks());
+    const indexer = createMockIndexerService();
+    vi.mocked(indexer.searchAllWithStatus)
+      .mockResolvedValueOnce(hit())
+      .mockImplementationOnce(NEVER)
+      .mockResolvedValueOnce(hit())
+      .mockResolvedValueOnce(hit());
+    const download = createMockDownloadOrchestrator();
+
+    const running = runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
+    await vi.waitFor(() => expect(armed).toHaveLength(2));
+    armed[1]!();
+
+    await expect(running).resolves.toEqual({ searched: 3, grabbed: 3 });
+    expect(indexer.searchAllWithStatus).toHaveBeenCalledTimes(4);
+  });
+
+  it('logs the deadline shape from the scheduled catch, with budgetMs as a sibling field', async () => {
+    const armed = captureDeadlineTimers();
+    const log = createMockLogger();
+    const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
+    const bookList = createMockBookListService([{ id: 8, title: 'Stalled', authors: [{ name: 'Author' }] }]);
+    const indexer = createMockIndexerService();
+    vi.mocked(indexer.searchAllWithStatus).mockImplementationOnce(NEVER);
+
+    const running = runSearchJob(settings, bookList, indexer, createMockDownloadOrchestrator(), inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
+    await vi.waitFor(() => expect(armed).toHaveLength(1));
+    armed[0]!();
+    await running;
+
+    const call = log.warn.mock.calls.find(([, message]) => message === 'Search abandoned at its deadline');
+    expect(call).toBeDefined();
+    const fields = call![0] as Record<string, unknown>;
+    expect(fields).toMatchObject({ bookId: 8, title: 'Stalled', budgetMs: SEARCH_DEADLINE_MS });
+    const serialized = fields.error as Record<string, unknown>;
+    expect(serialized).not.toBeInstanceOf(Error);
+    expect(Object.keys(serialized).sort()).toEqual(['message', 'stack', 'type']);
+    expect(serialized.type).toBe('SearchDeadlineError');
+  });
+
+  it('keeps the ordinary scheduled failure log unchanged, with no budget field', async () => {
+    const log = createMockLogger();
+    const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
+    const bookList = createMockBookListService([{ id: 9, title: 'Broken', authors: [{ name: 'Author' }] }]);
+    const indexer = createMockIndexerService();
+    vi.mocked(indexer.searchAllWithStatus).mockRejectedValueOnce(new Error('Network error'));
+
+    await runSearchJob(settings, bookList, indexer, createMockDownloadOrchestrator(), inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
+
+    const call = log.warn.mock.calls.find(([, message]) => message === 'Search failed for book');
+    expect(call).toBeDefined();
+    expect(call![0]).not.toHaveProperty('budgetMs');
+  });
+
+  it('counts an expired book as an error in searchAllWanted and keeps searching', async () => {
+    const armed = captureDeadlineTimers();
+    const log = createMockLogger();
+    const settings = createMockSettingsService();
+    const bookList = createMockBookListService(fourBooks());
+    const indexer = createMockIndexerService();
+    vi.mocked(indexer.searchAllWithStatus)
+      .mockResolvedValueOnce(hit())
+      .mockImplementationOnce(NEVER)
+      .mockResolvedValueOnce(hit())
+      .mockResolvedValueOnce(hit());
+
+    const running = searchAllWanted(settings, bookList, indexer, createMockDownloadOrchestrator(), inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
+    await vi.waitFor(() => expect(armed).toHaveLength(2));
+    armed[1]!();
+
+    await expect(running).resolves.toEqual({ searched: 3, grabbed: 3, skipped: 0, errors: 1 });
+  });
+
+  it('logs the deadline shape from the manual catch too', async () => {
+    const armed = captureDeadlineTimers();
+    const log = createMockLogger();
+    const bookList = createMockBookListService([{ id: 21, title: 'Stalled', authors: [{ name: 'Author' }] }]);
+    const indexer = createMockIndexerService();
+    vi.mocked(indexer.searchAllWithStatus).mockImplementationOnce(NEVER);
+
+    const running = searchAllWanted(createMockSettingsService(), bookList, indexer, createMockDownloadOrchestrator(), inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
+    await vi.waitFor(() => expect(armed).toHaveLength(1));
+    armed[0]!();
+    await running;
+
+    const call = log.warn.mock.calls.find(([, message]) => message === 'Search abandoned at its deadline');
+    expect(call).toBeDefined();
+    expect(call![0]).toMatchObject({ bookId: 21, budgetMs: SEARCH_DEADLINE_MS });
+  });
+
+  it('keeps the ordinary manual failure log unchanged, with no budget field', async () => {
+    const log = createMockLogger();
+    const bookList = createMockBookListService([{ id: 22, title: 'Broken', authors: [{ name: 'Author' }] }]);
+    const indexer = createMockIndexerService();
+    vi.mocked(indexer.searchAllWithStatus).mockRejectedValueOnce(new Error('Network error'));
+
+    await searchAllWanted(createMockSettingsService(), bookList, indexer, createMockDownloadOrchestrator(), inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
+
+    const call = log.warn.mock.calls.find(([, message]) => message === 'Search failed for book');
+    expect(call).toBeDefined();
+    expect(call![0]).not.toHaveProperty('budgetMs');
+  });
+
+  it('counts an already-in-flight book in searched and skipped, never in errors', async () => {
+    const log = createMockLogger();
+    const bookList = createMockBookListService([{ id: 31, title: 'Busy', authors: [{ name: 'Author' }] }]);
+    const indexer = createMockIndexerService([mockResult(10, 'magnet:?xt=urn:btih:aaa')]);
+    // Occupy book 31's slot exactly as a concurrent caller would.
+    void withSearchDeadline({ budgetMs: 0, bookId: 31, log: inject<FastifyBaseLogger>(log) }, NEVER);
+
+    const result = await searchAllWanted(createMockSettingsService(), bookList, indexer, createMockDownloadOrchestrator(), inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
+
+    expect(result).toEqual({ searched: 1, grabbed: 0, skipped: 1, errors: 0 });
+    expect(indexer.searchAllWithStatus).not.toHaveBeenCalled();
   });
 });

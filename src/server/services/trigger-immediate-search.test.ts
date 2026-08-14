@@ -9,6 +9,7 @@ vi.mock('./search-pipeline.js', () => ({
 
 import { triggerImmediateSearch, runImmediateSearch, type ImmediateSearchDeps } from './trigger-immediate-search.js';
 import { searchAndGrabForBook, buildNarratorPriority } from './search-pipeline.js';
+import { SearchDeadlineError } from './search-deadline.js';
 
 function createMockDeps(): ImmediateSearchDeps {
   return {
@@ -127,6 +128,36 @@ describe('runImmediateSearch (awaitable)', () => {
       expect.objectContaining({ bookId: 11 }),
       'Search-immediately trigger failed',
     );
+  });
+
+  it('contains a deadline expiry and logs it distinguishably from an ordinary failure', async () => {
+    const deps = createMockDeps();
+    const log = { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() } as unknown as FastifyBaseLogger;
+    vi.mocked(searchAndGrabForBook).mockRejectedValueOnce(new SearchDeadlineError(1_500_000, 13));
+
+    await expect(runImmediateSearch({ id: 13, title: 'Stalled' }, deps, log)).resolves.toBeUndefined();
+
+    expect(vi.mocked(log.warn)).toHaveBeenCalledTimes(1);
+    const [fields, message] = vi.mocked(log.warn).mock.calls[0]!;
+    expect(message).toBe('Search-immediately trigger abandoned at its deadline');
+    expect(fields).toMatchObject({ bookId: 13, budgetMs: 1_500_000 });
+    // budgetMs/bookId are siblings: serializeError emits a fixed key set and `type` is the discriminator.
+    const serialized = (fields as { error: Record<string, unknown> }).error;
+    expect(serialized).not.toBeInstanceOf(Error);
+    expect(Object.keys(serialized).sort()).toEqual(['message', 'stack', 'type']);
+    expect(serialized.type).toBe('SearchDeadlineError');
+  });
+
+  it('logs an ordinary failure with no budget field', async () => {
+    const deps = createMockDeps();
+    const log = { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() } as unknown as FastifyBaseLogger;
+    vi.mocked(searchAndGrabForBook).mockRejectedValueOnce(new Error('indexer exploded'));
+
+    await runImmediateSearch({ id: 14, title: 'Ordinary' }, deps, log);
+
+    const [fields, message] = vi.mocked(log.warn).mock.calls[0]!;
+    expect(message).toBe('Search-immediately trigger failed');
+    expect(fields).not.toHaveProperty('budgetMs');
   });
 
   it('contains a settings-read rejection the same way', async () => {

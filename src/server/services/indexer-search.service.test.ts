@@ -896,6 +896,186 @@ describe('IndexerSearchService', () => {
     });
   });
 
+  // #2310 AC8/AC9/AC14: the outer search deadline is COMPOSED into each leg, never substituted for
+  // the per-indexer controller, and its abort must not degrade into an empty result set.
+  describe('outer deadline signal (#2310)', () => {
+    const mockIndexer2 = createMockDbIndexer({ id: 2, name: 'MAM', type: 'myanonamouse' });
+
+    function adapterCapturingSignal(results: Partial<SearchResult>[] = [{ title: 'Book1', indexer: 'ABB' }]) {
+      const seen: Array<AbortSignal | undefined> = [];
+      return {
+        seen,
+        adapter: {
+          search: vi.fn().mockImplementation((_q: string, options?: { signal?: AbortSignal }) => {
+            seen.push(options?.signal);
+            return Promise.resolve(searchResponse(results));
+          }),
+          test: vi.fn(),
+        },
+      };
+    }
+
+    describe('searchAllStreaming', () => {
+      it('composes the outer signal with the per-indexer controller in both directions', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const { seen, adapter } = adapterCapturingSignal();
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(adapter as never);
+
+        const perIndexer = new AbortController();
+        const outer = new AbortController();
+        const controllers = new Map([[mockIndexer.id, perIndexer]]);
+
+        await searchService.searchAllStreaming('test', undefined, controllers, { onComplete: vi.fn(), onError: vi.fn() }, outer.signal);
+
+        const composed = seen[0]!;
+        expect(composed).toBeInstanceOf(AbortSignal);
+        expect(composed).not.toBe(outer.signal);
+        expect(composed).not.toBe(perIndexer.signal);
+
+        outer.abort();
+        expect(composed.aborted).toBe(true);
+        // The outer deadline must not read as a per-indexer cancellation.
+        expect(perIndexer.signal.aborted).toBe(false);
+      });
+
+      it('does not abort the outer signal when one indexer is cancelled', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const { adapter } = adapterCapturingSignal();
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(adapter as never);
+
+        const perIndexer = new AbortController();
+        const outer = new AbortController();
+        await searchService.searchAllStreaming('test', undefined, new Map([[mockIndexer.id, perIndexer]]), { onComplete: vi.fn(), onError: vi.fn() }, outer.signal);
+
+        perIndexer.abort();
+        expect(outer.signal.aborted).toBe(false);
+      });
+
+      it('passes a valid, never-aborted signal through when there is no per-indexer controller', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const { seen, adapter } = adapterCapturingSignal();
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(adapter as never);
+
+        const outer = new AbortController();
+        await searchService.searchAllStreaming('test', undefined, new Map(), { onComplete: vi.fn(), onError: vi.fn() }, outer.signal);
+
+        expect(seen[0]).toBe(outer.signal);
+        expect(seen[0]!.aborted).toBe(false);
+      });
+
+      it('propagates an outer-deadline abort instead of degrading to an empty result set', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer, mockIndexer2]));
+        const outer = new AbortController();
+        const boom = new DOMException('aborted', 'AbortError');
+        const adapter = {
+          search: vi.fn().mockImplementation(() => { outer.abort(); return Promise.reject(boom); }),
+          test: vi.fn(),
+        };
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(adapter as never);
+
+        const onCancelled = vi.fn();
+        await expect(searchService.searchAllStreaming(
+          'test', undefined,
+          new Map([[mockIndexer.id, new AbortController()], [2, new AbortController()]]),
+          { onComplete: vi.fn(), onError: vi.fn(), onCancelled },
+          outer.signal,
+        )).rejects.toBe(boom);
+        expect(onCancelled).not.toHaveBeenCalled();
+      });
+
+      it('still routes a per-indexer cancellation to onCancelled while the others complete', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer, mockIndexer2]));
+        const cancelled = new AbortController();
+        const outer = new AbortController();
+        let call = 0;
+        vi.spyOn(service, 'getAdapter').mockImplementation(async () => {
+          call++;
+          if (call === 1) {
+            return { search: vi.fn().mockImplementation(() => { cancelled.abort(); return Promise.reject(new DOMException('aborted', 'AbortError')); }), test: vi.fn() } as never;
+          }
+          return { search: vi.fn().mockResolvedValue(searchResponse([{ title: 'Book2', indexer: 'MAM' }])), test: vi.fn() } as never;
+        });
+
+        const onComplete = vi.fn();
+        const onCancelled = vi.fn();
+        const results = await searchService.searchAllStreaming(
+          'test', undefined,
+          new Map([[mockIndexer.id, cancelled], [2, new AbortController()]]),
+          { onComplete, onError: vi.fn(), onCancelled },
+          outer.signal,
+        );
+
+        expect(onCancelled).toHaveBeenCalledWith(mockIndexer.id, mockIndexer.name);
+        expect(onComplete).toHaveBeenCalledWith(2, 'MAM', 1, expect.any(Number));
+        expect(results).toHaveLength(1);
+      });
+
+      it('still reports a genuine failure through onError under a live outer signal', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        vi.spyOn(service, 'getAdapter').mockResolvedValue({ search: vi.fn().mockRejectedValue(new Error('Timeout')), test: vi.fn() } as never);
+
+        const onError = vi.fn();
+        const results = await searchService.searchAllStreaming(
+          'test', undefined, new Map([[mockIndexer.id, new AbortController()]]),
+          { onComplete: vi.fn(), onError }, new AbortController().signal,
+        );
+
+        expect(onError).toHaveBeenCalledWith(mockIndexer.id, mockIndexer.name, 'Timeout', expect.any(Number));
+        expect(results).toEqual([]);
+      });
+    });
+
+    describe('searchAllWithStatus', () => {
+      it('forwards the signal into the options the adapter sees', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const { seen, adapter } = adapterCapturingSignal();
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(adapter as never);
+
+        const outer = new AbortController();
+        await searchService.searchAllWithStatus('test', { title: 'test', signal: outer.signal });
+
+        expect(seen[0]).toBe(outer.signal);
+      });
+
+      it('rejects instead of reporting an outage when the signal is aborted', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const outer = new AbortController();
+        const boom = new DOMException('aborted', 'AbortError');
+        vi.spyOn(service, 'getAdapter').mockResolvedValue({
+          search: vi.fn().mockImplementation(() => { outer.abort(); return Promise.reject(boom); }),
+          test: vi.fn(),
+        } as never);
+
+        await expect(searchService.searchAllWithStatus('test', { title: 'test', signal: outer.signal }))
+          .rejects.toBe(boom);
+      });
+
+      it('still counts a genuine failure under a live signal', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        vi.spyOn(service, 'getAdapter').mockResolvedValue({
+          search: vi.fn().mockRejectedValue(new Error('Timeout')), test: vi.fn(),
+        } as never);
+
+        const outcome = await searchService.searchAllWithStatus('test', { title: 'test', signal: new AbortController().signal });
+
+        expect(outcome).toEqual({ results: [], succeeded: 0, failed: 1 });
+      });
+
+      it('forwards the signal to the pre-search refresh hook', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const refreshStatus = vi.fn().mockResolvedValue(null);
+        vi.spyOn(service, 'getAdapter').mockResolvedValue({
+          search: vi.fn().mockResolvedValue(searchResponse([])), test: vi.fn(), refreshStatus,
+        } as never);
+
+        const outer = new AbortController();
+        await searchService.searchAllWithStatus('test', { title: 'test', signal: outer.signal });
+
+        expect(refreshStatus).toHaveBeenCalledWith(outer.signal);
+      });
+    });
+  });
+
   // Settlement counts distinguish answered zero from outage; [] alone would burn the ladder budget and cooldown.
   describe('searchAllWithStatus (#2104 D16)', () => {
     const secondIndexer = createMockDbIndexer({ id: 2, name: 'MAM', type: 'myanonamouse' });
