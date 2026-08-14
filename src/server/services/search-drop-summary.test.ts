@@ -13,12 +13,13 @@ function options(overrides: Partial<SearchFilterOptions> = {}): SearchFilterOpti
 }
 
 describe('summarizeDrops — ordering and totals', () => {
+  // The dominant reason sits LAST in the vocabulary, so only the count sort can put it first.
   it('sorts reasons by count descending and totals the emitted counts', () => {
-    const counts: SearchDropCounts = { 'below-min-size': 3, 'below-min-seeders': 5 };
+    const counts: SearchDropCounts = { 'reject-word-match': 3, 'language-mismatch': 5 };
 
-    const summary = summarizeDrops(counts, options({ minSeeders: 5, minDownloadSize: 50 }));
+    const summary = summarizeDrops(counts, options({ languages: ['english'] }));
 
-    expect(summary.reasons[0]!.reason).toBe('below-min-seeders');
+    expect(summary.reasons.map((r) => r.reason)).toEqual(['language-mismatch', 'reject-word-match']);
     expect(summary.total).toBe(8);
   });
 

@@ -4090,14 +4090,15 @@ describe('filterAndRankResults — drop accounting (#2325)', () => {
 describe('applyMultiPartFilterAndRank — emptied-set info log (#2325 AC6)', () => {
   const base = { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' };
 
+  // The dominant reason sits after below-min-size in the vocabulary, so only the count ranking names it.
   it('logs once at info with the dominant reason, its threshold, and the per-reason counts', () => {
     const log = createMockLogger();
 
     applyMultiPartFilterAndRank(
       [
         makeResult({ title: 'Tracker test', size: 5 * MB }),
-        makeResult({ title: 'Sample', size: 1 * MB }),
         makeResult({ title: 'German edition', size: 500 * MB, language: 'german' }),
+        makeResult({ title: 'Deutsche Ausgabe', size: 500 * MB, language: 'german' }),
       ],
       3600,
       { ...base, minDownloadSize: 50, languages: ['english'] },
@@ -4109,9 +4110,9 @@ describe('applyMultiPartFilterAndRank — emptied-set info log (#2325 AC6)', () 
       {
         inputCount: 3,
         droppedCount: 3,
-        reason: 'below-min-size',
-        threshold: '50 MB',
-        dropCounts: { 'below-min-size': 2, 'language-mismatch': 1 },
+        reason: 'language-mismatch',
+        threshold: 'english',
+        dropCounts: { 'language-mismatch': 2, 'below-min-size': 1 },
       },
       'All search results removed by quality filters',
     );
