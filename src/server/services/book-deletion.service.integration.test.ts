@@ -129,6 +129,25 @@ describe('BookDeletionService — durable artifacts commit or roll back together
       expect(rows[0]).toMatchObject({ title: 'The Reckoning', authorName: 'Jane Doe', importListId: listId, importListName: 'NYT Bestsellers' });
     });
 
+    it('hands the sweep only the missing ids, so the re-check never sees another status', async () => {
+      const missingA = await seed({ title: 'Gone A' });
+      const missingB = await seed({ title: 'Gone B', author: 'Ada Lovelace' });
+      const imported = await seed({ title: 'Imported', author: 'Grace Hopper', status: 'imported', fromList: false });
+      const wanted = await seed({ title: 'Wanted', author: 'Alan Turing', status: 'wanted', fromList: false });
+      const failed = await seed({ title: 'Failed', author: 'Ada Byron', status: 'failed', fromList: false });
+      const recheck = vi.spyOn(bookService, 'getStatusById');
+
+      const result = await service.deleteMissingBooks();
+
+      // Surviving rows alone prove nothing here: the per-book re-check skips a non-missing book
+      // whether or not the enumeration filtered. What the enumeration handed over is the observable.
+      expect(recheck.mock.calls.map((call) => call[0])).toEqual([missingA, missingB]);
+      expect(result).toEqual({ deleted: 2, failed: 0 });
+      for (const survivor of [imported, wanted, failed]) {
+        expect(await bookRow(survivor)).not.toBeNull();
+      }
+    });
+
     it('produces a field-for-field identical exclusion row on both deletion paths', async () => {
       const bulkBook = await seed({ title: 'The Reckoning', asin: ' b0abc12345 ' });
       await service.deleteMissingBooks();

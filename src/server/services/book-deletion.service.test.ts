@@ -28,6 +28,22 @@ const deletableBook = {
   narrators: [{ name: 'Michael Kramer' }],
 };
 
+/**
+ * A mock db that marks when its transaction promise RESOLVES, which is the only observation point
+ * that separates a post-commit effect from one issued at the end of the transaction callback.
+ * Statement issuance cannot: both orders look identical to an `invocationCallOrder` comparison.
+ */
+function tracingDb() {
+  const order: string[] = [];
+  const db = createMockDb();
+  db.transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+    const result = await cb(db);
+    order.push('tx-committed');
+    return result;
+  });
+  return { db, order };
+}
+
 function createService(opts?: {
   db?: ReturnType<typeof createMockDb>;
   bookService?: Partial<BookService>;
@@ -154,23 +170,26 @@ describe('BookDeletionService', () => {
       expect(bookService.deleteBookFiles).toHaveBeenCalledWith('/audiobooks/Sanderson/Way of Kings', '/audiobooks');
     });
 
-    it('cancels active downloads AFTER the commit, from the rows read inside it', async () => {
+    it('cancels active downloads after the transaction RESOLVES, from the rows read inside it', async () => {
       // `downloads.book_id` is ON DELETE SET NULL, so a post-commit lookup would find nothing and
       // the torrent would never be cancelled — the rows must be captured inside the transaction.
-      const cancel = vi.fn().mockResolvedValue(true);
+      // The observation point is the transaction's resolution, not the row delete's issuance:
+      // cancelling at the END of the transaction callback still precedes the commit while
+      // satisfying any issuance-ordered assertion.
+      const { db, order } = tracingDb();
+      const cancel = vi.fn(() => { order.push('cancel'); return Promise.resolve(true); });
       const getActiveByBookId = vi.fn().mockResolvedValue([{ id: 10 }]);
-      const { service, db, bookService } = createService({
+      const { service, bookService } = createService({
+        db,
         downloadService: { getActiveByBookId },
         downloadOrchestrator: { cancel },
       });
 
       await service.deleteBook(1, { deleteFiles: false });
 
+      expect(order).toEqual(['tx-committed', 'cancel']);
       const lookupOrder = getActiveByBookId.mock.invocationCallOrder[0]!;
-      const deleteOrder = (bookService.delete as Mock).mock.invocationCallOrder[0]!;
-      const cancelOrder = cancel.mock.invocationCallOrder[0]!;
-      expect(lookupOrder).toBeLessThan(deleteOrder);
-      expect(deleteOrder).toBeLessThan(cancelOrder);
+      expect(lookupOrder).toBeLessThan((bookService.delete as Mock).mock.invocationCallOrder[0]!);
       expect(cancel).toHaveBeenCalledWith(10);
       expect(getActiveByBookId).toHaveBeenCalledWith(1, db);
     });
@@ -189,15 +208,9 @@ describe('BookDeletionService', () => {
     });
   });
 
-  describe('post-commit logging hand-back', () => {
+  describe('post-commit effects, observed against the transaction resolving', () => {
     it('emits the exclusion and event records only after the transaction resolves', async () => {
-      const order: string[] = [];
-      const db = createMockDb();
-      db.transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
-        const result = await cb(db);
-        order.push('tx-committed');
-        return result;
-      });
+      const { db, order } = tracingDb();
       const exclusionLog = vi.fn(() => { order.push('exclusion-log'); });
       const eventLog = vi.fn(() => { order.push('event-log'); });
       const { service } = createService({
@@ -211,6 +224,19 @@ describe('BookDeletionService', () => {
 
       expect(order).toEqual(['tx-committed', 'exclusion-log', 'event-log']);
       expect(exclusionLog).toHaveBeenCalledWith({ row: { id: 99 }, inserted: true });
+    });
+
+    it('starts cover-cache cleanup only after the transaction resolves', async () => {
+      // Filesystem work inside a libSQL transaction blocks every other write in the process, and
+      // an issuance-ordered assertion cannot tell the two placements apart.
+      const { db, order } = tracingDb();
+      (cleanCoverCache as Mock).mockImplementationOnce(() => { order.push('cover-cache'); return Promise.resolve(); });
+      const { service } = createService({ db });
+
+      await service.deleteBook(1, { deleteFiles: false });
+
+      expect(order).toEqual(['tx-committed', 'cover-cache']);
+      expect(cleanCoverCache).toHaveBeenCalledWith(1, '/test-config', expect.anything());
     });
 
     it('emits none of the success records when the transaction rolls back', async () => {
@@ -774,6 +800,22 @@ describe('BookDeletionService.deleteMissingBooks — the sweep (#2329)', () => {
 
       expect(result).toEqual({ deleted: 1, failed: 0 });
       expect((bookService.delete as Mock).mock.calls.map((c) => c[0])).toEqual([1]);
+    });
+
+    it.each([
+      ['file_deletion_failed', { outcome: 'file_deletion_failed' as const, error: 'Failed to delete book files from disk' }],
+      ['path_outside_library', { outcome: 'path_outside_library' as const, error: '/elsewhere is not inside library root' }],
+    ])('counts a %s disk outcome as failed and warns, should it ever escape deleteFiles: false', async (outcome, result) => {
+      // Unreachable through the sweep's own inputs — the disk arm needs `deleteFiles: true` — so
+      // the arm is stubbed. AC7 still specifies the bucket, and mis-bucketing it under-reports
+      // the operator-visible failure count.
+      const { service, log } = sweep([1, 2]);
+      vi.spyOn(service, 'deleteBook')
+        .mockResolvedValueOnce(result)
+        .mockResolvedValueOnce({ outcome: 'deleted', bookTitle: 'Book 2' });
+
+      expect(await service.deleteMissingBooks()).toEqual({ deleted: 1, failed: 1 });
+      expect(log.warn).toHaveBeenCalledWith({ bookId: 1, outcome }, 'Unexpected disk outcome sweeping missing books');
     });
 
     it('counts a not_found race in neither bucket', async () => {
