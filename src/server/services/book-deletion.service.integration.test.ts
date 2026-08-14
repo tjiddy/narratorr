@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -271,7 +271,7 @@ describe('BookDeletionService — durable artifacts commit or roll back together
 
       await expect(service.deleteBook(failing, { deleteFiles: false })).rejects.toThrow('books table locked');
 
-      const messages = () => log.info.mock.calls.map((c) => c[1]);
+      const messages = () => (log.info as Mock).mock.calls.map((c: unknown[]) => c[1]);
       expect(messages()).not.toContain('Import list exclusion recorded');
       expect(messages()).not.toContain('Recorded import list exclusion for deleted book');
       expect(messages()).not.toContain('Event recorded');
