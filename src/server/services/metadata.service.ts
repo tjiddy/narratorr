@@ -16,6 +16,8 @@ import {
   type SearchBooksResult,
 } from '@core/index.js';
 import { filterByLanguage } from '@core/utils/index.js';
+// Direct path, not the barrel: `src/core/utils/index.ts` is Vite-facing and deliberately curated.
+import { IntervalGate } from '@core/utils/interval-gate.js';
 import { parseWordList, matchesWord } from '@shared/parse-word-list.js';
 import type { SettingsService } from './settings.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
@@ -30,23 +32,14 @@ export type { ResolveBookInput } from './metadata-resolve-book.js';
 
 const DEFAULT_THROTTLE_MS = 200;
 
-class RequestThrottle {
-  private lastRequest = 0;
-
-  constructor(private minIntervalMs: number = DEFAULT_THROTTLE_MS) {}
-
-  async acquire(): Promise<void> {
-    const now = Date.now();
-    const elapsed = now - this.lastRequest;
-    if (elapsed < this.minIntervalMs) {
-      await new Promise(resolve => setTimeout(resolve, this.minIntervalMs - elapsed));
-    }
-    this.lastRequest = Date.now();
-  }
-}
-
 export interface MetadataServiceConfig {
   audibleRegion?: string;
+  /**
+   * Test-only escape hatch for suites that issue concurrent lookups and would otherwise pay the
+   * genuine production floor. Never surfaced as a user setting — see `MAM_MIN_REQUEST_INTERVAL_MS`
+   * for why these stay constants.
+   */
+  throttleIntervalMs?: number;
 }
 
 // Deliberately narrower than NARRATOR_PLACEHOLDERS: widening this set changes the
@@ -76,12 +69,15 @@ export class MetadataService {
 
   private providers: MetadataSearchProvider[] = [];
   private audnexus: MetadataEnrichmentProvider;
-  private throttle = new RequestThrottle();
+  // One floor for every provider this instance talks to, and per-instance for the same reason the
+  // chapter cache is: an Audible region is an instance, not a process.
+  private readonly throttle: IntervalGate;
   private rateLimitUntil: Map<string, number> = new Map();
   private chapterCorroborator: ChapterCorroborator;
 
   constructor(private log: FastifyBaseLogger, config?: MetadataServiceConfig, private settingsService?: SettingsService) {
     const region = config?.audibleRegion ?? process.env.AUDIBLE_REGION ?? 'us';
+    this.throttle = new IntervalGate(config?.throttleIntervalMs ?? DEFAULT_THROTTLE_MS);
 
     for (const [type, factory] of Object.entries(METADATA_SEARCH_PROVIDER_FACTORIES)) {
       const provider = factory({ region });
