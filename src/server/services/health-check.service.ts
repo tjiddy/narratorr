@@ -5,6 +5,9 @@ import type { IndexerService } from './indexer.service.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
+import { describeNotifierDelivery } from './notifier-failure-state.js';
+import type { EventPayload } from '@core/index.js';
+import type { HealthState, HealthCheckTarget, HealthCheckResult } from '@shared/health-types.js';
 import { inProgressDownloadCondition } from '../utils/download-state.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { mapHardcoverError } from '../utils/hardcover-error.js';
@@ -16,21 +19,9 @@ import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
 import { resolveMutagenDetection } from '@core/utils/mutagen-resolver.js';
 
 
-export type HealthState = 'healthy' | 'warning' | 'error';
-
-export type HealthCheckTarget =
-  | { kind: 'indexer'; id: number }
-  | { kind: 'download-client'; id: number }
-  | { kind: 'settings'; path: string }
-  | { kind: 'route'; path: string };
-
-export interface HealthCheckResult {
-  checkName: string;
-  state: HealthState;
-  message?: string | undefined;
-  target?: HealthCheckTarget | undefined;
-  link?: { url: string; label: string } | undefined;
-}
+// One definition, in @shared, so a new target arm cannot reach the wire without the
+// dashboard's exhaustive switch failing to compile.
+export type { HealthState, HealthCheckTarget, HealthCheckResult } from '@shared/health-types.js';
 
 export interface SystemDeps {
   fsAccess: (path: string, mode?: number) => Promise<void>;
@@ -56,7 +47,7 @@ function isNetworkBackedCheck(checkName: string): boolean {
 // Other targets can collide, so singleton checkName is their identity; HealthDashboard.cardKey mirrors this rule.
 function trackingKey(result: HealthCheckResult): string {
   const target = result.target;
-  if (target?.kind === 'indexer' || target?.kind === 'download-client') {
+  if (target?.kind === 'indexer' || target?.kind === 'download-client' || target?.kind === 'notifier') {
     return `${target.kind}:${target.id}`;
   }
   return result.checkName;
@@ -135,6 +126,7 @@ export class HealthCheckService {
     const checks = [
       () => this.checkIndexers(),
       () => this.checkDownloadClients(),
+      () => this.checkNotifiers(),
       () => this.checkLibraryRoot(),
       () => this.checkDiskSpace(),
       () => this.checkFfmpeg(),
@@ -166,16 +158,22 @@ export class HealthCheckService {
       if (passes < required || result.state === notifiedState) continue;
 
       // Use the confirming pass's current name and diagnostic, not the first observation's stale text.
+      const payload: EventPayload = {
+        event: 'on_health_issue',
+        health: {
+          checkName: result.checkName,
+          previousState: notifiedState,
+          currentState: result.state,
+          message: result.message,
+        },
+      };
+      // A notifier is never a recipient of an announcement about itself. The id comes from
+      // the target, never from parsing the mutable, non-unique checkName.
+      const target = result.target;
       fireAndForget(
-        this.notifierService.notify('on_health_issue', {
-          event: 'on_health_issue',
-          health: {
-            checkName: result.checkName,
-            previousState: notifiedState,
-            currentState: result.state,
-            message: result.message,
-          },
-        }),
+        target?.kind === 'notifier'
+          ? this.notifierService.notify('on_health_issue', payload, { excludeNotifierId: target.id })
+          : this.notifierService.notify('on_health_issue', payload),
         this.log,
         'Failed to send health issue notification',
       );
@@ -265,6 +263,28 @@ export class HealthCheckService {
           target,
         });
       }
+    }
+
+    return results;
+  }
+
+  // Report from OBSERVED send outcomes, never by probing: every notifier adapter's test() is
+  // literally send(), so probing on the */5 cron would mail the operator ~288 times a day.
+  private async checkNotifiers(): Promise<HealthCheckResult[]> {
+    const all = await this.notifierService.getAll();
+    const results: HealthCheckResult[] = [];
+
+    for (const notifier of all) {
+      // An operator-disabled notifier produces no entry at all, which is what keeps
+      // "I turned this off" distinguishable from "narratorr stopped this".
+      if (!notifier.enabled) continue;
+      const delivery = describeNotifierDelivery(this.notifierService.getFailureSnapshot(notifier.id));
+      results.push({
+        checkName: `notifier:${notifier.name}`,
+        state: delivery.state,
+        message: delivery.message,
+        target: { kind: 'notifier', id: notifier.id },
+      });
     }
 
     return results;

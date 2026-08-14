@@ -6,7 +6,7 @@ import type {
   ConnectorTarget,
   ConnectorTestResult,
 } from './types.js';
-import { ConnectorRequestError } from './errors.js';
+import { ConnectorRequestError, connectorStatusError, type ConnectorStatusPresentation } from './errors.js';
 import { getErrorMessage } from '@shared/error-message.js';
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { CONNECTOR_TIMEOUT_MS } from '../utils/constants.js';
@@ -24,23 +24,16 @@ const absLibrariesResponseSchema = z.object({
   }).passthrough()),
 }).passthrough();
 
+const ABS_PRESENTATION: ConnectorStatusPresentation = {
+  authField: 'apiKey',
+  authFieldError: 'Invalid API key',
+  authMessage: (status) => `Authentication failed (HTTP ${status})`,
+  notFoundMessage: (status) => `Library not found (HTTP ${status})`,
+  notFoundFieldError: 'Library not found',
+};
+
 function classifyStatus(status: number, notFoundField: string | null): ConnectorRequestError {
-  if (status === 401 || status === 403) {
-    return new ConnectorRequestError(`Authentication failed (HTTP ${status})`, {
-      retryable: false,
-      fieldErrors: { apiKey: 'Invalid API key' },
-    });
-  }
-  if (status === 404 && notFoundField) {
-    return new ConnectorRequestError(`Library not found (HTTP ${status})`, {
-      retryable: false,
-      fieldErrors: { [notFoundField]: 'Library not found' },
-    });
-  }
-  if (status >= 500) {
-    return new ConnectorRequestError(`Server error (HTTP ${status})`, { retryable: true });
-  }
-  return new ConnectorRequestError(`Request failed (HTTP ${status})`, { retryable: false });
+  return connectorStatusError(status, notFoundField, ABS_PRESENTATION);
 }
 
 function connectionError(error: unknown): ConnectorRequestError {

@@ -1,6 +1,7 @@
 import { createTransport } from 'nodemailer';
-import type { NotifierAdapter, NotificationEvent, EventPayload } from './types.js';
+import type { NotifierAdapter, NotifierResult, NotificationEvent, EventPayload } from './types.js';
 import { formatEventMessage } from './types.js';
+import { classifyFailure, describeSmtpError } from '../utils/failure-classification.js';
 import { getErrorMessage } from '@shared/error-message.js';
 
 export interface EmailConfig {
@@ -27,7 +28,7 @@ export class EmailNotifier implements NotifierAdapter {
 
   constructor(private config: EmailConfig) {}
 
-  async send(event: NotificationEvent, payload: EventPayload): Promise<{ success: boolean; message?: string }> {
+  async send(event: NotificationEvent, payload: EventPayload): Promise<NotifierResult> {
     try {
       const transport = createTransport({
         host: this.config.host,
@@ -45,18 +46,19 @@ export class EmailNotifier implements NotifierAdapter {
 
       return { success: true };
     } catch (error: unknown) {
-      const msg = getErrorMessage(error);
-      if (msg.includes('authentication') || msg.includes('auth') || msg.includes('AUTH')) {
-        return { success: false, message: 'SMTP authentication failed' };
-      }
-      if (msg.includes('TLS') || msg.includes('ssl') || msg.includes('certificate')) {
-        return { success: false, message: `TLS connection failed: ${msg}` };
-      }
-      return { success: false, message: msg };
+      // Key on the SMTP reply code and Nodemailer's own error code, never on the message —
+      // reply text varies by server and locale (#2312 AC3).
+      const failure = describeSmtpError(error);
+      const verdict = classifyFailure(failure);
+      return {
+        success: false,
+        message: verdict.terminal ? verdict.reason : getErrorMessage(error),
+        failure,
+      };
     }
   }
 
-  async test(): Promise<{ success: boolean; message?: string }> {
+  async test(): Promise<NotifierResult> {
     const testPayload: EventPayload = {
       event: 'on_grab',
       book: { title: 'Test Book', author: 'Test Author' },

@@ -10,6 +10,11 @@ import type { IndexerService } from './indexer.service.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
+import type { NotifierRow } from './types.js';
+import {
+  NOTIFIER_WARN_AFTER_CONSECUTIVE_FAILURES,
+  type NotifierFailureSnapshot,
+} from './notifier-failure-state.js';
 import type { Db } from '@db/index.js';
 
 vi.mock('../jobs/version-check.js', () => ({
@@ -33,6 +38,18 @@ vi.mock('@core/utils/mutagen-resolver.js', () => ({
       : null,
   ),
 }));
+
+function pristineSnapshot(overrides?: Partial<NotifierFailureSnapshot>): NotifierFailureSnapshot {
+  return {
+    state: 'ok',
+    consecutiveFailures: 0,
+    nextAttemptAt: 0,
+    suppressedCount: 0,
+    suppressedSince: null,
+    reason: null,
+    ...overrides,
+  };
+}
 
 function createService(overrides?: {
   indexer?: Partial<IndexerService>;
@@ -60,8 +77,12 @@ function createService(overrides?: {
   const settings = overrides?.settings ?? createMockSettingsService({
     processing: {},
   });
+  // checkNotifiers reads this double in EVERY suite, so its defaults are production behaviour
+  // for all of them. "No notifiers configured" adds no entries to any existing roster.
   const notifier = {
     notify: vi.fn().mockResolvedValue(undefined),
+    getAll: vi.fn().mockResolvedValue([]),
+    getFailureSnapshot: vi.fn().mockReturnValue(pristineSnapshot()),
     ...overrides?.notifier,
   };
   const db = overrides?.db ?? {
@@ -1830,6 +1851,364 @@ describe('HealthCheckService', () => {
 
         expect(results.find((r) => r.checkName === 'indexer:NZB')).toMatchObject({ state: 'error', message: 'down' });
         expect(healthNotifications(notifier, 'indexer:NZB')).toHaveLength(0);
+      });
+    });
+  });
+
+  // #2312 — the notifier health check. Reports from OBSERVED send outcomes; never probes.
+  describe('#2312 — checkNotifiers', () => {
+    const EMAIL = { id: 7, name: 'Email', enabled: true };
+
+    function withNotifiers(
+      rows: Array<{ id: number; name: string; enabled: boolean }>,
+      snapshots: Record<number, NotifierFailureSnapshot> = {},
+    ) {
+      return createService({
+        notifier: {
+          getAll: vi.fn().mockResolvedValue(rows),
+          getFailureSnapshot: vi.fn((id: number) => snapshots[id] ?? pristineSnapshot()),
+        },
+      });
+    }
+
+    describe('AC7 — the check never sends a message', () => {
+      it('calls neither send nor test on any adapter across repeated passes', async () => {
+        const send = vi.fn();
+        const test = vi.fn();
+        const { service } = createService({
+          notifier: {
+            getAll: vi.fn().mockResolvedValue([EMAIL, { id: 8, name: 'Discord', enabled: true }]),
+            getFailureSnapshot: vi.fn().mockReturnValue(pristineSnapshot()),
+            getAdapter: vi.fn().mockReturnValue({ type: 'email', send, test }),
+            test,
+          } as unknown as Partial<NotifierService>,
+        });
+
+        await runPasses(service, 3);
+
+        expect(send).toHaveBeenCalledTimes(0);
+        expect(test).toHaveBeenCalledTimes(0);
+      });
+    });
+
+    describe('AC6 — state mapping', () => {
+      it('reports a notifier that has never fired as healthy', async () => {
+        const { service } = withNotifiers([EMAIL]);
+        const results = await service.runAllChecks();
+        expect(results.find((r) => r.checkName === 'notifier:Email')).toEqual({
+          checkName: 'notifier:Email',
+          state: 'healthy',
+          message: undefined,
+          target: { kind: 'notifier', id: 7 },
+        });
+      });
+
+      it('stays healthy one below the warn threshold', async () => {
+        const { service } = withNotifiers([EMAIL], {
+          7: pristineSnapshot({
+            state: 'backing-off',
+            consecutiveFailures: NOTIFIER_WARN_AFTER_CONSECUTIVE_FAILURES - 1,
+            reason: 'the server reported a temporary error',
+          }),
+        });
+        const results = await service.runAllChecks();
+        expect(results.find((r) => r.checkName === 'notifier:Email')).toMatchObject({ state: 'healthy' });
+      });
+
+      it('stays healthy below the threshold but names the notifications it dropped', async () => {
+        const suppressedSince = Date.UTC(2026, 7, 13, 9, 30, 0);
+        const { service } = withNotifiers([EMAIL], {
+          7: pristineSnapshot({
+            state: 'backing-off',
+            consecutiveFailures: 1,
+            reason: 'the server reported a temporary error',
+            suppressedCount: 3,
+            suppressedSince,
+          }),
+        });
+
+        const results = await service.runAllChecks();
+        const check = results.find((r) => r.checkName === 'notifier:Email');
+
+        expect(check).toMatchObject({ state: 'healthy', target: { kind: 'notifier', id: 7 } });
+        expect(check?.message).toBe(`3 notifications suppressed since ${new Date(suppressedSince).toISOString()}.`);
+      });
+
+      it('warns at exactly the warn threshold', async () => {
+        const { service } = withNotifiers([EMAIL], {
+          7: pristineSnapshot({
+            state: 'backing-off',
+            consecutiveFailures: NOTIFIER_WARN_AFTER_CONSECUTIVE_FAILURES,
+            reason: 'the server reported a temporary error',
+          }),
+        });
+        const results = await service.runAllChecks();
+        expect(results.find((r) => r.checkName === 'notifier:Email')).toMatchObject({
+          state: 'warning',
+          target: { kind: 'notifier', id: 7 },
+        });
+      });
+
+      it('errors on a terminal stop, naming the reason in operator language', async () => {
+        const { service } = withNotifiers([EMAIL], {
+          7: pristineSnapshot({ state: 'stopped', consecutiveFailures: 1, reason: 'authentication rejected — check credentials' }),
+        });
+
+        const results = await service.runAllChecks();
+        const check = results.find((r) => r.checkName === 'notifier:Email');
+
+        expect(check).toMatchObject({ state: 'error', target: { kind: 'notifier', id: 7 } });
+        expect(check?.message).toContain('authentication rejected — check credentials');
+        expect(check?.message).not.toMatch(/\b(535|554|401)\b/);
+      });
+
+      it('names how many notifications were suppressed', async () => {
+        const suppressedSince = Date.UTC(2026, 7, 13, 9, 30, 0);
+        const { service } = withNotifiers([EMAIL], {
+          7: pristineSnapshot({ state: 'stopped', consecutiveFailures: 1, reason: 'nope', suppressedCount: 4, suppressedSince }),
+        });
+
+        const results = await service.runAllChecks();
+        expect(results.find((r) => r.checkName === 'notifier:Email')?.message)
+          .toContain(`4 notifications suppressed since ${new Date(suppressedSince).toISOString()}`);
+      });
+
+      it('emits NO entry for an operator-disabled notifier, even one that is stopped', async () => {
+        const { service } = withNotifiers([{ id: 7, name: 'Email', enabled: false }], {
+          7: pristineSnapshot({ state: 'stopped', reason: 'nope' }),
+        });
+        const results = await service.runAllChecks();
+        expect(results.filter((r) => r.checkName.startsWith('notifier:'))).toEqual([]);
+      });
+
+      it('reports healthy for an enabled notifier subscribed to no events', async () => {
+        const { service } = withNotifiers([{ id: 9, name: 'Silent', enabled: true }]);
+        const results = await service.runAllChecks();
+        expect(results.find((r) => r.checkName === 'notifier:Silent')).toMatchObject({ state: 'healthy' });
+      });
+
+      it('adds nothing to the roster when no notifiers are configured', async () => {
+        const { service } = withNotifiers([]);
+        const results = await service.runAllChecks();
+        expect(results.filter((r) => r.checkName.startsWith('notifier:'))).toEqual([]);
+        expect(results.find((r) => r.checkName === 'library-root')).toBeDefined();
+      });
+    });
+
+    describe('aggregate state', () => {
+      it('returns error when a notifier is terminally stopped and nothing else is unhealthy', async () => {
+        const { service } = withNotifiers([EMAIL], {
+          7: pristineSnapshot({ state: 'stopped', consecutiveFailures: 1, reason: 'nope' }),
+        });
+        await service.runAllChecks();
+        expect(service.getAggregateState()).toBe('error');
+      });
+
+      it('returns warning for a warned transient streak', async () => {
+        const { service } = withNotifiers([EMAIL], {
+          7: pristineSnapshot({ state: 'backing-off', consecutiveFailures: NOTIFIER_WARN_AFTER_CONSECUTIVE_FAILURES, reason: 'boom' }),
+        });
+        await service.runAllChecks();
+        expect(service.getAggregateState()).toBe('warning');
+      });
+    });
+
+    describe('AC11 — identity', () => {
+      it('gives two same-named notifiers two distinct entries and two distinct targets', async () => {
+        const { service } = withNotifiers(
+          [{ id: 7, name: 'Email', enabled: true }, { id: 8, name: 'Email', enabled: true }],
+          { 8: pristineSnapshot({ state: 'stopped', consecutiveFailures: 1, reason: 'nope' }) },
+        );
+
+        const results = (await service.runAllChecks()).filter((r) => r.checkName === 'notifier:Email');
+
+        expect(results).toHaveLength(2);
+        expect(results.map((r) => r.target)).toEqual([{ kind: 'notifier', id: 7 }, { kind: 'notifier', id: 8 }]);
+        expect(results.map((r) => r.state)).toEqual(['healthy', 'error']);
+      });
+
+      it('tracks by id, so two same-named notifiers announce independently', async () => {
+        const { service, notifier } = withNotifiers(
+          [{ id: 7, name: 'Email', enabled: true }, { id: 8, name: 'Email', enabled: true }],
+          {
+            7: pristineSnapshot({ state: 'stopped', consecutiveFailures: 1, reason: 'first' }),
+            8: pristineSnapshot({ state: 'stopped', consecutiveFailures: 1, reason: 'second' }),
+          },
+        );
+
+        await service.runAllChecks();
+
+        // A checkName-keyed tracker would collapse these into a single announcement.
+        expect(healthNotifications(notifier, 'notifier:Email')).toHaveLength(2);
+      });
+
+      it('does not re-announce after a rename when the state has not changed', async () => {
+        const snapshots = { 7: pristineSnapshot({ state: 'stopped', consecutiveFailures: 1, reason: 'nope' }) };
+        const rows = [{ id: 7, name: 'Email', enabled: true }];
+        const { service, notifier } = createService({
+          notifier: {
+            getAll: vi.fn(async (): Promise<NotifierRow[]> => rows as unknown as NotifierRow[]),
+            getFailureSnapshot: vi.fn((id: number) => snapshots[id as 7] ?? pristineSnapshot()),
+          },
+        });
+
+        await service.runAllChecks();
+        rows[0]!.name = 'Renamed Email';
+        await service.runAllChecks();
+
+        const announced = healthNotifications(notifier).filter((h) => h.checkName.startsWith('notifier:'));
+        expect(announced).toHaveLength(1);
+        expect(announced[0]!.checkName).toBe('notifier:Email');
+      });
+    });
+
+    describe('hysteresis', () => {
+      it('announces a notifier error on the FIRST pass — notifier checks are not network-backed', async () => {
+        const { service, notifier } = withNotifiers([EMAIL], {
+          7: pristineSnapshot({ state: 'stopped', consecutiveFailures: 1, reason: 'nope' }),
+        });
+
+        await service.runAllChecks();
+
+        // indexer:/download-client: need three passes; a "make it consistent" edit reds here.
+        expect(healthNotifications(notifier, 'notifier:Email')).toEqual([
+          expect.objectContaining({ previousState: 'healthy', currentState: 'error' }),
+        ]);
+      });
+
+      it('bounds the announce → fail → announce cycle for a permanently-failing notifier', async () => {
+        const { service, notifier } = withNotifiers([EMAIL], {
+          7: pristineSnapshot({ state: 'stopped', consecutiveFailures: 1, reason: 'nope' }),
+        });
+
+        await runPasses(service, 5);
+
+        expect(healthNotifications(notifier, 'notifier:Email')).toHaveLength(1);
+      });
+
+      it('announces the resolved transition when the notifier recovers', async () => {
+        const snapshots: Record<number, NotifierFailureSnapshot> = {
+          7: pristineSnapshot({ state: 'stopped', consecutiveFailures: 1, reason: 'nope' }),
+        };
+        const { service, notifier } = createService({
+          notifier: {
+            getAll: vi.fn().mockResolvedValue([EMAIL]),
+            getFailureSnapshot: vi.fn((id: number) => snapshots[id] ?? pristineSnapshot()),
+          },
+        });
+
+        await service.runAllChecks();
+        snapshots[7] = pristineSnapshot();
+        await service.runAllChecks();
+
+        expect(healthNotifications(notifier, 'notifier:Email')).toEqual([
+          expect.objectContaining({ previousState: 'healthy', currentState: 'error' }),
+          expect.objectContaining({ previousState: 'error', currentState: 'healthy' }),
+        ]);
+      });
+    });
+
+    describe('AC14 — a notifier is never told about itself', () => {
+      it('excludes the source id from the dispatch for a terminal stop', async () => {
+        const { service, notifier } = withNotifiers([EMAIL], {
+          7: pristineSnapshot({ state: 'stopped', consecutiveFailures: 1, reason: 'nope' }),
+        });
+
+        await service.runAllChecks();
+
+        expect(notifier.notify).toHaveBeenCalledWith(
+          'on_health_issue',
+          expect.objectContaining({ health: expect.objectContaining({ checkName: 'notifier:Email' }) }),
+          { excludeNotifierId: 7 },
+        );
+      });
+
+      it('excludes the source id at exactly the warn threshold, where the gate is already open', async () => {
+        const { service, notifier } = withNotifiers([EMAIL], {
+          7: pristineSnapshot({
+            state: 'backing-off',
+            consecutiveFailures: NOTIFIER_WARN_AFTER_CONSECUTIVE_FAILURES,
+            reason: 'the server reported a temporary error',
+          }),
+        });
+
+        await service.runAllChecks();
+
+        const call = (notifier.notify as ReturnType<typeof vi.fn>).mock.calls
+          .find((c: unknown[]) => (c[1] as { health: { checkName: string } }).health.checkName === 'notifier:Email');
+        expect(call?.[2]).toEqual({ excludeNotifierId: 7 });
+      });
+
+      it('excludes the source id on the RESOLVED transition too', async () => {
+        const snapshots: Record<number, NotifierFailureSnapshot> = {
+          7: pristineSnapshot({ state: 'stopped', consecutiveFailures: 1, reason: 'nope' }),
+        };
+        const { service, notifier } = createService({
+          notifier: {
+            getAll: vi.fn().mockResolvedValue([EMAIL]),
+            getFailureSnapshot: vi.fn((id: number) => snapshots[id] ?? pristineSnapshot()),
+          },
+        });
+
+        await service.runAllChecks();
+        snapshots[7] = pristineSnapshot();
+        await service.runAllChecks();
+
+        const calls = (notifier.notify as ReturnType<typeof vi.fn>).mock.calls
+          .filter((c: unknown[]) => (c[1] as { health: { checkName: string } }).health.checkName === 'notifier:Email');
+        expect(calls.map((c: unknown[]) => c[2])).toEqual([{ excludeNotifierId: 7 }, { excludeNotifierId: 7 }]);
+      });
+
+      it('does not exclude anything for a non-notifier check', async () => {
+        const { service, notifier } = createService({
+          settings: createMockSettingsService({ library: { ...DEFAULT_SETTINGS.library, path: '' } }),
+        });
+
+        await service.runAllChecks();
+
+        const call = (notifier.notify as ReturnType<typeof vi.fn>).mock.calls
+          .find((c: unknown[]) => (c[1] as { health: { checkName: string } }).health.checkName === 'library-root');
+        expect(call).toHaveLength(2);
+      });
+    });
+
+    describe('error isolation', () => {
+      it('keeps every other check when checkNotifiers throws, and logs a serialized error', async () => {
+        const { service, log } = createService({
+          notifier: { getAll: vi.fn().mockRejectedValue(new Error('notifier table gone')) },
+        });
+
+        const results = await service.runAllChecks();
+
+        expect(results.map((r) => r.checkName)).toEqual(
+          expect.arrayContaining(['library-root', 'disk-space', 'ffmpeg', 'stuck-downloads']),
+        );
+        const errorSpy = log.error as ReturnType<typeof vi.fn>;
+        const logged = errorSpy.mock.calls.find((c: unknown[]) => c[1] === 'Health check failed')?.[0] as { error: unknown };
+        // A raw Error satisfies toMatchObject({ message }); `type` is what it lacks.
+        expect(logged.error).not.toBeInstanceOf(Error);
+        expect(logged.error).toMatchObject({ type: 'Error', message: 'notifier table gone' });
+      });
+    });
+
+    describe('coalescing', () => {
+      it('includes checkNotifiers results in a trailing pass begun after the caller registered', async () => {
+        const rows = [{ id: 7, name: 'Email', enabled: true }];
+        const { service } = createService({
+          notifier: {
+            getAll: vi.fn(async (): Promise<NotifierRow[]> => rows.slice() as unknown as NotifierRow[]),
+            getFailureSnapshot: vi.fn().mockReturnValue(pristineSnapshot()),
+          },
+        });
+
+        const first = service.runAllChecks();
+        rows.push({ id: 8, name: 'Second', enabled: true });
+        const overlapping = service.runAllChecks();
+
+        await first;
+        const results = await overlapping;
+        expect(results.filter((r) => r.checkName.startsWith('notifier:')).map((r) => r.checkName))
+          .toEqual(['notifier:Email', 'notifier:Second']);
       });
     });
   });
