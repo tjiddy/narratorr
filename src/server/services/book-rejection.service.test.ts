@@ -101,6 +101,9 @@ const importedBook = createMockDbBook({
 describe('BookRejectionService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // clearAllMocks preserves implementations, so a `mockRejectedValue` armed by one test leaks
+    // into every test after it; re-establish the default here rather than per-test.
+    (preserveBookCover as Mock).mockResolvedValue(undefined);
   });
 
   describe('rejectAsWrongRelease', () => {
@@ -424,6 +427,105 @@ describe('BookRejectionService', () => {
 
       await expect(service.rejectAsWrongRelease(42)).rejects.toThrow('blacklist error');
     });
+  });
+
+  describe('claim-key enrolment (#2301)', () => {
+    it('sweeps the path the row names after the blacklist await, not the one read before it', async () => {
+      const { service, bookService } = createService();
+      (bookService.getById as Mock)
+        .mockResolvedValueOnce(importedBook)
+        .mockResolvedValue({ ...importedBook, path: '/audiobooks/Author/Moved' });
+
+      await service.rejectAsWrongRelease(42);
+
+      expect(bookService.deleteBookFiles).toHaveBeenCalledWith('/audiobooks/Author/Moved', '/audiobooks');
+      expect(preserveBookCover).toHaveBeenCalledWith('/audiobooks/Author/Moved', 42, '/test-config', expect.anything());
+    });
+
+    it('stops entirely — no reset, no sweep — when a replacement release took the book', async () => {
+      const { service, db, bookService, log } = createService();
+      (bookService.getById as Mock)
+        .mockResolvedValueOnce(importedBook)
+        .mockResolvedValue({ ...importedBook, path: '/audiobooks/Author/Replacement', lastGrabGuid: 'guid-b', lastGrabInfoHash: 'hash-b' });
+
+      await service.rejectAsWrongRelease(42);
+
+      expect(db.update).not.toHaveBeenCalled();
+      expect(bookService.deleteBookFiles).not.toHaveBeenCalled();
+      // The half the operator asked for still happened.
+      expect(blacklistAndRetrySearch).toHaveBeenCalledTimes(1);
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          rejected: { guid: 'guid-abc', infoHash: 'hash-123' },
+          current: expect.objectContaining({ guid: 'guid-b', infoHash: 'hash-b' }),
+        }),
+        expect.stringMatching(/no longer on this book/i),
+      );
+    });
+
+    it('stops when the row is no longer imported even though the identifiers match', async () => {
+      const { service, db, bookService } = createService();
+      (bookService.getById as Mock)
+        .mockResolvedValueOnce(importedBook)
+        .mockResolvedValue({ ...importedBook, status: 'wanted' });
+
+      await service.rejectAsWrongRelease(42);
+
+      expect(db.update).not.toHaveBeenCalled();
+      expect(bookService.deleteBookFiles).not.toHaveBeenCalled();
+    });
+
+    it('stops when the row was deleted outright during the await', async () => {
+      const { service, db, bookService } = createService();
+      (bookService.getById as Mock).mockResolvedValueOnce(importedBook).mockResolvedValue(null);
+
+      await expect(service.rejectAsWrongRelease(42)).resolves.toBeUndefined();
+
+      expect(db.update).not.toHaveBeenCalled();
+      expect(bookService.deleteBookFiles).not.toHaveBeenCalled();
+    });
+
+    it('still runs the idempotent reset, and skips the sweep, when the fresh path is null', async () => {
+      const { service, db, bookService } = createService();
+      (bookService.getById as Mock)
+        .mockResolvedValueOnce(importedBook)
+        .mockResolvedValue({ ...importedBook, path: null });
+
+      await service.rejectAsWrongRelease(42);
+
+      expect(db.update).toHaveBeenCalled();
+      expect(bookService.deleteBookFiles).not.toHaveBeenCalled();
+    });
+
+    it('skips the sweep when another row owns the locked folder, keeping the reset', async () => {
+      const { service, db, bookService, log } = createService();
+      (bookService.getById as Mock).mockResolvedValue(importedBook);
+      db.select.mockReturnValue(mockDbChain([{ id: 9, title: 'Other Claim', path: '/audiobooks/Author/Book' }]));
+
+      await service.rejectAsWrongRelease(42);
+
+      expect(db.update).toHaveBeenCalled();
+      expect(bookService.deleteBookFiles).not.toHaveBeenCalled();
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ ownerBookId: 9 }),
+        expect.stringMatching(/another book owns this folder/i),
+      );
+    });
+
+    it('warns and continues — book still reset — when the path churns past the re-acquire bound', async () => {
+      let call = 0;
+      const { service, db, bookService, log } = createService();
+      (bookService.getById as Mock).mockImplementation(async () => ({ ...importedBook, path: `/audiobooks/churn/${call++}` }));
+
+      await expect(service.rejectAsWrongRelease(42)).resolves.toBeUndefined();
+
+      expect(db.update).toHaveBeenCalled();
+      expect(bookService.deleteBookFiles).not.toHaveBeenCalled();
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42 }),
+        expect.stringMatching(/kept changing/i),
+      );
+    }, 5000);
   });
 
   describe('#1960 companion-ebook reconcile', () => {

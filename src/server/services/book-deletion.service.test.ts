@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
-import { createMockDb, createMockLogger, inject } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { createMockDbBook } from '../__tests__/factories.js';
 import { BookDeletionService } from './book-deletion.service.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
@@ -391,6 +391,90 @@ describe('BookDeletionService', () => {
       const result = await service.deleteBook(1, { deleteFiles: false });
 
       expect(result).toEqual({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
+    });
+  });
+
+  describe('claim-key enrolment (#2301)', () => {
+    it('sweeps the path the row names NOW, not the one hydrated before the awaits', async () => {
+      const { service, bookService } = createService({
+        bookService: {
+          getById: vi.fn()
+            .mockResolvedValueOnce({ ...deletableBook, path: '/audiobooks/Sanderson/Stale' })
+            .mockResolvedValue({ ...deletableBook, path: '/audiobooks/Sanderson/Fresh' }),
+        },
+      });
+
+      await service.deleteBook(1, { deleteFiles: true });
+
+      expect(bookService.deleteBookFiles).toHaveBeenCalledWith('/audiobooks/Sanderson/Fresh', '/audiobooks');
+    });
+
+    it('refuses the disk sweep — and still deletes the book — when another row owns the folder', async () => {
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([{ id: 8, title: 'Other Claim', path: '/audiobooks/Sanderson/Way of Kings' }]));
+      const { service, bookService, log } = createService({ db });
+
+      const result = await service.deleteBook(1, { deleteFiles: true });
+
+      expect(bookService.deleteBookFiles).not.toHaveBeenCalled();
+      expect(result).toEqual({ outcome: 'deleted', bookTitle: 'The Way of Kings', fileSummary: { deletedManaged: 0, preservedForeign: [] } });
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1, ownerBookId: 8 }),
+        expect.stringMatching(/another book owns this folder/i),
+      );
+    });
+
+    it('keeps the refusal scoped to the disk sweep — downloads, event and cover cache still run', async () => {
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([{ id: 8, title: 'Other Claim', path: '/audiobooks/Sanderson/Way of Kings' }]));
+      const active = [{ id: 55 }];
+      const { service, downloadOrchestrator, eventHistory } = createService({
+        db,
+        downloadService: { getActiveByBookId: vi.fn().mockResolvedValue(active) },
+      });
+
+      await service.deleteBook(1, { deleteFiles: true });
+
+      expect(downloadOrchestrator.cancel).toHaveBeenCalledWith(55);
+      expect(eventHistory?.create).toHaveBeenCalled();
+      expect(cleanCoverCache).toHaveBeenCalledWith(1, '/test-config', expect.anything());
+    });
+
+    it('skips the disk step but still deletes the row when the fresh path is null', async () => {
+      const { service, bookService } = createService({
+        bookService: {
+          getById: vi.fn()
+            .mockResolvedValueOnce(deletableBook)
+            .mockResolvedValue({ ...deletableBook, path: null }),
+        },
+      });
+
+      const result = await service.deleteBook(1, { deleteFiles: true });
+
+      expect(bookService.deleteBookFiles).not.toHaveBeenCalled();
+      expect(result).toEqual({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
+      expect(bookService.delete).toHaveBeenCalled();
+    });
+
+    it('takes file_deletion_failed WITHOUT deleting the row when the path churns past the bound', async () => {
+      let call = 0;
+      const { service, bookService } = createService({
+        bookService: { getById: vi.fn().mockImplementation(async () => ({ ...deletableBook, path: `/audiobooks/churn/${call++}` })) },
+      });
+
+      const result = await service.deleteBook(1, { deleteFiles: true });
+
+      expect(result).toEqual({ outcome: 'file_deletion_failed', error: 'Failed to delete book files from disk' });
+      expect(bookService.delete).not.toHaveBeenCalled();
+      expect(bookService.deleteBookFiles).not.toHaveBeenCalled();
+    }, 5000);
+
+    it('runs no ownership query at all when deleteFiles is false', async () => {
+      const { service, db } = createService();
+
+      await service.deleteBook(1, { deleteFiles: false });
+
+      expect(db.select).not.toHaveBeenCalled();
     });
   });
 

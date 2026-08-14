@@ -33,6 +33,11 @@ describe('toShortErrorText (#2159)', () => {
         .toBe('CONFLICT: Target folder already exists');
     });
 
+    it.each(['TARGET_OCCUPIED', 'STALE_PATH'] as const)('prefixes the %s RenameError code the same way', (code) => {
+      expect(toShortErrorText(new RenameError('Target path "/library/Y" is a non-empty directory', code)))
+        .toBe(`${code}: Target path "/library/Y" is a non-empty directory`);
+    });
+
     it('prefixes a RetagError with its code', () => {
       expect(toShortErrorText(new RetagError('PATH_MISSING', 'Book folder no longer exists on disk')))
         .toBe('PATH_MISSING: Book folder no longer exists on disk');

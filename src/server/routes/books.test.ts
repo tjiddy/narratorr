@@ -1371,6 +1371,19 @@ describe('books routes', () => {
       });
     });
 
+    // Both codes carry no `details`, so the route's structured branch does not fire and they
+    // reach the global handler. Remove either from the RenameError entry in error-handler.ts and
+    // these go red with a 500 — the whole reason the codes are registered there.
+    it.each(['TARGET_OCCUPIED', 'STALE_PATH'] as const)('returns a flat 409 for %s', async (code) => {
+      (services.rename.planRename as Mock).mockRejectedValue(new RenameError('Target path "/library/Y" is a non-empty directory', code));
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/rename/preview' });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Target path "/library/Y" is a non-empty directory' });
+      expect(JSON.parse(res.payload)).not.toHaveProperty('code');
+    });
+
     it('returns 400 for NaN id', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/books/abc/rename/preview' });
       expect(res.statusCode).toBe(400);
@@ -1439,6 +1452,16 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(409);
       expect(JSON.parse(res.payload)).toEqual({ error: 'Target path belongs to another book' });
+    });
+
+    it.each(['TARGET_OCCUPIED', 'STALE_PATH'] as const)('returns a flat 409 for %s', async (code) => {
+      (services.rename.renameBook as Mock).mockRejectedValue(new RenameError(`refused: ${code}`, code));
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload)).toEqual({ error: `refused: ${code}` });
+      expect(JSON.parse(res.payload)).not.toHaveProperty('code');
     });
 
     it('returns 400 for NaN id', async () => {

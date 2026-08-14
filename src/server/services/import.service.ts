@@ -182,7 +182,7 @@ export class ImportService {
       });
 
       // Delete the old folder only after DB commit; otherwise rollback can strand its path.
-      await cleanupOldBookPath({ bookPath: book.path, targetPath, libraryRoot: librarySettings.path, log: this.log });
+      await cleanupOldBookPath({ bookPath: book.path, targetPath, libraryRoot: librarySettings.path, log: this.log, db: this.db });
 
       const ffprobePath = resolveFfprobePathFromSettings(await resolveFfmpegPath());
       await notifyPhase(callbacks, 'fetching_metadata');

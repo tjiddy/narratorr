@@ -9,6 +9,8 @@ import type { ImportListExclusionService, ExclusionRecordResult } from './import
 import type { BookEventRow } from './types.js';
 import { basename } from 'node:path';
 import { PathOutsideLibraryError } from '../utils/paths.js';
+import { ClaimKeyChurnError, withFreshClaimLock } from '../utils/claim-lock.js';
+import { findOtherPathOwner } from '../utils/path-identity.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { cleanCoverCache } from '../utils/cover-cache.js';
 import { config } from '../config.js';
@@ -50,6 +52,11 @@ interface CommittedDeletion {
  */
 class BookRowVanishedError extends Error {}
 
+/** Either the deletion aborted with its own outcome, or the transaction landed. */
+type StagedDeletion =
+  | { failure: BookDeletionResult }
+  | { committed: CommittedDeletion; fileSummary: FileDeletionSummary | undefined };
+
 /**
  * Disk deletion must succeed before DB mutation. Every durable artifact — the import-list
  * exclusion, the `deleted` event and the row itself — then commits together or not at all, so a
@@ -73,33 +80,77 @@ export class BookDeletionService {
     const book = await this.bookService.getById(id);
 
     // Abort before any DB mutation if on-disk deletion fails.
-    let fileSummary: FileDeletionSummary | undefined;
-    if (deleteFiles) {
-      if (!book) return { outcome: 'not_found' };
-      if (book.path) {
-        const diskResult = await this.deleteFilesFromDisk(id, book.path);
-        if ('failure' in diskResult) return diskResult.failure;
-        fileSummary = diskResult.summary;
-      }
-    }
+    const staged = deleteFiles
+      ? book
+        ? await this.sweepAndCommitUnderClaim(id, book)
+        : { failure: { outcome: 'not_found' } as const }
+      : await this.commitStage(id, book, undefined);
+    if ('failure' in staged) return staged.failure;
 
-    let committed: CommittedDeletion;
-    try {
-      committed = await this.commitDeletion(id, book);
-    } catch (error: unknown) {
-      if (error instanceof BookRowVanishedError) return { outcome: 'not_found' };
-      throw error;
-    }
-
-    this.reportCommitted(id, committed);
-    await this.cancelDownloads(id, committed.activeDownloads);
+    this.reportCommitted(id, staged.committed);
+    await this.cancelDownloads(id, staged.committed.activeDownloads);
 
     cleanCoverCache(id, config.configPath, this.log).catch((error: unknown) => {
       this.log.warn({ bookId: id, error: serializeError(error) }, 'Failed to clean cover cache during deletion');
     });
 
     this.log.info({ id, deleteFiles, title: book?.title ?? null }, 'Book deleted');
-    return { outcome: 'deleted', bookTitle: book?.title ?? '', ...(fileSummary ? { fileSummary } : {}) };
+    return { outcome: 'deleted', bookTitle: book?.title ?? '', ...(staged.fileSummary ? { fileSummary: staged.fileSummary } : {}) };
+  }
+
+  /**
+   * The disk sweep and the row delete share one claim on the folder, so a rename cannot land in it
+   * between them, and the path swept is the one the row names NOW — `deleteBook` hydrates its row,
+   * awaits, and would otherwise sweep from that stale read even with no second request in flight.
+   */
+  private async sweepAndCommitUnderClaim(id: number, book: BookWithAuthor): Promise<StagedDeletion> {
+    try {
+      return await withFreshClaimLock(
+        async () => (await this.bookService.getById(id))?.path ?? null,
+        async (lockedPath) => {
+          if (lockedPath === null) return this.commitStage(id, book, undefined);
+          const disk = await this.sweepClaimedFolder(id, lockedPath);
+          if ('failure' in disk) return disk;
+          return this.commitStage(id, book, disk.summary);
+        },
+      );
+    } catch (error: unknown) {
+      if (!(error instanceof ClaimKeyChurnError)) throw error;
+      // Sustained churn takes the existing pre-commit failure arm, so the book is never deleted
+      // with its files stranded.
+      this.log.error({ bookId: id, error: serializeError(error) }, 'Book path kept changing during deletion — aborting before DB delete');
+      return { failure: { outcome: 'file_deletion_failed', error: 'Failed to delete book files from disk' } };
+    }
+  }
+
+  /**
+   * Refusing when a different row owns the folder is not merely defensive: a database predating
+   * #2301 can already hold two rows naming one folder, and sweeping for one destroys the other's
+   * content with no race required. The book still deletes — the files simply belong elsewhere.
+   */
+  private async sweepClaimedFolder(
+    id: number,
+    lockedPath: string,
+  ): Promise<{ failure: BookDeletionResult } | { summary: FileDeletionSummary }> {
+    const owner = await findOtherPathOwner(this.db, lockedPath, id);
+    if (owner) {
+      this.log.warn({ bookId: id, path: lockedPath, ownerBookId: owner.id }, 'Skipped book file deletion — another book owns this folder');
+      return { summary: { deletedManaged: 0, preservedForeign: [] } };
+    }
+    return this.deleteFilesFromDisk(id, lockedPath);
+  }
+
+  private async commitStage(
+    id: number,
+    book: BookWithAuthor | null,
+    fileSummary: FileDeletionSummary | undefined,
+  ): Promise<StagedDeletion> {
+    try {
+      return { committed: await this.commitDeletion(id, book), fileSummary };
+    } catch (error: unknown) {
+      if (error instanceof BookRowVanishedError) return { failure: { outcome: 'not_found' } };
+      throw error;
+    }
   }
 
   /**
