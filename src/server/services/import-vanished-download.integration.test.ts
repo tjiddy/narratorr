@@ -237,16 +237,30 @@ describe('Auto import of a vanished download row (#2307, DB-backed)', () => {
     createSpy.mockRestore();
   });
 
-  it('a book deleted after the job was read records no event but still fails the job cleanly', async () => {
+  /**
+   * Deleting the book BEFORE the drain nulls `import_jobs.book_id` via FK set-null, so the worker
+   * reads a null-book job and `AutoImportAdapter` rejects it before the orchestrator is reached —
+   * the degraded arm never runs here. The sibling case, a stale non-null id surviving in the
+   * worker's already-loaded job while `getById` returns null, only exists inside that in-memory
+   * window and is covered deterministically in import-orchestrator.degraded.test.ts
+   * ('skips the event and notification when the book was concurrently deleted').
+   */
+  it('a book deleted before the drain nulls the job book id and fails it without any event', async () => {
     const { bookId, jobId } = await seedJob();
-    // import_jobs.book_id is ON DELETE set null, so the worker's in-memory copy outlives the row.
     await db.delete(books).where(eq(books.id, bookId));
+    const createSpy = vi.spyOn(eventHistory, 'create');
 
     await runWorker();
 
     const [jobRow] = await db.select().from(importJobs).where(eq(importJobs.id, jobId)).limit(1);
+    expect(jobRow!.bookId).toBeNull();
     expect(jobRow!.status).toBe('failed');
+    expect(JSON.parse(jobRow!.lastError!).message).toContain('requires a bookId');
     expect(await db.select().from(bookEvents)).toHaveLength(0);
+    // A zero row count alone cannot separate a deliberate skip from an FK-rejected insert the
+    // helper's `.catch` swallowed; the no-call assertion is what rules the second one out.
+    expect(createSpy).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalled();
+    createSpy.mockRestore();
   });
 });

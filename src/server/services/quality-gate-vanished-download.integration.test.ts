@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -26,7 +26,7 @@ describe('Quality gate: download row vanished before evaluation (#2307, DB-backe
   let log: ReturnType<typeof createMockLogger>;
   let bookService: BookService;
   let eventHistory: EventHistoryService;
-  let createSpy: ReturnType<typeof vi.spyOn>;
+  let createSpy: MockInstance<EventHistoryService['create']>;
 
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), 'qg-vanished-'));
@@ -71,13 +71,27 @@ describe('Quality gate: download row vanished before evaluation (#2307, DB-backe
     return (log.error as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
   }
 
+  /**
+   * `recordDownloadFailedEvent` detaches `eventHistory.create` and `processOneDownload` resolves
+   * without it, so flushing a turn only guesses at the libSQL round trip. The spy records the write
+   * itself: awaiting it settles the insert with no timeout, and is a no-op resolve on the branches
+   * that correctly issue none. `allSettled` because a rejected insert is a row assertion's job to
+   * catch, not this helper's.
+   */
+  async function settleEventWrites(): Promise<void> {
+    await Promise.allSettled(createSpy.mock.results.map((result) => result.value));
+  }
+
   it('live book: persists one download_failed row keyed to the book, with a NULL download id', async () => {
     const bookId = await seedBook();
 
     await createOrchestrator().processOneDownload(VANISHED_DOWNLOAD_ID, {
       bookId, releaseTitle: 'The Stranger [2026] [MP3-64]',
     });
-    await new Promise((r) => setImmediate(r));
+    // Anchors the settle above: without a recorded write there is nothing to await, and a
+    // zero-row result below would be indistinguishable from an insert that never happened.
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    await settleEventWrites();
 
     const rows = await db.select().from(bookEvents);
     expect(rows).toHaveLength(1);
@@ -100,7 +114,7 @@ describe('Quality gate: download row vanished before evaluation (#2307, DB-backe
     await createOrchestrator().processOneDownload(VANISHED_DOWNLOAD_ID, {
       bookId, releaseTitle: 'The Stranger [2026]',
     });
-    await new Promise((r) => setImmediate(r));
+    await settleEventWrites();
 
     expect(await db.select().from(bookEvents)).toHaveLength(0);
     // Row-counting alone would also pass against an implementation whose FK-rejected insert
@@ -130,7 +144,7 @@ describe('Quality gate: download row vanished before evaluation (#2307, DB-backe
     await expect(createOrchestrator(failingHandle).processOneDownload(VANISHED_DOWNLOAD_ID, {
       bookId, releaseTitle: 'The Stranger [2026]',
     })).resolves.toBeUndefined();
-    await new Promise((r) => setImmediate(r));
+    await settleEventWrites();
 
     expect(await db.select().from(bookEvents)).toHaveLength(0);
     expect(createSpy).not.toHaveBeenCalled();
@@ -150,7 +164,7 @@ describe('Quality gate: download row vanished before evaluation (#2307, DB-backe
     }).returning({ id: downloads.id });
 
     await createOrchestrator().processOneDownload(row!.id, { bookId, releaseTitle: 'The Stranger [2026]' });
-    await new Promise((r) => setImmediate(r));
+    await settleEventWrites();
 
     expect(log.error).not.toHaveBeenCalled();
     expect(log.warn).toHaveBeenCalledWith({ downloadId: row!.id }, expect.stringContaining('not found or not completed'));
@@ -160,7 +174,7 @@ describe('Quality gate: download row vanished before evaluation (#2307, DB-backe
 
   it('no book provenance: errors on the release title alone and records nothing', async () => {
     await createOrchestrator().processOneDownload(VANISHED_DOWNLOAD_ID, { bookId: null, releaseTitle: 'Orphan Release' });
-    await new Promise((r) => setImmediate(r));
+    await settleEventWrites();
 
     expect(await db.select().from(bookEvents)).toHaveLength(0);
     expect(createSpy).not.toHaveBeenCalled();
