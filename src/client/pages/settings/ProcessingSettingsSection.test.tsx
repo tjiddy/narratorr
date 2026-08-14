@@ -263,6 +263,28 @@ describe('ProcessingSettingsSection', () => {
       expect(screen.queryByText('Failed to load post processing settings.')).not.toBeInTheDocument();
       expect(screen.queryByText('Failed to load custom script settings.')).not.toBeInTheDocument();
     });
+
+    // The shared query means the sibling test above recovers this card too, so it cannot see
+    // this card's own handler go missing. Only clicking Custom script's button can.
+    it("recovers from the Custom script card's own Retry control", async () => {
+      mockApi.getSettings
+        .mockRejectedValueOnce(new Error('settings unreadable'))
+        .mockResolvedValue(createMockSettings({ processing: { postProcessingScript: '/srv/hook.sh', postProcessingScriptTimeout: 300 } }));
+      mockApi.getFfmpegStatus.mockResolvedValue({ detected: true, version: '8.0.1', path: '/usr/bin/ffmpeg' });
+      mockApi.getMutagenStatus.mockResolvedValue({ detected: true, version: '1.47.0', path: '/usr/bin/python3' });
+      const user = userEvent.setup();
+
+      renderWithProviders(<ProcessingSettingsSection />);
+      await waitFor(() => expect(screen.getByText('Failed to load custom script settings.')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Retry loading custom script settings' }));
+
+      // A real path, not the schema default empty string: only a refetch this click caused
+      // produces it.
+      await waitFor(() => expect(screen.getByLabelText('Post-processing script')).toHaveValue('/srv/hook.sh'));
+      expect(screen.queryByText('Failed to load custom script settings.')).not.toBeInTheDocument();
+      expect(mockApi.getSettings).toHaveBeenCalledTimes(2);
+    });
   });
 
 });
