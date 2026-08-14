@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import type * as NetworkServiceModule from '../utils/network-service.js';
@@ -15,6 +15,8 @@ vi.mock('../utils/network-service.js', async (importActual) => {
 import { MyAnonamouseIndexer } from './myanonamouse.js';
 import { IndexerAuthError, IndexerError, ProxyError } from './errors.js';
 import { filterByLanguage } from '../utils/filters.js';
+import { mamThrottle, _resetMamThrottleForTesting } from './mam-throttle.js';
+import { INDEXER_TIMEOUT_MS, MAM_MIN_REQUEST_INTERVAL_MS } from '../utils/constants.js';
 
 const MAM_BASE = 'https://mam.test';
 
@@ -46,7 +48,15 @@ describe('MyAnonamouseIndexer', () => {
   let indexer: MyAnonamouseIndexer;
 
   beforeEach(() => {
+    // The gate is module-level state; without this, one case's floor delays and misattributes the next.
+    _resetMamThrottleForTesting();
     indexer = new MyAnonamouseIndexer({ mamId: 'test-mam-id', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 'active' });
+  });
+
+  // This suite has no other clearing hook, so an acquire spy would otherwise survive into the case
+  // that must measure the real gate.
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   describe('properties', () => {
@@ -2164,6 +2174,209 @@ describe('MyAnonamouseIndexer', () => {
       const result = await indexer.test();
       expect(result.success).toBe(true);
       expect(result.metadata).not.toHaveProperty('wedges');
+    });
+  });
+
+  // Wiring only: the gate's own timing lives in mam-throttle.test.ts, which can use fake timers
+  // without stalling MSW.
+  describe('#2309 — request-throttle wiring', () => {
+    function stubSearch(onHit?: () => void) {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          onHit?.();
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+    }
+
+    function stubStatus(onHit?: () => void) {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          onHit?.();
+          return HttpResponse.json({ username: 'u', classname: 'VIP' });
+        }),
+      );
+    }
+
+    /** Holds the gate open so the caller can observe what has and has not happened meanwhile. */
+    function gateAcquire() {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      const spy = vi.spyOn(mamThrottle, 'acquire').mockReturnValue(held);
+      return { spy, release };
+    }
+
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 25));
+
+    describe('every transport boundary acquires', () => {
+      it('search() acquires once, with the adapter base URL and no signal of its own', async () => {
+        const acquire = vi.spyOn(mamThrottle, 'acquire');
+        stubSearch();
+
+        await indexer.search('test');
+
+        expect(acquire).toHaveBeenCalledTimes(1);
+        expect(acquire).toHaveBeenCalledWith(MAM_BASE, undefined);
+      });
+
+      it('search() forwards the caller signal, not the composed timeout signal', async () => {
+        const acquire = vi.spyOn(mamThrottle, 'acquire');
+        const controller = new AbortController();
+        stubSearch();
+
+        await indexer.search('test', { signal: controller.signal });
+
+        expect(acquire).toHaveBeenCalledWith(MAM_BASE, controller.signal);
+      });
+
+      it('test() acquires once', async () => {
+        const acquire = vi.spyOn(mamThrottle, 'acquire');
+        stubStatus();
+
+        await indexer.test();
+
+        expect(acquire).toHaveBeenCalledTimes(1);
+        expect(acquire).toHaveBeenCalledWith(MAM_BASE, undefined);
+      });
+
+      it('refreshStatus() acquires once and forwards the signal it was given', async () => {
+        const acquire = vi.spyOn(mamThrottle, 'acquire');
+        const controller = new AbortController();
+        stubStatus();
+
+        await indexer.refreshStatus(controller.signal);
+
+        expect(acquire).toHaveBeenCalledTimes(1);
+        expect(acquire).toHaveBeenCalledWith(MAM_BASE, controller.signal);
+      });
+
+      // AC11: ResolveDownloadContext carries no signal, so this wait is uninterruptible by design.
+      // Pinned so a later change that starts threading one is a visible contract change.
+      it('resolveDownloadUrl() acquires once on the same key, carrying no signal', async () => {
+        const acquire = vi.spyOn(mamThrottle, 'acquire');
+        stubTorrentDownload(server);
+
+        await indexer.resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: true });
+
+        expect(acquire).toHaveBeenCalledTimes(1);
+        expect(acquire).toHaveBeenCalledWith(MAM_BASE, undefined);
+      });
+
+      it('acquires before MAM\'s "Nothing returned" empty is read', async () => {
+        const acquire = vi.spyOn(mamThrottle, 'acquire');
+        server.use(
+          http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () =>
+            HttpResponse.json({ error: 'Nothing returned, hit refresh or check your filters' })),
+        );
+
+        const { results } = await indexer.search('test');
+
+        expect(results).toEqual([]);
+        expect(acquire).toHaveBeenCalledTimes(1);
+      });
+
+      it('acquires before a malformed search body throws', async () => {
+        const acquire = vi.spyOn(mamThrottle, 'acquire');
+        server.use(http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => HttpResponse.text('<html>nope</html>')));
+
+        await expect(indexer.search('test')).rejects.toThrow(IndexerError);
+        expect(acquire).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    describe('ordering relative to the timeout arm', () => {
+      it('dispatches nothing while the acquire is outstanding, and dispatches once it releases', async () => {
+        let hits = 0;
+        stubSearch(() => { hits++; });
+        const { release } = gateAcquire();
+
+        const pending = indexer.search('test');
+        await settle();
+        expect(hits).toBe(0);
+
+        release();
+        await pending;
+        expect(hits).toBe(1);
+      });
+
+      it('arms the request timeout only after the acquire resolves', async () => {
+        const armed: number[] = [];
+        const realSetTimeout = globalThis.setTimeout;
+        // Delay-discriminating: everything else passes through untouched, because a blanket
+        // redirect-to-0 would abort every MAM request in this suite.
+        const passThrough = realSetTimeout as unknown as (...args: unknown[]) => ReturnType<typeof setTimeout>;
+        vi.spyOn(globalThis, 'setTimeout').mockImplementation(((...args: unknown[]) => {
+          if (args[1] === INDEXER_TIMEOUT_MS) armed.push(args[1] as number);
+          return passThrough(...args);
+        }) as unknown as typeof globalThis.setTimeout);
+        stubSearch();
+        const { release } = gateAcquire();
+
+        const pending = indexer.search('test');
+        await new Promise((resolve) => realSetTimeout(resolve, 25));
+        expect(armed).toEqual([]);
+
+        release();
+        await pending;
+        expect(armed).toEqual([INDEXER_TIMEOUT_MS]);
+      });
+    });
+
+    describe('abort propagation through the adapter', () => {
+      it('rejects search() with the abort reason instead of reporting an answered zero', async () => {
+        let hits = 0;
+        stubSearch(() => { hits++; });
+        const reason = new IndexerError('MyAnonamouse', 'search deadline reached');
+        const controller = new AbortController();
+        controller.abort(reason);
+        vi.spyOn(mamThrottle, 'acquire').mockRejectedValue(reason);
+
+        await expect(indexer.search('test', { signal: controller.signal })).rejects.toBe(reason);
+        expect(hits).toBe(0);
+      });
+
+      it('rejects refreshStatus() with an IndexerError abort reason rather than degrading to null', async () => {
+        let hits = 0;
+        stubStatus(() => { hits++; });
+        const reason = new IndexerError('MyAnonamouse', 'search deadline reached');
+        const controller = new AbortController();
+        controller.abort(reason);
+        vi.spyOn(mamThrottle, 'acquire').mockRejectedValue(reason);
+
+        await expect(indexer.refreshStatus(controller.signal)).rejects.toBe(reason);
+        expect(hits).toBe(0);
+      });
+
+      // Control: without it, a "rethrow everything" regression in refreshStatus is invisible.
+      it('still degrades a genuine IndexerError to null under a live signal', async () => {
+        const controller = new AbortController();
+        server.use(http.get(`${MAM_BASE}/jsonLoad.php`, () => HttpResponse.text('not json at all')));
+
+        expect(await indexer.refreshStatus(controller.signal)).toBeNull();
+        expect(controller.signal.aborted).toBe(false);
+      });
+    });
+
+    // The one case that lets the real singleton run end to end.
+    it('spaces two real MAM requests by the documented interval', async () => {
+      const seen: Array<{ label: string; at: number }> = [];
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          seen.push({ label: 'search', at: Date.now() });
+          return HttpResponse.json({ data: [] });
+        }),
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          seen.push({ label: 'status', at: Date.now() });
+          return HttpResponse.json({ username: 'u', classname: 'VIP' });
+        }),
+      );
+
+      await indexer.search('test');
+      await indexer.refreshStatus();
+
+      expect(seen.map((s) => s.label)).toEqual(['search', 'status']);
+      // Date.now() granularity is ~15.6ms on Windows, so a strict >= interval flakes there.
+      expect(seen[1]!.at - seen[0]!.at).toBeGreaterThanOrEqual(MAM_MIN_REQUEST_INTERVAL_MS - 20);
     });
   });
 });
