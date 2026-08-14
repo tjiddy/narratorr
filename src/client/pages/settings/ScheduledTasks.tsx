@@ -72,7 +72,7 @@ function TaskRow({ task }: { task: TaskMetadata }) {
 }
 
 export function ScheduledTasks() {
-  const { data: tasks, isLoading } = useQuery({
+  const { data: tasks, isLoading, isError, refetch } = useQuery({
     queryKey: queryKeys.systemTasks(),
     queryFn: api.getSystemTasks,
     refetchInterval: 30_000,
@@ -88,6 +88,23 @@ export function ScheduledTasks() {
         <div className="flex items-center gap-2 text-muted-foreground text-sm">
           <LoadingSpinner className="w-4 h-4" />
           Loading tasks...
+        </div>
+      )}
+
+      {/* Without this a failed read renders a blank card — both branches below gate on
+          `tasks`, so not even the empty message appears. The Retry name is surface-specific
+          because SystemSettings composes three failable sections. */}
+      {isError && (
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-red-500">Failed to load scheduled tasks.</p>
+          <button
+            type="button"
+            onClick={() => { void refetch(); }}
+            aria-label="Retry loading scheduled tasks"
+            className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-all focus-ring"
+          >
+            Retry
+          </button>
         </div>
       )}
 

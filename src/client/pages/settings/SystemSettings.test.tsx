@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
@@ -715,5 +715,89 @@ describe('#324 — restore modal contract change', () => {
       });
       expect(screen.getByText(/FFmpeg/)).toBeInTheDocument();
     });
+  });
+});
+
+// One System page composes Backup, System Information, and Scheduled Tasks, so their failures
+// can be on screen at the same time and must stay separately readable and separately actionable.
+describe('composed read failures', () => {
+  const SYSTEM_INFO = { version: '0.1.0', commit: 'unknown', nodeVersion: 'v20.0.0', os: 'linux', dbSize: 1024, libraryPath: '/books', freeSpace: 100000000000 };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockApi.getSettings.mockResolvedValue(createMockSettings({
+      system: { backupIntervalMinutes: 10080, backupRetention: 7 },
+    }));
+  });
+
+  afterEach(() => {
+    // The module-factory defaults are implementations, and clearAllMocks does not restore them.
+    vi.mocked(api.getSystemInfo).mockResolvedValue(SYSTEM_INFO);
+    vi.mocked(api.getSystemTasks).mockResolvedValue([]);
+  });
+
+  it('reports a failed backup read instead of claiming there are no backups', async () => {
+    mockApi.getBackups.mockRejectedValue(new Error('backup directory unreadable'));
+
+    renderWithProviders(<SystemSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to load backups.')).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/no backups yet/i)).not.toBeInTheDocument();
+  });
+
+  it('refetches the backups and renders the rows when the operator clicks Retry', async () => {
+    mockApi.getBackups
+      .mockRejectedValueOnce(new Error('backup directory unreadable'))
+      .mockResolvedValue([{ filename: 'narratorr-backup-20260101T000000000Z.zip', timestamp: '2026-01-01T00:00:00Z', size: 102400 }]);
+    const user = userEvent.setup();
+
+    renderWithProviders(<SystemSettings />);
+    await waitFor(() => expect(screen.getByText('Failed to load backups.')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Retry loading backups' }));
+
+    await waitFor(() => expect(screen.getByText('narratorr-backup-20260101T000000000Z.zip')).toBeInTheDocument());
+    expect(screen.queryByText('Failed to load backups.')).not.toBeInTheDocument();
+    expect(mockApi.getBackups).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives each simultaneous failure its own message and its own addressable Retry control', async () => {
+    mockApi.getBackups.mockRejectedValue(new Error('backup directory unreadable'));
+    vi.mocked(api.getSystemInfo).mockRejectedValue(new Error('stat failed'));
+    vi.mocked(api.getSystemTasks).mockRejectedValue(new Error('scheduler unavailable'));
+
+    renderWithProviders(<SystemSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to load backups.')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Failed to load system information.')).toBeInTheDocument();
+    expect(screen.getByText('Failed to load scheduled tasks.')).toBeInTheDocument();
+
+    // getByRole throws on multiple matches, so each of these succeeding is the uniqueness proof.
+    expect(screen.getByRole('button', { name: 'Retry loading backups' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry loading system information' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry loading scheduled tasks' })).toBeInTheDocument();
+  });
+
+  it('retries only the surface whose Retry the operator clicked', async () => {
+    mockApi.getBackups.mockRejectedValue(new Error('backup directory unreadable'));
+    vi.mocked(api.getSystemInfo).mockRejectedValue(new Error('stat failed'));
+    vi.mocked(api.getSystemTasks).mockRejectedValue(new Error('scheduler unavailable'));
+    const user = userEvent.setup();
+
+    renderWithProviders(<SystemSettings />);
+    await waitFor(() => expect(screen.getByText('Failed to load system information.')).toBeInTheDocument());
+
+    const backupCallsBefore = mockApi.getBackups.mock.calls.length;
+    const taskCallsBefore = vi.mocked(api.getSystemTasks).mock.calls.length;
+
+    await user.click(screen.getByRole('button', { name: 'Retry loading system information' }));
+
+    await waitFor(() => expect(vi.mocked(api.getSystemInfo)).toHaveBeenCalledTimes(2));
+    expect(mockApi.getBackups).toHaveBeenCalledTimes(backupCallsBefore);
+    expect(vi.mocked(api.getSystemTasks)).toHaveBeenCalledTimes(taskCallsBefore);
   });
 });

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../__tests__/helpers';
 import { SystemInfo } from './SystemInfo';
 
@@ -135,5 +136,42 @@ describe('SystemInfo', () => {
     });
     const naElements = screen.getAllByText(/n\/a|not configured/i);
     expect(naElements.length).toBeGreaterThanOrEqual(1);
+  });
+
+  describe('when the system-info read fails', () => {
+    beforeEach(() => {
+      // resetAllMocks, not clearAllMocks: the Retry test queues a `*Once()` rejection and
+      // clearAllMocks does not drain those queues.
+      vi.resetAllMocks();
+    });
+
+    it('names the read failure instead of leaving a blank card', async () => {
+      (api.getSystemInfo as Mock).mockRejectedValue(new Error('stat failed'));
+
+      renderWithProviders(<SystemInfo />);
+
+      // The pre-fix state is a blank card, so the positive assertion is the whole test:
+      // "no rows rendered" passes either way.
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load system information.')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Node.js')).not.toBeInTheDocument();
+    });
+
+    it('refetches and renders the rows when the operator clicks Retry', async () => {
+      (api.getSystemInfo as Mock)
+        .mockRejectedValueOnce(new Error('stat failed'))
+        .mockResolvedValue(baseInfo);
+      const user = userEvent.setup();
+
+      renderWithProviders(<SystemInfo />);
+      await waitFor(() => expect(screen.getByText('Failed to load system information.')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Retry loading system information' }));
+
+      await waitFor(() => expect(screen.getByText('v20.11.1')).toBeInTheDocument());
+      expect(screen.queryByText('Failed to load system information.')).not.toBeInTheDocument();
+      expect(api.getSystemInfo).toHaveBeenCalledTimes(2);
+    });
   });
 });

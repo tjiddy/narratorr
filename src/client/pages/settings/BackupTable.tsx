@@ -11,16 +11,39 @@ import {
 interface BackupTableProps {
   backups: BackupMetadata[] | undefined;
   isLoading: boolean;
+  /** Required, not defaulted: a `false` default would let a new caller silently re-conflate a failed read with an empty one. */
+  isError: boolean;
+  onRetry: () => void;
   onDownload: (backup: BackupMetadata) => void;
   onRestore: (backup: BackupMetadata) => void;
   onDelete: (backup: BackupMetadata) => void;
 }
 
-export function BackupTable({ backups, isLoading, onDownload, onRestore, onDelete }: BackupTableProps) {
+export function BackupTable({ backups, isLoading, isError, onRetry, onDownload, onRestore, onDelete }: BackupTableProps) {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-16">
         <LoadingSpinner className="w-6 h-6 text-primary" />
+      </div>
+    );
+  }
+
+  // Ahead of the empty state on purpose: a failed read leaves `backups` undefined, and
+  // "no backups yet" is a claim about the backup directory this page could not read.
+  // The Retry control's accessible name is surface-specific because SystemSettings composes
+  // three independently-failing sections whose Retry buttons must stay separately addressable.
+  if (isError) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-red-500">Failed to load backups.</p>
+        <button
+          type="button"
+          onClick={onRetry}
+          aria-label="Retry loading backups"
+          className="mt-4 px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-all focus-ring"
+        >
+          Retry
+        </button>
       </div>
     );
   }
