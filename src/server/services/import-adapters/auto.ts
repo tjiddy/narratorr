@@ -34,10 +34,11 @@ export class AutoImportAdapter implements ImportAdapter {
 
     await ctx.setPhase('analyzing');
 
-    // Use the orchestrator so every success and failure side effect remains attached.
+    // Use the orchestrator so every success and failure side effect remains attached. The job's own
+    // bookId is the only provenance that survives a download row vanishing before context resolution.
     await this.importOrchestrator.importDownload(payload.downloadId, {
       setPhase: ctx.setPhase,
       emitProgress: ctx.emitProgress,
-    });
+    }, { bookId });
   }
 }

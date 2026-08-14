@@ -67,8 +67,18 @@ function createOrchestrator(opts?: {
   settingsService?: SettingsService;
   importOrchestrator?: Partial<ImportOrchestrator>;
   importService?: Partial<ImportService>;
+  /** First direct select in the vanished-download path: does downloads.id still exist? */
+  existsResult?: unknown[];
+  /** Second direct select: the book title lookup that decides whether an event is FK-valid. */
+  bookResult?: unknown[];
+  bookError?: Error;
 }) {
   const db = createMockDb();
+  if (opts?.existsResult) {
+    db.select.mockReturnValueOnce(mockDbChain(opts.existsResult));
+    if (opts.bookError) db.select.mockReturnValueOnce(mockDbChain([], { error: opts.bookError }));
+    else if (opts.bookResult) db.select.mockReturnValueOnce(mockDbChain(opts.bookResult));
+  }
   const log = createMockLogger();
   const eventHistory = { create: vi.fn().mockResolvedValue({}) };
   const broadcaster = { emit: vi.fn() };
@@ -2021,12 +2031,123 @@ describe('QualityGateOrchestrator', () => {
     });
 
     it('returns early for non-existent download', async () => {
-      const { orchestrator, qualityGateService, log } = createOrchestrator();
+      const { orchestrator, qualityGateService } = createOrchestrator();
       await orchestrator.processOneDownload(999);
 
       expect(qualityGateService.getCompletedDownloadById).toHaveBeenCalledWith(999);
-      expect(log.warn).toHaveBeenCalledWith({ downloadId: 999 }, expect.stringContaining('not found'));
       expect(qualityGateService.atomicClaim).not.toHaveBeenCalled();
+    });
+
+    // getCompletedDownloadById returns null for a vanished row AND for a benign not-yet/no-longer
+    // completed one. Collapsing them is what made download 113 unattributable (#2307).
+    describe('unavailable download — vanished row vs benign race', () => {
+      it('row still present but no longer completed: warns, records nothing, claims nothing', async () => {
+        const { orchestrator, qualityGateService, log, eventHistory } = createOrchestrator({
+          existsResult: [{ id: 1 }],
+        });
+
+        await orchestrator.processOneDownload(1, { bookId: 5, releaseTitle: 'The Stranger [2026]' });
+
+        expect(log.warn).toHaveBeenCalledWith({ downloadId: 1 }, expect.stringContaining('not found or not completed'));
+        expect(log.error).not.toHaveBeenCalled();
+        expect(eventHistory.create).not.toHaveBeenCalled();
+        expect(qualityGateService.atomicClaim).not.toHaveBeenCalled();
+      });
+
+      it('row gone with a live book: errors with the book title and records one download_failed event', async () => {
+        const { orchestrator, log, eventHistory } = createOrchestrator({
+          existsResult: [],
+          bookResult: [{ title: 'The Stranger' }],
+        });
+
+        await orchestrator.processOneDownload(113, { bookId: 5, releaseTitle: 'The Stranger [2026] [MP3]' });
+
+        expect(log.error).toHaveBeenCalledWith(
+          { downloadId: 113, bookId: 5, bookTitle: 'The Stranger' },
+          expect.stringContaining('disappeared before the quality gate'),
+        );
+        expect(eventHistory.create).toHaveBeenCalledTimes(1);
+        expect(eventHistory.create).toHaveBeenCalledWith({
+          bookId: 5,
+          bookTitle: 'The Stranger',
+          // The book's own title, never the polled release title.
+          downloadId: null,
+          eventType: 'download_failed',
+          source: 'auto',
+          reason: { error: 'Download row disappeared before the quality gate could evaluate it' },
+        });
+        expect(log.warn).not.toHaveBeenCalled();
+      });
+
+      it('row gone with a null book id: errors with the release title and records no event', async () => {
+        const { orchestrator, log, eventHistory } = createOrchestrator({ existsResult: [] });
+
+        await orchestrator.processOneDownload(113, { bookId: null, releaseTitle: 'The Stranger [2026]' });
+
+        expect(log.error).toHaveBeenCalledWith(
+          { downloadId: 113, releaseTitle: 'The Stranger [2026]' },
+          expect.stringContaining('disappeared before the quality gate'),
+        );
+        expect(eventHistory.create).not.toHaveBeenCalled();
+      });
+
+      it('row gone with no provenance at all: errors on the download id alone', async () => {
+        const { orchestrator, log, eventHistory } = createOrchestrator({ existsResult: [] });
+
+        await orchestrator.processOneDownload(113);
+
+        expect(log.error).toHaveBeenCalledWith(
+          { downloadId: 113 },
+          expect.stringContaining('disappeared before the quality gate'),
+        );
+        expect(eventHistory.create).not.toHaveBeenCalled();
+      });
+
+      it('row gone but the book was concurrently deleted: no event, and bookDeleted is explicit', async () => {
+        const { orchestrator, log, eventHistory } = createOrchestrator({ existsResult: [], bookResult: [] });
+
+        await orchestrator.processOneDownload(113, { bookId: 5, releaseTitle: 'The Stranger [2026]' });
+
+        expect(log.error).toHaveBeenCalledWith(
+          { downloadId: 113, bookId: 5, releaseTitle: 'The Stranger [2026]', bookDeleted: true },
+          expect.stringContaining('disappeared before the quality gate'),
+        );
+        // An FK-rejected insert would be swallowed and look identical to this deliberate skip.
+        expect(eventHistory.create).not.toHaveBeenCalled();
+      });
+
+      it('row gone and the book lookup rejects: no event, serialized lookup error, still resolves', async () => {
+        const { orchestrator, log, eventHistory } = createOrchestrator({
+          existsResult: [],
+          bookError: new Error('SQLITE_BUSY: database is locked'),
+        });
+
+        await expect(orchestrator.processOneDownload(113, { bookId: 5, releaseTitle: 'The Stranger [2026]' })).resolves.toBeUndefined();
+
+        expect(eventHistory.create).not.toHaveBeenCalled();
+        const record = (log.error as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
+        expect(record).toMatchObject({ downloadId: 113, bookId: 5, releaseTitle: 'The Stranger [2026]' });
+        const logged = record.error as Record<string, unknown>;
+        expect(logged).not.toBeInstanceOf(Error);
+        expect(logged.type).toBe('Error');
+        expect(logged.message).toBe('SQLITE_BUSY: database is locked');
+      });
+
+      it('a rejected event write is logged, never thrown at the caller', async () => {
+        const { orchestrator, log, eventHistory } = createOrchestrator({
+          existsResult: [],
+          bookResult: [{ title: 'The Stranger' }],
+        });
+        eventHistory.create.mockRejectedValue(new Error('insert failed'));
+
+        await expect(orchestrator.processOneDownload(113, { bookId: 5, releaseTitle: 'r' })).resolves.toBeUndefined();
+        await new Promise((r) => setImmediate(r));
+
+        expect(log.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ error: expect.objectContaining({ type: 'Error' }) }),
+          expect.stringContaining('Failed to record download_failed event'),
+        );
+      });
     });
 
     it('holds for probe failure and reverts book to downloading', async () => {

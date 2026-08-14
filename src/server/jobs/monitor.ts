@@ -179,7 +179,9 @@ async function processDownloadUpdate(
 
   if (isCompletionTransition && qualityGateOrchestrator) {
     fireAndForget(
-      qualityGateOrchestrator.processOneDownload(download.id),
+      // Hand over the polled snapshot: if the row vanishes before the gate re-reads it, this is the
+      // only provenance left to attribute the failure to a book.
+      qualityGateOrchestrator.processOneDownload(download.id, { bookId: download.bookId, releaseTitle: download.title }),
       log,
       'Inline import after completion failed',
     );
