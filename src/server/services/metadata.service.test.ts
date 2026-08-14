@@ -2401,10 +2401,12 @@ describe('MetadataService', () => {
           row: 1,
           statement: 'metadata.service.ts → withThrottledSearch, via search(q)',
           gated: AUDIBLE,
+          // Deliberately NOT asserting the operator warning here: that string is the outer guard's
+          // own output, so asserting it would make this row red on a single outer-guard deletion
+          // for a return-value reason and disguise itself as the paired floor counterfactual. The
+          // warning is pinned by 'skips provider during backoff window after RateLimitError'.
           async run(svc) {
-            const result = await svc.search('q');
-            expect(result.books).toEqual([]);
-            expect(result.warnings?.[0]).toContain('rate limit reached');
+            expect((await svc.search('q')).books).toEqual([]);
           },
         },
         {
