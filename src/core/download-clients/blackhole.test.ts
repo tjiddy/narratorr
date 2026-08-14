@@ -587,9 +587,11 @@ describe('BlackholeClient', () => {
 
     it('leaves nothing under a final name while the write is still in flight', async () => {
       let releaseWrite!: () => void;
+      // Arm the gate before the write so the file cannot appear before the release handle exists.
+      const stalled = new Promise<void>((resolve) => { releaseWrite = resolve; });
       vi.mocked(writeFile).mockImplementationOnce((async (path: string, data: Parameters<typeof actualFs.writeFile>[1]) => {
         await actualFs.writeFile(path, data);
-        await new Promise<void>((resolve) => { releaseWrite = resolve; });
+        await stalled;
       }) as never);
 
       const pending = realClient.addDownload({ type: 'torrent-bytes', data: Buffer.from('d8'), infoHash: 'a' });
