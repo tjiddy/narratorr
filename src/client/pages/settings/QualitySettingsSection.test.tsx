@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { queryKeys } from '@/lib/queryKeys';
 import { createMockSettings } from '@/__tests__/factories';
 import { QualitySettingsSection } from './QualitySettingsSection';
 
@@ -356,20 +358,96 @@ describe('QualitySettingsSection', () => {
     });
   });
 
-  // Blast radius for #2320: `useSettingsForm` grew `settingsError`/`refetchSettings`, but only
-  // EbooksSettingsSection consumes them. This non-Ebooks consumer must behave exactly as before.
-  describe('shared-hook change is additive', () => {
-    it('renders its fields at their defaults under a rejected settings read, with no error affordance', async () => {
+  // #2338 retired the #2320 blast-radius pin that lived here ("renders its fields at their
+  // defaults under a rejected settings read, with no error affordance"). That pinned the
+  // pre-#2338 behaviour this issue deliberately inverts; the pair below replaces it.
+  describe('when the shared settings read fails', () => {
+    beforeEach(() => {
+      // resetAllMocks, not clearAllMocks: the tests below queue `*Once()` responses and
+      // clearAllMocks does not drain those queues.
+      vi.resetAllMocks();
+    });
+
+    it('reports the read failure instead of showing the schema defaults as saved thresholds', async () => {
       mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
 
       renderWithProviders(<QualitySettingsSection />);
 
       await waitFor(() => {
-        expect(screen.getByLabelText('Grab minimum')).toBeInTheDocument();
+        expect(screen.getByText('Failed to load quality settings.')).toBeInTheDocument();
       });
-      expect(screen.getByLabelText('Minimum seeders')).toBeInTheDocument();
-      expect(screen.queryByText(/^Failed to load/)).not.toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: /^Retry/ })).not.toBeInTheDocument();
+      // A 0 in Grab minimum reads as "no floor is configured"; that is the schema default,
+      // not a value this card ever read from the server.
+      expect(screen.queryByLabelText('Grab minimum')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Minimum seeders')).not.toBeInTheDocument();
+    });
+
+    it('refetches and shows the saved thresholds when the operator clicks Retry', async () => {
+      mockApi.getSettings
+        .mockRejectedValueOnce(new Error('settings unreadable'))
+        .mockResolvedValue(createMockSettings({ quality: { grabFloor: 77 } }));
+      const user = userEvent.setup();
+
+      renderWithProviders(<QualitySettingsSection />);
+      await waitFor(() => expect(screen.getByText('Failed to load quality settings.')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Retry loading quality settings' }));
+
+      // 77, not the schema default 0: only a real refetch can produce this value.
+      await waitFor(() => expect(screen.getByLabelText('Grab minimum')).toHaveValue(77));
+      expect(screen.queryByText('Failed to load quality settings.')).not.toBeInTheDocument();
+      expect(mockApi.getSettings).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps rendering the form while the read is merely pending', async () => {
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      let settle: ((value: unknown) => void) | undefined;
+      mockApi.getSettings.mockReturnValueOnce(new Promise((resolve) => { settle = resolve; }));
+
+      renderWithProviders(<QualitySettingsSection />, { queryClient: client });
+
+      // Observation point is the query's own non-terminal state, so this is not an
+      // assertion that any implementation satisfies at t=0 by accident.
+      expect(client.getQueryState(queryKeys.settings())?.status).toBe('pending');
+      expect(screen.getByLabelText('Grab minimum')).toBeInTheDocument();
+      expect(screen.queryByText('Failed to load quality settings.')).not.toBeInTheDocument();
+
+      await act(async () => { settle!(createMockSettings({ quality: { grabFloor: 77 } })); });
+
+      await waitFor(() => expect(screen.getByLabelText('Grab minimum')).toHaveValue(77));
+    });
+
+    it('hides but does not destroy an in-flight draft when the post-save refetch fails', async () => {
+      let settleSave: ((value: unknown) => void) | undefined;
+      mockApi.getSettings.mockResolvedValueOnce(createMockSettings({ quality: { grabFloor: 50 } }));
+      mockApi.updateSettings.mockReturnValueOnce(new Promise((resolve) => { settleSave = resolve; }));
+      const user = userEvent.setup();
+
+      renderWithProviders(<QualitySettingsSection />);
+      await waitFor(() => expect(screen.getByLabelText('Grab minimum')).toHaveValue(50));
+
+      await user.tripleClick(screen.getByLabelText('Grab minimum'));
+      await user.keyboard('100');
+      await user.click(screen.getByRole('button', { name: /save/i }));
+
+      // Editing *while the save is in flight* is what makes the hook's drift path fire:
+      // an ordinary save resets clean and would leave no draft for this test to protect.
+      await user.tripleClick(screen.getByLabelText('Grab minimum'));
+      await user.keyboard('125');
+
+      mockApi.getSettings.mockRejectedValueOnce(new Error('settings unreadable'));
+      await act(async () => { settleSave!(createMockSettings({ quality: { grabFloor: 100 } })); });
+
+      await waitFor(() => expect(screen.getByText('Failed to load quality settings.')).toBeInTheDocument());
+      expect(screen.queryByLabelText('Grab minimum')).not.toBeInTheDocument();
+
+      mockApi.getSettings.mockResolvedValue(createMockSettings({ quality: { grabFloor: 100 } }));
+      await user.click(screen.getByRole('button', { name: 'Retry loading quality settings' }));
+
+      // 125 (the draft), not the server's 100: the gate hides the draft, it does not clobber it.
+      await waitFor(() => expect(screen.getByLabelText('Grab minimum')).toHaveValue(125));
+      expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
+      expect(screen.queryByText('Failed to load quality settings.')).not.toBeInTheDocument();
     });
   });
 });

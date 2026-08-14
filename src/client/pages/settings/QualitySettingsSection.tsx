@@ -13,7 +13,7 @@ type QualityGateFormData = z.infer<typeof qualityGateFormSchema>;
 const CARD_LABEL = 'Quality';
 
 export function QualitySettingsSection() {
-  const { form, mutation, onSubmit } = useSettingsForm<QualityGateFormData>({
+  const { form, mutation, onSubmit , settingsError, refetchSettings } = useSettingsForm<QualityGateFormData>({
     schema: qualityGateFormSchema,
     defaultValues: {
       grabFloor: DEFAULT_SETTINGS.quality.grabFloor,
@@ -40,66 +40,82 @@ export function QualitySettingsSection() {
       title={CARD_LABEL}
       description="Minimum bar to grab"
     >
-      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
-        <SettingsTable>
-          <SettingsRow htmlFor="grabFloor" label="Grab minimum" description="Minimum MB/hr to accept. Releases below this threshold are hidden from search results. Set to 0 to disable.">
-            <NumberField
-              id="grabFloor"
-              {...register('grabFloor', { valueAsNumber: true })}
-              min={0}
-              step="any"
-              placeholder="0"
-              suffix="MB/hr"
-              error={errors.grabFloor?.message}
-            />
-          </SettingsRow>
-
-          <SettingsRow htmlFor="minSeeders" label="Minimum seeders" description="Torrent results with fewer seeders are hidden. Does not affect Usenet results. Set to 0 to disable.">
-            <NumberField
-              id="minSeeders"
-              {...register('minSeeders', { valueAsNumber: true })}
-              min={0}
-              step={1}
-              placeholder="0"
-              error={errors.minSeeders?.message}
-            />
-          </SettingsRow>
-
-          <SettingsRow htmlFor="minDownloadSize" label="Min download size" description="Minimum download size in MB. Filters out tracker-test uploads, single-track previews, and corrupted partial releases. Set to 0 to disable.">
-            <NumberField
-              id="minDownloadSize"
-              {...register('minDownloadSize', { valueAsNumber: true })}
-              min={0}
-              step="any"
-              placeholder="50"
-              suffix="MB"
-              error={errors.minDownloadSize?.message}
-            />
-          </SettingsRow>
-
-          <SettingsRow htmlFor="maxDownloadSize" label="Max download size" description="Maximum download size in GB. Releases larger than this are hidden from search results. Set to 0 to disable.">
-            <NumberField
-              id="maxDownloadSize"
-              {...register('maxDownloadSize', { valueAsNumber: true })}
-              min={0}
-              step="any"
-              placeholder="0"
-              suffix="GB"
-              error={errors.maxDownloadSize?.message}
-            />
-          </SettingsRow>
-        </SettingsTable>
-
-        {isDirty && (
+      {/* A 0 in Grab minimum reads as "no floor is configured" and a 1 in Minimum seeders
+          as a deliberate choice — both are schema defaults a failed read never observed. */}
+      {settingsError ? (
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-red-500">Failed to load quality settings.</p>
           <button
-            type="submit"
-            disabled={mutation.isPending}
-            className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
+            type="button"
+            onClick={refetchSettings}
+            aria-label="Retry loading quality settings"
+            className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-all focus-ring"
           >
-            {mutation.isPending ? 'Saving...' : 'Save'}
+            Retry
           </button>
-        )}
-      </form>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
+          <SettingsTable>
+            <SettingsRow htmlFor="grabFloor" label="Grab minimum" description="Minimum MB/hr to accept. Releases below this threshold are hidden from search results. Set to 0 to disable.">
+              <NumberField
+                id="grabFloor"
+                {...register('grabFloor', { valueAsNumber: true })}
+                min={0}
+                step="any"
+                placeholder="0"
+                suffix="MB/hr"
+                error={errors.grabFloor?.message}
+              />
+            </SettingsRow>
+
+            <SettingsRow htmlFor="minSeeders" label="Minimum seeders" description="Torrent results with fewer seeders are hidden. Does not affect Usenet results. Set to 0 to disable.">
+              <NumberField
+                id="minSeeders"
+                {...register('minSeeders', { valueAsNumber: true })}
+                min={0}
+                step={1}
+                placeholder="0"
+                error={errors.minSeeders?.message}
+              />
+            </SettingsRow>
+
+            <SettingsRow htmlFor="minDownloadSize" label="Min download size" description="Minimum download size in MB. Filters out tracker-test uploads, single-track previews, and corrupted partial releases. Set to 0 to disable.">
+              <NumberField
+                id="minDownloadSize"
+                {...register('minDownloadSize', { valueAsNumber: true })}
+                min={0}
+                step="any"
+                placeholder="50"
+                suffix="MB"
+                error={errors.minDownloadSize?.message}
+              />
+            </SettingsRow>
+
+            <SettingsRow htmlFor="maxDownloadSize" label="Max download size" description="Maximum download size in GB. Releases larger than this are hidden from search results. Set to 0 to disable.">
+              <NumberField
+                id="maxDownloadSize"
+                {...register('maxDownloadSize', { valueAsNumber: true })}
+                min={0}
+                step="any"
+                placeholder="0"
+                suffix="GB"
+                error={errors.maxDownloadSize?.message}
+              />
+            </SettingsRow>
+          </SettingsTable>
+
+          {isDirty && (
+            <button
+              type="submit"
+              disabled={mutation.isPending}
+              className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
+            >
+              {mutation.isPending ? 'Saving...' : 'Save'}
+            </button>
+          )}
+        </form>
+      )}
     </SettingsSection>
   );
 }
