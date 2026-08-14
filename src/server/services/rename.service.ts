@@ -1,5 +1,5 @@
 import { mkdir, rename, cp, rm } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { dirname } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@db/index.js';
 import type { BookService } from './book.service.js';
@@ -16,6 +16,7 @@ import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js
 import { sidecarLockKey } from '../utils/opf-writer.js';
 import { withPathWriteLock, withPathWriteLocks } from '../utils/path-write-lock.js';
 import { claimLockKey } from '../utils/claim-lock.js';
+import { canonicalPath } from '../utils/path-identity.js';
 import { assertNoOtherOwner, classifyTargetOccupancy, clearVerifiedEmptyTarget, type TargetOccupancy } from '../utils/rename-target-guard.js';
 import { RenameError } from '../utils/rename-error.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -244,7 +245,7 @@ export class RenameService {
     if (!fresh.path) {
       throw new RenameError('Book has no path — not imported yet', 'NO_PATH');
     }
-    if (resolve(fresh.path) !== resolve(oldPath)) {
+    if (canonicalPath(fresh.path) !== canonicalPath(oldPath)) {
       throw new RenameError(
         `Book path changed to "${fresh.path}" while the rename was queued`,
         'STALE_PATH',
