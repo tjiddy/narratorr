@@ -25,6 +25,18 @@ function composeSignals(a?: AbortSignal, b?: AbortSignal): AbortSignal | undefin
   return AbortSignal.any([a, b]);
 }
 
+/**
+ * The abort verdict is the signal's, never the settlements' shape: an adapter that fulfils after
+ * the deadline fired would otherwise read as an answered search, and the abandoned ladder would
+ * advance a rung and issue more indexer requests. A real rejection is preferred as the reason only
+ * because it carries more detail than the bare abort.
+ */
+function abortReason(settlements: PromiseSettledResult<unknown>[], signal: AbortSignal): unknown {
+  const rejected = settlements.find((s) => s.status === 'rejected');
+  if (rejected) return rejected.reason;
+  return signal.reason ?? new DOMException('Search aborted', 'AbortError');
+}
+
 export class IndexerSearchService {
   constructor(
     private db: Db,
@@ -180,12 +192,9 @@ export class IndexerSearchService {
       }),
     );
 
-    // Under an aborted signal every arm rejects, `succeeded` reads 0, and the ladder mistakes
-    // cancellation for an indexer outage. Key on the signal, never on the error's shape.
-    if (searchOptions?.signal?.aborted) {
-      const cancelled = settlements.find((s) => s.status === 'rejected');
-      if (cancelled) throw cancelled.reason;
-    }
+    // Cancellation is not an outage and not an answer: whatever the adapters did, an aborted
+    // signal terminates here rather than letting the ladder read a result set.
+    if (searchOptions?.signal?.aborted) throw abortReason(settlements, searchOptions.signal);
 
     const perIndexerCounts: Record<string, number> = {};
     const results: SearchResult[] = [];
@@ -284,9 +293,10 @@ export class IndexerSearchService {
       }),
     );
 
-    // Only the outer-deadline rethrow above rejects an arm; every other failure was routed to onError.
-    const cancelled = settlements.find((s) => s.status === 'rejected');
-    if (cancelled) throw cancelled.reason;
+    // Same verdict as the aggregate path, and for the same reason: an adapter that fulfilled after
+    // the abort must not hand the abandoned ladder a result set to advance on. A per-indexer
+    // cancellation leaves `outerSignal` un-aborted and still routes through `onCancelled` above.
+    if (outerSignal?.aborted) throw abortReason(settlements, outerSignal);
 
     const results: SearchResult[] = [];
     const perIndexerCounts: Record<string, number> = {};
