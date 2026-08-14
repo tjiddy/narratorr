@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 vi.mock('node:fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
   rename: vi.fn().mockResolvedValue(undefined),
+  unlink: vi.fn().mockResolvedValue(undefined),
   access: vi.fn().mockResolvedValue(undefined),
   constants: { R_OK: 4, W_OK: 2 },
 }));
@@ -65,7 +66,7 @@ vi.mock('../utils/network-service.js', async (importActual) => {
   };
 });
 
-const { writeFile, rename, access } = await import('node:fs/promises');
+const { writeFile, rename, unlink, access } = await import('node:fs/promises');
 const actualFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
 
 const { lookup: dnsLookup } = await import('node:dns/promises');
@@ -100,6 +101,7 @@ describe('BlackholeClient', () => {
   beforeEach(() => {
     vi.mocked(writeFile).mockReset().mockResolvedValue(undefined);
     vi.mocked(rename).mockReset().mockResolvedValue(undefined);
+    vi.mocked(unlink).mockReset().mockResolvedValue(undefined);
     vi.mocked(access).mockClear();
     mockFetch.mockClear();
     dispatcherCloseSpy.mockClear();
@@ -385,6 +387,139 @@ describe('BlackholeClient', () => {
 
       await expect(client.addDownload(artifact)).rejects.toThrow('ENOSPC');
     });
+
+    // #2341 AC4: a failed publish leaves the temp file exactly as a failed rename always has —
+    // addDownload owns no compensation, because it has no record to compensate against.
+    it('never discards the staged file when its own commit fails', async () => {
+      vi.mocked(rename).mockRejectedValueOnce(new Error('EXDEV: cross-device link'));
+
+      await expect(client.addDownload({ type: 'torrent-bytes', data: Buffer.from([0x64]), infoHash: 'abc123' }))
+        .rejects.toThrow('EXDEV');
+
+      expect(unlink).not.toHaveBeenCalled();
+    });
+  });
+
+  // #2341: staging exposes the two halves of the existing temp-then-rename write, so the caller
+  // can land a durable record between them. Nothing is consumable until commit().
+  describe('stageDownload', () => {
+    let usenetClient: BlackholeClient;
+
+    beforeEach(() => {
+      usenetClient = new BlackholeClient({ watchDir: '/downloads/watch', protocol: 'usenet' });
+    });
+
+    const lastTempPath = () => String(vi.mocked(writeFile).mock.calls.at(-1)![0]);
+
+    it.each([
+      ['torrent-bytes', { type: 'torrent-bytes', data: Buffer.from([0x64, 0x38]), infoHash: 'abc' }, Buffer.from([0x64, 0x38]), /download-\d+\.torrent$/],
+      ['magnet-uri', { type: 'magnet-uri', uri: 'magnet:?xt=urn:btih:abc', infoHash: 'abc' }, 'magnet:?xt=urn:btih:abc', /\d+\.magnet$/],
+      ['nzb-bytes', { type: 'nzb-bytes', data: Buffer.from('<nzb/>') }, Buffer.from('<nzb/>'), /download-\d+\.nzb$/],
+    ] as const)('stages %s to a random temp name and publishes nothing until commit', async (_label, artifact, data, finalName) => {
+      const staged = await usenetClient.stageDownload(artifact as DownloadArtifact);
+
+      expect(vi.mocked(writeFile)).toHaveBeenCalledTimes(1);
+      expect(toPosix(lastTempPath())).toMatch(TEMP_NAME_RE);
+      expect(vi.mocked(writeFile).mock.calls[0]![1]).toEqual(data);
+      expect(rename).not.toHaveBeenCalled();
+
+      await staged.commit();
+
+      expect(vi.mocked(rename)).toHaveBeenCalledTimes(1);
+      const [from, to] = vi.mocked(rename).mock.calls[0]!;
+      expect(from).toBe(vi.mocked(writeFile).mock.calls[0]![0]);
+      expect(toPosix(to)).toMatch(finalName);
+    });
+
+    it('completes the nzb-url fetch and closes the dispatcher before returning the handle', async () => {
+      mockFetch.mockResolvedValueOnce(nzbResponse(Buffer.from('<nzb>fetched</nzb>'), { status: 200 }));
+
+      const staged = await client.stageDownload({ type: 'nzb-url', url: 'https://example.com/file.nzb' });
+
+      expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(writeFile).mock.calls[0]![1]).toEqual(Buffer.from('<nzb>fetched</nzb>'));
+      expect(rename).not.toHaveBeenCalled();
+
+      await staged.commit();
+      expect(toPosix(vi.mocked(rename).mock.calls[0]![1])).toMatch(/download-\d+\.nzb$/);
+    });
+
+    it('rejects a non-OK nzb-url response from stageDownload with no temp file and a closed dispatcher', async () => {
+      mockFetch.mockResolvedValueOnce(new Response('Not Found', { status: 404 }));
+
+      await expect(client.stageDownload({ type: 'nzb-url', url: 'https://example.com/file.nzb' }))
+        .rejects.toBeInstanceOf(DownloadClientError);
+
+      expect(writeFile).not.toHaveBeenCalled();
+      expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects an nzb-url timeout from stageDownload with no temp file and a closed dispatcher', async () => {
+      mockFetch.mockRejectedValueOnce(new DOMException('The operation was aborted', 'TimeoutError'));
+
+      await expect(client.stageDownload({ type: 'nzb-url', url: 'https://example.com/file.nzb' }))
+        .rejects.toBeInstanceOf(DownloadClientTimeoutError);
+
+      expect(writeFile).not.toHaveBeenCalled();
+      expect(dispatcherCloseSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects zero-length nzb-bytes before any filesystem write, so there is no handle to abort', async () => {
+      await expect(usenetClient.stageDownload({ type: 'nzb-bytes', data: Buffer.alloc(0) }))
+        .rejects.toBeInstanceOf(DownloadClientError);
+
+      expect(writeFile).not.toHaveBeenCalled();
+      expect(rename).not.toHaveBeenCalled();
+      expect(unlink).not.toHaveBeenCalled();
+    });
+
+    it('discards the staged file on abort and renames nothing', async () => {
+      const staged = await client.stageDownload({ type: 'torrent-bytes', data: Buffer.from([0x64]), infoHash: 'a' });
+
+      await staged.abort();
+
+      expect(vi.mocked(unlink)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(unlink).mock.calls[0]![0]).toBe(vi.mocked(writeFile).mock.calls[0]![0]);
+      expect(rename).not.toHaveBeenCalled();
+    });
+
+    it('treats an already-gone staged file (ENOENT) as a successful abort', async () => {
+      const staged = await client.stageDownload({ type: 'torrent-bytes', data: Buffer.from([0x64]), infoHash: 'a' });
+      vi.mocked(unlink).mockRejectedValueOnce(Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' }));
+
+      await expect(staged.abort()).resolves.toBeUndefined();
+    });
+
+    it('rejects with the underlying error when the staged file cannot be discarded (EACCES)', async () => {
+      const staged = await client.stageDownload({ type: 'torrent-bytes', data: Buffer.from([0x64]), infoHash: 'a' });
+      const denied = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+      vi.mocked(unlink).mockRejectedValueOnce(denied);
+
+      // The adapter takes no logger: only a rejection can reach the layer allowed to record this.
+      await expect(staged.abort()).rejects.toBe(denied);
+    });
+
+    it('rejects from commit when the publish fails, leaving the staged file in place', async () => {
+      const staged = await client.stageDownload({ type: 'torrent-bytes', data: Buffer.from([0x64]), infoHash: 'a' });
+      vi.mocked(rename).mockRejectedValueOnce(new Error('EXDEV: cross-device link'));
+
+      await expect(staged.commit()).rejects.toThrow('EXDEV');
+      expect(unlink).not.toHaveBeenCalled();
+    });
+
+    it('publishes once across repeated commits and stays abortable in any order', async () => {
+      const staged = await client.stageDownload({ type: 'torrent-bytes', data: Buffer.from([0x64]), infoHash: 'a' });
+
+      await staged.commit();
+      await staged.commit();
+      expect(vi.mocked(rename)).toHaveBeenCalledTimes(1);
+
+      // The published file is no longer at the staged path, so its unlink is an ENOENT success.
+      vi.mocked(unlink).mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      await expect(staged.abort()).resolves.toBeUndefined();
+      await expect(staged.abort()).resolves.toBeUndefined();
+      expect(vi.mocked(rename)).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('getDownload', () => {
@@ -550,6 +685,8 @@ describe('BlackholeClient', () => {
     beforeEach(async () => {
       vi.mocked(writeFile).mockImplementation(actualFs.writeFile as never);
       vi.mocked(rename).mockImplementation(actualFs.rename as never);
+      // An unarmed spy resolves undefined, which would make every abort look successful.
+      vi.mocked(unlink).mockImplementation(actualFs.unlink as never);
       watchDir = await actualFs.mkdtemp(join(tmpdir(), 'blackhole-'));
       realClient = new BlackholeClient({ watchDir, protocol: 'torrent' });
     });
@@ -620,6 +757,76 @@ describe('BlackholeClient', () => {
         .rejects.toThrow(DownloadClientError);
 
       expect(await actualFs.readdir(watchDir)).toEqual([]);
+    });
+
+    // #2341: the directory contents are the property under test — a mock cannot show that a
+    // staged artifact is invisible to the watching client.
+    it.each([
+      ['torrent-bytes', { type: 'torrent-bytes', data: Buffer.from('d8:announce'), infoHash: 'a' }, /^download-\d+\.torrent$/, Buffer.from('d8:announce')],
+      ['magnet-uri', { type: 'magnet-uri', uri: 'magnet:?xt=urn:btih:abc', infoHash: 'a' }, /^\d+\.magnet$/, Buffer.from('magnet:?xt=urn:btih:abc')],
+      ['nzb-bytes', { type: 'nzb-bytes', data: Buffer.from('<nzb/>') }, /^download-\d+\.nzb$/, Buffer.from('<nzb/>')],
+    ] as const)('stages %s invisibly and publishes it only on commit', async (_label, artifact, namePattern, expected) => {
+      const staged = await realClient.stageDownload(artifact as DownloadArtifact);
+
+      expect(await tempNames()).toHaveLength(1);
+      expect(await finalNames()).toEqual([]);
+
+      await staged.commit();
+
+      const names = await finalNames();
+      expect(names).toHaveLength(1);
+      expect(names[0]).toMatch(namePattern);
+      expect(await actualFs.readFile(join(watchDir, names[0]!))).toEqual(expected);
+      expect(await tempNames()).toEqual([]);
+    });
+
+    it('leaves the watch directory empty after an abort', async () => {
+      const staged = await realClient.stageDownload({ type: 'torrent-bytes', data: Buffer.from('d8'), infoHash: 'a' });
+      expect(await tempNames()).toHaveLength(1);
+
+      await staged.abort();
+
+      expect(await actualFs.readdir(watchDir)).toEqual([]);
+      expect(rename).not.toHaveBeenCalled();
+    });
+
+    it('leaves the published file untouched when abort runs after commit', async () => {
+      const staged = await realClient.stageDownload({ type: 'torrent-bytes', data: Buffer.from('d8'), infoHash: 'a' });
+      await staged.commit();
+
+      await expect(staged.abort()).resolves.toBeUndefined();
+
+      const names = await finalNames();
+      expect(names).toHaveLength(1);
+      expect(await actualFs.readFile(join(watchDir, names[0]!))).toEqual(Buffer.from('d8'));
+    });
+
+    it('keeps the staged file and publishes nothing when the commit rename fails', async () => {
+      const staged = await realClient.stageDownload({ type: 'torrent-bytes', data: Buffer.from('d8'), infoHash: 'a' });
+      vi.mocked(rename).mockRejectedValueOnce(new Error('EXDEV: cross-device link'));
+
+      await expect(staged.commit()).rejects.toThrow('EXDEV');
+
+      expect(await finalNames()).toEqual([]);
+      expect(await tempNames()).toHaveLength(1);
+    });
+
+    it('publishes nothing while the commit rename is still in flight', async () => {
+      const staged = await realClient.stageDownload({ type: 'torrent-bytes', data: Buffer.from('d8'), infoHash: 'a' });
+      let releaseRename!: () => void;
+      const stalled = new Promise<void>((resolve) => { releaseRename = resolve; });
+      vi.mocked(rename).mockImplementationOnce((async (from: string, to: string) => {
+        await stalled;
+        await actualFs.rename(from, to);
+      }) as never);
+
+      const publishing = staged.commit();
+      await vi.waitFor(() => expect(releaseRename).toBeDefined());
+      expect(await finalNames()).toEqual([]);
+
+      releaseRename();
+      await publishing;
+      expect(await finalNames()).toHaveLength(1);
     });
 
     // F7: final names are millisecond-stamped, so a deterministic `<final>.tmp` would let two

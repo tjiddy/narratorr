@@ -549,6 +549,40 @@ describe('v1 action routes (search + grab)', () => {
       expect(a.json().id).toBe(b.json().id);
     });
 
+    // #2341 AC9: a crash between the insert and the publish leaves a completed, external-id-less
+    // row that is indistinguishable from a published handoff in every persisted field. V1's
+    // release lookup filters on neither status nor external id, so it short-circuits a same-release
+    // retry. That is accepted and pinned here, not asserted away.
+    describe('crash-residue short-circuit (#2341 AC9)', () => {
+      const residueRow = {
+        id: 42, guid: 'guid-1', infoHash: null, downloadUrl: 'http://x/1', indexerId: 3,
+      };
+      const residueDownload = () => hydratedDownload({ clientStatus: 'completed', pipelineStage: 'idle', progress: 1, externalId: null });
+
+      it('returns the unpublished residue row (200) for the same release instead of re-grabbing it', async () => {
+        downloadRows = [residueRow];
+        (downloadService.getById as Mock).mockResolvedValue(residueDownload());
+        const releaseId = signReleaseId({ downloadUrl: 'http://x/1', title: 'T', protocol: 'torrent', guid: 'guid-1', indexerId: 3 });
+
+        const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/grab', headers: keyHeaders, payload: { releaseId } });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.json().id).toBe('dl_test000000000000000');
+        expect(downloadOrchestrator.grab as Mock).not.toHaveBeenCalled();
+      });
+
+      it('is release-scoped, not book-scoped: a different release for the same book still grabs', async () => {
+        downloadRows = [residueRow];
+        (downloadService.getById as Mock).mockResolvedValue(residueDownload());
+        const releaseId = signReleaseId({ downloadUrl: 'http://x/2', title: 'T', protocol: 'torrent', guid: 'guid-2', indexerId: 3 });
+
+        const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/grab', headers: keyHeaders, payload: { releaseId } });
+
+        expect(res.statusCode).toBe(201);
+        expect(downloadOrchestrator.grab as Mock).toHaveBeenCalledTimes(1);
+      });
+    });
+
     describe('matching-predicate coverage (F2)', () => {
       it('(a) matches a row carrying both guid and info_hash by guid', async () => {
         downloadRows = [{ id: 42, guid: 'guid-1', infoHash: 'deadbeef', downloadUrl: 'http://x/1', indexerId: 3 }];

@@ -2122,6 +2122,110 @@ describe('DownloadService', () => {
     });
   });
 
+  // #2341: an adapter that can stage has no control channel to compensate through, so the grab
+  // path publishes after the row instead of before it. Absence of the hook is the discriminator.
+  describe('staged-handoff capability dispatch', () => {
+    const MAGNET_URL = 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d';
+
+    function stagingAdapter(over?: Record<string, unknown>) {
+      return {
+        stageDownload: vi.fn().mockResolvedValue({ commit: vi.fn().mockResolvedValue(undefined), abort: vi.fn().mockResolvedValue(undefined) }),
+        addDownload: vi.fn().mockResolvedValue('ext-should-not-be-used'),
+        removeDownload: vi.fn(),
+        ...over,
+      };
+    }
+
+    function primeGrab(adapter: unknown, client?: Record<string, unknown>) {
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'Blackhole', type: 'blackhole', settings: {}, ...client });
+      (clientService.getAdapter as Mock).mockResolvedValue(adapter);
+      const valuesSpy = vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([{ id: 1 }]) });
+      db.insert.mockReturnValue({ values: valuesSpy } as never);
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(mockDbChain([{ download: { ...mockDownload, clientStatus: 'completed', externalId: null }, book: mockBook }]));
+      return valuesSpy;
+    }
+
+    const grab = () => service.grab({ downloadUrl: MAGNET_URL, title: 'Test', skipDuplicateCheck: true });
+
+    it('stages the artifact, never adds it, and records no external id', async () => {
+      const adapter = stagingAdapter();
+      const valuesSpy = primeGrab(adapter);
+
+      await grab();
+
+      expect(adapter.stageDownload).toHaveBeenCalledTimes(1);
+      expect(adapter.stageDownload.mock.calls[0]![0]).toMatchObject({ type: 'magnet-uri' });
+      expect(adapter.addDownload).not.toHaveBeenCalled();
+      expect(valuesSpy).toHaveBeenCalledWith(expect.objectContaining({ externalId: null }));
+    });
+
+    it('publishes the staged artifact once the record has landed', async () => {
+      const handoff = { commit: vi.fn().mockResolvedValue(undefined), abort: vi.fn().mockResolvedValue(undefined) };
+      const adapter = stagingAdapter({ stageDownload: vi.fn().mockResolvedValue(handoff) });
+      primeGrab(adapter);
+
+      await grab();
+
+      expect(handoff.commit).toHaveBeenCalledTimes(1);
+      expect(handoff.abort).not.toHaveBeenCalled();
+    });
+
+    it('hands staging the same category options addDownload would have received', async () => {
+      const adapter = stagingAdapter();
+      primeGrab(adapter, { settings: { category: 'audiobooks' } });
+
+      await grab();
+
+      expect(adapter.stageDownload).toHaveBeenCalledWith(expect.anything(), { category: 'audiobooks' });
+    });
+
+    it('adds exactly as before when the adapter cannot stage', async () => {
+      const adapter = { addDownload: vi.fn().mockResolvedValue('ext-123'), removeDownload: vi.fn() };
+      const valuesSpy = primeGrab(adapter);
+
+      await grab();
+
+      expect(adapter.addDownload).toHaveBeenCalledWith(expect.objectContaining({ type: 'magnet-uri' }), undefined);
+      expect(valuesSpy).toHaveBeenCalledWith(expect.objectContaining({ externalId: 'ext-123' }));
+    });
+
+    it('rejects the grab and inserts no partial row when staging fails', async () => {
+      const adapter = stagingAdapter({ stageDownload: vi.fn().mockRejectedValue(new Error('ENOSPC')) });
+      primeGrab(adapter);
+
+      await expect(grab()).rejects.toThrow('ENOSPC');
+
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('reports staging as staged rather than sent, so a failed publish cannot leave a delivery claim', async () => {
+      const log = createMockLogger();
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+      primeGrab(stagingAdapter());
+
+      await svc.grab({ downloadUrl: MAGNET_URL, title: 'Test', skipDuplicateCheck: true });
+
+      expect(log.debug).not.toHaveBeenCalledWith(expect.anything(), 'Download sent to client');
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ clientName: 'Blackhole' }),
+        expect.stringContaining('staged'),
+      );
+    });
+
+    it('claims no delivery at all when the publish fails after the record landed', async () => {
+      const log = createMockLogger();
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+      const handoff = { commit: vi.fn().mockRejectedValue(new Error('EXDEV')), abort: vi.fn().mockResolvedValue(undefined) };
+      primeGrab(stagingAdapter({ stageDownload: vi.fn().mockResolvedValue(handoff) }));
+
+      await expect(svc.grab({ downloadUrl: MAGNET_URL, title: 'Test', skipDuplicateCheck: true })).rejects.toThrow('EXDEV');
+
+      expect(log.debug).not.toHaveBeenCalledWith(expect.anything(), 'Download sent to client');
+      expect(log.info).not.toHaveBeenCalledWith(expect.anything(), 'Download initiated');
+    });
+  });
+
   describe('logging improvements (#229)', () => {
     it('addDownload success logged at debug with { externalId, clientName, bookId }', async () => {
       const log = createMockLogger();

@@ -3,7 +3,7 @@ import { type Db, type DbOrTx } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, indexers } from '@db/schema.js';
 import type { DownloadProtocol } from '@core/index.js';
-import type { DownloadArtifact } from '@core/download-clients/types.js';
+import type { DownloadArtifact, StagedHandoff } from '@core/download-clients/types.js';
 import { isTerminalState, deriveDisplayStatus } from '@shared/download-status-registry.js';
 import {
   inProgressDownloadCondition,
@@ -214,7 +214,9 @@ export class DownloadService {
     return this.wired.require().indexerService.getLanAllowlist();
   }
 
-  private async sendToClient(artifact: DownloadArtifact, protocol: DownloadProtocol): Promise<{ externalId: string | null; clientId: number; clientType: string; clientName: string }> {
+  /** Staging and adding are mutually exclusive: a stageable adapter has no control channel, so its
+   * artifact is published after the row lands rather than compensated once the row fails. */
+  private async sendToClient(artifact: DownloadArtifact, protocol: DownloadProtocol): Promise<{ externalId: string | null; staged: StagedHandoff | null; clientId: number; clientType: string; clientName: string }> {
     const client = await this.downloadClientService.getFirstEnabledForProtocol(protocol);
     if (!client) throw new Error('No download client configured');
     const adapter = await this.downloadClientService.getAdapter(client.id);
@@ -222,8 +224,12 @@ export class DownloadService {
     const settings = (client.settings ?? {}) as Record<string, unknown>;
     const category = (settings.category as string | undefined)?.trim() || undefined;
     const addOptions = { ...(category ? { category } : {}) };
-    const externalId = await adapter.addDownload(artifact, Object.keys(addOptions).length > 0 ? addOptions : undefined);
-    return { externalId, clientId: client.id, clientType: client.type, clientName: client.name };
+    const options = Object.keys(addOptions).length > 0 ? addOptions : undefined;
+    const identity = { clientId: client.id, clientType: client.type, clientName: client.name };
+    if (adapter.stageDownload) {
+      return { externalId: null, staged: await adapter.stageDownload(artifact, options), ...identity };
+    }
+    return { externalId: await adapter.addDownload(artifact, options), staged: null, ...identity };
   }
 
   /**
@@ -285,13 +291,16 @@ export class DownloadService {
     const { artifact, infoHash } = await resolveArtifact(effectiveDownloadUrl, protocol, () => this.buildLanAllowlist());
 
     this.log.debug({ protocol, downloadUrl: sanitizeLogUrl(effectiveDownloadUrl), infoHash }, 'Sending download to client');
-    const { externalId, clientId, clientType, clientName } = await this.sendToClient(artifact, protocol);
-    this.log.debug({ externalId, clientName, bookId: params.bookId }, 'Download sent to client');
+    const { externalId, staged, clientId, clientType, clientName } = await this.sendToClient(artifact, protocol);
+    // A staged artifact has not reached the client yet, and may never; say so rather than claim delivery.
+    if (staged) this.log.debug({ clientName, bookId: params.bookId }, 'Download staged for client — published once the record lands');
+    else this.log.debug({ externalId, clientName, bookId: params.bookId }, 'Download sent to client');
 
-    // If DB insert fails after client-add, remove the orphan best-effort or log it for recovery.
+    // A failed insert publishes nothing and discards the staged artifact; with an external id
+    // instead it removes the orphan best-effort, or logs it for recovery.
     const result = await insertDownloadRecordOrCompensate(
       this.db, this.log, params,
-      { effectiveDownloadUrl, protocol, infoHash, clientId, clientType, externalId },
+      { effectiveDownloadUrl, protocol, infoHash, clientId, clientType, externalId, staged },
       (id) => this.downloadClientService.getAdapter(id),
     );
     this.log.info({ title: params.title, indexerId: params.indexerId }, 'Download initiated');

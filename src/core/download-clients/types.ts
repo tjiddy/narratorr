@@ -33,6 +33,17 @@ export interface AddDownloadOptions {
   paused?: boolean | undefined;
 }
 
+/**
+ * A handoff artifact written but not yet consumable. The publish is the commit point, so the
+ * caller can land its own durable record first and still discard the artifact if that fails.
+ */
+export interface StagedHandoff {
+  /** Publish the staged artifact under its final name. Rejects if the publish fails. */
+  commit(): Promise<void>;
+  /** Discard the staged artifact. Resolves if it is already gone; rejects on any other failure. */
+  abort(): Promise<void>;
+}
+
 export interface DownloadClientAdapter {
   readonly type: string;
   readonly name: string;
@@ -41,6 +52,9 @@ export interface DownloadClientAdapter {
 
   /** Return the tracking ID; Blackhole alone returns null because it has no control channel. */
   addDownload(artifact: DownloadArtifact, options?: AddDownloadOptions): Promise<string | null>;
+  /** Handoff clients only: stage the artifact invisibly so the DB record can land first. Its
+   * absence is what tells the grab path an adapter has a control channel to compensate through. */
+  stageDownload?(artifact: DownloadArtifact, options?: AddDownloadOptions): Promise<StagedHandoff>;
   getDownload(id: string): Promise<DownloadItemInfo | null>;
   getAllDownloads(category?: string): Promise<DownloadItemInfo[]>;
   getCategories(): Promise<string[]>;
