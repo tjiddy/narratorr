@@ -718,6 +718,68 @@ describe('MyAnonamouseIndexer', () => {
       expect(Number.isNaN(mbPerHour)).toBe(false);
       expect(mbPerHour).toBeGreaterThan(0);
     });
+
+    it('parses a grouped "1,008.8 MiB" string size into 1057803469 bytes (#2316)', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ size: '1,008.8 MiB' })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const { results } = await indexer.search('test');
+      expect(results[0]!.size).toBe(1057803469);
+    });
+
+    it('sets size undefined when the provider returns null (orUndef normalization)', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ size: null })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const { results } = await indexer.search('test');
+      expect(results[0]!).not.toHaveProperty('size');
+    });
+  });
+
+  describe('search — rawSize diagnostic field (#2316)', () => {
+    it('carries the indexer\'s raw size string when the API returned a string', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ size: '1,008.8 MiB' })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const { results } = await indexer.search('test');
+      expect(results[0]!.rawSize).toBe('1,008.8 MiB');
+    });
+
+    it('omits rawSize when the API returned a number', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ size: 1073741824 })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const { results } = await indexer.search('test');
+      expect(results[0]!).not.toHaveProperty('rawSize');
+    });
+
+    it('omits rawSize when the API omitted the size', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ size: null })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const { results } = await indexer.search('test');
+      expect(results[0]!).not.toHaveProperty('rawSize');
+    });
   });
 
   describe('AbortSignal threading', () => {

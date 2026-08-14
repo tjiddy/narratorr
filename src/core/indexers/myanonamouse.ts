@@ -191,6 +191,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     const narrator = parseDoubleEncodedNames(orUndef(item.narrator_info));
     const guid = item.id != null ? String(item.id) : undefined;
     const size = parseMamSize(orUndef(item.size));
+    const rawSize = typeof item.size === 'string' ? item.size : undefined;
     const seeders = orUndef(item.seeders);
     const leechers = orUndef(item.leechers);
     const language = normalizeLanguage(orUndef(item.lang_code));
@@ -203,6 +204,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       ...(guid !== undefined && { guid }),
       ...(downloadUrl !== undefined && { downloadUrl }),
       ...(size !== undefined && { size }),
+      ...(rawSize !== undefined && { rawSize }),
       ...(seeders !== undefined && { seeders }),
       ...(leechers !== undefined && { leechers }),
       ...(language !== undefined && { language }),

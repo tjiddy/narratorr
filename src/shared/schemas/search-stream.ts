@@ -39,6 +39,7 @@ export const searchResultSchema = z.object({
   downloadUrl: z.string().optional(),
   infoHash: z.string().optional(),
   size: z.number().optional(),
+  rawSize: z.string().optional(),
   seeders: z.number().optional(),
   leechers: z.number().optional(),
   grabs: z.number().optional(),

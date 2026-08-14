@@ -122,6 +122,27 @@ describe('searchResponseSchema', () => {
   });
 });
 
+describe('searchResultSchema — rawSize (#2316)', () => {
+  const base = { title: 'Play of Shadows', protocol: 'torrent', indexer: 'MAM' };
+
+  it('accepts and round-trips a rawSize string', () => {
+    const result = searchResultSchema.safeParse({ ...base, size: 1057803469, rawSize: '1,008.8 MiB' });
+    expect(result.success).toBe(true);
+    expect(result.data?.rawSize).toBe('1,008.8 MiB');
+  });
+
+  it('accepts a result without rawSize', () => {
+    const result = searchResultSchema.safeParse(base);
+    expect(result.success).toBe(true);
+    expect(result.data).not.toHaveProperty('rawSize');
+  });
+
+  it('rejects a non-string rawSize', () => {
+    const result = searchResultSchema.safeParse({ ...base, rawSize: 1057803469 });
+    expect(result.success).toBe(false);
+  });
+});
+
 // Normalize Zod's ?: T | undefined before comparing exact-optional DTOs.
 type TightenOptional<T> = {
   [K in keyof T as undefined extends T[K] ? never : K]: T[K];
