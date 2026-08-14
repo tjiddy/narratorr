@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor, fireEvent } from '@testing-library/react';
+import { screen, waitFor, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { queryKeys } from '@/lib/queryKeys';
 import { createMockSettings } from '@/__tests__/factories';
 import { NamingSettingsSection } from './NamingSettingsSection';
 
@@ -1182,4 +1184,88 @@ describe('NamingSettingsSection', () => {
       });
     });
   });
+
+  describe('when the shared settings read fails', () => {
+    beforeEach(() => {
+      // resetAllMocks, not clearAllMocks: these tests queue `*Once()` responses and
+      // clearAllMocks does not drain those queues.
+      vi.resetAllMocks();
+    });
+
+    it('reports the read failure instead of showing the default templates as saved formats', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
+
+      renderWithProviders(<NamingSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load file naming settings.')).toBeInTheDocument();
+      });
+      // "{author}/{title}" in Folder format reads as the operator's template; it is the
+      // schema default, and a failed read never observed the saved one.
+      expect(screen.queryByLabelText('Folder format')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('File format')).not.toBeInTheDocument();
+    });
+
+    it('refetches and restores the saved templates when the operator clicks Retry', async () => {
+      mockApi.getSettings
+        .mockRejectedValueOnce(new Error('settings unreadable'))
+        .mockResolvedValue(createMockSettings({ library: { folderFormat: '{authorLastFirst}/{titleSort}' } }));
+      const user = userEvent.setup();
+
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => expect(screen.getByText('Failed to load file naming settings.')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Retry loading file naming settings' }));
+
+      // The Last, First template, not the default "{author}/{title}": only a refetch yields it.
+      await waitFor(() => expect(screen.getByLabelText('Folder format')).toHaveValue('{authorLastFirst}/{titleSort}'));
+      expect(screen.queryByText('Failed to load file naming settings.')).not.toBeInTheDocument();
+      expect(mockApi.getSettings).toHaveBeenCalledTimes(2);
+    });
+
+    it('hides an already-open token modal on a background failure, then restores it working on Retry', async () => {
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      mockApi.getSettings.mockResolvedValueOnce(mockSettings);
+      const user = userEvent.setup();
+
+      renderWithProviders(<NamingSettingsSection />, { queryClient: client });
+      await waitFor(() => expect(screen.getByLabelText('Folder format')).toHaveValue('{author}/{title}'));
+
+      await user.click(screen.getByLabelText('Folder token reference'));
+      expect(screen.getByText('Folder Token Reference')).toBeInTheDocument();
+
+      // A background refetch failure reaches a card whose modal state is already non-null.
+      mockApi.getSettings.mockRejectedValueOnce(new Error('settings unreadable'));
+      await act(async () => { await client.refetchQueries({ queryKey: queryKeys.settings() }); });
+
+      await waitFor(() => expect(screen.getByText('Failed to load file naming settings.')).toBeInTheDocument());
+      expect(screen.queryByLabelText('Folder format')).not.toBeInTheDocument();
+      // A form-only gate leaves this modal floating over the error card, with both input
+      // refs nulled — every token button then silently no-ops at the null-ref guard.
+      expect(screen.queryByText('Folder Token Reference')).toBeNull();
+
+      mockApi.getSettings.mockResolvedValue(mockSettings);
+      await user.click(screen.getByRole('button', { name: 'Retry loading file naming settings' }));
+
+      // Scope was retained, not cleared, so the operator gets their place back.
+      await waitFor(() => expect(screen.getByText('Folder Token Reference')).toBeInTheDocument());
+      const input = screen.getByLabelText('Folder format') as HTMLInputElement;
+      input.setSelectionRange(input.value.length, input.value.length);
+      await user.click(screen.getByText('{series}'));
+
+      // Insertion, not mere visibility: a dead modal over a remounted form still renders.
+      await waitFor(() => expect(input.value).toBe('{author}/{title}{series}'));
+    });
+
+    it('leaves the modal closed on a failed read the operator never opened it for', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
+
+      renderWithProviders(<NamingSettingsSection />);
+
+      await waitFor(() => expect(screen.getByText('Failed to load file naming settings.')).toBeInTheDocument());
+      expect(screen.queryByText('Folder Token Reference')).toBeNull();
+      expect(screen.queryByText('File Token Reference')).toBeNull();
+    });
+  });
+
 });
