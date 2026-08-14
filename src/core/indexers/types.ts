@@ -11,6 +11,8 @@ export interface SearchResult {
   downloadUrl?: string;
   infoHash?: string;
   size?: number;
+  /** Indexer's human-readable size string; diagnostic only, so a mangled parse is legible in the log. */
+  rawSize?: string;
   seeders?: number;
   leechers?: number;
   grabs?: number;

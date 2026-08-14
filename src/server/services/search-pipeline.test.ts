@@ -11,6 +11,7 @@ import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '@core/index.js';
+import { parseMamSize } from '@core/indexers/mam-helpers.js';
 import { BYTES_PER_GB as GB, BYTES_PER_MB as MB } from '@shared/constants.js';
 import type { SearchResponsePayload, SearchResultPayload } from '@shared/schemas/search-stream.js';
 import { SearchLadderCooldown } from './search-ladder-cooldown.js';
@@ -903,6 +904,83 @@ describe('filterAndRankResults — minDownloadSize', () => {
       expect.objectContaining({ reason: 'below-min-size' }),
       expect.any(String),
     );
+  });
+});
+
+describe('filterAndRankResults — MAM grouped size reaches the gate intact (#2316)', () => {
+  const options = { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 50 } as const;
+
+  it('keeps a 1,008.8 MiB MAM release once the size parses correctly', () => {
+    const { results } = filterAndRankResults([makeResult({ size: parseMamSize('1,008.8 MiB') })], undefined, { ...options });
+    expect(results).toHaveLength(1);
+  });
+
+  it('drops the same release at the pre-fix mangled size', () => {
+    const { results } = filterAndRankResults([makeResult({ size: 1048576 })], undefined, { ...options });
+    expect(results).toHaveLength(0);
+  });
+});
+
+describe('filterAndRankResults — size-drop logs name the raw size string (#2316)', () => {
+  function dropLogFields(log: FastifyBaseLogger, reason: string): Record<string, unknown> | undefined {
+    const call = vi.mocked(log.debug).mock.calls.find(
+      ([fields]) => (fields as { reason?: string }).reason === reason,
+    );
+    return call?.[0] as Record<string, unknown> | undefined;
+  }
+
+  it('below-min-size drop log carries rawSize when the result has one', () => {
+    const log = createMockLogger();
+    filterAndRankResults(
+      [makeResult({ title: 'Play of Shadows', size: 1048576, rawSize: '1,008.8 MiB' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 50 },
+      log,
+    );
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Play of Shadows', reason: 'below-min-size', sizeBytes: 1048576, rawSize: '1,008.8 MiB' }),
+      'Quality filter dropped result',
+    );
+  });
+
+  it('below-min-size drop log omits the rawSize key when the result has none', () => {
+    const log = createMockLogger();
+    filterAndRankResults(
+      [makeResult({ title: 'Tracker test', size: 5 * MB })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 50 },
+      log,
+    );
+    const fields = dropLogFields(log, 'below-min-size');
+    expect(fields).toBeDefined();
+    expect(Object.keys(fields!)).not.toContain('rawSize');
+  });
+
+  it('over-max-size drop log carries rawSize when the result has one', () => {
+    const log = createMockLogger();
+    filterAndRankResults(
+      [makeResult({ title: 'Huge', size: 10 * GB, rawSize: '10.0 GiB' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5 },
+      log,
+    );
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Huge', reason: 'over-max-size', sizeBytes: 10 * GB, rawSize: '10.0 GiB' }),
+      'Quality filter dropped result',
+    );
+  });
+
+  it('over-max-size drop log omits the rawSize key when the result has none', () => {
+    const log = createMockLogger();
+    filterAndRankResults(
+      [makeResult({ title: 'Huge', size: 10 * GB })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5 },
+      log,
+    );
+    const fields = dropLogFields(log, 'over-max-size');
+    expect(fields).toBeDefined();
+    expect(Object.keys(fields!)).not.toContain('rawSize');
   });
 });
 

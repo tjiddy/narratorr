@@ -129,7 +129,7 @@ function buildQualityGates(
       evaluate: (r) => {
         if (!r.size || r.size <= 0) return { keep: true };
         if (r.size >= minBytes) return { keep: true };
-        return { keep: false, logFields: { sizeBytes: r.size, minBytes } };
+        return { keep: false, logFields: { sizeBytes: r.size, minBytes, ...(r.rawSize !== undefined && { rawSize: r.rawSize }) } };
       },
     },
     {
@@ -138,7 +138,7 @@ function buildQualityGates(
       evaluate: (r) => {
         if (!r.size || r.size <= 0) return { keep: true };
         if (r.size <= maxBytes) return { keep: true };
-        return { keep: false, logFields: { sizeBytes: r.size, maxBytes } };
+        return { keep: false, logFields: { sizeBytes: r.size, maxBytes, ...(r.rawSize !== undefined && { rawSize: r.rawSize }) } };
       },
     },
   ];
