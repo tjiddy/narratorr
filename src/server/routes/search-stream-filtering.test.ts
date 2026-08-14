@@ -13,12 +13,14 @@ import { DEFAULT_SETTINGS } from '@shared/schemas/settings/registry.js';
 import authPlugin from '../plugins/auth.js';
 import { searchStreamRoutes } from './search-stream.js';
 import type { SearchResult } from '@core/index.js';
+import { searchResponseSchema, type SearchDropSummary } from '@shared/schemas/search-stream.js';
 import { fetchSseEvents } from '../__tests__/sse-helpers.js';
 
 type SearchCompleteData = {
   results: SearchResult[];
   durationUnknown: boolean;
   unsupportedResults: { count: number; titles: string[] };
+  filteredOut?: SearchDropSummary;
 };
 
 function getSearchComplete(events: Array<{ event: string; data: unknown }>): SearchCompleteData {
@@ -239,6 +241,36 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
     });
   });
 
+  describe('quality-filtered empty result set (#2325)', () => {
+    it('carries filteredOut with the dominant reason and threshold when the gates empty the set', async () => {
+      const { app } = await createApp(
+        [{ ...baseResult, title: 'Tracker test', size: 5 * 1024 * 1024 }],
+        { minDownloadSize: 50 },
+      );
+      appInstance = app;
+
+      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test');
+      const data = getSearchComplete(events);
+
+      expect(data.results).toEqual([]);
+      expect(data.filteredOut).toEqual({
+        total: 1,
+        reasons: [{ reason: 'below-min-size', count: 1, threshold: '50 MB' }],
+      });
+    });
+
+    it('omits filteredOut when the indexers genuinely returned nothing', async () => {
+      const { app } = await createApp([], { minDownloadSize: 50 });
+      appInstance = app;
+
+      const { events } = await fetchSseEvents(app, '/api/search/stream?q=test');
+      const data = getSearchComplete(events);
+
+      expect(data.results).toEqual([]);
+      expect(data).not.toHaveProperty('filteredOut');
+    });
+  });
+
   describe('error isolation', () => {
     it('emits search-complete with empty results when postProcessSearchResults throws', async () => {
       const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
@@ -267,6 +299,8 @@ describe('searchStreamRoutes — reject word filtering (real postProcessSearchRe
 
       expect(data.results).toEqual([]);
       expect(data.durationUnknown).toBe(true);
+      expect(data).not.toHaveProperty('filteredOut');
+      expect(searchResponseSchema.safeParse(data).success).toBe(true);
     });
   });
 });

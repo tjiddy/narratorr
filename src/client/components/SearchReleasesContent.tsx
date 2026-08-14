@@ -12,6 +12,7 @@ import {
   XIcon,
 } from '@/components/icons';
 import { UnsupportedSection } from '@/components/UnsupportedSection';
+import { FilteredOutEmptyState } from '@/components/FilteredOutEmptyState';
 import { ReleaseCard } from '@/components/ReleaseCard';
 
 function IndexerStatusIcon({ status }: { status: IndexerState['status'] }) {
@@ -104,6 +105,20 @@ function SearchingPhase({
   );
 }
 
+/** A genuine indexer miss and "your settings hid everything" are different answers to the same screen. */
+function EmptyResultsState({ searchResponse }: { searchResponse: SearchResponse }) {
+  const filteredOut = searchResponse.filteredOut;
+  if (filteredOut && filteredOut.total > 0) {
+    return <FilteredOutEmptyState filteredOut={filteredOut} />;
+  }
+  return (
+    <div className="flex flex-col items-center justify-center py-12">
+      <SearchIcon className="w-10 h-10 text-muted-foreground/40 mb-4" />
+      <p className="text-muted-foreground">No releases found</p>
+    </div>
+  );
+}
+
 function ResultsPhase({
   searchResponse,
   resultKeys,
@@ -134,10 +149,7 @@ function ResultsPhase({
       )}
 
       {results?.length === 0 && searchResponse && (
-        <div className="flex flex-col items-center justify-center py-12">
-          <SearchIcon className="w-10 h-10 text-muted-foreground/40 mb-4" />
-          <p className="text-muted-foreground">No releases found</p>
-        </div>
+        <EmptyResultsState searchResponse={searchResponse} />
       )}
 
       {searchResponse?.durationUnknown && (

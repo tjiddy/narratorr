@@ -369,6 +369,27 @@ describe('v1 action routes (search + grab)', () => {
       expect(body.total).toBe(body.data.length);
     });
 
+    it('keeps the envelope at { data, total } when the quality gates removed every result (#2325 AC13)', async () => {
+      (settingsService.get as Mock).mockImplementation((cat: string) => {
+        if (cat === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5, minDownloadSize: 50, rejectWords: '', requiredWords: '' });
+        if (cat === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: [] });
+        return Promise.resolve({});
+      });
+      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({
+        results: [searchResult({ title: 'Tracker test', size: 5 * 1024 * 1024 })],
+        succeeded: 1,
+        failed: 0,
+      });
+
+      const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body).toEqual({ data: [], total: 0 });
+      expect(Object.keys(body).sort()).toEqual(['data', 'total']);
+      expect(body).not.toHaveProperty('filteredOut');
+    });
+
     describe('duration precedence via resolveBookQualityInputs', () => {
       afterEach(() => { vi.restoreAllMocks(); });
 
