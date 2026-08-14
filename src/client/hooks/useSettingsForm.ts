@@ -25,6 +25,12 @@ export interface UseSettingsFormReturn<T extends Record<string, unknown>> {
   form: UseFormReturn<T>;
   mutation: ReturnType<typeof useMutation<AppSettings, Error, T, { submittedRaw: T }>>;
   onSubmit: (data: T) => void;
+  /**
+   * The shared settings read failed, so `form` holds `defaultValues` rather than saved values.
+   * Additive: consumers that ignore it keep their pre-#2320 behavior unchanged.
+   */
+  settingsError: boolean;
+  refetchSettings: () => void;
 }
 
 // Both values come from one form, so JSON key order is stable.
@@ -49,7 +55,7 @@ export function useSettingsForm<T extends Record<string, unknown>>({
     toPayloadRef.current = toPayload;
   });
 
-  const { data: settings } = useQuery({
+  const { data: settings, isError: settingsError, refetch: refetchSettingsQuery } = useQuery({
     queryKey: queryKeys.settings(),
     queryFn: api.getSettings,
   });
@@ -105,5 +111,7 @@ export function useSettingsForm<T extends Record<string, unknown>>({
     mutation.mutate(data);
   };
 
-  return { form, mutation, onSubmit };
+  const refetchSettings = () => { void refetchSettingsQuery(); };
+
+  return { form, mutation, onSubmit, settingsError, refetchSettings };
 }

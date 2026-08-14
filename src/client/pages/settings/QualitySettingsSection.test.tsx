@@ -355,4 +355,21 @@ describe('QualitySettingsSection', () => {
       expect(mockToast.error).toHaveBeenCalledWith('Network error');
     });
   });
+
+  // Blast radius for #2320: `useSettingsForm` grew `settingsError`/`refetchSettings`, but only
+  // EbooksSettingsSection consumes them. This non-Ebooks consumer must behave exactly as before.
+  describe('shared-hook change is additive', () => {
+    it('renders its fields at their defaults under a rejected settings read, with no error affordance', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
+
+      renderWithProviders(<QualitySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Grab minimum')).toBeInTheDocument();
+      });
+      expect(screen.getByLabelText('Minimum seeders')).toBeInTheDocument();
+      expect(screen.queryByText(/^Failed to load/)).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^Retry/ })).not.toBeInTheDocument();
+    });
+  });
 });
