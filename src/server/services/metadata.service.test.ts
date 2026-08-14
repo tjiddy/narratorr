@@ -2185,6 +2185,314 @@ describe('MetadataService', () => {
       expect(result.kind).toBe('ok');
     });
   });
+
+  /**
+   * The shared provider floor (#2345). Faked `Date` AND timers together, asserting on
+   * provider-dispatch order — never on measured wall clock. Return values cannot see this: a path
+   * that takes a slot before its guard returns exactly the same shape, so the floor is the
+   * observable throughout.
+   */
+  describe('shared provider floor (#2345)', () => {
+    const THROTTLE_MS = 200;
+    const AUDIBLE = 'Audible.com';
+    const AUDNEXUS = 'Audnexus';
+    const fixMatchBook = { asin: 'B_FIX', title: 'Fix Title', authors: [{ name: 'Author' }] };
+
+    let calls: string[];
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+      calls = [];
+      const record = <T>(label: string, value: T) => async (arg: string): Promise<T> => {
+        calls.push(`${label}:${arg}`);
+        return value;
+      };
+      mockAudibleProvider.searchBooks.mockImplementation(record('audible.searchBooks', { books: [] }));
+      mockAudibleProvider.getBook.mockImplementation(record('audible.getBook', null));
+      mockAudibleProvider.getBookDetailed.mockImplementation(record('audible.getBookDetailed', { kind: 'ok', book: fixMatchBook }));
+      mockAudnexus.getBook.mockImplementation(record('audnexus.getBook', null));
+      mockAudnexus.getBookDetailed.mockImplementation(record('audnexus.getBookDetailed', { kind: 'not_found' }));
+      mockAudnexus.getAuthor.mockImplementation(record('audnexus.getAuthor', null));
+      mockAudnexus.getChapterRuntime.mockImplementation(record('audnexus.getChapterRuntime', { kind: 'not_found' }));
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /**
+     * Three deep, not two. The read-sleep-restamp form restamps synchronously before the next
+     * caller reads, so a two-call test is green against it — the coalescing is only observable
+     * once a third acquire arrives while a second is already sleeping and reads the same stamp.
+     */
+    it('spaces three same-tick enrichBook calls one interval apart, in call order (C15)', async () => {
+      void service.enrichBook('A');
+      void service.enrichBook('B');
+      void service.enrichBook('C');
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toEqual(['audnexus.getBook:A']);
+
+      await vi.advanceTimersByTimeAsync(THROTTLE_MS - 1);
+      expect(calls).toEqual(['audnexus.getBook:A']);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(calls).toEqual(['audnexus.getBook:A', 'audnexus.getBook:B']);
+
+      await vi.advanceTimersByTimeAsync(THROTTLE_MS);
+      expect(calls).toEqual(['audnexus.getBook:A', 'audnexus.getBook:B', 'audnexus.getBook:C']);
+    });
+
+    /**
+     * Discriminates in both directions: a coalescing gate dispatches the two Audnexus calls
+     * together at one interval, and a per-provider split would dispatch the first Audnexus call
+     * alongside the Audible one at zero.
+     */
+    it('holds ONE floor across Audible and Audnexus, not one each (C16)', async () => {
+      void service.search('q');
+      void service.enrichBook('B_ENRICH');
+      void service.getAuthor('AUTH');
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toEqual(['audible.searchBooks:q']);
+
+      await vi.advanceTimersByTimeAsync(THROTTLE_MS);
+      expect(calls).toEqual(['audible.searchBooks:q', 'audnexus.getBook:B_ENRICH']);
+
+      await vi.advanceTimersByTimeAsync(THROTTLE_MS);
+      expect(calls).toEqual([
+        'audible.searchBooks:q',
+        'audnexus.getBook:B_ENRICH',
+        'audnexus.getAuthor:AUTH',
+      ]);
+    });
+
+    it('gives each MetadataService instance its own floor (C17)', async () => {
+      const other = new MetadataService(inject<FastifyBaseLogger>(createMockLogger()));
+
+      void service.enrichBook('A');
+      void other.enrichBook('B');
+
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect([...calls].sort()).toEqual(['audnexus.getBook:A', 'audnexus.getBook:B']);
+    });
+
+    it('three concurrent same-ASIN chapter lookups cost ONE slot, not three (C19)', async () => {
+      void service.getChapterRuntimeSeconds('A');
+      void service.getChapterRuntimeSeconds('A');
+      void service.getChapterRuntimeSeconds('A');
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toEqual(['audnexus.getChapterRuntime:A']);
+
+      // B at one interval, not three, is what pins "waiters consume no throttle slot"; C is what
+      // makes the pair observable at all against a gate that coalesces its sleepers.
+      void service.getChapterRuntimeSeconds('B');
+      void service.getChapterRuntimeSeconds('C');
+
+      await vi.advanceTimersByTimeAsync(THROTTLE_MS - 1);
+      expect(calls).toEqual(['audnexus.getChapterRuntime:A']);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(calls).toEqual(['audnexus.getChapterRuntime:A', 'audnexus.getChapterRuntime:B']);
+
+      await vi.advanceTimersByTimeAsync(THROTTLE_MS);
+      expect(calls).toEqual([
+        'audnexus.getChapterRuntime:A',
+        'audnexus.getChapterRuntime:B',
+        'audnexus.getChapterRuntime:C',
+      ]);
+    });
+
+    it('lookupForFixMatch takes two slots when both providers are live (C21)', async () => {
+      void service.lookupForFixMatch('B_FIX');
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toEqual(['audible.getBookDetailed:B_FIX']);
+
+      await vi.advanceTimersByTimeAsync(THROTTLE_MS);
+      expect(calls).toEqual(['audible.getBookDetailed:B_FIX', 'audnexus.getBookDetailed:B_FIX']);
+    });
+
+    it('costs nothing for the second slot when the Audible request outlasted the interval (C21)', async () => {
+      mockAudibleProvider.getBookDetailed.mockImplementation(async (asin: string) => {
+        calls.push(`audible.getBookDetailed:${asin}`);
+        await new Promise((resolve) => setTimeout(resolve, THROTTLE_MS * 3));
+        return { kind: 'ok', book: fixMatchBook };
+      });
+
+      void service.lookupForFixMatch('B_FIX');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toEqual(['audible.getBookDetailed:B_FIX']);
+
+      // The floor expired at one interval, so Audnexus dispatches in the tick Audible settled in.
+      await vi.advanceTimersByTimeAsync(THROTTLE_MS * 3);
+      expect(calls).toEqual(['audible.getBookDetailed:B_FIX', 'audnexus.getBookDetailed:B_FIX']);
+    });
+
+    // AC7: every acquire sits inside a catch that degrades to a miss, so a gate rejection would be
+    // indistinguishable from a genuine provider miss. Nothing passes the gate a signal, and the
+    // zero interval here isolates the degradations from the spacing.
+    it('never rejects, so each degradation still comes from the provider (C20)', async () => {
+      const svc = new MetadataService(inject<FastifyBaseLogger>(mockLog), { throttleIntervalMs: 0 });
+
+      mockAudnexus.getBook.mockRejectedValue(new Error('boom'));
+      await expect(svc.enrichBook('A')).resolves.toBeNull();
+
+      mockAudnexus.getChapterRuntime.mockRejectedValue(new Error('boom'));
+      await expect(svc.getChapterRuntimeSeconds('A')).resolves.toEqual({});
+
+      mockAudibleProvider.searchBooks.mockRejectedValue(new TransientError(AUDIBLE, 'HTTP 503'));
+      const result = await svc.search('q');
+      expect(result.books).toEqual([]);
+      expect(result.warnings?.[0]).toContain('transient failure');
+
+      mockAudnexus.getBook.mockRejectedValue(new RateLimitError(60_000, AUDNEXUS));
+      await expect(svc.enrichBook('B')).rejects.toBeInstanceOf(RateLimitError);
+    });
+
+    /**
+     * C18 — the rate-limit short-circuit still precedes the gate, one case per AC6 statement.
+     *
+     * Rows 2-8 are each independently observable: the `isRateLimited` check and the `acquire` sit
+     * in the same function and no caller pre-checks the same provider, so moving that one statement's
+     * `acquire` above its guard reds exactly that row.
+     *
+     * Row 1 is the documented exception. `search(q)` and `searchBooksForDiscovery(q)` both check the
+     * same Audible backoff and return before ever reaching `withThrottledSearch`, so the inner guard
+     * is unreachable from any public path. This row therefore pins the PATH-level invariant — a
+     * backed-off Audible search consumes no slot — and cannot attribute it to the inner guard. Its
+     * counterfactual is a DOUBLE mutation (move the inner `acquire` above the inner guard AND delete
+     * `search`'s outer guard); either mutation alone leaves this row green, which is what
+     * double-guarding means. A reader who assumes one mutation reds it would read the green as proof
+     * of something it does not prove.
+     */
+    describe('the rate-limit short-circuit still precedes the gate (C18)', () => {
+      /**
+       * Arms the provider-wide backoff through one of its real 429 paths, then clears the floor the
+       * arming call itself consumed — without that step every "no delay" assertion below would be
+       * confounded and vacuous.
+       */
+      async function armBackoff(svc: MetadataService, provider: string): Promise<void> {
+        if (provider === AUDIBLE) {
+          mockAudibleProvider.searchBooks.mockRejectedValueOnce(new RateLimitError(60_000, AUDIBLE));
+          await svc.searchBooks('arm');
+        } else {
+          mockAudnexus.getBook.mockRejectedValueOnce(new RateLimitError(60_000, AUDNEXUS));
+          await expect(svc.enrichBook('ARM')).rejects.toBeInstanceOf(RateLimitError);
+        }
+        await vi.advanceTimersByTimeAsync(THROTTLE_MS);
+        calls.length = 0;
+      }
+
+      /** Probes with the OTHER provider: backoff is provider-wide, but the floor is shared. */
+      function probeOtherProvider(svc: MetadataService, gated: string): string {
+        if (gated === AUDIBLE) {
+          void svc.getAuthor('PROBE');
+          return 'audnexus.getAuthor:PROBE';
+        }
+        void svc.getBook('PROBE');
+        return 'audible.getBook:PROBE';
+      }
+
+      const ROWS: { row: number; statement: string; gated: string; run: (svc: MetadataService) => Promise<void> }[] = [
+        {
+          row: 1,
+          statement: 'metadata.service.ts → withThrottledSearch, via search(q)',
+          gated: AUDIBLE,
+          async run(svc) {
+            const result = await svc.search('q');
+            expect(result.books).toEqual([]);
+            expect(result.warnings?.[0]).toContain('rate limit reached');
+          },
+        },
+        {
+          row: 2,
+          statement: 'metadata.service.ts → withThrottle, via getBook(id)',
+          gated: AUDIBLE,
+          async run(svc) {
+            await expect(svc.getBook('B_GET')).resolves.toBeNull();
+          },
+        },
+        {
+          row: 3,
+          statement: 'metadata.service.ts → getAuthor, via getAuthor(id)',
+          gated: AUDNEXUS,
+          async run(svc) {
+            await expect(svc.getAuthor('AUTH')).resolves.toBeNull();
+          },
+        },
+        {
+          row: 4,
+          statement: 'metadata.service.ts → enrichBook, via enrichBook(asin)',
+          gated: AUDNEXUS,
+          async run(svc) {
+            await expect(svc.enrichBook('B_ENRICH')).rejects.toBeInstanceOf(RateLimitError);
+          },
+        },
+        {
+          row: 5,
+          statement: 'chapter-corroboration.ts → lookup, via getChapterRuntimeSeconds(asin)',
+          gated: AUDNEXUS,
+          async run(svc) {
+            await expect(svc.getChapterRuntimeSeconds('B_CHAP')).resolves.toEqual({});
+          },
+        },
+        {
+          row: 6,
+          statement: 'metadata-fix-match.ts → lookupForFixMatch Audible arm',
+          gated: AUDIBLE,
+          async run(svc) {
+            await expect(svc.lookupForFixMatch('B_FIX')).resolves.toEqual({
+              kind: 'rate_limited',
+              retryAfterMs: expect.any(Number),
+            });
+          },
+        },
+        {
+          row: 8,
+          statement: 'metadata-resolve-book.ts → searchBooksThrowing, via resolveBook without an asin',
+          gated: AUDIBLE,
+          async run(svc) {
+            await expect(svc.resolveBook({ title: 'T', author: 'A' })).rejects.toBeInstanceOf(RateLimitError);
+          },
+        },
+      ];
+
+      for (const { row, statement, gated, run } of ROWS) {
+        it(`row ${row}: ${statement} returns before taking a slot`, async () => {
+          const svc = new MetadataService(inject<FastifyBaseLogger>(createMockLogger()));
+          await armBackoff(svc, gated);
+
+          await run(svc);
+          expect(calls).toEqual([]);
+
+          const probeLabel = probeOtherProvider(svc, gated);
+          await vi.advanceTimersByTimeAsync(0);
+          expect(calls).toEqual([probeLabel]);
+        });
+      }
+
+      // Row 7 is the one exception to "made no provider call": reaching statement 7 requires the
+      // Audible arm to dispatch first. The observable is therefore that the whole call consumed
+      // exactly ONE slot rather than two — the probe waits one interval, not two.
+      it('row 7: metadata-fix-match.ts → callAudnexusBestEffort returns before taking a slot', async () => {
+        const svc = new MetadataService(inject<FastifyBaseLogger>(createMockLogger()));
+        await armBackoff(svc, AUDNEXUS);
+
+        await expect(svc.lookupForFixMatch('B_FIX')).resolves.toEqual({ kind: 'ok', book: fixMatchBook });
+        expect(calls).toEqual(['audible.getBookDetailed:B_FIX']);
+
+        void svc.getBook('PROBE');
+        await vi.advanceTimersByTimeAsync(THROTTLE_MS - 1);
+        expect(calls).toEqual(['audible.getBookDetailed:B_FIX']);
+
+        await vi.advanceTimersByTimeAsync(1);
+        expect(calls).toEqual(['audible.getBookDetailed:B_FIX', 'audible.getBook:PROBE']);
+      });
+    });
+  });
 });
 
 describe('isRejectedByWords (shared predicate)', () => {
