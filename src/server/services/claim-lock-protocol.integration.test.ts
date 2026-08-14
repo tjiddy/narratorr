@@ -12,7 +12,7 @@ import { BookRejectionService } from './book-rejection.service.js';
 import { RenameService, RenameError } from './rename.service.js';
 import { cleanupOldBookPath } from '../utils/import-steps.js';
 import { claimLockKey } from '../utils/claim-lock.js';
-import { hasPendingPathWrite } from '../utils/path-write-lock.js';
+import { hasPendingPathWrite, withPathWriteLock } from '../utils/path-write-lock.js';
 import { generatePublicId } from '../utils/public-id.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import type { DownloadService } from './download.service.js';
@@ -42,8 +42,26 @@ vi.mock('./rejection-helpers.js', () => ({
 
 vi.mock('../config.js', () => ({ config: { configPath: '/test-config' } }));
 
+// The two ends of rename's claim span. Both keep their real implementations (re-armed in
+// `beforeEach`) and are only parked per-test, so a contender can be observed against a rename that
+// is genuinely inside recovery / inside parent cleanup rather than merely before or after them.
+const actualRecovery = await vi.importActual<typeof import('../utils/recover-interrupted-commit.js')>('../utils/recover-interrupted-commit.js');
+vi.mock('../utils/recover-interrupted-commit.js', async (importOriginal) => ({
+  ...(await importOriginal() as Record<string, unknown>),
+  recoverInterruptedCommit: vi.fn(),
+}));
+
+const actualPaths = await vi.importActual<typeof import('../utils/paths.js')>('../utils/paths.js');
+vi.mock('../utils/paths.js', async (importOriginal) => ({
+  ...(await importOriginal() as Record<string, unknown>),
+  cleanEmptyParents: vi.fn(),
+}));
+
 import { rename, rm } from 'node:fs/promises';
 import { blacklistAndRetrySearch } from './rejection-helpers.js';
+import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
+import { cleanEmptyParents } from '../utils/paths.js';
+import { sidecarLockKey } from '../utils/opf-writer.js';
 
 // A backslash is an ordinary filename character on POSIX and illegal on Windows; the aliased-key
 // fixture needs a REAL directory whose name carries one, so probe rather than test the platform.
@@ -87,6 +105,8 @@ describe('claim-key protocol — rename and the three destroyers serialize (#230
     vi.clearAllMocks();
     (rename as Mock).mockImplementation(actualFs.rename as never);
     (rm as Mock).mockImplementation(actualFs.rm as never);
+    (recoverInterruptedCommit as Mock).mockImplementation(actualRecovery.recoverInterruptedCommit as never);
+    (cleanEmptyParents as Mock).mockImplementation(actualPaths.cleanEmptyParents as never);
     (blacklistAndRetrySearch as Mock).mockResolvedValue(undefined);
 
     dir = mkdtempSync(join(tmpdir(), 'claim-lock-'));
@@ -168,6 +188,39 @@ describe('claim-key protocol — rename and the three destroyers serialize (#230
       return actualFs.rename(from, to);
     });
     return { gate, entered };
+  };
+
+  /** Park the next recovery — the FIRST destructive step, and the span's opening boundary. */
+  const gateNextRecovery = () => {
+    const gate = deferred();
+    const entered = deferred();
+    (recoverInterruptedCommit as Mock).mockImplementationOnce(async (...args: Parameters<typeof actualRecovery.recoverInterruptedCommit>) => {
+      entered.resolve();
+      await gate.promise;
+      return actualRecovery.recoverInterruptedCommit(...args);
+    });
+    return { gate, entered };
+  };
+
+  /** Park the next parent cleanup — the span's closing boundary. */
+  const gateNextParentCleanup = () => {
+    const gate = deferred();
+    const entered = deferred();
+    (cleanEmptyParents as Mock).mockImplementationOnce(async (...args: Parameters<typeof actualPaths.cleanEmptyParents>) => {
+      entered.resolve();
+      await gate.promise;
+      return actualPaths.cleanEmptyParents(...args);
+    });
+    return { gate, entered };
+  };
+
+  /** A contender on one claim key, reported by whether it has ENTERED rather than by settling. */
+  const queueClaimContender = (key: string) => {
+    const marker = { entered: false };
+    // Every enrolled participant reaches a claim key through exactly this primitive
+    // (`withFreshClaimLock` -> `withPathWriteLock(claimLockKey(path))`).
+    const run = withPathWriteLock(key, async () => { marker.entered = true; });
+    return { marker, run };
   };
 
   it('serializes two renames onto one target: the second sees the committed owner and refuses', async () => {
@@ -371,7 +424,7 @@ describe('claim-key protocol — rename and the three destroyers serialize (#230
     );
   });
 
-  it('takes the pointer file itself as the claim key, so a file-keyed writer serializes behind it', async () => {
+  it('holds the pointer file as its claim key, so a raw file-key writer blocks until the rename releases', async () => {
     const pointer = join(root, 'Unknown Author', 'Pointer Book.m4b');
     await actualFs.mkdir(join(root, 'Unknown Author'), { recursive: true });
     await actualFs.writeFile(pointer, 'audio');
@@ -381,13 +434,97 @@ describe('claim-key protocol — rename and the three destroyers serialize (#230
     const renameRun = renameService.renameBook(bookId).catch((e: unknown) => e);
     await entered.promise;
 
-    // The raw audio key tagging.service.ts locks on is byte-identical to this claim key.
-    expect(hasPendingPathWrite(claimLockKey(pointer))).toBe(true);
+    // `tagging.service.ts:118` locks on the RAW stored audio path. Read that string back off the
+    // row rather than recomputing it: deriving both sides from `claimLockKey` would move the
+    // expected key in lockstep with any change to it, and prove nothing about the coincidence.
+    const rawFileKey = (await pathOf(bookId))!;
+    const tagWrite = queueClaimContender(rawFileKey);
+
+    await settle();
+    expect(tagWrite.marker.entered).toBe(false);
 
     gate.resolve();
     await renameRun;
+    await tagWrite.run;
+    expect(tagWrite.marker.entered).toBe(true);
+
+    // `sidecarLockKey` appends metadata.opf, so the EXDEV fallback's nested file key can never
+    // equal the claim key it nests inside — including for a pointer path.
+    expect(sidecarLockKey(pointer)).not.toBe(rawFileKey);
     await settle();
-    expect(hasPendingPathWrite(claimLockKey(pointer))).toBe(false);
+    expect(hasPendingPathWrite(rawFileKey)).toBe(false);
+  });
+
+  it('holds the source claim across recoverInterruptedCommit, so a second same-book rename cannot recover concurrently', async () => {
+    const bookId = await seedBook('Wanderer', join('Wrong', 'Old'));
+
+    const { gate, entered } = gateNextRecovery();
+    const first = renameService.renameBook(bookId);
+    await entered.promise;
+
+    let secondSettled = false;
+    const second = renameService.renameBook(bookId)
+      .then((v) => { secondSettled = true; return v as unknown; }, (e: unknown) => { secondSettled = true; return e; });
+    await settle();
+
+    // Recovery is not a read: with no marker present it recursively deletes the target's staging
+    // and backup siblings. A second entry here while the first is mid-recovery is exactly the
+    // destructive concurrency the span's opening boundary exists to prevent.
+    expect(recoverInterruptedCommit).toHaveBeenCalledTimes(1);
+    expect(secondSettled).toBe(false);
+
+    gate.resolve();
+    await first;
+    const error = await second;
+
+    // The queued plan is refused by post-lock re-verification before it can recover a second time.
+    expect((error as RenameError).code).toBe('STALE_PATH');
+    expect(recoverInterruptedCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a queued rename of a second row at the same folder enter recovery only once the claim releases', async () => {
+    // The duplicate-path pair this issue's own absence produces — and the arm where the queued
+    // participant does reach recovery, which the same-book case cannot show.
+    const first = await seedBook('Wanderer', join('Wrong', 'Old'));
+    const second = await seedRow('Second Claim', join(root, 'Wrong', 'Old'));
+
+    const { gate, entered } = gateNextRecovery();
+    const firstRun = renameService.renameBook(first);
+    await entered.promise;
+
+    const secondRun = renameService.renameBook(second).catch((e: unknown) => e);
+    await settle();
+    expect(recoverInterruptedCommit).toHaveBeenCalledTimes(1);
+
+    gate.resolve();
+    await firstRun;
+    await secondRun;
+
+    expect(recoverInterruptedCommit).toHaveBeenCalledTimes(2);
+    const secondCall = (recoverInterruptedCommit as Mock).mock.calls[1]!;
+    expect(norm(secondCall[0] as string)).toBe(norm(join(root, 'Wrong', 'Old')));
+  });
+
+  it('holds the source claim through cleanEmptyParents, so a contender cannot enter the vacated path first', async () => {
+    const bookId = await seedBook('Wanderer', join('Wrong', 'Old'));
+    const source = claimLockKey(join(root, 'Wrong', 'Old'));
+
+    const { gate, entered } = gateNextParentCleanup();
+    const renameRun = renameService.renameBook(bookId);
+    await entered.promise;
+
+    const contender = queueClaimContender(source);
+    await settle();
+    // Cleanup is removing the vacated folder's parents; a participant that entered here would be
+    // mutating a path underneath it.
+    expect(contender.marker.entered).toBe(false);
+
+    gate.resolve();
+    await renameRun;
+    await contender.run;
+    expect(contender.marker.entered).toBe(true);
+    await settle();
+    expect(hasPendingPathWrite(source)).toBe(false);
   });
 
   it('takes no lock at all in planRename, and releases every key after a rename fails', async () => {
