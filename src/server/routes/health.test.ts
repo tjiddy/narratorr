@@ -297,6 +297,41 @@ describe('POST /api/system/tasks/import-list-sync/run — the response spans the
   });
 });
 
+// #2344: the suite's default `getAll` stub is a literal array, so it cannot observe a
+// serialization throw. Only a real TaskRegistry can.
+describe('GET /api/system/tasks — a task whose next run could not be determined', () => {
+  let app: Awaited<ReturnType<typeof createTestApp>>;
+  let registry: TaskRegistry;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    registry = new TaskRegistry();
+    registry.register('search', 'timeout', vi.fn().mockResolvedValue(undefined));
+    registry.register('rss', 'timeout', vi.fn().mockResolvedValue(undefined));
+
+    const services = createMockServices();
+    (services as unknown as Record<string, unknown>).taskRegistry = registry;
+    app = await createTestApp(services);
+  });
+
+  afterEach(async () => {
+    await app.close();
+  });
+
+  it('answers 200 with a null nextRun instead of 500ing the whole endpoint', async () => {
+    const rssNext = new Date('2026-03-10T21:00:00Z');
+    registry.setNextRun('rss', rssNext);
+    registry.setNextRun('search', new Date(NaN));
+
+    const res = await app.inject({ method: 'GET', url: '/api/system/tasks' });
+    expect(res.statusCode).toBe(200);
+
+    const payload = JSON.parse(res.payload) as Array<{ name: string; nextRun: string | null }>;
+    expect(payload.find((t) => t.name === 'search')!.nextRun).toBeNull();
+    expect(payload.find((t) => t.name === 'rss')!.nextRun).toBe(rssNext.toISOString());
+  });
+});
+
 describe('System info routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
   let services: Services;

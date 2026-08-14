@@ -165,6 +165,31 @@ describe('TaskRegistry', () => {
     it('is a no-op for unknown task names', () => {
       registry.setNextRun('nonexistent', new Date());
     });
+
+    it('clears a previously-set value when passed null', () => {
+      registry.register('search', 'timeout', vi.fn());
+      const next = new Date('2026-03-10T21:00:00Z');
+      registry.setNextRun('search', next);
+      expect(registry.getAll()[0]!.nextRun).toBe(next.toISOString());
+
+      registry.setNextRun('search', null);
+      expect(registry.getAll()[0]!.nextRun).toBeNull();
+    });
+
+    it('#2344 treats an Invalid Date as a clear, so getAll() cannot throw RangeError', () => {
+      registry.register('search', 'timeout', vi.fn());
+      registry.setNextRun('search', new Date('2026-03-10T21:00:00Z'));
+
+      // Storing it would make getAll()'s toISOString() throw "Invalid time value" and 500 the route.
+      expect(() => registry.setNextRun('search', new Date(NaN))).not.toThrow();
+      expect(() => registry.getAll()).not.toThrow();
+      expect(registry.getAll()[0]!.nextRun).toBeNull();
+    });
+
+    it('is a no-op for unknown task names when clearing', () => {
+      expect(() => registry.setNextRun('nonexistent', null)).not.toThrow();
+      expect(registry.getAll()).toHaveLength(0);
+    });
   });
 
   describe('runExclusive', () => {

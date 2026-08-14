@@ -724,6 +724,10 @@ describe('startJobs', () => {
     it('runs the staged prune after an event-history failure, and its own failure does not suppress blacklist cleanup (F18)', async () => {
       (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
         if (category === 'general') return { housekeepingRetentionDays: 30 };
+        if (category === 'search') return { intervalMinutes: 30 };
+        if (category === 'rss') return { intervalMinutes: 30 };
+        if (category === 'system') return { backupIntervalMinutes: 60 };
+        if (category === 'discovery') return { intervalHours: 24 };
         return {};
       });
       (db as Record<string, unknown>).run = vi.fn().mockResolvedValue(undefined);
@@ -1411,5 +1415,366 @@ describe('startJobs', () => {
 
       setTimeoutSpy.mockRestore();
     });
+  });
+
+  // An interval Node cannot represent (NaN, 0, negative, or past TIMEOUT_MAX) is clamped to a 1 ms
+  // re-arm, which spins the loop for the life of the process instead of failing loudly.
+  describe('scheduleTimeoutLoop interval guard (#2344)', () => {
+    const RETRY_MS = 5 * 60 * 1000;
+    const TIMEOUT_MAX_MS = 2_147_483_647;
+
+    // Distinct per job, so an isolation assertion can name exactly one loop's timer.
+    const VALID_SETTINGS: Record<string, Record<string, unknown>> = {
+      search: { intervalMinutes: 30 },
+      rss: { intervalMinutes: 45 },
+      system: { backupIntervalMinutes: 90 },
+      discovery: { intervalHours: 12 },
+      general: { housekeepingRetentionDays: 90 },
+    };
+
+    const TIMEOUT_JOBS: ReadonlyArray<[job: string, category: string, validMs: number]> = [
+      ['search', 'search', 30 * 60 * 1000],
+      ['rss', 'rss', 45 * 60 * 1000],
+      ['backup', 'system', 90 * 60 * 1000],
+      ['discovery', 'discovery', 12 * 60 * 60 * 1000],
+    ];
+
+    function mockSettings(overrides: Record<string, unknown> = {}): void {
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) =>
+        category in overrides ? overrides[category] : (VALID_SETTINGS[category] ?? {}),
+      );
+    }
+
+    type TimeoutSpy = ReturnType<typeof vi.spyOn>;
+
+    function delaysOf(spy: TimeoutSpy): Array<number | undefined> {
+      return (spy.mock.calls as unknown as Array<[unknown, number | undefined]>).map(([, delay]) => delay);
+    }
+
+    function callbackFor(spy: TimeoutSpy, delay: number): () => Promise<void> {
+      const call = (spy.mock.calls as unknown as Array<[() => Promise<void>, number | undefined]>)
+        .find(([, d]) => d === delay);
+      expect(call, `no setTimeout armed at ${delay} ms`).toBeDefined();
+      return call![0];
+    }
+
+    function nextRunOf(job: string): string | null {
+      return services.taskRegistry.getAll().find((t) => t.name === job)!.nextRun;
+    }
+
+    function warnsFor(job: string): unknown[][] {
+      return (log.warn as unknown as ReturnType<typeof vi.fn>).mock.calls
+        .filter((call) => (call[0] as { job?: string } | undefined)?.job === job);
+    }
+
+    it.each(TIMEOUT_JOBS)(
+      '%s: an unusable interval arms the 5-minute retry and never a 1 ms tick',
+      async (job, category) => {
+        mockSettings({ [category]: {} });
+        const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+        const execSpy = vi.spyOn(services.taskRegistry, 'executeTracked');
+
+        const { startJobs } = await import('./index.js');
+        startJobs(injectHelper<Db>(db), services, log);
+
+        await vi.waitFor(() => expect(warnsFor(job).length).toBeGreaterThan(0));
+
+        expect(delaysOf(setTimeoutSpy)).toContain(RETRY_MS);
+        // "Armed the retry" alone still passes while a 1 ms timer spins alongside it.
+        const unrepresentable = delaysOf(setTimeoutSpy)
+          .filter((d) => d === undefined || d === 0 || d === 1 || Number.isNaN(d));
+        expect(unrepresentable).toEqual([]);
+        expect(execSpy.mock.calls.filter(([name]) => name === job)).toEqual([]);
+        expect(log.error).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining(job));
+
+        setTimeoutSpy.mockRestore();
+      },
+    );
+
+    it.each(TIMEOUT_JOBS)('%s: an unusable interval leaves nextRun null rather than Invalid Date', async (job, category) => {
+      mockSettings({ [category]: {} });
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await vi.waitFor(() => expect(warnsFor(job).length).toBeGreaterThan(0));
+      expect(nextRunOf(job)).toBeNull();
+    });
+
+    it.each([
+      ['NaN', { intervalMinutes: NaN }, 'NaN'],
+      ['a missing field', {}, 'undefined'],
+      ['Infinity', { intervalMinutes: Infinity }, 'Infinity'],
+    ] as const)('names the read value in the warn when search reads %s', async (_label, settings, expected) => {
+      mockSettings({ search: settings });
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await vi.waitFor(() => expect(warnsFor('search').length).toBeGreaterThan(0));
+
+      const [payload, message] = warnsFor('search')[0] as [Record<string, unknown>, string];
+      expect(payload.intervalMinutes).toBe(expected);
+      // pino serialises a raw NaN/Infinity to null, which reads as a MISSING field to an operator.
+      expect(JSON.parse(JSON.stringify(payload)).intervalMinutes).toBe(expected);
+      expect(message).toContain('search');
+      expect(message).toContain('5 minutes');
+    });
+
+    it('clamps a 30-day backup interval to the maximum timer delay instead of spinning', async () => {
+      mockSettings({ system: { backupIntervalMinutes: 43200 } });
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+      const before = Date.now();
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await vi.waitFor(() => expect(warnsFor('backup').length).toBeGreaterThan(0));
+
+      expect(delaysOf(setTimeoutSpy)).toContain(TIMEOUT_MAX_MS);
+      expect(delaysOf(setTimeoutSpy).filter((d) => d === 1)).toEqual([]);
+
+      // nextRun reports when it will actually fire (~24.85 days), not the unreachable 30 days.
+      const nextRunMs = new Date(nextRunOf('backup')!).getTime();
+      expect(nextRunMs).toBeGreaterThanOrEqual(before + TIMEOUT_MAX_MS);
+      expect(nextRunMs).toBeLessThan(before + 30 * 24 * 60 * 60 * 1000);
+
+      const [payload] = warnsFor('backup')[0] as [Record<string, unknown>];
+      expect(payload).toMatchObject({ job: 'backup', configuredDelayMs: '2592000000', effectiveDelayMs: TIMEOUT_MAX_MS });
+
+      setTimeoutSpy.mockRestore();
+    });
+
+    it.each(TIMEOUT_JOBS)('%s: a usable interval arms the same delay and logs nothing extra', async (job, _category, validMs) => {
+      mockSettings();
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+      const before = Date.now();
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await vi.waitFor(() => expect(delaysOf(setTimeoutSpy)).toContain(validMs));
+      await vi.waitFor(() => expect(nextRunOf(job)).not.toBeNull());
+
+      const nextRunMs = new Date(nextRunOf(job)!).getTime();
+      expect(nextRunMs).toBeGreaterThanOrEqual(before + validMs);
+      expect(warnsFor(job)).toEqual([]);
+      expect(log.error).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining(job));
+
+      setTimeoutSpy.mockRestore();
+    });
+
+    it('an unusable search interval does not disturb the other three loops', async () => {
+      mockSettings({ search: {} });
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await vi.waitFor(() => expect(warnsFor('search').length).toBeGreaterThan(0));
+
+      for (const [job, , validMs] of TIMEOUT_JOBS.filter(([name]) => name !== 'search')) {
+        await vi.waitFor(() => expect(delaysOf(setTimeoutSpy)).toContain(validMs));
+        expect(nextRunOf(job)).not.toBeNull();
+        expect(warnsFor(job)).toEqual([]);
+      }
+
+      setTimeoutSpy.mockRestore();
+    });
+
+    it('does not reject out of the loop when the interval is unusable', async () => {
+      const rejections: unknown[] = [];
+      const onRejection = (reason: unknown): void => { rejections.push(reason); };
+      process.on('unhandledRejection', onRejection);
+      try {
+        mockSettings({ search: {} });
+
+        const { startJobs } = await import('./index.js');
+        startJobs(injectHelper<Db>(db), services, log);
+
+        await vi.waitFor(() => expect(warnsFor('search').length).toBeGreaterThan(0));
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        expect(rejections).toEqual([]);
+      } finally {
+        process.off('unhandledRejection', onRejection);
+      }
+    });
+
+    it('arms nothing when stopAll() lands while an unusable interval is still being read', async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'search') { await gate; return {}; }
+        return VALID_SETTINGS[category] ?? {};
+      });
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+      const { startJobs } = await import('./index.js');
+      const scheduler = startJobs(injectHelper<Db>(db), services, log);
+      scheduler.stopAll();
+
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(delaysOf(setTimeoutSpy).filter((d) => d === RETRY_MS)).toEqual([]);
+      expect(warnsFor('search')).toEqual([]);
+      expect(nextRunOf('search')).toBeNull();
+
+      setTimeoutSpy.mockRestore();
+    });
+
+    it('clears an already-published nextRun when the next read is unusable', async () => {
+      mockSettings();
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+      const execSpy = vi.spyOn(services.taskRegistry, 'executeTracked').mockResolvedValue(undefined);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      const searchMs = 30 * 60 * 1000;
+      await vi.waitFor(() => expect(delaysOf(setTimeoutSpy)).toContain(searchMs));
+      const firstNextRun = nextRunOf('search');
+      expect(firstNextRun).not.toBeNull();
+      expect(Number.isNaN(new Date(firstNextRun!).getTime())).toBe(false);
+
+      mockSettings({ search: {} });
+      await callbackFor(setTimeoutSpy, searchMs)();
+
+      await vi.waitFor(() => expect(warnsFor('search').length).toBeGreaterThan(0));
+      // A guard that merely SKIPS setNextRun leaves the first tick's now-unreachable timestamp on display.
+      expect(nextRunOf('search')).toBeNull();
+      expect(delaysOf(setTimeoutSpy)).toContain(RETRY_MS);
+      expect(execSpy.mock.calls.filter(([name]) => name === 'search')).toHaveLength(1);
+
+      setTimeoutSpy.mockRestore();
+    });
+
+    it('clears an already-published nextRun when the next read throws', async () => {
+      mockSettings();
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+      vi.spyOn(services.taskRegistry, 'executeTracked').mockResolvedValue(undefined);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      const searchMs = 30 * 60 * 1000;
+      await vi.waitFor(() => expect(delaysOf(setTimeoutSpy)).toContain(searchMs));
+      expect(nextRunOf('search')).not.toBeNull();
+
+      (services.settings.get as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('settings unavailable'));
+      await callbackFor(setTimeoutSpy, searchMs)();
+
+      await vi.waitFor(() => expect(nextRunOf('search')).toBeNull());
+      expect(delaysOf(setTimeoutSpy)).toContain(RETRY_MS);
+
+      setTimeoutSpy.mockRestore();
+    });
+
+    it('recovers a real delay and a real nextRun once the interval reads cleanly again', async () => {
+      mockSettings({ search: {} });
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await vi.waitFor(() => expect(delaysOf(setTimeoutSpy)).toContain(RETRY_MS));
+
+      mockSettings();
+      const before = Date.now();
+      await callbackFor(setTimeoutSpy, RETRY_MS)();
+
+      const searchMs = 30 * 60 * 1000;
+      await vi.waitFor(() => expect(delaysOf(setTimeoutSpy)).toContain(searchMs));
+      const nextRunMs = new Date(nextRunOf('search')!).getTime();
+      expect(nextRunMs).toBeGreaterThanOrEqual(before + searchMs);
+
+      setTimeoutSpy.mockRestore();
+    });
+
+    // Spec-review F4: the nextRun invariant is a property of an ACTIVE loop. stopAll() cancels timers
+    // and writes nothing, so the last published timestamp survives a shutdown.
+    it('stopAll() leaves a published nextRun in place rather than clearing it', async () => {
+      mockSettings();
+
+      const { startJobs } = await import('./index.js');
+      const scheduler = startJobs(injectHelper<Db>(db), services, log);
+
+      await vi.waitFor(() => expect(nextRunOf('search')).not.toBeNull());
+      const published = nextRunOf('search');
+
+      scheduler.stopAll();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(nextRunOf('search')).toBe(published);
+    });
+  });
+});
+
+describe('normalizeIntervalMs (#2344)', () => {
+  const TIMEOUT_MAX_MS = 2_147_483_647;
+
+  it('converts a usable interval to its millisecond product', async () => {
+    const { normalizeIntervalMs } = await import('./index.js');
+    expect(normalizeIntervalMs(30)).toEqual({ kind: 'ok', delayMs: 1_800_000 });
+  });
+
+  it('exports the ceiling it keys on', async () => {
+    const mod = await import('./index.js');
+    expect(mod.TIMEOUT_MAX_MS).toBe(TIMEOUT_MAX_MS);
+    expect(mod.INTERVAL_RETRY_MS).toBe(5 * 60 * 1000);
+  });
+
+  it.each([
+    ['NaN', NaN],
+    ['Infinity', Infinity],
+    ['-Infinity', -Infinity],
+    ['zero', 0],
+    ['a negative interval', -1],
+    ['a missing field', undefined as unknown as number],
+    ['a null field', null as unknown as number],
+  ])('rejects %s', async (_label, value) => {
+    const { normalizeIntervalMs } = await import('./index.js');
+    expect(normalizeIntervalMs(value)).toEqual({ kind: 'invalid' });
+  });
+
+  it('rejects a finite operand whose PRODUCT overflows to Infinity', async () => {
+    const { normalizeIntervalMs } = await import('./index.js');
+    // The load-bearing point: a check written against the operand accepts this.
+    expect(Number.isFinite(1e306)).toBe(true);
+    expect(1e306 * 60 * 1000).toBe(Infinity);
+    expect(normalizeIntervalMs(1e306)).toEqual({ kind: 'invalid' });
+  });
+
+  it('rejects a null-shaped read whose product is 0, not NaN', async () => {
+    const { normalizeIntervalMs } = await import('./index.js');
+    // A Number.isNaN-only predicate lets this through to a zero-delay re-arm.
+    expect((null as unknown as number) * 60 * 1000).toBe(0);
+    expect(normalizeIntervalMs(null as unknown as number)).toEqual({ kind: 'invalid' });
+  });
+
+  it('treats 1 ms as the inclusive floor and anything under it as invalid', async () => {
+    const { normalizeIntervalMs } = await import('./index.js');
+    expect(normalizeIntervalMs(1 / 60000)).toEqual({ kind: 'ok', delayMs: 1 });
+    expect(normalizeIntervalMs(0.5 / 60000)).toEqual({ kind: 'invalid' });
+  });
+
+  it('treats exactly TIMEOUT_MAX_MS as usable and the next representable product as clamped', async () => {
+    const { normalizeIntervalMs } = await import('./index.js');
+    // 2_147_483_647 / 60000 rounds up; these two neighbours straddle the ceiling exactly.
+    const atCeiling = 35791.39411666666;
+    const justOver = 35791.39411666667;
+    expect(atCeiling * 60 * 1000).toBe(TIMEOUT_MAX_MS);
+    expect(justOver * 60 * 1000).toBeGreaterThan(TIMEOUT_MAX_MS);
+
+    expect(normalizeIntervalMs(atCeiling)).toEqual({ kind: 'ok', delayMs: TIMEOUT_MAX_MS });
+    expect(normalizeIntervalMs(justOver)).toEqual({ kind: 'clamped', delayMs: TIMEOUT_MAX_MS });
+  });
+
+  it('clamps the integer overflow boundary and the schema maximum', async () => {
+    const { normalizeIntervalMs } = await import('./index.js');
+    expect(normalizeIntervalMs(35791)).toEqual({ kind: 'ok', delayMs: 2_147_460_000 });
+    expect(normalizeIntervalMs(35792)).toEqual({ kind: 'clamped', delayMs: TIMEOUT_MAX_MS });
+    expect(normalizeIntervalMs(43200)).toEqual({ kind: 'clamped', delayMs: TIMEOUT_MAX_MS });
   });
 });
