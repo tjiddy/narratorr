@@ -261,7 +261,7 @@ const routeRegistry: RouteFactory[] = [
   (app, s) => eventsRoutes(app, s.eventBroadcaster, s.merge),
   (app, s) => searchStreamRoutes(app, s.indexerSearch, s.blacklist, s.settings, s.indexer, new SearchSessionManager()),
   (app, s) => prowlarrCompatRoutes(app, s.indexer),
-  (app, s) => importListsRoutes(app, s.importList),
+  (app, s) => importListsRoutes(app, s.importList, s.taskRegistry),
   (app, s) => discoverRoutes(app, {
     discoveryService: s.discovery,
     settingsService: s.settings,
