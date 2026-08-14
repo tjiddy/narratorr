@@ -1,11 +1,13 @@
-import { useRef, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { TagIcon } from '@/components/icons';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
+import { useTokenInsertion, type SetFormatValue } from '@/hooks/useTokenInsertion';
+import { SAMPLE_EDITION, SAMPLE_TOKENS, SAMPLE_TOKENS_MULTIFILE, SAMPLE_TOKENS_NO_SERIES } from '@/lib/naming-samples';
 import { NamingTokenModal } from '@/components/settings/NamingTokenModal';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { FormatField, FormatFieldHeader } from './NamingFormatField';
-import { renderTemplate, renderFilename, toLastFirst, toSortTitle, NAMING_PRESETS, detectPreset, FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP, TOKEN_PATTERN_SOURCE, templateHasToken, composeEditionSuffixLeaf, sanitizeEditionDiscriminator } from '@core/utils/index.js';
+import { renderTemplate, renderFilename, NAMING_PRESETS, detectPreset, FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP, TOKEN_PATTERN_SOURCE, templateHasToken, composeEditionSuffixLeaf, sanitizeEditionDiscriminator } from '@core/utils/index.js';
 import { DEFAULT_SETTINGS, namingSeparatorValues, namingCaseValues, namingFormSchema, hasTitle, hasAuthor, FOLDER_TITLE_MSG, AUTHOR_ADVISORY_MSG, type AppSettings } from '@shared/schemas.js';
 import type { NamingSeparator, NamingCase } from '@shared/schemas/settings/library.js';
 import type { NamingOptions } from '@core/utils/naming.js';
@@ -14,31 +16,11 @@ import type { z } from 'zod';
 
 type NamingFormData = z.infer<typeof namingFormSchema>;
 
-// Baseline samples omit edition; only edition-specific previews add this discriminator.
-const SAMPLE_EDITION = 'Full Cast';
-const SAMPLE_TOKENS = {
-  author: 'Brandon Sanderson', authorLastFirst: toLastFirst('Brandon Sanderson'),
-  title: 'The Way of Kings', titleSort: toSortTitle('The Way of Kings'),
-  series: 'The Stormlight Archive', seriesPosition: 1, year: '2010',
-  narrator: 'Michael Kramer, Kate Reading', narratorLastFirst: toLastFirst('Michael Kramer, Kate Reading'),
-};
-const SAMPLE_TOKENS_NO_SERIES = {
-  author: 'Andy Weir', authorLastFirst: toLastFirst('Andy Weir'),
-  title: 'Project Hail Mary', titleSort: toSortTitle('Project Hail Mary'),
-  year: '2021', narrator: 'Ray Porter', narratorLastFirst: toLastFirst('Ray Porter'),
-};
-const SAMPLE_TOKENS_MULTIFILE = {
-  ...SAMPLE_TOKENS,
-  trackNumber: 3, trackTotal: 12, partName: 'Chapter 3',
-};
-
 const SEPARATOR_LABELS: Record<NamingSeparator, string> = { space: 'Space', period: 'Period', underscore: 'Underscore', dash: 'Dash' };
 const CASE_LABELS: Record<NamingCase, string> = { default: 'Default', lower: 'lowercase', upper: 'UPPERCASE', title: 'Title Case' };
 
 
 const TOKEN_BOUNDARY_REGEX = new RegExp(`^${TOKEN_PATTERN_SOURCE}$`);
-
-type SetFormatValue = (field: 'folderFormat' | 'fileFormat', value: string, options: { shouldDirty: boolean; shouldValidate: boolean }) => void;
 
 function createFormatKeyDownHandler(
   ref: React.RefObject<HTMLInputElement | null>,
@@ -104,46 +86,6 @@ function useNamingPreviews(folderFormat: string | undefined, fileFormat: string 
   }, [fileFormat, namingOptions]);
 
   return { folderPreview, folderPreviewNoSeries, folderPreviewMultiEdition, filePreview, filePreviewNoSeries, filePreviewMultiFile, filePreviewEdition };
-}
-
-// Token insertion is its own concern: it owns the two input refs, the scope that decides which
-// one a token lands in, and everything the modal derives from that scope. Same-file hook, like
-// useNamingPreviews.
-function useTokenInsertion(setFieldValue: SetFormatValue, folderFormat: string | undefined, fileFormat: string | undefined) {
-  const folderFormatRef = useRef<HTMLInputElement | null>(null);
-  const fileFormatRef = useRef<HTMLInputElement | null>(null);
-  const [tokenModalScope, setTokenModalScope] = useState<'folder' | 'file' | null>(null);
-
-  const insertTokenAtCursor = (ref: React.RefObject<HTMLInputElement | null>, field: 'folderFormat' | 'fileFormat', token: string) => {
-    const input = ref.current;
-    if (!input) return;
-    const start = input.selectionStart ?? input.value.length;
-    const end = input.selectionEnd ?? start;
-    const newValue = `${input.value.slice(0, start)}{${token}}${input.value.slice(end)}`;
-    setFieldValue(field, newValue, { shouldDirty: true, shouldValidate: true });
-    requestAnimationFrame(() => { input.setSelectionRange(start + token.length + 2, start + token.length + 2); input.focus(); });
-  };
-
-  const handleTokenModalInsert = (token: string) => {
-    if (tokenModalScope === 'folder') insertTokenAtCursor(folderFormatRef, 'folderFormat', token);
-    else if (tokenModalScope === 'file') insertTokenAtCursor(fileFormatRef, 'fileFormat', token);
-  };
-
-  // Include edition so the modal reflects an inserted {edition} token.
-  const modalPreviewTokens = useMemo(() =>
-    tokenModalScope === 'file'
-      ? { ...SAMPLE_TOKENS, edition: SAMPLE_EDITION, trackNumber: 1, trackTotal: 12, partName: 'The Way of Kings' }
-      : { ...SAMPLE_TOKENS, edition: SAMPLE_EDITION },
-  [tokenModalScope]);
-
-  return {
-    folderFormatRef, fileFormatRef, tokenModalScope, insertTokenAtCursor, handleTokenModalInsert, modalPreviewTokens,
-    openTokenModal: (scope: 'folder' | 'file') => setTokenModalScope(scope),
-    closeTokenModal: () => setTokenModalScope(null),
-    // 'folder' is the modal's own default; scope only reads null while it is closed.
-    modalScope: tokenModalScope ?? 'folder',
-    modalCurrentFormat: (tokenModalScope === 'file' ? fileFormat : folderFormat) ?? '',
-  };
 }
 
 const CARD_LABEL = 'File Naming';
