@@ -90,7 +90,9 @@ describe('withFreshClaimLock', () => {
   it('runs the operation on the path the row names under the lock', async () => {
     const op = vi.fn().mockResolvedValue('swept');
     await expect(withFreshClaimLock(async () => '/library/Y', op)).resolves.toBe('swept');
-    expect(op).toHaveBeenCalledWith(canonicalPath('/library/Y'));
+    // The RAW stored value, not its canonical form: the key is canonicalized for locking, but the
+    // operation acts on the path the row actually names. Identical on POSIX; they diverge here.
+    expect(op).toHaveBeenCalledWith('/library/Y');
   });
 
   it('runs the operation with null — and takes no lock — when the row has no path', async () => {
@@ -110,8 +112,8 @@ describe('withFreshClaimLock', () => {
       async (locked) => { seen.push(locked); return locked; },
     );
 
-    expect(seen).toEqual([canonicalPath('/library/Z')]);
-    expect(result).toBe(canonicalPath('/library/Z'));
+    expect(seen).toEqual(['/library/Z']);
+    expect(result).toBe('/library/Z');
     await tick();
     expect(hasPendingPathWrite(canonicalPath('/library/Y'))).toBe(false);
     expect(hasPendingPathWrite(canonicalPath('/library/Z'))).toBe(false);

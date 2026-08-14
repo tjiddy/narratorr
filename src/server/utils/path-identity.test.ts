@@ -8,7 +8,9 @@ import { canonicalPath, findOtherPathOwner } from './path-identity.js';
 import { generatePublicId } from './public-id.js';
 import { inject, mockDbChain } from '../__tests__/helpers.js';
 
-const p = (value: string): string => value.split('\\').join('/');
+// Windows `resolve` prepends the cwd's drive, so strip it too: these expectations are the POSIX
+// paths production sees in Docker, and the drive is a platform artifact of running the suite here.
+const p = (value: string): string => value.split('\\').join('/').replace(/^[A-Za-z]:/, '');
 
 describe('canonicalPath', () => {
   it('folds backslashes before resolving so a parent segment behind them still collapses', () => {

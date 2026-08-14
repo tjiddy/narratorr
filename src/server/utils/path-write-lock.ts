@@ -1,3 +1,5 @@
+import { canonicalPath } from './path-identity.js';
+
 /**
  * In-place tag writes changed the safety model. The old temp-file + atomic rename made an
  * interleaved write last-writer-wins on a *whole* file; two mutagen processes patching one header
@@ -29,14 +31,25 @@
  */
 const chains = new Map<string, Promise<void>>();
 
+/**
+ * Lock identity is {@link canonicalPath}, applied HERE rather than trusted to each caller: three
+ * spellings of one file reached this map (`claimLockKey`, `sidecarLockKey`'s bare `resolve(join())`,
+ * and tagging's raw `books.path`), and any two that disagree hand one file two chains — mutual
+ * exclusion silently off. Idempotent, so a caller that already canonicalized is unaffected.
+ */
+function lockKey(filePath: string): string {
+  return canonicalPath(filePath);
+}
+
 export async function withPathWriteLock<T>(filePath: string, op: () => Promise<T>): Promise<T> {
-  const previous = chains.get(filePath) ?? Promise.resolve();
+  const key = lockKey(filePath);
+  const previous = chains.get(key) ?? Promise.resolve();
   // Run on either predecessor outcome: a failed write must not wedge the key for the next caller.
   const run = previous.then(op, op);
   const slot = run.then(() => undefined, () => undefined);
-  chains.set(filePath, slot);
+  chains.set(key, slot);
   void slot.then(() => {
-    if (chains.get(filePath) === slot) chains.delete(filePath);
+    if (chains.get(key) === slot) chains.delete(key);
   });
   return run;
 }
@@ -47,7 +60,9 @@ export async function withPathWriteLock<T>(filePath: string, op: () => Promise<T
  * not re-entrant: acquiring a key already held would await a slot only the outer holder settles.
  */
 export async function withPathWriteLocks<T>(keys: string[], op: () => Promise<T>): Promise<T> {
-  const ordered = [...new Set(keys)].sort();
+  // Canonicalize BEFORE dedup and sort: two callers spelling one pair differently would otherwise
+  // dedup to different sets and sort into opposite acquisition orders — the deadlock this guards.
+  const ordered = [...new Set(keys.map(lockKey))].sort();
   const acquire = async (index: number): Promise<T> =>
     index === ordered.length ? op() : withPathWriteLock(ordered[index]!, () => acquire(index + 1));
   return acquire(0);
@@ -55,5 +70,5 @@ export async function withPathWriteLocks<T>(keys: string[], op: () => Promise<T>
 
 /** Test-only: proves the key is released rather than leaked. */
 export function hasPendingPathWrite(filePath: string): boolean {
-  return chains.has(filePath);
+  return chains.has(lockKey(filePath));
 }
