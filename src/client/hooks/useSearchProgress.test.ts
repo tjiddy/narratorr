@@ -91,6 +91,46 @@ describe('useSearchProgress store', () => {
       expect(result.current[0]!.outcome).toBe('no_results');
     });
 
+    // #2310 AC17: a deadline expiry reaches the store the same way an answered zero does, and
+    // must NOT be conflated with one.
+    it('marks outcome as timed_out on search_complete with timed_out', () => {
+      const { result } = renderHook(() => useSearchProgress());
+      act(() => {
+        handleSearchEvent('search_started', {
+          book_id: 1, book_title: 'Test', indexers: [{ id: 10, name: 'MAM' }],
+        });
+        handleSearchEvent('search_complete', {
+          book_id: 1, total_results: 0, outcome: 'timed_out',
+        });
+      });
+      expect(result.current[0]!.outcome).toBe('timed_out');
+    });
+
+    it('removes a timed_out entry after the dismiss delay', () => {
+      const { result } = renderHook(() => useSearchProgress());
+      act(() => {
+        handleSearchEvent('search_started', {
+          book_id: 1, book_title: 'Test', indexers: [{ id: 10, name: 'MAM' }],
+        });
+        handleSearchEvent('search_complete', {
+          book_id: 1, total_results: 0, outcome: 'timed_out',
+        });
+      });
+      expect(result.current).toHaveLength(1);
+      act(() => { vi.advanceTimersByTime(3000); });
+      expect(result.current).toHaveLength(0);
+    });
+
+    it('ignores a timed_out search_complete for a book with no card', () => {
+      const { result } = renderHook(() => useSearchProgress());
+      act(() => {
+        handleSearchEvent('search_complete', {
+          book_id: 404, total_results: 0, outcome: 'timed_out',
+        });
+      });
+      expect(result.current).toHaveLength(0);
+    });
+
     it('replaces previous entry on duplicate search_started for same book_id', () => {
       const { result } = renderHook(() => useSearchProgress());
       act(() => {
