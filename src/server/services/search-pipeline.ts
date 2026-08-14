@@ -12,8 +12,9 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { EventHistoryService } from './event-history.service.js';
-import { recordGrabFailedEvent, recordSearchRelaxedHeldEvent } from '../utils/download-side-effects.js';
-import { selectRelaxedCandidate, type LadderRun } from './search-query-ladder.js';
+import { recordGrabBlockedUnsatisfiedEvent, recordGrabFailedEvent, recordSearchRelaxedHeldEvent } from '../utils/download-side-effects.js';
+import { type LadderRun } from './search-query-ladder.js';
+import { applyUnsatisfiedLimitGate } from './unsatisfied-limit-gate.js';
 import { runBookQueryLadder } from './search-ladder-execution.js';
 import type { SearchLadderCooldown } from './search-ladder-cooldown.js';
 import { type SearchBook, type SearchEventSink, NOOP_SINK, createBroadcasterSink } from './search-event-sink.js';
@@ -376,7 +377,13 @@ async function runSearchAndGrab(
   const { results } = applyMultiPartFilterAndRank(afterBlacklist, durationSeconds ?? undefined, qualitySettings, log);
 
   // Share relaxed-rung selection with retrySearch so floor policy cannot drift.
-  const selection = selectRelaxedCandidate(results, ran.rung);
+  const gate = applyUnsatisfiedLimitGate(results, ran.rung);
+  if (gate.kind === 'blocked') {
+    recordGrabBlockedUnsatisfiedEvent({ book, eventHistory, log, release: gate.result });
+    sink.searchComplete('no_results');
+    return { result: 'no_results' };
+  }
+  const selection = gate.selection;
   if (selection.kind === 'hold') {
     recordSearchRelaxedHeldEvent({
       book, eventHistory, log,

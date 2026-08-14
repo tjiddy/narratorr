@@ -9,10 +9,11 @@ import type { SettingsService } from './settings.service.js';
 import type { RetryBudget } from './retry-budget.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { buildNarratorPriority, applyMultiPartFilterAndRank, buildSearchFilterOptions, filterBlacklistedResults } from './search-pipeline.js';
-import { buildQueryLadder, runQueryLadder, selectRelaxedCandidate, type LadderRun } from './search-query-ladder.js';
+import { buildQueryLadder, runQueryLadder, type LadderRun } from './search-query-ladder.js';
+import { applyUnsatisfiedLimitGate } from './unsatisfied-limit-gate.js';
 import { createAggregateExecutor } from './search-ladder-execution.js';
 import type { SearchResult } from '@core/index.js';
-import { recordSearchRelaxedHeldEvent } from '../utils/download-side-effects.js';
+import { recordGrabBlockedUnsatisfiedEvent, recordSearchRelaxedHeldEvent } from '../utils/download-side-effects.js';
 import { resolveBookQualityInputs } from '@core/utils/index.js';
 import { buildGrabPayload } from './grab-payload.js';
 import { AUTO_GRAB_PHASE2_CAP, enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
@@ -73,8 +74,16 @@ function resolveRetryCandidate(
   attempt: number,
 ): { best: SearchResult } | { outcome: RetryOutcome } {
   const { eventHistory, log } = deps;
-  const selection = selectRelaxedCandidate(results, ran.rung);
+  const gate = applyUnsatisfiedLimitGate(results, ran.rung);
 
+  // No new RetryOutcome variant: the blocked disposition is the same no_candidates the segment-cut
+  // hold already returns, with the attempt consumed. The AC8 event carries the real reason.
+  if (gate.kind === 'blocked') {
+    recordGrabBlockedUnsatisfiedEvent({ book, eventHistory, log, attempt, release: gate.result });
+    return { outcome: { outcome: 'no_candidates' } };
+  }
+
+  const selection = gate.selection;
   if (selection.kind === 'hold') {
     recordSearchRelaxedHeldEvent({
       book, eventHistory, log, attempt,

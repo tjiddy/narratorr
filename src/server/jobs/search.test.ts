@@ -1002,3 +1002,66 @@ describe('runSearchJob — query-ladder cooldown (#2104)', () => {
     expect(queriesOf(manual)).toEqual(['Book One Author A', 'book one']);
   });
 });
+
+describe('runSearchJob — #2322 unsatisfied limit', () => {
+  const atLimitResult = (overrides: Partial<SearchResult> = {}): SearchResult => ({
+    title: 'MAM Release',
+    protocol: 'torrent',
+    indexer: 'MyAnonamouse',
+    indexerId: 10,
+    seeders: 10,
+    downloadUrl: 'magnet:?xt=urn:btih:aaa',
+    unsatisfied: { count: 150, limit: 150 },
+    ...overrides,
+  });
+
+  const eventsOfType = (history: EventHistoryService, type: string) =>
+    vi.mocked(history.create).mock.calls.filter((c) => (c[0] as { eventType: string }).eventType === type);
+
+  it('grabs nothing and records the blocked event for a wanted book at the limit', async () => {
+    const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
+    const bookList = createMockBookListService([{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }]);
+    const indexer = createMockIndexerService([atLimitResult()]);
+    const download = createMockDownloadOrchestrator();
+    const eventHistory = { create: vi.fn().mockResolvedValue({ id: 1 }) } as unknown as EventHistoryService;
+
+    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(createMockLogger()), createMockBlacklistService(), mockIndexer, eventHistory);
+
+    // No grab and no failure marking, so the book is left exactly as the cycle found it: wanted.
+    expect(download.grab).not.toHaveBeenCalled();
+    expect(result).toEqual({ searched: 1, grabbed: 0 });
+    expect(eventsOfType(eventHistory, 'grab_blocked_unsatisfied')).toHaveLength(1);
+    expect(eventsOfType(eventHistory, 'grab_failed')).toHaveLength(0);
+  });
+
+  it('still grabs the best non-MAM release in the same cycle', async () => {
+    const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
+    const bookList = createMockBookListService([{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }]);
+    const indexer = createMockIndexerService([
+      atLimitResult({ seeders: 99 }),
+      { title: 'Prowlarr Release', protocol: 'torrent', indexer: 'Prowlarr', indexerId: 3, seeders: 5, downloadUrl: 'magnet:?xt=urn:btih:bbb' },
+    ]);
+    const download = createMockDownloadOrchestrator();
+    const eventHistory = { create: vi.fn().mockResolvedValue({ id: 1 }) } as unknown as EventHistoryService;
+
+    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(createMockLogger()), createMockBlacklistService(), mockIndexer, eventHistory);
+
+    expect(result.grabbed).toBe(1);
+    expect(download.grab).toHaveBeenCalledWith(expect.objectContaining({ title: 'Prowlarr Release' }));
+    expect(eventsOfType(eventHistory, 'grab_blocked_unsatisfied')).toHaveLength(0);
+  });
+
+  it('leaves an unannotated result set entirely unchanged', async () => {
+    const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
+    const bookList = createMockBookListService([{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }]);
+    const { unsatisfied: _unsatisfied, ...unannotated } = atLimitResult();
+    const indexer = createMockIndexerService([unannotated as SearchResult]);
+    const download = createMockDownloadOrchestrator();
+    const eventHistory = { create: vi.fn().mockResolvedValue({ id: 1 }) } as unknown as EventHistoryService;
+
+    const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(createMockLogger()), createMockBlacklistService(), mockIndexer, eventHistory);
+
+    expect(result.grabbed).toBe(1);
+    expect(eventHistory.create).not.toHaveBeenCalled();
+  });
+});

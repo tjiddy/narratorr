@@ -1148,3 +1148,160 @@ describe('retrySearch — query ladder (#2104)', () => {
     }));
   });
 });
+
+describe('retrySearch — #2322 unsatisfied limit', () => {
+  const AT_LIMIT = { count: 150, limit: 150 };
+
+  const churnBook: BookWithAuthor = {
+    ...createMockDbBook({ duration: 3600, title: 'The Churn: An Expanse Novella' }),
+    authors: [{ ...createMockDbAuthor(), name: 'James S. A. Corey' }],
+    narrators: [],
+  };
+  const CHURN_RUNG_1 = 'The Churn An Expanse Novella James S A Corey';
+  const CHURN_CUT_RUNG = 'the churn James S A Corey';
+  const FLOOR_PASSING = 'The Churn: An Expanse Novella';
+  const FLOOR_FAILING = 'The Churn (Unabridged) [M4B]';
+
+  const mam = (overrides: Record<string, unknown> = {}) => ({
+    ...mockSearchResult, indexer: 'MyAnonamouse', unsatisfied: AT_LIMIT, ...overrides,
+  });
+  const nonMam = (overrides: Record<string, unknown> = {}) => ({
+    ...mockSearchResult, indexer: 'Prowlarr', title: 'Prowlarr Release', ...overrides,
+  });
+
+  function answering(byQuery: Record<string, unknown[]>) {
+    return vi.fn().mockImplementation(async (query: string) => ({
+      results: byQuery[query] ?? [], succeeded: 1, failed: 0,
+    }));
+  }
+
+  const depsFor = (book: BookWithAuthor, searchAllWithStatus: ReturnType<typeof vi.fn>) =>
+    createDeps({
+      indexerSearchService: inject<IndexerSearchService>({ searchAllWithStatus }),
+      bookService: inject<BookService>({ getById: vi.fn().mockResolvedValue(book) }),
+    });
+
+  const eventsOfType = (deps: RetrySearchDeps, type: string) =>
+    vi.mocked(deps.eventHistory.create).mock.calls.filter((c) => (c[0] as { eventType: string }).eventType === type);
+
+  it('returns no_candidates, grabs nothing and records the blocked event when every candidate is at the limit', async () => {
+    const deps = depsFor(mockBook, answering({ 'The Way of Kings Brandon Sanderson': [mam({ title: 'MAM Only' })] }));
+
+    const result = await retrySearch(1, deps);
+
+    expect(result).toEqual({ outcome: 'no_candidates' });
+    expect(deps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
+    expect(deps.eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'grab_blocked_unsatisfied',
+      reason: { indexer: 'MyAnonamouse', count: 150, limit: 150, release_title: 'MAM Only' },
+    }));
+  });
+
+  it('consumes exactly one budget attempt on an all-blocked set', async () => {
+    const deps = depsFor(mockBook, answering({ 'The Way of Kings Brandon Sanderson': [mam()] }));
+    const consumeAttempt = vi.spyOn(deps.retryBudget, 'consumeAttempt');
+
+    await retrySearch(1, deps);
+
+    expect(consumeAttempt).toHaveBeenCalledTimes(1);
+    expect(deps.retryBudget.hasRemaining(1)).toBe(true);
+  });
+
+  it('records the event once per blocked retry, not once per discarded release', async () => {
+    const deps = depsFor(mockBook, answering({
+      'The Way of Kings Brandon Sanderson': [mam({ title: 'MAM A' }), mam({ title: 'MAM B' })],
+    }));
+
+    await retrySearch(1, deps);
+
+    expect(eventsOfType(deps, 'grab_blocked_unsatisfied')).toHaveLength(1);
+  });
+
+  it('retries on the best remaining non-MAM candidate, recording no blocked event', async () => {
+    const deps = depsFor(mockBook, answering({
+      'The Way of Kings Brandon Sanderson': [mam({ title: 'MAM Best', seeders: 99 }), nonMam({ seeders: 5 })],
+    }));
+
+    const result = await retrySearch(1, deps);
+
+    expect(result.outcome).toBe('retried');
+    expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledTimes(1);
+    expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Prowlarr Release' }),
+    );
+    expect(eventsOfType(deps, 'grab_blocked_unsatisfied')).toHaveLength(0);
+  });
+
+  it('records no blocked event when the only at-limit candidate has no download link', async () => {
+    const deps = depsFor(mockBook, answering({
+      'The Way of Kings Brandon Sanderson': [mam({ title: 'Unlinked', downloadUrl: undefined })],
+    }));
+
+    const result = await retrySearch(1, deps);
+
+    expect(result).toEqual({ outcome: 'no_candidates' });
+    expect(deps.eventHistory.create).not.toHaveBeenCalled();
+  });
+
+  it('records no blocked event when the only at-limit candidate has an empty download link', async () => {
+    const deps = depsFor(mockBook, answering({
+      'The Way of Kings Brandon Sanderson': [mam({ title: 'Unlinked', downloadUrl: '' })],
+    }));
+
+    expect(await retrySearch(1, deps)).toEqual({ outcome: 'no_candidates' });
+    expect(deps.eventHistory.create).not.toHaveBeenCalled();
+  });
+
+  it('keeps the pre-existing hold when the floor, not the limit, stopped the grab', async () => {
+    const deps = depsFor(churnBook, answering({ [CHURN_CUT_RUNG]: [mam({ title: FLOOR_FAILING })] }));
+
+    const result = await retrySearch(1, deps);
+
+    expect(result).toEqual({ outcome: 'no_candidates' });
+    expect(eventsOfType(deps, 'search_relaxed_held')).toHaveLength(1);
+    expect(eventsOfType(deps, 'grab_blocked_unsatisfied')).toHaveLength(0);
+  });
+
+  it('records the blocked event when the limit removed the release the floor had admitted', async () => {
+    const deps = depsFor(churnBook, answering({
+      [CHURN_CUT_RUNG]: [mam({ title: FLOOR_PASSING, seeders: 99 }), nonMam({ title: FLOOR_FAILING, seeders: 5 })],
+    }));
+
+    const result = await retrySearch(1, deps);
+
+    expect(result).toEqual({ outcome: 'no_candidates' });
+    expect(eventsOfType(deps, 'grab_blocked_unsatisfied')).toHaveLength(1);
+    expect(eventsOfType(deps, 'search_relaxed_held')).toHaveLength(0);
+  });
+
+  it('is inert on a full rung, where the same fixture simply retries the remainder', async () => {
+    const deps = depsFor(churnBook, answering({
+      [CHURN_RUNG_1]: [mam({ title: FLOOR_PASSING, seeders: 99 }), nonMam({ title: FLOOR_FAILING, seeders: 5 })],
+    }));
+
+    const result = await retrySearch(1, deps);
+
+    expect(result.outcome).toBe('retried');
+    expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
+      expect.objectContaining({ title: FLOOR_FAILING }),
+    );
+    expect(deps.eventHistory.create).not.toHaveBeenCalled();
+  });
+
+  const grabbing: Array<{ name: string; unsatisfied: { count: number; limit: number } | undefined }> = [
+    { name: '149 of 150', unsatisfied: { count: 149, limit: 150 } },
+    { name: '0 of 150', unsatisfied: { count: 0, limit: 150 } },
+    { name: 'nothing attached', unsatisfied: undefined },
+  ];
+
+  for (const { name, unsatisfied } of grabbing) {
+    it(`retries normally at ${name}`, async () => {
+      const deps = depsFor(mockBook, answering({
+        'The Way of Kings Brandon Sanderson': [{ ...mockSearchResult, ...(unsatisfied !== undefined && { unsatisfied }) }],
+      }));
+
+      expect((await retrySearch(1, deps)).outcome).toBe('retried');
+      expect(deps.eventHistory.create).not.toHaveBeenCalled();
+    });
+  }
+});
