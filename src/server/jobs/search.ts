@@ -11,7 +11,18 @@ import type { EventHistoryService } from '../services/event-history.service.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import { buildNarratorPriority, buildSearchFilterOptions, searchAndGrabForBook } from '../services/search-pipeline.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { SearchDeadlineError } from '../services/search-deadline.js';
 
+
+/** budgetMs rides as a sibling field: serializeError emits a fixed key set that would drop it. */
+function logSearchFailure(log: FastifyBaseLogger, book: { id: number; title: string }, error: unknown): void {
+  const fields = { error: serializeError(error), bookId: book.id, title: book.title };
+  if (error instanceof SearchDeadlineError) {
+    log.warn({ ...fields, budgetMs: error.budgetMs }, 'Search abandoned at its deadline');
+    return;
+  }
+  log.warn(fields, 'Search failed for book');
+}
 
 export interface SearchJobResult {
   searched: number;
@@ -75,7 +86,7 @@ export async function runSearchJob(
         log.warn({ error: serializeError(result.error), bookId: book.id, title: book.title }, 'Search failed for book');
       }
     } catch (error: unknown) {
-      log.warn({ error: serializeError(error), bookId: book.id, title: book.title }, 'Search failed for book');
+      logSearchFailure(log, book, error);
     }
   }
 
@@ -129,7 +140,7 @@ export async function searchAllWanted(
       }
     } catch (error: unknown) {
       errors++;
-      log.warn({ error: serializeError(error), bookId: book.id, title: book.title }, 'Search failed for book');
+      logSearchFailure(log, book, error);
     }
   }
 

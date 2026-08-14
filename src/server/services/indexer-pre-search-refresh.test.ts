@@ -120,6 +120,51 @@ describe('preSearchRefresh — #2322 independently observed status groups', () =
     expect(deps.update).not.toHaveBeenCalled();
   });
 
+  it('forwards the caller signal to the adapter', async () => {
+    const deps = { ...makeDeps(), signal: new AbortController().signal };
+    const adapter = adapterReturning({ isVip: true, classname: 'VIP' });
+
+    await preSearchRefresh(adapter, mamIndexer, deps);
+
+    expect(adapter.refreshStatus).toHaveBeenCalledWith(deps.signal);
+  });
+
+  it('leaves an adapter with no refreshStatus hook untouched under an aborted signal', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const deps = { ...makeDeps(), signal: controller.signal };
+    const adapter = { type: 'newznab', name: 'Newznab', search: vi.fn(), test: vi.fn() } as unknown as IndexerAdapter;
+
+    expect(await preSearchRefresh(adapter, mamIndexer, deps)).toEqual({ skip: false });
+  });
+
+  // #2310 AC9: degrading here would swallow the outer deadline's cancellation.
+  it('propagates a refresh failure instead of degrading when the signal is aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const deps = { ...makeDeps(), signal: controller.signal };
+    const failure = new Error('The operation was aborted');
+    const adapter = {
+      type: 'myanonamouse', name: 'MAM', search: vi.fn(), test: vi.fn(),
+      refreshStatus: vi.fn().mockRejectedValue(failure),
+    } as unknown as IndexerAdapter;
+
+    await expect(preSearchRefresh(adapter, mamIndexer, deps)).rejects.toBe(failure);
+    expect(deps.log.debug).not.toHaveBeenCalled();
+  });
+
+  // The control: an ordinary failure under a live signal must still degrade exactly as today.
+  it('still degrades a refresh failure under a live, un-aborted signal', async () => {
+    const deps = { ...makeDeps(), signal: new AbortController().signal };
+    const adapter = {
+      type: 'myanonamouse', name: 'MAM', search: vi.fn(), test: vi.fn(),
+      refreshStatus: vi.fn().mockRejectedValue(new Error('Network error')),
+    } as unknown as IndexerAdapter;
+
+    expect(await preSearchRefresh(adapter, mamIndexer, deps)).toEqual({ skip: false });
+    expect(deps.log.debug).toHaveBeenCalled();
+  });
+
   it('never writes the observation into the indexer settings', async () => {
     const deps = makeDeps();
     const adapter = adapterReturning({ isVip: false, classname: 'Power User', unsatisfied: { count: 150, limit: 150 } });

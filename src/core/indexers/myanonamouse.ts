@@ -271,9 +271,9 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   }
 
   /** Class and unsatisfied are observed independently; a classname-less response still delivers the pair. */
-  async refreshStatus(): Promise<{ isVip?: boolean; classname?: string; unsatisfied?: UnsatisfiedStatus } | null> {
+  async refreshStatus(signal?: AbortSignal): Promise<{ isVip?: boolean; classname?: string; unsatisfied?: UnsatisfiedStatus } | null> {
     try {
-      const body = await this.fetchWithCookie(`${this.baseUrl}/jsonLoad.php?snatch_summary`);
+      const body = await this.fetchWithCookie(`${this.baseUrl}/jsonLoad.php?snatch_summary`, signal);
       const data = this.parseUserStatusBody(body);
       const unsatisfied = readUnsatisfiedStatus(data.unsat);
       if (!data.classname) return unsatisfied ? { unsatisfied } : null;

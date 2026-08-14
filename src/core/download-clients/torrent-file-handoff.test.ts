@@ -6,13 +6,14 @@ import { TransmissionClient } from './transmission.js';
 import { DelugeClient } from './deluge.js';
 import { BlackholeClient } from './blackhole.js';
 import type { DownloadArtifact } from './types.js';
-import { writeFile } from 'node:fs/promises';
+import { writeFile, rename } from 'node:fs/promises';
 
 vi.mock('node:fs/promises', async () => {
   const actual = await vi.importActual('node:fs/promises');
   return {
     ...actual,
     writeFile: vi.fn().mockResolvedValue(undefined),
+    rename: vi.fn().mockResolvedValue(undefined),
     access: vi.fn().mockResolvedValue(undefined),
   };
 });
@@ -258,9 +259,14 @@ describe('Torrent file handoff — DownloadArtifact pipeline', () => {
       const artifact: DownloadArtifact = { type: 'torrent-bytes', data: fakeTorrentFile, infoHash: 'fakehash123' };
       await client.addDownload(artifact);
 
+      // Staged under a temp name, then renamed into place (#2310 AC11).
       expect(writeFile).toHaveBeenCalledWith(
-        expect.stringMatching(/[/\\]tmp[/\\]watch[/\\]download-/),
+        expect.stringMatching(/[/\\]tmp[/\\]watch[/\\]\.narratorr-.+\.part$/),
         fakeTorrentFile,
+      );
+      expect(rename).toHaveBeenCalledWith(
+        vi.mocked(writeFile).mock.calls.at(-1)![0],
+        expect.stringMatching(/[/\\]tmp[/\\]watch[/\\]download-\d+\.torrent$/),
       );
     });
 
@@ -270,8 +276,12 @@ describe('Torrent file handoff — DownloadArtifact pipeline', () => {
       await client.addDownload(artifact);
 
       expect(writeFile).toHaveBeenCalledWith(
-        expect.stringMatching(/[/\\]tmp[/\\]watch[/\\]download-/),
+        expect.stringMatching(/[/\\]tmp[/\\]watch[/\\]\.narratorr-.+\.part$/),
         Buffer.from('fake'),
+      );
+      expect(rename).toHaveBeenCalledWith(
+        vi.mocked(writeFile).mock.calls.at(-1)![0],
+        expect.stringMatching(/[/\\]tmp[/\\]watch[/\\]download-\d+\.torrent$/),
       );
     });
   });

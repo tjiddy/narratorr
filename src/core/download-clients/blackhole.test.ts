@@ -3,9 +3,12 @@ import type * as NetworkServiceModule from '../utils/network-service.js';
 import { BlackholeClient } from './blackhole.js';
 import type { DownloadArtifact } from './types.js';
 import { DownloadClientError, DownloadClientTimeoutError } from './errors.js';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 vi.mock('node:fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
+  rename: vi.fn().mockResolvedValue(undefined),
   access: vi.fn().mockResolvedValue(undefined),
   constants: { R_OK: 4, W_OK: 2 },
 }));
@@ -62,7 +65,9 @@ vi.mock('../utils/network-service.js', async (importActual) => {
   };
 });
 
-const { writeFile, access } = await import('node:fs/promises');
+const { writeFile, rename, access } = await import('node:fs/promises');
+const actualFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+
 const { lookup: dnsLookup } = await import('node:dns/promises');
 const mockedDnsLookup = vi.mocked(dnsLookup) as unknown as Mock;
 
@@ -72,11 +77,29 @@ function nzbResponse(body: Uint8Array | string, init?: ResponseInit): Response {
   return new Response(body as BodyInit, init);
 }
 
+const toPosix = (p: unknown) => String(p).split('\\').join('/');
+const TEMP_NAME_RE = /\/\.narratorr-[0-9a-f-]{36}\.part$/;
+
+/**
+ * The artifact is only consumable after the rename, so both halves are the contract: the bytes go
+ * to a random temp name, and only a completed write reaches the final one.
+ */
+function expectArtifactWritten(finalName: RegExp, data: unknown): void {
+  const lastWrite = vi.mocked(writeFile).mock.calls.at(-1)!;
+  expect(toPosix(lastWrite[0])).toMatch(TEMP_NAME_RE);
+  expect(lastWrite[1]).toEqual(data);
+
+  const lastRename = vi.mocked(rename).mock.calls.at(-1)!;
+  expect(lastRename[0]).toBe(lastWrite[0]);
+  expect(toPosix(lastRename[1])).toMatch(finalName);
+}
+
 describe('BlackholeClient', () => {
   let client: BlackholeClient;
 
   beforeEach(() => {
-    vi.mocked(writeFile).mockClear();
+    vi.mocked(writeFile).mockReset().mockResolvedValue(undefined);
+    vi.mocked(rename).mockReset().mockResolvedValue(undefined);
     vi.mocked(access).mockClear();
     mockFetch.mockClear();
     dispatcherCloseSpy.mockClear();
@@ -104,10 +127,7 @@ describe('BlackholeClient', () => {
       };
 
       await client.addDownload(artifact);
-      expect(writeFile).toHaveBeenCalledWith(
-        expect.stringMatching(/download-\d+\.torrent$/),
-        artifact.data,
-      );
+      expectArtifactWritten(/download-\d+\.torrent$/, artifact.data);
     });
 
     it('writes magnet-uri artifact as .magnet file', async () => {
@@ -119,10 +139,7 @@ describe('BlackholeClient', () => {
       };
 
       await client.addDownload(artifact);
-      expect(writeFile).toHaveBeenCalledWith(
-        expect.stringMatching(/\d+\.magnet$/),
-        magnetUri,
-      );
+      expectArtifactWritten(/\d+\.magnet$/, magnetUri);
     });
 
     it('fetches nzb-url artifact and writes .nzb file', async () => {
@@ -135,10 +152,7 @@ describe('BlackholeClient', () => {
       };
 
       await client.addDownload(artifact);
-      expect(writeFile).toHaveBeenCalledWith(
-        expect.stringMatching(/download-\d+\.nzb$/),
-        expect.any(Buffer),
-      );
+      expectArtifactWritten(/download-\d+\.nzb$/, expect.any(Buffer));
     });
 
     it('sends User-Agent: Narratorr/<version> on the nzb-url self-download (#1315)', async () => {
@@ -172,10 +186,7 @@ describe('BlackholeClient', () => {
       await client.addDownload(artifact);
 
       expect(mockFetch).toHaveBeenCalledTimes(2);
-      expect(writeFile).toHaveBeenCalledWith(
-        expect.stringMatching(/download-\d+\.nzb$/),
-        Buffer.from(nzbContent),
-      );
+      expectArtifactWritten(/download-\d+\.nzb$/, Buffer.from(nzbContent));
     });
 
     it('writes the exact bytes from a non-redirecting (direct 200) NZB URL', async () => {
@@ -189,10 +200,7 @@ describe('BlackholeClient', () => {
 
       await client.addDownload(artifact);
       expect(mockFetch).toHaveBeenCalledTimes(1);
-      expect(writeFile).toHaveBeenCalledWith(
-        expect.stringMatching(/download-\d+\.nzb$/),
-        Buffer.from(nzbContent),
-      );
+      expectArtifactWritten(/download-\d+\.nzb$/, Buffer.from(nzbContent));
     });
 
     it('threads the LAN allowlist into the dispatcher and fetch for a private-host NZB URL', async () => {
@@ -216,10 +224,7 @@ describe('BlackholeClient', () => {
         'http://192.168.0.22:9696/getnzb/abc.nzb',
         expect.objectContaining({ lanAllowlist: hostPort }),
       );
-      expect(writeFile).toHaveBeenCalledWith(
-        expect.stringMatching(/download-\d+\.nzb$/),
-        Buffer.from(nzbContent),
-      );
+      expectArtifactWritten(/download-\d+\.nzb$/, Buffer.from(nzbContent));
     });
 
     it('refuses a private-host NZB URL with no allowlist (SSRF default → DownloadClientError)', async () => {
@@ -477,10 +482,7 @@ describe('BlackholeClient', () => {
       const nzbData = Buffer.from('<nzb><file subject="test"/></nzb>');
       await usenetClient.addDownload({ type: 'nzb-bytes', data: nzbData });
 
-      expect(writeFile).toHaveBeenCalledWith(
-        expect.stringMatching(/download-\d+\.nzb$/),
-        nzbData,
-      );
+      expectArtifactWritten(/download-\d+\.nzb$/, nzbData);
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
@@ -488,10 +490,7 @@ describe('BlackholeClient', () => {
       const binaryData = Buffer.from([0x00, 0x01, 0xFF, 0xFE, 0x80, 0x7F]);
       await usenetClient.addDownload({ type: 'nzb-bytes', data: binaryData });
 
-      expect(writeFile).toHaveBeenCalledWith(
-        expect.any(String),
-        binaryData,
-      );
+      expectArtifactWritten(/download-\d+\.nzb$/, binaryData);
     });
 
     it('rejects zero-length nzb-bytes with DownloadClientError before any filesystem write', async () => {
@@ -500,6 +499,7 @@ describe('BlackholeClient', () => {
         usenetClient.addDownload({ type: 'nzb-bytes', data: emptyBuffer }),
       ).rejects.toThrow(DownloadClientError);
       expect(writeFile).not.toHaveBeenCalled();
+      expect(rename).not.toHaveBeenCalled();
     });
 
     it('existing nzb-url path unchanged (still fetches URL and writes)', async () => {
@@ -507,10 +507,7 @@ describe('BlackholeClient', () => {
 
       await usenetClient.addDownload({ type: 'nzb-url', url: 'https://indexer.test/nzb' });
 
-      expect(writeFile).toHaveBeenCalledWith(
-        expect.stringMatching(/download-\d+\.nzb$/),
-        expect.any(Buffer),
-      );
+      expectArtifactWritten(/download-\d+\.nzb$/, expect.any(Buffer));
     });
   });
 
@@ -536,6 +533,117 @@ describe('BlackholeClient', () => {
 
       const usenetClient = new BlackholeClient({ watchDir: '/watch', protocol: 'usenet' });
       expect(usenetClient.protocol).toBe('usenet');
+    });
+  });
+
+  // #2310 AC11: a watching client must only ever see a completed artifact. These run against a real
+  // watch directory because the property is what the DIRECTORY contains, which a mock cannot show.
+  describe('artifact visibility on a real watch directory', () => {
+    let watchDir: string;
+    let realClient: BlackholeClient;
+
+    const finalNames = async () =>
+      (await actualFs.readdir(watchDir)).filter((n) => !n.endsWith('.part'));
+    const tempNames = async () =>
+      (await actualFs.readdir(watchDir)).filter((n) => n.endsWith('.part'));
+
+    beforeEach(async () => {
+      vi.mocked(writeFile).mockImplementation(actualFs.writeFile as never);
+      vi.mocked(rename).mockImplementation(actualFs.rename as never);
+      watchDir = await actualFs.mkdtemp(join(tmpdir(), 'blackhole-'));
+      realClient = new BlackholeClient({ watchDir, protocol: 'torrent' });
+    });
+
+    afterEach(async () => {
+      try {
+        await actualFs.rm(watchDir, { recursive: true, force: true });
+      } catch { /* a leaked tmpdir is cheaper than a red suite on Windows */ }
+    });
+
+    it.each([
+      ['torrent-bytes', { type: 'torrent-bytes', data: Buffer.from('d8:announce'), infoHash: 'a' }, /^download-\d+\.torrent$/, Buffer.from('d8:announce')],
+      ['magnet-uri', { type: 'magnet-uri', uri: 'magnet:?xt=urn:btih:abc', infoHash: 'a' }, /^\d+\.magnet$/, Buffer.from('magnet:?xt=urn:btih:abc')],
+      ['nzb-bytes', { type: 'nzb-bytes', data: Buffer.from('<nzb/>') }, /^download-\d+\.nzb$/, Buffer.from('<nzb/>')],
+    ] as const)('lands %s under its final name with the exact bytes and no temp survivor', async (_label, artifact, namePattern, expected) => {
+      await realClient.addDownload(artifact as DownloadArtifact);
+
+      const names = await finalNames();
+      expect(names).toHaveLength(1);
+      expect(names[0]).toMatch(namePattern);
+      expect(await actualFs.readFile(join(watchDir, names[0]!))).toEqual(expected);
+      expect(await tempNames()).toEqual([]);
+    });
+
+    it('lands a fetched nzb-url under its final name', async () => {
+      mockFetch.mockResolvedValueOnce(nzbResponse(Buffer.from('<nzb>fetched</nzb>'), { status: 200 }));
+
+      await realClient.addDownload({ type: 'nzb-url', url: 'https://example.com/file.nzb' });
+
+      const names = await finalNames();
+      expect(names).toHaveLength(1);
+      expect(names[0]).toMatch(/^download-\d+\.nzb$/);
+      expect(await actualFs.readFile(join(watchDir, names[0]!))).toEqual(Buffer.from('<nzb>fetched</nzb>'));
+    });
+
+    it('leaves nothing under a final name while the write is still in flight', async () => {
+      let releaseWrite!: () => void;
+      // Arm the gate before the write so the file cannot appear before the release handle exists.
+      const stalled = new Promise<void>((resolve) => { releaseWrite = resolve; });
+      vi.mocked(writeFile).mockImplementationOnce((async (path: string, data: Parameters<typeof actualFs.writeFile>[1]) => {
+        await actualFs.writeFile(path, data);
+        await stalled;
+      }) as never);
+
+      const pending = realClient.addDownload({ type: 'torrent-bytes', data: Buffer.from('d8'), infoHash: 'a' });
+      await vi.waitFor(async () => { expect(await tempNames()).toHaveLength(1); });
+
+      expect(await finalNames()).toEqual([]);
+
+      releaseWrite();
+      await pending;
+      expect(await finalNames()).toHaveLength(1);
+    });
+
+    it('leaves nothing under a final name when the rename fails', async () => {
+      vi.mocked(rename).mockRejectedValueOnce(new Error('EXDEV: cross-device link'));
+
+      await expect(realClient.addDownload({ type: 'torrent-bytes', data: Buffer.from('d8'), infoHash: 'a' }))
+        .rejects.toThrow('EXDEV');
+
+      expect(await finalNames()).toEqual([]);
+    });
+
+    it('creates no temp file at all when the empty-NZB guard rejects', async () => {
+      const usenet = new BlackholeClient({ watchDir, protocol: 'usenet' });
+
+      await expect(usenet.addDownload({ type: 'nzb-bytes', data: Buffer.alloc(0) }))
+        .rejects.toThrow(DownloadClientError);
+
+      expect(await actualFs.readdir(watchDir)).toEqual([]);
+    });
+
+    // F7: final names are millisecond-stamped, so a deterministic `<final>.tmp` would let two
+    // same-millisecond handoffs clobber each other's staging file.
+    it('gives concurrent same-millisecond handoffs distinct temp files', async () => {
+      vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+      const first = Buffer.from('first payload');
+      const second = Buffer.from('second payload');
+
+      await Promise.all([
+        realClient.addDownload({ type: 'torrent-bytes', data: first, infoHash: 'a' }),
+        realClient.addDownload({ type: 'torrent-bytes', data: second, infoHash: 'b' }),
+      ]);
+
+      const tempPaths = vi.mocked(writeFile).mock.calls.map((c) => String(c[0]));
+      expect(tempPaths).toHaveLength(2);
+      expect(new Set(tempPaths).size).toBe(2);
+
+      // Both raced for one timestamped final name; whichever landed must be whole, never a mix.
+      const names = await finalNames();
+      expect(names).toEqual(['download-1700000000000.torrent']);
+      const landed = await actualFs.readFile(join(watchDir, names[0]!));
+      expect([first.toString(), second.toString()]).toContain(landed.toString());
+      expect(await tempNames()).toEqual([]);
     });
   });
 });

@@ -1,9 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   buildQueryLadder,
   passesSegmentFloor,
   selectRelaxedCandidate,
   rungDedupKey,
+  runQueryLadder,
   MAX_SEARCH_RUNGS,
   type Rung,
 } from './search-query-ladder.js';
@@ -651,5 +652,30 @@ describe('countOccurrences self-overlap (the #2133 docblock claim)', () => {
     const rung = segmentCutRungs(TITLE)[0]!;
     expect(passesSegmentFloor('A A A', rung)).toBe(false);
     expect(passesSegmentFloor(TITLE, rung)).toBe(true);
+  });
+});
+
+// #2310 AC10: the ladder stops on an abort by PROPAGATION, not by an abort check of its own —
+// once an executor rethrows a cancellation, the loop simply exits.
+describe('runQueryLadder — executor rejection ends the ladder', () => {
+  const ladder = buildQueryLadder({ title: 'Star Wars: The High Republic', author: 'Charles Soule' });
+
+  it('invokes the executor once and propagates its rejection instead of advancing rungs', async () => {
+    expect(ladder.length).toBeGreaterThan(1);
+    const cancelled = new DOMException('aborted', 'AbortError');
+    const execute = vi.fn().mockRejectedValue(cancelled);
+
+    await expect(runQueryLadder(ladder, execute)).rejects.toBe(cancelled);
+
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('still advances rungs on an answered zero, so the rejection path is the only early exit', async () => {
+    const execute = vi.fn().mockResolvedValue({ results: [], succeeded: 1 });
+
+    const ran = await runQueryLadder(ladder, execute);
+
+    expect(execute).toHaveBeenCalledTimes(ladder.length);
+    expect(ran.exhausted).toBe(true);
   });
 });

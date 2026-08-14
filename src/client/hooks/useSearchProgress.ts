@@ -13,7 +13,8 @@ export interface SearchCardState {
   bookId: number;
   bookTitle: string;
   indexers: Map<number, IndexerState>;
-  outcome?: 'grabbed' | 'no_results' | 'skipped' | 'grab_error';
+  // Derived, not repeated: a parallel union silently drifts from the schema's the next time it grows.
+  outcome?: SSEEventPayloads['search_complete']['outcome'];
   grabbedFrom?: string;
 }
 

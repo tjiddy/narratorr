@@ -1,5 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { calculateQuality, filterByLanguage, filterMultiPartUsenet, resolveBookQualityInputs } from '@core/utils/index.js';
+import { SEARCH_DEADLINE_MS } from '@core/utils/constants.js';
 import { canonicalCompare, type NarratorPriority } from './search-ranking.js';
 export type { NarratorPriority } from './search-ranking.js';
 import { AUTO_GRAB_PHASE2_CAP, enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
@@ -16,6 +17,7 @@ import { recordGrabBlockedUnsatisfiedEvent, recordGrabFailedEvent, recordSearchR
 import { type LadderRun } from './search-query-ladder.js';
 import { applyUnsatisfiedLimitGate } from './unsatisfied-limit-gate.js';
 import { runBookQueryLadder } from './search-ladder-execution.js';
+import { withSearchDeadline, SearchDeadlineError } from './search-deadline.js';
 import type { SearchLadderCooldown } from './search-ladder-cooldown.js';
 import { type SearchBook, type SearchEventSink, NOOP_SINK, createBroadcasterSink } from './search-event-sink.js';
 import { ensureError } from '../utils/ensure-error.js';
@@ -441,15 +443,19 @@ export async function searchAndGrabForBook(
   deps: SearchAndGrabDeps,
 ): Promise<SingleBookSearchResult> {
   const { indexerSearchService, broadcaster, log } = deps;
-
+  // Constructed before the raced body — a plain object with no I/O — so expiry can still reach it.
   const sink = broadcaster ? createBroadcasterSink(book, broadcaster, log) : NOOP_SINK;
-  const ran = await runBookQueryLadder(book, {
-    indexerSearchService,
-    streaming: broadcaster !== undefined,
-    sink,
-    searchLadderCooldown: deps.searchLadderCooldown,
-    ladderMode: deps.ladderMode ?? 'always',
+  const outcome = await withSearchDeadline({ budgetMs: SEARCH_DEADLINE_MS, bookId: book.id, log }, async (signal) => {
+    const ran = await runBookQueryLadder(book, {
+      indexerSearchService, sink, signal, streaming: broadcaster !== undefined,
+      searchLadderCooldown: deps.searchLadderCooldown, ladderMode: deps.ladderMode ?? 'always',
+    });
+    return runSearchAndGrab(book, deps, sink, ran);
+  }).catch((error: unknown) => {
+    // The client only removes a card on grabbed/complete, so an expiry must still say so.
+    if (error instanceof SearchDeadlineError) sink.searchComplete('timed_out');
+    throw error;
   });
-
-  return runSearchAndGrab(book, deps, sink, ran);
+  if (!outcome) log.info({ bookId: book.id, title: book.title }, 'Search skipped — this book already has one in flight');
+  return outcome ?? { result: 'skipped', reason: 'search_already_in_flight' };
 }
