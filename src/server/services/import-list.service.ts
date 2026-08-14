@@ -37,6 +37,11 @@ interface SyncCounts {
   excludedCount: number;
 }
 
+/** What one list's sync did. A `failed` sync has already recorded `lastSyncError` (#2306). */
+export type SyncOutcome =
+  | { status: 'ok'; counts: SyncCounts }
+  | { status: 'failed'; message: string };
+
 /** Normalize legacy Hardcover `shelfId: ''` before strict per-provider schema parsing. */
 function parseSettingsForType(type: string, settings: Record<string, unknown>): ImportListSettings {
   const schema = importListSettingsSchemas[type as ImportListType];
@@ -160,33 +165,63 @@ export class ImportListService {
     this.log.info({ count: dueLists.length }, 'Processing due import lists');
 
     for (const list of dueLists) {
-      try {
-        const counts = await this.syncList(list);
-        const nextRunAt = new Date(Date.now() + list.syncIntervalMinutes * MS_PER_MINUTE);
-        await this.db
-          .update(importLists)
-          .set({ lastRunAt: now, nextRunAt, lastSyncError: null })
-          .where(eq(importLists.id, list.id));
-        this.log.info(
-          {
-            id: list.id,
-            name: list.name,
-            createdCount: counts.createdCount,
-            heldReviewCount: counts.heldReviewCount,
-            excludedCount: counts.excludedCount,
-          },
-          'Import list sync completed',
-        );
-      } catch (error: unknown) {
-        const message = getErrorMessage(error);
-        const nextRunAt = new Date(Date.now() + list.syncIntervalMinutes * MS_PER_MINUTE);
-        await this.db
-          .update(importLists)
-          .set({ lastSyncError: message, nextRunAt })
-          .where(eq(importLists.id, list.id));
-        this.log.error({ id: list.id, name: list.name, error: message }, 'Import list sync failed');
-      }
+      // The outcome is the manual path's return value; here the failure is already logged inside.
+      await this.syncAndRecord(list, now);
     }
+  }
+
+  /**
+   * Run one list to completion and be the sole writer of its `lastRunAt` / `nextRunAt` /
+   * `lastSyncError` bookkeeping — a second copy in either caller is how the scheduled and manual
+   * paths would drift (#2306 AC2). `now` is passed in because `syncDueLists` captures one for the
+   * whole cycle while `nextRunAt` is computed at completion; that mixed pair is preserved as-is.
+   */
+  private async syncAndRecord(list: ImportListRow, now: Date): Promise<SyncOutcome> {
+    try {
+      const counts = await this.syncList(list);
+      // A run — scheduled or manual — always puts the next automatic run one full interval out.
+      // Preserving a manual run's prior `nextRunAt` would leave it in the past, so the cron would
+      // re-sync the same list against the same provider minutes later (#2304's load pattern).
+      const nextRunAt = new Date(Date.now() + list.syncIntervalMinutes * MS_PER_MINUTE);
+      await this.db
+        .update(importLists)
+        .set({ lastRunAt: now, nextRunAt, lastSyncError: null })
+        .where(eq(importLists.id, list.id));
+      this.log.info(
+        {
+          id: list.id,
+          name: list.name,
+          createdCount: counts.createdCount,
+          heldReviewCount: counts.heldReviewCount,
+          excludedCount: counts.excludedCount,
+        },
+        'Import list sync completed',
+      );
+      return { status: 'ok', counts };
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
+      const nextRunAt = new Date(Date.now() + list.syncIntervalMinutes * MS_PER_MINUTE);
+      await this.db
+        .update(importLists)
+        .set({ lastSyncError: message, nextRunAt })
+        .where(eq(importLists.id, list.id));
+      this.log.error({ id: list.id, name: list.name, error: message }, 'Import list sync failed');
+      return { status: 'failed', message };
+    }
+  }
+
+  /**
+   * Operator-triggered sync of one list, admitted by the caller's `import-list-sync` task guard.
+   * Deliberately reads neither `enabled` nor `nextRunAt`: those govern *automatic* scheduling
+   * (`syncDueLists`' where clause), so a disabled list can be run once to check it and stays
+   * disabled — the advanced `nextRunAt` has no effect until the operator re-enables it.
+   */
+  async runNow(id: number): Promise<SyncOutcome | null> {
+    // Raw row, not `getById`: `syncAndRecord` takes one input shape and `syncList` decrypts itself.
+    const results = await this.db.select().from(importLists).where(eq(importLists.id, id)).limit(1);
+    const list = results[0];
+    if (!list) return null;
+    return this.syncAndRecord(list, new Date());
   }
 
   private async syncList(list: ImportListRow): Promise<SyncCounts> {

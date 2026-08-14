@@ -4,7 +4,7 @@ import type { Db } from '@db/index.js';
 import { ImportListService } from './import-list.service.js';
 import type { BookService, BookWithAuthor } from './book.service.js';
 import { OwnedRecordingError } from './book-dedup.js';
-import { TaskRegistry } from './task-registry.js';
+import { TaskRegistry, TaskRegistryError } from './task-registry.js';
 import type { MetadataService } from './metadata.service.js';
 import { RateLimitError, TransientError } from '@core/index.js';
 import { initializeKey, _resetKey, encrypt, getKey } from '../utils/secret-codec.js';
@@ -2213,6 +2213,296 @@ describe('ImportListService', () => {
         expect.objectContaining({ name: 'Failing Hardcover' }),
         expect.stringContaining('sync failed'),
       );
+    });
+
+    describe('runNow — the manual per-list run (#2306)', () => {
+      interface ManualSetup {
+        service: ImportListService;
+        db: ReturnType<typeof createMockDb>;
+        provider: { fetchItems: ReturnType<typeof vi.fn>; test: ReturnType<typeof vi.fn> };
+        updateChain: ReturnType<typeof mockDbChain>;
+        create: ReturnType<typeof vi.fn>;
+        findDuplicate: ReturnType<typeof vi.fn>;
+        qualityGet: ReturnType<typeof vi.fn> | undefined;
+      }
+
+      function setup(opts: {
+        items?: { title: string; author?: string }[];
+        list?: Record<string, unknown>;
+        providerError?: Error;
+        create?: ReturnType<typeof vi.fn>;
+        findDuplicate?: ReturnType<typeof vi.fn>;
+        withSearchDeps?: boolean;
+        searchImmediately?: boolean;
+      } = {}): ManualSetup {
+        const provider = {
+          fetchItems: opts.providerError
+            ? vi.fn().mockRejectedValue(opts.providerError)
+            : vi.fn().mockResolvedValue(opts.items ?? []),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(provider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList(opts.list)]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        const updateChain = mockDbChain([]);
+        db.update.mockReturnValue(updateChain);
+
+        let nextId = 1;
+        const create = opts.create
+          ?? vi.fn().mockImplementation(async (data: { title: string }) => createdBook(nextId++, data.title));
+        const findDuplicate = opts.findDuplicate
+          ?? vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null });
+        const searchDeps = opts.withSearchDeps === false
+          ? undefined
+          : makeSearchDeps({ searchImmediately: opts.searchImmediately ?? false });
+
+        return {
+          service: new ImportListService(
+            inject<Db>(db), mockLog, makeBookService({ create, findDuplicate }), undefined, searchDeps,
+          ),
+          db,
+          provider,
+          updateChain,
+          create,
+          findDuplicate,
+          qualityGet: searchDeps
+            ? (searchDeps.settingsService.get as unknown as ReturnType<typeof vi.fn>)
+            : undefined,
+        };
+      }
+
+      it('syncs a list whose nextRunAt is still in the future, and touches no other provider', async () => {
+        const { service: svc, provider } = setup({
+          items: [{ title: 'Manual Book', author: 'Manual Author' }],
+          list: { id: 9, nextRunAt: new Date(Date.now() + 60 * 60_000) },
+        });
+
+        const outcome = await svc.runNow(9);
+
+        expect(outcome).toEqual({ status: 'ok', counts: { createdCount: 1, heldReviewCount: 0, excludedCount: 0 } });
+        expect(provider.fetchItems).toHaveBeenCalledTimes(1);
+        expect(mockFactories.nyt).toHaveBeenCalledWith({ apiKey: 'key', list: 'audio-fiction' });
+        expect(mockFactories.hardcover).not.toHaveBeenCalled();
+      });
+
+      it('syncs a disabled list and leaves `enabled` out of the write payload (Decision 3)', async () => {
+        const { service: svc, provider, updateChain } = setup({
+          items: [{ title: 'Disabled List Book', author: 'A' }],
+          list: { id: 4, enabled: false },
+        });
+
+        const outcome = await svc.runNow(4);
+
+        expect(outcome).toMatchObject({ status: 'ok' });
+        expect(provider.fetchItems).toHaveBeenCalledTimes(1);
+        const setCall = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+        expect(setCall).not.toHaveProperty('enabled');
+      });
+
+      it('decrypts the stored settings before dispatching the provider', async () => {
+        const encryptedApiKey = encrypt('real-api-key', getKey());
+        const { service: svc } = setup({
+          list: { id: 12, settings: { apiKey: encryptedApiKey, list: 'audio-fiction' } },
+        });
+
+        await svc.runNow(12);
+
+        expect(mockFactories.nyt).toHaveBeenCalledWith(
+          expect.objectContaining({ apiKey: 'real-api-key' }),
+        );
+      });
+
+      it('returns null for an unknown id, writing nothing and calling no provider', async () => {
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([]));
+        const svc = new ImportListService(inject<Db>(db), mockLog, makeBookService());
+
+        const outcome = await svc.runNow(404);
+
+        expect(outcome).toBeNull();
+        expect(db.update).not.toHaveBeenCalled();
+        expect(mockFactories.nyt).not.toHaveBeenCalled();
+      });
+
+      describe('AC2 — the bookkeeping is single-homed', () => {
+        /** Run the same fixture down the scheduled path and the manual path; return both payloads. */
+        async function bothPayloads(opts: { providerError?: Error } = {}) {
+          const scheduled = setup({ list: { id: 5, syncIntervalMinutes: 60 }, ...opts });
+          await scheduled.service.syncDueLists();
+          const scheduledSet = scheduled.updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+
+          const manual = setup({ list: { id: 5, syncIntervalMinutes: 60 }, ...opts });
+          await manual.service.runNow(5);
+          const manualSet = manual.updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+
+          return { scheduledSet, manualSet };
+        }
+
+        it('writes the same success payload on both paths', async () => {
+          const { scheduledSet, manualSet } = await bothPayloads();
+
+          expect(Object.keys(manualSet).sort()).toEqual(Object.keys(scheduledSet).sort());
+          expect(manualSet.lastSyncError).toBeNull();
+          expect(scheduledSet.lastSyncError).toBeNull();
+          expect(manualSet.lastRunAt).toBeInstanceOf(Date);
+          expect(manualSet.nextRunAt).toBeInstanceOf(Date);
+          const diff = (manualSet.nextRunAt as Date).getTime() - Date.now();
+          expect(diff).toBeGreaterThan(59 * 60_000);
+          expect(diff).toBeLessThan(61 * 60_000);
+        });
+
+        it('writes the same failure payload on both paths', async () => {
+          const { scheduledSet, manualSet } = await bothPayloads({ providerError: new Error('Provider down') });
+
+          expect(Object.keys(manualSet).sort()).toEqual(Object.keys(scheduledSet).sort());
+          expect(manualSet.lastSyncError).toBe('Provider down');
+          expect(manualSet).not.toHaveProperty('lastRunAt');
+          expect(manualSet.nextRunAt).toBeInstanceOf(Date);
+        });
+
+        it('filters the write to the run list on both paths', async () => {
+          const scheduled = setup({ list: { id: 5 } });
+          await scheduled.service.syncDueLists();
+          const manual = setup({ list: { id: 5 } });
+          await manual.service.runNow(5);
+
+          expect(manual.updateChain.where.mock.calls[0]![0])
+            .toEqual(scheduled.updateChain.where.mock.calls[0]![0]);
+        });
+      });
+
+      describe('AC5 — the import-list-sync task guard admits one run at a time', () => {
+        /** Both entry points share one service and one provider, so a second sync is a second fetch. */
+        function gatedRegistry() {
+          const harnessed = setup({ items: [{ title: 'Gated Book', author: 'A' }] });
+          const gate = deferred();
+          harnessed.provider.fetchItems.mockImplementation(async () => { await gate.promise; return []; });
+          const registry = new TaskRegistry();
+          registry.register('import-list-sync', 'cron', () => harnessed.service.syncDueLists());
+          return { ...harnessed, gate, registry };
+        }
+
+        it('refuses a manual run while the cron cycle holds the task, and never syncs', async () => {
+          const { service: svc, provider, gate, registry } = gatedRegistry();
+
+          const cycle = registry.executeTracked('import-list-sync');
+          await flush();
+          expect(provider.fetchItems).toHaveBeenCalledTimes(1);
+
+          const err = await registry
+            .runExclusive('import-list-sync', () => svc.runNow(1))
+            .catch((e: unknown) => e);
+
+          expect(err).toBeInstanceOf(TaskRegistryError);
+          expect((err as TaskRegistryError).code).toBe('ALREADY_RUNNING');
+          expect(provider.fetchItems).toHaveBeenCalledTimes(1);
+
+          gate.resolve();
+          await cycle;
+        });
+
+        it('silently skips a cron tick that arrives while a manual run holds the task', async () => {
+          const { service: svc, provider, gate, registry } = gatedRegistry();
+
+          const manualRun = registry.runExclusive('import-list-sync', () => svc.runNow(1));
+          await flush();
+          expect(provider.fetchItems).toHaveBeenCalledTimes(1);
+
+          await expect(registry.executeTracked('import-list-sync')).resolves.toBeUndefined();
+          expect(provider.fetchItems).toHaveBeenCalledTimes(1);
+
+          gate.resolve();
+          await expect(manualRun).resolves.toMatchObject({ status: 'ok' });
+        });
+      });
+
+      describe('boundaries and transient state', () => {
+        it('reports an all-zero ok outcome and still clears a stale lastSyncError for an empty fetch', async () => {
+          const { service: svc, updateChain } = setup({ items: [], list: { id: 6, lastSyncError: 'old error' } });
+
+          const outcome = await svc.runNow(6);
+
+          expect(outcome).toEqual({ status: 'ok', counts: { createdCount: 0, heldReviewCount: 0, excludedCount: 0 } });
+          const setCall = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+          expect(setCall.lastSyncError).toBeNull();
+          expect(setCall.lastRunAt).toBeInstanceOf(Date);
+        });
+
+        it('counts a review-held duplicate without creating a book', async () => {
+          const findDuplicate = vi.fn().mockResolvedValue({ verdict: 'review', book: { id: 77, title: 'Ambiguous' } });
+          const create = vi.fn();
+          const { service: svc } = setup({ items: [{ title: 'Ambiguous', author: 'A' }], findDuplicate, create });
+
+          const outcome = await svc.runNow(1);
+
+          expect(outcome).toEqual({ status: 'ok', counts: { createdCount: 0, heldReviewCount: 1, excludedCount: 0 } });
+          expect(create).not.toHaveBeenCalled();
+        });
+
+        it('skips a whitespace-only title without consuming a count', async () => {
+          const { service: svc, create } = setup({
+            items: [{ title: '   ', author: 'Nobody' }, { title: 'Real Book', author: 'A' }],
+          });
+
+          const outcome = await svc.runNow(1);
+
+          expect(outcome).toEqual({ status: 'ok', counts: { createdCount: 1, heldReviewCount: 0, excludedCount: 0 } });
+          expect(create).toHaveBeenCalledTimes(1);
+          expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Real Book' }));
+        });
+
+        it('completes without searchDeps, reading no quality settings and running no search', async () => {
+          const { service: svc, qualityGet } = setup({
+            items: [{ title: 'No Search Deps', author: 'A' }],
+            withSearchDeps: false,
+          });
+
+          const outcome = await svc.runNow(1);
+
+          expect(outcome).toMatchObject({ status: 'ok' });
+          expect(qualityGet).toBeUndefined();
+          expect(mockRunImmediateSearch).not.toHaveBeenCalled();
+        });
+      });
+
+      describe('error isolation', () => {
+        it('returns a failed outcome and persists failure parity when the provider throws', async () => {
+          const { service: svc, updateChain } = setup({
+            providerError: new Error('Connection timeout'),
+            list: { id: 3, syncIntervalMinutes: 30 },
+          });
+
+          const outcome = await svc.runNow(3);
+
+          expect(outcome).toEqual({ status: 'failed', message: 'Connection timeout' });
+          const setCall = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+          expect(setCall.lastSyncError).toBe('Connection timeout');
+          expect(setCall).not.toHaveProperty('lastRunAt');
+          const diff = (setCall.nextRunAt as Date).getTime() - Date.now();
+          expect(diff).toBeGreaterThan(29 * 60_000);
+          expect(diff).toBeLessThan(31 * 60_000);
+        });
+
+        it('contains a per-item failure and still reports ok', async () => {
+          const create = vi.fn()
+            .mockRejectedValueOnce(new Error('Item exploded'))
+            .mockImplementationOnce(async (data: { title: string }) => createdBook(2, data.title));
+          const { service: svc } = setup({
+            items: [{ title: 'Boom', author: 'A' }, { title: 'Fine', author: 'B' }],
+            create,
+          });
+
+          const outcome = await svc.runNow(1);
+
+          expect(outcome).toEqual({ status: 'ok', counts: { createdCount: 1, heldReviewCount: 0, excludedCount: 0 } });
+          expect(mockLog.warn).toHaveBeenCalledWith(
+            expect.objectContaining({ title: 'Boom' }),
+            expect.stringContaining('Failed to process import list item'),
+          );
+        });
+      });
     });
   });
 });
