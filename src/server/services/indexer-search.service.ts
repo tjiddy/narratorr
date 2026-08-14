@@ -159,7 +159,11 @@ export class IndexerSearchService {
 
         const response = await adapter.search(transportQuery, searchOptions);
         logIndexerSearchTrace(this.log, indexer, response);
-        const mapped = response.results.map(r => ({ ...r, indexerId: indexer.id, indexerPriority: indexer.priority }));
+        // Stamp the refresh's observation where indexerId is stamped: it describes this search only.
+        const mapped = response.results.map(r => ({
+          ...r, indexerId: indexer.id, indexerPriority: indexer.priority,
+          ...(refresh.unsatisfied !== undefined && { unsatisfied: refresh.unsatisfied }),
+        }));
         this.parseReleaseNames(mapped, indexer.name);
         return mapped;
       }),
@@ -235,7 +239,10 @@ export class IndexerSearchService {
           const response = await adapter.search(transportQuery, { ...searchOptions, signal });
           logIndexerSearchTrace(this.log, indexer, response);
           const elapsedMs = Date.now() - indexerStartMs;
-          const mapped = response.results.map(r => ({ ...r, indexerId: indexer.id, indexerPriority: indexer.priority }));
+          const mapped = response.results.map(r => ({
+            ...r, indexerId: indexer.id, indexerPriority: indexer.priority,
+            ...(refresh.unsatisfied !== undefined && { unsatisfied: refresh.unsatisfied }),
+          }));
           this.parseReleaseNames(mapped, indexer.name);
           perIndexerResults.set(indexer.id, mapped);
           callbacks.onComplete(indexer.id, indexer.name, mapped.length, elapsedMs);

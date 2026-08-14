@@ -1,4 +1,5 @@
 import type { DownloadProtocol } from '@shared/schemas/download-protocol.js';
+import type { UnsatisfiedStatus } from '../utils/mam-unsatisfied.js';
 
 export type { DownloadProtocol };
 
@@ -30,6 +31,12 @@ export interface SearchResult {
   isVipOnly?: boolean;
   /** Lowercase MAM container. Absence is unknown, not mp3; display only. */
   format?: string;
+  /**
+   * The unsatisfied allowance the source indexer reported for THIS search, attached where
+   * indexerId is stamped. Request-scoped telemetry, never stored: absence is the fail-open
+   * state, so an unannotated result is never blocked. Only MAM reports it.
+   */
+  unsatisfied?: UnsatisfiedStatus;
 }
 
 export interface SearchOptions {
@@ -95,7 +102,12 @@ export interface IndexerAdapter {
 
   search(query: string, options?: SearchOptions): Promise<IndexerSearchResponse>;
   test(): Promise<IndexerTestResult>;
-  refreshStatus?(): Promise<{ isVip: boolean; classname: string } | null>;
+  /**
+   * Independently observed status groups. `isVip`/`classname` derive from one MAM field and are
+   * both present or both absent; `unsatisfied` is present only as a validated pair. `null` means
+   * neither group was observed.
+   */
+  refreshStatus?(): Promise<{ isVip?: boolean; classname?: string; unsatisfied?: UnsatisfiedStatus } | null>;
   /** Resolve an adapter sentinel to its real grab URL; MAM may also request a freeleech wedge. */
   resolveDownloadUrl?(ctx: ResolveDownloadContext): Promise<ResolveDownloadResult>;
 }

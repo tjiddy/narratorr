@@ -30,10 +30,19 @@ export const mamSearchResponseSchema = z.object({
   { message: 'MAM search response missing both "data" and "error" fields' },
 );
 
+// The snatch_summary unsatisfied allowance. `.catch()` degrades a shape change to absence rather
+// than an IndexerError: refusing the whole response would disable searching, a worse outage than
+// the snatch cooldown reading this field prevents. Numeric validity belongs to readUnsatisfiedStatus.
+const mamUnsatSchema = z.object({
+  count: z.number().nullish(),
+  limit: z.number().nullish(),
+}).passthrough().nullish().catch(undefined);
+
 export const mamUserStatusSchema = z.object({
   username: z.string().nullish(),
   classname: z.string().nullish(),
   wedges: z.number().nullish(),
+  unsat: mamUnsatSchema,
 }).passthrough();
 
 export type MAMSearchResult = z.infer<typeof mamSearchResultSchema>;
