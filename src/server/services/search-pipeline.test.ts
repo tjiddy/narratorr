@@ -1,4 +1,4 @@
-import { describe, it, expect, expectTypeOf, vi, beforeEach } from 'vitest';
+import { describe, it, expect, expectTypeOf, vi, beforeEach, afterEach } from 'vitest';
 import { buildSearchQuery, buildNarratorPriority, filterAndRankResults, filterBlacklistedResults, searchAndGrabForBook, postProcessSearchResults, applyMultiPartFilterAndRank, buildSearchFilterOptions } from './search-pipeline.js';
 import type { SingleBookSearchResult } from './search-pipeline.js';
 import type { SettingsService } from './settings.service.js';
@@ -15,6 +15,25 @@ import { parseMamSize } from '@core/indexers/mam-helpers.js';
 import { BYTES_PER_GB as GB, BYTES_PER_MB as MB } from '@shared/constants.js';
 import type { SearchResponsePayload, SearchResultPayload } from '@shared/schemas/search-stream.js';
 import { SearchLadderCooldown } from './search-ladder-cooldown.js';
+import { SEARCH_DEADLINE_MS } from '@core/utils/constants.js';
+import { SearchDeadlineError, _resetSearchRegistryForTesting } from './search-deadline.js';
+import { withBookAdmissionLock } from './book-admission.js';
+import { BlackholeClient } from '@core/download-clients/blackhole.js';
+import { fetchWithSsrfRedirect } from '@core/utils/network-service.js';
+import { tmpdir } from 'node:os';
+
+// Passthrough mocks: only the #2310 stall-class cases override these, so every other test in this
+// file keeps the real implementations.
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, writeFile: vi.fn(actual.writeFile) };
+});
+vi.mock('node:dns/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:dns/promises')>();
+  return { ...actual, lookup: vi.fn(actual.lookup) };
+});
+const { writeFile } = await import('node:fs/promises');
+const { lookup: dnsLookup } = await import('node:dns/promises');
 
 
 /**
@@ -4307,5 +4326,445 @@ describe('postProcessSearchResults — filteredOut wire field (#2325 AC8, AC9)',
     expect(output.results).toEqual([]);
     expect(output.unsupportedResults.count).toBe(1);
     expect(output).not.toHaveProperty('filteredOut');
+  });
+});
+
+/**
+ * #2310 — `searchAndGrabForBook` wraps its whole body in one deadline. The timer is a hand-rolled
+ * `setTimeout`, so a `globalThis` spy captures it; filtering on the exact budget leaves every other
+ * timer in the process real.
+ */
+describe('#2310 search deadline', () => {
+  const book = { id: 1, title: 'Test Book', duration: 3600, authors: [{ name: 'Author' }] };
+  const NEVER = <T,>() => new Promise<T>(() => { /* the stalled leaf */ });
+
+  let indexerSearchService: IndexerSearchService;
+  let downloadService: DownloadOrchestrator;
+  let blacklistService: BlacklistService;
+  let eventHistory: EventHistoryService;
+  let log: FastifyBaseLogger;
+  let armed: Array<{ delay: number; fire: () => void }>;
+
+  function captureDeadlineTimers() {
+    const captured: Array<{ delay: number; fire: () => void }> = [];
+    const original = globalThis.setTimeout;
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, delay?: number, ...rest: unknown[]) => {
+      if (delay !== SEARCH_DEADLINE_MS) return original(fn as never, delay as never, ...rest as never[]);
+      captured.push({ delay: delay!, fire: fn });
+      const parked = original(() => { /* never fires within a test */ }, 2 ** 30);
+      parked.unref();
+      return parked;
+    }) as never);
+    return captured;
+  }
+
+  const baseDeps = () => ({
+    indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings,
+    log, blacklistService, indexerService: mockIndexer, eventHistory,
+  });
+
+  beforeEach(() => {
+    _resetSearchRegistryForTesting();
+    armed = captureDeadlineTimers();
+    indexerSearchService = {
+      searchAllWithStatus: vi.fn().mockResolvedValue(withStatus([makeResult()])),
+    } as unknown as IndexerSearchService;
+    downloadService = { grab: vi.fn().mockResolvedValue({ id: 1, status: 'downloading' }) } as unknown as DownloadOrchestrator;
+    blacklistService = {
+      getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set<string>(), blacklistedGuids: new Set<string>() }),
+    } as unknown as BlacklistService;
+    eventHistory = createMockEventHistory();
+    log = createMockLogger();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    // Stalled operations never settle, so their registry slots would leak into later suites.
+    _resetSearchRegistryForTesting();
+  });
+
+  it('arms exactly one timer for the whole call, with the SEARCH_DEADLINE_MS budget', async () => {
+    await searchAndGrabForBook(book, baseDeps());
+    expect(armed).toHaveLength(1);
+    expect(armed[0]!.delay).toBe(1_500_000);
+  });
+
+  describe('every stall class inside the body is bounded, and the caller always sees the canonical error', () => {
+    // Each entry stalls a DIFFERENT await inside the raced body; AC3's claim is that the class of
+    // leaf does not matter, so one case per class.
+    /** `stalledLeafReached` pins WHICH leaf is pending when the deadline fires. */
+    async function expectExpiry(deps: Parameters<typeof searchAndGrabForBook>[1], stalledLeafReached: () => void) {
+      const running = searchAndGrabForBook(book, deps);
+      const settled = vi.fn();
+      void running.then(settled, () => { /* asserted below */ });
+
+      await vi.waitFor(stalledLeafReached);
+      expect(armed).toHaveLength(1);
+      armed[0]!.fire();
+
+      const error = await running.catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(SearchDeadlineError);
+      // The observation point that matters: an expiry is never reported as an answered zero.
+      expect(settled).not.toHaveBeenCalled();
+      return error as SearchDeadlineError;
+    }
+
+    it('a never-settling indexer ladder', async () => {
+      vi.mocked(indexerSearchService.searchAllWithStatus).mockImplementation(NEVER);
+      const error = await expectExpiry(baseDeps(), () => expect(indexerSearchService.searchAllWithStatus).toHaveBeenCalled());
+      expect(error.bookId).toBe(1);
+      expect(error.budgetMs).toBe(SEARCH_DEADLINE_MS);
+    });
+
+    it('a never-settling local database read (the blacklist gate)', async () => {
+      // The gate short-circuits on results with no identifier, so give it one to read.
+      vi.mocked(indexerSearchService.searchAllWithStatus).mockResolvedValue(withStatus([makeResult({ guid: 'g1' })]));
+      vi.mocked(blacklistService.getBlacklistedIdentifiers).mockImplementation(NEVER);
+      await expectExpiry(baseDeps(), () => expect(blacklistService.getBlacklistedIdentifiers).toHaveBeenCalled());
+    });
+
+    it('a never-settling writeFile inside the Blackhole handoff — the originally-filed defect', async () => {
+      const blackhole = new BlackholeClient({ watchDir: tmpdir(), protocol: 'torrent' });
+      vi.mocked(writeFile).mockImplementation(NEVER);
+      downloadService = {
+        grab: vi.fn(async () => {
+          await blackhole.addDownload({ type: 'magnet-uri', uri: 'magnet:?xt=urn:btih:aaa', infoHash: 'aaa' });
+          return { id: 1 } as never;
+        }),
+      } as unknown as DownloadOrchestrator;
+
+      await expectExpiry(baseDeps(), () => expect(writeFile).toHaveBeenCalled());
+      expect(downloadService.grab).toHaveBeenCalledTimes(1);
+    });
+
+    it('a never-settling DNS preflight inside the redirect helper — the leg no per-leg timeout bounds', async () => {
+      vi.mocked(dnsLookup).mockImplementation(NEVER);
+      downloadService = {
+        grab: vi.fn(async () => {
+          await fetchWithSsrfRedirect('https://indexer.test/getnzb/abc.nzb', {});
+          return { id: 1 } as never;
+        }),
+      } as unknown as DownloadOrchestrator;
+
+      await expectExpiry(baseDeps(), () => expect(dnsLookup).toHaveBeenCalled());
+      expect(dnsLookup).toHaveBeenCalled();
+    });
+  });
+
+  describe('one operation per book', () => {
+    it('runs the work once and skips concurrent same-book callers without arming their timers', async () => {
+      vi.mocked(indexerSearchService.searchAllWithStatus).mockImplementation(NEVER);
+
+      const first = searchAndGrabForBook(book, baseDeps());
+      const second = await searchAndGrabForBook(book, baseDeps());
+      const third = await searchAndGrabForBook(book, baseDeps());
+
+      expect(indexerSearchService.searchAllWithStatus).toHaveBeenCalledTimes(1);
+      expect(second).toEqual({ result: 'skipped', reason: 'search_already_in_flight' });
+      expect(third).toEqual({ result: 'skipped', reason: 'search_already_in_flight' });
+      expect(armed).toHaveLength(1);
+      expect(log.info).toHaveBeenCalledWith(
+        { bookId: 1, title: 'Test Book' },
+        'Search skipped — this book already has one in flight',
+      );
+
+      armed[0]!.fire();
+      await expect(first).rejects.toBeInstanceOf(SearchDeadlineError);
+    });
+
+    it('keeps skipping while the abandoned operation is still pending after its deadline', async () => {
+      vi.mocked(indexerSearchService.searchAllWithStatus).mockImplementation(NEVER);
+
+      const first = searchAndGrabForBook(book, baseDeps());
+      await vi.waitFor(() => expect(armed).toHaveLength(1));
+      armed[0]!.fire();
+      await expect(first).rejects.toBeInstanceOf(SearchDeadlineError);
+
+      expect(await searchAndGrabForBook(book, baseDeps())).toEqual({ result: 'skipped', reason: 'search_already_in_flight' });
+      expect(indexerSearchService.searchAllWithStatus).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves a different book unaffected', async () => {
+      vi.mocked(indexerSearchService.searchAllWithStatus).mockImplementationOnce(NEVER);
+
+      void searchAndGrabForBook(book, baseDeps());
+      const other = await searchAndGrabForBook({ ...book, id: 2 }, baseDeps());
+
+      expect(other).toEqual({ result: 'grabbed', title: 'Test Book' });
+      expect(armed).toHaveLength(2);
+    });
+
+    it('frees the slot once the operation settles, so the next call runs normally', async () => {
+      expect(await searchAndGrabForBook(book, baseDeps())).toEqual({ result: 'grabbed', title: 'Test Book' });
+      expect(await searchAndGrabForBook(book, baseDeps())).toEqual({ result: 'grabbed', title: 'Test Book' });
+      expect(indexerSearchService.searchAllWithStatus).toHaveBeenCalledTimes(2);
+    });
+
+    it('holds exactly one entry however many further callers arrive', async () => {
+      vi.mocked(indexerSearchService.searchAllWithStatus).mockImplementation(NEVER);
+      void searchAndGrabForBook(book, baseDeps());
+
+      for (let i = 0; i < 5; i++) {
+        expect(await searchAndGrabForBook(book, baseDeps())).toEqual({ result: 'skipped', reason: 'search_already_in_flight' });
+      }
+      expect(indexerSearchService.searchAllWithStatus).toHaveBeenCalledTimes(1);
+      expect(armed).toHaveLength(1);
+    });
+
+    it('contributes exactly one admission-lock waiter while a same-book lock holder is stuck', async () => {
+      let releaseHolder!: () => void;
+      const held = new Promise<void>((resolve) => { releaseHolder = resolve; });
+      void withBookAdmissionLock(book.id, () => held);
+
+      const entered = vi.fn();
+      downloadService = {
+        grab: vi.fn((params: { bookId: number }) => withBookAdmissionLock(params.bookId, async () => {
+          entered();
+          return { id: 1 } as never;
+        })),
+      } as unknown as DownloadOrchestrator;
+
+      const first = searchAndGrabForBook(book, baseDeps());
+      const skippedA = await searchAndGrabForBook(book, baseDeps());
+      const skippedB = await searchAndGrabForBook(book, baseDeps());
+
+      await vi.waitFor(() => expect(downloadService.grab).toHaveBeenCalledTimes(1));
+      expect(entered).not.toHaveBeenCalled();
+      expect(skippedA).toEqual({ result: 'skipped', reason: 'search_already_in_flight' });
+      expect(skippedB).toEqual({ result: 'skipped', reason: 'search_already_in_flight' });
+
+      releaseHolder();
+      await expect(first).resolves.toEqual({ result: 'grabbed', title: 'Test Book' });
+      expect(entered).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('grab integrity — abandon, never tear', () => {
+    it('rejects the caller while the in-flight grab still runs to completion', async () => {
+      let releaseGrab!: () => void;
+      const inserted = vi.fn();
+      downloadService = {
+        grab: vi.fn(async () => {
+          await new Promise<void>((resolve) => { releaseGrab = resolve; });
+          inserted();
+          return { id: 1 } as never;
+        }),
+      } as unknown as DownloadOrchestrator;
+
+      const running = searchAndGrabForBook(book, baseDeps());
+      await vi.waitFor(() => expect(releaseGrab).toBeDefined());
+      armed[0]!.fire();
+
+      await expect(running).rejects.toBeInstanceOf(SearchDeadlineError);
+      expect(inserted).not.toHaveBeenCalled();
+
+      // Abandoned, not cancelled: the download record still lands after the caller gave up.
+      releaseGrab();
+      await vi.waitFor(() => expect(inserted).toHaveBeenCalledTimes(1));
+    });
+
+    it('never reaches the grab when the deadline fires during the search', async () => {
+      vi.mocked(indexerSearchService.searchAllWithStatus).mockImplementation(NEVER);
+
+      const running = searchAndGrabForBook(book, baseDeps());
+      await vi.waitFor(() => expect(armed).toHaveLength(1));
+      armed[0]!.fire();
+
+      await expect(running).rejects.toBeInstanceOf(SearchDeadlineError);
+      expect(downloadService.grab).not.toHaveBeenCalled();
+    });
+
+    it('hands the download client no signal — cancelling a handoff would tear it', async () => {
+      await searchAndGrabForBook(book, baseDeps());
+      const payload = vi.mocked(downloadService.grab).mock.calls[0]![0] as Record<string, unknown>;
+      expect(payload).not.toHaveProperty('signal');
+    });
+  });
+
+  describe('signal propagation', () => {
+    it('forwards a live, never-aborted signal to the aggregate search leg', async () => {
+      await searchAndGrabForBook(book, baseDeps());
+      const options = vi.mocked(indexerSearchService.searchAllWithStatus).mock.calls[0]![1] as { signal?: AbortSignal };
+      expect(options.signal).toBeInstanceOf(AbortSignal);
+      expect(options.signal!.aborted).toBe(false);
+    });
+
+    it('aborts the search leg signal at expiry, so an abandoned run issues no further indexer requests', async () => {
+      let seen: AbortSignal | undefined;
+      vi.mocked(indexerSearchService.searchAllWithStatus).mockImplementation(((_q: string, o?: { signal?: AbortSignal }) => {
+        seen = o?.signal;
+        return NEVER();
+      }) as never);
+
+      const running = searchAndGrabForBook(book, baseDeps());
+      await vi.waitFor(() => expect(seen).toBeDefined());
+      armed[0]!.fire();
+      await expect(running).rejects.toBeInstanceOf(SearchDeadlineError);
+
+      expect(seen!.aborted).toBe(true);
+    });
+
+    it('forwards the outer signal to the streaming leg as its own argument', async () => {
+      const streaming = {
+        searchAllStreaming: vi.fn().mockResolvedValue([makeResult({ indexerId: 10 })]),
+        getEnabledIndexers: vi.fn().mockResolvedValue([{ id: 10, name: 'MAM' }]),
+      } as unknown as IndexerSearchService;
+
+      await searchAndGrabForBook(book, {
+        ...baseDeps(), indexerSearchService: streaming,
+        broadcaster: { emit: vi.fn() } as unknown as EventBroadcasterService,
+      });
+
+      const outer = vi.mocked(streaming.searchAllStreaming).mock.calls[0]![4];
+      expect(outer).toBeInstanceOf(AbortSignal);
+      expect(outer!.aborted).toBe(false);
+    });
+  });
+
+  describe('the terminal SSE contract on expiry', () => {
+    let broadcaster: EventBroadcasterService;
+    const emitsOf = (type: string) => vi.mocked(broadcaster.emit).mock.calls.filter((c) => c[0] === type);
+
+    function streamingIndexer(impl?: () => Promise<SearchResult[]>): IndexerSearchService {
+      const settle = impl ?? (async () => [makeResult({ indexerId: 10 })]);
+      return {
+        // onComplete is what makes `succeeded` non-zero, so the ladder reads a real answer.
+        searchAllStreaming: vi.fn().mockImplementation(async (_q: string, _o: unknown, _c: unknown, callbacks: { onComplete: (id: number, n: string, r: number, ms: number) => void }) => {
+          const results = await settle();
+          callbacks.onComplete(10, 'MAM', results.length, 50);
+          return results;
+        }),
+        getEnabledIndexers: vi.fn().mockResolvedValue([{ id: 10, name: 'MAM' }]),
+      } as unknown as IndexerSearchService;
+    }
+
+    beforeEach(() => {
+      broadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+    });
+
+    it('emits exactly one terminal search_complete with outcome timed_out when the ladder expires', async () => {
+      const streaming = streamingIndexer(NEVER);
+      const running = searchAndGrabForBook(book, { ...baseDeps(), indexerSearchService: streaming, broadcaster });
+      await vi.waitFor(() => expect(armed).toHaveLength(1));
+      armed[0]!.fire();
+      await expect(running).rejects.toBeInstanceOf(SearchDeadlineError);
+
+      expect(emitsOf('search_complete')).toHaveLength(1);
+      expect(emitsOf('search_complete')[0]![1]).toEqual({ book_id: 1, total_results: 0, outcome: 'timed_out' });
+      expect(emitsOf('search_started')).toHaveLength(1);
+    });
+
+    it('emits the same terminal event when the expiry lands after the ladder, during the grab', async () => {
+      let releaseGrab!: () => void;
+      downloadService = {
+        grab: vi.fn(() => new Promise<never>((_, reject) => { releaseGrab = () => reject(new Error('too late')); })),
+      } as unknown as DownloadOrchestrator;
+
+      const running = searchAndGrabForBook(book, { ...baseDeps(), indexerSearchService: streamingIndexer(), broadcaster });
+      await vi.waitFor(() => expect(releaseGrab).toBeDefined());
+      armed[0]!.fire();
+      await expect(running).rejects.toBeInstanceOf(SearchDeadlineError);
+
+      expect(emitsOf('search_complete')).toHaveLength(1);
+      expect(emitsOf('search_complete')[0]![1]).toMatchObject({ outcome: 'timed_out' });
+      releaseGrab();
+    });
+
+    it('fences a late grab so an abandoned run cannot flip a timed-out card to grabbed', async () => {
+      let releaseGrab!: () => void;
+      downloadService = {
+        grab: vi.fn(() => new Promise<never>((resolve) => { releaseGrab = resolve as () => void; })),
+      } as unknown as DownloadOrchestrator;
+
+      const running = searchAndGrabForBook(book, { ...baseDeps(), indexerSearchService: streamingIndexer(), broadcaster });
+      await vi.waitFor(() => expect(releaseGrab).toBeDefined());
+      armed[0]!.fire();
+      await expect(running).rejects.toBeInstanceOf(SearchDeadlineError);
+
+      releaseGrab();
+      await vi.waitFor(() => expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ bookId: 1 }), 'Auto-grabbed best result'));
+
+      expect(emitsOf('search_grabbed')).toHaveLength(0);
+      expect(emitsOf('search_complete')).toHaveLength(1);
+      expect(emitsOf('search_complete')[0]![1]).toMatchObject({ outcome: 'timed_out' });
+    });
+
+    it('fences a late grab failure too', async () => {
+      let failGrab!: () => void;
+      downloadService = {
+        grab: vi.fn(() => new Promise<never>((_, reject) => { failGrab = () => reject(new Error('client refused')); })),
+      } as unknown as DownloadOrchestrator;
+
+      const running = searchAndGrabForBook(book, { ...baseDeps(), indexerSearchService: streamingIndexer(), broadcaster });
+      await vi.waitFor(() => expect(failGrab).toBeDefined());
+      armed[0]!.fire();
+      await expect(running).rejects.toBeInstanceOf(SearchDeadlineError);
+
+      failGrab();
+      await vi.waitFor(() => expect(vi.mocked(eventHistory.create)).toHaveBeenCalled());
+
+      expect(emitsOf('search_complete')).toHaveLength(1);
+      expect(emitsOf('search_complete')[0]![1]).toMatchObject({ outcome: 'timed_out' });
+    });
+
+    it('drops a late per-indexer frame from abandoned ladder work', async () => {
+      let emitFrame!: () => void;
+      const streaming = {
+        searchAllStreaming: vi.fn().mockImplementation((_q: string, _o: unknown, _c: unknown, callbacks: { onComplete: (id: number, n: string, r: number, ms: number) => void; onError: (id: number, n: string, e: string, ms: number) => void }) =>
+          new Promise<SearchResult[]>((resolve) => {
+            emitFrame = () => {
+              callbacks.onComplete(10, 'MAM', 3, 100);
+              callbacks.onError(11, 'ABB', 'boom', 100);
+              resolve([]);
+            };
+          })),
+        getEnabledIndexers: vi.fn().mockResolvedValue([{ id: 10, name: 'MAM' }]),
+      } as unknown as IndexerSearchService;
+
+      const running = searchAndGrabForBook(book, { ...baseDeps(), indexerSearchService: streaming, broadcaster });
+      await vi.waitFor(() => expect(emitFrame).toBeDefined());
+      armed[0]!.fire();
+      await expect(running).rejects.toBeInstanceOf(SearchDeadlineError);
+
+      emitFrame();
+      await vi.waitFor(() => expect(log.debug).toHaveBeenCalledWith(
+        { bookId: 1, event: 'search_indexer_complete' }, 'Search event dropped — a terminal event already fired',
+      ));
+      expect(emitsOf('search_indexer_complete')).toHaveLength(0);
+      expect(emitsOf('search_indexer_error')).toHaveLength(0);
+    });
+
+    it('leaves the happy path emitting its normal grabbed → complete sequence', async () => {
+      await searchAndGrabForBook(book, { ...baseDeps(), indexerSearchService: streamingIndexer(), broadcaster });
+
+      expect(emitsOf('search_grabbed')).toHaveLength(1);
+      expect(emitsOf('search_complete')).toHaveLength(1);
+      expect(emitsOf('search_complete')[0]![1]).toMatchObject({ outcome: 'grabbed' });
+    });
+
+    it('emits nothing when there is no broadcaster', async () => {
+      vi.mocked(indexerSearchService.searchAllWithStatus).mockImplementation(NEVER);
+      const running = searchAndGrabForBook(book, baseDeps());
+      await vi.waitFor(() => expect(armed).toHaveLength(1));
+      armed[0]!.fire();
+
+      await expect(running).rejects.toBeInstanceOf(SearchDeadlineError);
+    });
+
+    it('still emits the terminal event when the expiry beats search_started', async () => {
+      const streaming = {
+        searchAllStreaming: vi.fn(),
+        getEnabledIndexers: vi.fn().mockImplementation(NEVER),
+      } as unknown as IndexerSearchService;
+
+      const running = searchAndGrabForBook(book, { ...baseDeps(), indexerSearchService: streaming, broadcaster });
+      await vi.waitFor(() => expect(armed).toHaveLength(1));
+      armed[0]!.fire();
+      await expect(running).rejects.toBeInstanceOf(SearchDeadlineError);
+
+      expect(emitsOf('search_started')).toHaveLength(0);
+      expect(emitsOf('search_complete')).toHaveLength(1);
+      expect(emitsOf('search_complete')[0]![1]).toMatchObject({ outcome: 'timed_out' });
+    });
   });
 });
