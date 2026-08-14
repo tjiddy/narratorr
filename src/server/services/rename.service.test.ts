@@ -835,9 +835,14 @@ describe('RenameService', () => {
       assertNothingMutated(bookService);
     });
 
-    it('proceeds when the fresh path differs only in spelling', async () => {
+    // Only the backslash row discriminates: bare `resolve` already collapses a forward-slash
+    // parent on POSIX, so the first row passes against a comparator that never folds separators.
+    it.each([
+      ['/library/Wrong/X/../Old', 'parent segment'],
+      ['/library\\Wrong\\X\\..\\Old', 'backslashes plus a parent segment'],
+    ])('proceeds when the fresh path differs only in spelling (%s, %s)', async (freshPath) => {
       const { service, bookService } = createService();
-      raceRow(bookService, { ...mockBook, id: 1, path: '/library/Wrong/Old' }, { ...mockBook, id: 1, path: '/library/Wrong/X/../Old' });
+      raceRow(bookService, { ...mockBook, id: 1, path: '/library/Wrong/Old' }, { ...mockBook, id: 1, path: freshPath });
       bookService.update.mockResolvedValue(undefined);
 
       await expect(service.renameBook(1)).resolves.toMatchObject({ oldPath: '/library/Wrong/Old' });
