@@ -19,7 +19,8 @@ import { getUserAgent } from '@shared/user-agent.js';
 import type { WedgeMode } from '@shared/schemas/indexer.js';
 import { getErrorMessage, getErrorMessageWithCause } from '@shared/error-message.js';
 import { normalizeBaseUrl } from '@shared/normalize-base-url.js';
-import { parseDoubleEncodedNames, parseMamSize, normalizeMamFormat, isMamFreeleech } from './mam-helpers.js';
+import { parseDoubleEncodedNames, parseMamSize, isMamFreeleech } from './mam-helpers.js';
+import { normalizeFormat } from './normalize-format.js';
 import {
   MAM_TORRENT_SENTINEL_PREFIX,
   parseTorrentIdFromContext,
@@ -197,7 +198,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     const seeders = orUndef(item.seeders);
     const leechers = orUndef(item.leechers);
     const language = normalizeLanguage(orUndef(item.lang_code));
-    const format = normalizeMamFormat(item.filetype);
+    const format = normalizeFormat(item.filetype);
     return {
       title: item.title!,
       ...(author !== undefined && { author }),

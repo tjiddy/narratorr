@@ -16,11 +16,19 @@ vi.mock('../utils/network-service.js', async (importActual) => {
 
 import { AudioBookBayIndexer } from './abb.js';
 import { ProxyError } from './errors.js';
+import type { SearchResult } from './types.js';
 
 const fixturesDir = resolve(import.meta.dirname, '../__tests__/fixtures');
 const searchHtml = readFileSync(resolve(fixturesDir, 'abb-search.html'), 'utf-8');
 const detailHtml = readFileSync(resolve(fixturesDir, 'abb-detail.html'), 'utf-8');
+const samePersonHtml = readFileSync(resolve(fixturesDir, 'abb-detail-same-person.html'), 'utf-8');
+const perRequestHtml = readFileSync(resolve(fixturesDir, 'abb-detail-per-request.html'), 'utf-8');
 const noResultsHtml = readFileSync(resolve(fixturesDir, 'abb-no-results.html'), 'utf-8');
+
+/** Every string a downstream gate, score or badge can read off a result. */
+function stringFieldsOf(result: SearchResult): string[] {
+  return Object.values(result).filter((value): value is string => typeof value === 'string');
+}
 
 const ABB_HOST = 'audiobookbay.test';
 const ABB_BASE = `https://${ABB_HOST}`;
@@ -474,13 +482,13 @@ describe('AudioBookBayIndexer', () => {
       expect(results[0]!.size).toBe(524288000);
     });
 
-    it('extracts author and narrator from detail page text', async () => {
+    it('extracts author and narrator from the detail page structured block', async () => {
       const detailWithMetadata = `
         <html><body>
           <h1>Test Book</h1>
           <pre>Info Hash: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0</pre>
-          <p>Author: Brandon Sanderson</p>
-          <p>Narrator: Michael Kramer</p>
+          <p>Written by <a href="/a/"><span class="author" itemprop="author">Brandon Sanderson</span></a>
+          <br>Read by <a href="/n/"><span class="narrator" itemprop="author">Michael Kramer</span></a></p>
           <p>Size: 1.0 GB</p>
         </body></html>`;
 
@@ -501,6 +509,177 @@ describe('AudioBookBayIndexer', () => {
       expect(results.length).toBeGreaterThan(0);
       expect(results[0]!.author).toBe('Brandon Sanderson');
       expect(results[0]!.narrator).toBe('Michael Kramer');
+    });
+  });
+
+  describe('structured metadata block (#2365)', () => {
+    /** Both fixture rows resolve through the same detail handler, so one body serves the whole page. */
+    function serveDetail(html: string) {
+      server.use(
+        http.get(`${ABB_BASE}/`, () => new HttpResponse(searchHtml, { headers: { 'Content-Type': 'text/html' } })),
+        http.get(`${ABB_BASE}/audio-books/:slug/`, () => new HttpResponse(html, { headers: { 'Content-Type': 'text/html' } })),
+      );
+    }
+
+    it('reads author, narrator and format from the page\'s own elements', async () => {
+      serveDetail(detailHtml);
+
+      const { results } = await indexer.search('Murder in the New Forest');
+
+      expect(results[0]!.author).toBe('Carol Cole');
+      expect(results[0]!.narrator).toBe('James MacNaughton');
+      expect(results[0]!.format).toBe('m4b');
+    });
+
+    it('never reports the uploader as the author', async () => {
+      serveDetail(detailHtml);
+
+      const { results } = await indexer.search('Murder in the New Forest');
+
+      expect(results[0]!.author).toBe('Carol Cole');
+      for (const result of results) {
+        expect(stringFieldsOf(result).join(' | ')).not.toContain('greads123');
+        expect(stringFieldsOf(result).join(' | ')).not.toContain('uploader123');
+      }
+    });
+
+    it('keeps both roles on a page where the author narrates their own book', async () => {
+      serveDetail(samePersonHtml);
+
+      const { results } = await indexer.search('Wish You Were Here Yet?');
+
+      expect(results[0]!.author).toBe('James Crookes');
+      expect(results[0]!.narrator).toBe('James Crookes');
+      expect(results[0]!.format).toBe('m4b');
+    });
+
+    it('parses the post body\'s three shapes identically — colons, no colons, and no boilerplate', async () => {
+      for (const [html, expected] of [
+        [detailHtml, { author: 'Carol Cole', narrator: 'James MacNaughton' }],
+        [samePersonHtml, { author: 'James Crookes', narrator: 'James Crookes' }],
+        [perRequestHtml, { author: 'Marilyn Ross', narrator: 'Kathleen Gati' }],
+      ] as const) {
+        serveDetail(html);
+        const { results } = await indexer.search('test');
+
+        expect(results[0]!.author).toBe(expected.author);
+        expect(results[0]!.narrator).toBe(expected.narrator);
+        expect(results[0]!.format).toBe('m4b');
+      }
+    });
+
+    it('is unmoved by what the uploader wrote in the post body', async () => {
+      serveDetail(detailHtml.replace('By: Carol Cole', 'By: Someone Else Entirely'));
+
+      const { results } = await indexer.search('Murder in the New Forest');
+
+      expect(results[0]!.author).toBe('Carol Cole');
+    });
+
+    it('reads exact values from a block whose <br> separators flatten with no whitespace', async () => {
+      // The shipped fixture writes the whole block on one source line — the shape that made
+      // /Format:\s*([^\n]+)/i capture "M4BBitrate: 128 KbpsUnabridged".
+      expect(detailHtml).toContain('</span></a><br>Read by');
+      serveDetail(detailHtml);
+
+      const { results } = await indexer.search('Murder in the New Forest');
+
+      expect(results[0]!.format).toBe('m4b');
+      expect(results[0]!.author).toBe('Carol Cole');
+    });
+
+    it('lowercases a format the page already wrote in lowercase', async () => {
+      serveDetail(detailHtml.replace('>M4B<', '>m4b<'));
+
+      const { results } = await indexer.search('Murder in the New Forest');
+
+      expect(results[0]!.format).toBe('m4b');
+    });
+
+    it('takes the container format, not the abridgement wording', async () => {
+      serveDetail(detailHtml.replace('<span class="is_abridged">Unabridged</span>', 'Format<br> Unabridged Audiobook'));
+
+      const { results } = await indexer.search('Murder in the New Forest');
+
+      expect(results[0]!.format).toBe('m4b');
+    });
+
+    it('leaves narrator absent when the page carries no narrator span', async () => {
+      serveDetail(detailHtml.replace(/<a href="\/audio-books\/narrator\/[^"]+\/"><span class="narrator"[^>]*>[^<]*<\/span><\/a>/, ''));
+
+      const { results } = await indexer.search('Murder in the New Forest');
+
+      expect(results[0]).not.toHaveProperty('narrator');
+      expect(results[0]!.author).toBe('Carol Cole');
+    });
+
+    it('leaves author absent when the page carries no author span', async () => {
+      serveDetail(detailHtml.replace(/<a href="\/audio-books\/author\/[^"]+\/"><span class="author"[^>]*>[^<]*<\/span><\/a>/, ''));
+
+      const { results } = await indexer.search('Murder in the New Forest');
+
+      expect(results[0]).not.toHaveProperty('author');
+      expect(results[0]!.narrator).toBe('James MacNaughton');
+    });
+
+    it('leaves format absent when the page carries no format span', async () => {
+      serveDetail(detailHtml.replace(/<span class="format"[^>]*>[^<]*<\/span>/, ''));
+
+      const { results } = await indexer.search('Murder in the New Forest');
+
+      expect(results[0]).not.toHaveProperty('format');
+      expect(results[0]!.author).toBe('Carol Cole');
+    });
+
+    it('folds whitespace-only spans to absence, never to an empty string', async () => {
+      serveDetail(
+        detailHtml
+          .replace('>Carol Cole<', '>   <')
+          .replace('>James MacNaughton<', '> <')
+          .replace('>M4B<', '>  <'),
+      );
+
+      const { results } = await indexer.search('Murder in the New Forest');
+
+      expect(results[0]).not.toHaveProperty('author');
+      expect(results[0]).not.toHaveProperty('narrator');
+      expect(results[0]).not.toHaveProperty('format');
+    });
+
+    it('emits no author from a search row when the detail page carries no structured block', async () => {
+      const detailNoBlock = `
+        <html><body>
+          <h1>Murder in the New Forest</h1>
+          <div class="postInfo">Shared by: <span class="author"><a href="/member/uploader123/">uploader123</a></span> On: 12 Dec 2022</div>
+          <pre>Info Hash: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0</pre>
+          <p>Whatever the uploader felt like typing.</p>
+        </body></html>`;
+      serveDetail(detailNoBlock);
+
+      const { results } = await indexer.search('Murder in the New Forest');
+
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0]!.downloadUrl).toContain('magnet:?');
+      expect(results[0]).not.toHaveProperty('author');
+      expect(results[0]).not.toHaveProperty('narrator');
+      expect(stringFieldsOf(results[0]!).join(' | ')).not.toContain('uploader123');
+    });
+
+    it('emits no author from a search row when the detail block carries only a narrator', async () => {
+      const detailNarratorOnly = `
+        <html><body>
+          <h1>Murder in the New Forest</h1>
+          <div class="postInfo">Shared by: <span class="author"><a href="/member/uploader123/">uploader123</a></span> On: 12 Dec 2022</div>
+          <pre>Info Hash: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0</pre>
+          <p>Read by <a href="/n/"><span class="narrator" itemprop="author">James MacNaughton</span></a></p>
+        </body></html>`;
+      serveDetail(detailNarratorOnly);
+
+      const { results } = await indexer.search('Murder in the New Forest');
+
+      expect(results[0]!.narrator).toBe('James MacNaughton');
+      expect(results[0]).not.toHaveProperty('author');
+      expect(stringFieldsOf(results[0]!).join(' | ')).not.toContain('uploader123');
     });
   });
 
