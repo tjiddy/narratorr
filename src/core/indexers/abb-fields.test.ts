@@ -20,8 +20,16 @@ function metadataBlock(opts: { author?: string; narrator?: string; format?: stri
 /** An uploader byline carries an `.author`-classed node of its own, above the metadata block. */
 const BYLINE = '<div class="postInfo">Shared by: <span class="author"><a href="/member/greads123/">greads123</a></span> On: 12 Dec 2022</div>';
 
+/** The same byline wearing the metadata block's own annotation — the shape class alone cannot reject. */
+const ANNOTATED_BYLINE = '<div class="postInfo">Shared by: <span class="author" itemprop="author">greads123</span> On: 12 Dec 2022</div>';
+
 function read(bodyHtml: string) {
   return readAbbMetadata(cheerio.load(`<html><body>${bodyHtml}</body></html>`));
+}
+
+/** ABB's real shape: the post's own content sits in `.postContent`, the uploader byline outside it. */
+function readPost(contentHtml: string, bylineHtml = '') {
+  return read(`<div class="post">${bylineHtml}<div class="postContent">${contentHtml}</div></div>`);
 }
 
 describe('readAbbMetadata', () => {
@@ -45,10 +53,26 @@ describe('readAbbMetadata', () => {
   });
 
   it('reads the block author even when the byline node carries the same microdata annotation', () => {
-    const annotatedByline = '<div class="postInfo">Shared by: <span class="author" itemprop="author">greads123</span></div>';
-    const fields = read(annotatedByline + metadataBlock({ author: 'Carol Cole', narrator: 'James MacNaughton', format: 'M4B' }));
+    const fields = read(ANNOTATED_BYLINE + metadataBlock({ author: 'Carol Cole', narrator: 'James MacNaughton', format: 'M4B' }));
 
     expect(fields.author).toBe('Carol Cole');
+  });
+
+  it('reads an author-only block from the post content region past an annotated uploader byline', () => {
+    const fields = readPost(metadataBlock({ author: 'Carol Cole' }), ANNOTATED_BYLINE);
+
+    expect(fields.author).toBe('Carol Cole');
+    expect(fields).not.toHaveProperty('narrator');
+  });
+
+  it('yields nothing rather than the uploader when an author-only block sits outside any content region', () => {
+    // No narrator or format to anchor on and no content region to scope to: the only candidate
+    // left is an author span that an uploader byline can wear, so absence is the safe answer.
+    expect(read(ANNOTATED_BYLINE + metadataBlock({ author: 'Carol Cole' }))).toEqual({});
+  });
+
+  it('yields nothing for an author-only block outside a content region even when the byline is unannotated', () => {
+    expect(read(BYLINE + metadataBlock({ author: 'Carol Cole' }))).toEqual({});
   });
 
   it('yields nothing at all when the page has only an uploader byline', () => {
@@ -71,7 +95,7 @@ describe('readAbbMetadata', () => {
   });
 
   it('reads an author-only block without inventing a narrator or format', () => {
-    const fields = read(metadataBlock({ author: 'Carol Cole' }));
+    const fields = readPost(metadataBlock({ author: 'Carol Cole' }));
 
     expect(fields.author).toBe('Carol Cole');
     expect(fields).not.toHaveProperty('narrator');

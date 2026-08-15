@@ -646,6 +646,39 @@ describe('AudioBookBayIndexer', () => {
       expect(results[0]).not.toHaveProperty('format');
     });
 
+    it('reads an author-only detail block past the page\'s annotated uploader byline', async () => {
+      // The narrator and format spans are what usually anchor the block; strip them and the byline's
+      // own annotated `.author` becomes the only other candidate on the page.
+      const authorOnly = detailHtml
+        .replace('Shared by: <span class="author">', 'Shared by: <span class="author" itemprop="author">')
+        .replace(/<br>Read by <a[^>]*><span class="narrator"[^>]*>[^<]*<\/span><\/a>/, '')
+        .replace(/<br>Format: <span class="format"[^>]*>[^<]*<\/span>/, '');
+      serveDetail(authorOnly);
+
+      const { results } = await indexer.search('Murder in the New Forest');
+
+      expect(results[0]!.author).toBe('Carol Cole');
+      expect(results[0]).not.toHaveProperty('narrator');
+      expect(stringFieldsOf(results[0]!).join(' | ')).not.toContain('greads123');
+    });
+
+    it('reports no author at all for an author-only block the page never scopes to its content region', async () => {
+      const noRegion = `
+        <html><body>
+          <h1>Murder in the New Forest</h1>
+          <div class="postInfo">Shared by: <span class="author" itemprop="author">greads123</span> On: 12 Dec 2022</div>
+          <pre>Info Hash: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0</pre>
+          <p>Written by <a href="/a/"><span class="author" itemprop="author">Carol Cole</span></a></p>
+        </body></html>`;
+      serveDetail(noRegion);
+
+      const { results } = await indexer.search('Murder in the New Forest');
+
+      expect(results[0]!.downloadUrl).toContain('magnet:?');
+      expect(results[0]).not.toHaveProperty('author');
+      expect(stringFieldsOf(results[0]!).join(' | ')).not.toContain('greads123');
+    });
+
     it('emits no author from a search row when the detail page carries no structured block', async () => {
       const detailNoBlock = `
         <html><body>

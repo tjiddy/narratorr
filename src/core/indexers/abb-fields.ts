@@ -11,15 +11,18 @@ export interface AbbMetadataFields {
   format?: string;
 }
 
+/** The post's own content. ABB writes the `Shared by:` byline outside it, in the post's meta block. */
+const CONTENT_REGION = '.postContent';
+
 /**
- * Where the metadata block starts. Both name spans carry `itemprop="author"`, so the class is the
- * discriminator and the annotation only co-selects; the order runs most-unambiguous first, because
- * an uploader byline can carry `class="author"` but never `class="narrator"` or `encodingFormat`.
+ * What identifies the metadata block, as opposed to what can be read out of it once found.
+ * `span.author` is deliberately absent: both name spans carry `itemprop="author"` and an uploader
+ * byline can wear `class="author"` too, so an author span may be READ from a located block but must
+ * never LOCATE one — otherwise a block carrying only its author anchors to the byline instead.
  */
-const BLOCK_ANCHORS = [
+const BLOCK_MARKERS = [
   'span.format[itemprop="encodingFormat"]',
   'span.narrator[itemprop="author"]',
-  'span.author[itemprop="author"]',
 ];
 
 /**
@@ -28,20 +31,24 @@ const BLOCK_ANCHORS = [
  * below the block is the post's body — free prose, and where `By:` used to find the uploader.
  */
 export function readAbbMetadata($: CheerioAPI, scope?: CheerioSelection): AbbMetadataFields {
-  const findIn = (selector: string) => (scope ? scope.find(selector) : $(selector));
+  const inScope = (selector: string) => (scope ? scope.find(selector) : $(selector));
+  const region = inScope(CONTENT_REGION).first();
+  const inRegion = (selector: string) => (region.length > 0 ? region.find(selector) : inScope(selector));
 
-  let anchor;
-  for (const selector of BLOCK_ANCHORS) {
-    const found = findIn(selector).first();
-    if (found.length > 0) {
-      anchor = found;
+  let block: CheerioSelection | undefined;
+  for (const marker of BLOCK_MARKERS) {
+    const anchor = inRegion(marker).first();
+    if (anchor.length > 0) {
+      const paragraph = anchor.closest('p');
+      block = paragraph.length > 0 ? paragraph : anchor.parent();
       break;
     }
   }
-  if (anchor === undefined) return {};
+  // No marker: the content region stands in as the block, so a block carrying only its author still
+  // reads. Without a region there is nothing left that a byline cannot satisfy, so read nothing.
+  if (block === undefined && region.length > 0) block = region;
+  if (block === undefined) return {};
 
-  const paragraph = anchor.closest('p');
-  const block: CheerioSelection = paragraph.length > 0 ? paragraph : anchor.parent();
   // A missing element reads as '', so this is a fold to absence rather than a trim.
   const read = (selector: string): string | undefined => block.find(selector).first().text().trim() || undefined;
 
