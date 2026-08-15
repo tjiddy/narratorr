@@ -309,8 +309,12 @@ export class ConnectorRefreshQueue {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timer = this.armTimer(() => {
-        controller.abort();
+        // Reject BEFORE aborting: abort listeners run synchronously, so a leaf that rejects from
+        // one would win the race and deliver a leaf error where the caller must see this canonical
+        // timeout. Latent only while the leaves reject asynchronously (undici); the house
+        // `if (signal?.aborted) throw` pattern would make it live. Same order as `search-deadline.ts`.
         reject(new ConnectorRequestError('Connector refresh timed out', { retryable: true }));
+        controller.abort();
       }, budgetMs);
     });
     try {
