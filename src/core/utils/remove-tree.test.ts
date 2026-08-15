@@ -100,6 +100,9 @@ describe('removeTree', () => {
       expect(options).not.toHaveProperty('retryDelay');
     });
 
+    // This pins the VALUES only. It cannot prove the implementation reads the constants rather
+    // than inline literals — reading them into the expectation is circular, and every assertion
+    // in this file holds either way. Single-homing is a source-review property (AC2).
     it('exports the retry budget as constants', () => {
       expect(REMOVE_TREE_MAX_RETRIES).toBe(3);
       expect(REMOVE_TREE_RETRY_DELAY_MS).toBe(100);
