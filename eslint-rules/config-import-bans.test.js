@@ -7,11 +7,14 @@
  * enabled (so a fixture that merely adds an unused import reds whether or not the ban exists).
  * Every assertion here therefore reads the resolved options directly or pins `ruleId`.
  *
- * Runtime (#2253): worst case 1,437ms, whole file 1,809ms, measured on Linux from a full-suite run
- * under worker pressure — a 10x margin under the 15s `testTimeout`, which is the ceiling that
- * applies because the cost sits in cases, not in `beforeAll` (30s `hookTimeout`). It was 10.1s whole
- * file with one case at ~6s, which timed out on slower hardware. If a case here ever creeps back
- * toward seconds, the cause is type-aware config resolution — see `banLinter`, not the ceiling.
+ * Runtime: every timing cost in this file is ONE cold `calculateConfigForFile`, and `beforeAll`
+ * pays it deliberately (1,106ms cold on Windows; 9ms for any later path, 0ms for a repeat). It
+ * used to fall on whichever case ran first, under the 15s `testTimeout`, where full-suite worker
+ * pressure inflated it past the ceiling on 2 of 3 consecutive `pnpm verify` runs — invisible on
+ * Linux CI, which is why it survived. The hook carries an explicit 60s ceiling rather than
+ * inheriting the 30s `hookTimeout`, because the failure mode being guarded is inflation under
+ * load, not a slow call. If a CASE here ever creeps toward seconds, the cause is type-aware config
+ * resolution — see `banLinter`, not the ceiling.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { ESLint } from 'eslint';
@@ -34,10 +37,18 @@ const CLIENT_TEST = 'src/client/pages/search/SearchBookCard.test.tsx';
 
 let eslint;
 let banLinter;
-beforeAll(() => {
+beforeAll(async () => {
   // The untouched real config. Every resolved-options assertion below must read exactly what
   // `pnpm lint` reads, so this instance takes no overrides.
   eslint = new ESLint({ cwd: REPO_ROOT });
+
+  // Pay the one-time config resolution HERE rather than in whichever case calls `patternsFor`
+  // first. Measured on Windows: 1,106ms cold, 9ms for any later path, 0ms for a repeat — so the
+  // file's whole timing exposure is this single call, and leaving it in a case put it under the
+  // 15s `testTimeout`, where full-suite worker pressure inflated it past the ceiling (2 of 3
+  // consecutive `pnpm verify` runs). The explicit hook timeout below is the real headroom; every
+  // case then runs warm.
+  await eslint.calculateConfigForFile(path.join(REPO_ROOT, NON_ALLOWLISTED));
 
   // The SAME config, narrowed for the synthetic lints only. `projectService: true`
   // (eslint.config.js) makes the first lint of any `src/server/**` path stand up the TypeScript
@@ -52,7 +63,7 @@ beforeAll(() => {
     ruleFilter: ({ ruleId }) => ruleId === 'no-restricted-imports',
     overrideConfig: { languageOptions: { parserOptions: { projectService: false, project: false } } },
   });
-});
+}, 60_000);
 
 /** The resolved `no-restricted-imports` pattern entries for a path, normalized to objects. */
 async function patternsFor(relPath) {
