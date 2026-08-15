@@ -24,9 +24,14 @@ export const REMOVE_TREE_RETRY_DELAY_MS = 100;
 /** Node's own `retryErrorCodes` (`internal/fs/rimraf`) — copied so we retry exactly what it would. */
 const RETRYABLE = new Set(['EBUSY', 'EMFILE', 'ENFILE', 'ENOTEMPTY', 'EPERM']);
 
-/** ENOENT never reaches here: `force: true` resolves it. A code-less or non-Error throw is not ours. */
+/**
+ * ENOENT never reaches here: `force: true` resolves it. Only a real `Error` can be ours — a bare
+ * `{ code: 'EBUSY' }` is some other layer's value, and reading `.code` off it would buy an
+ * arbitrary thrown object four attempts and 600 ms of backoff.
+ */
 function isRetryable(error: unknown): boolean {
-  const code = (error as NodeJS.ErrnoException | null | undefined)?.code;
+  if (!(error instanceof Error)) return false;
+  const { code } = error as NodeJS.ErrnoException;
   return code !== undefined && RETRYABLE.has(code);
 }
 

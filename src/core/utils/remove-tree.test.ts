@@ -240,6 +240,19 @@ describe('removeTree', () => {
       expect(delays).toEqual([]);
     });
 
+    it('rethrows a non-Error OBJECT carrying a retryable code immediately, with no wait', async () => {
+      const delays = captureAsyncWaits();
+      // A plain object is not ours no matter what it carries; a string fixture cannot catch a
+      // classifier that reads `.code` off any value.
+      const impostor = { code: 'EBUSY' };
+      vi.mocked(rm).mockRejectedValue(impostor);
+
+      await expect(removeTree('/tmp/tree')).rejects.toBe(impostor);
+
+      expect(rm).toHaveBeenCalledTimes(1);
+      expect(delays).toEqual([]);
+    });
+
     it('schedules no wait at all when the first attempt succeeds', async () => {
       const delays = captureAsyncWaits();
       vi.mocked(rm).mockResolvedValue(undefined);
@@ -309,6 +322,40 @@ describe('removeTree', () => {
 
       expect(() => removeTreeSync('/tmp/tree')).toThrow('not an error');
 
+      expect(rmSync).toHaveBeenCalledTimes(1);
+      expect(delays).toEqual([]);
+    });
+
+    it('rethrows an Error carrying no code immediately, with no sleep', () => {
+      const delays = captureSyncWaits();
+      const bare = new Error('no code here');
+      vi.mocked(rmSync).mockImplementation(() => { throw bare; });
+
+      let thrown: unknown;
+      try {
+        removeTreeSync('/tmp/tree');
+      } catch (error: unknown) {
+        thrown = error;
+      }
+
+      expect(thrown).toBe(bare);
+      expect(rmSync).toHaveBeenCalledTimes(1);
+      expect(delays).toEqual([]);
+    });
+
+    it('rethrows a non-Error OBJECT carrying a retryable code immediately, with no sleep', () => {
+      const delays = captureSyncWaits();
+      const impostor = { code: 'EBUSY' };
+      vi.mocked(rmSync).mockImplementation(() => { throw impostor; });
+
+      let thrown: unknown;
+      try {
+        removeTreeSync('/tmp/tree');
+      } catch (error: unknown) {
+        thrown = error;
+      }
+
+      expect(thrown).toBe(impostor);
       expect(rmSync).toHaveBeenCalledTimes(1);
       expect(delays).toEqual([]);
     });

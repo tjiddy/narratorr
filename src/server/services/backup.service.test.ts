@@ -523,18 +523,27 @@ describe('BackupService', () => {
     });
 
     it('rejects with error when pendingRestore is expired', async () => {
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      // Same clock-freeze as the expiry-cleanup case below: the TTL branch must be chosen by the
+      // test, not the host clock. Date only, so the real fs work here is unaffected.
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-08-15T12:00:00.000Z'));
+      try {
+        const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
 
-      const extractDir = path.join(tempDir, 'restore-expired');
-      await fs.mkdir(extractDir, { recursive: true });
-      const tempPath = path.join(extractDir, 'restore.db');
-      await fs.writeFile(tempPath, 'test');
-      await service.setPendingRestore(tempPath);
+        const extractDir = path.join(tempDir, 'restore-expired');
+        await fs.mkdir(extractDir, { recursive: true });
+        const tempPath = path.join(extractDir, 'restore.db');
+        await fs.writeFile(tempPath, 'test');
+        await service.setPendingRestore(tempPath);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (service as any)._pendingRestore.validatedAt = Date.now() - 6 * 60 * 1000;
+        // One minute past the 5-minute TTL, measured against the frozen instant.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (service as any)._pendingRestore.validatedAt = Date.now() - 6 * 60 * 1000;
 
-      await expect(service.confirmRestore()).rejects.toThrow('expired');
+        await expect(service.confirmRestore()).rejects.toThrow('expired');
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('copies validated temp DB to restore-pending.db on confirm', async () => {
@@ -1126,20 +1135,29 @@ describe('restore temp-dir cleanup: warn instead of swallow (#2370 AC9)', () => 
   });
 
   it('confirmRestore warns once on the expiry path and still throws "Pending restore has expired"', async () => {
-    const log = createMockLog();
-    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log);
-    const extractDir = path.join(tempDir, 'restore-expired');
-    await fs.mkdir(extractDir, { recursive: true });
-    const tempPath = path.join(extractDir, 'restore.db');
-    await fs.writeFile(tempPath, 'test');
-    await service.setPendingRestore(tempPath);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (service as any)._pendingRestore.validatedAt = Date.now() - 6 * 60 * 1000;
-    failEveryCleanup();
+    // Fixture and production both read Date.now(); fake ONLY Date so the TTL branch is chosen by
+    // the test rather than the host clock, and real timers keep the fs work below unaffected.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-08-15T12:00:00.000Z'));
+    try {
+      const log = createMockLog();
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), log);
+      const extractDir = path.join(tempDir, 'restore-expired');
+      await fs.mkdir(extractDir, { recursive: true });
+      const tempPath = path.join(extractDir, 'restore.db');
+      await fs.writeFile(tempPath, 'test');
+      await service.setPendingRestore(tempPath);
+      // One minute past the 5-minute TTL, measured against the frozen instant.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (service as any)._pendingRestore.validatedAt = Date.now() - 6 * 60 * 1000;
+      failEveryCleanup();
 
-    await expect(service.confirmRestore()).rejects.toThrow('Pending restore has expired');
+      await expect(service.confirmRestore()).rejects.toThrow('Pending restore has expired');
 
-    expect(cleanupWarns(log)).toHaveLength(1);
+      expect(cleanupWarns(log)).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('confirmRestore warns once on the success path and still completes', async () => {

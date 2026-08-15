@@ -129,12 +129,14 @@ describe('RenameService cross-volume fallback vs the sidecar writer (#2297 AC11)
     return { copying: started.promise, release: () => held.resolve() };
   }
 
-  function startDivergentWrite(): Promise<string> {
+  /**
+   * `getById` is `runSidecarWrite`'s FIRST act after the lock is acquired (opf-writer.ts:145-150),
+   * so passing a spy in makes "has this writer acquired yet?" directly observable.
+   */
+  function startDivergentWrite(getById = vi.fn().mockResolvedValue(bookRow(oldFolder, 'Generation N+1'))): Promise<string> {
     return writeOpfSidecar({
       enabled: true,
-      bookService: {
-        getById: vi.fn().mockResolvedValue(bookRow(oldFolder, 'Generation N+1')),
-      } as unknown as BookService,
+      bookService: { getById } as unknown as BookService,
       bookId: 1,
       bookFolder: oldFolder,
       log: inject<FastifyBaseLogger>(createMockLogger()),
@@ -222,7 +224,11 @@ describe('RenameService cross-volume fallback vs the sidecar writer (#2297 AC11)
 
   it('a queued sidecar writer is not starved by the retry-extended hold — it acquires once the move completes', async () => {
     (rename as Mock).mockImplementationOnce(() => Promise.reject(Object.assign(new Error('EXDEV'), { code: 'EXDEV' })));
-    // One transient EBUSY on the real removal, so the real ladder pays one 100 ms wait inside the lock.
+    // The helper's backoff is its own setTimeout, so redirect it: this asserts ORDERING, and a real
+    // 100 ms wait would only add wall-clock, not signal.
+    const originalSetTimeout = globalThis.setTimeout;
+    const timerSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void) =>
+      originalSetTimeout(fn, 0)) as typeof globalThis.setTimeout);
     let armed = true;
     (rm as Mock).mockImplementation(async (target: unknown, options: unknown) => {
       if (String(target) === oldFolder && armed) {
@@ -235,16 +241,26 @@ describe('RenameService cross-volume fallback vs the sidecar writer (#2297 AC11)
 
     const renaming = service.renameBook(1);
     await copying;
-    const writing = startDivergentWrite();
-    await sleep(50);
+    const writerRead = vi.fn().mockResolvedValue(bookRow(oldFolder, 'Generation N+1'));
+    const writing = startDivergentWrite(writerRead);
+    // No sleep: writeOpfSidecar reaches withPathWriteLock with no await ahead of it
+    // (opf-writer.ts:122-136), so the writer is chained behind the fallback's hold by the time the
+    // call returns. These two assertions are the handoff proof the sleep only guessed at — the key
+    // is engaged, and the writer has NOT run its first post-acquisition read.
+    expect(hasPendingPathWrite(sidecarLockKey(oldFolder))).toBe(true);
+    expect(writerRead).not.toHaveBeenCalled();
     release();
     await renaming;
 
     // The retry fired, the removal still recovered, and the queued writer ran rather than hanging.
     expect(armed).toBe(false);
+    // Not starved: it acquired and terminated. 'failed' is the #2297 property — it acquires after
+    // the fallback releases, so it targets the vacated folder rather than splitting the pair.
+    expect(writerRead).toHaveBeenCalledTimes(1);
     expect(await writing).toBe('failed');
     expect(await actualFs.stat(oldFolder).then(() => true, () => false)).toBe(false);
     expect(bookService.update).toHaveBeenCalled();
+    timerSpy.mockRestore();
   });
 
   it('the ATOMIC branch takes no lock — a single directory rename can never observe a split pair', async () => {
