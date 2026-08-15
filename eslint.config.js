@@ -9,6 +9,7 @@ const noRawErrorLogging = require('./eslint-rules/no-raw-error-logging.cjs');
 const noTautologicalExpect = require('./eslint-rules/no-tautological-expect.cjs');
 const noUnstampedMatchGeneration = require('./eslint-rules/no-unstamped-match-generation.cjs');
 const noDirectDuplicateCheck = require('./eslint-rules/no-direct-duplicate-check.cjs');
+const noRawRecursiveRm = require('./eslint-rules/no-raw-recursive-rm.cjs');
 
 // ONE object, referenced by every block below. Flat config rejects two blocks that define the same
 // plugin name for an overlapping file scope unless they hand it the identical reference; each block
@@ -19,6 +20,7 @@ const narratorr = {
     'no-tautological-expect': noTautologicalExpect,
     'no-unstamped-match-generation': noUnstampedMatchGeneration,
     'no-direct-duplicate-check': noDirectDuplicateCheck,
+    'no-raw-recursive-rm': noRawRecursiveRm,
   },
 };
 
@@ -131,6 +133,23 @@ export default tseslint.config(
     plugins: { narratorr },
     rules: {
       'narratorr/no-direct-duplicate-check': 'error',
+    },
+  },
+
+  // Tree removal has one retry policy, and it lives in the helper. Test files keep their own
+  // cleanups; `src/server/__tests__/**` is harness, not production.
+  {
+    files: ['**/src/**/*.ts'],
+    ignores: [
+      '**/*.test.ts',
+      '**/src/server/__tests__/**',
+      // EXACTLY one file, not a directory glob: the helper is required to write the very call
+      // shape this rule reports, so without this exemption `pnpm lint` could not be clean.
+      '**/src/core/utils/remove-tree.ts',
+    ],
+    plugins: { narratorr },
+    rules: {
+      'narratorr/no-raw-recursive-rm': 'error',
     },
   },
 

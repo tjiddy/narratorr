@@ -6,6 +6,16 @@ import globalTeardown from './global-teardown.js';
 import { _resetCurrentRunForTests, createRunTempDirs, getCurrentRun } from './fixtures/temp-dirs.js';
 import { registerFake, _resetRegisteredFakesForTests, getRegisteredFakes } from './fixtures/run-state.js';
 
+// Spied, not replaced: every case but the isolation one below removes real directories.
+const actualRemoveTree = await vi.importActual<typeof import('../src/core/utils/remove-tree.js')>('../src/core/utils/remove-tree.js');
+
+vi.mock('../src/core/utils/remove-tree.js', async (importOriginal) => ({
+  ...(await importOriginal() as Record<string, unknown>),
+  removeTreeSync: vi.fn(),
+}));
+
+import { removeTreeSync } from '../src/core/utils/remove-tree.js';
+
 describe('globalTeardown', () => {
   const orphans: string[] = [];
 
@@ -13,6 +23,8 @@ describe('globalTeardown', () => {
     _resetCurrentRunForTests();
     _resetRegisteredFakesForTests();
     orphans.length = 0;
+    vi.mocked(removeTreeSync).mockReset();
+    vi.mocked(removeTreeSync).mockImplementation(actualRemoveTree.removeTreeSync);
   });
 
   afterEach(() => {
@@ -135,6 +147,31 @@ describe('globalTeardown', () => {
     await globalTeardown();
 
     expect(existsSync(run.sourcePath)).toBe(false);
+  });
+
+  it('one target whose removal keeps failing does not abort the loop', async () => {
+    const run = createRunTempDirs();
+    orphans.push(dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath);
+    writeFileSync(run.dbPath, 'db-bytes');
+
+    // Exactly one target fails, and it is not the last — the later ones are the observation point.
+    vi.mocked(removeTreeSync).mockImplementation((target: string) => {
+      if (target === run.libraryPath) throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' });
+      actualRemoveTree.removeTreeSync(target);
+    });
+
+    await expect(globalTeardown()).resolves.toBeUndefined();
+
+    const attempted = vi.mocked(removeTreeSync).mock.calls.map(([target]) => target);
+    expect(attempted).toEqual([
+      dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath,
+    ]);
+    expect(existsSync(dirname(run.dbPath))).toBe(false);
+    expect(existsSync(run.configPath)).toBe(false);
+    expect(existsSync(run.downloadsPath)).toBe(false);
+    expect(existsSync(run.sourcePath)).toBe(false);
+    // The failing one is the only survivor, which is what makes the assertions above non-vacuous.
+    expect(existsSync(run.libraryPath)).toBe(true);
   });
 
   it('ignores temp dirs created by an unrelated process', async () => {

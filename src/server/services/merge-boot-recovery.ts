@@ -3,7 +3,7 @@
  * Settle before worker startup so no live merge can race cleanup; requeue afterward to avoid competing on import markers.
  * Any pre-settlement candidate failure preserves both durable traces for the next boot.
  */
-import { readdir, rm } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { and, eq, inArray, isNotNull, max } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
@@ -11,6 +11,7 @@ import type { Db } from '@db/index.js';
 import { bookEvents } from '@db/schema.js';
 import { AUDIO_EXTENSIONS } from '@core/utils/audio-constants.js';
 import { dotPrefixBasename } from '@core/utils/hidden-staging.js';
+import { removeTree } from '@core/utils/remove-tree.js';
 import type { EventType, EventSource } from '@shared/schemas/event-history.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
@@ -188,7 +189,7 @@ async function cleanStagingDir(
   }
 
   try {
-    await rm(stagingDir, { recursive: true, force: true });
+    await removeTree(stagingDir);
   } catch (error: unknown) {
     deps.log.warn(
       { error: serializeError(error), bookId: candidate.bookId, bookPath, stagingDir },

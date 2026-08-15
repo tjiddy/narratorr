@@ -1,4 +1,4 @@
-import { mkdir, cp, readdir, unlink, stat, rm, rename } from 'node:fs/promises';
+import { mkdir, cp, readdir, unlink, stat, rename } from 'node:fs/promises';
 import { join, extname, basename } from 'node:path';
 import { eq } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
@@ -20,6 +20,7 @@ import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { dotPrefixBasename } from '@core/utils/hidden-staging.js';
 import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
+import { removeTree } from '@core/utils/remove-tree.js';
 import { toSourceBitrateKbps } from '../utils/audio-bitrate.js';
 import { Semaphore, type SemaphoreRelease } from '../utils/semaphore.js';
 import type { MergePhase, MergeFailedReason, MergeStateSnapshot } from '@shared/schemas/sse-events.js';
@@ -322,7 +323,7 @@ export class MergeService {
       this.mergeState.finishTerminal(bookId, () => this.emitMergeFailed(bookId, bookTitle, errorMessage, reason));
       // Preserve unclaimed crash residue; only this execution's staging may be removed.
       if (stagingOwned && stagingDir !== undefined) {
-        try { await rm(stagingDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+        try { await removeTree(stagingDir); } catch { /* best-effort */ }
       }
       throw error;
     } finally {
@@ -351,7 +352,7 @@ export class MergeService {
     signal?: AbortSignal,
   ): Promise<{ stagedOutput: string; warnings: string[] }> {
     // Ownership is established; clear crash residue or it could be folded into the output (F25).
-    await rm(stagingDir, { recursive: true, force: true });
+    await removeTree(stagingDir);
     await mkdir(stagingDir, { recursive: true });
 
     for (const file of audioFiles) {
@@ -443,7 +444,7 @@ export class MergeService {
       bookId, title: book.title, authorName: book.authors?.[0]?.name ?? null, libraryPath: bookPath,
     });
 
-    await rm(stagingDir, { recursive: true, force: true });
+    await removeTree(stagingDir);
 
     return outputPath;
   }

@@ -10,6 +10,7 @@ import type { Readable } from 'stream';
 import type { SettingsService } from './settings.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { removeTree } from '@core/utils/remove-tree.js';
 import { BYTES_PER_GB } from '@shared/constants.js';
 
 /** Bound extracted DB bytes to limit zip bombs. */
@@ -58,6 +59,19 @@ export class BackupService {
 
   private async ensureBackupsDir(): Promise<void> {
     await fs.mkdir(this.backupsDir, { recursive: true });
+  }
+
+  /**
+   * Restore cleanup stays best-effort — it must never replace the outcome its caller is reporting —
+   * but a leaked temp dir is no longer silent. The helper's `force: true` keeps an already-cleaned
+   * directory from warning, which is what made the swallow tempting in the first place.
+   */
+  private async removeRestoreTempDir(tempDir: string): Promise<void> {
+    try {
+      await removeTree(tempDir);
+    } catch (error: unknown) {
+      this.log.warn({ error: serializeError(error), tempDir }, 'Failed to remove restore temp directory');
+    }
   }
 
   get pendingRestore(): PendingRestore | null {
@@ -272,7 +286,7 @@ export class BackupService {
       return { tempDir, tempDbPath };
     } catch (error: unknown) {
       // Overflow destroys streams first, so this one cleanup covers validation and system errors.
-      await fs.rm(tempDir, { recursive: true }).catch(() => {});
+      await this.removeRestoreTempDir(tempDir);
       throw error;
     }
   }
@@ -281,7 +295,7 @@ export class BackupService {
     const validation = await this.validateRestore(tempDbPath);
 
     if (!validation.valid) {
-      await fs.rm(tempDir, { recursive: true }).catch(() => {});
+      await this.removeRestoreTempDir(tempDir);
       return validation;
     }
 
@@ -378,7 +392,7 @@ export class BackupService {
     }
 
     if (Date.now() - this._pendingRestore.validatedAt > PENDING_TTL_MS) {
-      await fs.rm(path.dirname(this._pendingRestore.tempPath), { recursive: true }).catch(() => {});
+      await this.removeRestoreTempDir(path.dirname(this._pendingRestore.tempPath));
       this._pendingRestore = null;
       throw new Error('Pending restore has expired');
     }
@@ -387,7 +401,7 @@ export class BackupService {
 
     await fs.copyFile(tempPath, this.restorePendingPath);
 
-    await fs.rm(path.dirname(tempPath), { recursive: true }).catch(() => {});
+    await this.removeRestoreTempDir(path.dirname(tempPath));
     this._pendingRestore = null;
 
     this.log.info('Restore staged to restore-pending.db — process will exit');

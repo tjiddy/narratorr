@@ -555,6 +555,26 @@ describe('MergeService', () => {
         expect(notifyRefresh).toHaveBeenCalledWith('merge', [expect.objectContaining({ bookId: 42 })]);
       });
 
+      it("commitMerge's staging cleanup runs strictly AFTER the refresh enqueue, so a cleanup failure cannot suppress the now-required rescan", async () => {
+        setupHappyPath();
+        const notifyRefresh = vi.fn().mockResolvedValue(undefined);
+        const { service } = createService({ connector: { notifyRefresh } });
+
+        await service.enqueueMerge(42);
+        await settle();
+
+        // Two staging removals: runStaging's pre-mkdir reset, then commitMerge's cleanup.
+        const stagingRemovals = (rm as Mock).mock.calls
+          .map((call, i) => ({ path: call[0], order: (rm as Mock).mock.invocationCallOrder[i]! }))
+          .filter(({ path }) => path === STAGING_DIR)
+          .map(({ order }) => order);
+        expect(stagingRemovals).toHaveLength(2);
+
+        const refreshOrder = notifyRefresh.mock.invocationCallOrder[0]!;
+        expect(refreshOrder).toBeGreaterThan(stagingRemovals[0]!);
+        expect(refreshOrder).toBeLessThan(stagingRemovals[1]!);
+      });
+
       it('enqueues NO refresh when the DB size update fails before the unlink (pre-swap failure)', async () => {
         setupHappyPath();
         const notifyRefresh = vi.fn().mockResolvedValue(undefined);
