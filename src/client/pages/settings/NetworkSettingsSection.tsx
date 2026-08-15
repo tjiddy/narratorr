@@ -17,7 +17,7 @@ const CARD_LABEL = 'Network';
 export function NetworkSettingsSection() {
   const [testing, setTesting] = useState(false);
 
-  const { form, mutation, onSubmit } = useSettingsForm<NetworkFormData>({
+  const { form, mutation, onSubmit, settingsError, refetchSettings } = useSettingsForm<NetworkFormData>({
     schema: networkFormSchema,
     defaultValues: DEFAULT_SETTINGS.network,
     select: (s: AppSettings) => s.network as NetworkFormData,
@@ -54,59 +54,75 @@ export function NetworkSettingsSection() {
       title={CARD_LABEL}
       description="Configure proxy for indexer traffic"
     >
-      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
-        <SettingsTable>
-          <SettingsRow
-            layout="stacked"
-            htmlFor="proxyUrl"
-            label="Proxy URL"
-            description="Applies to indexer search and test traffic only — not metadata, cover art, or other outbound requests."
-          >
-            <div className="flex gap-3">
-              <input
-                id="proxyUrl"
-                type="text"
-                {...register('proxyUrl')}
-                className={`flex-1 ${errorInputClass(!!errors.proxyUrl)}`}
-                placeholder="http://user:pass@proxy:8888 or socks5://localhost:1080"
-              />
-              <button
-                type="button"
-                onClick={handleTestProxy}
-                disabled={!proxyUrl?.trim() || testing}
-                className="flex items-center gap-2 px-4 py-3 bg-muted text-foreground font-medium rounded-xl hover:bg-muted/80 disabled:opacity-50 transition-all whitespace-nowrap"
-              >
-                {testing ? (
-                  <>
-                    <LoadingSpinner className="w-4 h-4" />
-                    Testing...
-                  </>
-                ) : (
-                  'Test Proxy'
-                )}
-              </button>
-            </div>
-            {errors.proxyUrl ? (
-              <p className="text-sm text-destructive mt-1">{errors.proxyUrl.message}</p>
-            ) : (
-              /* Load-bearing advisory: stays visible because the proxy alone has no effect. */
-              <p className="text-sm text-amber-500 mt-2">
-                Has no effect on its own — you must also turn on <span className="font-medium">Route through proxy</span> for each indexer that should use it (Settings &gt; Indexers).
-              </p>
-            )}
-          </SettingsRow>
-        </SettingsTable>
-
-        {isDirty && (
+      {/* An empty Proxy URL reads as "this install connects directly"; it is the schema
+          default, and a failed read never observed the configured proxy. */}
+      {settingsError ? (
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-red-500">Failed to load network settings.</p>
           <button
-            type="submit"
-            disabled={mutation.isPending}
-            className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
+            type="button"
+            onClick={refetchSettings}
+            aria-label="Retry loading network settings"
+            className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-all focus-ring"
           >
-            {mutation.isPending ? 'Saving...' : 'Save'}
+            Retry
           </button>
-        )}
-      </form>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
+          <SettingsTable>
+            <SettingsRow
+              layout="stacked"
+              htmlFor="proxyUrl"
+              label="Proxy URL"
+              description="Applies to indexer search and test traffic only — not metadata, cover art, or other outbound requests."
+            >
+              <div className="flex gap-3">
+                <input
+                  id="proxyUrl"
+                  type="text"
+                  {...register('proxyUrl')}
+                  className={`flex-1 ${errorInputClass(!!errors.proxyUrl)}`}
+                  placeholder="http://user:pass@proxy:8888 or socks5://localhost:1080"
+                />
+                <button
+                  type="button"
+                  onClick={handleTestProxy}
+                  disabled={!proxyUrl?.trim() || testing}
+                  className="flex items-center gap-2 px-4 py-3 bg-muted text-foreground font-medium rounded-xl hover:bg-muted/80 disabled:opacity-50 transition-all whitespace-nowrap"
+                >
+                  {testing ? (
+                    <>
+                      <LoadingSpinner className="w-4 h-4" />
+                      Testing...
+                    </>
+                  ) : (
+                    'Test Proxy'
+                  )}
+                </button>
+              </div>
+              {errors.proxyUrl ? (
+                <p className="text-sm text-destructive mt-1">{errors.proxyUrl.message}</p>
+              ) : (
+                /* Load-bearing advisory: stays visible because the proxy alone has no effect. */
+                <p className="text-sm text-amber-500 mt-2">
+                  Has no effect on its own — you must also turn on <span className="font-medium">Route through proxy</span> for each indexer that should use it (Settings &gt; Indexers).
+                </p>
+              )}
+            </SettingsRow>
+          </SettingsTable>
+
+          {isDirty && (
+            <button
+              type="submit"
+              disabled={mutation.isPending}
+              className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
+            >
+              {mutation.isPending ? 'Saving...' : 'Save'}
+            </button>
+          )}
+        </form>
+      )}
     </SettingsSection>
   );
 }

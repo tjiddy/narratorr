@@ -556,4 +556,42 @@ describe('ImportSettingsSection', () => {
       });
     });
   });
+
+  describe('when the shared settings read fails', () => {
+    beforeEach(() => {
+      // resetAllMocks, not clearAllMocks: the Retry test queues a `*Once()` rejection and
+      // clearAllMocks does not drain those queues.
+      vi.resetAllMocks();
+    });
+
+    it('reports the read failure instead of showing the defaults as saved import rules', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
+
+      renderWithProviders(<ImportSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load import settings.')).toBeInTheDocument();
+      });
+      // An off toggle reads as "keep the torrent after import"; that is the schema default.
+      expect(screen.queryByLabelText('Delete after import')).not.toBeInTheDocument();
+    });
+
+    it('refetches and restores the saved import rules when the operator clicks Retry', async () => {
+      mockApi.getSettings
+        .mockRejectedValueOnce(new Error('settings unreadable'))
+        .mockResolvedValue(createMockSettings({ import: { deleteAfterImport: true } }));
+      const user = userEvent.setup();
+
+      renderWithProviders(<ImportSettingsSection />);
+      await waitFor(() => expect(screen.getByText('Failed to load import settings.')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Retry loading import settings' }));
+
+      // Checked, not the schema default off: only a real refetch produces this.
+      await waitFor(() => expect(screen.getByLabelText('Delete after import')).toBeChecked());
+      expect(screen.queryByText('Failed to load import settings.')).not.toBeInTheDocument();
+      expect(mockApi.getSettings).toHaveBeenCalledTimes(2);
+    });
+  });
+
 });

@@ -30,7 +30,7 @@ const HOUSEKEEPING_CARD_LABEL = 'Housekeeping';
 const LOGGING_CARD_LABEL = 'Logging';
 
 function HousekeepingForm() {
-  const { form, mutation, onSubmit } = useSettingsForm<HousekeepingFormData>({
+  const { form, mutation, onSubmit, settingsError, refetchSettings } = useSettingsForm<HousekeepingFormData>({
     schema: housekeepingSchema,
     defaultValues: { housekeepingRetentionDays: DEFAULT_SETTINGS.general.housekeepingRetentionDays },
     select: (s: AppSettings) => ({ housekeepingRetentionDays: s.general.housekeepingRetentionDays }),
@@ -47,32 +47,48 @@ function HousekeepingForm() {
       title={HOUSEKEEPING_CARD_LABEL}
       description="Automatic database maintenance and cleanup"
     >
-      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
-        <SettingsTable>
-          <SettingsRow
-            htmlFor="housekeepingRetentionDays"
-            label="Event history retention"
-            description="Events older than this are pruned during the weekly housekeeping job. Range 1–365 days."
+      {/* A 90-day retention reads as the operator's chosen window; it is the schema default,
+          and saving it would silently reset how long history survives. */}
+      {settingsError ? (
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-red-500">Failed to load housekeeping settings.</p>
+          <button
+            type="button"
+            onClick={refetchSettings}
+            aria-label="Retry loading housekeeping settings"
+            className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-all focus-ring"
           >
-            <NumberField
-              id="housekeepingRetentionDays"
-              {...register('housekeepingRetentionDays', { valueAsNumber: true })}
-              min={1}
-              max={365}
-              step={1}
-              suffix="days"
-              error={errors.housekeepingRetentionDays?.message}
-            />
-          </SettingsRow>
-        </SettingsTable>
-        {isDirty && <SaveButton pending={mutation.isPending} />}
-      </form>
+            Retry
+          </button>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
+          <SettingsTable>
+            <SettingsRow
+              htmlFor="housekeepingRetentionDays"
+              label="Event history retention"
+              description="Events older than this are pruned during the weekly housekeeping job. Range 1–365 days."
+            >
+              <NumberField
+                id="housekeepingRetentionDays"
+                {...register('housekeepingRetentionDays', { valueAsNumber: true })}
+                min={1}
+                max={365}
+                step={1}
+                suffix="days"
+                error={errors.housekeepingRetentionDays?.message}
+              />
+            </SettingsRow>
+          </SettingsTable>
+          {isDirty && <SaveButton pending={mutation.isPending} />}
+        </form>
+      )}
     </SettingsSection>
   );
 }
 
 function LoggingForm() {
-  const { form, mutation, onSubmit } = useSettingsForm<LoggingFormData>({
+  const { form, mutation, onSubmit, settingsError, refetchSettings } = useSettingsForm<LoggingFormData>({
     schema: loggingSchema,
     defaultValues: { logLevel: DEFAULT_SETTINGS.general.logLevel },
     select: (s: AppSettings) => ({ logLevel: s.general.logLevel }),
@@ -89,26 +105,42 @@ function LoggingForm() {
       title={LOGGING_CARD_LABEL}
       description="Control server log verbosity"
     >
-      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
-        <SettingsTable>
-          <SettingsRow
-            htmlFor="logLevel"
-            label="Log level"
-            description="Set to Debug for detailed diagnostic output, or Error to reduce noise."
+      {/* A Log level reading "info" is the schema default, not the verbosity the operator
+          set — and the wrong one here hides the diagnostics they came for. */}
+      {settingsError ? (
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-red-500">Failed to load logging settings.</p>
+          <button
+            type="button"
+            onClick={refetchSettings}
+            aria-label="Retry loading logging settings"
+            className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-all focus-ring"
           >
-            <div className="w-56">
-              <SelectWithChevron id="logLevel" {...register('logLevel')}>
-                {logLevelSchema.options.map((level) => (
-                  <option key={level} value={level}>
-                    {level.charAt(0).toUpperCase() + level.slice(1)}
-                  </option>
-                ))}
-              </SelectWithChevron>
-            </div>
-          </SettingsRow>
-        </SettingsTable>
-        {isDirty && <SaveButton pending={mutation.isPending} />}
-      </form>
+            Retry
+          </button>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
+          <SettingsTable>
+            <SettingsRow
+              htmlFor="logLevel"
+              label="Log level"
+              description="Set to Debug for detailed diagnostic output, or Error to reduce noise."
+            >
+              <div className="w-56">
+                <SelectWithChevron id="logLevel" {...register('logLevel')}>
+                  {logLevelSchema.options.map((level) => (
+                    <option key={level} value={level}>
+                      {level.charAt(0).toUpperCase() + level.slice(1)}
+                    </option>
+                  ))}
+                </SelectWithChevron>
+              </div>
+            </SettingsRow>
+          </SettingsTable>
+          {isDirty && <SaveButton pending={mutation.isPending} />}
+        </form>
+      )}
     </SettingsSection>
   );
 }

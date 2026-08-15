@@ -191,4 +191,100 @@ describe('ProcessingSettingsSection', () => {
     expect(payload.processing).toEqual({ postProcessingScript: '/scripts/notify.sh', postProcessingScriptTimeout: 120 });
     expect(payload).not.toHaveProperty('tagging');
   });
+
+  describe('when the shared settings read fails', () => {
+    beforeEach(() => {
+      // resetAllMocks, not clearAllMocks: the Retry test queues a `*Once()` rejection and
+      // clearAllMocks does not drain those queues.
+      vi.resetAllMocks();
+    });
+
+    it('reports the failure on both cards, in copy that tells them apart', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
+      mockApi.getFfmpegStatus.mockResolvedValue({ detected: true, version: '8.0.1', path: '/usr/bin/ffmpeg' });
+      mockApi.getMutagenStatus.mockResolvedValue({ detected: true, version: '1.47.0', path: '/usr/bin/python3' });
+
+      renderWithProviders(<ProcessingSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load post processing settings.')).toBeInTheDocument();
+      });
+      // Both cards read the same query, so one failure lands on both — and the operator has
+      // to be able to tell which card is which.
+      expect(screen.getByText('Failed to load custom script settings.')).toBeInTheDocument();
+      // An off auto-merge toggle and an empty script path are schema defaults, not saved config.
+      expect(screen.queryByLabelText(/Auto-merge multi-file downloads/)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Post-processing script')).not.toBeInTheDocument();
+    });
+
+    it('leaves the ffmpeg capability derivation alone when only the settings read fails', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
+      mockApi.getFfmpegStatus.mockResolvedValue({ detected: false });
+      mockApi.getMutagenStatus.mockResolvedValue({ detected: true, version: '1.47.0', path: '/usr/bin/python3' });
+
+      renderWithProviders(<ProcessingSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load post processing settings.')).toBeInTheDocument();
+      });
+      // The gate replaces the form; it must not turn a missing-ffmpeg state into a rendered row.
+      expect(screen.queryByLabelText(/Auto-merge multi-file downloads/)).not.toBeInTheDocument();
+      expect(screen.queryByText('needs ffmpeg')).not.toBeInTheDocument();
+    });
+
+    it('keeps the needs-ffmpeg pill on the success path when ffmpeg is missing', async () => {
+      mockApi.getSettings.mockResolvedValue(settings);
+      mockApi.getFfmpegStatus.mockResolvedValue({ detected: false });
+      mockApi.getMutagenStatus.mockResolvedValue({ detected: true, version: '1.47.0', path: '/usr/bin/python3' });
+
+      renderWithProviders(<ProcessingSettingsSection />);
+
+      await waitFor(() => expect(screen.getByText('needs ffmpeg')).toBeInTheDocument());
+      expect(screen.getByLabelText(/Auto-merge multi-file downloads/)).toBeInTheDocument();
+      expect(screen.queryByText('Failed to load post processing settings.')).not.toBeInTheDocument();
+    });
+
+    it("recovers both cards from one card's Retry — they share the settings query", async () => {
+      mockApi.getSettings
+        .mockRejectedValueOnce(new Error('settings unreadable'))
+        .mockResolvedValue(createMockSettings({ processing: { autoMergeDownloads: true, postProcessingScript: '/srv/hook.sh', postProcessingScriptTimeout: 300 } }));
+      mockApi.getFfmpegStatus.mockResolvedValue({ detected: true, version: '8.0.1', path: '/usr/bin/ffmpeg' });
+      mockApi.getMutagenStatus.mockResolvedValue({ detected: true, version: '1.47.0', path: '/usr/bin/python3' });
+      const user = userEvent.setup();
+
+      renderWithProviders(<ProcessingSettingsSection />);
+      await waitFor(() => expect(screen.getByText('Failed to load custom script settings.')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Retry loading post processing settings' }));
+
+      // Checked / a real path, not the schema defaults off / empty: only a refetch yields these.
+      await waitFor(() => expect(screen.getByLabelText(/Auto-merge multi-file downloads/)).toBeChecked());
+      expect(screen.getByLabelText('Post-processing script')).toHaveValue('/srv/hook.sh');
+      expect(screen.queryByText('Failed to load post processing settings.')).not.toBeInTheDocument();
+      expect(screen.queryByText('Failed to load custom script settings.')).not.toBeInTheDocument();
+    });
+
+    // The shared query means the sibling test above recovers this card too, so it cannot see
+    // this card's own handler go missing. Only clicking Custom script's button can.
+    it("recovers from the Custom script card's own Retry control", async () => {
+      mockApi.getSettings
+        .mockRejectedValueOnce(new Error('settings unreadable'))
+        .mockResolvedValue(createMockSettings({ processing: { postProcessingScript: '/srv/hook.sh', postProcessingScriptTimeout: 300 } }));
+      mockApi.getFfmpegStatus.mockResolvedValue({ detected: true, version: '8.0.1', path: '/usr/bin/ffmpeg' });
+      mockApi.getMutagenStatus.mockResolvedValue({ detected: true, version: '1.47.0', path: '/usr/bin/python3' });
+      const user = userEvent.setup();
+
+      renderWithProviders(<ProcessingSettingsSection />);
+      await waitFor(() => expect(screen.getByText('Failed to load custom script settings.')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Retry loading custom script settings' }));
+
+      // A real path, not the schema default empty string: only a refetch this click caused
+      // produces it.
+      await waitFor(() => expect(screen.getByLabelText('Post-processing script')).toHaveValue('/srv/hook.sh'));
+      expect(screen.queryByText('Failed to load custom script settings.')).not.toBeInTheDocument();
+      expect(mockApi.getSettings).toHaveBeenCalledTimes(2);
+    });
+  });
+
 });

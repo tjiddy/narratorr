@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
 import { BackupScheduleForm } from './BackupScheduleForm';
@@ -155,4 +156,43 @@ describe('BackupScheduleForm', () => {
     expect(screen.getByText(/too small/i)).toBeInTheDocument();
     expect(mockApi.updateSettings).not.toHaveBeenCalled();
   });
+
+  describe('when the shared settings read fails', () => {
+    beforeEach(() => {
+      // resetAllMocks, not clearAllMocks: the Retry test queues a `*Once()` rejection and
+      // clearAllMocks does not drain those queues.
+      vi.resetAllMocks();
+    });
+
+    it('reports the read failure instead of showing the defaults as the saved schedule', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
+
+      renderWithProviders(<BackupScheduleForm />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load backup schedule settings.')).toBeInTheDocument();
+      });
+      // A weekly interval reads as the operator's chosen cadence; it is the schema default.
+      expect(screen.queryByLabelText('Backup interval')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Backup retention')).not.toBeInTheDocument();
+    });
+
+    it('refetches and restores the saved schedule when the operator clicks Retry', async () => {
+      mockApi.getSettings
+        .mockRejectedValueOnce(new Error('settings unreadable'))
+        .mockResolvedValue(createMockSettings({ system: { backupIntervalMinutes: 4320 } }));
+      const user = userEvent.setup();
+
+      renderWithProviders(<BackupScheduleForm />);
+      await waitFor(() => expect(screen.getByText('Failed to load backup schedule settings.')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Retry loading backup schedule settings' }));
+
+      // 4320, not the schema default 10080: only a real refetch produces this value.
+      await waitFor(() => expect(screen.getByLabelText('Backup interval')).toHaveValue(4320));
+      expect(screen.queryByText('Failed to load backup schedule settings.')).not.toBeInTheDocument();
+      expect(mockApi.getSettings).toHaveBeenCalledTimes(2);
+    });
+  });
+
 });

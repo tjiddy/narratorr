@@ -195,4 +195,42 @@ describe('NewBookDefaultsSection (#284)', () => {
     expect((screen.getByLabelText('Search immediately') as HTMLInputElement).checked).toBe(true);
     expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
   });
+
+  describe('when the shared settings read fails', () => {
+    beforeEach(() => {
+      // resetAllMocks, not clearAllMocks: the Retry test queues a `*Once()` rejection and
+      // clearAllMocks does not drain those queues.
+      vi.resetAllMocks();
+    });
+
+    it('reports the read failure instead of showing the default as a saved choice', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
+
+      renderWithProviders(<NewBookDefaultsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load new book defaults.')).toBeInTheDocument();
+      });
+      // An off toggle reads as "do not search on add"; that is the schema default.
+      expect(screen.queryByLabelText('Search immediately')).not.toBeInTheDocument();
+    });
+
+    it('refetches and restores the saved choice when the operator clicks Retry', async () => {
+      mockApi.getSettings
+        .mockRejectedValueOnce(new Error('settings unreadable'))
+        .mockResolvedValue(createMockSettings({ quality: { searchImmediately: true } }));
+      const user = userEvent.setup();
+
+      renderWithProviders(<NewBookDefaultsSection />);
+      await waitFor(() => expect(screen.getByText('Failed to load new book defaults.')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Retry loading new book defaults' }));
+
+      // Checked, not the schema default off: only a real refetch produces this.
+      await waitFor(() => expect(screen.getByLabelText('Search immediately')).toBeChecked());
+      expect(screen.queryByText('Failed to load new book defaults.')).not.toBeInTheDocument();
+      expect(mockApi.getSettings).toHaveBeenCalledTimes(2);
+    });
+  });
+
 });

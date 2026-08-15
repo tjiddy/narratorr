@@ -271,4 +271,42 @@ describe('MetadataSettingsSection', () => {
     expect(payload.metadata).not.toHaveProperty('minDurationMinutes');
     expect(payload).not.toHaveProperty('quality');
   });
+
+  describe('when the shared settings read fails', () => {
+    beforeEach(() => {
+      // resetAllMocks, not clearAllMocks: the Retry test queues a `*Once()` rejection and
+      // clearAllMocks does not drain those queues.
+      vi.resetAllMocks();
+    });
+
+    it('reports the read failure instead of showing US as the saved region', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
+
+      renderWithProviders(<MetadataSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load metadata settings.')).toBeInTheDocument();
+      });
+      // A Region reading "United States" is the schema default, not a saved catalog choice.
+      expect(screen.queryByLabelText('Region')).not.toBeInTheDocument();
+    });
+
+    it('refetches and restores the saved region when the operator clicks Retry', async () => {
+      mockApi.getSettings
+        .mockRejectedValueOnce(new Error('settings unreadable'))
+        .mockResolvedValue(createMockSettings({ metadata: { audibleRegion: 'uk' } }));
+      const user = userEvent.setup();
+
+      renderWithProviders(<MetadataSettingsSection />);
+      await waitFor(() => expect(screen.getByText('Failed to load metadata settings.')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Retry loading metadata settings' }));
+
+      // uk, not the schema default us: only a real refetch produces this value.
+      await waitFor(() => expect(screen.getByLabelText('Region')).toHaveValue('uk'));
+      expect(screen.queryByText('Failed to load metadata settings.')).not.toBeInTheDocument();
+      expect(mockApi.getSettings).toHaveBeenCalledTimes(2);
+    });
+  });
+
 });

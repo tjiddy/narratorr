@@ -147,7 +147,7 @@ function AutomationsForm() {
   const ffmpegStatus = useFfmpegStatus();
   const ffmpegAvailable = ffmpegStatus.isError ? false : ffmpegStatus.data?.detected !== false;
 
-  const { form, mutation, onSubmit } = useSettingsForm<AutomationsFormData>({
+  const { form, mutation, onSubmit, settingsError, refetchSettings } = useSettingsForm<AutomationsFormData>({
     schema: automationsFormSchema,
     defaultValues: toAutomationsFormData({ ...DEFAULT_SETTINGS } as AppSettings),
     select: toAutomationsFormData,
@@ -166,48 +166,64 @@ function AutomationsForm() {
       title={POST_PROCESSING_CARD_LABEL}
       description="Automations that run on their own after a download lands. None run on Library or Manual Import."
     >
-      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
-        <SettingsTable>
-          <SettingsRow
-            htmlFor="autoMergeDownloads"
-            label={<>Auto-merge multi-file downloads {!ffmpegAvailable && <CapabilityPill label="needs ffmpeg" />}</>}
-            description={<AutoMergeDescription gated={!ffmpegAvailable} />}
-            muted={!ffmpegAvailable}
+      {/* An off auto-merge toggle and off tagging read as deliberate automation choices;
+          all are schema defaults a failed read never observed. */}
+      {settingsError ? (
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-red-500">Failed to load post processing settings.</p>
+          <button
+            type="button"
+            onClick={refetchSettings}
+            aria-label="Retry loading post processing settings"
+            className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-all focus-ring"
           >
-            <ToggleSwitch id="autoMergeDownloads" disabled={!ffmpegAvailable && !autoMergeDownloads} {...register('autoMergeDownloads')} />
-          </SettingsRow>
-
-          <TagEmbeddingRows register={register} taggingEnabled={taggingEnabled} />
-
-          <SettingsRow
-            htmlFor="writeOpf"
-            label="OPF metadata sidecar"
-            description={
-              <>
-                Write a <code className="px-1 py-0.5 bg-muted rounded text-xs">{OPF_FILENAME}</code> into each book folder on import.{' '}
-                If an import would replace a sidecar Narratorr wrote earlier whose values have since
-                diverged, the previous file is kept beside the book as{' '}
-                <code className="px-1 py-0.5 bg-muted rounded text-xs">{OPF_BACKUP_FILENAME}</code> and the
-                change is recorded in Activity → Needs Review. The Activity record is pruned by the
-                general housekeeping retention setting; the backup file on disk is not, and is only
-                removed when you delete the book.{' '}
-                <InfoTip label="Audiobookshelf setup">
-                  Using Audiobookshelf? Enable this, then turn on “Prefer OPF metadata” in your ABS
-                  library settings so it reads the sidecar instead of the audio file’s tags.
-                </InfoTip>
-              </>
-            }
-          >
-            <ToggleSwitch id="writeOpf" {...register('writeOpf')} />
-          </SettingsRow>
-        </SettingsTable>
-
-        {isDirty && (
-          <button type="submit" disabled={mutation.isPending} className={saveButtonClass}>
-            {mutation.isPending ? 'Saving...' : 'Save'}
+            Retry
           </button>
-        )}
-      </form>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
+          <SettingsTable>
+            <SettingsRow
+              htmlFor="autoMergeDownloads"
+              label={<>Auto-merge multi-file downloads {!ffmpegAvailable && <CapabilityPill label="needs ffmpeg" />}</>}
+              description={<AutoMergeDescription gated={!ffmpegAvailable} />}
+              muted={!ffmpegAvailable}
+            >
+              <ToggleSwitch id="autoMergeDownloads" disabled={!ffmpegAvailable && !autoMergeDownloads} {...register('autoMergeDownloads')} />
+            </SettingsRow>
+
+            <TagEmbeddingRows register={register} taggingEnabled={taggingEnabled} />
+
+            <SettingsRow
+              htmlFor="writeOpf"
+              label="OPF metadata sidecar"
+              description={
+                <>
+                  Write a <code className="px-1 py-0.5 bg-muted rounded text-xs">{OPF_FILENAME}</code> into each book folder on import.{' '}
+                  If an import would replace a sidecar Narratorr wrote earlier whose values have since
+                  diverged, the previous file is kept beside the book as{' '}
+                  <code className="px-1 py-0.5 bg-muted rounded text-xs">{OPF_BACKUP_FILENAME}</code> and the
+                  change is recorded in Activity → Needs Review. The Activity record is pruned by the
+                  general housekeeping retention setting; the backup file on disk is not, and is only
+                  removed when you delete the book.{' '}
+                  <InfoTip label="Audiobookshelf setup">
+                    Using Audiobookshelf? Enable this, then turn on “Prefer OPF metadata” in your ABS
+                    library settings so it reads the sidecar instead of the audio file’s tags.
+                  </InfoTip>
+                </>
+              }
+            >
+              <ToggleSwitch id="writeOpf" {...register('writeOpf')} />
+            </SettingsRow>
+          </SettingsTable>
+
+          {isDirty && (
+            <button type="submit" disabled={mutation.isPending} className={saveButtonClass}>
+              {mutation.isPending ? 'Saving...' : 'Save'}
+            </button>
+          )}
+        </form>
+      )}
     </SettingsSection>
   );
 }
@@ -250,7 +266,7 @@ function EnvChip({ children }: { children: ReactNode }) {
 const CUSTOM_SCRIPT_CARD_LABEL = 'Custom script';
 
 function CustomScriptForm() {
-  const { form, mutation, onSubmit } = useSettingsForm<CustomScriptFormData>({
+  const { form, mutation, onSubmit, settingsError, refetchSettings } = useSettingsForm<CustomScriptFormData>({
     schema: customScriptFormSchema,
     defaultValues: toCustomScriptFormData({ ...DEFAULT_SETTINGS } as AppSettings),
     select: toCustomScriptFormData,
@@ -267,60 +283,76 @@ function CustomScriptForm() {
       title={CUSTOM_SCRIPT_CARD_LABEL}
       description="Run a script after each successful import — hand off to another tool, or run ffmpeg and other transforms on every downloaded book."
     >
-      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
-        <SettingsTable>
-          <SettingsRow
-            layout="stacked"
-            htmlFor="postProcessingScript"
-            label="Post-processing script"
-            description={
-              <>
-                Absolute path to the script. Leave empty to disable.{' '}
-                <InfoTip label="Script environment variables">
-                  <span className="block mb-1.5">The script runs with these environment variables set:</span>
-                  <span className="block space-y-1">
-                    <span className="block"><EnvChip>NARRATORR_BOOK_TITLE</EnvChip></span>
-                    <span className="block"><EnvChip>NARRATORR_BOOK_AUTHOR</EnvChip></span>
-                    <span className="block"><EnvChip>NARRATORR_IMPORT_PATH</EnvChip></span>
-                    <span className="block"><EnvChip>NARRATORR_IMPORT_FILE_COUNT</EnvChip></span>
-                  </span>
-                </InfoTip>
-              </>
-            }
+      {/* An empty script path reads as "no post-processing hook is configured"; it is the
+          schema default, and saving it would clear a real one. */}
+      {settingsError ? (
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-red-500">Failed to load custom script settings.</p>
+          <button
+            type="button"
+            onClick={refetchSettings}
+            aria-label="Retry loading custom script settings"
+            className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-all focus-ring"
           >
-            <input
-              id="postProcessingScript"
-              type="text"
-              {...register('postProcessingScript')}
-              placeholder="/path/to/script.sh"
-              className={errorInputClass(!!errors.postProcessingScript)}
-            />
-            {errors.postProcessingScript && <span className="block mt-1 text-xs text-destructive">{errors.postProcessingScript.message}</span>}
-          </SettingsRow>
-
-          <SettingsRow
-            htmlFor="postProcessingScriptTimeout"
-            label="Script timeout"
-            description="Maximum time before the script is killed. Default: 300 (5 minutes)."
-          >
-            <NumberField
-              id="postProcessingScriptTimeout"
-              {...register('postProcessingScriptTimeout', { setValueAs: (v: string) => { const n = Number(v); return v === '' || Number.isNaN(n) ? undefined : n; } })}
-              min={1}
-              step={1}
-              placeholder="300"
-              suffix="seconds"
-              error={errors.postProcessingScriptTimeout?.message}
-            />
-          </SettingsRow>
-        </SettingsTable>
-
-        {isDirty && (
-          <button type="submit" disabled={mutation.isPending} className={saveButtonClass}>
-            {mutation.isPending ? 'Saving...' : 'Save'}
+            Retry
           </button>
-        )}
-      </form>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
+          <SettingsTable>
+            <SettingsRow
+              layout="stacked"
+              htmlFor="postProcessingScript"
+              label="Post-processing script"
+              description={
+                <>
+                  Absolute path to the script. Leave empty to disable.{' '}
+                  <InfoTip label="Script environment variables">
+                    <span className="block mb-1.5">The script runs with these environment variables set:</span>
+                    <span className="block space-y-1">
+                      <span className="block"><EnvChip>NARRATORR_BOOK_TITLE</EnvChip></span>
+                      <span className="block"><EnvChip>NARRATORR_BOOK_AUTHOR</EnvChip></span>
+                      <span className="block"><EnvChip>NARRATORR_IMPORT_PATH</EnvChip></span>
+                      <span className="block"><EnvChip>NARRATORR_IMPORT_FILE_COUNT</EnvChip></span>
+                    </span>
+                  </InfoTip>
+                </>
+              }
+            >
+              <input
+                id="postProcessingScript"
+                type="text"
+                {...register('postProcessingScript')}
+                placeholder="/path/to/script.sh"
+                className={errorInputClass(!!errors.postProcessingScript)}
+              />
+              {errors.postProcessingScript && <span className="block mt-1 text-xs text-destructive">{errors.postProcessingScript.message}</span>}
+            </SettingsRow>
+
+            <SettingsRow
+              htmlFor="postProcessingScriptTimeout"
+              label="Script timeout"
+              description="Maximum time before the script is killed. Default: 300 (5 minutes)."
+            >
+              <NumberField
+                id="postProcessingScriptTimeout"
+                {...register('postProcessingScriptTimeout', { setValueAs: (v: string) => { const n = Number(v); return v === '' || Number.isNaN(n) ? undefined : n; } })}
+                min={1}
+                step={1}
+                placeholder="300"
+                suffix="seconds"
+                error={errors.postProcessingScriptTimeout?.message}
+              />
+            </SettingsRow>
+          </SettingsTable>
+
+          {isDirty && (
+            <button type="submit" disabled={mutation.isPending} className={saveButtonClass}>
+              {mutation.isPending ? 'Saving...' : 'Save'}
+            </button>
+          )}
+        </form>
+      )}
     </SettingsSection>
   );
 }

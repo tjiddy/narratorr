@@ -325,4 +325,37 @@ describe('DiscoverySettingsSection', () => {
       unmount();
     }
   });
+
+  describe('when the shared settings read fails', () => {
+    it('reports the read failure instead of showing the defaults as saved discovery config', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
+
+      renderWithProviders(<DiscoverySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load discovery settings.')).toBeInTheDocument();
+      });
+      // A 24-hour refresh reads as the operator's cadence; it is the schema default.
+      expect(screen.queryByLabelText(/enable discovery/i)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/refresh interval/i)).not.toBeInTheDocument();
+    });
+
+    it('refetches and restores the saved discovery config when the operator clicks Retry', async () => {
+      mockApi.getSettings
+        .mockRejectedValueOnce(new Error('settings unreadable'))
+        .mockResolvedValue(makeSettings({ discovery: { enabled: true, intervalHours: 72, maxSuggestionsPerAuthor: 5, expiryDays: 90 } }));
+      const user = userEvent.setup();
+
+      renderWithProviders(<DiscoverySettingsSection />);
+      await waitFor(() => expect(screen.getByText('Failed to load discovery settings.')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Retry loading discovery settings' }));
+
+      // 72, not the schema default 24: only a real refetch produces this value.
+      await waitFor(() => expect(screen.getByLabelText(/refresh interval/i)).toHaveValue(72));
+      expect(screen.queryByText('Failed to load discovery settings.')).not.toBeInTheDocument();
+      expect(mockApi.getSettings).toHaveBeenCalledTimes(2);
+    });
+  });
+
 });

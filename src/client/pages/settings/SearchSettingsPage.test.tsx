@@ -167,4 +167,44 @@ describe('SearchSettingsPage', () => {
 
     expect(qualityForm.querySelector('button[type="submit"]')).toBeInTheDocument();
   });
+
+  describe('when the shared settings read fails', () => {
+    beforeEach(() => {
+      // resetAllMocks, not clearAllMocks: clearAllMocks does not drain `*Once()` queues.
+      vi.resetAllMocks();
+    });
+
+    it('gives each of its five cards its own addressable error copy', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
+
+      renderWithProviders(<SearchSettingsPage />);
+
+      await waitFor(() => expect(screen.getByText('Failed to load search settings.')).toBeInTheDocument());
+      // One shared query fails all five at once, so getByText — which throws on a duplicate —
+      // is the collision guard: identical copy on any two of them would fail here.
+      expect(screen.getByText('Failed to load new book defaults.')).toBeInTheDocument();
+      expect(screen.getByText('Failed to load metadata settings.')).toBeInTheDocument();
+      expect(screen.getByText('Failed to load filtering settings.')).toBeInTheDocument();
+      expect(screen.getByText('Failed to load quality settings.')).toBeInTheDocument();
+      expect(screen.getAllByRole('button', { name: /^Retry loading/ })).toHaveLength(5);
+    });
+
+    it("recovers all five cards from one card's Retry — they share the settings query", async () => {
+      mockApi.getSettings
+        .mockRejectedValueOnce(new Error('settings unreadable'))
+        .mockResolvedValue(mockSettings);
+      const user = userEvent.setup();
+
+      renderWithProviders(<SearchSettingsPage />);
+      await waitFor(() => expect(screen.getByText('Failed to load quality settings.')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Retry loading quality settings' }));
+
+      await waitFor(() => expect(screen.getByLabelText('Grab minimum')).toHaveValue(50));
+      expect(screen.queryByText(/^Failed to load/)).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Region')).toBeInTheDocument();
+      expect(screen.getByLabelText('Minimum duration')).toBeInTheDocument();
+    });
+  });
+
 });
