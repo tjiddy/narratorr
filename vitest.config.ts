@@ -40,6 +40,13 @@ export default defineConfig({
           // Full-app setup exceeded the default only under suite parallelism; retain bounded headroom.
           testTimeout: 15000,
           hookTimeout: 30000,
+          // 249 files in this project build real temp trees, so worker count is filesystem
+          // contention, not CPU. Uncapped on a 24-core machine the suite went non-deterministic —
+          // three symptoms of one cause, all absent at 8: ENOTEMPTY on a recursive rm whose
+          // directory was empty, `Worker exited unexpectedly`, and 15s timeouts on tests that run
+          // in 88ms alone. CI runners have 4 cores, so this never binds there; it bounds dev
+          // machines big enough to outrun their own disk.
+          poolOptions: { forks: { maxForks: 8 } },
           include: [
             'src/server/**/*.test.ts',
             'src/shared/**/*.test.ts',
