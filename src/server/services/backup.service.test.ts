@@ -1075,10 +1075,14 @@ describe('restore temp-dir cleanup: warn instead of swallow (#2370 AC9)', () => 
     vi.mocked(removeTree).mockRejectedValue(ebusy());
   }
 
-  /** The one warn this conversion emits, or undefined. */
+  /** Mock calls at one level, through the `as never` log type this suite already uses. */
+  function logCalls(log: ReturnType<typeof createMockLog>, level: 'warn' | 'info'): unknown[][] {
+    return (log as unknown as Record<string, { mock: { calls: unknown[][] } }>)[level]!.mock.calls;
+  }
+
+  /** Just the warns this conversion emits. */
   function cleanupWarns(log: ReturnType<typeof createMockLog>) {
-    return (log as unknown as { warn: { mock: { calls: unknown[][] } } }).warn.mock.calls
-      .filter(([, message]) => message === 'Failed to remove restore temp directory');
+    return logCalls(log, 'warn').filter(([, message]) => message === 'Failed to remove restore temp directory');
   }
 
   beforeEach(async () => {
@@ -1151,7 +1155,7 @@ describe('restore temp-dir cleanup: warn instead of swallow (#2370 AC9)', () => 
     await expect(service.confirmRestore()).resolves.toBeUndefined();
 
     expect(await fs.readFile(path.join(configPath, 'restore-pending.db'), 'utf-8')).toBe('restored-db-content');
-    expect(log.info).toHaveBeenCalledWith('Restore staged to restore-pending.db — process will exit');
+    expect(logCalls(log, 'info').flat()).toContain('Restore staged to restore-pending.db — process will exit');
     expect(cleanupWarns(log)).toHaveLength(1);
   });
 
