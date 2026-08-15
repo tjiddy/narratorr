@@ -68,6 +68,31 @@ describe('searchResultSchema', () => {
     expect(result.success && result.data.format).toBe('m4b');
   });
 
+  it('carries an ABB-shaped result through with its author, narrator and format intact (#2365)', () => {
+    const result = searchResultSchema.safeParse({
+      title: 'Murder in the New Forest',
+      indexer: 'AudioBookBay',
+      protocol: 'torrent',
+      author: 'Carol Cole',
+      narrator: 'James MacNaughton',
+      format: 'm4b',
+      infoHash: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0',
+      downloadUrl: 'magnet:?xt=urn:btih:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0',
+    });
+    expect(result.success && result.data).toMatchObject({
+      author: 'Carol Cole',
+      narrator: 'James MacNaughton',
+      format: 'm4b',
+    });
+  });
+
+  it('rejects a non-string format', () => {
+    const result = searchResultSchema.safeParse({
+      title: 'Book', indexer: 'AudioBookBay', protocol: 'torrent', format: 4,
+    });
+    expect(result.success).toBe(false);
+  });
+
   it('rejects unknown protocol value', () => {
     const result = searchResultSchema.safeParse({ title: 'Book', indexer: 'ABB', protocol: 'http' });
     expect(result.success).toBe(false);

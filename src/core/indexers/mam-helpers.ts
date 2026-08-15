@@ -35,12 +35,6 @@ export function isMamFreeleech(
   return !!(item.free || item.personal_freeleech || (item.fl_vip && isVip));
 }
 
-/** MAM's `filetype` → `SearchResult.format`. Blank/absent stays undefined (unknown, not mp3). */
-export function normalizeMamFormat(raw: string | null | undefined): string | undefined {
-  const trimmed = raw?.trim().toLowerCase();
-  return trimmed ? trimmed : undefined;
-}
-
 // MAM renders English-locale numbers: ',' groups thousands, '.' is the decimal point.
 // Provider-scoped by design — not a locale-aware parser.
 const ENGLISH_GROUPED = /^\d{1,3}(?:,\d{3})*(?:\.\d+)?$/;

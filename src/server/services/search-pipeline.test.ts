@@ -4840,3 +4840,42 @@ describe('#2310 AC15 — the immediate-search chain advances past an expired boo
     );
   });
 });
+
+describe('gate interaction with the ABB metadata fields (#2365)', () => {
+  it('keeps an ABB result that now carries a container format — no gate reads SearchResult.format', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ title: 'Murder in the New Forest', indexer: 'AudioBookBay', format: 'm4b' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' },
+    );
+    expect(results).toHaveLength(1);
+    expect(results[0]!.format).toBe('m4b');
+  });
+
+  it('still drops an ebook-titled result carrying an audio format field — the title is what the gate reads', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ title: 'Murder in the New Forest.epub', indexer: 'AudioBookBay', format: 'm4b' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' },
+    );
+    expect(results).toHaveLength(0);
+  });
+
+  it('no longer drops an ABB result for a rejectWords entry naming the uploader', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ title: 'Murder in the New Forest', indexer: 'AudioBookBay', author: 'Carol Cole', narrator: 'James MacNaughton' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'greads123' },
+    );
+    expect(results).toHaveLength(1);
+  });
+
+  it('drops that same result when the uploader is the author — the pre-fix shape the gate saw', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ title: 'Murder in the New Forest', indexer: 'AudioBookBay', author: 'greads123' })],
+      undefined,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'greads123' },
+    );
+    expect(results).toHaveLength(0);
+  });
+});

@@ -8,6 +8,7 @@ import {
   type SearchResult,
 } from './types.js';
 import { buildMagnetUri } from '../utils';
+import { readAbbMetadata } from './abb-fields.js';
 import { normalizeBaseUrl } from '@shared/normalize-base-url.js';
 import { fetchWithProxy } from './fetch.js';
 import { isProxyRelatedError } from './errors.js';
@@ -233,14 +234,13 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       const coverUrl = $el.find('img').first().attr('src') ||
                        $el.find('img').first().attr('data-src');
 
-      const postText = $el.text();
-      const author = this.extractField(postText, ['Author:', 'Written by:', 'By:']);
-      const narrator = this.extractField(postText, ['Narrator:', 'Narrated by:', 'Read by:']);
+      // Row metadata comes from the row's own annotated elements or not at all: its post text is
+      // free prose over an uploader byline, and a value set here survives the detail merge.
+      const fields = readAbbMetadata($, $el);
 
       results.push({
         title,
-        ...(author !== undefined && { author }),
-        ...(narrator !== undefined && { narrator }),
+        ...fields,
         protocol: 'torrent',
         detailsUrl,
         ...(coverUrl !== undefined && { coverUrl }),
@@ -305,23 +305,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       result.downloadUrl = buildMagnetUri(result.infoHash, title || undefined);
     }
 
-    if (!result.author) {
-      const author = this.extractField(pageText, [
-        'Author:',
-        'Written by:',
-        'By:',
-      ]);
-      if (author !== undefined) result.author = author;
-    }
-
-    if (!result.narrator) {
-      const narrator = this.extractField(pageText, [
-        'Narrator:',
-        'Narrated by:',
-        'Read by:',
-      ]);
-      if (narrator !== undefined) result.narrator = narrator;
-    }
+    Object.assign(result, readAbbMetadata($));
 
     const sizeMatch = pageText.match(/Size[:\s]*([\d.]+)\s*(MB|GB|TB)/i);
     if (sizeMatch?.[1] && sizeMatch[2]) {
@@ -339,17 +323,6 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     }
 
     return result;
-  }
-
-  private extractField(text: string, labels: string[]): string | undefined {
-    for (const label of labels) {
-      const regex = new RegExp(`${label}\\s*([^\\n]+)`, 'i');
-      const match = text.match(regex);
-      if (match) {
-        return match[1]!.trim().replace(/^[:\s]+/, '').trim();
-      }
-    }
-    return undefined;
   }
 
   private parseSize(value: string, unit: string): number {
