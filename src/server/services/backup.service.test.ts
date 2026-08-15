@@ -7,6 +7,7 @@ import { Readable } from 'stream';
 import { EventEmitter } from 'events';
 import { BackupService, RestoreUploadError, applyPendingRestore } from './backup.service.js';
 import { createMockSettingsService } from '../__tests__/helpers.js';
+import { removeTree } from '@core/utils/remove-tree.js';
 
 // This must stay constructible: production calls `new ZipArchive(...)`, so an arrow-backed vi.fn throws.
 vi.mock('archiver', () => ({
@@ -26,6 +27,14 @@ vi.mock('archiver', () => ({
 
 const mockExecute = vi.fn();
 const mockClose = vi.fn();
+// Spied, not replaced: only the four restore-cleanup cases below make a removal fail.
+const actualRemoveTree = await vi.importActual<typeof import('@core/utils/remove-tree.js')>('@core/utils/remove-tree.js');
+
+vi.mock('@core/utils/remove-tree.js', async (importOriginal) => ({
+  ...(await importOriginal() as Record<string, unknown>),
+  removeTree: vi.fn(),
+}));
+
 vi.mock('@libsql/client', () => ({
   createClient: vi.fn(() => ({
     execute: mockExecute,
@@ -60,6 +69,12 @@ async function createZipBuffer(entries: { name: string; content: Buffer }[]): Pr
     archive.finalize();
   });
 }
+
+// Every describe removes real temp dirs; only the cleanup-warn cases below re-arm it to fail.
+beforeEach(() => {
+  vi.mocked(removeTree).mockReset();
+  vi.mocked(removeTree).mockImplementation(actualRemoveTree.removeTree);
+});
 
 describe('BackupService', () => {
   let tempDir: string;
@@ -1045,5 +1060,135 @@ describe('#324 — restore contract change', () => {
 
     expect(result.valid).toBe(false);
     expect(result.error).toContain('newer version');
+  });
+});
+
+describe('restore temp-dir cleanup: warn instead of swallow (#2370 AC9)', () => {
+  let tempDir: string;
+  let configPath: string;
+  let dbPath: string;
+
+  const ebusy = () => Object.assign(new Error('EBUSY: resource busy'), { code: 'EBUSY' });
+
+  /** Every removal in these flows is a restore temp dir, so failing them all is failing exactly those. */
+  function failEveryCleanup() {
+    vi.mocked(removeTree).mockRejectedValue(ebusy());
+  }
+
+  /** The one warn this conversion emits, or undefined. */
+  function cleanupWarns(log: ReturnType<typeof createMockLog>) {
+    return (log as unknown as { warn: { mock: { calls: unknown[][] } } }).warn.mock.calls
+      .filter(([, message]) => message === 'Failed to remove restore temp directory');
+  }
+
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'narratorr-cleanup-warn-'));
+    configPath = tempDir;
+    dbPath = path.join(tempDir, 'narratorr.db');
+    await fs.writeFile(dbPath, 'test-db-content');
+    mockExecute.mockReset();
+    mockClose.mockReset();
+  });
+
+  afterEach(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('extractDbFromZip warns once and still rethrows the original error', async () => {
+    failEveryCleanup();
+    const log = createMockLog();
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log);
+    const zipBuffer = await createZipBuffer([{ name: 'other.txt', content: Buffer.from('no db') }]);
+
+    await expect(service.processRestoreUpload(Readable.from(zipBuffer)))
+      .rejects.toThrow(RestoreUploadError);
+
+    expect(cleanupWarns(log)).toHaveLength(1);
+  });
+
+  it('validateAndStage warns once and still returns the invalid validation', async () => {
+    failEveryCleanup();
+    // No __drizzle_migrations table → invalid, which is the branch that cleans up.
+    mockExecute.mockResolvedValue({ rows: [{ count: 0 }] });
+    const log = createMockLog();
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log);
+    const zipBuffer = await createZipBuffer([{ name: 'narratorr.db', content: Buffer.from('fake-db') }]);
+
+    const result = await service.processRestoreUpload(Readable.from(zipBuffer));
+
+    expect(result.valid).toBe(false);
+    expect(service.pendingRestore).toBeNull();
+    expect(cleanupWarns(log)).toHaveLength(1);
+  });
+
+  it('confirmRestore warns once on the expiry path and still throws "Pending restore has expired"', async () => {
+    const log = createMockLog();
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log);
+    const extractDir = path.join(tempDir, 'restore-expired');
+    await fs.mkdir(extractDir, { recursive: true });
+    const tempPath = path.join(extractDir, 'restore.db');
+    await fs.writeFile(tempPath, 'test');
+    await service.setPendingRestore(tempPath);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (service as any)._pendingRestore.validatedAt = Date.now() - 6 * 60 * 1000;
+    failEveryCleanup();
+
+    await expect(service.confirmRestore()).rejects.toThrow('Pending restore has expired');
+
+    expect(cleanupWarns(log)).toHaveLength(1);
+  });
+
+  it('confirmRestore warns once on the success path and still completes', async () => {
+    const log = createMockLog();
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log);
+    const extractDir = path.join(tempDir, 'restore-ok');
+    await fs.mkdir(extractDir, { recursive: true });
+    const tempPath = path.join(extractDir, 'restore.db');
+    await fs.writeFile(tempPath, 'restored-db-content');
+    await service.setPendingRestore(tempPath);
+    failEveryCleanup();
+
+    await expect(service.confirmRestore()).resolves.toBeUndefined();
+
+    expect(await fs.readFile(path.join(configPath, 'restore-pending.db'), 'utf-8')).toBe('restored-db-content');
+    expect(log.info).toHaveBeenCalledWith('Restore staged to restore-pending.db — process will exit');
+    expect(cleanupWarns(log)).toHaveLength(1);
+  });
+
+  it('emits no warn when the removal succeeds', async () => {
+    const log = createMockLog();
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log);
+    const extractDir = path.join(tempDir, 'restore-clean');
+    await fs.mkdir(extractDir, { recursive: true });
+    const tempPath = path.join(extractDir, 'restore.db');
+    await fs.writeFile(tempPath, 'restored-db-content');
+    await service.setPendingRestore(tempPath);
+
+    await service.confirmRestore();
+
+    expect(removeTree).toHaveBeenCalledWith(extractDir);
+    expect(cleanupWarns(log)).toHaveLength(0);
+  });
+
+  it('logs a SERIALIZED error, not the raw catch binding', async () => {
+    failEveryCleanup();
+    const log = createMockLog();
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), log);
+    const extractDir = path.join(tempDir, 'restore-serialized');
+    await fs.mkdir(extractDir, { recursive: true });
+    const tempPath = path.join(extractDir, 'restore.db');
+    await fs.writeFile(tempPath, 'x');
+    await service.setPendingRestore(tempPath);
+
+    await service.confirmRestore();
+
+    const [payload] = cleanupWarns(log)[0] as [Record<string, unknown>, string];
+    const logged = payload.error as Record<string, unknown>;
+    // `objectContaining({ message })` cannot tell a serialized error from a raw one: message and
+    // stack are non-enumerable own properties that both matchers read straight through.
+    expect(logged).not.toBeInstanceOf(Error);
+    expect(logged.type).toBe('Error');
+    expect(logged.code).toBe('EBUSY');
+    expect(payload.tempDir).toBe(extractDir);
   });
 });

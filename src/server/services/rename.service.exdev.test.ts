@@ -10,17 +10,27 @@ import type { SettingsService } from './settings.service.js';
 import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 
-// Real filesystem, with exactly two primitives injectable: `rename` to force the cross-volume
-// branch, and `cp` to pause between the two entries the writer maintains as a matched pair.
+// Real filesystem, with exactly three primitives injectable: `rename` to force the cross-volume
+// branch, `cp` to pause between the two entries the writer maintains as a matched pair, and `rm`
+// to make the fallback's removal fail transiently under the real retry helper.
 const actualFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+const actualRemoveTree = await vi.importActual<typeof import('@core/utils/remove-tree.js')>('@core/utils/remove-tree.js');
 
 vi.mock('node:fs/promises', async (importOriginal) => ({
   ...(await importOriginal() as Record<string, unknown>),
   rename: vi.fn(),
   cp: vi.fn(),
+  rm: vi.fn(),
+}));
+
+// Spied, not replaced: the default is the real helper, so its retry ladder still runs for real.
+vi.mock('@core/utils/remove-tree.js', async (importOriginal) => ({
+  ...(await importOriginal() as Record<string, unknown>),
+  removeTree: vi.fn(),
 }));
 
 import { cp, rename } from 'node:fs/promises';
+import { removeTree } from '@core/utils/remove-tree.js';
 import { RenameService } from './rename.service.js';
 import { sidecarLockKey, writeOpfSidecar } from '../utils/opf-writer.js';
 import { hasPendingPathWrite, withPathWriteLock } from '../utils/path-write-lock.js';
@@ -70,6 +80,8 @@ describe('RenameService cross-volume fallback vs the sidecar writer (#2297 AC11)
     vi.clearAllMocks();
     (rename as Mock).mockImplementation(actualFs.rename as never);
     (cp as Mock).mockImplementation(actualFs.cp as never);
+    (rm as Mock).mockImplementation(actualFs.rm as never);
+    (removeTree as Mock).mockImplementation(actualRemoveTree.removeTree as never);
 
     libraryRoot = await actualFs.mkdtemp(join(tmpdir(), 'narratorr-2297-exdev-'));
     oldFolder = join(libraryRoot, 'Old Author', 'Old Title');
@@ -180,6 +192,59 @@ describe('RenameService cross-volume fallback vs the sidecar writer (#2297 AC11)
     expect(await actualFs.readFile(join(oldFolder, OPF_FILENAME), 'utf-8')).toBe(GENERATION_N);
     expect(await actualFs.readFile(join(oldFolder, OPF_BACKUP_FILENAME), 'utf-8')).toBe(GENERATION_N_MINUS_1);
     expect(bookService.update).not.toHaveBeenCalled();
+  });
+
+  it('the EXDEV cleanup goes through removeTree, so it inherits the bounded retry (#2370)', async () => {
+    (rename as Mock).mockImplementationOnce(() => Promise.reject(Object.assign(new Error('EXDEV'), { code: 'EXDEV' })));
+
+    await service.renameBook(1);
+
+    // The import-sibling clears reach removeTree too, so the book folder itself is the discriminator.
+    expect(removeTree).toHaveBeenCalledWith(oldFolder);
+  });
+
+  it('a removal that keeps failing still escapes moveBookFolder, leaving content at both paths and books.path uncommitted (#2370 narrows this window, it does not close it)', async () => {
+    (rename as Mock).mockImplementationOnce(() => Promise.reject(Object.assign(new Error('EXDEV'), { code: 'EXDEV' })));
+    // Only the fallback's own removal fails; the pre-move sibling clears must still run, or the
+    // rejection would come from before `cp` and the both-paths assertion below would be vacuous.
+    (removeTree as Mock).mockImplementation(async (target: string) => {
+      if (target === oldFolder) throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' });
+      return actualRemoveTree.removeTree(target);
+    });
+
+    await expect(service.renameBook(1)).rejects.toThrow('EBUSY');
+
+    // The pre-existing contract: cp has already reproduced the tree, so both paths hold it.
+    expect(await actualFs.readFile(join(oldFolder, OPF_FILENAME), 'utf-8')).toBe(GENERATION_N);
+    expect(await actualFs.readFile(join(newFolder, OPF_FILENAME), 'utf-8')).toBe(GENERATION_N);
+    expect(bookService.update).not.toHaveBeenCalled();
+  });
+
+  it('a queued sidecar writer is not starved by the retry-extended hold — it acquires once the move completes', async () => {
+    (rename as Mock).mockImplementationOnce(() => Promise.reject(Object.assign(new Error('EXDEV'), { code: 'EXDEV' })));
+    // One transient EBUSY on the real removal, so the real ladder pays one 100 ms wait inside the lock.
+    let armed = true;
+    (rm as Mock).mockImplementation(async (target: unknown, options: unknown) => {
+      if (String(target) === oldFolder && armed) {
+        armed = false;
+        throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' });
+      }
+      return actualFs.rm(target as string, options as never);
+    });
+    const { copying, release } = gateTheCopy();
+
+    const renaming = service.renameBook(1);
+    await copying;
+    const writing = startDivergentWrite();
+    await sleep(50);
+    release();
+    await renaming;
+
+    // The retry fired, the removal still recovered, and the queued writer ran rather than hanging.
+    expect(armed).toBe(false);
+    expect(await writing).toBe('failed');
+    expect(await actualFs.stat(oldFolder).then(() => true, () => false)).toBe(false);
+    expect(bookService.update).toHaveBeenCalled();
   });
 
   it('the ATOMIC branch takes no lock — a single directory rename can never observe a split pair', async () => {

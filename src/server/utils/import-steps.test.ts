@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, onTestFinished } from 'vitest';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { deriveImportSiblings } from '../utils/import-sibling-paths.js';
@@ -106,7 +106,23 @@ function createMockLog(): FastifyBaseLogger {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks preserves implementations, and the retry cases below arm PERSISTENT rejections
+  // (a Once queue drains on removeTree's second attempt). Restore the factory default every test.
+  vi.mocked(rm).mockReset();
+  vi.mocked(rm).mockResolvedValue(undefined);
 });
+
+/**
+ * Removals now go through `removeTree`, which retries EBUSY/EMFILE/ENFILE/ENOTEMPTY/EPERM four
+ * times over 600 ms of its OWN backoff. Tests that arm one of those codes would pay that in real
+ * time; redirect the helper's `setTimeout` so the full ladder still runs, instantly.
+ */
+function collapseRemoveTreeBackoff(): void {
+  const realSetTimeout = globalThis.setTimeout;
+  const spy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void) =>
+    realSetTimeout(fn, 0)) as typeof globalThis.setTimeout);
+  onTestFinished(() => { spy.mockRestore(); });
+}
 
 describe('validateSource', () => {
   it('returns sourcePath and fileCount for directory with audio files', async () => {
@@ -785,9 +801,11 @@ describe('prepareImportSiblings', () => {
 
   it('propagates a stale-backup cleanup failure (strict)', async () => {
     const log = createMockLog();
+    collapseRemoveTreeBackoff();
+    // Persistent, not Once: EBUSY is retryable, and a drained Once queue would let attempt 2 succeed.
     vi.mocked(rm)
       .mockResolvedValueOnce(undefined)
-      .mockRejectedValueOnce(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+      .mockRejectedValue(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
     await expect(
       prepareImportSiblings({ targetPath: target, libraryRoot: '/library', log }),
     ).rejects.toThrow('EBUSY');
@@ -849,8 +867,10 @@ describe('prepareImportSiblings', () => {
     const log = createMockLog();
     vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never);
     vi.mocked(readdir).mockResolvedValue([] as never);
-    // Total-clean failures before marker removal must preserve the marker.
-    vi.mocked(rm).mockRejectedValueOnce(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+    // Total-clean failures before marker removal must preserve the marker. Persistent, not Once:
+    // EBUSY is retryable, and a drained Once queue would let removeTree's second attempt succeed.
+    collapseRemoveTreeBackoff();
+    vi.mocked(rm).mockRejectedValue(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
     await expect(
       prepareImportSiblings({ targetPath: target, libraryRoot: '/library', log }),
     ).rejects.toBeInstanceOf(BackupRecoveryError);
@@ -979,6 +999,7 @@ describe('commitStagedImport', () => {
     const marker = `${target}.import-commit-pending`;
     readdirByPath({ [target]: [dirent('old.mp3')], [staging]: [dirent('new.m4b')] });
     // Isolate a post-success, best-effort backup cleanup failure.
+    collapseRemoveTreeBackoff();
     vi.mocked(rm).mockImplementation(async (p: unknown) => {
       if (p === backup) throw Object.assign(new Error('EBUSY backup leftover'), { code: 'EBUSY' });
       return undefined as never;
@@ -1277,6 +1298,7 @@ describe('#1911 recovery preservation: strict marker-removal + late total-clean 
     vi.mocked(readdir).mockImplementation(async (p: unknown) =>
       (p === backup ? [dirent('old.m4b')] : []) as never);
     // A late non-selected backup clear must abort before marker removal.
+    collapseRemoveTreeBackoff();
     vi.mocked(rm).mockImplementation(async (p: unknown) => {
       if (String(p) === legacyBackup) throw Object.assign(new Error('EBUSY legacy backup'), { code: 'EBUSY' });
       return undefined as never;
