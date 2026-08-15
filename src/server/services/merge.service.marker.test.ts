@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
-import { mkdir, rm, writeFile, readdir, stat } from 'node:fs/promises';
+import { mkdir, writeFile, readdir, stat } from 'node:fs/promises';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { dotPrefixBasename } from '@core/utils/hidden-staging.js';
+import { removeTree } from '@core/utils/remove-tree.js';
 import { createMockLogger, createMockDb, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { MergeService } from './merge.service.js';
@@ -77,7 +78,7 @@ describe('MergeService marker convergence (#1418, real tmpdir)', () => {
   });
 
   afterEach(async () => {
-    await rm(libraryRoot, { recursive: true, force: true });
+    await removeTree(libraryRoot);
   });
 
   function buildService(): MergeService {

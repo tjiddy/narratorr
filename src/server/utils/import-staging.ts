@@ -7,6 +7,7 @@ import { join, extname, dirname } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/index.js';
 import { MARKER_SUFFIX } from '@core/utils/import-sibling-suffixes.js';
+import { removeTree } from '@core/utils/remove-tree.js';
 import { deriveImportSiblings, type ImportSiblings } from './import-sibling-paths.js';
 import { assertMarkerPathWritable } from './marker-path-conflict.js';
 import { serializeError } from './serialize-error.js';
@@ -130,10 +131,10 @@ export async function removeImportSibling(
     }
   }
   if (opts?.strict) {
-    await rm(path, { recursive: true, force: true });
+    await removeTree(path);
     return;
   }
-  await rm(path, { recursive: true, force: true })
+  await removeTree(path)
     .catch((rmError: unknown) => log.warn({ error: serializeError(rmError), path, label }, 'Failed to remove import sibling — continuing'));
 }
 

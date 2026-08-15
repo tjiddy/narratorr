@@ -1,4 +1,4 @@
-import { rmSync } from 'node:fs';
+import { removeTreeSync } from '../src/core/utils/remove-tree.js';
 import { dirname } from 'node:path';
 import { getAllRuns } from './fixtures/temp-dirs.js';
 import { getRegisteredFakes, clearRegisteredFakes } from './fixtures/run-state.js';
@@ -20,7 +20,7 @@ export default async function globalTeardown(): Promise<void> {
     const dbDir = dirname(state.dbPath);
     for (const target of [dbDir, state.libraryPath, state.configPath, state.downloadsPath, state.sourcePath]) {
       try {
-        rmSync(target, { recursive: true, force: true });
+        removeTreeSync(target);
       } catch {
         // Best-effort cleanup.
       }

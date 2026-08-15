@@ -12,7 +12,8 @@ import { createServices, registerRoutes, type Services } from '../routes/index.j
 import { clearImportAdapters } from '../services/import-adapters/registry.js';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync } from 'fs';
+import { removeTreeSync } from '@core/utils/remove-tree.js';
 import { expect } from 'vitest';
 import { initializeKey } from '../utils/secret-codec.js';
 
@@ -35,7 +36,7 @@ const isWindows = process.platform === 'win32';
  */
 function rmDirOrLeak(dir: string) {
   try {
-    rmSync(dir, { recursive: true, force: true });
+    removeTreeSync(dir);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     const isLockError = code === 'EPERM' || code === 'EBUSY' || code === 'ENOTEMPTY';
@@ -47,7 +48,7 @@ function rmDirOrLeak(dir: string) {
 function purgeActiveDirs() {
   for (const dir of activeRunDirs) {
     try {
-      rmSync(dir, { recursive: true, force: true });
+      removeTreeSync(dir);
     } catch {
       // Best-effort — process is exiting.
     }

@@ -1,4 +1,4 @@
-import { mkdir, rename, cp, rm } from 'node:fs/promises';
+import { mkdir, rename, cp } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@db/index.js';
@@ -10,6 +10,7 @@ import { fireAndForget } from '../utils/fire-and-forget.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { assertRealPathInsideLibrary, cleanEmptyParents, planFileRenames, renameFilesWithTemplate } from '../utils/paths.js';
 import { toNamingOptions } from '@core/utils/naming.js';
+import { removeTree } from '@core/utils/remove-tree.js';
 import type { AppSettings } from '@shared/schemas/settings/registry.js';
 import { computeFolderTarget, toLibraryRelative } from '../utils/rename-target.js';
 import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
@@ -273,7 +274,10 @@ export class RenameService {
         // commit, so a queued writer targets the vacated folder and fails rather than splitting it.
         await withPathWriteLock(sidecarLockKey(oldPath), async () => {
           await cp(oldPath, newPath, { recursive: true });
-          await rm(oldPath, { recursive: true, force: true });
+          // removeTree's retry extends this hold by at most 600 ms of backoff plus three
+          // extra walks, whatever the folder's depth — its own bound, not fs.rm's. The key
+          // is one book's sidecar, so only another writer to THIS book waits.
+          await removeTree(oldPath);
         });
       } else {
         throw error;

@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { removeTreeSync } from '@core/utils/remove-tree.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -13,14 +14,14 @@ export const CAN_SYMLINK = (() => {
   } catch {
     return false;
   } finally {
-    rmSync(probe, { recursive: true, force: true });
+    removeTreeSync(probe);
   }
 })();
 
 /** Tolerate Windows EPERM from lingering libSQL handles; other platforms remain strict. */
 export function removeDirTolerant(dir: string): void {
   try {
-    rmSync(dir, { recursive: true, force: true });
+    removeTreeSync(dir);
   } catch (error) {
     if (process.platform !== 'win32') throw error;
   }

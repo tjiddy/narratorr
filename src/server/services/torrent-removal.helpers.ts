@@ -1,5 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
-import { rm, stat } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
+import { removeTree } from '@core/utils/remove-tree.js';
 import { isTorrentRemovalDeferred } from '../utils/seed-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { DownloadClientService } from './download-client.service.js';
@@ -103,7 +104,7 @@ export async function deleteDownloadOutputPath(download: DownloadRow, log: Fasti
   }
 
   try {
-    await rm(outputPath, { recursive: true, force: true });
+    await removeTree(outputPath);
     log.info({ downloadId: download.id, outputPath }, 'Torrent removal: deleted output path');
     return true;
   } catch (error: unknown) {
