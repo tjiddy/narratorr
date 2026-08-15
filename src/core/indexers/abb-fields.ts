@@ -49,12 +49,21 @@ export function readAbbMetadata($: CheerioAPI, scope?: CheerioSelection): AbbMet
   if (block === undefined && region.length > 0) block = region;
   if (block === undefined) return {};
 
-  // A missing element reads as '', so this is a fold to absence rather than a trim.
-  const read = (selector: string): string | undefined => block.find(selector).first().text().trim() || undefined;
+  // A missing element reads as '', so both folds land on absence rather than trimming.
+  const readOne = (selector: string): string | undefined => block.find(selector).first().text().trim() || undefined;
 
-  const author = read('span.author');
-  const narrator = read('span.narrator');
-  const format = normalizeFormat(read('span.format'));
+  /**
+   * Names are routinely multi-valued — 2 authors and 13 narrators observed on real posts — while
+   * `SearchResult` holds one string, so join on the separator `parseDoubleEncodedNames` already
+   * uses. Never `.text()` the selection: cheerio concatenates matches with no delimiter, and
+   * `Yana WeinsteinMegan Sumeracki` reads as one plausible name rather than as a defect.
+   */
+  const readAll = (selector: string): string | undefined =>
+    block.find(selector).map((_, el) => $(el).text().trim()).get().filter(Boolean).join(', ') || undefined;
+
+  const author = readAll('span.author');
+  const narrator = readAll('span.narrator');
+  const format = normalizeFormat(readOne('span.format'));
 
   return {
     ...(author !== undefined && { author }),

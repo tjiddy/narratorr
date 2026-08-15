@@ -3,13 +3,20 @@ import * as cheerio from 'cheerio';
 import { readAbbMetadata } from './abb-fields.js';
 
 /** The structured block ABB annotates with schema.org microdata, as it appears on a real post. */
-function metadataBlock(opts: { author?: string; narrator?: string; format?: string } = {}): string {
+function metadataBlock(opts: { author?: string | string[]; narrator?: string | string[]; format?: string } = {}): string {
+  // ABB renders several names as sibling anchors separated by a literal ', ' — the shape that makes
+  // `.text()` on the selection concatenate them into one name.
+  const anchors = (names: string | string[], cls: string, href: string): string =>
+    (Array.isArray(names) ? names : [names])
+      .map((n) => `<a href="${href}"><span class="${cls}" itemprop="author">${n}</span></a>`)
+      .join(', ');
+
   const parts: string[] = [];
   if (opts.author !== undefined) {
-    parts.push(`Written by <a href="/x/"><span class="author" itemprop="author">${opts.author}</span></a>`);
+    parts.push(`Written by ${anchors(opts.author, 'author', '/x/')}`);
   }
   if (opts.narrator !== undefined) {
-    parts.push(`Read by <a href="/y/"><span class="narrator" itemprop="author">${opts.narrator}</span></a>`);
+    parts.push(`Read by ${anchors(opts.narrator, 'narrator', '/y/')}`);
   }
   if (opts.format !== undefined) {
     parts.push(`Format: <span class="format" itemprop="encodingFormat">${opts.format}</span>`);
@@ -37,6 +44,36 @@ describe('readAbbMetadata', () => {
     const fields = read(metadataBlock({ author: 'Carol Cole', narrator: 'James MacNaughton', format: 'M4B' }));
 
     expect(fields).toEqual({ author: 'Carol Cole', narrator: 'James MacNaughton', format: 'm4b' });
+  });
+
+  it('joins several authors on the separator the repo already uses, rather than taking the first', () => {
+    const fields = read(metadataBlock({ author: ['Yana Weinstein', 'Megan Sumeracki'], narrator: 'Dina Pearlman' }));
+
+    expect(fields.author).toBe('Yana Weinstein, Megan Sumeracki');
+    // Both failure modes by name: `.first()` silently drops the rest, and `.text()` on the
+    // selection concatenates without a delimiter into something that reads as one real person.
+    expect(fields.author).not.toBe('Yana Weinstein');
+    expect(fields.author).not.toBe('Yana WeinsteinMegan Sumeracki');
+  });
+
+  it('keeps every narrator of a full-cast production, in page order', () => {
+    const cast = [
+      'Toni Collette', 'Kit Harington', 'Jasmine Jobson', 'Calam Lynch', 'Eliot Salt', 'Katy Wix',
+      'Lolly Adefope', 'Billy Postlethwaite', 'Vicki Pepperdine', 'Meera Syal', 'La Voix', 'Leo Reich',
+      'full cast',
+    ];
+    const fields = read(metadataBlock({ author: 'Agatha Christie', narrator: cast }));
+
+    // Order and the tail matter: `full cast` is a pseudo-narrator ABB puts last, so a membership or
+    // count assertion would pass against an implementation that reorders or dedupes.
+    expect(fields.narrator).toBe(cast.join(', '));
+    expect(fields.author).toBe('Agatha Christie');
+  });
+
+  it('leaves format single-valued — only names are joined', () => {
+    const fields = read(metadataBlock({ author: ['A One', 'B Two'], format: 'M4B' }));
+
+    expect(fields.format).toBe('m4b');
   });
 
   it('distinguishes the author span from the narrator span when they differ', () => {
