@@ -879,10 +879,12 @@ describe('NewznabIndexer', () => {
       const stub = bound.stub(`${PROXY_URL}/v1`);
       await bound.saturate(stub, PROXY_URL);
 
-      const timer = bound.captureTimer();
+      const timer = bound.captureTimers();
       const searching = bound.track(proxiedIndexer.search('test'));
-      // The deadline being armed IS the observable "this request is queued behind the bound".
-      await timer.armed();
+      // Wait until the search has declared itself queued or admitted; over-admission then fails the
+      // pending() assertion rather than hanging on a deadline that was never armed.
+      await bound.accountedFor(stub, timer, { arrived: bound.max, queued: 1 });
+      expect(timer.pending()).toBe(1);
       timer.fire();
 
       await expect(searching).rejects.toThrow(/waiting for a request slot/);

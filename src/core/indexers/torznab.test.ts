@@ -860,10 +860,12 @@ describe('TorznabIndexer', () => {
       const stub = bound.stub(`${PROXY_URL}/v1`);
       await bound.saturate(stub, PROXY_URL);
 
-      const timer = bound.captureTimer();
+      const timer = bound.captureTimers();
       const searching = bound.track(proxiedIndexer.search('test'));
-      // The deadline being armed IS the observable "this request is queued behind the bound".
-      await timer.armed();
+      // Wait until the search has declared itself queued or admitted; over-admission then fails the
+      // pending() assertion rather than hanging on a deadline that was never armed.
+      await bound.accountedFor(stub, timer, { arrived: bound.max, queued: 1 });
+      expect(timer.pending()).toBe(1);
       timer.fire();
 
       await expect(searching).rejects.toThrow(/waiting for a request slot/);
@@ -891,9 +893,16 @@ describe('TorznabIndexer', () => {
       for (let i = 1; i < bound.max; i++) bound.track(proxiedIndexer.search(`test-${i}`));
       await stub.reaches(bound.max);
 
-      bound.track(proxiedIndexer.search('one-too-many'));
-      await bound.drain();
+      // Installed only now: an adapter hard-codes PROXY_TIMEOUT_MS for its request timer, which
+      // equals the slot-wait delay, so capturing earlier would count admitted requests as queued.
+      const timers = bound.captureTimers();
 
+      bound.track(proxiedIndexer.search('one-too-many'));
+      // The extra search declares itself queued by arming a slot-wait deadline against the shared
+      // pool — the same bound the Newznab search is occupying.
+      await bound.accountedFor(stub, timers, { arrived: bound.max, queued: 1 });
+
+      expect(timers.pending()).toBe(1);
       expect(stub.observed).toBe(bound.max);
       expect(stub.targets.some((target) => target.includes('one-too-many'))).toBe(false);
     });

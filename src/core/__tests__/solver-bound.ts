@@ -4,12 +4,17 @@
  * requests at the solver so "did this reach it?" is an exact observation rather than a race, and
  * drive the slot-wait deadline on demand rather than waiting a real minute for it.
  *
- * **No barrier here is a sleep.** Admission is decided synchronously inside `pool.acquire()` when
- * `fetchWithProxy` is called, so a request's queued-or-admitted verdict is already fixed by the time
- * the call returns; what needs awaiting is only the *observation* that an admitted request reached
- * the stub. That is `reaches`/`receives` — resolved by the stub itself on arrival. `drain` covers the
- * one case an arrival cannot: proving that nothing FURTHER landed, by running a full round trip on an
- * uncontended endpoint and letting anything already admitted overtake it.
+ * **Every barrier here is causal — nothing waits "long enough".** The key is that production makes a
+ * queued request directly observable: `BoundedSemaphore.acquire` arms its slot-wait deadline
+ * synchronously and *only* on the queueing branch, and `pump` (admission), `abandon` (abort/expiry)
+ * and `drainWaiters` each clear it synchronously. So an armed-and-uncleared deadline is exactly a
+ * request sitting behind the bound, and intercepting `setTimeout`/`clearTimeout` for that delay reads
+ * the live queue depth rather than guessing at it.
+ *
+ * That is what `accountedFor` rests on: a request either reaches the solver or arms a deadline, never
+ * neither and never both, so `arrivals + queueDepth` reaching the issued count means the whole batch
+ * has been adjudicated. A witness that watched only arrivals would still be sound when the bound
+ * works and silently early when it over-admits — which is the failure mode these tests exist to catch.
  *
  * Teardown ordering is the harness's job precisely because it is easy to get wrong:
  * `_resetSolverConcurrencyForTesting` restores bookkeeping but holds no handle on in-flight solver
@@ -50,6 +55,21 @@ export interface SolverStub {
   releaseAll(): void;
 }
 
+export interface TimerWitness {
+  /** Every delay passed to `setTimeout` while this witness was installed, in order. */
+  readonly delays: number[];
+  /**
+   * Timers armed with `delayMs` and not yet cleared or fired. For the slot-wait delay this is the
+   * live queue depth behind the bound, read synchronously — production arms on queue and clears on
+   * admission, abort, expiry and drain.
+   */
+  pending(delayMs?: number): number;
+  /** Resolves once `count` timers with `delayMs` have been armed, cumulatively. */
+  armed(count?: number, delayMs?: number): Promise<void>;
+  /** Runs and discards every pending timer armed with `delayMs`. */
+  fire(delayMs?: number): void;
+}
+
 export interface SolverRequestOptions {
   url?: string;
   signal?: AbortSignal;
@@ -61,42 +81,60 @@ export function solverOk(body = 'ok'): Response {
 }
 
 export interface GatedSolverBody {
-  /** A body whose bytes are withheld until `complete()`, so headers land long before parsing can. */
+  /** A body whose tail is withheld until `complete()`, so headers land long before parsing can. */
   stream: ReadableStream<Uint8Array>;
-  /** Resolves once the client starts consuming the body — i.e. `fetch()` has already resolved. */
-  reading: Promise<void>;
+  /**
+   * Resolves once `fetch()` has already resolved for this response and the caller is draining its
+   * body — the exact window in which a slot released "after fetch" is free but one released "after
+   * parsing" is not. See `gatedSolverBody` for why the second pull is what pins that ordering.
+   */
+  draining: Promise<void>;
   complete(): void;
 }
 
 /**
- * A solver response whose headers are deliverable immediately but whose body is withheld. This is
- * what separates "the slot is held until the body is read and parsed" from "the slot is held until
- * `fetch()` resolves" — with an already-materialized body the two are indistinguishable.
+ * A solver response whose headers are deliverable immediately but whose body tail is withheld. This
+ * is what separates "the slot is held until the body is read and parsed" from "the slot is held
+ * until `fetch()` resolves" — with an already-materialized body the two are indistinguishable.
  *
- * `highWaterMark: 0` is load-bearing: under the default strategy the stream pre-pulls one chunk at
- * construction, so `reading` would resolve before any client existed and the barrier would be a lie.
+ * Two details are load-bearing, both measured against Node 24 + msw 2.15:
+ *
+ * - `highWaterMark: 0`, or the default strategy pre-pulls a chunk at construction and any pull-based
+ *   witness fires before a client exists.
+ * - The body is emitted in TWO chunks, and `draining` resolves on the SECOND pull. The observed
+ *   order is `handler → pull#1 → fetch() resolves → pull#2`, so the first pull is still part of the
+ *   Fetch implementation assembling the response and is NOT evidence that the caller holds it. Only
+ *   the second pull proves `fetch()` already returned — which is precisely the moment a
+ *   release-after-headers bug has fired and a release-after-parse implementation has not.
  */
 export function gatedSolverBody(body = 'ok'): GatedSolverBody {
-  let announceReading!: () => void;
-  const reading = new Promise<void>((resolve) => { announceReading = resolve; });
+  let announceDraining!: () => void;
+  const draining = new Promise<void>((resolve) => { announceDraining = resolve; });
   let complete!: () => void;
   const completed = new Promise<void>((resolve) => { complete = resolve; });
-  let sent = false;
+
+  const encoder = new TextEncoder();
+  const payload = JSON.stringify({ status: 'ok', solution: { response: body, status: 200 } });
+  const head = payload.slice(0, 1);
+  const tail = payload.slice(1);
+  let pulls = 0;
 
   const stream = new ReadableStream<Uint8Array>({
     async pull(controller) {
-      if (sent) return;
-      sent = true;
-      announceReading();
+      pulls++;
+      if (pulls === 1) {
+        controller.enqueue(encoder.encode(head));
+        return;
+      }
+      if (pulls > 2) return;
+      announceDraining();
       await completed;
-      controller.enqueue(new TextEncoder().encode(
-        JSON.stringify({ status: 'ok', solution: { response: body, status: 200 } }),
-      ));
+      controller.enqueue(encoder.encode(tail));
       controller.close();
     },
   }, { highWaterMark: 0 });
 
-  return { stream, reading, complete };
+  return { stream, draining, complete };
 }
 
 /** A solver response carrying a `gatedSolverBody` stream. */
@@ -104,7 +142,8 @@ export function gatedSolverResponse(gated: GatedSolverBody): Response {
   return new HttpResponse(gated.stream, { headers: { 'Content-Type': 'application/json' } });
 }
 
-const DRAIN_ENDPOINT = 'http://drain.solver-bound.test';
+/** Far above any real timer id, so a captured handle can never be mistaken for a live one. */
+const CAPTURED_TIMER_ID_BASE = 1_000_000_000;
 
 /**
  * Registers the bound's teardown and returns the observation tools. Call once per `describe`, after
@@ -112,13 +151,26 @@ const DRAIN_ENDPOINT = 'http://drain.solver-bound.test';
  */
 export function useSolverBound(server: ReturnType<typeof setupServer>) {
   const max = SOLVER_MAX_CONCURRENT_REQUESTS;
-  /** Captured before any spy replaces it, so the harness never routes through a test's timer spy. */
+  /** Captured before any spy replaces them, so the harness never routes through its own mocks. */
   const nativeSetTimeout = globalThis.setTimeout;
+  const nativeClearTimeout = globalThis.clearTimeout;
 
   const openStubs: SolverStub[] = [];
   const outstanding: Array<Promise<unknown>> = [];
-  let timerSpy: { mockRestore: () => void } | undefined;
-  let drainStub: SolverStub | undefined;
+  const conditions: Array<{ satisfied: () => boolean; resolve: () => void }> = [];
+  const installedSpies: Array<{ mockRestore: () => void }> = [];
+
+  /** Re-checks every pending condition. Called on each observable transition. */
+  function announce(): void {
+    for (let i = conditions.length - 1; i >= 0; i--) {
+      if (conditions[i]!.satisfied()) conditions.splice(i, 1)[0]!.resolve();
+    }
+  }
+
+  function awaitCondition(satisfied: () => boolean): Promise<void> {
+    if (satisfied()) return Promise.resolve();
+    return new Promise<void>((resolve) => { conditions.push({ satisfied, resolve }); });
+  }
 
   /** Lets a rejection be observed later without ever going unhandled. */
   function track<T>(promise: Promise<T>): Promise<T> {
@@ -129,28 +181,16 @@ export function useSolverBound(server: ReturnType<typeof setupServer>) {
   function stub(endpoint: string, options: SolverStubOptions = {}): SolverStub {
     const { immediate, parked = () => solverOk() } = options;
     const gates: Array<() => void> = [];
-    const arrivals: Array<{ satisfied: () => boolean; resolve: () => void }> = [];
     let parking = true;
     const state = { observed: 0, live: 0, peak: 0, targets: [] as string[] };
-
-    function announce(): void {
-      for (let i = arrivals.length - 1; i >= 0; i--) {
-        if (arrivals[i]!.satisfied()) arrivals.splice(i, 1)[0]!.resolve();
-      }
-    }
-
-    function when(satisfied: () => boolean): Promise<void> {
-      if (satisfied()) return Promise.resolve();
-      return new Promise<void>((resolve) => { arrivals.push({ satisfied, resolve }); });
-    }
 
     const handle: SolverStub = {
       get observed() { return state.observed; },
       get live() { return state.live; },
       get peak() { return state.peak; },
       get targets() { return state.targets; },
-      reaches: (count) => when(() => state.observed >= count),
-      receives: (targetUrl) => when(() => state.targets.includes(targetUrl)),
+      reaches: (count) => awaitCondition(() => state.observed >= count),
+      receives: (targetUrl) => awaitCondition(() => state.targets.includes(targetUrl)),
       releaseOne: () => gates.shift()?.(),
       releaseAll: () => {
         parking = false;
@@ -196,7 +236,7 @@ export function useSolverBound(server: ReturnType<typeof setupServer>) {
   /**
    * Fills every slot at `proxyUrl` and resolves when all `max` requests have reached `target`,
    * returning them so a caller can await their settlement. Their request timeout is deliberately not
-   * `PROXY_TIMEOUT_MS`: that value equals `SOLVER_SLOT_WAIT_TIMEOUT_MS`, and `captureTimer` keys on
+   * `PROXY_TIMEOUT_MS`: that value equals `SOLVER_SLOT_WAIT_TIMEOUT_MS`, and `captureTimers` keys on
    * the delay, so sharing it would make the two timers indistinguishable.
    */
   async function saturate(
@@ -212,65 +252,92 @@ export function useSolverBound(server: ReturnType<typeof setupServer>) {
   }
 
   /**
-   * Resolves once any solver request admitted before this call has reached its stub — the barrier a
-   * "nothing further landed" assertion needs, since the absence of an arrival is not itself an event.
-   * Two full round trips on an uncontended endpoint, so an admitted request has two chances to
-   * overtake; unlike a fixed sleep this scales with the host's actual dispatch latency.
+   * Intercepts exactly the timers armed with one of `delaysToCapture` so they can be counted and
+   * fired on demand, while every other timer — MSW's included — keeps running for real.
+   *
+   * Both `setTimeout` and `clearTimeout` are intercepted, which is what makes `pending` a live read
+   * of production state rather than a running total: the semaphore clears a waiter's deadline the
+   * instant it is admitted, aborted, expired or drained.
+   *
+   * **Trap when saturating through an adapter:** an adapter does not take `timeoutMs` from the test,
+   * so its request timer is armed with `PROXY_TIMEOUT_MS` — the same value as
+   * `SOLVER_SLOT_WAIT_TIMEOUT_MS`, and therefore indistinguishable by delay. Install the witness only
+   * after that traffic is already in flight, or admitted requests are counted as queued ones. Tests
+   * that drive the transport directly avoid this by passing a request timeout of their own.
    */
-  async function drain(): Promise<void> {
-    drainStub ??= stub(`${DRAIN_ENDPOINT}/v1`, { immediate: () => solverOk('drain') });
-    await request(DRAIN_ENDPOINT, { url: 'https://drain.test/probe', timeoutMs: 25_000 });
-    await request(DRAIN_ENDPOINT, { url: 'https://drain.test/probe', timeoutMs: 25_000 });
-  }
-
-  /**
-   * Intercepts exactly the timers armed with `delayMs` — the slot-wait deadline by default — so they
-   * can be fired on demand while every other timer, MSW's included, keeps running for real. These
-   * deadlines are hand-rolled `setTimeout` calls rather than `AbortSignal.timeout`, which is the only
-   * reason a spy can see them at all. Keying on the delay is also why a saturating request must not
-   * use `PROXY_TIMEOUT_MS`: it equals `SOLVER_SLOT_WAIT_TIMEOUT_MS` and would be captured too.
-   */
-  function captureTimer(delayMs: number = SOLVER_SLOT_WAIT_TIMEOUT_MS): {
-    fire: () => void;
-    armed: (count?: number) => Promise<void>;
-    delays: number[];
-  } {
+  function captureTimers(delaysToCapture: number[] = [SOLVER_SLOT_WAIT_TIMEOUT_MS]): TimerWitness {
+    const primary = delaysToCapture[0] ?? SOLVER_SLOT_WAIT_TIMEOUT_MS;
     const delays: number[] = [];
-    const callbacks: Array<() => void> = [];
-    const waiters: Array<{ satisfied: () => boolean; resolve: () => void }> = [];
+    const captured = new Map<number, { delay: number; run: () => void }>();
+    const armedTotals = new Map<number, number>();
+    let nextId = 0;
 
-    timerSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler: TimerHandler, delay?: number, ...rest: unknown[]) => {
-      delays.push(delay ?? 0);
-      if (delay === delayMs) {
-        callbacks.push(handler as () => void);
-        for (let i = waiters.length - 1; i >= 0; i--) {
-          if (waiters[i]!.satisfied()) waiters.splice(i, 1)[0]!.resolve();
+    installedSpies.push(
+      vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler: TimerHandler, delay?: number, ...rest: unknown[]) => {
+        delays.push(delay ?? 0);
+        if (delay !== undefined && delaysToCapture.includes(delay)) {
+          const id = CAPTURED_TIMER_ID_BASE + nextId++;
+          captured.set(id, { delay, run: handler as () => void });
+          armedTotals.set(delay, (armedTotals.get(delay) ?? 0) + 1);
+          announce();
+          return id as unknown as ReturnType<typeof setTimeout>;
         }
-        return 0 as unknown as ReturnType<typeof setTimeout>;
-      }
-      return nativeSetTimeout(handler as () => void, delay, ...rest);
-    }) as typeof globalThis.setTimeout);
+        return nativeSetTimeout(handler as () => void, delay, ...rest);
+      }) as typeof globalThis.setTimeout),
+    );
+
+    installedSpies.push(
+      vi.spyOn(globalThis, 'clearTimeout').mockImplementation(((handle?: unknown) => {
+        if (typeof handle === 'number' && captured.delete(handle)) {
+          announce();
+          return;
+        }
+        nativeClearTimeout(handle as Parameters<typeof globalThis.clearTimeout>[0]);
+      }) as typeof globalThis.clearTimeout),
+    );
 
     return {
       delays,
-      fire: () => callbacks.splice(0).forEach((callback) => callback()),
-      /** Resolves once `count` such deadlines have been armed — the "it is queued now" barrier. */
-      armed: (count = 1) => {
-        const satisfied = () => callbacks.length >= count;
-        if (satisfied()) return Promise.resolve();
-        return new Promise<void>((resolve) => { waiters.push({ satisfied, resolve }); });
+      pending: (delayMs = primary) =>
+        [...captured.values()].filter((entry) => entry.delay === delayMs).length,
+      armed: (count = 1, delayMs = primary) =>
+        awaitCondition(() => (armedTotals.get(delayMs) ?? 0) >= count),
+      fire: (delayMs = primary) => {
+        for (const [id, entry] of [...captured.entries()]) {
+          if (entry.delay !== delayMs) continue;
+          captured.delete(id);
+          entry.run();
+        }
+        announce();
       },
     };
   }
 
+  /**
+   * Resolves once every request issued against `target`'s solver has declared itself: production
+   * either dispatches it (an arrival) or arms its slot-wait deadline (a queue entry), synchronously
+   * and exclusively. Summing the two is therefore a complete witness that the batch has been
+   * adjudicated, and — unlike waiting on arrivals alone — it stays honest when the bound over-admits,
+   * because the surplus arrival is counted rather than silently overtaken.
+   *
+   * Assert the exact split afterwards; this only establishes that everything has landed somewhere.
+   */
+  function accountedFor(
+    target: SolverStub,
+    timers: TimerWitness,
+    expected: { arrived: number; queued: number },
+  ): Promise<void> {
+    const total = expected.arrived + expected.queued;
+    return awaitCondition(() => target.observed + timers.pending() >= total);
+  }
+
   afterEach(async () => {
-    timerSpy?.mockRestore();
-    timerSpy = undefined;
-    drainStub = undefined;
+    for (const spy of installedSpies.splice(0)) spy.mockRestore();
     for (const open of openStubs.splice(0)) open.releaseAll();
     await Promise.allSettled(outstanding.splice(0));
+    conditions.splice(0);
     _resetSolverConcurrencyForTesting();
   });
 
-  return { max, track, stub, request, saturate, drain, captureTimer };
+  return { max, track, stub, request, saturate, captureTimers, accountedFor };
 }

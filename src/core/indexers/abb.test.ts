@@ -942,11 +942,12 @@ describe('AudioBookBayIndexer', () => {
       const stub = bound.stub(`${PROXY_URL}/v1`);
       await bound.saturate(stub, PROXY_URL);
 
-      const timer = bound.captureTimer();
+      const timer = bound.captureTimers();
       const searching = bound.track(proxiedIndexer.search('Brandon Sanderson'));
-      // The adapter reaches the transport after its own async work, so wait for the deadline it
-      // arms rather than for a clock: that arming IS the observable "this request is queued".
-      await timer.armed();
+      // The adapter reaches the transport after its own async work, so wait until it has declared
+      // itself either way. Over-admission then fails the pending() assertion instead of hanging.
+      await bound.accountedFor(stub, timer, { arrived: bound.max, queued: 1 });
+      expect(timer.pending()).toBe(1);
       timer.fire();
 
       await expect(searching).rejects.toThrow(/waiting for a request slot/);
@@ -966,9 +967,10 @@ describe('AudioBookBayIndexer', () => {
 
       // The search page has released its slot; fill the pool before enrichment resumes.
       await bound.saturate(stub, PROXY_URL);
-      const timer = bound.captureTimer();
+      const timer = bound.captureTimers();
       enrichment.open();
-      await timer.armed();
+      await bound.accountedFor(stub, timer, { arrived: bound.max + 1, queued: 1 });
+      expect(timer.pending()).toBe(1);
       timer.fire();
 
       await expect(searching).rejects.toThrow(/waiting for a request slot/);
@@ -986,9 +988,10 @@ describe('AudioBookBayIndexer', () => {
       });
       await stub.reaches(bound.max);
 
-      const timer = bound.captureTimer();
+      const timer = bound.captureTimers();
       const testing = proxiedIndexer.test();
-      await timer.armed();
+      await bound.accountedFor(stub, timer, { arrived: bound.max, queued: 1 });
+      expect(timer.pending()).toBe(1);
       timer.fire();
 
       const result = await testing;
