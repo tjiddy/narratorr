@@ -133,7 +133,7 @@ export async function retrySearch(
   try {
     // Retry runs the full ladder without scheduled cooldown; the whole ladder costs one budget attempt.
     const ladder = buildQueryLadder({ title: book.title, author: book.authors?.[0]?.name });
-    const ran = await runQueryLadder(ladder, createAggregateExecutor(book, indexerSearchService, NOOP_SINK));
+    const ran = await runQueryLadder(ladder, createAggregateExecutor(book, indexerSearchService, NOOP_SINK, log));
     const rawResults = ran.results;
 
     if (rawResults.length === 0) {

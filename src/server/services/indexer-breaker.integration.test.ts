@@ -43,6 +43,24 @@ function emptyResponse(titles: string[] = []) {
   };
 }
 
+/** Pull the single consumer-threw warn line, so callers assert its fields rather than its count. */
+function expectConsumerThrewLog(harness: { log: Record<string, unknown> }): [Record<string, unknown>, string] {
+  const calls = (harness.log.warn as ReturnType<typeof vi.fn>).mock.calls
+    .filter(([, message]) => message === 'Search event consumer threw — report dropped');
+  expect(calls).toHaveLength(1);
+  return calls[0] as [Record<string, unknown>, string];
+}
+
+/**
+ * `toMatchObject({ message })` reads through `Error.prototype.message`, so it passes against a raw
+ * Error and would stay green if `serializeError` were deleted. Pin the own-enumerable key set.
+ */
+function expectSerializedError(logged: unknown, message: string): void {
+  expect(logged).not.toBeInstanceOf(Error);
+  expect(Object.keys(logged as object).sort()).toEqual(['message', 'stack', 'type']);
+  expect(logged).toMatchObject({ message, type: 'Error' });
+}
+
 function build(rows = [ROW_A]) {
   const clock = { now: 0 };
   const db = createMockDb();
@@ -231,7 +249,7 @@ describe('#2376 AC6 — the skip is reported, not silent', () => {
     const harness = build();
     await trip(harness);
 
-    const executor = createAggregateExecutor({ id: 1, title: 'Kings' }, harness.search, NOOP_SINK);
+    const executor = createAggregateExecutor({ id: 1, title: 'Kings' }, harness.search, NOOP_SINK, inject<FastifyBaseLogger>(harness.log));
     const outcome = await executor({ query: 'kings', author: undefined, tag: 'full', lossy: false } as never);
 
     expect(outcome.succeeded).toBe(0);
@@ -243,7 +261,7 @@ describe('#2376 AC6 — the skip is reported, not silent', () => {
     await trip(harness);
     const sink = { ...NOOP_SINK, indexerError: vi.fn() } as SearchEventSink;
 
-    const executor = createAggregateExecutor({ id: 1, title: 'Kings' }, harness.search, sink);
+    const executor = createAggregateExecutor({ id: 1, title: 'Kings' }, harness.search, sink, inject<FastifyBaseLogger>(harness.log));
     await executor({ query: 'kings', author: undefined, tag: 'full', lossy: false } as never);
 
     expect(sink.indexerError).toHaveBeenCalledWith(1, 'Torznab', `Skipped — backing-off: ${REFUSED}`, 0);
@@ -255,7 +273,7 @@ describe('#2376 AC6 — the skip is reported, not silent', () => {
     const sink = { ...NOOP_SINK, indexerError: vi.fn(() => { throw new Error('sink exploded'); }) } as SearchEventSink;
     const before = harness.service.getFailureSnapshot(1);
 
-    const executor = createAggregateExecutor({ id: 1, title: 'Kings' }, harness.search, sink);
+    const executor = createAggregateExecutor({ id: 1, title: 'Kings' }, harness.search, sink, inject<FastifyBaseLogger>(harness.log));
 
     await expect(executor({ query: 'kings', author: undefined, tag: 'full', lossy: false } as never)).resolves.toMatchObject({ succeeded: 0 });
     expect(harness.service.getFailureSnapshot(1)).toMatchObject({
@@ -265,8 +283,115 @@ describe('#2376 AC6 — the skip is reported, not silent', () => {
     });
   });
 
+  // F2: a swallowed sink failure makes broken reporting indistinguishable from delivery. The
+  // earlier `info` line records the skip, not the sink's own failure.
+  it('logs the swallowed sink failure as a serialized error rather than discarding it', async () => {
+    const harness = build();
+    await trip(harness);
+    const sink = { ...NOOP_SINK, indexerError: vi.fn(() => { throw new Error('sink exploded'); }) } as SearchEventSink;
+
+    const executor = createAggregateExecutor({ id: 3, title: 'Kings' }, harness.search, sink, inject<FastifyBaseLogger>(harness.log));
+    await executor({ query: 'kings', author: undefined, tag: 'full', lossy: false } as never);
+
+    const [fields, message] = expectConsumerThrewLog(harness);
+    expect(message).toBe('Search event consumer threw — report dropped');
+    expect(fields).toMatchObject({ bookId: 3, indexer: 'Torznab', indexerId: 1 });
+    expectSerializedError(fields.error, 'sink exploded');
+  });
+
   it('adds no field to the SSE wire contract', () => {
     expect(Object.keys(indexerErrorEventSchema.shape).sort()).toEqual(['elapsedMs', 'error', 'indexerId', 'name']);
+  });
+});
+
+/**
+ * F1: every streaming callback is delivered to a consumer we do not control — an SSE writer on a
+ * disconnected socket, a sink built by a route. A throw from one used to land in the leg's
+ * transport catch and circuit-break a perfectly healthy indexer.
+ */
+describe('#2376 AC6 — a throwing streaming consumer cannot commit a transport failure', () => {
+  beforeEach(() => initializeKey(TEST_KEY));
+  afterEach(() => { _resetKey(); vi.restoreAllMocks(); });
+
+  const boom = () => { throw new Error('consumer socket closed'); };
+
+  it('leaves the breaker pristine and still returns results when onComplete throws', async () => {
+    const harness = build();
+    harness.adapterSearch.mockResolvedValue(emptyResponse(['Kings']));
+
+    const results = await harness.search.searchAllStreaming('kings', undefined, new Map(), {
+      onComplete: boom, onError: vi.fn(),
+    });
+
+    expect(harness.service.getFailureSnapshot(1)).toMatchObject({ state: 'ok', consecutiveFailures: 0 });
+    // The leg's results are recorded before the callback, so a broken consumer costs nothing.
+    expect(results).toHaveLength(1);
+    const [fields] = expectConsumerThrewLog(harness);
+    expect(fields).toMatchObject({ indexer: 'Torznab', indexerId: 1 });
+    expectSerializedError(fields.error, 'consumer socket closed');
+  });
+
+  it('leaves the breaker pristine when the policy-refusal onError throws', async () => {
+    const harness = build();
+    harness.getAdapter.mockImplementation(async () => ({
+      type: 'myanonamouse', name: 'MAM',
+      refreshStatus: vi.fn().mockResolvedValue({ isVip: false, classname: 'Mouse' }),
+      search: harness.adapterSearch, test: vi.fn(),
+    }) as never);
+
+    await harness.search.searchAllStreaming('kings', undefined, new Map(), {
+      onComplete: vi.fn(), onError: boom,
+    });
+
+    expect(harness.service.getFailureSnapshot(1)).toMatchObject({ state: 'ok', consecutiveFailures: 0 });
+    expectConsumerThrewLog(harness);
+  });
+
+  it('leaves the breaker untouched when the breaker-skip onError throws', async () => {
+    const harness = build();
+    harness.adapterSearch.mockRejectedValue(new Error(REFUSED));
+    await harness.search.searchAllWithStatus('kings');
+    const before = harness.service.getFailureSnapshot(1);
+
+    await harness.search.searchAllStreaming('kings', undefined, new Map(), {
+      onComplete: vi.fn(), onError: boom,
+    });
+
+    // Only the suppression counter moves — the skip itself is still counted.
+    expect(harness.service.getFailureSnapshot(1)).toMatchObject({
+      state: before.state,
+      consecutiveFailures: before.consecutiveFailures,
+      nextAttemptAt: before.nextAttemptAt,
+      reason: before.reason,
+    });
+    expectConsumerThrewLog(harness);
+  });
+
+  it('still commits the transport failure when a real failure meets a throwing onError', async () => {
+    const harness = build();
+    harness.adapterSearch.mockRejectedValue(new Error(REFUSED));
+
+    await harness.search.searchAllStreaming('kings', undefined, new Map(), {
+      onComplete: vi.fn(), onError: boom,
+    });
+
+    // The control: isolating callbacks must not also isolate genuine transport outcomes.
+    expect(harness.service.getFailureSnapshot(1)).toMatchObject({ state: 'backing-off', consecutiveFailures: 1, reason: REFUSED });
+  });
+
+  it('does not let a throwing consumer suppress a sibling indexer in the same fan-out', async () => {
+    const harness = build([ROW_A, ROW_B]);
+    harness.adapterSearch.mockResolvedValue(emptyResponse(['Kings']));
+    const onComplete = vi.fn().mockImplementationOnce(boom);
+
+    const results = await harness.search.searchAllStreaming('kings', undefined, new Map(), {
+      onComplete, onError: vi.fn(),
+    });
+
+    expect(onComplete).toHaveBeenCalledTimes(2);
+    expect(results).toHaveLength(2);
+    expect(harness.service.getFailureSnapshot(1).state).toBe('ok');
+    expect(harness.service.getFailureSnapshot(2).state).toBe('ok');
   });
 });
 
@@ -433,7 +558,7 @@ describe('#2376 AC15 — the ladder reads suppressed as an outage, never an answ
     await harness.search.searchAllWithStatus('the way of kings');
     harness.clock.now += 1_000;
 
-    const executor = createAggregateExecutor({ id: 1, title: 'The Way of Kings' }, harness.search, NOOP_SINK);
+    const executor = createAggregateExecutor({ id: 1, title: 'The Way of Kings' }, harness.search, NOOP_SINK, inject<FastifyBaseLogger>(harness.log));
     const spy = vi.fn(executor);
     const ran = await runQueryLadder(buildQueryLadder({ title: 'The Way of Kings', author: 'Brandon Sanderson' }), spy);
 
@@ -456,7 +581,7 @@ describe('#2376 AC15 — the ladder reads suppressed as an outage, never an answ
     expect(outcome).toMatchObject({ succeeded: 1, failed: 0 });
     expect(outcome.skipped).toHaveLength(1);
 
-    const spy = vi.fn(createAggregateExecutor({ id: 1, title: 'The Way of Kings' }, harness.search, NOOP_SINK));
+    const spy = vi.fn(createAggregateExecutor({ id: 1, title: 'The Way of Kings' }, harness.search, NOOP_SINK, inject<FastifyBaseLogger>(harness.log)));
     const ladder = buildQueryLadder({ title: 'The Way of Kings', author: 'Brandon Sanderson' });
     const ran = await runQueryLadder(ladder, spy);
 

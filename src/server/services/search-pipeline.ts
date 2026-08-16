@@ -447,7 +447,7 @@ export async function searchAndGrabForBook(
   const sink = broadcaster ? createBroadcasterSink(book, broadcaster, log) : NOOP_SINK;
   const outcome = await withSearchDeadline({ budgetMs: SEARCH_DEADLINE_MS, bookId: book.id, log }, async (signal) => {
     const ran = await runBookQueryLadder(book, {
-      indexerSearchService, sink, signal, streaming: broadcaster !== undefined,
+      indexerSearchService, sink, signal, log, streaming: broadcaster !== undefined,
       searchLadderCooldown: deps.searchLadderCooldown, ladderMode: deps.ladderMode ?? 'always',
     });
     return runSearchAndGrab(book, deps, sink, ran);

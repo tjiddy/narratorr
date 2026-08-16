@@ -165,7 +165,7 @@ export async function v1ActionsRoutes(app: FastifyInstance, deps: V1ActionsRoute
           const ladder = buildQueryLadder({ title: book.title, author, query });
           const { results: allResults } = await runQueryLadder(
             ladder,
-            createAggregateExecutor(book, deps.indexerSearchService, NOOP_SINK),
+            createAggregateExecutor(book, deps.indexerSearchService, NOOP_SINK, request.log),
           );
 
           // Match UI filtering/ranking; `total` counts filtered results and duration uses the shared resolver.

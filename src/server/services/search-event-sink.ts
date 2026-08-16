@@ -2,6 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '@core/index.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import { safeEmit } from '../utils/safe-emit.js';
+import { serializeError } from '../utils/serialize-error.js';
 
 export type SearchBook = {
   id: number;
@@ -25,6 +26,26 @@ export interface SearchEventSink {
   searchComplete(outcome: 'no_results' | 'grabbed' | 'skipped' | 'timed_out'): void;
   grabbed(best: SearchResult): void;
   grabError(error: Error, releaseTitle: string): void;
+}
+
+/**
+ * The single home for "a search consumer's failure is its own, not the search's".
+ *
+ * Two things ride on it. A report that throws must not cost the caller results it already holds;
+ * and — the sharper one — a callback delivered from inside a per-indexer leg must never be
+ * mistaken for a transport outcome, or a broken SSE consumer would circuit-break a healthy
+ * indexer (#2376). Both consequences are silent, so the swallow logs rather than discards.
+ */
+export function deliverSearchReport(
+  log: FastifyBaseLogger,
+  context: Record<string, unknown>,
+  report: () => void,
+): void {
+  try {
+    report();
+  } catch (error: unknown) {
+    log.warn({ ...context, error: serializeError(error) }, 'Search event consumer threw — report dropped');
+  }
 }
 
 export const NOOP_SINK: SearchEventSink = {

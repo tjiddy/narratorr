@@ -2,7 +2,9 @@
  * I/O half of the query ladder: the pure ladder chooses queries while this module executes them
  * and settles cooldown state.
  */
+import type { FastifyBaseLogger } from 'fastify';
 import type { SearchBook, SearchEventSink } from './search-event-sink.js';
+import { deliverSearchReport } from './search-event-sink.js';
 import { formatIndexerSkip } from './indexer-failure-state.js';
 import type { IndexerSearchService } from './indexer-search.service.js';
 import type { SearchLadderCooldown } from './search-ladder-cooldown.js';
@@ -62,6 +64,7 @@ export function createAggregateExecutor(
   book: SearchBook,
   indexerSearchService: IndexerSearchService,
   sink: SearchEventSink,
+  log: FastifyBaseLogger,
   signal?: AbortSignal,
 ): (rung: Rung) => Promise<RungExecution> {
   return async (rung: Rung) => {
@@ -73,13 +76,8 @@ export function createAggregateExecutor(
       ...(signal !== undefined && { signal }),
     });
     for (const skip of skipped) {
-      // Best-effort: reporting a skip must never cost the caller results it already holds. The
-      // unconditional `info` line at the skip site keeps the event visible either way.
-      try {
-        sink.indexerError(skip.indexerId, skip.name, formatIndexerSkip(skip.state, skip.reason), 0);
-      } catch {
-        // The sink's own problem, not the search's.
-      }
+      deliverSearchReport(log, { bookId: book.id, indexer: skip.name, indexerId: skip.indexerId }, () =>
+        sink.indexerError(skip.indexerId, skip.name, formatIndexerSkip(skip.state, skip.reason), 0));
     }
     return { results, succeeded };
   };
@@ -93,6 +91,7 @@ export interface BookLadderRunDeps {
   searchLadderCooldown?: SearchLadderCooldown | undefined;
   /** `'scheduled'` consults and records the cooldown; `'always'` does neither. */
   ladderMode: 'scheduled' | 'always';
+  log: FastifyBaseLogger;
   /** The outer search deadline; composed into every indexer leg, never substituted for one. */
   signal?: AbortSignal | undefined;
 }
@@ -109,7 +108,7 @@ export async function runBookQueryLadder(book: SearchBook, deps: BookLadderRunDe
 
   const execute = deps.streaming
     ? await createStreamingExecutor(book, indexerSearchService, sink, deps.signal)
-    : createAggregateExecutor(book, indexerSearchService, sink, deps.signal);
+    : createAggregateExecutor(book, indexerSearchService, sink, deps.log, deps.signal);
 
   const ran = await runQueryLadder(ladder, execute);
 

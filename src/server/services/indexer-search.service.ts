@@ -5,9 +5,11 @@ import { indexers } from '@db/schema.js';
 import {
   parseAudiobookTitle,
   scoreResult,
+  type IndexerAdapter,
   type SearchResult,
   type SearchOptions,
 } from '@core/index.js';
+import type { UnsatisfiedStatus } from '@core/utils/mam-unsatisfied.js';
 import type { SettingsService } from './settings.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -15,6 +17,7 @@ import { logIndexerSearchTrace } from './indexer-search-trace.js';
 import { preSearchRefresh } from './indexer-pre-search-refresh.js';
 import { cleanIndexerQuery, cleanIndexerSearchOptions } from './indexer-query.js';
 import type { IndexerService } from './indexer.service.js';
+import { deliverSearchReport } from './search-event-sink.js';
 import {
   describeIndexerSkip,
   formatIndexerSkip,
@@ -106,6 +109,11 @@ export class IndexerSearchService {
   private commitLegFailure(indexer: IndexerRow, error: unknown, generation: number, signal?: AbortSignal): void {
     if (signal?.aborted) return;
     this.indexerService.recordSearchFailure(indexer.id, error, generation);
+  }
+
+  /** Every consumer callback goes through here; see `deliverSearchReport` for why. */
+  private deliverLegReport(indexer: IndexerRow, report: () => void): void {
+    deliverSearchReport(this.log, { indexer: indexer.name, indexerId: indexer.id }, report);
   }
 
   private parseReleaseNames(results: SearchResult[], indexerName?: string): void {
@@ -350,15 +358,21 @@ export class IndexerSearchService {
           return;
         }
 
+        const report = (deliver: () => void) => this.deliverLegReport(indexer, deliver);
+
         // Before any await, so a reopened gate admits exactly one leg across the fan-out.
         const gate = this.reserveIndexerLeg(indexer);
         if (!gate.allowed) {
           // The existing error channel, so the skip reaches SearchEventSink.indexerError and the
           // `indexer-error` SSE frame with no new wire event. elapsedMs 0 marks a zero-I/O skip.
-          callbacks.onError(indexer.id, indexer.name, formatIndexerSkip(gate.skip.state, gate.skip.reason), 0);
+          report(() => callbacks.onError(indexer.id, indexer.name, formatIndexerSkip(gate.skip.state, gate.skip.reason), 0));
           return;
         }
 
+        // The try wraps the TRANSPORT only. Everything after it — parsing, and every consumer
+        // callback — used to sit inside, so a throwing SSE consumer committed a transport
+        // failure and circuit-broke a healthy indexer.
+        let settled: { response: Awaited<ReturnType<IndexerAdapter['search']>>; unsatisfied?: UnsatisfiedStatus; elapsedMs: number };
         try {
           const adapter = await this.indexerService.getAdapter(indexer);
 
@@ -366,21 +380,17 @@ export class IndexerSearchService {
           if (refresh.skip) {
             // A policy refusal is not a transport failure; nothing is recorded (AC14).
             const elapsedMs = Date.now() - indexerStartMs;
-            callbacks.onError(indexer.id, indexer.name, refresh.error ?? 'Indexer skipped', elapsedMs);
+            report(() => callbacks.onError(indexer.id, indexer.name, refresh.error ?? 'Indexer skipped', elapsedMs));
             return;
           }
 
           const response = await adapter.search(transportQuery, { ...searchOptions, signal });
           this.indexerService.recordSearchSuccess(indexer.id, gate.generation);
-          logIndexerSearchTrace(this.log, indexer, response);
-          const elapsedMs = Date.now() - indexerStartMs;
-          const mapped = response.results.map(r => ({
-            ...r, indexerId: indexer.id, indexerPriority: indexer.priority,
+          settled = {
+            response,
             ...(refresh.unsatisfied !== undefined && { unsatisfied: refresh.unsatisfied }),
-          }));
-          this.parseReleaseNames(mapped, indexer.name);
-          perIndexerResults.set(indexer.id, mapped);
-          callbacks.onComplete(indexer.id, indexer.name, mapped.length, elapsedMs);
+            elapsedMs: Date.now() - indexerStartMs,
+          };
         } catch (error: unknown) {
           const elapsedMs = Date.now() - indexerStartMs;
           // A cancelled leg is neither a success nor a failure, whichever signal cancelled it.
@@ -389,13 +399,24 @@ export class IndexerSearchService {
           if (outerSignal?.aborted) throw error;
           if (perIndexerSignal?.aborted) {
             this.log.debug({ indexer: indexer.name }, 'Indexer search cancelled');
-            callbacks.onCancelled?.(indexer.id, indexer.name);
+            report(() => callbacks.onCancelled?.(indexer.id, indexer.name));
             return;
           }
           const message = getErrorMessage(error);
           this.log.warn({ indexer: indexer.name, query: transportQuery, error: serializeError(error) }, 'Error searching indexer');
-          callbacks.onError(indexer.id, indexer.name, message, elapsedMs);
+          report(() => callbacks.onError(indexer.id, indexer.name, message, elapsedMs));
+          return;
         }
+
+        logIndexerSearchTrace(this.log, indexer, settled.response);
+        const mapped = settled.response.results.map(r => ({
+          ...r, indexerId: indexer.id, indexerPriority: indexer.priority,
+          ...(settled.unsatisfied !== undefined && { unsatisfied: settled.unsatisfied }),
+        }));
+        this.parseReleaseNames(mapped, indexer.name);
+        // Recorded before the callback, so a throwing consumer cannot lose this leg's results.
+        perIndexerResults.set(indexer.id, mapped);
+        report(() => callbacks.onComplete(indexer.id, indexer.name, mapped.length, settled.elapsedMs));
       }),
     );
 
