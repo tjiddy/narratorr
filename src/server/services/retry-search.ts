@@ -12,6 +12,7 @@ import { buildNarratorPriority, applyMultiPartFilterAndRank, buildSearchFilterOp
 import { buildQueryLadder, runQueryLadder, type LadderRun } from './search-query-ladder.js';
 import { applyUnsatisfiedLimitGate } from './unsatisfied-limit-gate.js';
 import { createAggregateExecutor } from './search-ladder-execution.js';
+import { NOOP_SINK } from './search-event-sink.js';
 import type { SearchResult } from '@core/index.js';
 import { recordGrabBlockedUnsatisfiedEvent, recordSearchRelaxedHeldEvent } from '../utils/download-side-effects.js';
 import { resolveBookQualityInputs } from '@core/utils/index.js';
@@ -132,7 +133,7 @@ export async function retrySearch(
   try {
     // Retry runs the full ladder without scheduled cooldown; the whole ladder costs one budget attempt.
     const ladder = buildQueryLadder({ title: book.title, author: book.authors?.[0]?.name });
-    const ran = await runQueryLadder(ladder, createAggregateExecutor(book, indexerSearchService));
+    const ran = await runQueryLadder(ladder, createAggregateExecutor(book, indexerSearchService, NOOP_SINK));
     const rawResults = ran.results;
 
     if (rawResults.length === 0) {

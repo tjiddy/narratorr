@@ -15,8 +15,26 @@ import { logIndexerSearchTrace } from './indexer-search-trace.js';
 import { preSearchRefresh } from './indexer-pre-search-refresh.js';
 import { cleanIndexerQuery, cleanIndexerSearchOptions } from './indexer-query.js';
 import type { IndexerService } from './indexer.service.js';
+import {
+  describeIndexerSkip,
+  formatIndexerSkip,
+  type IndexerSkip,
+} from './indexer-failure-state.js';
 import type { IndexerRow } from './types.js';
 
+export type { IndexerSkip } from './indexer-failure-state.js';
+
+export interface AggregateSearchStatus {
+  results: SearchResult[];
+  succeeded: number;
+  failed: number;
+  /**
+   * Breaker-suppressed indexers. Counted here and NOWHERE else: `succeeded` would make an
+   * all-suppressed search read as an answered zero and march the ladder through all eight rungs
+   * (the amplification path #2376 exists to close), and `failed` means "tried and broke".
+   */
+  skipped: IndexerSkip[];
+}
 
 /** `AbortSignal.any` requires at least one input, and either side may be absent. */
 function composeSignals(a?: AbortSignal, b?: AbortSignal): AbortSignal | undefined {
@@ -48,9 +66,46 @@ export class IndexerSearchService {
   private preSearchRefreshDeps(signal?: AbortSignal) {
     return {
       log: this.log,
-      update: (id: number, data: { settings: Record<string, unknown> }) => this.indexerService.update(id, data),
+      // The non-clearing writer: this fires mid-leg, after the gate has been reserved, so the
+      // clearing mutator would bump the generation and discard this very leg's outcome (AC17).
+      update: (id: number, data: { settings: Record<string, unknown> }) => this.indexerService.persistObservedSettings(id, data.settings),
       signal,
     };
+  }
+
+  /**
+   * AC21's gate, and the one place a skip is reported. Synchronous by contract — every caller
+   * invokes it as the first statement of its per-indexer leg, before any `await`, so a reopened
+   * window admits exactly one attempt process-wide across all three entry points.
+   */
+  private reserveIndexerLeg(indexer: IndexerRow): { allowed: true; generation: number } | { allowed: false; skip: IndexerSkip } {
+    const decision = this.indexerService.reserveSearchAttempt(indexer.id);
+    if (decision.allowed) return { allowed: true, generation: decision.generation };
+
+    const skip = describeIndexerSkip(indexer.id, indexer.name, decision.snapshot);
+    // `info`, not `debug`: two of the three entry points have no sink at all, and a silent skip
+    // that makes a wanted book unobtainable must stay visible without enabling debug.
+    this.log.info(
+      {
+        indexer: indexer.name,
+        indexerId: indexer.id,
+        breakerState: skip.state,
+        reason: skip.reason,
+        nextAttemptAt: decision.snapshot.nextAttemptAt,
+      },
+      'Indexer search skipped — breaker open',
+    );
+    return { allowed: false, skip };
+  }
+
+  /**
+   * The failure arm of every leg. Cancellation is neither a success nor a failure: the verdict
+   * is the signal's, never the error's shape, or a slow-but-working indexer would trip its own
+   * breaker every time the book deadline fired.
+   */
+  private commitLegFailure(indexer: IndexerRow, error: unknown, generation: number, signal?: AbortSignal): void {
+    if (signal?.aborted) return;
+    this.indexerService.recordSearchFailure(indexer.id, error, generation);
   }
 
   private parseReleaseNames(results: SearchResult[], indexerName?: string): void {
@@ -80,13 +135,24 @@ export class IndexerSearchService {
     return all.filter((i) => IndexerSearchService.RSS_CAPABLE_TYPES.includes(i.type));
   }
 
-  async pollRss(indexer: IndexerRow): Promise<SearchResult[]> {
-    const adapter = await this.indexerService.getAdapter(indexer);
-    const response = await adapter.search('');
-    logIndexerSearchTrace(this.log, indexer, response);
-    const results = response.results.map(r => ({ ...r, indexerId: indexer.id, indexerPriority: indexer.priority }));
-    this.parseReleaseNames(results, indexer.name);
-    return results;
+  /** `skipped` is present only when the breaker suppressed the poll, so its one caller can tell
+   *  a real empty feed from a zero-I/O skip. */
+  async pollRss(indexer: IndexerRow): Promise<{ results: SearchResult[]; skipped?: IndexerSkip }> {
+    const gate = this.reserveIndexerLeg(indexer);
+    if (!gate.allowed) return { results: [], skipped: gate.skip };
+
+    try {
+      const adapter = await this.indexerService.getAdapter(indexer);
+      const response = await adapter.search('');
+      this.indexerService.recordSearchSuccess(indexer.id, gate.generation);
+      logIndexerSearchTrace(this.log, indexer, response);
+      const results = response.results.map(r => ({ ...r, indexerId: indexer.id, indexerPriority: indexer.priority }));
+      this.parseReleaseNames(results, indexer.name);
+      return { results };
+    } catch (error: unknown) {
+      this.commitLegFailure(indexer, error, gate.generation);
+      throw error;
+    }
   }
 
   async getEnabledIndexers(): Promise<Array<{ id: number; name: string }>> {
@@ -163,32 +229,56 @@ export class IndexerSearchService {
   async searchAllWithStatus(
     query: string,
     options?: SearchOptions,
-  ): Promise<{ results: SearchResult[]; succeeded: number; failed: number }> {
+  ): Promise<AggregateSearchStatus> {
     const prep = await this.prepareSearch(query, options, 'searchAll');
-    if (!prep) return { results: [], succeeded: 0, failed: 0 };
+    if (!prep) return { results: [], succeeded: 0, failed: 0, skipped: [] };
     const { transportQuery, searchOptions, enabledIndexers } = prep;
 
     this.log.debug({ query: transportQuery, indexers: enabledIndexers.map(i => i.name), count: enabledIndexers.length }, 'Searching enabled indexers');
 
+    const skipped: IndexerSkip[] = [];
     const settlements = await Promise.allSettled(
       enabledIndexers.map(async (indexer) => {
-        const adapter = await this.indexerService.getAdapter(indexer);
+        // First statement, before any await: allSettled starts every callback synchronously up
+        // to its first await, which is what makes the gate atomic across the fan-out.
+        const gate = this.reserveIndexerLeg(indexer);
+        if (!gate.allowed) {
+          skipped.push(gate.skip);
+          return null;
+        }
 
-        const refresh = await preSearchRefresh(adapter, indexer, this.preSearchRefreshDeps(searchOptions?.signal));
+        let adapter;
+        let refresh;
+        try {
+          adapter = await this.indexerService.getAdapter(indexer);
+          refresh = await preSearchRefresh(adapter, indexer, this.preSearchRefreshDeps(searchOptions?.signal));
+        } catch (error: unknown) {
+          this.commitLegFailure(indexer, error, gate.generation, searchOptions?.signal);
+          throw error;
+        }
+
         if (refresh.skip) {
+          // A policy refusal, not a transport failure: the indexer is reachable and no breaker
+          // can improve the operator's own account class, so nothing is recorded.
           this.log.warn({ indexer: indexer.name, error: refresh.error }, 'Indexer skipped by pre-search refresh');
           throw new Error(refresh.error ?? 'Indexer skipped');
         }
 
-        const response = await adapter.search(transportQuery, searchOptions);
-        logIndexerSearchTrace(this.log, indexer, response);
-        // Stamp the refresh's observation where indexerId is stamped: it describes this search only.
-        const mapped = response.results.map(r => ({
-          ...r, indexerId: indexer.id, indexerPriority: indexer.priority,
-          ...(refresh.unsatisfied !== undefined && { unsatisfied: refresh.unsatisfied }),
-        }));
-        this.parseReleaseNames(mapped, indexer.name);
-        return mapped;
+        try {
+          const response = await adapter.search(transportQuery, searchOptions);
+          this.indexerService.recordSearchSuccess(indexer.id, gate.generation);
+          logIndexerSearchTrace(this.log, indexer, response);
+          // Stamp the refresh's observation where indexerId is stamped: it describes this search only.
+          const mapped = response.results.map(r => ({
+            ...r, indexerId: indexer.id, indexerPriority: indexer.priority,
+            ...(refresh.unsatisfied !== undefined && { unsatisfied: refresh.unsatisfied }),
+          }));
+          this.parseReleaseNames(mapped, indexer.name);
+          return mapped;
+        } catch (error: unknown) {
+          this.commitLegFailure(indexer, error, gate.generation, searchOptions?.signal);
+          throw error;
+        }
       }),
     );
 
@@ -204,9 +294,12 @@ export class IndexerSearchService {
       const settlement = settlements[i]!;
       const name = enabledIndexers[i]!.name;
       if (settlement.status === 'fulfilled') {
+        const value = settlement.value;
+        // A suppressed leg fulfils with null: neither tried nor broke, so neither counter moves.
+        perIndexerCounts[name] = value?.length ?? 0;
+        if (value === null) continue;
         succeeded++;
-        perIndexerCounts[name] = settlement.value.length;
-        results.push(...settlement.value);
+        results.push(...value);
       } else {
         failed++;
         perIndexerCounts[name] = 0;
@@ -219,7 +312,7 @@ export class IndexerSearchService {
     this.applyMatchScore(results, options);
 
     this.log.debug({ totalResults: results.length }, 'Search complete');
-    return { results, succeeded, failed };
+    return { results, succeeded, failed, skipped };
   }
 
   /** Stream per-indexer settlement callbacks and return aggregate noncancelled results. */
@@ -257,17 +350,28 @@ export class IndexerSearchService {
           return;
         }
 
+        // Before any await, so a reopened gate admits exactly one leg across the fan-out.
+        const gate = this.reserveIndexerLeg(indexer);
+        if (!gate.allowed) {
+          // The existing error channel, so the skip reaches SearchEventSink.indexerError and the
+          // `indexer-error` SSE frame with no new wire event. elapsedMs 0 marks a zero-I/O skip.
+          callbacks.onError(indexer.id, indexer.name, formatIndexerSkip(gate.skip.state, gate.skip.reason), 0);
+          return;
+        }
+
         try {
           const adapter = await this.indexerService.getAdapter(indexer);
 
           const refresh = await preSearchRefresh(adapter, indexer, this.preSearchRefreshDeps(signal));
           if (refresh.skip) {
+            // A policy refusal is not a transport failure; nothing is recorded (AC14).
             const elapsedMs = Date.now() - indexerStartMs;
             callbacks.onError(indexer.id, indexer.name, refresh.error ?? 'Indexer skipped', elapsedMs);
             return;
           }
 
           const response = await adapter.search(transportQuery, { ...searchOptions, signal });
+          this.indexerService.recordSearchSuccess(indexer.id, gate.generation);
           logIndexerSearchTrace(this.log, indexer, response);
           const elapsedMs = Date.now() - indexerStartMs;
           const mapped = response.results.map(r => ({
@@ -279,6 +383,8 @@ export class IndexerSearchService {
           callbacks.onComplete(indexer.id, indexer.name, mapped.length, elapsedMs);
         } catch (error: unknown) {
           const elapsedMs = Date.now() - indexerStartMs;
+          // A cancelled leg is neither a success nor a failure, whichever signal cancelled it.
+          this.commitLegFailure(indexer, error, gate.generation, signal);
           // One catch, two verdicts: the outer deadline must propagate, a per-indexer cancel must not.
           if (outerSignal?.aborted) throw error;
           if (perIndexerSignal?.aborted) {

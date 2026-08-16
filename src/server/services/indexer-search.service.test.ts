@@ -87,7 +87,7 @@ describe('IndexerSearchService', () => {
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
-      const results = await searchService.pollRss(torznabIndexer);
+      const { results } = await searchService.pollRss(torznabIndexer);
 
       expect(mockAdapter.search).toHaveBeenCalledWith('');
       expect(results).toHaveLength(1);
@@ -103,7 +103,7 @@ describe('IndexerSearchService', () => {
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
-      const results = await searchService.pollRss(newznabIndexer);
+      const { results } = await searchService.pollRss(newznabIndexer);
       expect(results).toEqual([]);
     });
 
@@ -119,7 +119,7 @@ describe('IndexerSearchService', () => {
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
-      const results = await searchService.pollRss(torznabIndexer);
+      const { results } = await searchService.pollRss(torznabIndexer);
 
       expect(results).toHaveLength(1);
       expect(results[0]!.indexerId).toBe(7);
@@ -139,7 +139,7 @@ describe('IndexerSearchService', () => {
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
-      const results = await searchService.pollRss(torznabIndexer);
+      const { results } = await searchService.pollRss(torznabIndexer);
 
       expect(results).toHaveLength(3);
       for (const result of results) {
@@ -1176,7 +1176,7 @@ describe('IndexerSearchService', () => {
 
         const outcome = await searchService.searchAllWithStatus('test', { title: 'test', signal: new AbortController().signal });
 
-        expect(outcome).toEqual({ results: [], succeeded: 0, failed: 1 });
+        expect(outcome).toEqual({ results: [], succeeded: 0, failed: 1, skipped: [] });
       });
 
       it('forwards the signal to the pre-search refresh hook', async () => {
@@ -1217,19 +1217,19 @@ describe('IndexerSearchService', () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
       vi.spyOn(service, 'getAdapter').mockResolvedValue({ search: vi.fn().mockResolvedValue(searchResponse([])), test: vi.fn() } as never);
 
-      expect(await searchService.searchAllWithStatus('test')).toEqual({ results: [], succeeded: 1, failed: 0 });
+      expect(await searchService.searchAllWithStatus('test')).toEqual({ results: [], succeeded: 1, failed: 0, skipped: [] });
     });
 
     it('reports succeeded 0 when every indexer rejects — indistinguishable from a zero without it', async () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer, secondIndexer]));
       vi.spyOn(service, 'getAdapter').mockResolvedValue({ search: vi.fn().mockRejectedValue(new Error('boom')), test: vi.fn() } as never);
 
-      expect(await searchService.searchAllWithStatus('test')).toEqual({ results: [], succeeded: 0, failed: 2 });
+      expect(await searchService.searchAllWithStatus('test')).toEqual({ results: [], succeeded: 0, failed: 2, skipped: [] });
     });
 
     it('reports succeeded 0 when the query normalizes away, preserving the short-circuit', async () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
-      expect(await searchService.searchAllWithStatus('...')).toEqual({ results: [], succeeded: 0, failed: 0 });
+      expect(await searchService.searchAllWithStatus('...')).toEqual({ results: [], succeeded: 0, failed: 0, skipped: [] });
     });
 
     it('leaves searchAll returning the bare array so pre-#2104 callers are untouched', async () => {
@@ -1361,11 +1361,13 @@ describe('IndexerSearchService', () => {
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
-      const updateSpy = vi.spyOn(service, 'update').mockResolvedValue(mamIndexer as never);
+      const persistSpy = vi.spyOn(service, 'persistObservedSettings').mockResolvedValue(mamIndexer as never);
+      const clearingSpy = vi.spyOn(service, 'update');
       const results = await searchService.searchAll('test');
-      expect(updateSpy).toHaveBeenCalledWith(10, {
-        settings: expect.objectContaining({ isVip: false, classname: 'Power User' }),
-      });
+      expect(persistSpy).toHaveBeenCalledWith(10, expect.objectContaining({ isVip: false, classname: 'Power User' }));
+      // #2376 AC17: this write lands mid-leg, after the gate was reserved — routing it through
+      // the clearing mutator would bump the generation and discard this leg's own outcome.
+      expect(clearingSpy).not.toHaveBeenCalled();
       expect(mockAdapter.search).toHaveBeenCalled();
       expect(results).toHaveLength(1);
     });
@@ -1379,7 +1381,7 @@ describe('IndexerSearchService', () => {
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
-      const updateSpy = vi.spyOn(service, 'update').mockResolvedValue(mamIndexer as never);
+      const updateSpy = vi.spyOn(service, 'persistObservedSettings').mockResolvedValue(mamIndexer as never);
       const results = await searchService.searchAll('test');
       expect(updateSpy).not.toHaveBeenCalled();
       expect(mockAdapter.search).toHaveBeenCalled();
@@ -1639,7 +1641,7 @@ describe('IndexerSearchService', () => {
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
-      const results = await searchService.pollRss(rssIndexer);
+      const { results } = await searchService.pollRss(rssIndexer);
       expect(results[0]!.indexerPriority).toBe(75);
     });
 

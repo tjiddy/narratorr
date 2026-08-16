@@ -178,7 +178,7 @@ describe('#2310 grab integrity and excluded surfaces — real download chain', (
     getAdapter = vi.fn().mockResolvedValue({ addDownload, removeDownload });
     orchestrator = buildOrchestrator();
     indexerSearchService = inject<IndexerSearchService>({
-      searchAllWithStatus: vi.fn().mockResolvedValue({ results: [searchHit()], succeeded: 1, failed: 0 }),
+      searchAllWithStatus: vi.fn().mockResolvedValue({ results: [searchHit()], succeeded: 1, failed: 0, skipped: [] }),
     });
   });
 
@@ -387,7 +387,7 @@ describe('#2310 grab integrity and excluded surfaces — real download chain', (
       vi.mocked(fetchWithSsrfRedirect).mockResolvedValue(new Response(Buffer.from('<nzb/>'), { status: 200 }));
       vi.mocked(indexerSearchService.searchAllWithStatus).mockResolvedValue({
         results: [{ ...searchHit(), protocol: 'usenet', downloadUrl: 'https://indexer.test/getnzb/abc.nzb' }],
-        succeeded: 1, failed: 0,
+        succeeded: 1, failed: 0, skipped: [],
       });
 
       await expect(searchAndGrabForBook(book, deps())).resolves.toMatchObject({ result: 'grabbed' });

@@ -42,7 +42,7 @@ const { lookup: dnsLookup } = await import('node:dns/promises');
  * Pre-ladder fixtures answer identically on every rung (#2104 D16).
  */
 function withStatus(results: SearchResult[]) {
-  return { results, succeeded: 1, failed: 0 };
+  return { results, succeeded: 1, failed: 0, skipped: [] };
 }
 
 const mockIndexer = {
@@ -3377,6 +3377,7 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
         results: byQuery[query] ?? [],
         succeeded: opts.succeeded ?? 1,
         failed: 0,
+        skipped: [],
       })),
     } as unknown as IndexerSearchService;
   }
@@ -3835,7 +3836,7 @@ describe('searchAndGrabForBook — query ladder (#2104)', () => {
   // One answered-empty indexer makes the aggregate a genuine zero despite another failure.
   it('advances when at least one indexer answered but the aggregate is empty (AC35)', async () => {
     const svc = {
-      searchAllWithStatus: vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 1 }),
+      searchAllWithStatus: vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 1, skipped: [] }),
     } as unknown as IndexerSearchService;
 
     await searchAndGrabForBook(churnBook, deps(svc));

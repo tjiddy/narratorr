@@ -14,7 +14,6 @@
  */
 import { IndexerAuthError } from '@core/indexers/errors.js';
 import { classifyFailure, describeTransportError } from '@core/utils/failure-classification.js';
-import { getErrorMessage } from '../utils/error-message.js';
 import {
   FailureTracker,
   computeBackoffDelayMs,

@@ -77,7 +77,7 @@ describe('#2322 — auto-grab is blocked at the unsatisfied limit', () => {
   function serviceAnswering(byQuery: Record<string, SearchResult[]>): IndexerSearchService {
     return inject<IndexerSearchService>({
       searchAllWithStatus: vi.fn().mockImplementation(async (query: string) => ({
-        results: byQuery[query] ?? [], succeeded: 1, failed: 0,
+        results: byQuery[query] ?? [], succeeded: 1, failed: 0, skipped: [],
       })),
     });
   }

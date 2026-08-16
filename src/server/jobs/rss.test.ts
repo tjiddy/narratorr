@@ -38,7 +38,7 @@ function createMockIndexerService(rssResults: SearchResult[] = []): IndexerSearc
     getRssCapableIndexers: vi.fn().mockResolvedValue([
       { id: 1, name: 'TestNewznab', type: 'newznab', enabled: true, priority: 1, settings: {} },
     ]),
-    pollRss: vi.fn().mockResolvedValue(rssResults),
+    pollRss: vi.fn().mockResolvedValue({ results: rssResults }),
     searchAll: vi.fn().mockResolvedValue([]),
     searchAllStreaming: vi.fn().mockResolvedValue([]),
     getEnabledIndexers: vi.fn().mockResolvedValue([]),
@@ -110,7 +110,7 @@ describe('runRssJob', () => {
 
     const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
-    expect(result).toEqual({ polled: 0, matched: 0, grabbed: 0 });
+    expect(result).toEqual({ polled: 0, skipped: 0, matched: 0, grabbed: 0 });
     expect(bookList.getAll).not.toHaveBeenCalled();
   });
 
@@ -138,7 +138,7 @@ describe('runRssJob', () => {
       { id: 1, name: 'Newznab', type: 'newznab', enabled: true },
       { id: 2, name: 'Torznab', type: 'torznab', enabled: true },
     ]);
-    (indexer.pollRss as Mock).mockResolvedValue([]);
+    (indexer.pollRss as Mock).mockResolvedValue({ results: [] });
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
@@ -332,7 +332,7 @@ describe('runRssJob', () => {
     ]);
     (indexer.pollRss as Mock)
       .mockRejectedValueOnce(new Error('Connection refused'))
-      .mockResolvedValueOnce([makeResult('Test Book', 'Author')]);
+      .mockResolvedValueOnce({ results: [makeResult('Test Book', 'Author')] });
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
@@ -562,7 +562,7 @@ describe('runRssJob', () => {
 
     const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
-    expect(result).toEqual({ polled: 0, matched: 0, grabbed: 0 });
+    expect(result).toEqual({ polled: 0, skipped: 0, matched: 0, grabbed: 0 });
     expect(indexer.pollRss).not.toHaveBeenCalled();
   });
 
@@ -778,10 +778,10 @@ describe('rss tests — GUID blacklist filtering', () => {
       search: { searchPriority: 'accuracy' },
     });
     const indexer = createMockIndexerService();
-    vi.mocked(indexer.pollRss).mockResolvedValue([
+    vi.mocked(indexer.pollRss).mockResolvedValue({ results: [
       makeResult('Book One', 'Author', { size: GOOD_SIZE, downloadUrl: 'magnet:?xt=urn:btih:quality', narrator: 'Someone Else', matchScore: 0.9 }),
       makeResult('Book One', 'Author', { size: FAIR_SIZE, downloadUrl: 'magnet:?xt=urn:btih:narrator', narrator: 'Kevin R. Free', matchScore: 0.9 }),
-    ]);
+    ] });
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
@@ -802,10 +802,10 @@ describe('rss tests — GUID blacklist filtering', () => {
       search: { searchPriority: 'accuracy' },
     });
     const indexer = createMockIndexerService();
-    vi.mocked(indexer.pollRss).mockResolvedValue([
+    vi.mocked(indexer.pollRss).mockResolvedValue({ results: [
       makeResult('Way of Kings', 'Sanderson', { narrator: 'Kevin R. Free', size: BYTES_PER_GB, downloadUrl: 'magnet:?xt=urn:btih:narratorpick' }),
       makeResult('The Way of Kings', 'Brandon Sanderson', { narrator: 'Someone Else', size: 500 * 1024 * 1024, downloadUrl: 'magnet:?xt=urn:btih:matchscorepick' }),
-    ]);
+    ] });
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 

@@ -24,7 +24,7 @@ vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
 
 // succeeded: 1 makes empty results a genuine zero, allowing query-ladder fallback.
 function withStatus(results: SearchResult[]) {
-  return { results, succeeded: 1, failed: 0 };
+  return { results, succeeded: 1, failed: 0, skipped: [] };
 }
 
 function createMockBookListService(books: unknown[] = []): BookListService {
