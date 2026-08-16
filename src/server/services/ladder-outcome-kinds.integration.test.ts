@@ -12,7 +12,7 @@ import { IndexerService } from './indexer.service.js';
 import { IndexerSearchService } from './indexer-search.service.js';
 import { createAggregateExecutor, createStreamingExecutor } from './search-ladder-execution.js';
 import { buildQueryLadder, runQueryLadder, type Rung, type RungExecution } from './search-query-ladder.js';
-import { createRunExclusionPolicy } from './search-run-exclusion.js';
+import { createRunExclusionPolicy, type IndexerRunOptions, type RunExclusionPolicy } from './search-run-exclusion.js';
 import { NOOP_SINK, type SearchEventSink } from './search-event-sink.js';
 import { preSearchRefresh } from './indexer-pre-search-refresh.js';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
@@ -104,6 +104,23 @@ async function executorFor(surface: Surface, harness: Harness, sink: SearchEvent
   return createStreamingExecutor(BOOK, harness.search, sink);
 }
 
+/**
+ * A real policy with a spy spliced into its outcome channel, so a case can assert the structural
+ * kind a leg delivered rather than only the exclusion set it did or did not move.
+ */
+function observingPolicy(): { policy: RunExclusionPolicy; outcomes: Mock } {
+  const policy = createRunExclusionPolicy();
+  const outcomes = vi.fn();
+  const runOptions: IndexerRunOptions = {
+    ...policy.runOptions,
+    onOutcome: (indexerId, name, outcome) => {
+      outcomes(indexerId, name, outcome);
+      policy.observe(indexerId, name, outcome);
+    },
+  };
+  return { policy: { ...policy, runOptions }, outcomes };
+}
+
 /** A MAM-shaped adapter whose account class refuses searching. */
 function mouse(): Leg {
   return { id: 1, name: 'MAM', search: vi.fn(), refreshStatus: vi.fn().mockResolvedValue({ isVip: false, classname: 'Mouse' }) };
@@ -119,25 +136,32 @@ beforeEach(() => {
 afterEach(() => { _resetKey(); vi.restoreAllMocks(); });
 
 describe('#2375 AC12 — a cancelled leg is never excluded', () => {
-  it('excludes nothing when the outer deadline aborts an aggregate leg', async () => {
+  /**
+   * An empty exclusion set is where the set STARTS, so on its own it cannot tell "reported
+   * cancelled" from "reported nothing at all". Both paths therefore assert the structural
+   * outcome the leg actually delivered — that is the AC18 contract, and the AC9 parity claim.
+   */
+  it('emits a cancelled outcome and excludes nothing when the outer deadline aborts an aggregate leg', async () => {
     const outer = new AbortController();
     const harness = build([{ id: 1, name: 'ABB', search: vi.fn().mockImplementation(async () => { outer.abort(); throw new Error('socket hang up'); }) }]);
-    const policy = createRunExclusionPolicy();
+    const { policy, outcomes } = observingPolicy();
 
     await expect(harness.search.searchAllWithStatus('kings', { signal: outer.signal }, policy.runOptions)).rejects.toThrow();
 
+    expect(outcomes).toHaveBeenCalledExactlyOnceWith(1, 'ABB', { kind: 'cancelled' });
     expect([...policy.runOptions.excludeIndexerIds!]).toEqual([]);
   });
 
-  it('excludes nothing when the outer deadline aborts a streaming leg', async () => {
+  it('emits a cancelled outcome and excludes nothing when the outer deadline aborts a streaming leg', async () => {
     const outer = new AbortController();
     const harness = build([{ id: 1, name: 'ABB', search: vi.fn().mockImplementation(async () => { outer.abort(); throw new Error('socket hang up'); }) }]);
-    const policy = createRunExclusionPolicy();
+    const { policy, outcomes } = observingPolicy();
 
     await expect(harness.search.searchAllStreaming(
       'kings', undefined, new Map(), { onComplete: vi.fn(), onError: vi.fn() }, outer.signal, policy.runOptions,
     )).rejects.toThrow();
 
+    expect(outcomes).toHaveBeenCalledExactlyOnceWith(1, 'ABB', { kind: 'cancelled' });
     expect([...policy.runOptions.excludeIndexerIds!]).toEqual([]);
   });
 
@@ -206,14 +230,15 @@ describe.each(SURFACES)('#2375 AC17/AC18 — a policy refusal is asked once, on 
     }
   });
 
-  it('reports the refusal to the operator once, not once per rung', async () => {
+  it('reports the refusal to the operator exactly once, not once per rung', async () => {
     const refusal = mouse();
     const errors = vi.fn();
     const harness = build([refusal, { id: 2, name: 'Torznab', search: healthy() }]);
 
     await runQueryLadder(LADDER, await executorFor(surface, harness, { ...NOOP_SINK, indexerError: errors } as SearchEventSink));
 
-    expect(errors.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(errors).toHaveBeenCalledTimes(1);
+    expect(errors).toHaveBeenCalledWith(1, 'MAM', MOUSE_REFUSAL, expect.any(Number));
   });
 
   /**

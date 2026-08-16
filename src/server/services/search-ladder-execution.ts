@@ -5,10 +5,9 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { SearchBook, SearchEventSink } from './search-event-sink.js';
 import { deliverSearchReport } from './search-event-sink.js';
-import { formatIndexerSkip } from './indexer-failure-state.js';
 import type { IndexerSearchService } from './indexer-search.service.js';
 import type { SearchLadderCooldown } from './search-ladder-cooldown.js';
-import { createRunExclusionPolicy } from './search-run-exclusion.js';
+import { createRunExclusionPolicy, reportableLeg, type IndexerRunOptions } from './search-run-exclusion.js';
 import {
   buildQueryLadder,
   runQueryLadder,
@@ -79,8 +78,24 @@ export function createAggregateExecutor(
 ): (rung: Rung) => Promise<RungExecution> {
   const policy = createRunExclusionPolicy();
 
+  // The aggregate status returns counts plus breaker skips, so the outcome channel is the only
+  // place this executor can learn that a leg failed or was refused, and the only wording of it
+  // that matches the streaming path. Reporting rides the same callback as the accounting so the
+  // two cannot drift apart per rung.
+  const runOptions: IndexerRunOptions = {
+    ...policy.runOptions,
+    onOutcome: (indexerId, name, outcome) => {
+      policy.observe(indexerId, name, outcome);
+      if (!reportableLeg(outcome)) return;
+      // Re-gated and re-refused every rung; the operator wants "ABB failed" once, not eight times.
+      if (!policy.claimReport(indexerId)) return;
+      deliverSearchReport(log, { bookId: book.id, indexer: name, indexerId }, () =>
+        sink.indexerError(indexerId, name, outcome.report.reason, outcome.report.elapsedMs));
+    },
+  };
+
   return async (rung: Rung) => {
-    const { results, succeeded, skipped } = await indexerSearchService.searchAllWithStatus(
+    const { results, succeeded } = await indexerSearchService.searchAllWithStatus(
       rung.query,
       {
         title: book.title,
@@ -89,15 +104,8 @@ export function createAggregateExecutor(
         // Omitted rather than assigned undefined so callers without a deadline keep today's options.
         ...(signal !== undefined && { signal }),
       },
-      policy.runOptions,
+      runOptions,
     );
-    for (const skip of skipped) {
-      // A suppressed indexer is re-gated every rung and reported by every one of them; the
-      // operator wants "ABB is backing off" once, not once per rung.
-      if (!policy.claimReport(skip.indexerId)) continue;
-      deliverSearchReport(log, { bookId: book.id, indexer: skip.name, indexerId: skip.indexerId }, () =>
-        sink.indexerError(skip.indexerId, skip.name, formatIndexerSkip(skip.state, skip.reason), 0));
-    }
     return { results, succeeded };
   };
 }

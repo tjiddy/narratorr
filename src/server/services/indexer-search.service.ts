@@ -132,8 +132,9 @@ export class IndexerSearchService {
    * Cancellation is neither a success nor a failure, and the verdict is the signal's rather than
    * the error's shape — the same rule `commitLegFailure` applies, for the same reason.
    */
-  private legFailureOutcome(error: unknown, signal?: AbortSignal): IndexerLegOutcome {
-    return signal?.aborted ? { kind: 'cancelled' } : { kind: 'failed', error };
+  private legFailureOutcome(error: unknown, elapsedMs: number, signal?: AbortSignal): IndexerLegOutcome {
+    if (signal?.aborted) return { kind: 'cancelled' };
+    return { kind: 'failed', error, report: { reason: getErrorMessage(error), elapsedMs } };
   }
 
   private parseReleaseNames(results: SearchResult[], indexerName?: string): void {
@@ -274,12 +275,16 @@ export class IndexerSearchService {
     const skipped: IndexerSkip[] = [];
     const settlements = await Promise.allSettled(
       enabledIndexers.map(async (indexer) => {
+        const indexerStartMs = Date.now();
         // First statement, before any await: allSettled starts every callback synchronously up
         // to its first await, which is what makes the gate atomic across the fan-out.
         const gate = this.reserveIndexerLeg(indexer);
         if (!gate.allowed) {
           skipped.push(gate.skip);
-          this.reportLegOutcome(indexer, run, { kind: 'breaker-suppressed' });
+          this.reportLegOutcome(indexer, run, {
+            kind: 'breaker-suppressed',
+            report: { reason: formatIndexerSkip(gate.skip.state, gate.skip.reason), elapsedMs: 0 },
+          });
           return null;
         }
 
@@ -290,7 +295,7 @@ export class IndexerSearchService {
           refresh = await preSearchRefresh(adapter, indexer, this.preSearchRefreshDeps(searchOptions?.signal));
         } catch (error: unknown) {
           this.commitLegFailure(indexer, error, gate.generation, searchOptions?.signal);
-          this.reportLegOutcome(indexer, run, this.legFailureOutcome(error, searchOptions?.signal));
+          this.reportLegOutcome(indexer, run, this.legFailureOutcome(error, Date.now() - indexerStartMs, searchOptions?.signal));
           throw error;
         }
 
@@ -299,9 +304,10 @@ export class IndexerSearchService {
           // can improve the operator's own account class, so nothing is recorded. The throw stays
           // — it is what puts this leg in `failed` — but the kind travels beside it, because a
           // plain Error is by design indistinguishable from a genuine failure downstream.
+          const reason = refresh.error ?? 'Indexer skipped';
           this.log.warn({ indexer: indexer.name, error: refresh.error }, 'Indexer skipped by pre-search refresh');
-          this.reportLegOutcome(indexer, run, { kind: 'policy-refused' });
-          throw new Error(refresh.error ?? 'Indexer skipped');
+          this.reportLegOutcome(indexer, run, { kind: 'policy-refused', report: { reason, elapsedMs: Date.now() - indexerStartMs } });
+          throw new Error(reason);
         }
 
         try {
@@ -318,7 +324,7 @@ export class IndexerSearchService {
           return mapped;
         } catch (error: unknown) {
           this.commitLegFailure(indexer, error, gate.generation, searchOptions?.signal);
-          this.reportLegOutcome(indexer, run, this.legFailureOutcome(error, searchOptions?.signal));
+          this.reportLegOutcome(indexer, run, this.legFailureOutcome(error, Date.now() - indexerStartMs, searchOptions?.signal));
           throw error;
         }
       }),
@@ -401,8 +407,9 @@ export class IndexerSearchService {
         if (!gate.allowed) {
           // The existing error channel, so the skip reaches SearchEventSink.indexerError and the
           // `indexer-error` SSE frame with no new wire event. elapsedMs 0 marks a zero-I/O skip.
-          this.reportLegOutcome(indexer, run, { kind: 'breaker-suppressed' });
-          report(() => callbacks.onError(indexer.id, indexer.name, formatIndexerSkip(gate.skip.state, gate.skip.reason), 0));
+          const skipReport = { reason: formatIndexerSkip(gate.skip.state, gate.skip.reason), elapsedMs: 0 };
+          this.reportLegOutcome(indexer, run, { kind: 'breaker-suppressed', report: skipReport });
+          report(() => callbacks.onError(indexer.id, indexer.name, skipReport.reason, skipReport.elapsedMs));
           return;
         }
 
@@ -416,9 +423,9 @@ export class IndexerSearchService {
           const refresh = await preSearchRefresh(adapter, indexer, this.preSearchRefreshDeps(signal));
           if (refresh.skip) {
             // A policy refusal is not a transport failure; nothing is recorded (AC14).
-            const elapsedMs = Date.now() - indexerStartMs;
-            this.reportLegOutcome(indexer, run, { kind: 'policy-refused' });
-            report(() => callbacks.onError(indexer.id, indexer.name, refresh.error ?? 'Indexer skipped', elapsedMs));
+            const refusal = { reason: refresh.error ?? 'Indexer skipped', elapsedMs: Date.now() - indexerStartMs };
+            this.reportLegOutcome(indexer, run, { kind: 'policy-refused', report: refusal });
+            report(() => callbacks.onError(indexer.id, indexer.name, refusal.reason, refusal.elapsedMs));
             return;
           }
 
@@ -434,7 +441,12 @@ export class IndexerSearchService {
           // A cancelled leg is neither a success nor a failure, whichever signal cancelled it.
           this.commitLegFailure(indexer, error, gate.generation, signal);
           // One catch, two verdicts: the outer deadline must propagate, a per-indexer cancel must not.
-          if (outerSignal?.aborted) throw error;
+          // Both are cancellations though, so both report the kind before diverging — the aggregate
+          // path reaches the same verdict through `legFailureOutcome`, and parity is the contract.
+          if (outerSignal?.aborted) {
+            this.reportLegOutcome(indexer, run, { kind: 'cancelled' });
+            throw error;
+          }
           if (perIndexerSignal?.aborted) {
             this.log.debug({ indexer: indexer.name }, 'Indexer search cancelled');
             this.reportLegOutcome(indexer, run, { kind: 'cancelled' });
@@ -443,7 +455,7 @@ export class IndexerSearchService {
           }
           const message = getErrorMessage(error);
           this.log.warn({ indexer: indexer.name, query: transportQuery, error: serializeError(error) }, 'Error searching indexer');
-          this.reportLegOutcome(indexer, run, { kind: 'failed', error });
+          this.reportLegOutcome(indexer, run, { kind: 'failed', error, report: { reason: message, elapsedMs } });
           report(() => callbacks.onError(indexer.id, indexer.name, message, elapsedMs));
           return;
         }

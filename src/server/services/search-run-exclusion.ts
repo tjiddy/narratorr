@@ -10,16 +10,38 @@
 import { classifyQueryDependence } from '@core/indexers/query-dependence.js';
 
 /**
+ * The operator-facing half of a leg that produced no results. Carried on the outcome so the
+ * wording is derived once, at the branch that knows it, and both executors render the identical
+ * sentence — the aggregate one has no other channel to learn it from.
+ */
+export interface LegReport {
+  /** Already operator language; never a serialized throw. */
+  reason: string;
+  /** 0 marks a leg that cost no I/O at all. */
+  elapsedMs: number;
+}
+
+/**
  * What a single indexer leg did, tagged where the branch already knows it. The kind is never
  * re-derived downstream from the error — three of these five reach the executor through the same
  * operator-facing string today, and message matching is exactly what this channel replaces.
+ *
+ * `report` is present on exactly the outcomes an operator should be told about. A cancellation
+ * is not one: it has its own event, and it is the operator's own action or the search deadline.
  */
 export type IndexerLegOutcome =
   | { kind: 'resolved' }
-  | { kind: 'failed'; error: unknown }
+  | { kind: 'failed'; error: unknown; report: LegReport }
   | { kind: 'cancelled' }
-  | { kind: 'breaker-suppressed' }
-  | { kind: 'policy-refused' };
+  | { kind: 'breaker-suppressed'; report: LegReport }
+  | { kind: 'policy-refused'; report: LegReport };
+
+/** True for the outcomes carrying a `report`, narrowed so the executors can read it. */
+export function reportableLeg(
+  outcome: IndexerLegOutcome,
+): outcome is Extract<IndexerLegOutcome, { report: LegReport }> {
+  return 'report' in outcome;
+}
 
 /** The run-scoped half of a search call: both service entry points accept exactly this. */
 export interface IndexerRunOptions {
@@ -60,6 +82,11 @@ export interface RunExclusionPolicy {
   /** Pass verbatim to `searchAllWithStatus` / `searchAllStreaming`; the set is live. */
   readonly runOptions: IndexerRunOptions;
   /**
+   * The accounting half of `runOptions.onOutcome`, exposed so an executor that wraps the callback
+   * to add its own reporting cannot accidentally drop it.
+   */
+  observe(indexerId: number, name: string, outcome: IndexerLegOutcome): void;
+  /**
    * AC10 — true only the first time this indexer's failure is reported in the run. The operator
    * should see "ABB failed" once, not once per rung, and that holds for a breaker skip too.
    */
@@ -70,13 +97,13 @@ export function createRunExclusionPolicy(): RunExclusionPolicy {
   const excluded = new Set<number>();
   const reported = new Set<number>();
 
+  const observe = (indexerId: number, _name: string, outcome: IndexerLegOutcome): void => {
+    if (excludesForRun(outcome)) excluded.add(indexerId);
+  };
+
   return {
-    runOptions: {
-      excludeIndexerIds: excluded,
-      onOutcome: (indexerId, _name, outcome) => {
-        if (excludesForRun(outcome)) excluded.add(indexerId);
-      },
-    },
+    runOptions: { excludeIndexerIds: excluded, onOutcome: observe },
+    observe,
     claimReport(indexerId) {
       if (reported.has(indexerId)) return false;
       reported.add(indexerId);

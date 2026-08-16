@@ -306,13 +306,7 @@ describe.each(SURFACES)('#2375 AC7/AC13/AC17 — accounting, on the %s executor'
 });
 
 describe.each(SURFACES)('#2375 AC10 — reported once, on the %s executor', (surface) => {
-  /**
-   * Both surfaces must stop repeating themselves; only the streaming one has ever surfaced a
-   * GENUINE failure to the sink at all (the aggregate path logs it and forwards breaker skips
-   * only, which is why the suppressed-indexer case below is the one that exercises its dedupe).
-   * Widening that is a reporting change #2375 does not ask for.
-   */
-  it('never reports a transport-failed indexer more than once across the whole run', async () => {
+  it('reports a transport-failed indexer exactly once across the whole run', async () => {
     const dead = vi.fn().mockRejectedValue(refused());
     const harness = build([
       { id: 1, name: 'ABB', search: dead },
@@ -322,10 +316,8 @@ describe.each(SURFACES)('#2375 AC10 — reported once, on the %s executor', (sur
 
     await runQueryLadder(LADDER, await executorFor(surface, harness, sink));
 
-    expect(errors.mock.calls.length).toBeLessThanOrEqual(1);
-    for (const call of errors.mock.calls) {
-      expect(call).toEqual([1, 'ABB', 'Connection refused on port 443', expect.any(Number)]);
-    }
+    expect(errors).toHaveBeenCalledTimes(1);
+    expect(errors).toHaveBeenCalledWith(1, 'ABB', 'Connection refused on port 443', expect.any(Number));
   });
 
   /**
@@ -364,23 +356,6 @@ describe.each(SURFACES)('#2375 AC10 — reported once, on the %s executor', (sur
     expect(ran.exhausted).toBe(true);
     expect(dead).toHaveBeenCalledTimes(1);
     expect(alive).toHaveBeenCalledTimes(8);
-  });
-});
-
-/** The surface that does report genuine failures: the count must be exactly one, not merely bounded. */
-describe('#2375 AC10 — the streaming failure report is exactly one', () => {
-  it('names the failing indexer once, with the operator wording unchanged', async () => {
-    const dead = vi.fn().mockRejectedValue(refused());
-    const harness = build([
-      { id: 1, name: 'ABB', search: dead },
-      { id: 2, name: 'Torznab', search: healthy() },
-    ]);
-    const { sink, errors } = recordingSink();
-
-    await runQueryLadder(LADDER, await createStreamingExecutor(BOOK, harness.search, sink));
-
-    expect(errors).toHaveBeenCalledTimes(1);
-    expect(errors).toHaveBeenCalledWith(1, 'ABB', 'Connection refused on port 443', expect.any(Number));
   });
 });
 
