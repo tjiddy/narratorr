@@ -372,6 +372,13 @@ describe.each(SURFACES)('#2375 AC1/AC9 — the real AudioBookBay adapter, on the
   const server = useMswServer();
   const ABB_HOST = 'abb.test';
 
+  // The adapter is constructed inside getAdapter, so its inter-request pause is stubbed on the
+  // prototype; the outer afterEach restores it.
+  beforeEach(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.spyOn(AudioBookBayIndexer.prototype as any, 'delay').mockResolvedValue(undefined);
+  });
+
   /** Indexer 1 is the real ABB over MSW; indexer 2 is a healthy companion so the ladder advances. */
   function buildWithRealAbb(respond: () => Response) {
     let abbRequests = 0;
@@ -420,6 +427,26 @@ describe.each(SURFACES)('#2375 AC1/AC9 — the real AudioBookBay adapter, on the
 
     expect(abbRequests()).toBe(8);
     expect(alive).toHaveBeenCalledTimes(8);
+  });
+
+  /**
+   * #2367 AC8 — the search page answered, so this is a partial result, not a failed leg. Recording
+   * the detail failure must not turn it into one: the indexer stays eligible for every later rung.
+   */
+  it('stays eligible when the search page answers and only the detail fetch fails', async () => {
+    const oneRow = `<html><body><div class="post"><div class="postTitle">
+      <h2><a href="/audio-books/murder-in-the-new-forest/" rel="bookmark">Murder in the New Forest</a></h2>
+    </div></div></body></html>`;
+    const { harness, alive, abbRequests } = buildWithRealAbb(
+      () => new HttpResponse(oneRow, { headers: { 'Content-Type': 'text/html' } }),
+    );
+    server.use(http.get(`https://${ABB_HOST}/audio-books/:slug/`, () => new HttpResponse(null, { status: 500 })));
+
+    const ran = await runQueryLadder(LADDER, await executorFor(surface, harness));
+
+    expect(abbRequests()).toBe(8);
+    expect(alive).toHaveBeenCalledTimes(8);
+    expect(ran.exhausted).toBe(true);
   });
 });
 

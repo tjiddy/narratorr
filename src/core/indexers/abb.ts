@@ -11,7 +11,8 @@ import { buildMagnetUri } from '../utils';
 import { readAbbMetadata } from './abb-fields.js';
 import { normalizeBaseUrl } from '@shared/normalize-base-url.js';
 import { fetchWithProxy } from './fetch.js';
-import { isProxyRelatedError } from './errors.js';
+import { httpStatusOf, isProxyRelatedError } from './errors.js';
+import { describeTransportError } from '../utils/failure-classification.js';
 import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
 import { describeSolverFailure } from './solver-diagnosis.js';
 import { getErrorMessage } from '@shared/error-message.js';
@@ -31,6 +32,26 @@ const DEFAULT_USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
 ];
+
+/**
+ * A detail fetch that never answered. The identity comes off the error's structure — a transport
+ * code or an HTTP status — never off its message, which is operator text and free to be reworded.
+ */
+function detailFetchFailure(error: unknown, rawTitle: string, requestUrl: string): IndexerParseTrace {
+  const rawTitleBytes = rawTitleBytesHex(rawTitle);
+  const { errorCode } = describeTransportError(error);
+  const httpStatus = httpStatusOf(error);
+  return {
+    source: 'row',
+    reason: 'dropped:detail-fetch-failed',
+    rawTitle,
+    ...(rawTitleBytes !== undefined && { rawTitleBytes }),
+    errorMessage: getErrorMessage(error),
+    ...(errorCode !== undefined && { errorCode }),
+    ...(httpStatus !== undefined && { httpStatus }),
+    requestUrl,
+  };
+}
 
 export class AudioBookBayIndexer implements IndexerAdapter {
   readonly type = 'abb';
@@ -125,16 +146,22 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     signal?: AbortSignal,
   ): Promise<boolean> {
     for (const result of pageResults) {
-      if (result.detailsUrl) {
+      const detailsUrl = result.detailsUrl;
+      if (detailsUrl) {
         try {
           await this.delay(500);
-          const detail = await this.fetchPage(result.detailsUrl, signal);
+          const detail = await this.fetchPage(detailsUrl, signal);
           const details = this.parseDetailPage(detail.body);
           Object.assign(result, details);
         } catch (error: unknown) {
           if (isProxyRelatedError(error)) {
             throw error;
           }
+          // Falling through would admit the row to the no-URL arm, which claims the book has no
+          // torrent. Nothing was pushed, so skipping the limit check leaves the count unchanged.
+          dropped.other++;
+          debugTrace.push(detailFetchFailure(error, result.title, detailsUrl));
+          continue;
         }
       }
 

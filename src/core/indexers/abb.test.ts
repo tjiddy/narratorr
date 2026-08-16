@@ -138,6 +138,8 @@ describe('AudioBookBayIndexer', () => {
       expect(results).toEqual([]);
     });
 
+    // #2367 AC4: a detail page that loads but carries no hash is a book with no torrent, which is
+    // a different story from a page that never loaded — and must keep its own attribution.
     it('only includes results with download URLs', async () => {
       const noHashHtml = `
         <html><body>
@@ -159,8 +161,12 @@ describe('AudioBookBayIndexer', () => {
         }),
       );
 
-      const { results } = await indexer.search('test');
-      expect(results).toEqual([]);
+      const response = await indexer.search('test');
+
+      expect(response.results).toEqual([]);
+      expect(response.debugTrace.map((trace) => trace.reason)).toEqual(['dropped:no-url', 'dropped:no-url']);
+      expect(response.parseStats.dropped.noUrl).toBe(2);
+      expect(response.parseStats.dropped.other).toBe(0);
     });
 
     it('respects limit option', async () => {
@@ -233,8 +239,165 @@ describe('AudioBookBayIndexer', () => {
         }),
       );
 
-      const { results } = await indexer.search('test');
-      expect(results).toEqual([]);
+      const response = await indexer.search('test');
+
+      expect(response.results).toEqual([]);
+      // Both fixture rows fail, and each is attributed to the fetch rather than to a missing torrent.
+      const failures = response.debugTrace.filter((trace) => trace.reason === 'dropped:detail-fetch-failed');
+      expect(failures).toHaveLength(2);
+      expect(failures[0]).toMatchObject({
+        source: 'row',
+        rawTitle: 'Murder in the New Forest',
+        rawTitleBytes: '4d757264657220696e20746865204e657720466f72657374',
+        httpStatus: 500,
+        requestUrl: `${ABB_BASE}/audio-books/murder-in-the-new-forest/`,
+      });
+      expect(failures[0]!.errorMessage).toContain('HTTP 500');
+      expect(response.parseStats.dropped.other).toBe(2);
+      expect(response.parseStats.dropped.noUrl).toBe(0);
+    });
+  });
+
+  /**
+   * #2367 — the detail catch used to swallow every non-proxy failure, and the row then fell through
+   * to admission with no `downloadUrl`, so a 500, a timeout and a book with genuinely no torrent
+   * were all recorded as `dropped:no-url`. Classification keys on structure, never on message text.
+   */
+  describe('detail-fetch failure attribution (#2367)', () => {
+    const MURDER_SLUG = 'murder-in-the-new-forest';
+    const MURDER_TITLE = 'Murder in the New Forest';
+    const WISH_TITLE = 'Wish You Were Here Yet?';
+    let routed: RoutedFetch | undefined;
+
+    afterEach(() => {
+      routed?.restore();
+      routed = undefined;
+    });
+
+    function serveSearchPage() {
+      server.use(
+        http.get(`${ABB_BASE}/`, () => new HttpResponse(searchHtml, { headers: { 'Content-Type': 'text/html' } })),
+      );
+    }
+
+    /**
+     * `HttpResponse.error()` carries no transport code, so a coded failure has to be stubbed at the
+     * fetch boundary. Routing only the detail URLs leaves the search page falling through to MSW —
+     * which requires the spy to be installed after `server.listen()`, i.e. inside the test.
+     */
+    function rejectDetailWith(error: Error) {
+      serveSearchPage();
+      routed = routeFetch((url) => (url.includes('/audio-books/') ? error : undefined));
+    }
+
+    /** The first fixture row's detail page 500s; the second serves a real detail body. */
+    function failFirstRowDetail() {
+      server.use(
+        http.get(`${ABB_BASE}/`, () => new HttpResponse(searchHtml, { headers: { 'Content-Type': 'text/html' } })),
+        http.get(`${ABB_BASE}/audio-books/:slug/`, ({ params }) => (
+          params.slug === MURDER_SLUG
+            ? new HttpResponse(null, { status: 500 })
+            : new HttpResponse(detailHtml, { headers: { 'Content-Type': 'text/html' } })
+        )),
+      );
+    }
+
+    async function firstFailure() {
+      const response = await indexer.search('test');
+      const failures = response.debugTrace.filter((trace) => trace.reason === 'dropped:detail-fetch-failed');
+      expect(failures.length).toBeGreaterThan(0);
+      return failures[0]!;
+    }
+
+    it('reads the transport code off a refused connection', async () => {
+      rejectDetailWith(codedRejection('ECONNREFUSED'));
+
+      const failure = await firstFailure();
+
+      expect(failure.errorCode).toBe('ECONNREFUSED');
+      expect(failure.requestUrl).toBe(`${ABB_BASE}/audio-books/${MURDER_SLUG}/`);
+    });
+
+    it('reads an aborted detail fetch as a timeout', async () => {
+      rejectDetailWith(abortRejection());
+
+      const failure = await firstFailure();
+
+      expect(failure.errorCode).toBe('ETIMEDOUT');
+    });
+
+    it('omits errorCode and httpStatus entirely when the failure carries neither', async () => {
+      rejectDetailWith(uncodedRejection());
+
+      const failure = await firstFailure();
+
+      expect(failure.errorMessage).toBe('socket hang up');
+      expect(failure).not.toHaveProperty('errorCode');
+      expect(failure).not.toHaveProperty('httpStatus');
+    });
+
+    // rawTitleBytes exists so an encoding fault is legible in the log even when the rendered title
+    // is not; an ASCII-only assertion cannot tell UTF-8 bytes from a latin1 round-trip.
+    it('records the title\'s UTF-8 bytes on a failed row, truncated at the byte limit', async () => {
+      const cyrillic = 'Мурдер: Мгла над Лондоном';
+      server.use(
+        http.get(`${ABB_BASE}/`, () => new HttpResponse(
+          `<html><body><div class="post"><div class="postTitle">
+            <h2><a href="/audio-books/mgla/" rel="bookmark">${cyrillic}</a></h2>
+          </div></div></body></html>`,
+          { headers: { 'Content-Type': 'text/html; charset=utf-8' } },
+        )),
+        http.get(`${ABB_BASE}/audio-books/:slug/`, () => new HttpResponse(null, { status: 500 })),
+      );
+
+      const failure = await firstFailure();
+
+      expect(failure.rawTitle).toBe(cyrillic);
+      // Two bytes per Cyrillic character, cut at the 32-byte limit mid-word.
+      expect(failure.rawTitleBytes).toBe('d09cd183d180d0b4d0b5d1803a20d09cd0b3d0bbd0b020d0bdd0b0d0b420d09b');
+    });
+
+    it('returns the rows whose detail pages did load', async () => {
+      failFirstRowDetail();
+
+      const response = await indexer.search('test');
+
+      expect(response.results).toHaveLength(1);
+      expect(response.results[0]!.title).toBe(WISH_TITLE);
+      expect(response.results[0]!.downloadUrl).toContain('magnet:?');
+      expect(response.debugTrace.filter((trace) => trace.reason === 'kept')).toHaveLength(1);
+      expect(response.parseStats.dropped.other).toBe(1);
+      expect(response.parseStats.dropped.noUrl).toBe(0);
+    });
+
+    it('records exactly one trace entry for the failed row', async () => {
+      failFirstRowDetail();
+
+      const response = await indexer.search('test');
+
+      expect(response.debugTrace.filter((trace) => trace.rawTitle === MURDER_TITLE)).toEqual([
+        expect.objectContaining({ reason: 'dropped:detail-fetch-failed' }),
+      ]);
+    });
+
+    it('does not let a failed row consume the result budget', async () => {
+      failFirstRowDetail();
+
+      const response = await indexer.search('test', { limit: 1 });
+
+      expect(response.results).toHaveLength(1);
+      expect(response.results[0]!.title).toBe(WISH_TITLE);
+    });
+
+    it('conserves the counters across kept and dropped rows', async () => {
+      failFirstRowDetail();
+
+      const { parseStats, results } = await indexer.search('test');
+      const { dropped } = parseStats;
+
+      expect(parseStats.kept + dropped.emptyTitle + dropped.noUrl + dropped.other).toBe(parseStats.itemsObserved);
+      expect(parseStats.kept).toBe(results.length);
+      expect(parseStats.itemsObserved).toBe(2);
     });
   });
 

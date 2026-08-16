@@ -58,13 +58,24 @@ export interface IndexerTestResult {
   metadata?: Record<string, unknown> | undefined;
 }
 
-/** Per-item parse outcome; rawTitleBytes preserves UTF-8 shape for encoding diagnostics. */
+/**
+ * Per-item parse outcome; rawTitleBytes preserves UTF-8 shape for encoding diagnostics.
+ *
+ * The four failure fields are optional because most producers never carry one — but a
+ * `dropped:detail-fetch-failed` entry always sets `errorMessage` and `requestUrl`, and sets
+ * `errorCode`/`httpStatus` whenever the error carried that structural identity (#2367).
+ */
 export interface IndexerParseTrace {
   source: 'item' | 'enclosure' | 'row';
   reason: 'kept' | 'dropped:empty-title' | 'dropped:no-url' | `dropped:${string}`;
   rawTitle?: string;
   rawTitleBytes?: string;
   guid?: string;
+  errorMessage?: string;
+  errorCode?: string;
+  httpStatus?: number;
+  /** The request that failed, not the search request the response as a whole reports. */
+  requestUrl?: string;
 }
 
 export interface IndexerParseStats {
