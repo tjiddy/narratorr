@@ -3,7 +3,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Db, DbOrTx } from '@db/client.js';
 import { books } from '@db/schema.js';
 import type { BookStatus } from '@shared/schemas/book.js';
-import { Semaphore } from '../utils/semaphore.js';
+import { BoundedSemaphore } from '@core/utils/bounded-semaphore.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { withBookAdmissionLock } from './book-admission.js';
 import { findCompanionEbookCandidates } from './companion-ebook-discovery.js';
@@ -23,7 +23,7 @@ import type { CompanionEbookRow } from './types.js';
 export const RECONCILE_CONCURRENCY = 4;
 
 // Only sweeps use this; direct user actions rely on the per-book admission lock.
-const sweepSemaphore = new Semaphore(RECONCILE_CONCURRENCY);
+const sweepSemaphore = new BoundedSemaphore(RECONCILE_CONCURRENCY);
 
 type BookDisposition = 'observed' | 'unchanged' | 'retained' | 'conflicted' | 'skipped' | 'failed' | 'stopped';
 

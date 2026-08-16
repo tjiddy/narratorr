@@ -8,7 +8,7 @@ import { scanAudioDirectory, type AudioScanResult } from '@core/utils/audio-scan
 import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
 import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
 import type { SettingsService } from './settings.service.js';
-import { Semaphore } from '../utils/semaphore.js';
+import { BoundedSemaphore } from '@core/utils/bounded-semaphore.js';
 import { diceCoefficient } from '@core/utils/similarity.js';
 import { searchWithSwapRetryTrace } from '../utils/search-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
@@ -80,7 +80,7 @@ class MatchJob {
   private terminal: 'completed' | 'failed' | 'cancelled' | null = null;
   private error?: string;
   private startMs = Date.now();
-  private semaphore = new Semaphore(MAX_CONCURRENCY);
+  private semaphore = new BoundedSemaphore(MAX_CONCURRENCY);
 
   private get isCancelled(): boolean {
     return this.terminal === 'cancelled';
