@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
-import { createMockLogger, inject, createMockSettingsService } from '../__tests__/helpers.js';
+import { createMockLogger, inject, createMockSettingsService, searchStatus } from '../__tests__/helpers.js';
 import { runSearchJob, searchAllWanted } from './search.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { BookListService } from '../services/book-list.service.js';
@@ -22,11 +22,6 @@ vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
 }));
 
 
-// succeeded: 1 makes empty results a genuine zero, allowing query-ladder fallback.
-function withStatus(results: SearchResult[]) {
-  return { results, succeeded: 1, failed: 0, skipped: [] };
-}
-
 function createMockBookListService(books: unknown[] = []): BookListService {
   return inject<BookListService>({
     getAll: vi.fn().mockResolvedValue({ data: books, total: books.length }),
@@ -37,7 +32,7 @@ function createMockBookListService(books: unknown[] = []): BookListService {
 
 function createMockIndexerService(results: SearchResult[] = []): IndexerSearchService {
   return inject<IndexerSearchService>({
-    searchAllWithStatus: vi.fn().mockResolvedValue(withStatus(results)),
+    searchAllWithStatus: vi.fn().mockResolvedValue(searchStatus(results)),
     searchAllStreaming: vi.fn().mockResolvedValue(results),
     getEnabledIndexers: vi.fn().mockResolvedValue([]),
     getRssCapableIndexers: vi.fn().mockResolvedValue([]),
@@ -194,9 +189,9 @@ describe('runSearchJob', () => {
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([]);
     const results = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
-    vi.mocked(indexer.searchAllWithStatus).mockResolvedValueOnce(withStatus(results))
+    vi.mocked(indexer.searchAllWithStatus).mockResolvedValueOnce(searchStatus(results))
       .mockRejectedValueOnce(new Error('Network error'))
-      .mockResolvedValueOnce(withStatus(results));
+      .mockResolvedValueOnce(searchStatus(results));
     const download = createMockDownloadOrchestrator();
 
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
@@ -307,7 +302,7 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService([]);
     vi.mocked(indexer.searchAllWithStatus)
       .mockRejectedValueOnce(new Error('Indexer down'))
-      .mockResolvedValueOnce(withStatus([]));
+      .mockResolvedValueOnce(searchStatus([]));
     const download = createMockDownloadOrchestrator();
 
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
@@ -522,9 +517,9 @@ describe('searchAllWanted', () => {
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([]);
     const results = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
-    vi.mocked(indexer.searchAllWithStatus).mockResolvedValueOnce(withStatus(results))
+    vi.mocked(indexer.searchAllWithStatus).mockResolvedValueOnce(searchStatus(results))
       .mockRejectedValueOnce(new Error('Network error'))
-      .mockResolvedValueOnce(withStatus(results));
+      .mockResolvedValueOnce(searchStatus(results));
     const download = createMockDownloadOrchestrator();
 
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), createMockBlacklistService(), mockIndexer, mockEventHistory);
@@ -558,9 +553,9 @@ describe('searchAllWanted', () => {
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([]);
     const results = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
-    vi.mocked(indexer.searchAllWithStatus).mockResolvedValueOnce(withStatus(results))
-      .mockResolvedValueOnce(withStatus(results))
-      .mockResolvedValueOnce(withStatus(results));
+    vi.mocked(indexer.searchAllWithStatus).mockResolvedValueOnce(searchStatus(results))
+      .mockResolvedValueOnce(searchStatus(results))
+      .mockResolvedValueOnce(searchStatus(results));
     const download = createMockDownloadOrchestrator();
     vi.mocked(download.grab)
       .mockResolvedValueOnce({ id: 1 } as never)
@@ -683,10 +678,10 @@ describe('searchAllWanted', () => {
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([]);
     const results = [mockResult(10, 'magnet:?aaa')];
-    vi.mocked(indexer.searchAllWithStatus).mockResolvedValueOnce(withStatus(results))
+    vi.mocked(indexer.searchAllWithStatus).mockResolvedValueOnce(searchStatus(results))
       .mockRejectedValueOnce(new Error('Timeout'))
-      .mockResolvedValueOnce(withStatus(results))
-      .mockResolvedValueOnce(withStatus([]));
+      .mockResolvedValueOnce(searchStatus(results))
+      .mockResolvedValueOnce(searchStatus([]));
     const download = createMockDownloadOrchestrator();
     vi.mocked(download.grab)
       .mockResolvedValueOnce({ id: 1 } as never)
@@ -824,7 +819,7 @@ describe('searchAllWanted', () => {
 
 function createStreamingIndexerService(results: SearchResult[] = []): IndexerSearchService {
   return inject<IndexerSearchService>({
-    searchAllWithStatus: vi.fn().mockResolvedValue(withStatus(results)),
+    searchAllWithStatus: vi.fn().mockResolvedValue(searchStatus(results)),
     searchAllStreaming: vi.fn().mockImplementation(async (_q: string, _o: unknown, _c: Map<number, AbortController>, callbacks: { onComplete: (id: number, name: string, count: number, ms: number) => void }) => {
       callbacks.onComplete(10, 'MAM', results.length, 500);
       return results;
@@ -1088,7 +1083,7 @@ describe('search deadline expiry (#2310)', () => {
   }
 
   const fourBooks = () => [1, 2, 3, 4].map((id) => ({ id, title: `Book ${id}`, authors: [{ name: 'Author' }] }));
-  const hit = () => withStatus([mockResult(10, 'magnet:?xt=urn:btih:aaa')]);
+  const hit = () => searchStatus([mockResult(10, 'magnet:?xt=urn:btih:aaa')]);
 
   beforeEach(() => {
     _resetSearchRegistryForTesting();

@@ -7,7 +7,7 @@ import type { DownloadOrchestrator } from './download-orchestrator.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
-import { createMockLogger, inject, createMockSettingsService } from '../__tests__/helpers.js';
+import { createMockLogger, inject, createMockSettingsService, answeringSearchStatus } from '../__tests__/helpers.js';
 
 vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
   ...(await importActual<typeof import('../utils/enrich-usenet-languages.js')>()),
@@ -73,13 +73,8 @@ describe('#2322 — auto-grab is blocked at the unsatisfied limit', () => {
 
   const qualitySettings = { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5 };
 
-  /** Maps transport queries to results; succeeded=1 makes an unlisted query an answered zero. */
-  function serviceAnswering(byQuery: Record<string, SearchResult[]>): IndexerSearchService {
-    return inject<IndexerSearchService>({
-      searchAllWithStatus: vi.fn().mockImplementation(async (query: string) => ({
-        results: byQuery[query] ?? [], succeeded: 1, failed: 0, skipped: [],
-      })),
-    });
+  function indexerServiceAnswering(byQuery: Record<string, SearchResult[]>): IndexerSearchService {
+    return inject<IndexerSearchService>({ searchAllWithStatus: answeringSearchStatus(byQuery) });
   }
 
   const deps = (indexerSearchService: IndexerSearchService) => ({
@@ -92,7 +87,7 @@ describe('#2322 — auto-grab is blocked at the unsatisfied limit', () => {
 
   describe('the regression this exists for', () => {
     it('issues zero grabs and records the blocked event when every candidate is at the limit', async () => {
-      const svc = serviceAnswering({ [SIMPLE_RUNG_1]: [mamAtLimit({ title: 'MAM Only' })] });
+      const svc = indexerServiceAnswering({ [SIMPLE_RUNG_1]: [mamAtLimit({ title: 'MAM Only' })] });
 
       const result = await searchAndGrabForBook(simpleBook, deps(svc));
 
@@ -107,7 +102,7 @@ describe('#2322 — auto-grab is blocked at the unsatisfied limit', () => {
     });
 
     it('records the event once per blocked search, not once per discarded release', async () => {
-      const svc = serviceAnswering({
+      const svc = indexerServiceAnswering({
         [SIMPLE_RUNG_1]: [mamAtLimit({ title: 'MAM A' }), mamAtLimit({ title: 'MAM B' }), mamAtLimit({ title: 'MAM C' })],
       });
 
@@ -117,7 +112,7 @@ describe('#2322 — auto-grab is blocked at the unsatisfied limit', () => {
     });
 
     it('blocks an import-list sync’s auto-grab without breaking the chain', async () => {
-      const svc = serviceAnswering({
+      const svc = indexerServiceAnswering({
         'Book One Author A': [mamAtLimit({ title: 'MAM One' })],
         'Book Two Author B': [mamAtLimit({ title: 'MAM Two' })],
       });
@@ -137,7 +132,7 @@ describe('#2322 — auto-grab is blocked at the unsatisfied limit', () => {
     });
 
     it('follows each book’s own observation when the reported count crosses the limit mid-cycle', async () => {
-      const svc = serviceAnswering({
+      const svc = indexerServiceAnswering({
         'Book One Author A': [makeResult({ title: 'Below Limit', unsatisfied: { count: 149, limit: 150 } })],
         'Book Two Author B': [mamAtLimit({ title: 'At Limit' })],
       });
@@ -160,7 +155,7 @@ describe('#2322 — auto-grab is blocked at the unsatisfied limit', () => {
 
   describe('mixed result sets fall through rather than stall', () => {
     it('grabs the best remaining non-MAM release and records no blocked event', async () => {
-      const svc = serviceAnswering({
+      const svc = indexerServiceAnswering({
         [SIMPLE_RUNG_1]: [mamAtLimit({ title: 'MAM Best', seeders: 100 }), other({ seeders: 50 })],
       });
 
@@ -172,7 +167,7 @@ describe('#2322 — auto-grab is blocked at the unsatisfied limit', () => {
     });
 
     it('leaves a search with no MAM entries at all completely unchanged', async () => {
-      const svc = serviceAnswering({ [SIMPLE_RUNG_1]: [other()] });
+      const svc = indexerServiceAnswering({ [SIMPLE_RUNG_1]: [other()] });
 
       const result = await searchAndGrabForBook(simpleBook, deps(svc));
 
@@ -181,7 +176,7 @@ describe('#2322 — auto-grab is blocked at the unsatisfied limit', () => {
     });
 
     it('does not block a non-MAM release that happens to share an indexerId shape', async () => {
-      const svc = serviceAnswering({ [SIMPLE_RUNG_1]: [other({ indexerId: 10 })] });
+      const svc = indexerServiceAnswering({ [SIMPLE_RUNG_1]: [other({ indexerId: 10 })] });
 
       expect(await searchAndGrabForBook(simpleBook, deps(svc))).toEqual({ result: 'grabbed', title: 'Prowlarr Release' });
     });
@@ -195,7 +190,7 @@ describe('#2322 — auto-grab is blocked at the unsatisfied limit', () => {
 
     for (const { name, downloadUrl } of unlinkedShapes) {
       it(`records no blocked event when the only at-limit release has a downloadUrl of ${name}`, async () => {
-        const svc = serviceAnswering({ [SIMPLE_RUNG_1]: [mamAtLimit({ title: 'Unlinked', downloadUrl })] });
+        const svc = indexerServiceAnswering({ [SIMPLE_RUNG_1]: [mamAtLimit({ title: 'Unlinked', downloadUrl })] });
 
         const result = await searchAndGrabForBook(simpleBook, deps(svc));
 
@@ -206,7 +201,7 @@ describe('#2322 — auto-grab is blocked at the unsatisfied limit', () => {
     }
 
     it('grabs the lower-ranked non-MAM release when the top at-limit release is unlinked', async () => {
-      const svc = serviceAnswering({
+      const svc = indexerServiceAnswering({
         [SIMPLE_RUNG_1]: [mamAtLimit({ title: 'Unlinked', downloadUrl: undefined, seeders: 100 }), other({ seeders: 50 })],
       });
 
@@ -217,7 +212,7 @@ describe('#2322 — auto-grab is blocked at the unsatisfied limit', () => {
     });
 
     it('names the linked at-limit release when a higher-ranked at-limit release is unlinked', async () => {
-      const svc = serviceAnswering({
+      const svc = indexerServiceAnswering({
         [SIMPLE_RUNG_1]: [
           mamAtLimit({ title: 'Unlinked', downloadUrl: undefined, seeders: 100 }),
           mamAtLimit({ title: 'Linked', seeders: 50 }),
@@ -236,7 +231,7 @@ describe('#2322 — auto-grab is blocked at the unsatisfied limit', () => {
 
   describe('cut-rung causality — the floor and the limit are told apart', () => {
     it('reports the pre-existing hold when the floor would have stopped the grab anyway', async () => {
-      const svc = serviceAnswering({ [CHURN_CUT_RUNG]: [mamAtLimit({ title: FLOOR_FAILING })] });
+      const svc = indexerServiceAnswering({ [CHURN_CUT_RUNG]: [mamAtLimit({ title: FLOOR_FAILING })] });
 
       const result = await searchAndGrabForBook(churnBook, deps(svc));
 
@@ -246,7 +241,7 @@ describe('#2322 — auto-grab is blocked at the unsatisfied limit', () => {
     });
 
     it('records the blocked event when the limit removed the release the floor had admitted', async () => {
-      const svc = serviceAnswering({
+      const svc = indexerServiceAnswering({
         [CHURN_CUT_RUNG]: [
           mamAtLimit({ title: FLOOR_PASSING, seeders: 100 }),
           other({ title: FLOOR_FAILING, seeders: 50 }),
@@ -261,7 +256,7 @@ describe('#2322 — auto-grab is blocked at the unsatisfied limit', () => {
     });
 
     it('is inert on a full rung, where the same fixture simply grabs the remainder', async () => {
-      const svc = serviceAnswering({
+      const svc = indexerServiceAnswering({
         [CHURN_RUNG_1]: [
           mamAtLimit({ title: FLOOR_PASSING, seeders: 100 }),
           other({ title: FLOOR_FAILING, seeders: 50 }),
@@ -275,13 +270,13 @@ describe('#2322 — auto-grab is blocked at the unsatisfied limit', () => {
     });
 
     it('grabs normally on a full rung even when the only release fails the cut floor', async () => {
-      const svc = serviceAnswering({ [CHURN_RUNG_1]: [mamAtLimit({ title: FLOOR_FAILING, unsatisfied: undefined })] });
+      const svc = indexerServiceAnswering({ [CHURN_RUNG_1]: [mamAtLimit({ title: FLOOR_FAILING, unsatisfied: undefined })] });
 
       expect(await searchAndGrabForBook(churnBook, deps(svc))).toEqual({ result: 'grabbed', title: FLOOR_FAILING });
     });
 
     it('carries the observation onto a later rung’s own results', async () => {
-      const svc = serviceAnswering({ [CHURN_CUT_RUNG]: [mamAtLimit({ title: FLOOR_PASSING })] });
+      const svc = indexerServiceAnswering({ [CHURN_CUT_RUNG]: [mamAtLimit({ title: FLOOR_PASSING })] });
 
       await searchAndGrabForBook(churnBook, deps(svc));
 
@@ -299,7 +294,7 @@ describe('#2322 — auto-grab is blocked at the unsatisfied limit', () => {
 
     for (const { name, unsatisfied } of grabbing) {
       it(`grabs normally at ${name}`, async () => {
-        const svc = serviceAnswering({ [SIMPLE_RUNG_1]: [makeResult({ ...(unsatisfied !== undefined && { unsatisfied }) })] });
+        const svc = indexerServiceAnswering({ [SIMPLE_RUNG_1]: [makeResult({ ...(unsatisfied !== undefined && { unsatisfied }) })] });
 
         expect(await searchAndGrabForBook(simpleBook, deps(svc))).toEqual({ result: 'grabbed', title: 'Test Book' });
         expect(eventHistory.create).not.toHaveBeenCalled();
@@ -307,14 +302,14 @@ describe('#2322 — auto-grab is blocked at the unsatisfied limit', () => {
     }
 
     it('blocks at 151 of 150', async () => {
-      const svc = serviceAnswering({ [SIMPLE_RUNG_1]: [makeResult({ unsatisfied: { count: 151, limit: 150 } })] });
+      const svc = indexerServiceAnswering({ [SIMPLE_RUNG_1]: [makeResult({ unsatisfied: { count: 151, limit: 150 } })] });
 
       expect(await searchAndGrabForBook(simpleBook, deps(svc))).toEqual({ result: 'no_results' });
       expect(eventsOfType('grab_blocked_unsatisfied')).toHaveLength(1);
     });
 
     it('reads the reported limit rather than a hardcoded 150', async () => {
-      const svc = serviceAnswering({ [SIMPLE_RUNG_1]: [makeResult({ unsatisfied: { count: 40, limit: 40 } })] });
+      const svc = indexerServiceAnswering({ [SIMPLE_RUNG_1]: [makeResult({ unsatisfied: { count: 40, limit: 40 } })] });
 
       expect(await searchAndGrabForBook(simpleBook, deps(svc))).toEqual({ result: 'no_results' });
     });
@@ -327,7 +322,7 @@ describe('#2322 — auto-grab is blocked at the unsatisfied limit', () => {
           blacklistedHashes: new Set<string>(['blocked-hash']), blacklistedGuids: new Set<string>(),
         }),
       });
-      const svc = serviceAnswering({
+      const svc = indexerServiceAnswering({
         [SIMPLE_RUNG_1]: [mamAtLimit({ title: 'Blacklisted', infoHash: 'blocked-hash', seeders: 100 }), other({ seeders: 50 })],
       });
 
@@ -343,7 +338,7 @@ describe('#2322 — auto-grab is blocked at the unsatisfied limit', () => {
           blacklistedHashes: new Set<string>(['dropped-hash']), blacklistedGuids: new Set<string>(),
         }),
       });
-      const svc = serviceAnswering({
+      const svc = indexerServiceAnswering({
         [SIMPLE_RUNG_1]: [
           other({ title: 'Dropped By Blacklist', infoHash: 'dropped-hash' }),
           other({ title: 'Dune EPUB' }),
@@ -363,7 +358,7 @@ describe('#2322 — auto-grab is blocked at the unsatisfied limit', () => {
   describe('error isolation', () => {
     it('warns and keeps going when the blocked event fails to persist', async () => {
       eventHistory = inject<EventHistoryService>({ create: vi.fn().mockRejectedValue(new Error('db down')) });
-      const svc = serviceAnswering({ [SIMPLE_RUNG_1]: [mamAtLimit({ title: 'MAM Only' })] });
+      const svc = indexerServiceAnswering({ [SIMPLE_RUNG_1]: [mamAtLimit({ title: 'MAM Only' })] });
 
       const result = await searchAndGrabForBook(simpleBook, deps(svc));
       await Promise.resolve();
@@ -377,7 +372,7 @@ describe('#2322 — auto-grab is blocked at the unsatisfied limit', () => {
 
     it('searches the next book in a multi-book chain after a failed event write', async () => {
       eventHistory = inject<EventHistoryService>({ create: vi.fn().mockRejectedValue(new Error('db down')) });
-      const svc = serviceAnswering({
+      const svc = indexerServiceAnswering({
         'Book One Author A': [mamAtLimit({ title: 'MAM One' })],
         'Book Two Author B': [other({ title: 'Grabbable' })],
       });
