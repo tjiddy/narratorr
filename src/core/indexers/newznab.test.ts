@@ -986,3 +986,92 @@ describe('NewznabIndexer — solver failure diagnosis (#2374)', () => {
     expect(result.message).toMatch(/^Connection refused on port /);
   });
 });
+
+/**
+ * #2391 section B — the usenet side of the six shared axes. Everything else newznab does now lives
+ * in `newznab-family.test.ts` and runs against both adapters; these are the cases that have no
+ * torznab counterpart by construction.
+ */
+describe('NewznabIndexer — usenet-only divergences (#2391)', () => {
+  const server = useMswServer();
+  let newznab: NewznabIndexer;
+
+  beforeEach(() => {
+    newznab = new NewznabIndexer({ apiUrl: API_BASE, apiKey: 'testapikey' });
+  });
+
+  function serve(items: string) {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+  <channel>${items}</channel>
+</rss>`;
+    server.use(http.get(`${API_BASE}/api`, () =>
+      new HttpResponse(xml, { headers: { 'Content-Type': 'application/rss+xml' } })));
+  }
+
+  it('ignores a torznab:attr while honouring the newznab:attr of the same name', async () => {
+    serve(`
+      <item>
+        <title>Namespace Asymmetry</title>
+        <enclosure url="https://indexer.test/dl/1.nzb"/>
+        <torznab:attr name="language" value="fre"/>
+      </item>
+      <item>
+        <title>Namespace Honoured</title>
+        <enclosure url="https://indexer.test/dl/2.nzb"/>
+        <newznab:attr name="language" value="fre"/>
+      </item>`);
+
+    const { results } = await newznab.search('test');
+
+    expect(results[0]).not.toHaveProperty('language');
+    expect(results[1]!.language).toBe('french');
+  });
+
+  it('omits newsgroup when the group attr is empty', async () => {
+    serve(`
+      <item>
+        <title>Blank Group</title>
+        <enclosure url="https://indexer.test/dl/1.nzb"/>
+        <newznab:attr name="group" value=""/>
+      </item>`);
+
+    const { results } = await newznab.search('test');
+
+    expect(results[0]).not.toHaveProperty('newsgroup');
+  });
+
+  it('stamps every result usenet and carries no torrent swarm fields, even when the payload supplies them', async () => {
+    serve(`
+      <item>
+        <title>Torrent Attrs On A Usenet Feed</title>
+        <enclosure url="https://indexer.test/dl/1.nzb"/>
+        <newznab:attr name="group" value="alt.binaries.audiobooks"/>
+        <newznab:attr name="infohash" value="da4b9237bacccdf19c0760cab7aec4a8359010b0"/>
+        <newznab:attr name="seeders" value="15"/>
+        <newznab:attr name="leechers" value="3"/>
+      </item>`);
+
+    const { results } = await newznab.search('test');
+
+    expect(results[0]!.protocol).toBe('usenet');
+    expect(results[0]!.newsgroup).toBe('alt.binaries.audiobooks');
+    for (const key of ['infoHash', 'seeders', 'leechers']) {
+      expect(results[0]).not.toHaveProperty(key);
+    }
+  });
+
+  it('drops a hash-only item as no-url rather than synthesizing a magnet', async () => {
+    serve(`
+      <item>
+        <title>Hash Only Book</title>
+        <newznab:attr name="infohash" value="da4b9237bacccdf19c0760cab7aec4a8359010b0"/>
+      </item>`);
+
+    const { results, parseStats, debugTrace } = await newznab.search('test');
+
+    expect(results).toEqual([]);
+    expect(parseStats.dropped.noUrl).toBe(1);
+    expect(debugTrace[0]!.reason).toBe('dropped:no-url');
+  });
+});
