@@ -38,7 +38,7 @@ export const mamSettingsSchema = z.object({
   useFreeleechWedge: wedgeModeSchema.default('never'),
 }).strict();
 
-export const ABB_HOSTNAME_MESSAGE = 'Must be a valid hostname';
+const ABB_HOSTNAME_MESSAGE = 'Must be a valid hostname';
 
 // A bare `host:port` parses as scheme `host:` with an empty host, so a colon followed by digits is
 // a port, not a scheme (#2392) — without this, `audiobookbay.lu:8080` reads as a rejected scheme.
