@@ -1229,6 +1229,22 @@ describe('IndexerService', () => {
       expect(service.getFailureGeneration(7)).toBe(generationBefore);
     });
 
+    it('a Prowlarr config upsert clears through update(), leaving other indexers untouched', async () => {
+      const prowlarrRow = createMockDbIndexer({ id: 7, source: 'prowlarr', sourceIndexerId: 42 });
+      stop(7);
+      stop(8);
+      db.select.mockReturnValue(mockDbChain([prowlarrRow]));
+      db.update.mockReturnValue(mockDbChain([prowlarrRow]));
+
+      await service.createOrUpsertProwlarr({
+        name: 'Prowlarr ABB', type: 'abb', enabled: true, priority: 50,
+        settings: { hostname: 'audiobookbay.lu' }, sourceIndexerId: 42,
+      });
+
+      expect(service.getFailureSnapshot(7).state).toBe('ok');
+      expect(service.getFailureSnapshot(8).state).toBe('stopped');
+    });
+
     it('delete() clears the breaker and leaves every other indexer untouched', async () => {
       stop(7);
       stop(8);
