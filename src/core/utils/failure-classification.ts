@@ -37,7 +37,9 @@ const MISCONFIGURED = 'misconfiguration — check the notifier settings';
 const REQUEST_REJECTED = 'the server rejected the request';
 const DESTINATION_NOT_FOUND = 'the destination was not found';
 
-const TRANSIENT_UNREACHABLE = 'the notifier could not be reached';
+// Domain-neutral: this vocabulary is now shared by notifier delivery and indexer search (#2376),
+// so the generic fallback names the destination rather than one of its consumers.
+const TRANSIENT_UNREACHABLE = 'the server could not be reached';
 const TRANSIENT_SERVER = 'the server reported a temporary error';
 const TRANSIENT_TIMEOUT = 'the request timed out';
 const TRANSIENT_RATE_LIMIT = 'the server is rate-limiting requests';
