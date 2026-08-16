@@ -1152,7 +1152,7 @@ describe('AudioBookBayIndexer', () => {
 
       const result = await solverIndexer.test();
 
-      expect(result.message.startsWith(arm === 'solver' ? 'Solver unreachable:' : 'Could not determine')).toBe(true);
+      expect(result.message).toMatch(arm === 'solver' ? /^Solver unreachable: / : /^Could not determine /);
       expect(calls.probes()).toEqual([]);
     });
 

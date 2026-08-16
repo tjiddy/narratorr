@@ -1273,7 +1273,7 @@ describe('fetchWithProxy — solver failure discriminants (#2374)', () => {
       await bound.accountedFor(stub, timers, { arrived: bound.max, queued: 1 });
       timers.fire();
 
-      const error = await queued.catch((err: unknown) => err as Error);
+      const error: Error = await queued.then(() => { throw new Error('expected the slot wait to reject'); }, (err: unknown) => err as Error);
       expect(error).toBeInstanceOf(ProxyError);
       expect(error.message).toBe(`Timed out after 60s waiting for a request slot at solver ${PROXY_URL}`);
       expect(solverFailureOf(error)).toEqual({ origin: 'slot-wait' });

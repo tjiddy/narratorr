@@ -30,12 +30,17 @@ export interface SolverFailure {
 const ORIGIN_KEY = 'solverFailureOrigin';
 const CODE_KEY = 'solverTransportCode';
 
-const ORIGINS: readonly SolverFailureOrigin[] = [
+/**
+ * Every arm the round-trip can throw from. Exported so the classifier's table test enumerates the
+ * real registry: a fifth arm added to `fetch.ts` then shows up as a failing test rather than
+ * silently falling through to whatever the classifier's last branch happens to be.
+ */
+export const SOLVER_FAILURE_ORIGINS: readonly SolverFailureOrigin[] = Object.freeze([
   'slot-wait',
   'solver-no-answer',
   'solver-answered',
   'round-trip-timeout',
-];
+]);
 
 /** Attach the discriminant, leaving the message byte-identical. */
 export function markSolverFailure<E extends Error>(
@@ -54,7 +59,7 @@ export function solverFailureOf(error: unknown): SolverFailure | undefined {
   if (!(error instanceof Error)) return undefined;
   const marked = error as Error & { [ORIGIN_KEY]?: unknown; [CODE_KEY]?: unknown };
   const origin = marked[ORIGIN_KEY];
-  if (typeof origin !== 'string' || !ORIGINS.includes(origin as SolverFailureOrigin)) return undefined;
+  if (typeof origin !== 'string' || !SOLVER_FAILURE_ORIGINS.includes(origin as SolverFailureOrigin)) return undefined;
   const transportCode = marked[CODE_KEY];
   return {
     origin: origin as SolverFailureOrigin,

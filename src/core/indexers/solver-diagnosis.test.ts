@@ -27,7 +27,7 @@ import {
   probesNeededFor,
   type ProbeOutcome,
 } from './solver-diagnosis.js';
-import { markSolverFailure, type SolverFailure } from './solver-failure.js';
+import { markSolverFailure, SOLVER_FAILURE_ORIGINS, type SolverFailure } from './solver-failure.js';
 import { MAPPED_TRANSPORT_CODES } from '../utils/map-network-error.js';
 import { REACHABILITY_PROBE_TIMEOUT_MS } from '../utils/constants.js';
 
@@ -177,6 +177,22 @@ describe('solver diagnosis — which probes each arm needs (AC2, AC9)', () => {
     ['round-trip-timeout', { target: true, solver: true }],
   ] as const)('%s', (origin, expected) => {
     expect(probesNeededFor({ origin })).toEqual(expected);
+  });
+
+  /**
+   * Enumerates the real registry rather than the four cases above, so an arm added to `fetch.ts`
+   * without a probe policy and a table row is visible here rather than inheriting a branch.
+   */
+  it('covers every arm the transport can throw from', () => {
+    expect([...SOLVER_FAILURE_ORIGINS].sort()).toEqual(
+      ['round-trip-timeout', 'slot-wait', 'solver-answered', 'solver-no-answer'],
+    );
+    for (const origin of SOLVER_FAILURE_ORIGINS) {
+      expect(probesNeededFor({ origin })).toEqual(expect.objectContaining({ target: expect.any(Boolean), solver: expect.any(Boolean) }));
+      const { verdict, message } = classify({ origin }, TIMED_OUT, { targetProbe: reachable(), solverProbe: reachable() });
+      expect(['target', 'solver', 'no-page', 'inconclusive', 'undiagnosed']).toContain(verdict);
+      expect(message.length).toBeGreaterThan(0);
+    }
   });
 });
 

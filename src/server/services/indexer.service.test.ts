@@ -9,6 +9,13 @@ import type { Db } from '@db/index.js';
 import type { SettingsService } from './settings.service.js';
 import { initializeKey, _resetKey, isEncrypted } from '../utils/secret-codec.js';
 import { IndexerAuthError } from '@core/indexers/errors.js';
+import {
+  abortRejection,
+  codedRejection,
+  routeFetch,
+  solverEnvelope,
+  type RoutedFetch,
+} from '@core/__tests__/solver-routes.js';
 
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 const mockIndexer = createMockDbIndexer();
@@ -1168,6 +1175,61 @@ describe('IndexerService', () => {
 
       await service.test(10);
       expect(persistSpy).toHaveBeenCalledWith(10, expect.objectContaining({ isVip: true, classname: 'VIP' }));
+    });
+  });
+
+
+  /**
+   * #2374 end-to-end: the diagnosis is produced by the real adapter, returned by the service, and
+   * recorded as the breaker's reason verbatim — `reasonFor` reads `error.message`, so the new
+   * wording is what the health card renders. The transient/terminal verdict must be unchanged by it.
+   */
+  describe('#2374 the solver diagnosis reaches the health card', () => {
+    const SOLVER_URL = 'http://flaresolverr.test:8191';
+    const ABB_HOST = 'audiobookbay.test';
+    const TARGET_VERDICT = `Target unreachable: ${ABB_HOST} refused the connection (ECONNREFUSED). Probed directly, not through the solver.`;
+    const solverRow = createMockDbIndexer({
+      id: 11,
+      name: 'ABB',
+      type: 'abb',
+      settings: { hostname: ABB_HOST, pageLimit: 1, flareSolverrUrl: SOLVER_URL },
+    });
+    let routed: RoutedFetch | undefined;
+
+    afterEach(() => {
+      routed?.restore();
+      routed = undefined;
+    });
+
+    it('records the Target verdict as the breaker reason and takes the transient ladder', async () => {
+      db.select.mockReturnValue(mockDbChain([solverRow]));
+      routed = routeFetch((url, method) => {
+        if (method === 'POST' && url.startsWith(`${SOLVER_URL}/v1`)) return abortRejection();
+        if (method === 'HEAD' && url.includes(ABB_HOST)) return codedRejection('ECONNREFUSED');
+        if (method === 'HEAD') return new Response(null, { status: 405 });
+        return undefined;
+      });
+
+      const result = await service.test(11);
+
+      expect(result).toEqual({ success: false, message: TARGET_VERDICT });
+      expect(service.getFailureSnapshot(11)).toMatchObject({ state: 'backing-off', reason: TARGET_VERDICT });
+    });
+
+    it('clears the breaker when the same solver round-trip succeeds, and probes nothing', async () => {
+      db.select.mockReturnValue(mockDbChain([solverRow]));
+      const calls = routeFetch((url, method) => (method === 'POST' && url.startsWith(`${SOLVER_URL}/v1`)
+        ? solverEnvelope({ status: 'ok', solution: { response: '<html>ok</html>', status: 200 } })
+        : undefined));
+      routed = calls;
+      service.recordSearchFailure(11, new Error('Connection refused on port 443'), service.reserveSearchAttempt(11).generation);
+      expect(service.getFailureSnapshot(11).state).toBe('backing-off');
+
+      const result = await service.test(11);
+
+      expect(result.success).toBe(true);
+      expect(service.getFailureSnapshot(11).state).toBe('ok');
+      expect(calls.probes()).toEqual([]);
     });
   });
 
