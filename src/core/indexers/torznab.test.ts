@@ -994,3 +994,135 @@ describe('TorznabIndexer — solver failure diagnosis (#2374)', () => {
     expect(result.message).toMatch(/^Connection refused on port /);
   });
 });
+
+/**
+ * #2391 section B — the torrent side of the six shared axes. Everything else torznab does now lives
+ * in `newznab-family.test.ts` and runs against both adapters; these are the cases that have no
+ * newznab counterpart by construction.
+ */
+describe('TorznabIndexer — torrent-only divergences (#2391)', () => {
+  const server = useMswServer();
+  let torznab: TorznabIndexer;
+
+  beforeEach(() => {
+    torznab = new TorznabIndexer({ apiUrl: API_BASE, apiKey: 'testapikey' });
+  });
+
+  function serve(items: string) {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+  <channel>${items}</channel>
+</rss>`;
+    server.use(http.get(`${API_BASE}/api`, () =>
+      new HttpResponse(xml, { headers: { 'Content-Type': 'application/rss+xml' } })));
+  }
+
+  it('reads all three arms of its attr selector', async () => {
+    serve(`
+      <item>
+        <title>Three Namespaces</title>
+        <enclosure url="https://tracker.test/dl/1.torrent"/>
+        <torznab:attr name="seeders" value="11"/>
+        <newznab:attr name="grabs" value="22"/>
+        <attr name="language" value="ENG"/>
+      </item>`);
+
+    const { results } = await torznab.search('test');
+
+    expect(results[0]!.seeders).toBe(11);
+    expect(results[0]!.grabs).toBe(22);
+    expect(results[0]!.language).toBe('english');
+  });
+
+  it('omits seeders and leechers when the attrs are missing or non-numeric', async () => {
+    serve(`
+      <item>
+        <title>No Swarm Attrs</title>
+        <enclosure url="https://tracker.test/dl/1.torrent"/>
+      </item>
+      <item>
+        <title>Garbage Swarm Attrs</title>
+        <enclosure url="https://tracker.test/dl/2.torrent"/>
+        <torznab:attr name="seeders" value="lots"/>
+        <torznab:attr name="leechers" value=""/>
+      </item>`);
+
+    const { results } = await torznab.search('test');
+
+    for (const result of results) {
+      expect(result).not.toHaveProperty('seeders');
+      expect(result).not.toHaveProperty('leechers');
+    }
+  });
+
+  it('builds a magnet with the infohash and the title when no enclosure or link exists', async () => {
+    serve(`
+      <item>
+        <title>Hash Only Book</title>
+        <torznab:attr name="infohash" value="da4b9237bacccdf19c0760cab7aec4a8359010b0"/>
+      </item>`);
+
+    const { results, parseStats } = await torznab.search('test');
+
+    expect(parseStats.dropped.noUrl).toBe(0);
+    const magnet = new URL(results[0]!.downloadUrl!).searchParams;
+    expect(magnet.get('xt')).toBe('urn:btih:da4b9237bacccdf19c0760cab7aec4a8359010b0');
+    expect(magnet.get('dn')).toBe('Hash Only Book');
+    expect(results[0]!.infoHash).toBe('da4b9237bacccdf19c0760cab7aec4a8359010b0');
+  });
+
+  it('treats an empty infohash as no hash at all — no magnet, so a URL-less item drops', async () => {
+    serve(`
+      <item>
+        <title>Empty Hash Book</title>
+        <torznab:attr name="infohash" value=""/>
+      </item>`);
+
+    const { results, parseStats, debugTrace } = await torznab.search('test');
+
+    expect(results).toEqual([]);
+    expect(parseStats.dropped.noUrl).toBe(1);
+    expect(debugTrace[0]!.reason).toBe('dropped:no-url');
+  });
+
+  /**
+   * The dropped arm above cannot see the key-omission contract, because it produces no result at
+   * all — and `toBeUndefined()` would not see it either, since that passes for a present
+   * `infoHash: undefined` too.
+   *
+   * TWO independently sufficient guards produce the omission, so neither single-site mutation reds
+   * this: `parseNewznabAttrs` never stores a falsy value (`newznab-family.ts:292`), and the hook
+   * additionally folds `attrs.infohash || undefined`. Measured — mutating either alone leaves the
+   * whole `src/core/indexers/` suite green; mutating both reds exactly this case and the
+   * pre-existing 'handles empty string infohash → undefined'. What is pinned here is therefore the
+   * composed contract, which is the one callers depend on.
+   */
+  it('omits the infoHash key entirely on a kept result whose infohash is empty', async () => {
+    serve(`
+      <item>
+        <title>Empty Hash With Enclosure</title>
+        <enclosure url="https://tracker.test/dl/1.torrent"/>
+        <torznab:attr name="infohash" value=""/>
+      </item>`);
+
+    const { results } = await torznab.search('test');
+
+    expect(results).toHaveLength(1);
+    expect(results[0]!.downloadUrl).toBe('https://tracker.test/dl/1.torrent');
+    expect(results[0]).not.toHaveProperty('infoHash');
+  });
+
+  it('stamps every result torrent and never carries a newsgroup', async () => {
+    serve(`
+      <item>
+        <title>Usenet Attrs On A Torrent Feed</title>
+        <enclosure url="https://tracker.test/dl/1.torrent"/>
+        <torznab:attr name="group" value="alt.binaries.audiobooks"/>
+      </item>`);
+
+    const { results } = await torznab.search('test');
+
+    expect(results[0]!.protocol).toBe('torrent');
+    expect(results[0]).not.toHaveProperty('newsgroup');
+  });
+});

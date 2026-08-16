@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { http, HttpResponse } from 'msw';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { routeFetch } from '../__tests__/solver-routes.js';
 import { ADAPTER_FACTORIES } from './registry.js';
@@ -352,5 +354,61 @@ describe('Indexer ADAPTER_FACTORIES', () => {
         routed.restore();
       }
     });
+  });
+});
+
+/**
+ * #2391 case 19 — the caps-family adapters now share one implementation, so this drives each factory
+ * end to end against its own fixture feed. The registry bodies are unchanged; what this pins is that
+ * the shared base still reaches the wire with each adapter's own profile and protocol.
+ */
+describe('caps-family factories — registry to wire (#2391)', () => {
+  const server = useMswServer();
+  const fixturesDir = resolve(import.meta.dirname, '../__tests__/fixtures');
+
+  const CASES = [
+    {
+      type: 'torznab' as const,
+      apiUrl: 'https://tracker.test',
+      fixture: 'torznab-search.xml',
+      protocol: 'torrent',
+      attrsParam: 'grabs,language',
+    },
+    {
+      type: 'newznab' as const,
+      apiUrl: 'https://indexer.test',
+      fixture: 'newznab-search.xml',
+      protocol: 'usenet',
+      attrsParam: 'grabs,language,group,files',
+    },
+  ];
+
+  it.each(CASES)('$type reaches the wire with its own profile and returns $protocol results', async (testCase) => {
+    const xml = readFileSync(resolve(fixturesDir, testCase.fixture), 'utf-8');
+    let capturedUrl = '';
+    server.use(
+      http.get(`${testCase.apiUrl}/api`, ({ request }) => {
+        capturedUrl = request.url;
+        return new HttpResponse(xml, { headers: { 'Content-Type': 'application/rss+xml' } });
+      }),
+    );
+
+    const adapter = ADAPTER_FACTORIES[testCase.type](
+      { apiUrl: testCase.apiUrl, apiKey: 'realkey' },
+      'Operator Name',
+    );
+    const { results, parseStats } = await adapter.search('Brandon Sanderson', { limit: 50 });
+
+    expect(new URL(capturedUrl).searchParams.get('attrs')).toBe(testCase.attrsParam);
+    expect(parseStats.itemsObserved).toBe(3);
+    expect(results).toHaveLength(3);
+    for (const result of results) {
+      expect(result.protocol).toBe(testCase.protocol);
+      expect(result.indexer).toBe('Operator Name');
+      expect(result.downloadUrl).toBeTruthy();
+      expect(result.title).toContain('Brandon Sanderson');
+    }
+    expect(results[0]!.size).toBe(1073741824);
+    expect(results[0]!.grabs).toBe(42);
   });
 });
