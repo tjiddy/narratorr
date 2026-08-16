@@ -98,6 +98,15 @@ describe('#2309 end-to-end — the MAM gate spaces one search\'s own refresh/sea
 
   it('spaces the status refresh and the search it precedes, and leaves the other row unwaited', async () => {
     stubMam();
+    // Both observations below are stamped inside MSW handlers, so the asserted quantity is the
+    // gate's interval plus the difference of two fetch-to-handler latencies. The run's first
+    // intercepted fetch pays a one-time interception cost the second does not, biasing the gap
+    // ~5-11ms SHORT and eating the tolerance meant for clock granularity (#2362). Warm the path so
+    // the measurement lands on the interval itself; this fetch bypasses the adapter, so it takes no
+    // gate slot and leaves no stamp behind.
+    await fetch(`${MAM_BASE}/jsonLoad.php`);
+    dispatched.length = 0;
+
     const startedAt = Date.now();
 
     const outcome = await searchService.searchAllWithStatus('the way of kings');
