@@ -8,6 +8,8 @@ import {
   AUDIBLE_TIMEOUT_MS,
   AUDNEXUS_TIMEOUT_MS,
   HTTP_DOWNLOAD_TIMEOUT_MS,
+  SOLVER_MAX_CONCURRENT_REQUESTS,
+  SOLVER_SLOT_WAIT_TIMEOUT_MS,
 } from './constants.js';
 
 describe('timeout constants', () => {
@@ -41,5 +43,19 @@ describe('timeout constants', () => {
 
   it('HTTP_DOWNLOAD_TIMEOUT_MS is 30_000 (30s)', () => {
     expect(HTTP_DOWNLOAD_TIMEOUT_MS).toBe(30_000);
+  });
+
+  it('SOLVER_SLOT_WAIT_TIMEOUT_MS is 60_000 (60s)', () => {
+    expect(SOLVER_SLOT_WAIT_TIMEOUT_MS).toBe(60_000);
+  });
+});
+
+describe('solver concurrency constants', () => {
+  it('SOLVER_MAX_CONCURRENT_REQUESTS is 3', () => {
+    expect(SOLVER_MAX_CONCURRENT_REQUESTS).toBe(3);
+  });
+
+  it('SOLVER_SLOT_WAIT_TIMEOUT_MS matches one full PROXY_TIMEOUT_MS hold', () => {
+    expect(SOLVER_SLOT_WAIT_TIMEOUT_MS).toBe(PROXY_TIMEOUT_MS);
   });
 });
