@@ -181,7 +181,9 @@ export const createIndexerFormSchema = z.object({
 
   // Validation only — the server schema stays the single normalizer, because a `.transform()` here
   // would diverge the form's input and output types and mistype `zodResolver`.
-  const hostname = data.settings.hostname?.trim();
+  // Guard on the RAW value, matching the required-field loop above: trimming here would let `'   '`
+  // fall between the two rules — present to that loop, absent to this one — and reach the server.
+  const hostname = data.settings.hostname;
   if (data.type === 'abb' && hostname && normalizeAbbHostname(hostname) === null) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'hostname'], message: ABB_HOSTNAME_MESSAGE });
   }

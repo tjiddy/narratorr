@@ -964,6 +964,16 @@ describe('#2392 abb hostname field', () => {
     expect(screen.queryByText('Domain only — a pasted URL is reduced to its host')).not.toBeInTheDocument();
   });
 
+  it('F1 — reports the field error when the operator types only whitespace into the hostname', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ValidatedAbbForm hostname="" />);
+
+    await user.type(screen.getByPlaceholderText('audiobookbay.lu'), '   ');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText('Must be a valid hostname')).toBeInTheDocument();
+  });
+
   it('keeps the helper text for a pasted https:// URL, which the server normalizes', async () => {
     const user = userEvent.setup();
     renderWithProviders(<ValidatedAbbForm hostname="https://audiobookbay.lu" />);

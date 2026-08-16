@@ -957,6 +957,25 @@ describe('#2392 — createIndexerFormSchema validates the abb hostname without t
     expect(result.success).toBe(false);
   });
 
+  it('F1 — rejects a whitespace-only hostname, which the required-field loop reads as present', () => {
+    const result = createIndexerFormSchema.safeParse({ ...base, settings: { hostname: '   ' } });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({ path: ['settings', 'hostname'], message: 'Must be a valid hostname' }),
+      );
+    }
+  });
+
+  it('F1 — an absent hostname still reports "required" once, not two competing messages', () => {
+    const result = createIndexerFormSchema.safeParse({ ...base, settings: { hostname: '' } });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const hostnameIssues = result.error.issues.filter((issue) => issue.path.join('.') === 'settings.hostname');
+      expect(hostnameIssues.map((issue) => issue.message)).toEqual(['Hostname is required']);
+    }
+  });
+
   it('leaves a non-abb type unaffected — a full apiUrl is still a full apiUrl', () => {
     const result = createIndexerFormSchema.safeParse({
       ...base,
