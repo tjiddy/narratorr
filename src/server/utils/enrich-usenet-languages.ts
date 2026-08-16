@@ -5,7 +5,7 @@ import { detectLanguageFromNewsgroup, detectLanguageFromText, parseNzbGroups, pa
 import { createSsrfSafeDispatcher, fetchWithSsrfRedirect } from '@core/utils/network-service.js';
 import type { LanAllowlist } from '@core/utils/download-url.js';
 import { getUserAgent } from '@shared/user-agent.js';
-import { Semaphore } from './semaphore.js';
+import { BoundedSemaphore } from '@core/utils/bounded-semaphore.js';
 import { serializeError } from './serialize-error.js';
 import { sanitizeLogUrl } from './sanitize-log-url.js';
 import { enrichmentCache, type EnrichmentCacheValue } from './enrichment-cache.js';
@@ -286,7 +286,7 @@ export async function enrichUsenetLanguages(
 
   languagesDetected += detectCapSkippedTitles(skipped, logger);
 
-  const semaphore = new Semaphore(NZB_FETCH_CONCURRENCY);
+  const semaphore = new BoundedSemaphore(NZB_FETCH_CONCURRENCY);
 
   async function fetchAndEnrich(result: SearchResult): Promise<void> {
     const release = await semaphore.acquire();

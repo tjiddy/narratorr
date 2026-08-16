@@ -20,20 +20,41 @@ interface Waiter {
 }
 
 /**
- * A FIFO concurrency bound whose waiters can leave the queue. `Semaphore` in
- * `src/server/utils/semaphore.ts` is the same contract without that: its queue holds bare `resolve`
- * callbacks with no removal path, so racing a deadline or an abort against `acquire()` leaves the
- * waiter enqueued and the next release hands a slot to nobody — a permanent shrink of the pool.
- * Kept separate rather than shared because ESLint bars `src/core/**` from importing `src/server/**`.
+ * A FIFO concurrency bound whose waiters can leave the queue: a deadline, an abort or a drain
+ * removes the waiter, so a later release can never hand a slot to a caller that is no longer there
+ * — which would shrink the live pool permanently.
  *
  * Slots are released by the caller's own releaser, never by a timer: the resource being bounded is
  * held for as long as the caller's work runs.
+ *
+ * The bound is mutable. A raise admits waiters immediately; a shrink withholds admission until
+ * occupancy falls back below the new bound. FIFO holds for `acquire` and `tryAcquire` alike without
+ * either consulting the queue, because every transition that frees capacity ends in `pump()` — so a
+ * queued waiter implies `active >= max`, and there is no spare slot for a newcomer to barge into.
  */
 export class BoundedSemaphore {
   private readonly waiters: Waiter[] = [];
   private active = 0;
 
-  constructor(private readonly max: number) {}
+  constructor(private max: number) {}
+
+  /**
+   * Pumping is what keeps a raise live: a release is otherwise the only way in, so raising a bound
+   * that has already drained to zero would strand its queue with no holder left to let it out.
+   */
+  setMax(newMax: number): void {
+    this.max = newMax;
+    this.pump();
+  }
+
+  /** Non-blocking counterpart to `acquire()`: takes a slot only if one is free at this instant. */
+  tryAcquire(): SlotRelease | null {
+    if (this.active < this.max) {
+      this.active++;
+      return this.makeRelease();
+    }
+    return null;
+  }
 
   /**
    * Resolves with the releaser for one slot. Rejects only when `signal` aborts, when
@@ -114,6 +135,7 @@ export class BoundedSemaphore {
     };
   }
 
+  // A prior setMax shrink may leave active above max; do not wake until capacity returns.
   private pump(): void {
     while (this.active < this.max) {
       const waiter = this.waiters.shift();

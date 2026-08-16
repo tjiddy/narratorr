@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from '@db/index.js';
+import type { AcquireSlotOptions, SlotRelease } from '@core/utils/bounded-semaphore.js';
 import { books, companionEbooks } from '@db/schema.js';
 import { generatePublicId } from '../utils/public-id.js';
 import type { SettingsService } from './settings.service.js';
@@ -80,13 +81,13 @@ vi.mock('./book-admission.js', async (importOriginal) => {
   };
 });
 
-vi.mock('../utils/semaphore.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../utils/semaphore.js')>();
-  class RecordingSemaphore extends actual.Semaphore {
+vi.mock('@core/utils/bounded-semaphore.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@core/utils/bounded-semaphore.js')>();
+  class RecordingSemaphore extends actual.BoundedSemaphore {
     // acquire() returns a single-use release token, so wrap it to record release (#1984).
-    override async acquire(): Promise<() => void> {
+    override async acquire(options: AcquireSlotOptions = {}): Promise<SlotRelease> {
       hoisted.events.push('semaphore.wait');
-      const release = await super.acquire();
+      const release = await super.acquire(options);
       hoisted.events.push('semaphore.acquired');
       return () => {
         hoisted.events.push('semaphore.release');
@@ -94,7 +95,7 @@ vi.mock('../utils/semaphore.js', async (importOriginal) => {
       };
     }
   }
-  return { ...actual, Semaphore: RecordingSemaphore };
+  return { ...actual, BoundedSemaphore: RecordingSemaphore };
 });
 
 const observeMock = vi.mocked(observeCompanionEbook);

@@ -22,7 +22,7 @@ import { dotPrefixBasename } from '@core/utils/hidden-staging.js';
 import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
 import { removeTree } from '@core/utils/remove-tree.js';
 import { toSourceBitrateKbps } from '../utils/audio-bitrate.js';
-import { Semaphore, type SemaphoreRelease } from '../utils/semaphore.js';
+import { BoundedSemaphore, type SlotRelease } from '@core/utils/bounded-semaphore.js';
 import type { MergePhase, MergeFailedReason, MergeStateSnapshot } from '@shared/schemas/sse-events.js';
 import { MergeStateBroadcaster } from './merge-state-broadcaster.js';
 import { MergeError, validateBookForMerge, validateDequeueTime, listTopLevelAudioFiles, requireMergeMinimum } from './merge-eligibility.js';
@@ -64,7 +64,7 @@ export type CancelResult = { status: 'cancelled' } | { status: 'committing' } | 
 export class MergeService {
   private inProgress = new Set<number>();
   private queue: number[] = [];
-  private readonly semaphore = new Semaphore(1);
+  private readonly semaphore = new BoundedSemaphore(1);
   private abortControllers = new Map<number, AbortController>();
   private currentPhase = new Map<number, MergePhase>();
   // Per-book provenance follows queue/inProgress lifetime and is installed only after preflight succeeds.
@@ -138,7 +138,8 @@ export class MergeService {
       // Reuse validation's processing read and title; another settings read can reject and another book read would suspend.
       const validated = await validateBookForMerge(this.bookService, this.settingsService, bookId);
       bookTitle = validated.title;
-      // Refresh before admission; setMax does not wake waiters, so both enqueue and release paths drain FIFO.
+      // Refresh before admission. setMax pumps, but this service never calls acquire(), so the primitive
+      // holds no waiters of its own and drainQueue stays the sole promoter of `queue` on both paths.
       this.semaphore.setMax(clampConcurrency(validated.processing?.maxConcurrentProcessing));
     } catch (error: unknown) {
       this.inProgress.delete(bookId);
@@ -192,12 +193,12 @@ export class MergeService {
   }
 
   /** Release then reacquire synchronously; passing the old slot forward bypassed max and defeated capacity shrink. */
-  private processNext(releaseSlot: SemaphoreRelease): void {
+  private processNext(releaseSlot: SlotRelease): void {
     releaseSlot();
     this.drainQueue();
   }
 
-  private startQueuedMerge(bookId: number, releaseSlot: SemaphoreRelease): void {
+  private startQueuedMerge(bookId: number, releaseSlot: SlotRelease): void {
     this.inProgress.add(bookId);
 
     // Promote queued→active(starting) atomically; carry the captured title and remaining FIFO positions in one frame (#2129).
