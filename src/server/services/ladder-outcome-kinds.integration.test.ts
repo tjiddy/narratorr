@@ -111,7 +111,10 @@ function mouse(): Leg {
 
 beforeEach(() => {
   initializeKey(TEST_KEY);
-  vi.mocked(preSearchRefresh).mockImplementation(actualRefresh.preSearchRefresh);
+  // `restoreAllMocks` clears neither the implementation nor the history of a module-factory mock,
+  // and every case in this file calls through it — an uncleared count is the whole suite's, not
+  // this case's.
+  vi.mocked(preSearchRefresh).mockReset().mockImplementation(actualRefresh.preSearchRefresh);
 });
 afterEach(() => { _resetKey(); vi.restoreAllMocks(); });
 
@@ -229,6 +232,10 @@ describe.each(SURFACES)('#2375 AC17/AC18 — a policy refusal is asked once, on 
 
     await runQueryLadder(LADDER, await executorFor(surface, harness));
 
+    // The refused indexer is asked ONCE. An implementation that recognised the refusal by its
+    // sentence would read the new wording as an ordinary outcome and ask it on all eight rungs.
+    const refusedCalls = vi.mocked(preSearchRefresh).mock.calls.filter(([, indexer]) => indexer.id === 1);
+    expect(refusedCalls).toHaveLength(1);
     expect(refusal.search).not.toHaveBeenCalled();
     expect(alive).toHaveBeenCalledTimes(8);
   });
