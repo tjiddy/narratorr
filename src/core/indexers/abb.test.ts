@@ -16,6 +16,7 @@ vi.mock('../utils/network-service.js', async (importActual) => {
 
 import { AudioBookBayIndexer } from './abb.js';
 import { ProxyError } from './errors.js';
+import { solverOk, useSolverBound } from '../__tests__/solver-bound.js';
 import type { SearchResult } from './types.js';
 
 const fixturesDir = resolve(import.meta.dirname, '../__tests__/fixtures');
@@ -904,6 +905,97 @@ describe('AudioBookBayIndexer', () => {
       expect(results.length).toBeGreaterThan(0);
       expect(results[0]!.guid).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');
       expect(results[0]!.guid).toBe(results[0]!.infoHash);
+    });
+  });
+
+  /**
+   * The amplification guard (#2373 AC5). Both catches in this adapter rethrow only what
+   * `isProxyRelatedError` accepts and swallow everything else, so a slot-wait failure typed as a
+   * plain `Error` would be dropped, ABB would report an empty result set, the search service would
+   * count it as `succeeded`, and the query ladder would read an answered zero and advance — issuing
+   * more solver requests, which is exactly the amplification the bound exists to prevent.
+   */
+  describe('solver concurrency bound (#2373)', () => {
+    const PROXY_URL = 'http://flaresolverr.test:8191';
+    const bound = useSolverBound(server);
+    let proxiedIndexer: AudioBookBayIndexer;
+
+    beforeEach(() => {
+      proxiedIndexer = new AudioBookBayIndexer({
+        hostname: ABB_HOST,
+        pageLimit: 1,
+        flareSolverrUrl: PROXY_URL,
+      });
+    });
+
+    /** Replaces the inter-request pause with a gate, so enrichment can be held mid-loop. */
+    function gateEnrichmentDelay(indexerUnderTest: AudioBookBayIndexer): { open: () => void } {
+      let resume: (() => void) | undefined;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(indexerUnderTest as any, 'delay').mockImplementation(
+        () => new Promise<void>((resolve) => { resume = resolve; }),
+      );
+      return { open: () => resume?.() };
+    }
+
+    it('propagates a slot-wait timeout from the search page out of search()', async () => {
+      const stub = bound.stub(`${PROXY_URL}/v1`);
+      await bound.saturate(PROXY_URL);
+      expect(stub.observed).toBe(bound.max);
+
+      const timer = bound.captureSlotWait();
+      const searching = bound.track(proxiedIndexer.search('Brandon Sanderson'));
+      await bound.settle();
+      timer.fire();
+
+      await expect(searching).rejects.toThrow(/waiting for a request slot/);
+      await expect(searching).rejects.toBeInstanceOf(ProxyError);
+      expect(stub.targets.some((target) => target.includes('?s='))).toBe(false);
+    });
+
+    it('propagates a slot-wait timeout from detail-page enrichment out of search()', async () => {
+      const stub = bound.stub(`${PROXY_URL}/v1`, {
+        immediate: (targetUrl) => (targetUrl.includes('?s=') ? solverOk(searchHtml) : undefined),
+      });
+      const enrichment = gateEnrichmentDelay(proxiedIndexer);
+
+      const searching = bound.track(proxiedIndexer.search('Brandon Sanderson'));
+      await bound.settle();
+      expect(stub.targets.some((target) => target.includes('?s='))).toBe(true);
+
+      // The search page has released its slot; fill the pool before enrichment resumes.
+      await bound.saturate(PROXY_URL);
+      const timer = bound.captureSlotWait();
+      enrichment.open();
+      await bound.settle();
+      timer.fire();
+
+      await expect(searching).rejects.toThrow(/waiting for a request slot/);
+      await expect(searching).rejects.toBeInstanceOf(ProxyError);
+    });
+
+    it('makes the connection test queue behind search traffic and reports the slot wait', async () => {
+      const stub = bound.stub(`${PROXY_URL}/v1`);
+
+      const searchers = Array.from({ length: bound.max }, () => {
+        const searcher = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 1, flareSolverrUrl: PROXY_URL });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        vi.spyOn(searcher as any, 'delay').mockResolvedValue(undefined);
+        return bound.track(searcher.search('Brandon Sanderson'));
+      });
+      await bound.settle();
+      expect(stub.observed).toBe(bound.max);
+
+      const timer = bound.captureSlotWait();
+      const testing = proxiedIndexer.test();
+      await bound.settle();
+      timer.fire();
+
+      const result = await testing;
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/waiting for a request slot/);
+      expect(result.message).toContain(PROXY_URL);
+      expect(searchers).toHaveLength(bound.max);
     });
   });
 });

@@ -7,7 +7,8 @@ import { fetchWithProxy } from './fetch.js';
 import { fetchWithProxyAgent } from './proxy.js';
 import { isProxyRelatedError, ProxyError } from './errors.js';
 import { _resetSolverConcurrencyForTesting } from './solver-concurrency.js';
-import { PROXY_TIMEOUT_MS, SOLVER_MAX_CONCURRENT_REQUESTS, SOLVER_SLOT_WAIT_TIMEOUT_MS } from '../utils/constants.js';
+import { solverOk, useSolverBound, type SolverRequestOptions } from '../__tests__/solver-bound.js';
+import { PROXY_TIMEOUT_MS, SOLVER_SLOT_WAIT_TIMEOUT_MS } from '../utils/constants.js';
 
 const TARGET_URL = 'https://indexer.test/api?q=test';
 const PROXY_URL = 'http://flaresolverr.test:8191';
@@ -541,92 +542,15 @@ describe('fetchWithProxy', () => {
    * outstanding leaves real fetches running against the stub with a fresh pool behind them.
    */
   describe('solver concurrency bound (#2373)', () => {
-    const N = SOLVER_MAX_CONCURRENT_REQUESTS;
-    /** Captured before any spy replaces it, so the pacing helper is immune to the timer spies below. */
-    const nativeSetTimeout = globalThis.setTimeout;
+    const bound = useSolverBound(server);
+    const { max: N, settle, saturate, captureSlotWait } = bound;
 
-    type Respond = () => Response;
+    const useStub = (endpoint: string, parked?: () => Response) =>
+      bound.stub(endpoint, { ...(parked !== undefined && { parked }) });
+    const solverRequest = (proxyUrl: string, options?: SolverRequestOptions) =>
+      bound.request(proxyUrl, options);
 
-    const okResponse: Respond = () =>
-      HttpResponse.json({ status: 'ok', solution: { response: 'ok', status: 200 } });
-
-    interface HoldingStub {
-      observed: number;
-      live: number;
-      peak: number;
-      targets: string[];
-      releaseOne(): void;
-      releaseAll(): void;
-    }
-
-    const openStubs: HoldingStub[] = [];
-    const outstanding: Array<Promise<unknown>> = [];
-
-    /** Lets a rejection be observed later without ever going unhandled. */
-    function track<T>(promise: Promise<T>): Promise<T> {
-      outstanding.push(promise.catch(() => undefined));
-      return promise;
-    }
-
-    function settle(ms = 20): Promise<void> {
-      return new Promise((resolve) => nativeSetTimeout(resolve, ms));
-    }
-
-    /**
-     * A solver that parks every request until released, so "did this reach the solver?" is an exact
-     * observation rather than a race. Once `releaseAll` runs it answers immediately, which is what
-     * makes teardown terminate even for requests still queued behind the bound.
-     */
-    function useStub(endpoint: string, respond: Respond = okResponse): HoldingStub {
-      const gates: Array<() => void> = [];
-      let holding = true;
-      const stub: HoldingStub = {
-        observed: 0,
-        live: 0,
-        peak: 0,
-        targets: [],
-        releaseOne: () => gates.shift()?.(),
-        releaseAll: () => {
-          holding = false;
-          for (const open of gates.splice(0)) open();
-        },
-      };
-
-      server.use(
-        http.post(endpoint, async ({ request }) => {
-          const body = await request.json() as { url?: string };
-          stub.observed++;
-          stub.targets.push(body.url ?? '');
-          stub.live++;
-          stub.peak = Math.max(stub.peak, stub.live);
-          if (holding) await new Promise<void>((resolve) => gates.push(resolve));
-          stub.live--;
-          return respond();
-        }),
-      );
-
-      openStubs.push(stub);
-      return stub;
-    }
-
-    function solverRequest(proxyUrl: string, options: { signal?: AbortSignal; timeoutMs?: number; url?: string } = {}) {
-      return track(fetchWithProxy({
-        url: options.url ?? TARGET_URL,
-        proxyUrl,
-        ...(options.signal !== undefined && { signal: options.signal }),
-        ...(options.timeoutMs !== undefined && { timeoutMs: options.timeoutMs }),
-      }));
-    }
-
-    async function saturate(proxyUrl: string, options: { timeoutMs?: number } = {}): Promise<void> {
-      for (let i = 0; i < N; i++) solverRequest(proxyUrl, options);
-      await settle();
-    }
-
-    afterEach(async () => {
-      for (const stub of openStubs.splice(0)) stub.releaseAll();
-      await Promise.allSettled(outstanding.splice(0));
-      _resetSolverConcurrencyForTesting();
+    afterEach(() => {
       vi.restoreAllMocks();
     });
 
@@ -657,8 +581,8 @@ describe('fetchWithProxy', () => {
     });
 
     describe('slot release on every exit path', () => {
-      const outcomes: Array<{ name: string; respond: Respond }> = [
-        { name: '2xx success', respond: okResponse },
+      const outcomes: Array<{ name: string; respond: () => Response }> = [
+        { name: '2xx success', respond: () => solverOk() },
         { name: 'solver HTTP 500', respond: () => new HttpResponse(null, { status: 500 }) },
         { name: 'a 200 error envelope', respond: () => HttpResponse.json({ status: 'error', message: 'solver failed' }) },
         { name: 'a 200 ok envelope with no solution.response', respond: () => HttpResponse.json({ status: 'ok' }) },
@@ -904,27 +828,11 @@ describe('fetchWithProxy', () => {
     });
 
     describe('bounded wait for a slot', () => {
-      /** Redirects only the slot-wait deadline so it can be driven on demand, alongside live MSW. */
-      function captureSlotWaitTimer(): { fire: () => void; delays: number[] } {
-        const delays: number[] = [];
-        const callbacks: Array<() => void> = [];
-        vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler: TimerHandler, delay?: number, ...rest: unknown[]) => {
-          delays.push(delay ?? 0);
-          if (delay === SOLVER_SLOT_WAIT_TIMEOUT_MS) {
-            callbacks.push(handler as () => void);
-            return 0 as unknown as ReturnType<typeof setTimeout>;
-          }
-          return nativeSetTimeout(handler as () => void, delay, ...rest);
-        }) as typeof globalThis.setTimeout);
-
-        return { delays, fire: () => callbacks.splice(0).forEach((callback) => callback()) };
-      }
-
       it('rejects a waiter that never gets a slot with a proxy-related, operator-legible error', async () => {
         const stub = useStub(`${PROXY_URL}/v1`);
         await saturate(PROXY_URL, { timeoutMs: 25_000 });
 
-        const timer = captureSlotWaitTimer();
+        const timer = captureSlotWait();
         const waiting = solverRequest(PROXY_URL, { url: 'https://indexer.test/api?q=waiting', timeoutMs: 25_000 });
         await settle();
         timer.fire();
@@ -949,7 +857,7 @@ describe('fetchWithProxy', () => {
         useStub(`${PROXY_URL}/v1`);
         await saturate(PROXY_URL, { timeoutMs: 25_000 });
 
-        const timer = captureSlotWaitTimer();
+        const timer = captureSlotWait();
         solverRequest(PROXY_URL, { timeoutMs: 25_000 });
         await settle();
 
@@ -961,7 +869,7 @@ describe('fetchWithProxy', () => {
         const stub = useStub(`${PROXY_URL}/v1`);
         await saturate(PROXY_URL, { timeoutMs: 25_000 });
 
-        const timer = captureSlotWaitTimer();
+        const timer = captureSlotWait();
         const waiting = solverRequest(PROXY_URL, { timeoutMs: 25_000 });
         await settle();
 
@@ -1019,11 +927,7 @@ describe('fetchWithProxy', () => {
         const stub = useStub(`${PROXY_URL}/v1`);
         await saturate(PROXY_URL, { timeoutMs: 25_000 });
 
-        const armed: number[] = [];
-        vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler: TimerHandler, delay?: number, ...rest: unknown[]) => {
-          armed.push(delay ?? 0);
-          return nativeSetTimeout(handler as () => void, delay, ...rest);
-        }) as typeof globalThis.setTimeout);
+        const armed = captureSlotWait().delays;
 
         solverRequest(PROXY_URL, { url: 'https://indexer.test/api?q=budget', timeoutMs: 12_345 });
         await settle();
@@ -1041,7 +945,7 @@ describe('fetchWithProxy', () => {
         server.use(
           http.post(`${PROXY_URL}/v1`, async ({ request }) => {
             capturedBody = await request.json() as Record<string, unknown>;
-            return okResponse();
+            return solverOk();
           }),
         );
 

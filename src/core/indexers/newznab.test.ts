@@ -16,6 +16,7 @@ vi.mock('../utils/network-service.js', async (importActual) => {
 
 import { NewznabIndexer } from './newznab.js';
 import { ProxyError } from './errors.js';
+import { useSolverBound } from '../__tests__/solver-bound.js';
 
 const fixturesDir = resolve(import.meta.dirname, '../__tests__/fixtures');
 const searchXml = readFileSync(resolve(fixturesDir, 'newznab-search.xml'), 'utf-8');
@@ -857,6 +858,48 @@ describe('NewznabIndexer', () => {
 
       const { results } = await indexer.search('test');
       expect(results[0]!.grabs).toBe(0);
+    });
+  });
+
+  /** #2373: the Newznab adapter's solver-bound `fetchXml` takes a slot; its unproxied path does not. */
+  describe('solver concurrency bound (#2373)', () => {
+    const PROXY_URL = 'http://flaresolverr.test:8191';
+    const bound = useSolverBound(server);
+    let proxiedIndexer: NewznabIndexer;
+
+    beforeEach(() => {
+      proxiedIndexer = new NewznabIndexer({
+        apiUrl: API_BASE,
+        apiKey: 'testapikey',
+        flareSolverrUrl: PROXY_URL,
+      });
+    });
+
+    it('takes a slot for a solver-bound search and surfaces the slot wait as a ProxyError', async () => {
+      const stub = bound.stub(`${PROXY_URL}/v1`);
+      await bound.saturate(PROXY_URL);
+      expect(stub.observed).toBe(bound.max);
+
+      const timer = bound.captureSlotWait();
+      const searching = bound.track(proxiedIndexer.search('test'));
+      await bound.settle();
+      timer.fire();
+
+      await expect(searching).rejects.toThrow(/waiting for a request slot/);
+      await expect(searching).rejects.toBeInstanceOf(ProxyError);
+      expect(stub.observed).toBe(bound.max);
+    });
+
+    it('takes no slot when the same indexer has no flareSolverrUrl', async () => {
+      bound.stub(`${PROXY_URL}/v1`);
+      await bound.saturate(PROXY_URL);
+
+      server.use(http.get(`${API_BASE}/api`, () =>
+        new HttpResponse(searchXml, { headers: { 'Content-Type': 'application/rss+xml' } }),
+      ));
+
+      const { results } = await indexer.search('test');
+      expect(results.length).toBeGreaterThan(0);
     });
   });
 });
