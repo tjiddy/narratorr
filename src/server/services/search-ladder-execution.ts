@@ -73,7 +73,13 @@ export function createAggregateExecutor(
       ...(signal !== undefined && { signal }),
     });
     for (const skip of skipped) {
-      sink.indexerError(skip.indexerId, skip.name, formatIndexerSkip(skip.state, skip.reason), 0);
+      // Best-effort: reporting a skip must never cost the caller results it already holds. The
+      // unconditional `info` line at the skip site keeps the event visible either way.
+      try {
+        sink.indexerError(skip.indexerId, skip.name, formatIndexerSkip(skip.state, skip.reason), 0);
+      } catch {
+        // The sink's own problem, not the search's.
+      }
     }
     return { results, succeeded };
   };

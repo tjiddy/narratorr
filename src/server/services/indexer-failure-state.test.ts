@@ -147,6 +147,14 @@ describe('IndexerFailureTracker — the count-based terminal promotion (#2376 AC
 });
 
 describe('IndexerFailureTracker — reset and outcome precedence (#2376 AC3, AC22)', () => {
+  it('is a no-op on a success while ok — no entry is ever created', () => {
+    const { tracker } = makeTracker();
+    tracker.recordSuccess(1);
+
+    expect(tracker.get(1).state).toBe('ok');
+    expect(tracker.generation(1)).toBe(0);
+  });
+
   it('deletes the entry entirely on a success out of backing-off', () => {
     const { tracker } = makeTracker();
     tracker.recordTransientFailure(1, 'boom');
