@@ -19,6 +19,9 @@ import { createMockDbIndexer } from '../__tests__/factories.js';
 import { initializeKey, _resetKey } from '../utils/secret-codec.js';
 import { indexerErrorEventSchema } from '@shared/schemas/search-stream.js';
 import { httpStatusError, IndexerError } from '@core/indexers/errors.js';
+import { AudioBookBayIndexer } from '@core/indexers/abb.js';
+import { useMswServer } from '@core/__tests__/msw/server.js';
+import { http, HttpResponse } from 'msw';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@db/index.js';
 
@@ -355,6 +358,67 @@ describe.each(SURFACES)('#2375 AC10 — reported once, on the %s executor', (sur
 
     expect(ran.exhausted).toBe(true);
     expect(dead).toHaveBeenCalledTimes(1);
+    expect(alive).toHaveBeenCalledTimes(8);
+  });
+});
+
+/**
+ * The regression is named after a real indexer, so at least one case has to drive the real one.
+ * Every other case here injects a rejecting fake adapter, which cannot see an adapter that
+ * SWALLOWS its transport failure and reports an answered zero — the shape ABB had, and the shape
+ * that let a dead ABB absorb one request per rung no matter what the executor decided.
+ */
+describe.each(SURFACES)('#2375 AC1/AC9 — the real AudioBookBay adapter, on the %s executor', (surface) => {
+  const server = useMswServer();
+  const ABB_HOST = 'abb.test';
+
+  /** Indexer 1 is the real ABB over MSW; indexer 2 is a healthy companion so the ladder advances. */
+  function buildWithRealAbb(respond: () => Response) {
+    let abbRequests = 0;
+    server.use(http.get(`https://${ABB_HOST}/`, () => { abbRequests++; return respond(); }));
+
+    const alive = healthy();
+    const harness = build([
+      { id: 1, name: 'AudioBookBay', search: vi.fn() },
+      { id: 2, name: 'Torznab', search: alive },
+    ]);
+    harness.getAdapter.mockImplementation(async (indexer) => (
+      indexer.id === 1
+        ? new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 1 })
+        : { type: 'torznab', name: indexer.name, search: alive, test: vi.fn() }
+    ) as never);
+
+    return { harness, alive, abbRequests: () => abbRequests };
+  }
+
+  it('asks a direct HTTP 503 exactly once across an eight-rung run', async () => {
+    const { harness, alive, abbRequests } = buildWithRealAbb(() => new HttpResponse(null, { status: 503 }));
+
+    const ran = await runQueryLadder(LADDER, await executorFor(surface, harness));
+
+    expect(abbRequests()).toBe(1);
+    expect(alive).toHaveBeenCalledTimes(8);
+    expect(ran.exhausted).toBe(true);
+  });
+
+  it('asks a direct network failure exactly once across an eight-rung run', async () => {
+    const { harness, alive, abbRequests } = buildWithRealAbb(() => HttpResponse.error());
+
+    await runQueryLadder(LADDER, await executorFor(surface, harness));
+
+    expect(abbRequests()).toBe(1);
+    expect(alive).toHaveBeenCalledTimes(8);
+  });
+
+  // Without this the fix cannot be told apart from "ABB is always excluded".
+  it('control: an ABB that answers a genuine zero stays eligible for every rung', async () => {
+    const { harness, alive, abbRequests } = buildWithRealAbb(
+      () => new HttpResponse('<html><body></body></html>', { headers: { 'Content-Type': 'text/html' } }),
+    );
+
+    await runQueryLadder(LADDER, await executorFor(surface, harness));
+
+    expect(abbRequests()).toBe(8);
     expect(alive).toHaveBeenCalledTimes(8);
   });
 });

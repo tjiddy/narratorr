@@ -94,6 +94,13 @@ export class AudioBookBayIndexer implements IndexerAdapter {
         if (isProxyRelatedError(error)) {
           throw error;
         }
+        // Page one failing IS the search failing. Nothing came back, so returning an empty
+        // success tells the caller this indexer answered a genuine zero — and the query ladder
+        // believes it, advances, and asks again on every relaxed rung (#2375). A later page is
+        // a different story: the indexer demonstrably answered, so keep the pages we did get.
+        if (page === 1) {
+          throw error;
+        }
         break;
       }
     }
