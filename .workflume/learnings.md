@@ -2929,3 +2929,278 @@ The shape, if you ever need to reason about it: per-key `{ waiters, nextAllowedA
 **Cancellation:** `acquire` takes an optional `AbortSignal`, rejects with `signal.reason` verbatim (never on an error shape — see [[abort-verdict-not-error-shape]]), removes the waiter from the queue, and leaves `nextAllowedAt` untouched. Immediate queue hand-off is not immediate dispatch: the successor becomes head at once but still owes whatever remains of the floor. Every downstream catch-and-degrade on that path needs `if (signal?.aborted) throw error;` first, or the rejection reads as a legitimate empty answer.
 
 **Module-level state, module-level reset.** Adapter instances are cached and evicted (`indexer.service.ts`), so the floor belongs to the destination, not the object — key it by canonical `host:port` via `normalizedHostPortFromUrl`. `reset` must clear stamps, cancel timers, detach abort listeners AND reject queued waiters; a bare `Map.clear()` leaves timer closures armed and promises permanently pending, which surfaces later as flake (see [[shared-suite-state-inflates-counterfactual]]).
+
+## msw-gated-stream-body-separates-headers-from-parse
+
+**source:** #2373
+**added:** 2026-08-16
+**files:** src/core/__tests__/solver-bound.ts
+**tags:** msw, readablestream, resource-lifetime
+
+---
+
+**To pin that a resource is held until a response body is read and parsed — not merely until `fetch()` resolves — stub a gated streaming body.** With an already-materialized body (`HttpResponse.json(...)`) the two release points are indistinguishable, so a `finally` that wraps only the fetch passes exactly the same tests as one that wraps the parse. This is a whole class of blind spot: any `try { …fetch…; …parse… } finally { release() }` has it.
+
+**The technique is right; the obvious witness is wrong.** Measured on Node 24 / msw 2.15.0, a `new ReadableStream(source, { highWaterMark: 0 })` returned via `new HttpResponse(stream, { headers: { 'Content-Type': 'application/json' } })` produces:
+
+```
+handler → pull#1 → fetch() RESOLVES → pull#2 → (gate opened) → parsed
+```
+
+`pull#1` fires while the Fetch implementation is still assembling the Response — the caller does not hold it yet. A witness resolved on pull#1 therefore samples *before* a release-after-headers bug has fired, and the test passes under the very mutation it exists to catch.
+
+**`highWaterMark: 0` is load-bearing but insufficient.** Construct as `new ReadableStream(source, { highWaterMark: 0 })` — under the default queuing strategy the stream pre-pulls one chunk at construction, so a `pull`-resolved barrier settles before the response reaches any client at all. But `highWaterMark: 0` only removes that construction-time pre-pull; it does NOT move pull#1 after `fetch()` resolves.
+
+**Remedy: emit the body in two chunks and resolve the witness on the SECOND pull.** Enqueue a head byte on pull#1; on pull#2 announce the witness, `await` the gate, then enqueue the tail and close. pull#2 provably follows `fetch()` resolving, which is exactly the window where release-after-headers has freed the resource and release-after-parse has not.
+
+Exemplar: `gatedSolverBody()` in `src/core/__tests__/solver-bound.ts` (`stream` / `draining` / `complete`), consumed by 'keeps the slot until the body is read and parsed, not merely until headers arrive' in `src/core/indexers/fetch.test.ts` (#2373). Counterfactual: moving `releaseSlot()` out of the `finally` in `fetchViaProxy` to just after the `fetch()` call reds it 5/5 and greens 5/5 unmutated — where the single-pull version passed under that same mutation.
+
+**Process note worth as much as the mechanism.** The single-pull test only ever redded because an unrelated helper in the same test was incidentally adding delay. When that helper was removed as unreliable, the flaw underneath surfaced. A test that stops catching its mutation after you delete an unrelated wait was timing-dependent all along — re-run every counterfactual after removing a synchronization helper, not just the tests the helper was named in. See [[vacuous-assertion-observation-points]].
+
+Distinct from [[msw-url-matching-ipv6-and-path-case]] (handler URL matching) and from the Audnexus body-boundary note on splitting `response.text()` from `JSON.parse` (error classification, not resource lifetime).
+
+## msw-network-error-has-no-transport-code
+
+**source:** #2374  
+**added:** 2026-08-16  
+**files:** src/core/__tests__/solver-routes.ts  
+**tags:** msw, vitest, error-classification, undici
+
+---
+
+msw's `HttpResponse.error()` produces a network error with **no** `code` and no `cause`. It therefore cannot exercise any branch that classifies on the transport code — it only ever hits the unknown/default arm — and it cannot produce the `AbortError` DOMException an expiring `AbortController` raises. A test that uses it to mean "the host refused the connection" is vacuous against a code-reading classifier and stays green when the classifier is wrong.
+
+Real undici failures arrive as `TypeError('fetch failed')` whose `cause` carries `.code`; that is the shape `mapNetworkError` unwraps (`src/core/utils/map-network-error.ts:51-52`), and the shape a test must reproduce. Stub at the fetch boundary, not at an inner export — see [[esm-same-module-vi-mock-bypass]] for why that boundary is the right one anyway.
+
+`src/core/__tests__/solver-routes.ts` is the shared harness: `routeFetch(route)` spies `globalThis.fetch`, routes by URL **and method** (the #2374 solver probe and the solver round-trip share an address — `HEAD /v1` is the probe, `POST /v1` is the round-trip), records every call for "was a probe issued?" assertions, and falls through to the pre-spy fetch so MSW keeps serving everything else. It must be installed after `server.listen()` for that fall-through to reach MSW. Companion builders: `codedRejection(code)`, `uncodedRejection()`, `abortRejection()`, `hangUntilAborted(signal)`, `solverEnvelope(body, status)`.
+
+Related: [[map-network-error-drops-transport-code]] — the production half of the same rule (classify on `code`, never on message text).
+
+## degrading-adapter-invisible-to-mock-suite
+
+**source:** #2375  
+**added:** 2026-08-16  
+**files:** src/core/indexers/abb.ts  
+**tags:** indexer-adapters, error-classification, test-observability
+
+---
+
+**A service-level classifier keyed on a thrown error is only as good as its adapters' willingness to throw, and a mock-adapter suite is structurally blind to that.** Injecting a fake adapter that rejects proves the classifier; it proves nothing about whether the real adapter ever rejects.
+
+#2375 shipped to review with a green suite covering both executors, every outcome kind, a route-level SSE test and five counterfactuals — while `AudioBookBayIndexer.search()`, the adapter the motivating incident was named after, still caught its own direct HTTP/network failures and returned an empty *successful* response. The service read that as `{ kind: 'resolved' }`, `succeeded` incremented, the ladder read a genuine zero and advanced, and the dead indexer was re-asked once per rung — the exact amplification the work removed everywhere else.
+
+Why no extra mock-layer case could have caught it: a fake adapter that rejects can only exercise the branch where the adapter rejects. The defect lives in the branch where it doesn't.
+
+**Rule.** When behavior depends on an adapter raising rather than degrading, drive at least one REAL adapter through the real service seam (MSW for the transport). Pair it with a control that keeps the adapter eligible on a genuine answered zero, or the assertion passes just as well against 'always excluded'. Precedent: the `#2375 AC1/AC9 — the real AudioBookBay adapter` describe in `src/server/services/ladder-exclusion.integration.test.ts`.
+
+**Auditing an adapter for this shape:** look for a `catch` whose non-rethrow arm falls through to the ordinary success return. As of #2375, ABB's *search-page* catch is fixed (first page rethrows; later pages still degrade to the pages already fetched, since the indexer demonstrably answered); its *detail-page* catch still swallows by design and is tracked as #2367. `torznab.ts` and `newznab.ts` have no catch in the search path; `myanonamouse.ts`'s `results: []` returns are genuine answered zeros. Related: [[compat-wrapper-hides-stale-test-doubles]] for the other direction — doubles that drift from a widened real surface.
+
+## ladder-rung-count-needs-colon-segments
+
+**source:** #2375  
+**added:** 2026-08-16  
+**files:** src/server/services/search-query-ladder.ts  
+**tags:** search-ladder, title-variants, test-fixtures
+
+---
+
+`buildQueryLadder` (`src/server/services/search-query-ladder.ts`) builds its relaxation rungs from COLON segments, not from words. `titleVariants` (`src/core/utils/title-variants.ts`) emits two unconditional `full` variants and then derives `prefix(n)` / `suffix(n)` / `first+last` from `colonSegments(base)`; with no colon there is one segment, every cut dedupes against the full form, and the ladder is 2 rungs long however many words the title has.
+
+Measured at `29968a8b`: 'The Way of Kings' → 2; 'The Hitchhikers Guide to the Galaxy' → 2; 'The Name of the Wind Kingkiller Chronicle Day One' → 2; 'Dune Messiah (Dune Chronicles Book Two)' → 4 (the parenthetical adds a second full form); 'Kings: Stormlight Archive: Special Edition' + author 'Sanderson' → exactly 8 = `MAX_SEARCH_RUNGS`. The author is load-bearing too: the ladder iterates `[author, undefined]` author-major, so dropping it roughly doubles the count.
+
+**Why it matters for tests.** Any test that means to exercise multi-rung behaviour — exclusion across rungs, per-rung reporting, cooldown, relaxation disclosure — and picks a natural-looking title runs against 2 rungs and passes whether or not the behaviour works past rung 1. A 'called fewer than 8 times' or even 'called twice' assertion is then vacuous, and nothing in the output reveals it.
+
+**Rule:** use a colon-segmented fixture title when rung count is load-bearing, and pin it with `expect(LADDER).toHaveLength(MAX_SEARCH_RUNGS)` in its own case so a change to the variant generator reds the fixture rather than silently shortening every count that depends on it. `ladder-exclusion.integration.test.ts` and `ladder-outcome-kinds.integration.test.ts` (#2375) do exactly this. Reproduce with `pnpm exec tsx` and a small script file — the inline `-e` form cannot resolve the `@core` alias on Windows. Related: [[variant-tag-not-slice-under-first-wins-dedup]] for why the generator's tags, not its text, are the contract.
+
+## reservation-proof-needs-same-entry-point-race
+
+**source:** #2376  
+**added:** 2026-08-16  
+**files:** src/server/services/indexer-breaker.integration.test.ts  
+**tags:** concurrency, circuit-breaker, mutation-testing
+
+---
+
+**A cross-entry-point race does not prove a synchronous gate's reservation.** When two callers reach a shared gate through unequal amounts of pre-gate `await`, the one that arrives first commits its outcome and closes the gate on the other by the ordinary timestamp comparison — so the test passes identically against code with no reservation at all. Only two concurrent calls through the SAME entry point exercise the atomicity.
+
+The live instance: `pollRss` (`src/server/services/indexer-search.service.ts`) calls `reserveIndexerLeg` as its first statement, while `searchAllWithStatus` / `searchAllStreaming` `await prepareSearch(...)` first. Racing RSS against streaming always lets RSS win, fail, and advance `nextAttemptAt` before streaming's gate check runs.
+
+Mutation-verified: deleting the reservation line in `FailureTracker.reserveAttempt` (`failure-backoff-tracker.ts`) reds only the two-concurrent-`searchAllWithStatus` case; the cross-surface case stays green. Keep both — the cross-surface one still proves every surface consults the gate — but write the same-surface one, and mutation-check it, or the reservation is untested.
+
+Related: [[interval-gate-fifo-chain-not-timestamp-compare]] establishes that a read-then-act gate does not bound concurrent callers and that concurrent acquires into a shared resolve-order array are the observation point; this entry narrows WHICH concurrent acquires can see it. [[vacuous-assertion-observation-points]] is the general rule this is an instance of.
+
+## msw-url-matching-ipv6-and-path-case
+
+**source:** #2373  
+**added:** 2026-08-16  
+**files:** src/core/indexers/fetch.test.ts  
+**tags:** msw, path-to-regexp, url-matching
+
+---
+
+MSW 2.15 routes handler URLs through path-to-regexp 6.3, which constrains handler URLs in two non-obvious ways.
+
+**An IPv6-literal handler URL crashes the handler lookup.** `http.post('http://[::1]:8080/v1', ...)` throws `TypeError: Missing parameter name at 9` in `matchRequestUrl` → `HttpHandler.parse`; MSW logs 'Encountered an unhandled exception during the handler lookup' and answers 500, so the resolver never runs and the stub's counters stay at zero. The symptom is indistinguishable from 'production never issued the request', which is what makes it expensive. There is no bracketed-literal spelling that works — stub at the `vi.spyOn(globalThis, 'fetch')` boundary for that case and read the URL off the spy's argument. Exemplar: the IPv6 isolation case in `src/core/indexers/fetch.test.ts` (#2373).
+
+**Path matching is case-insensitive.** `http.post('http://h/Solver-A/v1')` and `http.post('http://h/solver-a/v1')` both match either request, and since `server.use()` prepends, the last-registered one wins for both. Any test proving that production treats path case as significant therefore cannot use two handlers. Register ONE handler with a wildcard path — `http://h/*` matches and does work — and discriminate inside the resolver on `request.url` or on the request body. Exemplar: 'separates paths differing only in case, while host case still folds' in `src/core/indexers/fetch.test.ts`.
+
+Host case and an explicit default port are NOT affected: `fetch` normalizes those before MSW sees the request, so `http://SOLVER.lan:8191/v1` and `http://solver.lan:80/v1` correctly reach handlers registered as `http://solver.lan:8191/v1` and `http://solver.lan/v1`. Verified on Node 24 / msw 2.15.0 / path-to-regexp 6.3.0.
+
+## cheerio-br-zero-width-text
+
+**source:** #2365  
+**added:** 2026-08-15  
+**files:** src/core/indexers/abb-fields.ts  
+**tags:** cheerio, html-scraping, text-extraction
+
+---
+
+**cheerio's `.text()` treats `<br>` as zero-width — it contributes no character, not even a space.** Measured on cheerio@1.2.0: `cheerio.load('<p>Format: <span>M4B</span><br>Bitrate: <span>128 Kbps</span><br>Unabridged</p>')('body').text()` is `"Format: M4BBitrate: 128 KbpsUnabridged"`. All whitespace in flattened output comes from source text nodes, so a source newline before the `<br>` changes the result to `"Format: M4B\nBitrate: 128 Kbps"`.
+
+Two consequences for any `$(sel).text()` + regex extraction:
+
+1. **A `([^\n]+)`-style capture does not stop at a visual line break.** `/Format:\s*([^\n]+)/i` captures `"M4BBitrate: 128 KbpsUnabridged"` on the first shape and `"M4B"` on the second — the same markup, parsed differently because of how the upstream page was indented. Self-terminating captures (`([\d.]+)`, `(\d+)`) are immune, which is why a broken flattening parser can look fine for numeric fields while every string field is wrong.
+2. **Do not repair a text-flattening parser with a narrower pattern.** If the page carries the values in its own elements, read the elements. `src/core/indexers/abb.ts` mined `$('body').text()` for author/narrator and returned the uploader's username; `src/core/indexers/abb-fields.ts` (#2365) replaced it with class-selected reads anchored to the page's schema.org block. The flattening-hostile shape is pinned by the one-source-line block in `src/core/__tests__/fixtures/abb-detail.html`, so a regression back to any text-run regex reds on exact values.
+
+Same family as [[htmlparser2-no-attribute-normalisation]]: measure the parser's actual behaviour before building code or tests on what the markup looks like.
+
+## workflow-dispatch-needs-default-branch
+
+**source:** #2358  
+**added:** 2026-08-15  
+**files:** .github/workflows/windows-tests.yml  
+**tags:** github-actions, workflow-triggers, ci-verification
+
+---
+
+GitHub runs `workflow_dispatch` **only for a workflow file present on the repository's default branch** ([docs](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch)). Declaring the trigger in a NEW workflow on a feature branch does not make it dispatchable — not from the feature branch, not from `develop`, not until it merges to `main`.
+
+**Consequence: `workflow_dispatch` is never a pre-merge verification route for the workflow that introduces it.** A plan that plans to "dispatch it on a scratch branch to prove it catches X" has no route, and the failure mode is silent — nothing fires, which on the PR page is indistinguishable from a clean run.
+
+**Use an event the workflow's own `on:` block covers on a reachable ref.** For `.github/workflows/windows-tests.yml` that is `pull_request: branches: [main, develop]`, i.e. a draft PR into `develop`.
+
+The trap is sharper in this repository because of the surrounding trigger asymmetry: a bare push to a scratch branch fires **nothing** (`ci.yml` is main-only; `docker.yml` is develop-push plus semver tags), so "I pushed and nothing broke" is never evidence here.
+
+Better still, where the property allows it: make the thing you wanted to observe once into a standing test instead. #2358 replaced a planned one-time Windows-red experiment with a filesystem-free, platform-neutral assertion in `src/server/utils/path-write-lock.test.ts` plus a required-file entry in the selection guard — which holds on every run on both platforms instead of once on a branch that gets deleted.
+
+## msw-first-fetch-skews-interval-assertions
+
+**source:** #2358  
+**added:** 2026-08-15  
+**files:** src/server/services/mam-throttle.integration.test.ts  
+**tags:** msw, vitest, timing-assertions
+
+---
+
+A test that stamps `Date.now()` inside two MSW handlers and asserts on their **difference** is measuring the delay under test *plus* the difference of two fetch-to-handler latencies:
+
+```
+observed = (resolve2 - resolve1) + (d2 - d1)
+```
+
+The run's **first** real fetch pays a one-time interception cost that later ones do not, so `d1 > d2` and the observed gap comes in systematically **short**. Measured in `src/server/services/mam-throttle.integration.test.ts` against `IntervalGate`'s exact 250ms floor: six unloaded runs read 239-245ms, i.e. a ~5-11ms standing bias. The assertion's `- 20` tolerance, written to cover clock granularity, was instead spending most of itself on that bias — so the first run under full-suite parallel load read 225 and went red.
+
+**Rule: warm the fetch path before the measured window.**
+
+```ts
+await fetch(`${BASE}/some-stubbed-path`);
+dispatched.length = 0;          // drop the warm-up's own stamp
+const startedAt = Date.now();
+```
+
+Six runs then read 249-250 against a true 250, and the in-test latency probe fell from 11-18ms to 3-5ms — the cost is interception setup, not per-request work. Only after this does a tolerance mean what it says: `Date.now()` granularity, ~15.6ms on Windows and ~1ms on Linux.
+
+**Measure before widening.** The failure looked like generic load flake and the one-line fix was to drop the floor. Instrumenting it showed a fixable bias instead; widening would have deferred the identical failure to the next busy run. Note the gate itself is exact — `IntervalGate.dispatchHead` (`src/core/utils/interval-gate.ts`) stamps `nextAllowedAt = Date.now() + intervalMs` at resolve time — so any shortfall is observation error, never the code under test.
+
+## vitest-passwithnotests-hides-empty-selection
+
+**source:** #2358  
+**added:** 2026-08-15  
+**files:** vitest.config.ts  
+**tags:** vitest, ci, test-selection
+
+---
+
+`vitest.config.ts:19` sets `passWithNoTests: true`, so a run whose include globs match nothing exits **0**. Any gate that reads only the exit code cannot tell "everything passed" from "nothing ran" — and on a platform CI has never covered before, those two look identical.
+
+**Rule: a test gate on a new surface needs a selection assertion, not just an exit code.** Run the JSON reporter alongside the default one and assert on the report:
+
+```
+pnpm test --reporter=default --reporter=json --outputFile.json=vitest-windows.json
+```
+
+Verified against vitest@4.1.10, the report is `{ numTotalTests, numPassedTests, numFailedTests, numPendingTests, numTodoTests, snapshot, startTime, success, testResults: [{ assertionResults, startTime, endTime, status, message, name }] }`. Three conditions catch every realistic collapse given the two-project layout at `vitest.config.ts:25-58`:
+
+- `numTotalTests - numPendingTests - numTodoTests > 0` — something actually executed;
+- at least one `testResults[].name` under `src/client/` — the jsdom `client` project selected files;
+- at least one `testResults[].name` outside it — the `server` project selected files.
+
+`testResults[].name` is an **absolute** path, so on Windows it arrives backslash-separated: fold with `.split('\\').join('/')` before the prefix test, per [[posix-resolve-ignores-backslash]].
+
+The implementation is `scripts/vitest-selection-guard.ts` (pure, unit-tested at `scripts/vitest-selection-guard.test.ts`) with the CI entry `scripts/check-vitest-selection.ts`; `.github/workflows/windows-tests.yml` runs it as the step after the test step, deliberately ungated — if the tests failed the job is already red for the right reason.
+
+**Do not add a global numeric floor and do not assert the skip count.** A magic total (`>= 4000`) catches nothing the per-project check misses and reds on legitimate shrinkage. The skip count moves with hosted-runner capabilities — `describe.skipIf(!FFMPEG_PRESENT)`, the `CAN_RUN` mutagen gate, `CAN_SYMLINK` flipping with Developer Mode — not with selection correctness; print it as a diagnostic and let the per-project check be the only thing that can fail. See [[windows-hostile-test-primitives]].
+
+Both `--outputFile=` and `--outputFile.json=` write the report with two reporters configured on vitest@4.1.10; the keyed form is preferred for explicit per-reporter routing, not because the bare form fails.
+
+## interval-gate-frozen-clock-livelock
+
+**source:** #2345  
+**added:** 2026-08-14  
+**files:** src/core/utils/interval-gate.ts  
+**tags:** fake-timers, rate-limiting, concurrency, vitest
+
+---
+
+**A wall-clock FIFO interval gate must dispatch on its armed timer, not re-read the clock when that timer fires.** `pump()` arms one `setTimeout(..., waitFor(queue))`; if the callback re-enters `pump()` and recomputes `remaining = queue.nextAllowedAt - Date.now()`, it livelocks under `vi.useFakeTimers({ toFake: ['Date'] })` — `Date.now()` is pinned while real timers still fire, so the remainder never shrinks and the queue re-arms forever. The worker hangs at the test timeout rather than failing fast. Fix: the callback calls `dispatchHead(queue)` unconditionally, then `pump(queue)`.
+
+This is a **new** failure mode the read-sleep-restamp form did not have (its `setTimeout` sleep is unconditional and real-time), so it appears exactly when a gate built per [[interval-gate-fifo-chain-not-timestamp-compare]] is adopted by a consumer whose suites freeze `Date` only. That harness is not optional — full fake timers stall MSW and the native `AbortSignal.timeout` inside `fetchWithTimeout` (see [[rate-limit-gate-fails-open-on-nan-window]], [[abortsignal-timeout-native-timer-retry-tests]]) — so any shared gate must assume some caller freezes the clock. Pin it with a liveness case on REAL timers and a small interval: `src/core/utils/interval-gate.test.ts`, describe 'IntervalGate under a frozen clock with live timers'. It reds by timeout against the re-consulting form.
+
+**Second-order effect on mutation testing.** Because every dispatch restamps `nextAllowedAt = Date.now() + intervalMs`, a clamp-only variant of `waitFor` (returning `intervalMs` without rewriting the stamp) is repaired at the next dispatch. A third sequential acquire after a backwards clock step therefore CANNOT discriminate a repaired stamp from a merely clamped return — contrary to the obvious test design. The repair is only observable across a wait that ends in no dispatch: queue a waiter after the backwards step, abort it before the timer fires, then acquire again and assert zero wait. See 'repairs the stored deadline, not just the returned wait' in the same suite, and [[vacuous-assertion-observation-points]] for the general rule.
+
+## settimeout-overflow-clamps-to-1ms
+
+**source:** #2344  
+**added:** 2026-08-14  
+**files:** src/server/jobs/index.ts  
+**tags:** node-timers, schedulers, settings-schema
+
+---
+
+Node's `setTimeout` clamps a delay it cannot represent to **1 ms** — in BOTH directions. NaN gives `TimeoutNaNWarning`; anything above `2**31-1` ms (2_147_483_647, ~24.855 days) gives `TimeoutOverflowWarning`. Both turn a bounded schedule into an unbounded one, and neither throws.
+
+So a delay guard must bound the value from both ends, and must be written on the arithmetic **product** rather than the operand (a finite `1e306` overflows to `Infinity` only after `× 60000`; a `null` read multiplies to `0`, not `NaN`, so a `Number.isNaN`-only predicate misses it). The shipped shape is `normalizeIntervalMs` in `src/server/jobs/index.ts`, returning a discriminated `{ kind: 'ok' | 'clamped' | 'invalid' }` — invalid takes a warned retry, clamped fires early at the ceiling (early is the safe direction for a periodic job; late is not).
+
+The non-obvious half: a Zod `.max()` is not a timer bound. `systemSettingsSchema.backupIntervalMinutes` is `.max(43200)` = 30 days = 2,592,000,000 ms, so the schema's own documented maximum — a value the settings form accepts — made the backup job run continuously. Any settings-derived duration that reaches a timer needs the range check at the arming boundary; narrowing the schema instead would silently reset already-stored out-of-range values to defaults through `parseCategory`.
+
+Mirror trap on the display side: `new Date(NaN).toISOString()` throws `RangeError: Invalid time value`, so one poisoned `nextRun` 500s the whole `GET /api/system/tasks` response, not just its own field. `TaskRegistry.setNextRun` (`src/server/services/task-registry.ts`) accepts `Date | null` and treats an Invalid Date as a clear for exactly that reason. Companion entry: [[rate-limit-gate-fails-open-on-nan-window]] (finiteness on the product, and pino serialising NaN to null so the warn must carry `String(value)`).
+
+## pr-branch-rebase-duplicates-unpin-merge-base
+
+**source:** #2309  
+**added:** 2026-08-14  
+**tags:** git, rebase, pr-scope, merge-base
+
+---
+
+**A branch update can put the BASE's commits on your branch as duplicates, and the PR then shows their content as yours.**
+
+GitHub renders a PR's delta as `git diff <base>...HEAD` — three-dot, relative to the *merge base*, not to the base tip. If the base's commits exist on your branch as rewritten copies (same patch, new SHA), git can no longer see them as shared history: the merge base falls back to the last true common ancestor, and every change the base made since surfaces as part of your PR. This is a realistic outcome whenever a local rebase leaves the branch diverged from its remote and something else reconciles the divergence — the reconciliation can replay the base onto the branch rather than the branch onto the base.
+
+Nothing about this is visible from inside the branch. The working tree is correct, the tests pass, and `git log --oneline` reads as a sensible history. Only the comparison point is wrong.
+
+**Detect** — after ANY history operation on a PR branch:
+
+```sh
+git merge-base origin/<base> HEAD   # must equal…
+git rev-parse origin/<base>          # …this
+git diff origin/<base>...HEAD --name-only   # must list only your files
+```
+
+To name the duplicates, compare subjects of `git rev-list <merge-base>..HEAD` against `git log --format=%s <merge-base>..origin/<base>`.
+
+**Fix** — plain `git rebase origin/<base>`. Patch-id detection drops the duplicates (it says `skippedCherryPicks`) and replays only your commits, restoring `merge-base == base tip`.
+
+**Do NOT fix by reverting the foreign files.** That inverts the problem: the branch would diff as *deleting* the base's work, and merging the PR would silently undo it. This is the expensive mistake — the intuitive repair is the destructive one.
+
+**Verify three ways**, not one: (1) merge base equals base tip; (2) the delta's file list, filtered against the set your issue permits, is empty; (3) `git diff origin/<base> HEAD -- <foreign path>` is empty for each previously-leaking file, which distinguishes "present and unmodified" from "reverted". Then re-run the base's own suites — your commits now sit on code they were never tested against.
