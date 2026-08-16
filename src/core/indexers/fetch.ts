@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { mapNetworkError } from '../utils/map-network-error.js';
 
 import { INDEXER_TIMEOUT_MS, PROXY_TIMEOUT_MS } from '../utils/constants.js';
+import { acquireSolverSlot } from './solver-concurrency.js';
 import { normalizeBaseUrl } from '@shared/normalize-base-url.js';
 
 const flareSolverrResponseSchema = z.object({
@@ -78,7 +79,29 @@ async function fetchDirect(
   }
 }
 
+/**
+ * Every solver-bound request in the process funnels through here, so this is where the concurrency
+ * bound belongs. The slot is taken before the request timer is armed — acquiring inside that window
+ * would hand a request that waited 55s for a slot a 5s solver budget — and released in the `finally`
+ * below, after the body has been read and parsed. A leaked slot permanently shrinks the pool and is
+ * strictly worse than no bound at all, because it fails closed and silently.
+ */
 async function fetchViaProxy(
+  targetUrl: string,
+  headers: Record<string, string> | undefined,
+  proxyUrl: string,
+  timeoutMs: number,
+  callerSignal?: AbortSignal,
+): Promise<FetchResult> {
+  const releaseSlot = await acquireSolverSlot(proxyUrl, callerSignal);
+  try {
+    return await postToSolver(targetUrl, headers, proxyUrl, timeoutMs, callerSignal);
+  } finally {
+    releaseSlot();
+  }
+}
+
+async function postToSolver(
   targetUrl: string,
   headers: Record<string, string> | undefined,
   proxyUrl: string,
