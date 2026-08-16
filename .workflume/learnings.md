@@ -3177,7 +3177,7 @@ Mirror trap on the display side: `new Date(NaN).toISOString()` throws `RangeErro
 
 ## pr-branch-rebase-duplicates-unpin-merge-base
 
-**source:** #2309  
+**source:** #2309, #2348  
 **added:** 2026-08-14  
 **tags:** git, rebase, pr-scope, merge-base
 
@@ -3199,8 +3199,15 @@ git diff origin/<base>...HEAD --name-only   # must list only your files
 
 To name the duplicates, compare subjects of `git rev-list <merge-base>..HEAD` against `git log --format=%s <merge-base>..origin/<base>`.
 
-**Fix** — plain `git rebase origin/<base>`. Patch-id detection drops the duplicates (it says `skippedCherryPicks`) and replays only your commits, restoring `merge-base == base tip`.
+**Fix** — `git merge origin/<base>`. It makes the base tip a genuine ancestor, so the merge base moves to the base tip and the delta becomes correct **without rewriting a single commit**. The push that follows is a strict fast-forward: nothing is rejected, so no reconcile path is ever entered. Verify with `git merge-base --is-ancestor <remote-head> HEAD`.
 
-**Do NOT fix by reverting the foreign files.** That inverts the problem: the branch would diff as *deleting* the base's work, and merging the PR would silently undo it. This is the expensive mistake — the intuitive repair is the destructive one.
+**Do NOT fix by rebasing — under this harness the rebase is correct locally and then thrown away.** The push gate's rebase-on-reject checks out `origin/<feature-branch>` (workflume `src/gates/push.ts`, `git rebase origin/${branch}` where `branch` is your own branch), NOT `origin/<base>`. Your freshly-rewritten commits are patch-identical to the ones already on the stale remote head, so every one is skipped and the branch lands back on exactly that head. `git ls-remote` shows the remote never moved. This looks like a no-op push, not a failure, and it cost PR #2343 two review rounds across two attempts before the reflog gave it up:
+
+```
+19:20:12  rebase (start): checkout origin/develop                 -> ed3800be1   (correct delta)
+19:28:51  rebase (start): checkout origin/feature/issue-2309-...  -> e608ccf77   (rewrite discarded)
+```
+
+**Reverting the duplicated commits is the trap.** It produces the same correct delta by fast-forward, so it *looks* like the cheap fix — but the safety depends entirely on the merge strategy. Merge-commit and squash-merge are safe. **Rebase-merge is not**: the reverts replay onto the base tip and silently delete the base commits they reverted.
 
 **Verify three ways**, not one: (1) merge base equals base tip; (2) the delta's file list, filtered against the set your issue permits, is empty; (3) `git diff origin/<base> HEAD -- <foreign path>` is empty for each previously-leaking file, which distinguishes "present and unmodified" from "reverted". Then re-run the base's own suites — your commits now sit on code they were never tested against.
