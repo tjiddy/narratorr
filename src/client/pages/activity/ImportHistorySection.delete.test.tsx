@@ -405,7 +405,10 @@ describe('ImportHistorySection deep-link cleanup (#2220)', () => {
 
     await confirmClear(user);
 
-    await waitFor(() => expect(screen.getByTestId('search')).toHaveTextContent('tab=history&filter=deleted'), SETTLED);
+    // Anchored: `toHaveTextContent` matches on substring, and the pre-cleanup URL
+    // `tab=history&filter=deleted&run=3` contains the unanchored form — so that barrier settles on
+    // its first poll against the state it is meant to wait past, leaving the next line to race.
+    await waitFor(() => expect(screen.getByTestId('search')).toHaveTextContent(/^tab=history&filter=deleted$/), SETTLED);
     expect(screen.getByTestId('search').textContent).not.toContain('run=');
     expect(screen.queryByTestId('import-run-unavailable')).not.toBeInTheDocument();
     expect(await screen.findByTestId('import-history-card-7')).toBeInTheDocument();
