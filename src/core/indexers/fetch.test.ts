@@ -6,6 +6,7 @@ import { getErrorMessage } from '@shared/error-message.js';
 import { fetchWithProxy } from './fetch.js';
 import { fetchWithProxyAgent } from './proxy.js';
 import { isProxyRelatedError, ProxyError } from './errors.js';
+import { solverFailureOf } from './solver-failure.js';
 import { _resetSolverConcurrencyForTesting } from './solver-concurrency.js';
 import {
   gatedSolverBody,
@@ -1147,6 +1148,135 @@ describe('fetchWithProxy', () => {
         expect(fresh.observed).toBe(N);
         expect(fresh.targets).not.toContain('https://indexer.test/api?q=overflow');
       });
+    });
+  });
+});
+
+/**
+ * #2374 — the diagnosis keys on WHERE the throw originated, never on the message text. Both halves
+ * are pinned here: the seven outward strings stay byte-identical (several are operator text,
+ * `isProxyRelatedError` matches their prefix on the search path), and each carries the discriminant
+ * its AC1 row assigns.
+ */
+describe('fetchWithProxy — solver failure discriminants (#2374)', () => {
+  const server = useMswServer();
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function solverRequest() {
+    return fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL });
+  }
+
+  /** Runs the round-trip and hands back the error, so message and discriminant are asserted together. */
+  async function failureOf(): Promise<Error> {
+    try {
+      await solverRequest();
+    } catch (error: unknown) {
+      return error as Error;
+    }
+    throw new Error('expected the solver round-trip to fail');
+  }
+
+  it('tags an aborted POST round-trip-timeout, keeping the message byte-identical', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new DOMException('The operation was aborted', 'AbortError'));
+
+    const error = await failureOf();
+
+    expect(error.message).toBe('FlareSolverr proxy timed out after 60s');
+    expect(solverFailureOf(error)).toEqual({ origin: 'round-trip-timeout' });
+    expect(isProxyRelatedError(error)).toBe(true);
+  });
+
+  it.each([
+    ['ECONNREFUSED', 'connect ECONNREFUSED 10.0.0.9:8191'],
+    ['ENOTFOUND', 'getaddrinfo ENOTFOUND flaresolverr.test'],
+    ['EAI_AGAIN', 'getaddrinfo EAI_AGAIN flaresolverr.test'],
+  ])('tags a %s rejection solver-no-answer and recovers the code from the retained cause', async (code, causeMessage) => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error(causeMessage), { code }) }),
+    );
+
+    const error = await failureOf();
+
+    expect(error.message).toBe(`FlareSolverr proxy unreachable at ${PROXY_URL}`);
+    expect(solverFailureOf(error)).toEqual({ origin: 'solver-no-answer', transportCode: code });
+    expect(isProxyRelatedError(error)).toBe(true);
+  });
+
+  it('carries no transport code when the rejection had none', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      Object.assign(new TypeError('fetch failed'), { cause: new Error('socket hang up') }),
+    );
+
+    expect(solverFailureOf(await failureOf())).toEqual({ origin: 'solver-no-answer' });
+  });
+
+  it.each([
+    [
+      'a non-2xx status',
+      () => new HttpResponse('nope', { status: 502 }),
+      'FlareSolverr proxy HTTP error 502',
+    ],
+    [
+      'a non-JSON body',
+      () => new HttpResponse('<html>gateway</html>', { headers: { 'Content-Type': 'text/html' } }),
+      'FlareSolverr returned invalid response (not JSON)',
+    ],
+    [
+      'a status:error envelope',
+      () => HttpResponse.json({ status: 'error', message: 'Challenge failed' }),
+      'FlareSolverr error: Challenge failed',
+    ],
+    [
+      'an ok envelope with no solution.response',
+      () => HttpResponse.json({ status: 'ok', solution: { response: '', status: 200 } }),
+      'FlareSolverr returned empty response',
+    ],
+  ])('tags %s solver-answered, keeping the message byte-identical', async (_label, reply, expected) => {
+    server.use(http.post(`${PROXY_URL}/v1`, reply));
+
+    const error = await failureOf();
+
+    expect(error.message).toBe(expected);
+    expect(solverFailureOf(error)).toEqual({ origin: 'solver-answered' });
+    expect(isProxyRelatedError(error)).toBe(true);
+  });
+
+  it('tags a wrong-shape envelope solver-answered, keeping its message prefix', async () => {
+    server.use(http.post(`${PROXY_URL}/v1`, () => HttpResponse.json({ unexpected: true })));
+
+    const error = await failureOf();
+
+    expect(error.message).toMatch(/^FlareSolverr returned unexpected response shape: /);
+    expect(solverFailureOf(error)).toEqual({ origin: 'solver-answered' });
+  });
+
+  it('leaves a direct (non-solver) failure unmarked, so nothing diagnoses it as a solver arm', async () => {
+    server.use(http.get('https://indexer.test/api', () => new HttpResponse('nope', { status: 503 })));
+
+    await expect(fetchWithProxy({ url: TARGET_URL })).rejects.toThrow('HTTP 503');
+    const error = await fetchWithProxy({ url: TARGET_URL }).catch((err: unknown) => err as Error);
+    expect(solverFailureOf(error)).toBeUndefined();
+  });
+
+  describe('the slot wait never reached the solver', () => {
+    const bound = useSolverBound(server);
+
+    it('is tagged slot-wait, with its ProxyError identity and message intact', async () => {
+      const stub = bound.stub(`${PROXY_URL}/v1`);
+      await bound.saturate(stub, PROXY_URL);
+
+      const timers = bound.captureTimers();
+      const queued = bound.track(fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL, timeoutMs: 25_000 }));
+      await bound.accountedFor(stub, timers, { arrived: bound.max, queued: 1 });
+      timers.fire();
+
+      const error = await queued.catch((err: unknown) => err as Error);
+      expect(error).toBeInstanceOf(ProxyError);
+      expect(error.message).toBe(`Timed out after 60s waiting for a request slot at solver ${PROXY_URL}`);
+      expect(solverFailureOf(error)).toEqual({ origin: 'slot-wait' });
     });
   });
 });

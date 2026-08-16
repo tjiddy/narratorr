@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -17,6 +17,17 @@ vi.mock('../utils/network-service.js', async (importActual) => {
 import { AudioBookBayIndexer } from './abb.js';
 import { ProxyError } from './errors.js';
 import { solverOk, useSolverBound } from '../__tests__/solver-bound.js';
+import {
+  abortRejection,
+  codedRejection,
+  hangUntilAborted,
+  routeFetch,
+  solverEnvelope,
+  uncodedRejection,
+  type RouteOutcome,
+  type RoutedFetch,
+} from '../__tests__/solver-routes.js';
+import { REACHABILITY_PROBE_TIMEOUT_MS } from '../utils/constants.js';
 import type { SearchResult } from './types.js';
 
 const fixturesDir = resolve(import.meta.dirname, '../__tests__/fixtures');
@@ -1029,6 +1040,347 @@ describe('AudioBookBayIndexer', () => {
       expect(result.message).toContain(PROXY_URL);
       expect(stub.observed).toBe(bound.max);
       expect(searchers).toHaveLength(bound.max);
+    });
+
+    // #2374 AC10 — the slot wait already names the right component, so spending a probe on it (or
+    // re-attributing it to the target) is a regression.
+    it('spends no reachability probe on a slot wait', async () => {
+      const probed: string[] = [];
+      server.use(
+        http.head(`${ABB_BASE}/`, () => { probed.push('target'); return new HttpResponse(null, { status: 200 }); }),
+        http.head(`${PROXY_URL}/v1`, () => { probed.push('solver'); return new HttpResponse(null, { status: 405 }); }),
+      );
+      const stub = bound.stub(`${PROXY_URL}/v1`);
+      await bound.saturate(stub, PROXY_URL);
+
+      const timer = bound.captureTimers();
+      const testing = proxiedIndexer.test();
+      await bound.accountedFor(stub, timer, { arrived: bound.max, queued: 1 });
+      timer.fire();
+
+      const result = await testing;
+      expect(result.message).toMatch(/waiting for a request slot/);
+      expect(probed).toEqual([]);
+    });
+  });
+
+  /**
+   * #2374 — the Test button must answer *which* component is broken. The incident it exists for:
+   * ABB refused connections outright while a healthy solver reported `FlareSolverr proxy timed out
+   * after 60s`, and six hours went into the wrong component.
+   */
+  describe('#2374 solver failure diagnosis', () => {
+    const SOLVER_URL = 'http://flaresolverr.test:8191';
+    const SOLVER_ENDPOINT = `${SOLVER_URL}/v1`;
+    const STANDARD_PROXY = 'http://proxy.test:8080';
+    const TIMED_OUT = 'FlareSolverr proxy timed out after 60s';
+
+    let solverIndexer: AudioBookBayIndexer;
+    let routed: RoutedFetch | undefined;
+
+    beforeEach(() => {
+      solverIndexer = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 1, flareSolverrUrl: SOLVER_URL });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(solverIndexer as any, 'delay').mockResolvedValue(undefined);
+    });
+
+    afterEach(() => {
+      routed?.restore();
+      routed = undefined;
+    });
+
+    const isTarget = (url: string) => url.includes(ABB_HOST);
+    const isSolver = (url: string) => url.startsWith(SOLVER_ENDPOINT);
+
+    /** Round-trip aborts on its own deadline; probes answer as the test asks. */
+    function timeoutArm(target: RouteOutcome, solver: RouteOutcome = new Response(null, { status: 405 })) {
+      routed = routeFetch((url, method) => {
+        if (method === 'POST' && isSolver(url)) return abortRejection();
+        if (method === 'HEAD' && isTarget(url)) return target;
+        if (method === 'HEAD' && isSolver(url)) return solver;
+        return undefined;
+      });
+      return routed;
+    }
+
+    /** The solver delivered a `Response`, so only the target probe can decide. */
+    function answeredArm(envelope: Response, target: RouteOutcome) {
+      routed = routeFetch((url, method) => {
+        if (method === 'POST' && isSolver(url)) return envelope;
+        if (method === 'HEAD' && isTarget(url)) return target;
+        return undefined;
+      });
+      return routed;
+    }
+
+    it('names the target, not the solver, when the site refuses connections (the regression)', async () => {
+      timeoutArm(codedRejection('ECONNREFUSED', `connect ECONNREFUSED 10.0.0.7:443`));
+
+      const result = await solverIndexer.test();
+
+      expect(result.success).toBe(false);
+      expect(result.message).toBe(
+        `Target unreachable: ${ABB_HOST} refused the connection (ECONNREFUSED). Probed directly, not through the solver.`,
+      );
+      expect(result.message).not.toContain(SOLVER_URL);
+      expect(result.message).not.toMatch(/timed out/i);
+    });
+
+    it('names the solver URL and issues no probe when the solver itself refuses', async () => {
+      const calls = routeFetch((url, method) => (method === 'POST' && isSolver(url)
+        ? codedRejection('ECONNREFUSED', 'connect ECONNREFUSED 10.0.0.9:8191')
+        : undefined));
+      routed = calls;
+
+      const result = await solverIndexer.test();
+
+      expect(result.message).toBe(`Solver unreachable: ${SOLVER_ENDPOINT} refused the connection (ECONNREFUSED).`);
+      expect(result.message).not.toContain(ABB_HOST);
+      expect(calls.probes()).toEqual([]);
+    });
+
+    it.each([
+      ['ECONNREFUSED', 'solver'],
+      ['ENOTFOUND', 'solver'],
+      ['ECONNRESET', 'inconclusive'],
+      ['ETIMEDOUT', 'inconclusive'],
+      ['UND_ERR_CONNECT_TIMEOUT', 'inconclusive'],
+      ['EAI_AGAIN', 'inconclusive'],
+    ] as const)('reads a %s rejection of the solver fetch as the %s arm, with no probe', async (code, arm) => {
+      const calls = routeFetch((url, method) => (method === 'POST' && isSolver(url) ? codedRejection(code) : undefined));
+      routed = calls;
+
+      const result = await solverIndexer.test();
+
+      expect(result.message.startsWith(arm === 'solver' ? 'Solver unreachable:' : 'Could not determine')).toBe(true);
+      expect(calls.probes()).toEqual([]);
+    });
+
+    it('reads an uncoded solver rejection as inconclusive, naming nobody', async () => {
+      const calls = routeFetch((url, method) => (method === 'POST' && isSolver(url) ? uncodedRejection() : undefined));
+      routed = calls;
+
+      const result = await solverIndexer.test();
+
+      expect(result.message).toContain('Could not determine which component failed');
+      expect(result.message).toContain('the failure carried no transport code');
+      expect(calls.probes()).toEqual([]);
+    });
+
+    describe('the solver answered — the target probe decides', () => {
+      const ENVELOPES: Array<[string, Response]> = [
+        ['a status:error envelope', solverEnvelope({ status: 'error', message: 'Challenge failed' })],
+        ['an empty solution.response', solverEnvelope({ status: 'ok', solution: { response: '', status: 200 } })],
+        ['a non-JSON body', new Response('<html>gateway</html>', { status: 200, headers: { 'Content-Type': 'text/html' } })],
+        ['a JSON body of the wrong shape', solverEnvelope({ unexpected: true })],
+        ['a proxy HTTP error', new Response('nope', { status: 500 })],
+      ];
+
+      it.each(ENVELOPES)('%s with an unreachable target yields Target', async (_label, envelope) => {
+        answeredArm(envelope.clone(), codedRejection('ECONNREFUSED'));
+        const result = await solverIndexer.test();
+        expect(result.message).toMatch(/^Target unreachable: /);
+      });
+
+      it.each(ENVELOPES)('%s with a reachable target yields No page', async (_label, envelope) => {
+        answeredArm(envelope.clone(), new Response(null, { status: 200 }));
+        const result = await solverIndexer.test();
+        expect(result.message).toMatch(/^No page came back\./);
+      });
+
+      it.each(ENVELOPES)('%s with an inconclusive target yields Inconclusive', async (_label, envelope) => {
+        answeredArm(envelope.clone(), codedRejection('EAI_AGAIN'));
+        const result = await solverIndexer.test();
+        expect(result.message).toMatch(/^Could not determine which component failed: /);
+      });
+
+      it.each(ENVELOPES)('%s never yields the Solver verdict', async (_label, envelope) => {
+        for (const target of [codedRejection('ECONNREFUSED'), new Response(null, { status: 200 }), codedRejection('ETIMEDOUT')]) {
+          answeredArm(envelope.clone(), target);
+          const result = await solverIndexer.test();
+          expect(result.message).not.toMatch(/^Solver unreachable: /);
+          routed?.restore();
+        }
+      });
+
+      it("quotes the solver's own words in the No-page message", async () => {
+        answeredArm(solverEnvelope({ status: 'error', message: 'Challenge failed' }), new Response(null, { status: 200 }));
+        const result = await solverIndexer.test();
+        expect(result.message).toContain('"FlareSolverr error: Challenge failed"');
+      });
+
+      /**
+       * The F6 counterfactual: supported solvers return valid protocol envelopes on non-2xx
+       * (FlareSolverr 500, Byparr 408 for a downstream page timeout, TRAWL 429/500/503), so a
+       * status alone must never carry a solver-health claim.
+       */
+      it.each([408, 429, 500, 503])('resolves a %i-delivered error envelope on the target probe, not against the solver', async (status) => {
+        answeredArm(
+          solverEnvelope({ status: 'error', message: 'downstream page timeout' }, status),
+          new Response(null, { status: 200 }),
+        );
+        const result = await solverIndexer.test();
+        expect(result.message).toMatch(/^No page came back\./);
+        expect(result.message).not.toMatch(/^Solver unreachable: /);
+      });
+    });
+
+    describe('the round-trip timed out — both probes decide', () => {
+      it.each([
+        ['target refused', codedRejection('ECONNREFUSED'), new Response(null, { status: 405 }), /^Target unreachable: /],
+        ['solver refused', new Response(null, { status: 200 }), codedRejection('ECONNREFUSED'), /^Solver unreachable: /],
+        ['both answered', new Response(null, { status: 200 }), new Response(null, { status: 405 }), /^No page came back\./],
+        ['solver blackholes', new Response(null, { status: 200 }), codedRejection('ETIMEDOUT'), /^Could not determine which component failed: /],
+        ['target blackholes', codedRejection('ETIMEDOUT'), new Response(null, { status: 405 }), /^Could not determine which component failed: /],
+      ] as const)('%s', async (_label, target, solver, expected) => {
+        timeoutArm(target, solver);
+        const result = await solverIndexer.test();
+        expect(result.message).toMatch(expected);
+      });
+
+      /**
+       * AC17 — a solver whose router answers while its browser worker is wedged. The honest answer
+       * narrows the search without asserting a cause the probe cannot establish, so the Test button
+       * must not point the operator away from the broken component.
+       */
+      it('does not exonerate the solver when its front door answers but no page comes back', async () => {
+        timeoutArm(new Response(null, { status: 200 }), new Response(null, { status: 200 }));
+
+        const result = await solverIndexer.test();
+
+        expect(result.message).toMatch(/^No page came back\./);
+        expect(result.message).not.toMatch(/\b(up|healthy|working|fine|operational|alive|ok|exonerated)\b/i);
+        expect(result.message).toContain(SOLVER_ENDPOINT);
+        expect(result.message).toContain(ABB_HOST);
+        expect(result.message).toContain('remain possible causes — neither has been ruled out');
+      });
+
+      it('degrades to the verbatim solver error plus a could-not-determine statement (AC6)', async () => {
+        timeoutArm(codedRejection('EAI_AGAIN'), codedRejection('EAI_AGAIN'));
+
+        const result = await solverIndexer.test();
+
+        expect(result.success).toBe(false);
+        expect(result.message).toContain(TIMED_OUT);
+        expect(result.message).toContain('Could not determine which component failed');
+      });
+
+      it('is bounded by the probe budget, not by PROXY_TIMEOUT_MS', async () => {
+        const probeTimers: Array<() => void> = [];
+        const nativeSetTimeout = globalThis.setTimeout;
+        vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler: TimerHandler, delay?: number, ...rest: unknown[]) => {
+          if (delay !== REACHABILITY_PROBE_TIMEOUT_MS) return nativeSetTimeout(handler as () => void, delay, ...rest);
+          probeTimers.push(handler as () => void);
+          return 0 as unknown as ReturnType<typeof setTimeout>;
+        }) as typeof globalThis.setTimeout);
+
+        // Both probes hang, so only their own deadline can settle them — if the diagnosis were
+        // bounded by the round-trip budget instead, this would sit for PROXY_TIMEOUT_MS.
+        routed = routeFetch((url, method, init) => {
+          if (method === 'POST' && isSolver(url)) return abortRejection();
+          if (method === 'HEAD') return hangUntilAborted(init?.signal);
+          return undefined;
+        });
+
+        const testing = solverIndexer.test();
+        await vi.waitFor(() => expect(probeTimers).toHaveLength(2));
+        for (const fire of probeTimers) fire();
+
+        const result = await testing;
+        expect(result.message).toMatch(/^Could not determine which component failed: /);
+        expect(result.message).toContain(TIMED_OUT);
+      });
+    });
+
+    describe('through a configured standard proxy (AC13)', () => {
+      let proxiedSolverIndexer: AudioBookBayIndexer;
+
+      beforeEach(() => {
+        proxiedSolverIndexer = new AudioBookBayIndexer({
+          hostname: ABB_HOST,
+          pageLimit: 1,
+          flareSolverrUrl: SOLVER_URL,
+          proxyUrl: STANDARD_PROXY,
+        });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        vi.spyOn(proxiedSolverIndexer as any, 'delay').mockResolvedValue(undefined);
+      });
+
+      it.each(['ECONNREFUSED', 'ENOTFOUND'])('never blames the target for a %s through the dispatcher', async (code) => {
+        timeoutArm(codedRejection(code), new Response(null, { status: 405 }));
+
+        const result = await proxiedSolverIndexer.test();
+
+        expect(result.message).toMatch(/^Could not determine which component failed: /);
+        expect(result.message).not.toMatch(/^Target unreachable: /);
+        expect(result.message).not.toMatch(/^Solver unreachable: /);
+      });
+
+      it('sends the target probe through the dispatcher and the solver probe without one', async () => {
+        const calls = timeoutArm(new Response(null, { status: 200 }), new Response(null, { status: 405 }));
+
+        await proxiedSolverIndexer.test();
+
+        const probes = calls.probes();
+        expect(probes.find((call) => call.url.includes(ABB_HOST))?.init.dispatcher).toBeDefined();
+        expect(probes.find((call) => call.url.startsWith(SOLVER_ENDPOINT))?.init.dispatcher).toBeUndefined();
+      });
+
+      it('still reads a 403 through the dispatcher as reachable', async () => {
+        answeredArm(solverEnvelope({ status: 'error', message: 'Challenge failed' }), new Response(null, { status: 403 }));
+
+        const result = await proxiedSolverIndexer.test();
+
+        expect(result.message).toMatch(/^No page came back\./);
+      });
+
+      it('gives a target-generated and a proxy-generated 503 the same verdict (F7)', async () => {
+        answeredArm(
+          solverEnvelope({ status: 'error', message: 'Challenge failed' }),
+          new Response(null, { status: 503, headers: { 'X-Fixture-Origin': 'target' } }),
+        );
+        const fromTarget = await proxiedSolverIndexer.test();
+        routed?.restore();
+
+        answeredArm(
+          solverEnvelope({ status: 'error', message: 'Challenge failed' }),
+          new Response(null, { status: 503, headers: { 'X-Fixture-Origin': 'proxy' } }),
+        );
+        const fromProxy = await proxiedSolverIndexer.test();
+
+        expect(fromTarget.message).toBe(fromProxy.message);
+        expect(fromTarget.message).toMatch(/^Could not determine which component failed: /);
+      });
+
+      it('control: the same target refusal with no standard proxy is a Target verdict', async () => {
+        timeoutArm(codedRejection('ECONNREFUSED'));
+        const result = await solverIndexer.test();
+        expect(result.message).toMatch(/^Target unreachable: /);
+      });
+    });
+
+    describe('the diagnosis costs nothing on the healthy path (AC9)', () => {
+      it('issues no probe when the solver round-trip succeeds, and keeps today\'s success text', async () => {
+        const calls = routeFetch((url, method) => (method === 'POST' && isSolver(url)
+          ? solverEnvelope({ status: 'ok', solution: { response: '<html>ok</html>', status: 200 } })
+          : codedRejection('ECONNREFUSED')));
+        routed = calls;
+
+        const result = await solverIndexer.test();
+
+        expect(result).toEqual({ success: true, message: `Connected to ${ABB_HOST} via FlareSolverr` });
+        expect(calls.probes()).toEqual([]);
+      });
+
+      it('issues no probe from the search path, even when the solver fails there', async () => {
+        const calls = routeFetch((url, method) => (method === 'POST' && isSolver(url)
+          ? codedRejection('ECONNREFUSED')
+          : undefined));
+        routed = calls;
+
+        await expect(solverIndexer.search('Brandon Sanderson')).rejects.toThrow('FlareSolverr');
+        expect(calls.probes()).toEqual([]);
+      });
     });
   });
 });

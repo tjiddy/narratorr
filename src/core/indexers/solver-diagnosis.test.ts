@@ -7,6 +7,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
+import { useSolverBound } from '../__tests__/solver-bound.js';
 import type * as NetworkServiceModule from '../utils/network-service.js';
 
 // Keep MSW/fetch spies on this test path while production retains dispatcher routing.
@@ -575,5 +576,38 @@ describe('describeSolverFailure — orchestration (AC3, AC9, AC10)', () => {
     const message = await describeSolverFailure(error, context);
     expect(message).toContain(TIMED_OUT);
     expect(message).toContain('Could not determine which component failed');
+  });
+});
+
+/**
+ * AC14 — a diagnosis must not be able to queue behind the very traffic it is diagnosing. Neither
+ * probe goes through `fetchWithProxy`, so neither enters `acquireSolverSlot`; if one did, this test
+ * would hang rather than fail, which is exactly why the pool is held saturated for its duration.
+ */
+describe('describeSolverFailure — neither probe consumes a solver slot', () => {
+  const server = useMswServer();
+  const bound = useSolverBound(server);
+
+  it('completes both probes while every solver slot is held by in-flight searches', async () => {
+    const stub = bound.stub(SOLVER_ENDPOINT);
+    await bound.saturate(stub, SOLVER_URL);
+
+    const probed: string[] = [];
+    server.use(
+      http.head(TARGET_URL, () => { probed.push('target'); return new HttpResponse(null, { status: 200 }); }),
+      http.head(SOLVER_ENDPOINT, () => { probed.push('solver'); return new HttpResponse(null, { status: 405 }); }),
+    );
+
+    const error = markSolverFailure(new Error(TIMED_OUT), 'round-trip-timeout');
+    const message = await describeSolverFailure(error, {
+      targetProbeUrl: TARGET_URL,
+      targetHost: HOST,
+      solverUrl: SOLVER_URL,
+    });
+
+    expect([...probed].sort()).toEqual(['solver', 'target']);
+    expect(message).toMatch(/^No page came back\./);
+    // The saturating searches are still parked: the probes neither displaced nor waited on them.
+    expect(stub.observed).toBe(bound.max);
   });
 });
