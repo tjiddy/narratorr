@@ -3,6 +3,7 @@
 import { z } from 'zod';
 
 import { mapNetworkError } from '../utils/map-network-error.js';
+import { httpStatusError } from './errors.js';
 
 import { INDEXER_TIMEOUT_MS, PROXY_TIMEOUT_MS } from '../utils/constants.js';
 import { acquireSolverSlot } from './solver-concurrency.js';
@@ -69,7 +70,7 @@ async function fetchDirect(
     }
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      throw httpStatusError(response.status, response.statusText);
     }
 
     const body = await response.text();

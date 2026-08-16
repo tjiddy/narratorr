@@ -7,6 +7,7 @@ import { type SearchSessionManager } from '../services/search-session.js';
 import { postProcessSearchResults } from '../services/search-pipeline.js';
 import { cleanIndexerQuery } from '../services/indexer-query.js';
 import { buildQueryLadder, runQueryLadder } from '../services/search-query-ladder.js';
+import { createRunExclusionPolicy } from '../services/search-run-exclusion.js';
 import { searchQuerySchema, type SearchQuery } from '@shared/schemas.js';
 import type {
   SearchStartEvent,
@@ -94,8 +95,10 @@ export async function searchStreamRoutes(
       // Interactive search runs the full ladder without a floor; the user judges the results.
       // Rung 1 preserves editable q; later rungs derive from canonical title, so no title means no relaxation.
       // Reuse controllers across rungs so cancellation persists; the client replaces per-indexer counts.
+      // The run exclusion policy is scoped to this request, exactly like the session's controllers.
       try {
         const ladder = buildQueryLadder({ title: title ?? '', author, query: q });
+        const policy = createRunExclusionPolicy();
         const ran = await runQueryLadder(ladder, async (rung) => {
           let succeeded = 0;
           const results = await indexerSearchService.searchAllStreaming(
@@ -109,6 +112,7 @@ export async function searchStreamRoutes(
                 writeSSE(reply, 'indexer-complete', event);
               },
               onError: (indexerId, name, error, elapsedMs) => {
+                if (!policy.claimReport(indexerId)) return;
                 const event: IndexerErrorEvent = { indexerId, name, error, elapsedMs };
                 writeSSE(reply, 'indexer-error', event);
               },
@@ -117,6 +121,8 @@ export async function searchStreamRoutes(
                 writeSSE(reply, 'indexer-cancelled', event);
               },
             },
+            undefined,
+            policy.runOptions,
           );
           return { results, succeeded };
         });

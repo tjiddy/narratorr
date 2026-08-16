@@ -170,15 +170,44 @@ describe('AudioBookBayIndexer', () => {
       expect(results).toHaveLength(1);
     });
 
-    it('handles search page fetch error gracefully', async () => {
+    // #2375: an empty success here would read to the query ladder as an answered zero, so the
+    // ladder would advance and re-ask a dead indexer once per relaxed rung.
+    it('propagates a first-page fetch error instead of reporting an answered zero', async () => {
       server.use(
         http.get(`${ABB_BASE}/`, () => {
           return new HttpResponse(null, { status: 503 });
         }),
       );
 
-      const { results } = await indexer.search('test');
-      expect(results).toEqual([]);
+      await expect(indexer.search('test')).rejects.toThrow('HTTP 503');
+    });
+
+    it('keeps the structural status on the propagated first-page error', async () => {
+      server.use(
+        http.get(`${ABB_BASE}/`, () => {
+          return new HttpResponse(null, { status: 503 });
+        }),
+      );
+
+      const error = await indexer.search('test').catch((e: unknown) => e);
+
+      expect((error as { httpStatus?: unknown }).httpStatus).toBe(503);
+    });
+
+    it('still returns the pages it did get when a LATER page fails', async () => {
+      const twoPageIndexer = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 2 });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(twoPageIndexer as any, 'delay').mockResolvedValue(undefined);
+      server.use(
+        http.get(`${ABB_BASE}/`, () => new HttpResponse(searchHtml, { headers: { 'Content-Type': 'text/html' } })),
+        http.get(`${ABB_BASE}/page/2/`, () => new HttpResponse(null, { status: 503 })),
+        http.get(`${ABB_BASE}/audio-books/:slug/`, () => new HttpResponse(detailHtml, { headers: { 'Content-Type': 'text/html' } })),
+      );
+
+      // The indexer demonstrably answered page one, so this is partial success, not a failure.
+      const { results } = await twoPageIndexer.search('test');
+
+      expect(results.length).toBeGreaterThan(0);
     });
 
     it('handles detail page fetch error gracefully', async () => {
@@ -762,7 +791,8 @@ describe('AudioBookBayIndexer', () => {
       await expect(proxiedIndexer.search('test')).rejects.toThrow(ProxyError);
     });
 
-    it('search returns empty results for non-proxy errors', async () => {
+    // Direct mode has no ProxyError to raise, which is exactly why this used to degrade silently.
+    it('search propagates a direct network error rather than returning empty results', async () => {
       const directIndexer = new AudioBookBayIndexer({
         hostname: ABB_HOST,
         pageLimit: 1,
@@ -774,8 +804,7 @@ describe('AudioBookBayIndexer', () => {
         http.get(`${ABB_BASE}/`, () => HttpResponse.error()),
       );
 
-      const { results } = await directIndexer.search('test');
-      expect(results).toEqual([]);
+      await expect(directIndexer.search('test')).rejects.toThrow();
     });
 
     it('test with proxy returns success with exit IP', async () => {

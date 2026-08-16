@@ -9,7 +9,7 @@ import {
   type SearchOptions,
   type SearchResult,
 } from './types.js';
-import { IndexerAuthError, IndexerError, ProxyError } from './errors.js';
+import { IndexerAuthError, IndexerError, ProxyError, httpStatusError } from './errors.js';
 import { createProxyAgent, resolveProxyIp } from './proxy.js';
 import { fetchWithOptionalDispatcher, type DispatcherFetchInit } from '../utils/network-service.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
@@ -344,7 +344,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       }
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        throw httpStatusError(response.status, response.statusText);
       }
 
       const body = await response.text();
