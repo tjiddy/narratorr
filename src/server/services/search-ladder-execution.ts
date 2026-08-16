@@ -2,7 +2,10 @@
  * I/O half of the query ladder: the pure ladder chooses queries while this module executes them
  * and settles cooldown state.
  */
+import type { FastifyBaseLogger } from 'fastify';
 import type { SearchBook, SearchEventSink } from './search-event-sink.js';
+import { deliverSearchReport } from './search-event-sink.js';
+import { formatIndexerSkip } from './indexer-failure-state.js';
 import type { IndexerSearchService } from './indexer-search.service.js';
 import type { SearchLadderCooldown } from './search-ladder-cooldown.js';
 import {
@@ -51,20 +54,31 @@ export async function createStreamingExecutor(
   };
 }
 
-/** Shared silent executor preserves the transport/ranking author split across aggregate callers. */
+/**
+ * Shared silent executor preserves the transport/ranking author split across aggregate callers.
+ * The sink gives this path the same breaker-skip observable the streaming path has; the two
+ * callers that own no sink (`retry-search.ts`, `routes/v1/actions.ts`) pass `NOOP_SINK` and stay
+ * explicable through the unconditional skip log inside the search service.
+ */
 export function createAggregateExecutor(
   book: SearchBook,
   indexerSearchService: IndexerSearchService,
+  sink: SearchEventSink,
+  log: FastifyBaseLogger,
   signal?: AbortSignal,
 ): (rung: Rung) => Promise<RungExecution> {
   return async (rung: Rung) => {
-    const { results, succeeded } = await indexerSearchService.searchAllWithStatus(rung.query, {
+    const { results, succeeded, skipped } = await indexerSearchService.searchAllWithStatus(rung.query, {
       title: book.title,
       author: rung.author,
       rankingAuthor: book.authors?.[0]?.name,
       // Omitted rather than assigned undefined so callers without a deadline keep today's options.
       ...(signal !== undefined && { signal }),
     });
+    for (const skip of skipped) {
+      deliverSearchReport(log, { bookId: book.id, indexer: skip.name, indexerId: skip.indexerId }, () =>
+        sink.indexerError(skip.indexerId, skip.name, formatIndexerSkip(skip.state, skip.reason), 0));
+    }
     return { results, succeeded };
   };
 }
@@ -77,6 +91,7 @@ export interface BookLadderRunDeps {
   searchLadderCooldown?: SearchLadderCooldown | undefined;
   /** `'scheduled'` consults and records the cooldown; `'always'` does neither. */
   ladderMode: 'scheduled' | 'always';
+  log: FastifyBaseLogger;
   /** The outer search deadline; composed into every indexer leg, never substituted for one. */
   signal?: AbortSignal | undefined;
 }
@@ -93,7 +108,7 @@ export async function runBookQueryLadder(book: SearchBook, deps: BookLadderRunDe
 
   const execute = deps.streaming
     ? await createStreamingExecutor(book, indexerSearchService, sink, deps.signal)
-    : createAggregateExecutor(book, indexerSearchService, deps.signal);
+    : createAggregateExecutor(book, indexerSearchService, sink, deps.log, deps.signal);
 
   const ran = await runQueryLadder(ladder, execute);
 

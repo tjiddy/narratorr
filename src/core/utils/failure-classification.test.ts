@@ -118,7 +118,7 @@ describe('classifyFailure — named transient reasons (#2312)', () => {
   it('leaves an unnamed transient code on the generic fallback', () => {
     expect(classifyFailure({ errorCode: 'ECONNRESET' })).toEqual({
       terminal: false,
-      reason: 'the notifier could not be reached',
+      reason: 'the server could not be reached',
     });
   });
 });

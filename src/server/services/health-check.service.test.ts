@@ -67,6 +67,9 @@ function createService(overrides?: {
   const indexer = {
     getAll: vi.fn().mockResolvedValue([]),
     test: vi.fn().mockResolvedValue({ success: true }),
+    // checkIndexers reads the #2376 breaker after every probe; pristine is production behaviour
+    // for every suite that does not deliberately trip it.
+    getFailureSnapshot: vi.fn().mockReturnValue(pristineSnapshot()),
     ...overrides?.indexer,
   };
   const downloadClient = {

@@ -16,6 +16,7 @@ import { resolveBookQualityInputs } from '@core/utils/index.js';
 import { buildSearchQuery, postProcessSearchResults } from '../../services/search-pipeline.js';
 import { buildQueryLadder, runQueryLadder } from '../../services/search-query-ladder.js';
 import { createAggregateExecutor } from '../../services/search-ladder-execution.js';
+import { NOOP_SINK } from '../../services/search-event-sink.js';
 import { resolveByPublicId } from '../../utils/public-id.js';
 import { downloadV1Schema, toDownloadV1 } from '@shared/schemas/v1/downloads.js';
 import { v1ListResponseSchema, v1PublicIdParamSchema, v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
@@ -164,7 +165,7 @@ export async function v1ActionsRoutes(app: FastifyInstance, deps: V1ActionsRoute
           const ladder = buildQueryLadder({ title: book.title, author, query });
           const { results: allResults } = await runQueryLadder(
             ladder,
-            createAggregateExecutor(book, deps.indexerSearchService),
+            createAggregateExecutor(book, deps.indexerSearchService, NOOP_SINK, request.log),
           );
 
           // Match UI filtering/ranking; `total` counts filtered results and duration uses the shared resolver.

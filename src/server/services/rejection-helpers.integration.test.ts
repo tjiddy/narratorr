@@ -15,7 +15,7 @@ import type { EventHistoryService } from './event-history.service.js';
 // Keep retrySearch real: the unit suite mocks it and cannot detect deletion of its imported guard.
 
 function makeImportedBookDeps(retryBudget: RetryBudget) {
-  const mockSearchAll = vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
+  const mockSearchAll = vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0, skipped: [] });
   const mockGrab = vi.fn();
   const deps: RetrySearchDeps = {
     indexerSearchService: inject<IndexerSearchService>({ searchAllWithStatus: mockSearchAll }),

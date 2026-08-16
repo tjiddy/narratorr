@@ -8,6 +8,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@db/index.js';
 import type { SettingsService } from './settings.service.js';
 import { initializeKey, _resetKey, isEncrypted } from '../utils/secret-codec.js';
+import { IndexerAuthError } from '@core/indexers/errors.js';
 
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 const mockIndexer = createMockDbIndexer();
@@ -283,14 +284,15 @@ describe('IndexerService', () => {
       };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       vi.spyOn(service as any, 'getAdapter').mockResolvedValue(mockAdapter as never);
-      const updateSpy = vi.spyOn(service, 'update').mockResolvedValue(mamIndexer as never);
+      const persistSpy = vi.spyOn(service, 'persistObservedSettings').mockResolvedValue(mamIndexer as never);
+      const updateSpy = vi.spyOn(service, 'update');
 
       const result = await service.test(5);
       expect(result.success).toBe(true);
       expect(result.metadata).toEqual({ username: 'VipUser', classname: 'VIP', isVip: true });
-      expect(updateSpy).toHaveBeenCalledWith(5, {
-        settings: { mamId: 'test-id', searchLanguages: [1], searchType: 'active', isVip: true, classname: 'VIP' },
-      });
+      expect(persistSpy).toHaveBeenCalledWith(5, { mamId: 'test-id', searchLanguages: [1], searchType: 'active', isVip: true, classname: 'VIP' });
+      // #2376 AC17: the observation write must not travel through the clearing mutator.
+      expect(updateSpy).not.toHaveBeenCalled();
     });
 
     it('#317 does not persist metadata on failed test', async () => {
@@ -308,11 +310,11 @@ describe('IndexerService', () => {
       };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       vi.spyOn(service as any, 'getAdapter').mockResolvedValue(mockAdapter as never);
-      const updateSpy = vi.spyOn(service, 'update');
+      const persistSpy = vi.spyOn(service, 'persistObservedSettings');
 
       const result = await service.test(5);
       expect(result.success).toBe(false);
-      expect(updateSpy).not.toHaveBeenCalled();
+      expect(persistSpy).not.toHaveBeenCalled();
     });
 
     it('#317 returns test result even if metadata persistence fails', async () => {
@@ -330,7 +332,7 @@ describe('IndexerService', () => {
       };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       vi.spyOn(service as any, 'getAdapter').mockResolvedValue(mockAdapter as never);
-      vi.spyOn(service, 'update').mockRejectedValue(new Error('DB error'));
+      vi.spyOn(service, 'persistObservedSettings').mockRejectedValue(new Error('DB error'));
 
       const result = await service.test(5);
       expect(result.success).toBe(true);
@@ -1162,12 +1164,159 @@ describe('IndexerService', () => {
         }),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
-      const updateSpy = vi.spyOn(service, 'update').mockResolvedValue(mamRow as never);
+      const persistSpy = vi.spyOn(service, 'persistObservedSettings').mockResolvedValue(mamRow as never);
 
       await service.test(10);
-      expect(updateSpy).toHaveBeenCalledWith(10, {
-        settings: expect.objectContaining({ isVip: true, classname: 'VIP' }),
+      expect(persistSpy).toHaveBeenCalledWith(10, expect.objectContaining({ isVip: true, classname: 'VIP' }));
+    });
+  });
+
+  // #2376 — the breaker lives here so the clears (AC17) and the health-probe recovery hook
+  // (AC7) share one home, while the gate itself stays out on the search path (AC18).
+  describe('#2376 search breaker state', () => {
+    /** Drive the breaker to `stopped` the way eight consecutive transient search failures would. */
+    function stop(id: number): void {
+      for (let n = 1; n <= 8; n++) service.recordSearchFailure(id, new Error('Connection refused on port 443'), service.reserveSearchAttempt(id).generation);
+    }
+
+    it('lets a pristine indexer through without writing state', () => {
+      const decision = service.reserveSearchAttempt(7);
+
+      expect(decision.allowed).toBe(true);
+      expect(decision.snapshot.state).toBe('ok');
+      expect(service.getFailureSnapshot(7).state).toBe('ok');
+    });
+
+    it('shuts the gate after a search failure and reopens it on a search success', () => {
+      service.recordSearchFailure(7, new Error('Connection refused on port 443'), service.reserveSearchAttempt(7).generation);
+      expect(service.getFailureSnapshot(7)).toMatchObject({ state: 'backing-off', reason: 'Connection refused on port 443' });
+      expect(service.reserveSearchAttempt(7).allowed).toBe(false);
+
+      service.recordSearchSuccess(7, service.getFailureGeneration(7));
+      expect(service.getFailureSnapshot(7).state).toBe('ok');
+    });
+
+    it('stops on an IndexerAuthError at the first sight, without a backoff ladder', () => {
+      service.recordSearchFailure(7, new IndexerAuthError('MAM'), service.reserveSearchAttempt(7).generation);
+
+      expect(service.getFailureSnapshot(7)).toMatchObject({ state: 'stopped', consecutiveFailures: 1 });
+    });
+
+    it('update() clears the breaker — an operator config change is a repair signal', async () => {
+      stop(7);
+      db.update.mockReturnValue(mockDbChain([mockIndexer]));
+
+      await service.update(7, { name: 'Renamed' });
+
+      expect(service.getFailureSnapshot(7).state).toBe('ok');
+      expect(service.getFailureGeneration(7)).toBe(1);
+    });
+
+    it('persistObservedSettings() writes and evicts the adapter but leaves the breaker alone', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      const adapter1 = await service.getAdapter(mockIndexer);
+      service.recordSearchFailure(7, new Error('Connection refused on port 443'), service.reserveSearchAttempt(7).generation);
+      const before = service.getFailureSnapshot(7);
+      const generationBefore = service.getFailureGeneration(7);
+      db.update.mockReturnValue(mockDbChain([mockIndexer]));
+
+      await service.persistObservedSettings(mockIndexer.id, { isVip: true });
+
+      const setArg = (db.update.mock.results[0]!.value as { set: ReturnType<typeof vi.fn> }).set.mock.calls[0]![0] as { settings: unknown };
+      expect(setArg.settings).toBeDefined();
+      expect(await service.getAdapter(mockIndexer)).not.toBe(adapter1);
+      expect(service.getFailureSnapshot(7)).toEqual(before);
+      expect(service.getFailureGeneration(7)).toBe(generationBefore);
+    });
+
+    it('a Prowlarr config upsert clears through update(), leaving other indexers untouched', async () => {
+      const prowlarrRow = createMockDbIndexer({ id: 7, source: 'prowlarr', sourceIndexerId: 42 });
+      stop(7);
+      stop(8);
+      db.select.mockReturnValue(mockDbChain([prowlarrRow]));
+      db.update.mockReturnValue(mockDbChain([prowlarrRow]));
+
+      await service.createOrUpsertProwlarr({
+        name: 'Prowlarr ABB', type: 'abb', enabled: true, priority: 50,
+        settings: { hostname: 'audiobookbay.lu' }, sourceIndexerId: 42,
       });
+
+      expect(service.getFailureSnapshot(7).state).toBe('ok');
+      expect(service.getFailureSnapshot(8).state).toBe('stopped');
+    });
+
+    it('delete() clears the breaker and leaves every other indexer untouched', async () => {
+      stop(7);
+      stop(8);
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      db.delete.mockReturnValue(mockDbChain([]));
+
+      await service.delete(7);
+
+      expect(service.getFailureSnapshot(7).state).toBe('ok');
+      expect(service.getFailureSnapshot(8).state).toBe('stopped');
+    });
+
+    it('a successful test() clears the breaker with exactly one generation bump', async () => {
+      const mamRow = createMockDbIndexer({ id: 10, name: 'MAM', type: 'myanonamouse', settings: { mamId: 'test', searchLanguages: [1], searchType: 'active' } });
+      db.select.mockReturnValue(mockDbChain([mamRow]));
+      db.update.mockReturnValue(mockDbChain([mamRow]));
+      vi.spyOn(service, 'getAdapter').mockResolvedValue({
+        test: vi.fn().mockResolvedValue({ success: true, message: 'Connected', metadata: { username: 'u', classname: 'VIP', isVip: true } }),
+      } as never);
+      stop(10);
+      const generationBefore = service.getFailureGeneration(10);
+
+      await service.test(10);
+
+      expect(service.getFailureSnapshot(10).state).toBe('ok');
+      expect(service.getFailureGeneration(10) - generationBefore).toBe(1);
+    });
+
+    it('keeps probing a stopped indexer — suppression is for searches, never the probe (AC8)', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      const adapterTest = vi.fn().mockResolvedValue({ success: true, message: 'Connected' });
+      vi.spyOn(service, 'getAdapter').mockResolvedValue({ test: adapterTest } as never);
+      stop(mockIndexer.id);
+
+      await service.test(mockIndexer.id);
+
+      expect(adapterTest).toHaveBeenCalledTimes(1);
+      expect(service.getFailureSnapshot(mockIndexer.id).state).toBe('ok');
+    });
+
+    it('a failing test() records a failure instead of clearing', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      vi.spyOn(service, 'getAdapter').mockResolvedValue({
+        test: vi.fn().mockResolvedValue({ success: false, message: 'Connection refused on port 443' }),
+      } as never);
+
+      await service.test(mockIndexer.id);
+
+      expect(service.getFailureSnapshot(mockIndexer.id)).toMatchObject({
+        state: 'backing-off',
+        consecutiveFailures: 1,
+        reason: 'Connection refused on port 443',
+      });
+    });
+
+    it('a throwing test() records a failure too, so a probe outage advances the ladder', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      vi.spyOn(service, 'getAdapter').mockRejectedValue(new Error('Connection refused on port 443'));
+
+      await service.test(mockIndexer.id);
+
+      expect(service.getFailureSnapshot(mockIndexer.id)).toMatchObject({ state: 'backing-off', consecutiveFailures: 1 });
+    });
+
+    it('drops a search outcome whose generation predates an operator clear', async () => {
+      const generation = service.reserveSearchAttempt(7).generation;
+      db.update.mockReturnValue(mockDbChain([mockIndexer]));
+      await service.update(7, { name: 'Fixed' });
+
+      service.recordSearchFailure(7, new Error('a late in-flight failure'), generation);
+
+      expect(service.getFailureSnapshot(7).state).toBe('ok');
     });
   });
 });

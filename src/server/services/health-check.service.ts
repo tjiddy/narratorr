@@ -6,6 +6,7 @@ import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
 import { describeNotifierDelivery } from './notifier-failure-state.js';
+import { describeIndexerBreaker } from './indexer-failure-state.js';
 import type { EventPayload } from '@core/index.js';
 import type { HealthState, HealthCheckTarget, HealthCheckResult } from '@shared/health-types.js';
 import { inProgressDownloadCondition } from '../utils/download-state.js';
@@ -218,13 +219,17 @@ export class HealthCheckService {
       const target: HealthCheckTarget = { kind: 'indexer', id: indexer.id };
       try {
         const result = await this.indexerService.test(indexer.id);
+        // The probe both feeds and can clear the breaker, so read the snapshot after it. A
+        // `stopped` breaker outranks the probe's own verdict: searches are suppressed
+        // indefinitely and that, not the last transport message, is what the operator must see.
+        const breaker = describeIndexerBreaker(this.indexerService.getFailureSnapshot(indexer.id));
         const state = result.success
           ? (result.warning ? 'warning' : 'healthy')
           : 'error';
         results.push({
           checkName: `indexer:${indexer.name}`,
-          state,
-          message: result.success ? result.warning : result.message,
+          state: breaker?.state ?? state,
+          message: breaker?.message ?? (result.success ? result.warning : result.message),
           target,
         });
       } catch (error: unknown) {

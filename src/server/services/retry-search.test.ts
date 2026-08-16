@@ -18,7 +18,7 @@ import { MAX_SEARCH_RUNGS } from './search-query-ladder.js';
 
 /** Nonempty results stop rung one; empty results answer every rung. Mapped overrides permit explicit undefined. */
 function withStatus(results: Array<{ [K in keyof SearchResult]?: SearchResult[K] | undefined }>) {
-  return vi.fn().mockResolvedValue({ results, succeeded: 1, failed: 0 });
+  return vi.fn().mockResolvedValue({ results, succeeded: 1, failed: 0, skipped: [] });
 }
 
 vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
@@ -968,6 +968,7 @@ describe('retrySearch — query ladder (#2104)', () => {
       results: byQuery[query] ?? [],
       succeeded: 1,
       failed: 0,
+      skipped: [],
     }));
   }
 
@@ -1171,7 +1172,7 @@ describe('retrySearch — #2322 unsatisfied limit', () => {
 
   function answering(byQuery: Record<string, unknown[]>) {
     return vi.fn().mockImplementation(async (query: string) => ({
-      results: byQuery[query] ?? [], succeeded: 1, failed: 0,
+      results: byQuery[query] ?? [], succeeded: 1, failed: 0, skipped: [],
     }));
   }
 

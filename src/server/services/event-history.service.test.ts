@@ -319,7 +319,7 @@ describe('EventHistoryService', () => {
         .mockReturnValueOnce(mockDbChain([download]));
 
       const { RetryBudget } = await import('./retry-budget.js');
-      const mockSearchAll = vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
+      const mockSearchAll = vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0, skipped: [] });
       const fresh = freshService();
       fresh.wire({ retrySearchDeps: {
         indexerSearchService: { searchAllWithStatus: mockSearchAll },
@@ -411,7 +411,7 @@ describe('EventHistoryService', () => {
       );
 
       const { RetryBudget } = await import('./retry-budget.js');
-      const mockSearchAll = vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
+      const mockSearchAll = vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0, skipped: [] });
       const fresh = freshService();
       fresh.wire({ retrySearchDeps: {
         indexerSearchService: { searchAllWithStatus: mockSearchAll },
@@ -484,7 +484,7 @@ describe('EventHistoryService', () => {
 
       const { RetryBudget } = await import('./retry-budget.js');
       const retryBudget = new RetryBudget();
-      const mockSearchAll = vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
+      const mockSearchAll = vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0, skipped: [] });
       const mockGrab = vi.fn();
 
       const fresh = freshService();

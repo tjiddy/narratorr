@@ -212,6 +212,35 @@ describe('searchStreamRoutes', () => {
       expect(data).toEqual({ indexerId: 2, name: 'MAM' });
     });
 
+    // #2376 AC6: this route builds its own callbacks rather than using SearchEventSink, so a
+    // sink-only test would not prove the breaker skip reaches the client at all.
+    it('writes the breaker skip through the existing indexer-error frame, with no new event type', async () => {
+      indexerService.searchAllStreaming = vi.fn().mockImplementation(
+        async (_q: string, _o: unknown, _c: Map<number, AbortController>, callbacks: {
+          onError: (indexerId: number, name: string, error: string, elapsedMs: number) => void;
+        }) => {
+          callbacks.onError(2, 'MAM', 'Skipped — stopped: Connection refused on port 443', 0);
+          return [];
+        },
+      );
+
+      const { reply, request, write } = createMockReplyAndRequest();
+      await streamHandler!(request, reply);
+
+      const frames = write.mock.calls.filter(
+        (call: unknown[]) => typeof call[0] === 'string' && (call[0] as string).includes('event: indexer-error'),
+      );
+      expect(frames).toHaveLength(1);
+      const dataLine = (frames[0]![0] as string).split('\n').find((l: string) => l.startsWith('data: '));
+      expect(JSON.parse(dataLine!.replace('data: ', ''))).toEqual({
+        indexerId: 2,
+        name: 'MAM',
+        error: 'Skipped — stopped: Connection refused on port 443',
+        elapsedMs: 0,
+      });
+      expect(write.mock.calls.some((c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).includes('event: indexer-skipped'))).toBe(false);
+    });
+
     it('registers close handler for client disconnect cleanup', async () => {
       const { reply, request, onClose } = createMockReplyAndRequest();
       await streamHandler!(request, reply);
