@@ -1,13 +1,14 @@
 import { BoundedSemaphore, type SlotRelease } from '../utils/bounded-semaphore.js';
 import { SOLVER_MAX_CONCURRENT_REQUESTS, SOLVER_SLOT_WAIT_TIMEOUT_MS } from '../utils/constants.js';
 import { ProxyError } from './errors.js';
-import { normalizeBaseUrl } from '@shared/normalize-base-url.js';
+import { solverEndpoint } from './solver-endpoint.js';
 
 /**
  * The request target `fetchViaProxy` puts on the wire, which is the only thing this code knows about
  * which solver *process* it is addressing — and the process is what owns the browser memory the
  * bound protects. Two spellings share a bound if and only if they POST to the same target, so the
- * key follows the transport automatically: change the endpoint suffix and the key changes with it.
+ * key follows the transport automatically: it is built from the same `solverEndpoint` the transport
+ * fetches, and `URL` canonicalization is what makes two spellings of it one string.
  *
  * The fragment is cleared because the Fetch Standard never transmits it; keying on raw `.href` would
  * give `…/v1#one` and `…/v1#two` a pool of N each against one process. Query is kept — it *is*
@@ -21,7 +22,7 @@ import { normalizeBaseUrl } from '@shared/normalize-base-url.js';
  */
 export function solverConcurrencyKey(proxyUrl: string): string {
   try {
-    const endpoint = new URL(`${normalizeBaseUrl(proxyUrl)}/v1`);
+    const endpoint = new URL(solverEndpoint(proxyUrl));
     endpoint.hash = '';
     return endpoint.href;
   } catch {
