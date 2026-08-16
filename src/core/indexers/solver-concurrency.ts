@@ -1,6 +1,7 @@
 import { BoundedSemaphore, type SlotRelease } from '../utils/bounded-semaphore.js';
 import { SOLVER_MAX_CONCURRENT_REQUESTS, SOLVER_SLOT_WAIT_TIMEOUT_MS } from '../utils/constants.js';
 import { ProxyError } from './errors.js';
+import { markSolverFailure } from './solver-failure.js';
 import { solverEndpoint } from './solver-endpoint.js';
 
 /**
@@ -60,9 +61,15 @@ export function acquireSolverSlot(proxyUrl: string, signal?: AbortSignal): Promi
     waitTimeoutMs: SOLVER_SLOT_WAIT_TIMEOUT_MS,
     // Deliberately not prefixed "FlareSolverr": `isProxyRelatedError` matches that prefix on any
     // Error, which would make the ProxyError type non-load-bearing and unfalsifiable.
+    // Marked `slot-wait` so the #2374 diagnosis can see the request never left for the solver: this
+    // message already names the right component, and re-attributing it — or spending a probe on
+    // it — would be a regression.
     waitTimeoutReason: () =>
-      new ProxyError(
-        `Timed out after ${Math.round(SOLVER_SLOT_WAIT_TIMEOUT_MS / 1000)}s waiting for a request slot at solver ${proxyUrl}`,
+      markSolverFailure(
+        new ProxyError(
+          `Timed out after ${Math.round(SOLVER_SLOT_WAIT_TIMEOUT_MS / 1000)}s waiting for a request slot at solver ${proxyUrl}`,
+        ),
+        'slot-wait',
       ),
   });
 }

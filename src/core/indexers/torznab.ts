@@ -11,6 +11,7 @@ import { buildMagnetUri } from '../utils/magnet.js';
 import { parseOptionalNumber } from './parse-attr.js';
 import { fetchWithProxy } from './fetch.js';
 import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
+import { describeSolverFailure, probeTargetFromApiUrl } from './solver-diagnosis.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
 import { getErrorMessage } from '@shared/error-message.js';
 import { normalizeBaseUrl } from '@shared/normalize-base-url.js';
@@ -98,6 +99,16 @@ export class TorznabIndexer implements IndexerAdapter {
 
       return result;
     } catch (error: unknown) {
+      if (this.flareSolverrUrl) {
+        return {
+          success: false,
+          message: await describeSolverFailure(error, {
+            ...probeTargetFromApiUrl(this.apiUrl),
+            solverUrl: this.flareSolverrUrl,
+            ...(this.proxyUrl !== undefined && { proxyUrl: this.proxyUrl }),
+          }),
+        };
+      }
       return {
         success: false,
         message: getErrorMessage(error),
