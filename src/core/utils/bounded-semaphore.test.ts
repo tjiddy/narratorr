@@ -1,12 +1,15 @@
 /**
- * Pure and MSW-free by design, like `interval-gate.test.ts`: the primitive's admission, deadline and
- * cancellation mechanics live here, and the consumer suites (`fetch.test.ts`, the indexer adapters)
- * prove only the wiring. Real timers throughout — every deadline here is a handful of milliseconds,
- * and fake timers buy nothing without MSW in the picture.
+ * Pure and MSW-free by design, like `interval-gate.test.ts` — which is why this suite can run on
+ * fake timers where the transport-level suites cannot (full fake timers stall MSW). Every deadline
+ * assertion advances the clock to an exact boundary instead of inferring which timer fired from
+ * elapsed wall time, and timer cleanup is observed through `vi.getTimerCount()` rather than a spy on
+ * `clearTimeout`. The consumer suites (`fetch.test.ts`, the indexer adapters) prove only the wiring.
  */
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BoundedSemaphore, type SlotRelease } from './bounded-semaphore.js';
+
+const WAIT_MS = 10_000;
 
 interface Watched {
   settled: boolean;
@@ -30,17 +33,22 @@ function watch(promise: Promise<SlotRelease>): Watched {
   return state;
 }
 
-function after(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/** Drains pending promise continuations without moving the clock. */
+async function flush(): Promise<void> {
+  await vi.advanceTimersByTimeAsync(0);
 }
 
-/** One macrotask — enough for any already-resolvable acquisition to settle. */
-function tick(): Promise<void> {
-  return after(0);
+async function advance(ms: number): Promise<void> {
+  await vi.advanceTimersByTimeAsync(ms);
 }
 
 describe('BoundedSemaphore', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+  });
+
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -51,12 +59,12 @@ describe('BoundedSemaphore', () => {
       const first = await semaphore.acquire();
       const second = await semaphore.acquire();
       const third = watch(semaphore.acquire());
-      await tick();
+      await flush();
 
       expect(third.settled).toBe(false);
 
       first();
-      await tick();
+      await flush();
       expect(third.release).toBeTypeOf('function');
 
       second();
@@ -74,13 +82,13 @@ describe('BoundedSemaphore', () => {
           return release;
         }),
       );
-      await tick();
+      await flush();
       expect(admitted).toEqual([]);
 
       let release = held;
       for (const pending of queued) {
         release();
-        await tick();
+        await flush();
         release = await pending;
       }
 
@@ -97,17 +105,17 @@ describe('BoundedSemaphore', () => {
 
       first();
       first();
-      await tick();
+      await flush();
 
       const replacement = await semaphore.acquire();
       const overflow = watch(semaphore.acquire());
-      await tick();
+      await flush();
 
       expect(overflow.settled).toBe(false);
 
       second();
       replacement();
-      await tick();
+      await flush();
       overflow.release!();
     });
 
@@ -123,70 +131,61 @@ describe('BoundedSemaphore', () => {
   });
 
   describe('bounded wait', () => {
-    it('rejects a waiter that is not admitted within waitTimeoutMs, with the supplied reason', async () => {
+    it('holds the waiter to the last millisecond before waitTimeoutMs, then rejects with the supplied reason', async () => {
       const semaphore = new BoundedSemaphore(1);
       const held = await semaphore.acquire();
       const expiry = new Error('slot wait expired');
+      const waiter = watch(semaphore.acquire({ waitTimeoutMs: WAIT_MS, waitTimeoutReason: () => expiry }));
 
-      await expect(
-        semaphore.acquire({ waitTimeoutMs: 10, waitTimeoutReason: () => expiry }),
-      ).rejects.toBe(expiry);
+      await advance(WAIT_MS - 1);
+      expect(waiter.settled).toBe(false);
+
+      await advance(1);
+      expect(waiter.reason).toBe(expiry);
 
       held();
     });
 
-    it('arms the wait deadline with exactly waitTimeoutMs', async () => {
+    it('supplies its own reason when the caller gives none', async () => {
       const semaphore = new BoundedSemaphore(1);
       const held = await semaphore.acquire();
-      const armed: number[] = [];
-      const realSetTimeout = globalThis.setTimeout;
-      vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler: TimerHandler, delay?: number, ...rest: unknown[]) => {
-        armed.push(delay ?? 0);
-        return realSetTimeout(handler as () => void, 0, ...rest);
-      }) as typeof globalThis.setTimeout);
+      const waiter = watch(semaphore.acquire({ waitTimeoutMs: WAIT_MS }));
 
-      const waiter = watch(semaphore.acquire({ waitTimeoutMs: 60_000, waitTimeoutReason: () => new Error('expired') }));
-      await new Promise((resolve) => realSetTimeout(resolve, 0));
+      await advance(WAIT_MS);
 
-      expect(armed).toEqual([60_000]);
       expect(waiter.reason).toBeInstanceOf(Error);
-
+      expect((waiter.reason as Error).message).toBe('Timed out waiting for a slot');
       held();
     });
 
-    it('does not arm a deadline when waitTimeoutMs is omitted', async () => {
+    it('arms no deadline at all when waitTimeoutMs is omitted', async () => {
       const semaphore = new BoundedSemaphore(1);
       const held = await semaphore.acquire();
-      const armed: number[] = [];
-      const realSetTimeout = globalThis.setTimeout;
-      vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler: TimerHandler, delay?: number, ...rest: unknown[]) => {
-        armed.push(delay ?? 0);
-        return realSetTimeout(handler as () => void, delay, ...rest);
-      }) as typeof globalThis.setTimeout);
-
       const waiter = watch(semaphore.acquire());
-      await new Promise((resolve) => realSetTimeout(resolve, 5));
+      await flush();
 
-      expect(armed).toEqual([]);
+      expect(vi.getTimerCount()).toBe(0);
+
+      await advance(10 * WAIT_MS);
       expect(waiter.settled).toBe(false);
 
       held();
-      await new Promise((resolve) => realSetTimeout(resolve, 0));
+      await flush();
       waiter.release!();
     });
 
     it('removes a timed-out waiter from the queue so the next release goes to its successor', async () => {
       const semaphore = new BoundedSemaphore(1);
       const held = await semaphore.acquire();
-      const expired = watch(semaphore.acquire({ waitTimeoutMs: 10, waitTimeoutReason: () => new Error('expired') }));
+      const expired = watch(semaphore.acquire({ waitTimeoutMs: WAIT_MS, waitTimeoutReason: () => new Error('expired') }));
       const successor = watch(semaphore.acquire());
 
-      await after(30);
+      await advance(WAIT_MS);
       expect(expired.reason).toBeInstanceOf(Error);
       expect(successor.settled).toBe(false);
 
       held();
-      await tick();
+      await flush();
 
       expect(successor.release).toBeTypeOf('function');
       successor.release!();
@@ -196,14 +195,17 @@ describe('BoundedSemaphore', () => {
       const semaphore = new BoundedSemaphore(1);
       const held = await semaphore.acquire();
       const stray = new Error('must not fire');
-      const admitted = watch(semaphore.acquire({ waitTimeoutMs: 30, waitTimeoutReason: () => stray }));
+      const admitted = watch(semaphore.acquire({ waitTimeoutMs: WAIT_MS, waitTimeoutReason: () => stray }));
 
-      await tick();
+      await flush();
+      expect(vi.getTimerCount()).toBe(1);
+
       held();
-      await tick();
+      await flush();
       expect(admitted.release).toBeTypeOf('function');
+      expect(vi.getTimerCount()).toBe(0);
 
-      await after(50);
+      await advance(10 * WAIT_MS);
       expect(admitted.reason).toBeUndefined();
       admitted.release!();
     });
@@ -214,14 +216,14 @@ describe('BoundedSemaphore', () => {
       const controller = new AbortController();
       const expiry = new Error('slot wait expired');
       const waiter = watch(
-        semaphore.acquire({ signal: controller.signal, waitTimeoutMs: 10, waitTimeoutReason: () => expiry }),
+        semaphore.acquire({ signal: controller.signal, waitTimeoutMs: WAIT_MS, waitTimeoutReason: () => expiry }),
       );
 
-      await after(30);
+      await advance(WAIT_MS);
       expect(waiter.reason).toBe(expiry);
 
       controller.abort(new Error('too late'));
-      await tick();
+      await flush();
       expect(waiter.reason).toBe(expiry);
 
       held();
@@ -237,17 +239,17 @@ describe('BoundedSemaphore', () => {
 
       const cancelled = watch(semaphore.acquire({ signal: controller.signal }));
       const successor = watch(semaphore.acquire());
-      await tick();
+      await flush();
 
       const reason = new Error('caller cancelled');
       controller.abort(reason);
-      await tick();
+      await flush();
 
       expect(cancelled.reason).toBe(reason);
       expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function));
 
       held();
-      await tick();
+      await flush();
       expect(successor.release).toBeTypeOf('function');
       successor.release!();
     });
@@ -259,18 +261,40 @@ describe('BoundedSemaphore', () => {
 
       const cancelled = watch(semaphore.acquire({ signal: controller.signal }));
       const successor = watch(semaphore.acquire());
-      await tick();
+      await flush();
 
       controller.abort(new Error('cancelled'));
-      await tick();
+      await flush();
       expect(cancelled.settled).toBe(true);
       expect(successor.settled).toBe(false);
 
       held();
-      await tick();
+      await flush();
 
       expect(successor.release).toBeTypeOf('function');
       successor.release!();
+    });
+
+    it('cancels the queued waiter’s deadline along with it', async () => {
+      const semaphore = new BoundedSemaphore(1);
+      const held = await semaphore.acquire();
+      const controller = new AbortController();
+      const stray = new Error('must not fire');
+      const cancelled = watch(
+        semaphore.acquire({ signal: controller.signal, waitTimeoutMs: WAIT_MS, waitTimeoutReason: () => stray }),
+      );
+      await flush();
+      expect(vi.getTimerCount()).toBe(1);
+
+      const reason = new Error('caller cancelled');
+      controller.abort(reason);
+      await flush();
+
+      expect(vi.getTimerCount()).toBe(0);
+      await advance(10 * WAIT_MS);
+      expect(cancelled.reason).toBe(reason);
+
+      held();
     });
 
     it('rejects a pre-aborted signal without taking or queuing for a slot', async () => {
@@ -293,23 +317,23 @@ describe('BoundedSemaphore', () => {
       const held = await semaphore.acquire();
       const controller = new AbortController();
       const removeListener = vi.spyOn(controller.signal, 'removeEventListener');
-      const clearTimer = vi.spyOn(globalThis, 'clearTimeout');
       const stray = new Error('must not fire');
 
       const drained = watch(
-        semaphore.acquire({ signal: controller.signal, waitTimeoutMs: 10, waitTimeoutReason: () => stray }),
+        semaphore.acquire({ signal: controller.signal, waitTimeoutMs: WAIT_MS, waitTimeoutReason: () => stray }),
       );
-      await tick();
+      await flush();
+      expect(vi.getTimerCount()).toBe(1);
 
       const reason = new Error('drained');
       semaphore.drainWaiters(reason);
-      await tick();
+      await flush();
 
       expect(drained.reason).toBe(reason);
-      expect(clearTimer).toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
       expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function));
 
-      await after(30);
+      await advance(10 * WAIT_MS);
       expect(drained.reason).toBe(reason);
 
       held();
@@ -322,11 +346,11 @@ describe('BoundedSemaphore', () => {
       semaphore.drainWaiters(new Error('drained'));
 
       const blocked = watch(semaphore.acquire());
-      await tick();
+      await flush();
       expect(blocked.settled).toBe(false);
 
       stale();
-      await tick();
+      await flush();
       expect(blocked.release).toBeTypeOf('function');
       blocked.release!();
     });

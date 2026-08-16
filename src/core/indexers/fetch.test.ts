@@ -7,7 +7,13 @@ import { fetchWithProxy } from './fetch.js';
 import { fetchWithProxyAgent } from './proxy.js';
 import { isProxyRelatedError, ProxyError } from './errors.js';
 import { _resetSolverConcurrencyForTesting } from './solver-concurrency.js';
-import { solverOk, useSolverBound, type SolverRequestOptions } from '../__tests__/solver-bound.js';
+import {
+  gatedSolverBody,
+  gatedSolverResponse,
+  solverOk,
+  useSolverBound,
+  type SolverRequestOptions,
+} from '../__tests__/solver-bound.js';
 import { PROXY_TIMEOUT_MS, SOLVER_SLOT_WAIT_TIMEOUT_MS } from '../utils/constants.js';
 
 const TARGET_URL = 'https://indexer.test/api?q=test';
@@ -536,6 +542,12 @@ describe('fetchWithProxy', () => {
   });
 
   /**
+   * Every barrier below is an observable event, never a sleep. Admission is decided synchronously
+   * inside `pool.acquire()` when `fetchWithProxy` is called, so a request's queued-or-admitted
+   * verdict is already fixed when the call returns; only the *arrival* of an admitted request needs
+   * awaiting, and the stub resolves that itself. `bound.drain()` covers the one thing an arrival
+   * cannot express — that nothing FURTHER landed — by running round trips on an uncontended endpoint.
+   *
    * Teardown ordering is this suite's obligation, not the reset's: `_resetSolverConcurrencyForTesting`
    * restores bookkeeping but holds no handle on in-flight solver fetches, so every case releases or
    * aborts its own requests and awaits them before `afterEach` resets. Resetting while requests are
@@ -543,7 +555,7 @@ describe('fetchWithProxy', () => {
    */
   describe('solver concurrency bound (#2373)', () => {
     const bound = useSolverBound(server);
-    const { max: N, settle, saturate, captureSlotWait } = bound;
+    const { max: N, saturate, drain, captureTimer } = bound;
 
     const useStub = (endpoint: string, parked?: () => Response) =>
       bound.stub(endpoint, { ...(parked !== undefined && { parked }) });
@@ -559,7 +571,8 @@ describe('fetchWithProxy', () => {
         const stub = useStub(`${PROXY_URL}/v1`);
 
         for (let i = 0; i < 30; i++) solverRequest(PROXY_URL);
-        await settle();
+        await stub.reaches(N);
+        await drain();
 
         expect(stub.observed).toBe(N);
         expect(stub.peak).toBe(N);
@@ -568,12 +581,10 @@ describe('fetchWithProxy', () => {
 
       it('holds request N+1 back from the solver entirely while N are in flight', async () => {
         const stub = useStub(`${PROXY_URL}/v1`);
-
-        await saturate(PROXY_URL);
-        expect(stub.observed).toBe(N);
+        await saturate(stub, PROXY_URL);
 
         solverRequest(PROXY_URL, { url: 'https://indexer.test/api?q=overflow' });
-        await settle();
+        await drain();
 
         expect(stub.observed).toBe(N);
         expect(stub.targets).not.toContain('https://indexer.test/api?q=overflow');
@@ -600,32 +611,69 @@ describe('fetchWithProxy', () => {
 
       it.each(outcomes)('releases the slot after $name', async ({ respond }) => {
         const stub = useStub(`${PROXY_URL}/v1`, respond);
+        await saturate(stub, PROXY_URL);
 
-        await saturate(PROXY_URL);
         const queued = solverRequest(PROXY_URL, { url: 'https://indexer.test/api?q=after' });
-        await settle();
+        await drain();
         expect(stub.observed).toBe(N);
 
         stub.releaseAll();
-        await settle();
+        await stub.receives('https://indexer.test/api?q=after');
 
         expect(stub.observed).toBe(N + 1);
-        expect(stub.targets).toContain('https://indexer.test/api?q=after');
         await expect(Promise.allSettled([queued])).resolves.toHaveLength(1);
       });
 
-      it('releases the slot after the request timeout elapses', async () => {
-        const stub = useStub(`${PROXY_URL}/v1`);
+      /**
+       * The outcome matrix above cannot see this: every one of those bodies is already materialized
+       * when the handler returns, so releasing right after `fetch()` resolves and releasing after
+       * `parseFlareSolverrResponse` are indistinguishable. A gated body separates them — headers land
+       * immediately, bytes do not — which is what AC8's "after the body is read and parsed" needs.
+       */
+      it('keeps the slot until the body is read and parsed, not merely until headers arrive', async () => {
+        const bodies = Array.from({ length: N }, (_unused, index) => gatedSolverBody(`page-${index}`));
+        let served = 0;
+        const stub = bound.stub(`${PROXY_URL}/v1`, {
+          immediate: () => gatedSolverResponse(bodies[served++]!),
+        });
 
-        await saturate(PROXY_URL, { timeoutMs: 200 });
-        solverRequest(PROXY_URL, { url: 'https://indexer.test/api?q=after-timeout', timeoutMs: 200 });
-        await settle();
+        const inFlight = Array.from({ length: N }, (_unused, index) =>
+          bound.request(PROXY_URL, { url: `https://indexer.test/api?q=held-${index}`, timeoutMs: 25_000 }));
+        await stub.reaches(N);
+        // Every response's headers have been delivered and its body is being consumed, so a release
+        // placed after `fetch()` rather than after parsing would already have freed all N slots.
+        await Promise.all(bodies.map((body) => body.reading));
+
+        solverRequest(PROXY_URL, { url: 'https://indexer.test/api?q=after-parse', timeoutMs: 25_000 });
+        await drain();
+
+        expect(stub.observed).toBe(N);
+        expect(stub.targets).not.toContain('https://indexer.test/api?q=after-parse');
+
+        for (const body of bodies) body.complete();
+        await expect(Promise.all(inFlight)).resolves.toEqual(
+          bodies.map((_unused, index) => expect.objectContaining({ body: `page-${index}` })),
+        );
+
+        await stub.receives('https://indexer.test/api?q=after-parse');
+        expect(stub.observed).toBe(N + 1);
+      });
+
+      it('releases the slot after the request timeout elapses', async () => {
+        const REQUEST_BUDGET_MS = 4_242;
+        const stub = useStub(`${PROXY_URL}/v1`);
+        const timer = captureTimer(REQUEST_BUDGET_MS);
+
+        await saturate(stub, PROXY_URL, { timeoutMs: REQUEST_BUDGET_MS });
+        await timer.armed(N);
+
+        solverRequest(PROXY_URL, { url: 'https://indexer.test/api?q=after-timeout', timeoutMs: REQUEST_BUDGET_MS });
+        await drain();
         expect(stub.observed).toBe(N);
 
-        await settle(300);
-
+        timer.fire();
+        await stub.receives('https://indexer.test/api?q=after-timeout');
         expect(stub.observed).toBe(N + 1);
-        expect(stub.targets).toContain('https://indexer.test/api?q=after-timeout');
       });
 
       it('releases the slot when the caller aborts a request that is already in flight', async () => {
@@ -633,16 +681,14 @@ describe('fetchWithProxy', () => {
         const controllers = Array.from({ length: N }, () => new AbortController());
 
         for (const controller of controllers) solverRequest(PROXY_URL, { signal: controller.signal });
-        await settle();
+        await stub.reaches(N);
         solverRequest(PROXY_URL, { url: 'https://indexer.test/api?q=after-abort' });
-        await settle();
+        await drain();
         expect(stub.observed).toBe(N);
 
         for (const controller of controllers) controller.abort(new Error('caller cancelled'));
-        await settle();
-
+        await stub.receives('https://indexer.test/api?q=after-abort');
         expect(stub.observed).toBe(N + 1);
-        expect(stub.targets).toContain('https://indexer.test/api?q=after-abort');
       });
 
       it('keeps capacity at N when one request releases twice over', async () => {
@@ -650,15 +696,13 @@ describe('fetchWithProxy', () => {
         // must not raise the live bound, so the N+1th still queues after a full round trip.
         const stub = useStub(`${PROXY_URL}/v1`);
         stub.releaseAll();
-
         await expect(solverRequest(PROXY_URL)).resolves.toMatchObject({ body: 'ok' });
 
         const holding = useStub(`${PROXY_URL}/v1`);
-        await saturate(PROXY_URL);
-        expect(holding.observed).toBe(N);
+        await saturate(holding, PROXY_URL);
 
         solverRequest(PROXY_URL, { url: 'https://indexer.test/api?q=overflow' });
-        await settle();
+        await drain();
         expect(holding.observed).toBe(N);
       });
     });
@@ -666,12 +710,10 @@ describe('fetchWithProxy', () => {
     describe('per-solver keying', () => {
       async function assertSharesBound(a: string, b: string, endpoint: string): Promise<void> {
         const stub = useStub(endpoint);
-
-        await saturate(a);
-        expect(stub.observed).toBe(N);
+        await saturate(stub, a);
 
         solverRequest(b, { url: 'https://indexer.test/api?q=probe' });
-        await settle();
+        await drain();
 
         expect(stub.observed).toBe(N);
         expect(stub.targets).not.toContain('https://indexer.test/api?q=probe');
@@ -680,22 +722,18 @@ describe('fetchWithProxy', () => {
       async function assertSeparateBounds(a: string, b: string, endpointA: string, endpointB: string): Promise<void> {
         const stubA = useStub(endpointA);
         const stubB = endpointA === endpointB ? stubA : useStub(endpointB);
-
-        await saturate(a);
-        expect(stubA.observed).toBe(N);
+        await saturate(stubA, a);
 
         solverRequest(b, { url: 'https://indexer.test/api?q=probe' });
-        await settle();
-
-        expect(stubB.targets).toContain('https://indexer.test/api?q=probe');
+        await stubB.receives('https://indexer.test/api?q=probe');
       }
 
       it('gives two distinct solvers 2N in flight, neither delaying the other', async () => {
         const first = useStub('http://solver-one.test:8191/v1');
         const second = useStub('http://solver-two.test:8191/v1');
 
-        await saturate('http://solver-one.test:8191');
-        await saturate('http://solver-two.test:8191');
+        await saturate(first, 'http://solver-one.test:8191');
+        await saturate(second, 'http://solver-two.test:8191');
 
         expect(first.observed).toBe(N);
         expect(second.observed).toBe(N);
@@ -752,16 +790,13 @@ describe('fetchWithProxy', () => {
         // One wildcard stub because MSW's own path matching is case-insensitive: two handlers
         // differing only in path case cannot tell these requests apart, but the bound must.
         const stub = useStub('http://pathcase.test/*');
-
-        await saturate('http://pathcase.test/Solver-A');
-        expect(stub.observed).toBe(N);
+        await saturate(stub, 'http://pathcase.test/Solver-A');
 
         solverRequest('http://pathcase.test/solver-a', { url: 'https://indexer.test/api?q=other-path' });
-        await settle();
-        expect(stub.targets).toContain('https://indexer.test/api?q=other-path');
+        await stub.receives('https://indexer.test/api?q=other-path');
 
         solverRequest('http://PATHCASE.test/Solver-A', { url: 'https://indexer.test/api?q=same-host' });
-        await settle();
+        await drain();
         expect(stub.targets).not.toContain('https://indexer.test/api?q=same-host');
       });
 
@@ -776,42 +811,59 @@ describe('fetchWithProxy', () => {
       it('separates two bracketed IPv6 literals on different ports', async () => {
         // Observed at the global fetch boundary rather than through MSW: path-to-regexp cannot lex
         // an IPv6 literal, so `http.post('http://[::1]:8080/v1')` throws inside MSW's handler lookup.
+        // Port 9090 is the uncontended stand-in for `drain()`, which cannot be used here because it
+        // would route through this same stub rather than MSW.
         const requested: string[] = [];
         const gates: Array<() => void> = [];
-        let holding = true;
+        const waiters: Array<{ satisfied: () => boolean; resolve: () => void }> = [];
+        let parking = true;
+
+        const reachedPort = (port: string) => requested.filter((url) => url.startsWith(`http://[::1]:${port}`)).length;
+        const until = (satisfied: () => boolean) => satisfied()
+          ? Promise.resolve()
+          : new Promise<void>((resolve) => { waiters.push({ satisfied, resolve }); });
+
         vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
-          requested.push(String(input));
-          if (holding) await new Promise<void>((resolve) => gates.push(resolve));
+          const url = String(input);
+          requested.push(url);
+          for (let i = waiters.length - 1; i >= 0; i--) {
+            if (waiters[i]!.satisfied()) waiters.splice(i, 1)[0]!.resolve();
+          }
+          if (parking && url.startsWith('http://[::1]:808')) {
+            await new Promise<void>((resolve) => gates.push(resolve));
+          }
           return new Response(
             JSON.stringify({ status: 'ok', solution: { response: 'ok', status: 200 } }),
             { headers: { 'Content-Type': 'application/json' } },
           );
         });
-        const reachedPort = (port: string) => requested.filter((url) => url.startsWith(`http://[::1]:${port}`)).length;
 
-        await saturate('http://[::1]:8080');
-        await saturate('http://[::1]:8081');
+        for (let i = 0; i < N; i++) solverRequest('http://[::1]:8080', { timeoutMs: 25_000 });
+        await until(() => reachedPort('8080') >= N);
+        for (let i = 0; i < N; i++) solverRequest('http://[::1]:8081', { timeoutMs: 25_000 });
+        await until(() => reachedPort('8081') >= N);
+
         expect(reachedPort('8080')).toBe(N);
         expect(reachedPort('8081')).toBe(N);
 
-        solverRequest('http://[::1]:8080');
-        await settle();
+        solverRequest('http://[::1]:8080', { timeoutMs: 25_000 });
+        await solverRequest('http://[::1]:9090', { timeoutMs: 25_000 });
+        await solverRequest('http://[::1]:9090', { timeoutMs: 25_000 });
         expect(reachedPort('8080')).toBe(N);
 
-        holding = false;
+        parking = false;
         for (const open of gates.splice(0)) open();
       });
 
       it('fails a credential-bearing solver URL immediately instead of queuing it behind a saturated pool', async () => {
         const stub = useStub('http://cred.test/v1');
+        await saturate(stub, 'http://cred.test');
 
-        await saturate('http://cred.test');
-        expect(stub.observed).toBe(N);
-
-        const before = stub.observed;
+        // Awaiting the rejection is itself the proof it never queued: a queued request cannot settle
+        // until the slot-wait deadline, which this suite never fires.
         await expect(fetchWithProxy({ url: TARGET_URL, proxyUrl: 'http://user:pass@cred.test' }))
           .rejects.toThrow('FlareSolverr proxy unreachable at http://user:pass@cred.test');
-        expect(stub.observed).toBe(before);
+        expect(stub.observed).toBe(N);
       });
 
       it('keeps the pre-existing unreachable failure for an unparseable proxy URL', async () => {
@@ -830,11 +882,11 @@ describe('fetchWithProxy', () => {
     describe('bounded wait for a slot', () => {
       it('rejects a waiter that never gets a slot with a proxy-related, operator-legible error', async () => {
         const stub = useStub(`${PROXY_URL}/v1`);
-        await saturate(PROXY_URL, { timeoutMs: 25_000 });
+        await saturate(stub, PROXY_URL);
 
-        const timer = captureSlotWait();
+        const timer = captureTimer();
         const waiting = solverRequest(PROXY_URL, { url: 'https://indexer.test/api?q=waiting', timeoutMs: 25_000 });
-        await settle();
+        await timer.armed();
         timer.fire();
 
         let captured: unknown;
@@ -854,12 +906,12 @@ describe('fetchWithProxy', () => {
       });
 
       it('arms the wait deadline with exactly SOLVER_SLOT_WAIT_TIMEOUT_MS', async () => {
-        useStub(`${PROXY_URL}/v1`);
-        await saturate(PROXY_URL, { timeoutMs: 25_000 });
+        const stub = useStub(`${PROXY_URL}/v1`);
+        await saturate(stub, PROXY_URL);
 
-        const timer = captureSlotWait();
+        const timer = captureTimer();
         solverRequest(PROXY_URL, { timeoutMs: 25_000 });
-        await settle();
+        await timer.armed();
 
         expect(timer.delays.filter((delay) => delay === SOLVER_SLOT_WAIT_TIMEOUT_MS)).toHaveLength(1);
         timer.fire();
@@ -867,17 +919,19 @@ describe('fetchWithProxy', () => {
 
       it('admits a waiter whose slot frees just before the deadline, with no stray rejection after', async () => {
         const stub = useStub(`${PROXY_URL}/v1`);
-        await saturate(PROXY_URL, { timeoutMs: 25_000 });
+        await saturate(stub, PROXY_URL);
 
-        const timer = captureSlotWait();
+        const timer = captureTimer();
         const waiting = solverRequest(PROXY_URL, { timeoutMs: 25_000 });
-        await settle();
+        await timer.armed();
 
         stub.releaseAll();
         await expect(waiting).resolves.toMatchObject({ body: 'ok' });
 
+        // The deadline is cleared on admission, so firing whatever the spy still holds must not
+        // reach the settled request.
         timer.fire();
-        await settle();
+        await drain();
         await expect(waiting).resolves.toMatchObject({ body: 'ok' });
       });
     });
@@ -885,13 +939,13 @@ describe('fetchWithProxy', () => {
     describe('abort while queued', () => {
       it('rejects with signal.reason verbatim, never reaches the solver, and leaves its slot to the next waiter', async () => {
         const stub = useStub(`${PROXY_URL}/v1`);
-        await saturate(PROXY_URL);
+        await saturate(stub, PROXY_URL);
 
         const controller = new AbortController();
         const removeListener = vi.spyOn(controller.signal, 'removeEventListener');
         const cancelled = solverRequest(PROXY_URL, { signal: controller.signal, url: 'https://indexer.test/api?q=cancelled' });
         solverRequest(PROXY_URL, { url: 'https://indexer.test/api?q=successor' });
-        await settle();
+        await drain();
         expect(stub.observed).toBe(N);
 
         const reason = new Error('search cancelled');
@@ -901,10 +955,8 @@ describe('fetchWithProxy', () => {
         expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function));
 
         stub.releaseOne();
-        await settle();
-
+        await stub.receives('https://indexer.test/api?q=successor');
         expect(stub.targets).not.toContain('https://indexer.test/api?q=cancelled');
-        expect(stub.targets).toContain('https://indexer.test/api?q=successor');
       });
 
       it('rejects a pre-aborted signal without taking or queuing for a slot', async () => {
@@ -917,7 +969,7 @@ describe('fetchWithProxy', () => {
           .rejects.toBe(reason);
         expect(stub.observed).toBe(0);
 
-        await saturate(PROXY_URL);
+        await saturate(stub, PROXY_URL);
         expect(stub.observed).toBe(N);
       });
     });
@@ -925,19 +977,16 @@ describe('fetchWithProxy', () => {
     describe('timeout budget ordering', () => {
       it('arms the request timeout only after the slot is acquired, with the full budget', async () => {
         const stub = useStub(`${PROXY_URL}/v1`);
-        await saturate(PROXY_URL, { timeoutMs: 25_000 });
+        await saturate(stub, PROXY_URL);
 
-        const armed = captureSlotWait().delays;
-
+        const timer = captureTimer();
         solverRequest(PROXY_URL, { url: 'https://indexer.test/api?q=budget', timeoutMs: 12_345 });
-        await settle();
-        expect(armed).not.toContain(12_345);
+        await timer.armed();
+        expect(timer.delays).not.toContain(12_345);
 
         stub.releaseAll();
-        await settle();
-
-        expect(armed).toContain(12_345);
-        expect(stub.targets).toContain('https://indexer.test/api?q=budget');
+        await stub.receives('https://indexer.test/api?q=budget');
+        expect(timer.delays).toContain(12_345);
       });
 
       it('leaves the solver maxTimeout body field at the caller budget', async () => {
@@ -957,18 +1006,19 @@ describe('fetchWithProxy', () => {
     describe('FIFO', () => {
       it('admits queued requests in acquisition order', async () => {
         const stub = useStub(`${PROXY_URL}/v1`);
-        await saturate(PROXY_URL);
+        await saturate(stub, PROXY_URL);
 
+        // Enqueueing is synchronous inside `pool.acquire()`, so calling in sequence fixes the order.
         for (const label of ['first', 'second', 'third']) {
           solverRequest(PROXY_URL, { url: `https://indexer.test/api?q=${label}` });
-          await settle(5);
         }
+        await drain();
         expect(stub.observed).toBe(N);
 
         const admitted: string[] = [];
         for (let i = 0; i < 3; i++) {
           stub.releaseOne();
-          await settle();
+          await stub.reaches(N + i + 1);
           admitted.push(stub.targets[N + i] ?? 'missing');
         }
 
@@ -984,9 +1034,7 @@ describe('fetchWithProxy', () => {
       it('lets a direct fetch and a proxy-agent fetch through while the solver bound is saturated', async () => {
         const stub = useStub(`${PROXY_URL}/v1`);
         server.use(http.get('https://indexer.test/api', () => new HttpResponse('direct')));
-
-        await saturate(PROXY_URL);
-        expect(stub.observed).toBe(N);
+        await saturate(stub, PROXY_URL);
 
         await expect(fetchWithProxy({ url: TARGET_URL })).resolves.toMatchObject({ body: 'direct' });
         await expect(fetchWithProxyAgent(TARGET_URL)).resolves.toMatchObject({ body: 'direct' });
@@ -997,12 +1045,12 @@ describe('fetchWithProxy', () => {
     describe('reset seam', () => {
       it('rejects queued waiters with the stated reason rather than leaving them pending', async () => {
         const stub = useStub(`${PROXY_URL}/v1`);
-        await saturate(PROXY_URL);
+        await saturate(stub, PROXY_URL);
 
         const controller = new AbortController();
         const removeListener = vi.spyOn(controller.signal, 'removeEventListener');
         const queued = solverRequest(PROXY_URL, { signal: controller.signal });
-        await settle();
+        await drain();
         expect(stub.observed).toBe(N);
 
         // Reset while the waiter is genuinely queued: a bare map clear would leave this promise
@@ -1016,40 +1064,37 @@ describe('fetchWithProxy', () => {
 
       it('restores full capacity once every in-flight request has settled first', async () => {
         const stub = useStub(`${PROXY_URL}/v1`);
-        await saturate(PROXY_URL);
+        const inFlight = await saturate(stub, PROXY_URL);
 
         stub.releaseAll();
-        await settle();
+        await Promise.allSettled(inFlight);
         _resetSolverConcurrencyForTesting();
 
         const fresh = useStub(`${PROXY_URL}/v1`);
-        await saturate(PROXY_URL);
-        expect(fresh.observed).toBe(N);
+        await saturate(fresh, PROXY_URL);
 
         solverRequest(PROXY_URL, { url: 'https://indexer.test/api?q=overflow' });
-        await settle();
+        await drain();
         expect(fresh.observed).toBe(N);
       });
 
       it('cannot be over-admitted by a releaser from a pre-reset request', async () => {
         const stale = useStub(`${PROXY_URL}/v1`);
         solverRequest(PROXY_URL, { url: 'https://indexer.test/api?q=stale' });
-        await settle();
-        expect(stale.observed).toBe(1);
+        await stale.reaches(1);
 
         _resetSolverConcurrencyForTesting();
 
         const fresh = useStub(`${PROXY_URL}/v1`);
-        await saturate(PROXY_URL);
-        expect(fresh.observed).toBe(N);
+        await saturate(fresh, PROXY_URL);
 
         solverRequest(PROXY_URL, { url: 'https://indexer.test/api?q=overflow' });
-        await settle();
+        await drain();
         expect(fresh.observed).toBe(N);
 
         // The pre-reset request now settles; its releaser belongs to the detached pool.
         stale.releaseOne();
-        await settle();
+        await drain();
         expect(fresh.observed).toBe(N);
         expect(fresh.targets).not.toContain('https://indexer.test/api?q=overflow');
       });

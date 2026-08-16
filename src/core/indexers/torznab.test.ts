@@ -858,12 +858,12 @@ describe('TorznabIndexer', () => {
 
     it('takes a slot for a solver-bound search and surfaces the slot wait as a ProxyError', async () => {
       const stub = bound.stub(`${PROXY_URL}/v1`);
-      await bound.saturate(PROXY_URL);
-      expect(stub.observed).toBe(bound.max);
+      await bound.saturate(stub, PROXY_URL);
 
-      const timer = bound.captureSlotWait();
+      const timer = bound.captureTimer();
       const searching = bound.track(proxiedIndexer.search('test'));
-      await bound.settle();
+      // The deadline being armed IS the observable "this request is queued behind the bound".
+      await timer.armed();
       timer.fire();
 
       await expect(searching).rejects.toThrow(/waiting for a request slot/);
@@ -872,8 +872,8 @@ describe('TorznabIndexer', () => {
     });
 
     it('takes no slot when the same indexer has no flareSolverrUrl', async () => {
-      bound.stub(`${PROXY_URL}/v1`);
-      await bound.saturate(PROXY_URL);
+      const solver = bound.stub(`${PROXY_URL}/v1`);
+      await bound.saturate(solver, PROXY_URL);
 
       server.use(http.get(`${API_BASE}/api`, () =>
         new HttpResponse(searchXml, { headers: { 'Content-Type': 'application/rss+xml' } }),
@@ -889,11 +889,10 @@ describe('TorznabIndexer', () => {
 
       bound.track(newznab.search('test'));
       for (let i = 1; i < bound.max; i++) bound.track(proxiedIndexer.search(`test-${i}`));
-      await bound.settle();
-      expect(stub.observed).toBe(bound.max);
+      await stub.reaches(bound.max);
 
       bound.track(proxiedIndexer.search('one-too-many'));
-      await bound.settle();
+      await bound.drain();
 
       expect(stub.observed).toBe(bound.max);
       expect(stub.targets.some((target) => target.includes('one-too-many'))).toBe(false);

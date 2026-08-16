@@ -940,12 +940,13 @@ describe('AudioBookBayIndexer', () => {
 
     it('propagates a slot-wait timeout from the search page out of search()', async () => {
       const stub = bound.stub(`${PROXY_URL}/v1`);
-      await bound.saturate(PROXY_URL);
-      expect(stub.observed).toBe(bound.max);
+      await bound.saturate(stub, PROXY_URL);
 
-      const timer = bound.captureSlotWait();
+      const timer = bound.captureTimer();
       const searching = bound.track(proxiedIndexer.search('Brandon Sanderson'));
-      await bound.settle();
+      // The adapter reaches the transport after its own async work, so wait for the deadline it
+      // arms rather than for a clock: that arming IS the observable "this request is queued".
+      await timer.armed();
       timer.fire();
 
       await expect(searching).rejects.toThrow(/waiting for a request slot/);
@@ -960,14 +961,14 @@ describe('AudioBookBayIndexer', () => {
       const enrichment = gateEnrichmentDelay(proxiedIndexer);
 
       const searching = bound.track(proxiedIndexer.search('Brandon Sanderson'));
-      await bound.settle();
+      await stub.reaches(1);
       expect(stub.targets.some((target) => target.includes('?s='))).toBe(true);
 
       // The search page has released its slot; fill the pool before enrichment resumes.
-      await bound.saturate(PROXY_URL);
-      const timer = bound.captureSlotWait();
+      await bound.saturate(stub, PROXY_URL);
+      const timer = bound.captureTimer();
       enrichment.open();
-      await bound.settle();
+      await timer.armed();
       timer.fire();
 
       await expect(searching).rejects.toThrow(/waiting for a request slot/);
@@ -983,18 +984,18 @@ describe('AudioBookBayIndexer', () => {
         vi.spyOn(searcher as any, 'delay').mockResolvedValue(undefined);
         return bound.track(searcher.search('Brandon Sanderson'));
       });
-      await bound.settle();
-      expect(stub.observed).toBe(bound.max);
+      await stub.reaches(bound.max);
 
-      const timer = bound.captureSlotWait();
+      const timer = bound.captureTimer();
       const testing = proxiedIndexer.test();
-      await bound.settle();
+      await timer.armed();
       timer.fire();
 
       const result = await testing;
       expect(result.success).toBe(false);
       expect(result.message).toMatch(/waiting for a request slot/);
       expect(result.message).toContain(PROXY_URL);
+      expect(stub.observed).toBe(bound.max);
       expect(searchers).toHaveLength(bound.max);
     });
   });
