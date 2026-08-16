@@ -18,6 +18,13 @@ import { TorznabIndexer } from './torznab.js';
 import { NewznabIndexer } from './newznab.js';
 import { ProxyError } from './errors.js';
 import { useSolverBound } from '../__tests__/solver-bound.js';
+import {
+  abortRejection,
+  codedRejection,
+  routeFetch,
+  solverEnvelope,
+  type RoutedFetch,
+} from '../__tests__/solver-routes.js';
 
 const fixturesDir = resolve(import.meta.dirname, '../__tests__/fixtures');
 const searchXml = readFileSync(resolve(fixturesDir, 'torznab-search.xml'), 'utf-8');
@@ -906,5 +913,84 @@ describe('TorznabIndexer', () => {
       expect(stub.observed).toBe(bound.max);
       expect(stub.targets.some((target) => target.includes('one-too-many'))).toBe(false);
     });
+  });
+});
+
+/**
+ * #2374 — the same four-way vocabulary the ABB adapter renders, on the torznab probe target. The
+ * host comes from `apiUrl`, not from the indexer's display name, so this adapter is constructed
+ * with a name that differs from its host.
+ */
+describe('TorznabIndexer — solver failure diagnosis (#2374)', () => {
+  useMswServer();
+
+  const SOLVER_URL = 'http://flaresolverr.test:8191';
+  const SOLVER_ENDPOINT = `${SOLVER_URL}/v1`;
+  const API_HOST = 'tracker.test';
+  let indexer: TorznabIndexer;
+  let routed: RoutedFetch | undefined;
+
+  beforeEach(() => {
+    indexer = new TorznabIndexer(
+      { apiUrl: API_BASE, apiKey: 'testapikey', flareSolverrUrl: SOLVER_URL },
+      'My Tracker',
+    );
+  });
+
+  afterEach(() => {
+    routed?.restore();
+    routed = undefined;
+  });
+
+  it('names the target host from apiUrl when the site refuses connections', async () => {
+    routed = routeFetch((url, method) => {
+      if (method === 'POST' && url.startsWith(SOLVER_ENDPOINT)) return abortRejection();
+      if (method === 'HEAD' && url.includes(API_HOST)) return codedRejection('ECONNREFUSED');
+      if (method === 'HEAD') return new Response(null, { status: 405 });
+      return undefined;
+    });
+
+    const result = await indexer.test();
+
+    expect(result.success).toBe(false);
+    expect(result.message).toBe(
+      `Target unreachable: ${API_HOST} refused the connection (ECONNREFUSED). Probed directly, not through the solver.`,
+    );
+    expect(result.message).not.toContain('My Tracker');
+  });
+
+  it('names the solver address when the solver itself refuses, and issues no probe', async () => {
+    const calls = routeFetch((url, method) => (method === 'POST' && url.startsWith(SOLVER_ENDPOINT)
+      ? codedRejection('ECONNREFUSED')
+      : undefined));
+    routed = calls;
+
+    const result = await indexer.test();
+
+    expect(result.message).toBe(`Solver unreachable: ${SOLVER_ENDPOINT} refused the connection (ECONNREFUSED).`);
+    expect(calls.probes()).toEqual([]);
+  });
+
+  it('probes the API origin rather than the caps URL, so no api key goes onto the probe wire', async () => {
+    const calls = routeFetch((url, method) => {
+      if (method === 'POST' && url.startsWith(SOLVER_ENDPOINT)) return solverEnvelope({ status: 'error', message: 'Challenge failed' });
+      if (method === 'HEAD') return new Response(null, { status: 200 });
+      return undefined;
+    });
+    routed = calls;
+
+    const result = await indexer.test();
+
+    expect(result.message).toMatch(/^No page came back\./);
+    expect(calls.probes().map((call) => call.url)).toEqual([API_BASE]);
+  });
+
+  it('keeps a non-solver failure verbatim when no solver is configured (AC7)', async () => {
+    const plainIndexer = new TorznabIndexer({ apiUrl: API_BASE, apiKey: 'testapikey' });
+    routed = routeFetch((url) => (url.includes(API_HOST) ? codedRejection('ECONNREFUSED') : undefined));
+
+    const result = await plainIndexer.test();
+
+    expect(result.message).toMatch(/^Connection refused on port /);
   });
 });

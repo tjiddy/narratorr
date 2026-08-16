@@ -58,8 +58,8 @@ export interface IndexerFailureVerdict {
 /**
  * Terminal means only the operator can fix it. Today only `myanonamouse.ts` constructs
  * `IndexerAuthError`; the torznab/newznab/ABB adapters raise a plain `Error('HTTP 401: …')` from
- * `fetch.ts`, which deliberately takes the transient ladder — broadening auth detection to bare
- * status codes belongs with #2374, not here.
+ * `fetch.ts`, which deliberately takes the transient ladder. Broadening auth detection to bare
+ * status codes is its own change and has not been made.
  */
 export function classifyIndexerFailure(error: unknown): IndexerFailureVerdict {
   return { terminal: error instanceof IndexerAuthError, reason: reasonFor(error) };

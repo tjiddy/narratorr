@@ -13,6 +13,7 @@ import { normalizeBaseUrl } from '@shared/normalize-base-url.js';
 import { fetchWithProxy } from './fetch.js';
 import { isProxyRelatedError } from './errors.js';
 import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
+import { describeSolverFailure } from './solver-diagnosis.js';
 import { getErrorMessage } from '@shared/error-message.js';
 import { requireDefined } from '@shared/utils/assert.js';
 import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
@@ -358,7 +359,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
 
   async test(): Promise<{ success: boolean; message?: string; ip?: string }> {
     if (this.flareSolverrUrl) {
-      return this.testViaFlareSolverr();
+      return this.testViaFlareSolverr(this.flareSolverrUrl);
     }
     if (this.proxyUrl) {
       return this.testViaStandardProxy();
@@ -398,19 +399,24 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     }
   }
 
-  private async testViaFlareSolverr(): Promise<{ success: boolean; message?: string }> {
+  private async testViaFlareSolverr(solverUrl: string): Promise<{ success: boolean; message?: string }> {
     try {
       // FlareSolverr has no request.head; use request.get.
       await fetchWithProxy({
         url: this.baseUrl,
         headers: { 'User-Agent': this.getNextUserAgent() },
-        ...(this.flareSolverrUrl !== undefined && { proxyUrl: this.flareSolverrUrl }),
+        proxyUrl: solverUrl,
       });
       return { success: true, message: `Connected to ${this.config.hostname} via FlareSolverr` };
     } catch (error: unknown) {
       return {
         success: false,
-        message: getErrorMessage(error),
+        message: await describeSolverFailure(error, {
+          targetProbeUrl: this.baseUrl,
+          targetHost: this.config.hostname,
+          solverUrl,
+          ...(this.proxyUrl !== undefined && { proxyUrl: this.proxyUrl }),
+        }),
       };
     }
   }

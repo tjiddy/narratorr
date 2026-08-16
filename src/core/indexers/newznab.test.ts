@@ -17,6 +17,12 @@ vi.mock('../utils/network-service.js', async (importActual) => {
 import { NewznabIndexer } from './newznab.js';
 import { ProxyError } from './errors.js';
 import { useSolverBound } from '../__tests__/solver-bound.js';
+import {
+  abortRejection,
+  codedRejection,
+  routeFetch,
+  type RoutedFetch,
+} from '../__tests__/solver-routes.js';
 
 const fixturesDir = resolve(import.meta.dirname, '../__tests__/fixtures');
 const searchXml = readFileSync(resolve(fixturesDir, 'newznab-search.xml'), 'utf-8');
@@ -903,5 +909,80 @@ describe('NewznabIndexer', () => {
       const { results } = await indexer.search('test');
       expect(results.length).toBeGreaterThan(0);
     });
+  });
+});
+
+/** #2374 — the same four-way vocabulary, on the newznab probe target derived from `apiUrl`. */
+describe('NewznabIndexer — solver failure diagnosis (#2374)', () => {
+  useMswServer();
+
+  const SOLVER_URL = 'http://flaresolverr.test:8191';
+  const SOLVER_ENDPOINT = `${SOLVER_URL}/v1`;
+  const API_HOST = 'indexer.test';
+  let indexer: NewznabIndexer;
+  let routed: RoutedFetch | undefined;
+
+  beforeEach(() => {
+    indexer = new NewznabIndexer(
+      { apiUrl: API_BASE, apiKey: 'testapikey', flareSolverrUrl: SOLVER_URL },
+      'My Usenet Indexer',
+    );
+  });
+
+  afterEach(() => {
+    routed?.restore();
+    routed = undefined;
+  });
+
+  it('names the target host from apiUrl when the site does not resolve', async () => {
+    routed = routeFetch((url, method) => {
+      if (method === 'POST' && url.startsWith(SOLVER_ENDPOINT)) return abortRejection();
+      if (method === 'HEAD' && url.includes(API_HOST)) return codedRejection('ENOTFOUND', `getaddrinfo ENOTFOUND ${API_HOST}`);
+      if (method === 'HEAD') return new Response(null, { status: 405 });
+      return undefined;
+    });
+
+    const result = await indexer.test();
+
+    expect(result.success).toBe(false);
+    expect(result.message).toBe(
+      `Target unreachable: ${API_HOST} did not resolve (ENOTFOUND). Probed directly, not through the solver.`,
+    );
+    expect(result.message).not.toContain('My Usenet Indexer');
+  });
+
+  it('names the solver address when the solver itself refuses, and issues no probe', async () => {
+    const calls = routeFetch((url, method) => (method === 'POST' && url.startsWith(SOLVER_ENDPOINT)
+      ? codedRejection('ECONNREFUSED')
+      : undefined));
+    routed = calls;
+
+    const result = await indexer.test();
+
+    expect(result.message).toBe(`Solver unreachable: ${SOLVER_ENDPOINT} refused the connection (ECONNREFUSED).`);
+    expect(calls.probes()).toEqual([]);
+  });
+
+  it('reports No page when both answer but the solver returns none', async () => {
+    routed = routeFetch((url, method) => {
+      if (method === 'POST' && url.startsWith(SOLVER_ENDPOINT)) return abortRejection();
+      if (method === 'HEAD') return new Response(null, { status: 200 });
+      return undefined;
+    });
+
+    const result = await indexer.test();
+
+    expect(result.message).toMatch(/^No page came back\./);
+    expect(result.message).toContain(API_HOST);
+    expect(result.message).toContain(SOLVER_ENDPOINT);
+  });
+
+  it('keeps a non-solver failure verbatim when no solver is configured (AC7)', async () => {
+    const plainIndexer = new NewznabIndexer({ apiUrl: API_BASE, apiKey: 'testapikey' });
+    routed = routeFetch((url) => (url.includes(API_HOST) ? codedRejection('ECONNREFUSED') : undefined));
+
+    const result = await plainIndexer.test();
+
+    expect(result.message).toMatch(/^Connection refused on port /);
   });
 });

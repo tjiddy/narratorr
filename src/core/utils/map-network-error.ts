@@ -21,6 +21,14 @@ const CODE_MAP: Record<string, CauseMapper> = {
   UND_ERR_RESPONSE_EXCEEDED_SIZE: () => 'Response exceeded size limit',
 };
 
+/**
+ * Every transport code this module recognises, read straight off the registry above. Exported so a
+ * consumer's coverage test can enumerate the real source of truth instead of hand-copying the keys:
+ * a policy that partitions these codes (the #2374 attribution allowlist) must red when a code is
+ * added upstream rather than silently inheriting a verdict.
+ */
+export const MAPPED_TRANSPORT_CODES: readonly string[] = Object.freeze(Object.keys(CODE_MAP));
+
 // Carry the transport code onto the mapped error: it is the only structural identity a
 // caller has left once the cause is dropped, and failure classification keys on it (#2312).
 function withCode(error: Error, code: string | undefined): Error {

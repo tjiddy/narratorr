@@ -9,6 +9,7 @@ import {
 } from './types.js';
 import { fetchWithProxy } from './fetch.js';
 import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
+import { describeSolverFailure, probeTargetFromApiUrl } from './solver-diagnosis.js';
 import { parseOptionalNumber } from './parse-attr.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
 import { getErrorMessage } from '@shared/error-message.js';
@@ -96,6 +97,16 @@ export class NewznabIndexer implements IndexerAdapter {
 
       return result;
     } catch (error: unknown) {
+      if (this.flareSolverrUrl) {
+        return {
+          success: false,
+          message: await describeSolverFailure(error, {
+            ...probeTargetFromApiUrl(this.apiUrl),
+            solverUrl: this.flareSolverrUrl,
+            ...(this.proxyUrl !== undefined && { proxyUrl: this.proxyUrl }),
+          }),
+        };
+      }
       return {
         success: false,
         message: getErrorMessage(error),

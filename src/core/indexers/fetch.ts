@@ -8,6 +8,7 @@ import { httpStatusError } from './errors.js';
 import { INDEXER_TIMEOUT_MS, PROXY_TIMEOUT_MS } from '../utils/constants.js';
 import { acquireSolverSlot } from './solver-concurrency.js';
 import { solverEndpoint } from './solver-endpoint.js';
+import { markSolverFailure, transportCodeOf } from './solver-failure.js';
 
 const flareSolverrResponseSchema = z.object({
   status: z.string(),
@@ -138,13 +139,28 @@ async function postToSolver(
       });
     } catch (error: unknown) {
       if (error instanceof DOMException && error.name === 'AbortError') {
-        throw new Error(`FlareSolverr proxy timed out after ${Math.round(timeoutMs / 1000)}s`, { cause: error });
+        // No connection or response milestone is retained, so this arm entails nothing about either
+        // component — it is the only one the diagnosis must probe both sides for (#2374).
+        throw markSolverFailure(
+          new Error(`FlareSolverr proxy timed out after ${Math.round(timeoutMs / 1000)}s`, { cause: error }),
+          'round-trip-timeout',
+        );
       }
-      throw new Error(`FlareSolverr proxy unreachable at ${proxyUrl}`, { cause: error });
+      // One message covers every non-abort rejection, so the retained cause's transport code is the
+      // only thing separating "that address refused" from "our own resolver is down".
+      const transportCode = transportCodeOf(mapNetworkError(error));
+      throw markSolverFailure(
+        new Error(`FlareSolverr proxy unreachable at ${proxyUrl}`, { cause: error }),
+        'solver-no-answer',
+        transportCode,
+      );
     }
 
     if (!response.ok) {
-      throw new Error(`FlareSolverr proxy HTTP error ${response.status}`);
+      // A `Response` exists, so something answered at the solver URL — and nothing more than that.
+      // The envelope is deliberately not inspected: supported solvers return valid protocol bodies
+      // on non-2xx, so a status carries no claim about solver health either way.
+      throw markSolverFailure(new Error(`FlareSolverr proxy HTTP error ${response.status}`), 'solver-answered');
     }
 
     const parsedBody = await parseFlareSolverrResponse(response);
@@ -154,31 +170,36 @@ async function postToSolver(
   }
 }
 
+/** Every throw here follows a `Response`, so all four carry the `solver-answered` discriminant. */
 async function parseFlareSolverrResponse(response: Response): Promise<{ body: string; upstreamStatus: number }> {
   let raw: unknown;
   try {
     raw = await response.json();
   } catch {
-    throw new Error('FlareSolverr returned invalid response (not JSON)');
+    throw markSolverFailure(new Error('FlareSolverr returned invalid response (not JSON)'), 'solver-answered');
   }
 
   const parsed = flareSolverrResponseSchema.safeParse(raw);
   if (!parsed.success) {
-    throw new Error(
-      `FlareSolverr returned unexpected response shape: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
-      { cause: parsed.error },
+    throw markSolverFailure(
+      new Error(
+        `FlareSolverr returned unexpected response shape: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
+        { cause: parsed.error },
+      ),
+      'solver-answered',
     );
   }
   const data: FlareSolverrResponse = parsed.data;
 
   if (data.status !== 'ok') {
-    throw new Error(
-      `FlareSolverr error: ${data.message || 'unknown error'}`,
+    throw markSolverFailure(
+      new Error(`FlareSolverr error: ${data.message || 'unknown error'}`),
+      'solver-answered',
     );
   }
 
   if (!data.solution?.response) {
-    throw new Error('FlareSolverr returned empty response');
+    throw markSolverFailure(new Error('FlareSolverr returned empty response'), 'solver-answered');
   }
 
   return {

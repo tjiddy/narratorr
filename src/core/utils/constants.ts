@@ -48,6 +48,16 @@ export const SOLVER_MAX_CONCURRENT_REQUESTS = 3;
 export const SOLVER_SLOT_WAIT_TIMEOUT_MS = 60_000;
 
 /**
+ * How long each connection-test reachability probe may wait for anything to answer. ONE value for
+ * both the target and the solver probe, not one each: they run concurrently, so a single budget is
+ * the whole diagnosis's added cost, and a second value would make that arithmetic false. Far below
+ * `PROXY_TIMEOUT_MS` because the probe only asks whether an HTTP listener is there — it runs on a
+ * test that has already failed, so a slow answer is worth less to the operator than a fast verdict,
+ * and an expiry is `inconclusive` rather than a culprit (#2374).
+ */
+export const REACHABILITY_PROBE_TIMEOUT_MS = 5_000;
+
+/**
  * How long one `searchAndGrabForBook` call may hold its caller. Sized above the worst legitimate
  * run (~17.5 min: 8 ladder rungs of refresh+search, usenet enrichment, URL resolution, redirects
  * and the download client's own request graph), because a tighter number aborts searches that were

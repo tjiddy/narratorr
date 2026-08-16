@@ -212,6 +212,24 @@ describe('crud-routes shared error paths', () => {
     });
   });
 
+  /**
+   * #2374 — the diagnosis is only useful if the operator reads it. Pin the whole message: the API
+   * body is the last hop before the health card, and a route that reworded or truncated it would
+   * undo the distinction the verdict exists to draw.
+   */
+  describe('POST /api/indexers/:id/test — the solver diagnosis reaches the body unaltered', () => {
+    const VERDICT = 'Target unreachable: audiobookbay.lu refused the connection (ECONNREFUSED). Probed directly, not through the solver.';
+
+    it('returns the verdict message byte-for-byte', async () => {
+      (services.indexer.test as Mock).mockResolvedValue({ success: false, message: VERDICT });
+
+      const res = await app.inject({ method: 'POST', url: '/api/indexers/7/test' });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ success: false, message: VERDICT });
+    });
+  });
+
   describe('POST /api/notifiers/test — sentinel-aware schema (#827)', () => {
     it('accepts sentinel in registered secret field with id and forwards id to service', async () => {
       (services.notifier.testConfig as Mock).mockResolvedValue({ success: true });
