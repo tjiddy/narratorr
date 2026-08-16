@@ -7,6 +7,7 @@ import {
 import { vi, type Mock } from 'vitest';
 import type { Db } from '@db/index.js';
 import { config } from '../config.js';
+import type { AggregateSearchStatus } from '../services/indexer-search.service.js';
 import { registerRoutes } from '../routes/index.js';
 import type { AuthService } from '../services/auth.service.js';
 import { SERVICE_KEYS, type Services } from '../services/di.js';
@@ -305,4 +306,43 @@ export function createMockSettingsService(overrides?: DeepPartial<AppSettings>):
     patch: vi.fn().mockResolvedValue(undefined),
     update: vi.fn().mockResolvedValue(undefined),
   });
+}
+
+/** Counts only — `results` is generic so partial fixtures flow through (see {@link searchStatus}). */
+export type SearchStatusOverrides = Partial<Omit<AggregateSearchStatus, 'results'>>;
+
+/**
+ * The `AggregateSearchStatus` envelope `IndexerSearchService.searchAllWithStatus` resolves,
+ * spelled once for the whole server test tree.
+ *
+ * `succeeded: 1` makes an empty `results` an *answered zero*, so the query-relaxation ladder
+ * advances to the next rung; `succeeded: 0` means a total indexer outage and stops it after one
+ * rung. Pre-ladder fixtures answer identically on every rung (#2104 D16).
+ *
+ * The counts are typed from the production interface, so a field added there fails to compile here
+ * rather than going silently `undefined` at every mock site.
+ */
+export function searchStatus<T>(
+  results: T[],
+  overrides: SearchStatusOverrides = {},
+): Omit<AggregateSearchStatus, 'results'> & { results: T[] } {
+  return {
+    succeeded: 1,
+    failed: 0,
+    ...overrides,
+    results,
+    // Copied, never aliased: production pushes onto `skipped`, so sharing one array — the caller's
+    // or a previous return's — lets one mock's breaker skips surface through another.
+    skipped: [...(overrides.skipped ?? [])],
+  };
+}
+
+/** `searchAllWithStatus` double resolving one fixed envelope. */
+export function mockSearchAllWithStatus<T>(results: T[], overrides?: SearchStatusOverrides): Mock {
+  return vi.fn().mockResolvedValue(searchStatus(results, overrides));
+}
+
+/** `searchAllWithStatus` double mapping each transport query to its results; unlisted queries answer zero. */
+export function answeringSearchStatus<T>(byQuery: Record<string, T[]>, overrides?: SearchStatusOverrides): Mock {
+  return vi.fn().mockImplementation(async (query: string) => searchStatus(byQuery[query] ?? [], overrides));
 }

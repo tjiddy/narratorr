@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vite
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@db/index.js';
 import type { SearchResult } from '@core/index.js';
-import { createMockDb, mockDbChain, createMockLogger, inject } from '../__tests__/helpers.js';
+import { createMockDb, mockDbChain, createMockLogger, inject, searchStatus, mockSearchAllWithStatus } from '../__tests__/helpers.js';
 import { DownloadService } from './download.service.js';
 import { DownloadOrchestrator } from './download-orchestrator.js';
 import type { DownloadClientService } from './download-client.service.js';
@@ -178,7 +178,7 @@ describe('#2310 grab integrity and excluded surfaces — real download chain', (
     getAdapter = vi.fn().mockResolvedValue({ addDownload, removeDownload });
     orchestrator = buildOrchestrator();
     indexerSearchService = inject<IndexerSearchService>({
-      searchAllWithStatus: vi.fn().mockResolvedValue({ results: [searchHit()], succeeded: 1, failed: 0, skipped: [] }),
+      searchAllWithStatus: mockSearchAllWithStatus([searchHit()]),
     });
   });
 
@@ -385,10 +385,9 @@ describe('#2310 grab integrity and excluded surfaces — real download chain', (
       getAdapter = vi.fn().mockResolvedValue({ addDownload, removeDownload });
       orchestrator = buildOrchestrator();
       vi.mocked(fetchWithSsrfRedirect).mockResolvedValue(new Response(Buffer.from('<nzb/>'), { status: 200 }));
-      vi.mocked(indexerSearchService.searchAllWithStatus).mockResolvedValue({
-        results: [{ ...searchHit(), protocol: 'usenet', downloadUrl: 'https://indexer.test/getnzb/abc.nzb' }],
-        succeeded: 1, failed: 0, skipped: [],
-      });
+      vi.mocked(indexerSearchService.searchAllWithStatus).mockResolvedValue(
+        searchStatus([{ ...searchHit(), protocol: 'usenet', downloadUrl: 'https://indexer.test/getnzb/abc.nzb' }]),
+      );
 
       await expect(searchAndGrabForBook(book, deps())).resolves.toMatchObject({ result: 'grabbed' });
 

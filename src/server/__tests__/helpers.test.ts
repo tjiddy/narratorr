@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, type Mock } from 'vitest';
+import { describe, it, expect, expectTypeOf, vi, type Mock } from 'vitest';
 import type { Db } from '@db/index.js';
+import type { AggregateSearchStatus, IndexerSkip } from '../services/indexer-search.service.js';
 import {
   mockDbChain,
   createMockServices,
@@ -8,6 +9,9 @@ import {
   createAuthTestApp,
   stubAuthService,
   inject,
+  searchStatus,
+  mockSearchAllWithStatus,
+  answeringSearchStatus,
   BASIC_AUTH_HEADER,
   FORMS_SESSION_COOKIE,
   type ZodTestApp,
@@ -719,5 +723,125 @@ describe('createAuthTestApp', () => {
     } finally {
       await app.close();
     }
+  });
+});
+
+describe('searchStatus', () => {
+  const skip: IndexerSkip = { indexerId: 3, name: 'MAM', state: 'backing-off', reason: 'timeout' };
+
+  it('defaults to an answered zero, with every envelope key present and no extras', () => {
+    expect(searchStatus([])).toStrictEqual({ results: [], succeeded: 1, failed: 0, skipped: [] });
+  });
+
+  it('passes results through by identity, unmodified and unsorted', () => {
+    const results = [{ guid: 'b' }, { guid: 'a' }];
+    const status = searchStatus(results);
+    expect(status.results).toBe(results);
+    expect(status.results).toEqual([{ guid: 'b' }, { guid: 'a' }]);
+  });
+
+  it('honours a zero count override instead of coercing it back to the default', () => {
+    expect(searchStatus([], { succeeded: 0 })).toStrictEqual({ results: [], succeeded: 0, failed: 0, skipped: [] });
+    expect(searchStatus([], { failed: 0 })).toStrictEqual({ results: [], succeeded: 1, failed: 0, skipped: [] });
+  });
+
+  it('honours a non-empty skipped override, and an explicit empty one reads as the default', () => {
+    expect(searchStatus([], { skipped: [skip] }).skipped).toEqual([skip]);
+    expect(searchStatus([], { skipped: [] })).toStrictEqual(searchStatus([]));
+  });
+
+  it('leaves the unnamed counts at their defaults for a partial override', () => {
+    expect(searchStatus([], { failed: 1 })).toStrictEqual({ results: [], succeeded: 1, failed: 1, skipped: [] });
+  });
+
+  it('gives every call its own skipped array', () => {
+    const first = searchStatus([]);
+    const second = searchStatus([]);
+    expect(first.skipped).not.toBe(second.skipped);
+    first.skipped.push(skip);
+    expect(second.skipped).toEqual([]);
+  });
+
+  // `{ skipped: [], ...overrides }` passes every test above while handing the caller's own array
+  // back on each call; production pushes onto `skipped`, so that aliasing leaks across mocks.
+  it('copies a caller-supplied skipped array rather than aliasing it', () => {
+    const callerOwned = [skip];
+    const first = searchStatus([], { skipped: callerOwned });
+    const second = searchStatus([], { skipped: callerOwned });
+
+    expect(first.skipped).not.toBe(callerOwned);
+    expect(second.skipped).not.toBe(callerOwned);
+    expect(first.skipped).not.toBe(second.skipped);
+
+    first.skipped.push({ ...skip, indexerId: 9, name: 'Prowlarr' });
+    expect(second.skipped).toEqual([skip]);
+    expect(callerOwned).toEqual([skip]);
+  });
+
+  it('accepts a partial result fixture and keeps its element type', () => {
+    const loose = [{ title: 'Partial Fixture', seeders: undefined }];
+    const status = searchStatus(loose);
+    expectTypeOf(status.results).toEqualTypeOf<Array<{ title: string; seeders: undefined }>>();
+    expect(status.results[0]).toBe(loose[0]);
+  });
+
+  it('pins the counts to the production envelope rather than restating them', () => {
+    const status = searchStatus([]);
+    expectTypeOf(status.succeeded).toEqualTypeOf<AggregateSearchStatus['succeeded']>();
+    expectTypeOf(status.failed).toEqualTypeOf<AggregateSearchStatus['failed']>();
+    expectTypeOf(status.skipped).toEqualTypeOf<AggregateSearchStatus['skipped']>();
+  });
+});
+
+describe('mockSearchAllWithStatus', () => {
+  const skip: IndexerSkip = { indexerId: 3, name: 'MAM', state: 'stopped', reason: 'auth failed' };
+
+  it('resolves the default envelope around the given results', async () => {
+    const result = { guid: 'g1' };
+    await expect(mockSearchAllWithStatus([result])()).resolves.toStrictEqual({
+      results: [result], succeeded: 1, failed: 0, skipped: [],
+    });
+  });
+
+  it('forwards overrides to the resolved envelope', async () => {
+    await expect(mockSearchAllWithStatus([], { succeeded: 0, skipped: [skip] })()).resolves.toStrictEqual({
+      results: [], succeeded: 0, failed: 0, skipped: [skip],
+    });
+  });
+
+  it('keeps independently constructed mocks from sharing a skipped array', async () => {
+    const first = mockSearchAllWithStatus([]);
+    const second = mockSearchAllWithStatus([]);
+    ((await first()) as AggregateSearchStatus).skipped.push(skip);
+    await expect(second()).resolves.toMatchObject({ skipped: [] });
+  });
+});
+
+describe('answeringSearchStatus', () => {
+  const result = { guid: 'g1', title: 'Haunted Starlight' };
+
+  it('maps a listed query to its results', async () => {
+    const answer = answeringSearchStatus({ 'rung one': [result] });
+    await expect(answer('rung one')).resolves.toStrictEqual({
+      results: [result], succeeded: 1, failed: 0, skipped: [],
+    });
+  });
+
+  it('answers an unlisted query with an answered zero rather than undefined results', async () => {
+    await expect(answeringSearchStatus({})('anything')).resolves.toStrictEqual({
+      results: [], succeeded: 1, failed: 0, skipped: [],
+    });
+  });
+
+  it('applies overrides on the unmatched branch too', async () => {
+    const answer = answeringSearchStatus({ 'rung one': [result] }, { succeeded: 0 });
+    await expect(answer('rung five')).resolves.toStrictEqual({
+      results: [], succeeded: 0, failed: 0, skipped: [],
+    });
+  });
+
+  it('builds a fresh envelope on every invocation', async () => {
+    const answer = answeringSearchStatus({ 'rung one': [result] });
+    expect(await answer('rung one')).not.toBe(await answer('rung one'));
   });
 });

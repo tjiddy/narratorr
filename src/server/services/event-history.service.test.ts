@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService, mockSearchAllWithStatus } from '../__tests__/helpers.js';
 import { createMockDbBookEvent } from '../__tests__/factories.js';
 
 import type * as RetrySearchModule from './retry-search.js';
@@ -319,7 +319,7 @@ describe('EventHistoryService', () => {
         .mockReturnValueOnce(mockDbChain([download]));
 
       const { RetryBudget } = await import('./retry-budget.js');
-      const mockSearchAll = vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0, skipped: [] });
+      const mockSearchAll = mockSearchAllWithStatus([]);
       const fresh = freshService();
       fresh.wire({ retrySearchDeps: {
         indexerSearchService: { searchAllWithStatus: mockSearchAll },
@@ -411,7 +411,7 @@ describe('EventHistoryService', () => {
       );
 
       const { RetryBudget } = await import('./retry-budget.js');
-      const mockSearchAll = vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0, skipped: [] });
+      const mockSearchAll = mockSearchAllWithStatus([]);
       const fresh = freshService();
       fresh.wire({ retrySearchDeps: {
         indexerSearchService: { searchAllWithStatus: mockSearchAll },
@@ -484,7 +484,7 @@ describe('EventHistoryService', () => {
 
       const { RetryBudget } = await import('./retry-budget.js');
       const retryBudget = new RetryBudget();
-      const mockSearchAll = vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0, skipped: [] });
+      const mockSearchAll = mockSearchAllWithStatus([]);
       const mockGrab = vi.fn();
 
       const fresh = freshService();

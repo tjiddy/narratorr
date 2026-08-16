@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
-import { createMockLogger, inject, createMockSettingsService } from '../__tests__/helpers.js';
+import { createMockLogger, inject, createMockSettingsService, mockSearchAllWithStatus } from '../__tests__/helpers.js';
 import { blacklistAndRetrySearch, type BlacklistAndRetryRequest } from './rejection-helpers.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
@@ -15,7 +15,7 @@ import type { EventHistoryService } from './event-history.service.js';
 // Keep retrySearch real: the unit suite mocks it and cannot detect deletion of its imported guard.
 
 function makeImportedBookDeps(retryBudget: RetryBudget) {
-  const mockSearchAll = vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0, skipped: [] });
+  const mockSearchAll = mockSearchAllWithStatus([]);
   const mockGrab = vi.fn();
   const deps: RetrySearchDeps = {
     indexerSearchService: inject<IndexerSearchService>({ searchAllWithStatus: mockSearchAll }),
