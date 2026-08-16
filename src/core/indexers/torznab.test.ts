@@ -1071,7 +1071,7 @@ describe('TorznabIndexer — torrent-only divergences (#2391)', () => {
     expect(results[0]!.infoHash).toBe('da4b9237bacccdf19c0760cab7aec4a8359010b0');
   });
 
-  it('treats an empty infohash as no hash at all — no infoHash key and no magnet', async () => {
+  it('treats an empty infohash as no hash at all — no magnet, so a URL-less item drops', async () => {
     serve(`
       <item>
         <title>Empty Hash Book</title>
@@ -1083,6 +1083,33 @@ describe('TorznabIndexer — torrent-only divergences (#2391)', () => {
     expect(results).toEqual([]);
     expect(parseStats.dropped.noUrl).toBe(1);
     expect(debugTrace[0]!.reason).toBe('dropped:no-url');
+  });
+
+  /**
+   * The dropped arm above cannot see the key-omission contract, because it produces no result at
+   * all — and `toBeUndefined()` would not see it either, since that passes for a present
+   * `infoHash: undefined` too.
+   *
+   * TWO independently sufficient guards produce the omission, so neither single-site mutation reds
+   * this: `parseNewznabAttrs` never stores a falsy value (`newznab-family.ts:292`), and the hook
+   * additionally folds `attrs.infohash || undefined`. Measured — mutating either alone leaves the
+   * whole `src/core/indexers/` suite green; mutating both reds exactly this case and the
+   * pre-existing 'handles empty string infohash → undefined'. What is pinned here is therefore the
+   * composed contract, which is the one callers depend on.
+   */
+  it('omits the infoHash key entirely on a kept result whose infohash is empty', async () => {
+    serve(`
+      <item>
+        <title>Empty Hash With Enclosure</title>
+        <enclosure url="https://tracker.test/dl/1.torrent"/>
+        <torznab:attr name="infohash" value=""/>
+      </item>`);
+
+    const { results } = await torznab.search('test');
+
+    expect(results).toHaveLength(1);
+    expect(results[0]!.downloadUrl).toBe('https://tracker.test/dl/1.torrent');
+    expect(results[0]).not.toHaveProperty('infoHash');
   });
 
   it('stamps every result torrent and never carries a newsgroup', async () => {

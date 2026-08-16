@@ -229,6 +229,44 @@ describe.each(ROWS)('newznab family contract — $label', (row) => {
       expect(userAgent).toBe('Narratorr/v9.9.9');
     });
 
+    // F2 — the target headers ride inside the solver's JSON envelope, not on the POST itself, so
+    // the direct-path assertion above cannot see this arm at all.
+    it('forwards the same target headers inside the solver request body', async () => {
+      vi.stubEnv('GIT_TAG', 'v9.9.9');
+      let capturedBody: Record<string, unknown> = {};
+      server.use(
+        http.post(SOLVER_ENDPOINT, async ({ request }) => {
+          capturedBody = await request.json() as Record<string, unknown>;
+          return HttpResponse.json({ status: 'ok', solution: { response: rss(ITEM_FULL), status: 200 } });
+        }),
+      );
+
+      await adapter({ flareSolverrUrl: SOLVER_URL }).search('kings');
+
+      expect(capturedBody.headers).toEqual({
+        Accept: 'application/rss+xml, application/xml, text/xml',
+        'User-Agent': 'Narratorr/v9.9.9',
+      });
+    });
+
+    // F3 — the proxied path builds its own fetch init, so it is a third independently deletable site.
+    it('forwards the same target headers on the standard-proxy path', async () => {
+      vi.stubEnv('GIT_TAG', 'v9.9.9');
+      let capturedHeaders: unknown;
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+        capturedHeaders = (init as RequestInit | undefined)?.headers;
+        return new Response(rss(ITEM_FULL), { headers: { 'Content-Type': 'application/rss+xml' } });
+      });
+
+      await adapter({ proxyUrl: PROXY_URL }).search('kings');
+
+      expect(capturedHeaders).toEqual({
+        Accept: 'application/rss+xml, application/xml, text/xml',
+        'User-Agent': 'Narratorr/v9.9.9',
+      });
+      fetchSpy.mockRestore();
+    });
+
     it('defaults limit to 100 when the option is omitted', async () => {
       let capturedUrl = '';
       serveXml(rss(ITEM_FULL), (request) => { capturedUrl = request.url; });
@@ -457,6 +495,35 @@ describe.each(ROWS)('newznab family contract — $label', (row) => {
     });
   });
 
+  // F1 — the shared enclosure-then-<link> derivation, both arms
+  describe('shared download-URL derivation', () => {
+    it('falls back to <link> when the item carries no enclosure', async () => {
+      serveXml(rss(`
+    <item>
+      <title>Link Only Book</title>
+      <link>https://indexer.test/download/link-only.bin</link>
+    </item>`));
+
+      const { results, parseStats } = await adapter().search('kings');
+
+      expect(parseStats.dropped.noUrl).toBe(0);
+      expect(results[0]!.downloadUrl).toBe('https://indexer.test/download/link-only.bin');
+    });
+
+    it('prefers the enclosure over <link> when both are present', async () => {
+      serveXml(rss(`
+    <item>
+      <title>Both Urls Book</title>
+      <enclosure url="https://indexer.test/download/from-enclosure.bin"/>
+      <link>https://indexer.test/download/from-link.bin</link>
+    </item>`));
+
+      const { results } = await adapter().search('kings');
+
+      expect(results[0]!.downloadUrl).toBe('https://indexer.test/download/from-enclosure.bin');
+    });
+  });
+
   // 8 — drop paths and trace entries
   describe('drop paths and debugTrace', () => {
     it('drops an empty title, records the trace entry, and carries its guid', async () => {
@@ -496,6 +563,25 @@ describe.each(ROWS)('newznab family contract — $label', (row) => {
       });
     });
 
+    // F4 — the guid spread on this branch is independently deletable from the empty-title one.
+    it('carries the guid on a dropped:no-url trace entry when the item has one', async () => {
+      serveXml(rss(`
+    <item>
+      <title>Über Bücher</title>
+      <guid>https://indexer.test/details/no-url</guid>
+    </item>`));
+
+      const { debugTrace } = await adapter().search('kings');
+
+      expect(debugTrace[0]).toEqual({
+        source: 'item',
+        reason: 'dropped:no-url',
+        rawTitle: 'Über Bücher',
+        rawTitleBytes: 'c39c6265722042c3bc63686572',
+        guid: 'https://indexer.test/details/no-url',
+      });
+    });
+
     it('records a kept item with the raw title and its byte shape', async () => {
       serveXml(rss(`
     <item><title>Über Bücher</title><enclosure url="https://indexer.test/u.bin"/></item>`));
@@ -507,6 +593,26 @@ describe.each(ROWS)('newznab family contract — $label', (row) => {
         reason: 'kept',
         rawTitle: 'Über Bücher',
         rawTitleBytes: 'c39c6265722042c3bc63686572',
+      });
+    });
+
+    // F5 — likewise: the kept branch's guid spread is its own deletable site.
+    it('carries the guid on a kept trace entry when the item has one', async () => {
+      serveXml(rss(`
+    <item>
+      <title>Über Bücher</title>
+      <guid>https://indexer.test/details/kept</guid>
+      <enclosure url="https://indexer.test/u.bin"/>
+    </item>`));
+
+      const { debugTrace } = await adapter().search('kings');
+
+      expect(debugTrace[0]).toEqual({
+        source: 'item',
+        reason: 'kept',
+        rawTitle: 'Über Bücher',
+        rawTitleBytes: 'c39c6265722042c3bc63686572',
+        guid: 'https://indexer.test/details/kept',
       });
     });
   });
