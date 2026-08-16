@@ -248,6 +248,7 @@ describe('AudioBookBayIndexer', () => {
       expect(failures[0]).toMatchObject({
         source: 'row',
         rawTitle: 'Murder in the New Forest',
+        rawTitleBytes: '4d757264657220696e20746865204e657720466f72657374',
         httpStatus: 500,
         requestUrl: `${ABB_BASE}/audio-books/murder-in-the-new-forest/`,
       });
@@ -333,6 +334,27 @@ describe('AudioBookBayIndexer', () => {
       expect(failure.errorMessage).toBe('socket hang up');
       expect(failure).not.toHaveProperty('errorCode');
       expect(failure).not.toHaveProperty('httpStatus');
+    });
+
+    // rawTitleBytes exists so an encoding fault is legible in the log even when the rendered title
+    // is not; an ASCII-only assertion cannot tell UTF-8 bytes from a latin1 round-trip.
+    it('records the title\'s UTF-8 bytes on a failed row, truncated at the byte limit', async () => {
+      const cyrillic = 'Мурдер: Мгла над Лондоном';
+      server.use(
+        http.get(`${ABB_BASE}/`, () => new HttpResponse(
+          `<html><body><div class="post"><div class="postTitle">
+            <h2><a href="/audio-books/mgla/" rel="bookmark">${cyrillic}</a></h2>
+          </div></div></body></html>`,
+          { headers: { 'Content-Type': 'text/html; charset=utf-8' } },
+        )),
+        http.get(`${ABB_BASE}/audio-books/:slug/`, () => new HttpResponse(null, { status: 500 })),
+      );
+
+      const failure = await firstFailure();
+
+      expect(failure.rawTitle).toBe(cyrillic);
+      // Two bytes per Cyrillic character, cut at the 32-byte limit mid-word.
+      expect(failure.rawTitleBytes).toBe('d09cd183d180d0b4d0b5d1803a20d09cd0b3d0bbd0b020d0bdd0b0d0b420d09b');
     });
 
     it('returns the rows whose detail pages did load', async () => {
