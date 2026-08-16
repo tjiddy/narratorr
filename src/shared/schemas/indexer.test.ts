@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createIndexerFormSchema, createIndexerSchema, updateIndexerSchema, mamSettingsSchema, torznabSettingsSchema, newznabSettingsSchema } from './indexer.js';
+import { createIndexerFormSchema, createIndexerSchema, normalizeAbbHostname, updateIndexerSchema, mamSettingsSchema, torznabSettingsSchema, newznabSettingsSchema } from './indexer.js';
 import { coerceSearchType } from '../indexer-registry.js';
 
 describe('createIndexerFormSchema — flareSolverrUrl validation', () => {
@@ -827,4 +827,162 @@ describe('#1198 — torznab/newznab adapter-settings schema fail-closed contract
       });
     });
   }
+});
+
+describe('#2392 — abb hostname accepts a pasted URL and stores the bare host', () => {
+  const base = { name: 'ABB', type: 'abb' as const, enabled: true, priority: 50 };
+
+  function parseHostname(hostname: string) {
+    return createIndexerSchema.safeParse({ ...base, settings: { hostname } });
+  }
+
+  /** Every row is `[input, stored]`; the stored column is re-fed to the parser by the idempotence case. */
+  const NORMALIZATION_TABLE: ReadonlyArray<readonly [string, string]> = [
+    ['audiobookbay.lu', 'audiobookbay.lu'],
+    ['https://audiobookbay.lu', 'audiobookbay.lu'],
+    ['http://audiobookbay.lu', 'audiobookbay.lu'],
+    ['HTTPS://AudioBookBay.LU', 'audiobookbay.lu'],
+    ['https://audiobookbay.lu/', 'audiobookbay.lu'],
+    ['https://audiobookbay.lu/index.php', 'audiobookbay.lu'],
+    ['https://audiobookbay.lu/index.php?x=1#frag', 'audiobookbay.lu'],
+    ['  https://audiobookbay.lu  ', 'audiobookbay.lu'],
+    ['audiobookbay.lu:8080', 'audiobookbay.lu:8080'],
+    ['https://audiobookbay.lu:8080', 'audiobookbay.lu:8080'],
+    ['http://audiobookbay.lu:80', 'audiobookbay.lu:80'],
+    ['audiobookbay.lu:443', 'audiobookbay.lu'],
+    ['https://audiobookbay.lu:443', 'audiobookbay.lu'],
+    ['http://audiobookbay.lu:443', 'audiobookbay.lu'],
+    ['https://[::1]:8080', '[::1]:8080'],
+    ['https://192.168.1.5:8080', '192.168.1.5:8080'],
+    ['https://localhost', 'localhost'],
+    ['tracker', 'tracker'],
+    ['https://аудиокниги.рф', 'xn--80agcqablyh1c.xn--p1ai'],
+    ['https://ftp://audiobookbay.lu', 'ftp'],
+  ];
+
+  describe('normalization table', () => {
+    for (const [input, expected] of NORMALIZATION_TABLE) {
+      it(`stores ${JSON.stringify(input)} as ${JSON.stringify(expected)}`, () => {
+        const result = parseHostname(input);
+        expect(result.success).toBe(true);
+        if (result.success) expect(result.data.settings.hostname).toBe(expected);
+      });
+    }
+  });
+
+  it('the regression: a pasted https:// URL stores the bare host', () => {
+    const result = createIndexerSchema.safeParse({ ...base, settings: { hostname: 'https://audiobookbay.lu' } });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.hostname).toBe('audiobookbay.lu');
+  });
+
+  it('AC15 — re-parsing an already-normalized value returns it unchanged', () => {
+    for (const [, stored] of NORMALIZATION_TABLE) {
+      const result = parseHostname(stored);
+      expect(result.success, `re-parse of ${stored}`).toBe(true);
+      if (result.success) expect(result.data.settings.hostname, `re-parse of ${stored}`).toBe(stored);
+    }
+  });
+
+  describe('rejection', () => {
+    const REJECTED: ReadonlyArray<readonly [string, string]> = [
+      ['', 'empty'],
+      ['   ', 'whitespace only'],
+      ['.', 'no alphanumeric character'],
+      ['-', 'no alphanumeric character'],
+      ['***', 'no alphanumeric character'],
+      ['********', 'the masked-secret sentinel gets no special case (AC9)'],
+      ['audiobookbay lu', 'embedded space'],
+      ['https:// ', 'nothing left after the scheme'],
+      ['ftp://audiobookbay.lu', 'non-HTTP scheme (AC6)'],
+      ['file:///etc/passwd', 'non-HTTP scheme (AC6)'],
+      ['javascript:alert(1)', 'non-HTTP scheme (AC6)'],
+      ['mailto:x@y.z', 'non-HTTP scheme (AC6)'],
+      ['https://audiobookbay.lu:99999', 'port out of range'],
+      ['https://audiobookbay.lu:abc', 'non-numeric port'],
+      ['https://user:pw@audiobookbay.lu', 'credentials would be silently dropped (AC8)'],
+    ];
+
+    for (const [input, why] of REJECTED) {
+      it(`rejects ${JSON.stringify(input)} at settings.hostname — ${why}`, () => {
+        const result = parseHostname(input);
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error.issues).toContainEqual(
+            expect.objectContaining({ path: ['settings', 'hostname'] }),
+          );
+        }
+      });
+    }
+  });
+
+  describe('normalizeAbbHostname — the exported pure rule', () => {
+    it('returns the bare host for a pasted URL', () => {
+      expect(normalizeAbbHostname('  HTTPS://AudioBookBay.LU/index.php?x=1  ')).toBe('audiobookbay.lu');
+    });
+
+    it('returns null for input that cannot be reduced to a plausible host', () => {
+      expect(normalizeAbbHostname('ftp://audiobookbay.lu')).toBeNull();
+      expect(normalizeAbbHostname('********')).toBeNull();
+    });
+  });
+});
+
+describe('#2392 — createIndexerFormSchema validates the abb hostname without transforming it', () => {
+  const base = { name: 'ABB', type: 'abb' as const, enabled: true, priority: 50 };
+
+  it('reports a non-HTTP scheme at settings.hostname before the request is sent', () => {
+    const result = createIndexerFormSchema.safeParse({ ...base, settings: { hostname: 'ftp://audiobookbay.lu' } });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({ path: ['settings', 'hostname'] }),
+      );
+    }
+  });
+
+  it('accepts a pasted URL', () => {
+    const result = createIndexerFormSchema.safeParse({ ...base, settings: { hostname: 'https://audiobookbay.lu' } });
+    expect(result.success).toBe(true);
+  });
+
+  it('leaves a valid hostname byte-identical — the guard that no transform crept into the form schema', () => {
+    const result = createIndexerFormSchema.safeParse({ ...base, settings: { hostname: 'https://audiobookbay.lu/' } });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.hostname).toBe('https://audiobookbay.lu/');
+  });
+
+  it('rejects the masked-secret sentinel like any other implausible host', () => {
+    const result = createIndexerFormSchema.safeParse({ ...base, settings: { hostname: '********' } });
+    expect(result.success).toBe(false);
+  });
+
+  it('F1 — rejects a whitespace-only hostname, which the required-field loop reads as present', () => {
+    const result = createIndexerFormSchema.safeParse({ ...base, settings: { hostname: '   ' } });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({ path: ['settings', 'hostname'], message: 'Must be a valid hostname' }),
+      );
+    }
+  });
+
+  it('F1 — an absent hostname still reports "required" once, not two competing messages', () => {
+    const result = createIndexerFormSchema.safeParse({ ...base, settings: { hostname: '' } });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const hostnameIssues = result.error.issues.filter((issue) => issue.path.join('.') === 'settings.hostname');
+      expect(hostnameIssues.map((issue) => issue.message)).toEqual(['Hostname is required']);
+    }
+  });
+
+  it('leaves a non-abb type unaffected — a full apiUrl is still a full apiUrl', () => {
+    const result = createIndexerFormSchema.safeParse({
+      ...base,
+      type: 'newznab' as const,
+      settings: { apiUrl: 'https://nzb.test/api', apiKey: 'abc' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.apiUrl).toBe('https://nzb.test/api');
+  });
 });

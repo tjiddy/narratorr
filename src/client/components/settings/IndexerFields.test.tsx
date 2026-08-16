@@ -2,8 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
 import { IndexerFields } from './IndexerFields';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { createIndexerFormSchema } from '@shared/schemas/indexer.js';
 import type { CreateIndexerFormData } from '@shared/schemas.js';
 import type { IndexerType } from '@shared/indexer-registry.js';
 import type { Mock } from 'vitest';
@@ -929,5 +931,58 @@ describe('IndexerFields', () => {
       expect(registeredNames.find(r => r.name === 'settings.useFreeleechWedge')).toBeDefined();
       expect(registeredNames.find(r => r.name === 'settings.minWedgeReserve')).toBeUndefined();
     });
+  });
+});
+
+describe('#2392 abb hostname field', () => {
+  function ValidatedAbbForm({ hostname }: { hostname: string }) {
+    const { register, handleSubmit, formState: { errors } } = useForm<CreateIndexerFormData>({
+      resolver: zodResolver(createIndexerFormSchema),
+      defaultValues: { name: 'ABB', type: 'abb', enabled: true, priority: 50, settings: { hostname, pageLimit: 2 } },
+    });
+    return (
+      <form onSubmit={handleSubmit(() => undefined)}>
+        <IndexerFields selectedType="abb" register={register} errors={errors} />
+        <button type="submit">Save</button>
+      </form>
+    );
+  }
+
+  it('tells the operator a pasted URL is reduced rather than forbidden', () => {
+    renderWithProviders(<FieldWrapper type="abb" />);
+
+    expect(screen.getByText('Domain only — a pasted URL is reduced to its host')).toBeInTheDocument();
+  });
+
+  it('replaces the helper text with the field error when the hostname cannot be reduced to a host', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ValidatedAbbForm hostname="ftp://audiobookbay.lu" />);
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText('Must be a valid hostname')).toBeInTheDocument();
+    expect(screen.queryByText('Domain only — a pasted URL is reduced to its host')).not.toBeInTheDocument();
+  });
+
+  it('F1 — reports the field error when the operator types only whitespace into the hostname', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ValidatedAbbForm hostname="" />);
+
+    await user.type(screen.getByPlaceholderText('audiobookbay.lu'), '   ');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText('Must be a valid hostname')).toBeInTheDocument();
+  });
+
+  it('keeps the helper text for a pasted https:// URL, which the server normalizes', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ValidatedAbbForm hostname="https://audiobookbay.lu" />);
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Domain only — a pasted URL is reduced to its host')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Must be a valid hostname')).not.toBeInTheDocument();
   });
 });

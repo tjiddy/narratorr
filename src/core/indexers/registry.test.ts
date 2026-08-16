@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
+import { routeFetch } from '../__tests__/solver-routes.js';
 import { ADAPTER_FACTORIES } from './registry.js';
-import { indexerTypeSchema, type IndexerSettings } from '@shared/schemas/indexer.js';
+import { createIndexerSchema, indexerTypeSchema, type IndexerSettings } from '@shared/schemas/indexer.js';
 
 const MAM_BASE = 'https://www.myanonamouse.net';
 
@@ -304,6 +305,52 @@ describe('Indexer ADAPTER_FACTORIES', () => {
       const result = await adapter.resolveDownloadUrl!({ guid: '1', downloadUrl: 'mam-torrent://1', protocol: 'torrent', isFreeleech: false });
       expect(result.wedgeRequested).toBe(false);
       expect(captured.url).not.toContain('fl');
+    });
+  });
+  /**
+   * #2392 — the doubled scheme this issue is named for, observed where it actually shows: the URL
+   * the adapter requests. `baseUrl` is private, so the factory + a mocked transport is the seam.
+   */
+  describe('#2392 abb factory composes exactly one scheme', () => {
+    const ABB_HOST = 'audiobookbay.test';
+
+    async function requestUrlFor(hostname: string): Promise<string> {
+      server.use(
+        http.get(`https://${ABB_HOST}/`, () => new HttpResponse('<html><body></body></html>', {
+          headers: { 'Content-Type': 'text/html' },
+        })),
+      );
+      const adapter = ADAPTER_FACTORIES.abb({ hostname, pageLimit: 1 }, 'ABB');
+      const response = await adapter.search('brandon sanderson');
+      expect(response.requestUrl).toBeDefined();
+      return response.requestUrl!;
+    }
+
+    it('requests https://<host>/ from settings a pasted URL was normalized into', async () => {
+      const parsed = createIndexerSchema.parse({
+        name: 'ABB', type: 'abb', enabled: true, priority: 50,
+        settings: { hostname: `https://${ABB_HOST}`, pageLimit: 1 },
+      });
+      expect(parsed.settings.hostname).toBe(ABB_HOST);
+
+      const requestUrl = await requestUrlFor(parsed.settings.hostname as string);
+
+      expect(requestUrl.startsWith(`https://${ABB_HOST}/`)).toBe(true);
+      expect(requestUrl.match(/https:\/\//g)).toHaveLength(1);
+    });
+
+    it('an unnormalized pasted URL is what produced the doubled scheme — the failure being fixed', async () => {
+      const routed = routeFetch(() => new Response('<html><body></body></html>', {
+        headers: { 'Content-Type': 'text/html' },
+      }));
+      try {
+        const adapter = ADAPTER_FACTORIES.abb({ hostname: `https://${ABB_HOST}`, pageLimit: 1 }, 'ABB');
+        await adapter.search('brandon sanderson');
+
+        expect(routed.calls[0]?.url.startsWith('https://https://')).toBe(true);
+      } finally {
+        routed.restore();
+      }
     });
   });
 });

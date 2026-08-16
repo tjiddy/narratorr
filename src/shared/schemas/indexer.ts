@@ -38,8 +38,48 @@ export const mamSettingsSchema = z.object({
   useFreeleechWedge: wedgeModeSchema.default('never'),
 }).strict();
 
+const ABB_HOSTNAME_MESSAGE = 'Must be a valid hostname';
+
+// A bare `host:port` parses as scheme `host:` with an empty host, so a colon followed by digits is
+// a port, not a scheme (#2392) — without this, `audiobookbay.lu:8080` reads as a rejected scheme.
+const EXPLICIT_SCHEME = /^[a-z][a-z0-9+.-]*(:\/\/|:(?!\d))/i;
+const HTTP_SCHEME_PREFIX = /^https?:\/\//i;
+
+/**
+ * Reduce whatever the operator typed into the bare host `ABBConfig` composes `https://${…}` from,
+ * or `null` when it cannot be. Re-parsing under `https://` is what elides an explicit `:443` while
+ * keeping every other port, and what yields punycode for an IDN. Exported for `pnpm exec tsx`.
+ */
+export function normalizeAbbHostname(raw: string): string | null {
+  const trimmed = raw.trim();
+  const scheme = EXPLICIT_SCHEME.test(trimmed);
+  if (scheme && !HTTP_SCHEME_PREFIX.test(trimmed)) return null;
+  const withoutScheme = scheme ? trimmed.replace(HTTP_SCHEME_PREFIX, '') : trimmed;
+
+  let url: URL;
+  try {
+    url = new URL(`https://${withoutScheme}`);
+  } catch {
+    return null;
+  }
+  // Userinfo is dropped silently by the parser, so an operator who typed it meant something the
+  // stored value would not do.
+  if (url.username !== '' || url.password !== '') return null;
+  if (!/[a-z0-9]/i.test(url.host)) return null;
+  return url.host;
+}
+
+const abbHostnameSchema = z.string().transform((value, ctx) => {
+  const host = normalizeAbbHostname(value);
+  if (host === null) {
+    ctx.addIssue({ code: 'custom', message: ABB_HOSTNAME_MESSAGE });
+    return z.NEVER;
+  }
+  return host;
+});
+
 export const abbSettingsSchema = z.object({
-  hostname: z.string().trim().min(1),
+  hostname: abbHostnameSchema,
   pageLimit: z.number().int().min(1).max(10).optional(),
   flareSolverrUrl: z.string().optional(),
   useProxy: z.boolean().optional(),
@@ -137,6 +177,15 @@ export const createIndexerFormSchema = z.object({
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', field.path], message: field.message });
       }
     }
+  }
+
+  // Validation only — the server schema stays the single normalizer, because a `.transform()` here
+  // would diverge the form's input and output types and mistype `zodResolver`.
+  // Guard on the RAW value, matching the required-field loop above: trimming here would let `'   '`
+  // fall between the two rules — present to that loop, absent to this one — and reach the server.
+  const hostname = data.settings.hostname;
+  if (data.type === 'abb' && hostname && normalizeAbbHostname(hostname) === null) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'hostname'], message: ABB_HOSTNAME_MESSAGE });
   }
 
   const proxyUrl = normalizeBaseUrl(data.settings.flareSolverrUrl)?.trim();

@@ -265,6 +265,54 @@ describe('IndexerService', () => {
 
       await expect(service.getAdapter(badIndexer)).rejects.toThrow(/hostname/);
     });
+
+    /**
+     * #2392 AC15 — `createAdapter` reparses the decrypted row, so the schema's normalization is a
+     * read-path behavior too. No migration rewrites the row; the two halves disagree by design and
+     * the pair of cases below is what makes that legible.
+     */
+    describe('#2392 a persisted pasted URL', () => {
+      const ABB_HOST = 'audiobookbay.test';
+      let routed: RoutedFetch | undefined;
+
+      afterEach(() => {
+        routed?.restore();
+        routed = undefined;
+      });
+
+      it('AC15b targets https://<host> on the very next search, with no operator action', async () => {
+        const legacyRow = createMockDbIndexer({ settings: { hostname: `https://${ABB_HOST}`, pageLimit: 1 } });
+        routed = routeFetch(() => new Response('<html><body></body></html>', {
+          headers: { 'Content-Type': 'text/html' },
+        }));
+
+        const adapter = await service.getAdapter(legacyRow);
+        const response = await adapter.search('brandon sanderson');
+
+        expect(response.requestUrl?.startsWith(`https://${ABB_HOST}/`)).toBe(true);
+        expect(response.requestUrl?.match(/https:\/\//g)).toHaveLength(1);
+        // AC15a, the other half of the same value: the row itself is untouched, which is what
+        // `GET /api/indexers` serializes (asserted at the route boundary in indexers.test.ts).
+        expect(legacyRow.settings.hostname).toBe(`https://${ABB_HOST}`);
+      });
+
+      it('AC15c fails at adapter construction naming hostname when the new rule rejects the stored value', async () => {
+        const rejectedRow = createMockDbIndexer({ settings: { hostname: 'ftp://audiobookbay.lu', pageLimit: 1 } });
+
+        await expect(service.getAdapter(rejectedRow)).rejects.toThrow(/hostname/);
+      });
+
+      it.each(['audiobookbay.lu', 'test', 'tracker', 'old-host', 'new-host', 'persisted-host', 'abb.test'])(
+        'AC15c leaves the working bare-host fixture %s alone on the read path',
+        async (hostname) => {
+          const row = createMockDbIndexer({ settings: { hostname, pageLimit: 2 } });
+
+          const adapter = await service.getAdapter(row);
+
+          expect(adapter.type).toBe('abb');
+        },
+      );
+    });
   });
 
   describe('test', () => {
