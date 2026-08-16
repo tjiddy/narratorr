@@ -8,6 +8,7 @@ import { deliverSearchReport } from './search-event-sink.js';
 import { formatIndexerSkip } from './indexer-failure-state.js';
 import type { IndexerSearchService } from './indexer-search.service.js';
 import type { SearchLadderCooldown } from './search-ladder-cooldown.js';
+import { createRunExclusionPolicy } from './search-run-exclusion.js';
 import {
   buildQueryLadder,
   runQueryLadder,
@@ -20,6 +21,9 @@ import {
 /**
  * Emit `search_started` once and retain abort controllers across rungs. `succeeded` counts
  * responding indexers so the ladder can distinguish a real zero from an outage.
+ *
+ * The run exclusion policy lives here for the same reason the controllers do: it is scoped to
+ * one ladder run and must die with it (#2375). A new executor starts with an empty set.
  */
 export async function createStreamingExecutor(
   book: SearchBook,
@@ -35,6 +39,8 @@ export async function createStreamingExecutor(
     controllers.set(indexer.id, new AbortController());
   }
 
+  const policy = createRunExclusionPolicy();
+
   return async (rung: Rung) => {
     let succeeded = 0;
     const results = await indexerSearchService.searchAllStreaming(
@@ -46,9 +52,13 @@ export async function createStreamingExecutor(
           succeeded++;
           sink.indexerComplete(indexerId, name, resultCount, elapsedMs);
         },
-        onError: (indexerId, name, error, elapsedMs) => sink.indexerError(indexerId, name, error, elapsedMs),
+        onError: (indexerId, name, error, elapsedMs) => {
+          if (!policy.claimReport(indexerId)) return;
+          sink.indexerError(indexerId, name, error, elapsedMs);
+        },
       },
       signal,
+      policy.runOptions,
     );
     return { results, succeeded };
   };
@@ -67,15 +77,24 @@ export function createAggregateExecutor(
   log: FastifyBaseLogger,
   signal?: AbortSignal,
 ): (rung: Rung) => Promise<RungExecution> {
+  const policy = createRunExclusionPolicy();
+
   return async (rung: Rung) => {
-    const { results, succeeded, skipped } = await indexerSearchService.searchAllWithStatus(rung.query, {
-      title: book.title,
-      author: rung.author,
-      rankingAuthor: book.authors?.[0]?.name,
-      // Omitted rather than assigned undefined so callers without a deadline keep today's options.
-      ...(signal !== undefined && { signal }),
-    });
+    const { results, succeeded, skipped } = await indexerSearchService.searchAllWithStatus(
+      rung.query,
+      {
+        title: book.title,
+        author: rung.author,
+        rankingAuthor: book.authors?.[0]?.name,
+        // Omitted rather than assigned undefined so callers without a deadline keep today's options.
+        ...(signal !== undefined && { signal }),
+      },
+      policy.runOptions,
+    );
     for (const skip of skipped) {
+      // A suppressed indexer is re-gated every rung and reported by every one of them; the
+      // operator wants "ABB is backing off" once, not once per rung.
+      if (!policy.claimReport(skip.indexerId)) continue;
       deliverSearchReport(log, { bookId: book.id, indexer: skip.name, indexerId: skip.indexerId }, () =>
         sink.indexerError(skip.indexerId, skip.name, formatIndexerSkip(skip.state, skip.reason), 0));
     }

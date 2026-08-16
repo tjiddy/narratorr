@@ -472,7 +472,12 @@ describe('searchAndGrabForBook', () => {
 
   it('calls buildSearchQuery to construct the query', async () => {
     await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
-    expect(indexerSearchService.searchAllWithStatus).toHaveBeenCalledWith('Test Book Author', expect.any(Object));
+    // The third argument is the run-scoped exclusion channel the ladder executor owns (#2375).
+    expect(indexerSearchService.searchAllWithStatus).toHaveBeenCalledWith(
+      'Test Book Author',
+      expect.any(Object),
+      expect.objectContaining({ excludeIndexerIds: expect.any(Set), onOutcome: expect.any(Function) }),
+    );
   });
 });
 
