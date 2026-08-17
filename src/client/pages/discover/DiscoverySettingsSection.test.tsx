@@ -49,6 +49,25 @@ describe('DiscoverySettingsSection', () => {
     expect(screen.getByLabelText(/max suggestions per author/i)).toBeInTheDocument();
   });
 
+  it('renders the fetched discovery config rather than the schema defaults', async () => {
+    // None of these four match DEFAULT_SETTINGS.discovery (true / 24 / 5 / 90), so a card wired to
+    // the defaults instead of the fetch cannot produce them. createMockSettings supplies every other
+    // category — including companionEpub and general.housekeepingRetentionDays, which the deleted
+    // hand-rolled fixture omitted; its coverage is pinned by create-mock-settings.fixtures.test.ts.
+    mockApi.getSettings.mockResolvedValue(createMockSettings({
+      discovery: { enabled: false, intervalHours: 72, maxSuggestionsPerAuthor: 12, expiryDays: 45 },
+    }));
+
+    renderWithProviders(<DiscoverySettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/refresh interval/i)).toHaveValue(72);
+    });
+    expect(screen.getByLabelText(/max suggestions per author/i)).toHaveValue(12);
+    expect(screen.getByLabelText(/suggestion expiry/i)).toHaveValue(45);
+    expect(screen.getByLabelText(/enable discovery/i)).not.toBeChecked();
+  });
+
   it('toggling enable/disable persists via settings mutation', async () => {
     mockApi.updateSettings.mockResolvedValue(createMockSettings({ discovery: { enabled: true } }));
 
