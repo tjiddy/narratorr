@@ -74,6 +74,20 @@ export class BackupService {
     }
   }
 
+  /**
+   * File-level twin of removeRestoreTempDir, on fs.unlink rather than removeTree: these are single
+   * files whose removal has never retried, and the create() tests observe the unlink spy directly.
+   * ENOENT is success — create()'s catch arm runs whenever VACUUM rejects, before either file exists.
+   */
+  private async removeTempFile(filePath: string): Promise<void> {
+    try {
+      await fs.unlink(filePath);
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      this.log.warn({ error: serializeError(error), filePath }, 'Failed to remove temp file');
+    }
+  }
+
   get pendingRestore(): PendingRestore | null {
     return this._pendingRestore;
   }
@@ -125,7 +139,7 @@ export class BackupService {
         archive.finalize();
       });
 
-      await fs.unlink(tempDbPath).catch(() => {});
+      await this.removeTempFile(tempDbPath);
 
       const stat = await fs.stat(zipPath);
       const metadata: BackupMetadata = {
@@ -137,8 +151,8 @@ export class BackupService {
       this.log.info({ filename, size: stat.size }, 'Backup created');
       return metadata;
     } catch (error: unknown) {
-      await fs.unlink(tempDbPath).catch(() => {});
-      await fs.unlink(zipPath).catch(() => {});
+      await this.removeTempFile(tempDbPath);
+      await this.removeTempFile(zipPath);
       throw error;
     } finally {
       this.backupInProgress = false;
@@ -377,7 +391,9 @@ export class BackupService {
 
   async setPendingRestore(tempPath: string): Promise<void> {
     if (this._pendingRestore) {
-      await fs.unlink(this._pendingRestore.tempPath).catch(() => {});
+      // File-level, not removeRestoreTempDir(dirname(...)): this is a public method and the dirname
+      // of a caller-chosen path can be a directory shared with unrelated state.
+      await this.removeTempFile(this._pendingRestore.tempPath);
     }
 
     this._pendingRestore = {
