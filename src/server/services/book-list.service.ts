@@ -8,6 +8,7 @@ import { sortCollapsedRows, collapseRows, buildFallbackCompare } from './book-li
 import type { BookWithAuthor } from './book.service.js';
 import type { BookRow } from './types.js';
 import { stripClearedFields } from './book-row-public.js';
+import { applyPagination } from '../utils/db-helpers.js';
 
 /** Wire list shape before Fastify serializes Drizzle dates to ISO strings. */
 export type LibraryBookListItemRow = Omit<LibraryBookListItem, 'createdAt' | 'updatedAt'> & {
@@ -121,23 +122,17 @@ export class BookListService {
 
     const orderClauses = this.buildOrderBy(sortField, sortDirection);
 
-    let query = this.db
+    const query = this.db
       .select({ book: bookFields, importListName: importLists.name, primaryAuthorName: authors.name })
       .from(books)
       .leftJoin(importLists, eq(books.importListId, importLists.id))
       .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
       .leftJoin(authors, eq(bookAuthors.authorId, authors.id))
       .where(where)
-      .orderBy(...orderClauses);
+      .orderBy(...orderClauses)
+      .$dynamic();
 
-    if (pagination?.limit !== undefined) {
-      query = query.limit(pagination.limit) as typeof query;
-    }
-    if (pagination?.offset !== undefined) {
-      query = query.offset(pagination.offset) as typeof query;
-    }
-
-    const results = await query;
+    const results = await applyPagination(query, pagination);
 
     if (results.length === 0) {
       return { data: [], total };
@@ -236,7 +231,7 @@ export class BookListService {
   }
 
   private async queryLibraryRows(where: SQL | undefined, orderClauses: SQL[], pagination?: { limit?: number; offset?: number }) {
-    let query = this.db
+    const query = this.db
       .select({
         id: books.id, title: books.title, coverUrl: books.coverUrl, status: books.status,
         seriesName: books.seriesName, seriesPosition: books.seriesPosition,
@@ -250,10 +245,9 @@ export class BookListService {
       .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
       .leftJoin(authors, eq(bookAuthors.authorId, authors.id))
       .where(where)
-      .orderBy(...orderClauses);
-    if (pagination?.limit !== undefined) query = query.limit(pagination.limit) as typeof query;
-    if (pagination?.offset !== undefined) query = query.offset(pagination.offset) as typeof query;
-    return query;
+      .orderBy(...orderClauses)
+      .$dynamic();
+    return applyPagination(query, pagination);
   }
 
   private async hydrateLibraryRows(rows: Array<{

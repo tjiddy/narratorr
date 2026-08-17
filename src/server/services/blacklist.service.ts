@@ -5,6 +5,7 @@ import { blacklist } from '@db/schema.js';
 import type { SettingsService } from './settings.service.js';
 import type { BlacklistRow } from './types.js';
 import { chunkArray } from '../utils/batch.js';
+import { applyPagination } from '../utils/db-helpers.js';
 
 type NewBlacklist = typeof blacklist.$inferInsert;
 
@@ -18,19 +19,13 @@ export class BlacklistService {
       .select({ value: countFn() })
       .from(blacklist);
 
-    let query = this.db
+    const query = this.db
       .select()
       .from(blacklist)
-      .orderBy(desc(blacklist.blacklistedAt), desc(blacklist.id));
+      .orderBy(desc(blacklist.blacklistedAt), desc(blacklist.id))
+      .$dynamic();
 
-    if (pagination?.limit !== undefined) {
-      query = query.limit(pagination.limit) as typeof query;
-    }
-    if (pagination?.offset !== undefined) {
-      query = query.offset(pagination.offset) as typeof query;
-    }
-
-    const data = await query;
+    const data = await applyPagination(query, pagination);
     return { data, total };
   }
 

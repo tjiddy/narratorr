@@ -297,6 +297,16 @@ describe('ImportListExclusionService (DB-backed, #2305)', () => {
       expect(total).toBe(3);
     });
 
+    it('returns exactly the second and third rows of its own ordering for limit 2 offset 1', async () => {
+      const ids: number[] = [];
+      for (let i = 1; i <= 5; i++) ids.push(await seedAt(`E${i}`, new Date(1_700_000_000_000 + i * 60_000)));
+
+      const { data, total } = await service.getAll({ limit: 2, offset: 1 });
+
+      expect(data.map((r) => r.id)).toEqual([ids[3], ids[2]]);
+      expect(total).toBe(5);
+    });
+
     it('getById returns null for an unknown id', async () => {
       expect(await service.getById(4242)).toBeNull();
     });

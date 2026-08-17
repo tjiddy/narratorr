@@ -136,6 +136,23 @@ describe('EventHistoryService', () => {
       expect(result.total).toBe(25);
     });
 
+    it('paginates the data query only, leaving the filtered count query unwindowed', async () => {
+      const countChain = mockDbChain([{ value: 25 }]);
+      const dataChain = mockDbChain([createMockDbBookEvent()]);
+      db.select.mockReturnValueOnce(countChain).mockReturnValueOnce(dataChain);
+
+      const result = await service.getAll(
+        { eventType: ['grabbed'], search: 'Kings' },
+        { limit: 10, offset: 20 },
+      );
+
+      expect(dataChain.limit).toHaveBeenCalledWith(10);
+      expect(dataChain.offset).toHaveBeenCalledWith(20);
+      expect(countChain.limit).not.toHaveBeenCalled();
+      expect(countChain.offset).not.toHaveBeenCalled();
+      expect(result.total).toBe(25);
+    });
+
     it('applies stable orderBy with createdAt DESC, id DESC', async () => {
       const dataChain = mockDbChain([]);
       db.select
