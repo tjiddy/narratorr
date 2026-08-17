@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { tmpdir } from 'node:os';
-import { join, sep } from 'node:path';
+import { basename, join, sep } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 
 // Real filesystem semantics AND injected errno failures: the temp+rename replacement, the
@@ -658,6 +658,17 @@ describe('writeOpfSidecar — atomic replacement and failure arms (#2297 AC10)',
     await actualFs.writeFile(opfPath, generateOpf(makeBook(folder, { publisher: 'Gollancz' })), 'utf-8');
     await runWrite({ book: makeBook(folder, { publisher: 'Corgi' }), eventHistory: makeEventHistory().service });
     expect(await tempsLeftBehind()).toEqual([]);
+  });
+
+  // The replacement helper's temp prefix is a defaulted parameter (#2302); the opf callers must
+  // keep inheriting the default rather than another caller's prefix.
+  it('writes the sidecar temp with the .metadata-opf- prefix', async () => {
+    await actualFs.writeFile(opfPath, generateOpf(makeBook(folder, { publisher: 'Gollancz' })), 'utf-8');
+    await runWrite({ book: makeBook(folder, { publisher: 'Corgi' }), preserve: false });
+
+    const temps = (writeFile as Mock).mock.calls.map((call) => basename(call[0] as string));
+    expect(temps).not.toEqual([]);
+    for (const temp of temps) expect(temp).toMatch(/^\.metadata-opf-[0-9a-f-]+\.tmp$/);
   });
 
   it('a failing backup write leaves the sidecar untouched and records nothing', async () => {

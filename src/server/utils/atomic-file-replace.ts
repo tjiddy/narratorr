@@ -11,12 +11,19 @@ import { dirname, join } from 'node:path';
  * the existing inode, so a hard-linked peer would be rewritten. Rename swaps the directory entry,
  * so any other name for the old inode keeps its bytes.
  *
- * Cleanup spans the whole span rather than just the rename (unlike `cover-upload.ts:35-43`): a
- * temp write that rejects after creating or truncating the temp has already left a file behind.
- * The `committed` flag keeps the happy path from firing a pointless ENOENT unlink.
+ * Cleanup spans the temp write as well as the rename: a temp write that rejects after creating or
+ * truncating the temp has already left a file behind, so a `try` around the rename alone orphans
+ * it. The `committed` flag keeps the happy path from firing a pointless ENOENT unlink.
+ *
+ * `tempPrefix` stays dot-led — the temp is born hidden so narratorr's own scans and Audiobookshelf
+ * ingest skip it while it exists (#1852).
  */
-export async function replaceFileAtomically(targetPath: string, data: string | Buffer): Promise<void> {
-  const tempPath = join(dirname(targetPath), `.metadata-opf-${randomUUID()}.tmp`);
+export async function replaceFileAtomically(
+  targetPath: string,
+  data: string | Buffer,
+  tempPrefix = '.metadata-opf-',
+): Promise<void> {
+  const tempPath = join(dirname(targetPath), `${tempPrefix}${randomUUID()}.tmp`);
   let committed = false;
   try {
     await writeFile(tempPath, data);

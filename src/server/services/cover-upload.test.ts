@@ -30,6 +30,15 @@ function createMockDb(whereImpl: () => Promise<unknown> = () => Promise.resolve(
 
 const PNG = Buffer.from('fake-png');
 
+function errno(code: string): NodeJS.ErrnoException {
+  return Object.assign(new Error(`${code}: injected`), { code });
+}
+
+/** The temp path the writer actually chose — asserting cleanup targets it pins the boundary. */
+function tempPathWritten(): string {
+  return (writeFile as ReturnType<typeof vi.fn>).mock.calls[0]![0] as string;
+}
+
 describe('uploadBookCover (#1707 CoverWriteOutcome)', () => {
   let log: FastifyBaseLogger;
 
@@ -71,7 +80,32 @@ describe('uploadBookCover (#1707 CoverWriteOutcome)', () => {
     await expect(
       uploadBookCover(5, '/books/b', PNG, 'image/png', inject<Db>(mockDb), log),
     ).rejects.toThrow('EACCES');
-    expect(unlink).toHaveBeenCalled();
+    expect(unlink).toHaveBeenCalledWith(tempPathWritten());
     expect(mockDb.update).not.toHaveBeenCalled();
+  });
+
+  it('THROWS and cleans up the temp file when the temp WRITE fails (#2302)', async () => {
+    (writeFile as ReturnType<typeof vi.fn>).mockRejectedValue(errno('ENOSPC'));
+    const mockDb = createMockDb();
+    await expect(
+      uploadBookCover(5, '/books/b', PNG, 'image/png', inject<Db>(mockDb), log),
+    ).rejects.toThrow('ENOSPC');
+    expect(unlink).toHaveBeenCalledWith(tempPathWritten());
+    expect(rename).not.toHaveBeenCalled();
+    expect(mockDb.update).not.toHaveBeenCalled();
+  });
+
+  it('propagates the ORIGINAL write error when the cleanup unlink itself rejects (#2302)', async () => {
+    const cause = errno('ENOSPC');
+    (writeFile as ReturnType<typeof vi.fn>).mockRejectedValue(cause);
+    (unlink as ReturnType<typeof vi.fn>).mockRejectedValue(errno('EACCES'));
+    await expect(
+      uploadBookCover(5, '/books/b', PNG, 'image/png', inject<Db>(createMockDb()), log),
+    ).rejects.toBe(cause);
+  });
+
+  it('never unlinks the temp on the success path (#2302)', async () => {
+    await uploadBookCover(5, '/books/b', PNG, 'image/png', inject<Db>(createMockDb()), log);
+    expect(unlink).not.toHaveBeenCalled();
   });
 });
