@@ -6,7 +6,7 @@ import type {
   ConnectorTarget,
   ConnectorTestResult,
 } from './types.js';
-import { ConnectorRequestError, connectorStatusError, type ConnectorStatusPresentation } from './errors.js';
+import { ConnectorRequestError, connectorConnectionError, connectorStatusError, type ConnectorStatusPresentation } from './errors.js';
 import { getErrorMessage } from '@shared/error-message.js';
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { CONNECTOR_TIMEOUT_MS } from '../utils/constants.js';
@@ -46,13 +46,6 @@ const PLEX_PRESENTATION: ConnectorStatusPresentation = {
 
 function classifyStatus(status: number, notFoundField: string | null): ConnectorRequestError {
   return connectorStatusError(status, notFoundField, PLEX_PRESENTATION);
-}
-
-function connectionError(error: unknown): ConnectorRequestError {
-  return new ConnectorRequestError(`Connection failed: ${getErrorMessage(error)}`, {
-    retryable: true,
-    fieldErrors: { baseUrl: 'Could not connect to server' },
-  });
 }
 
 /** Normalize a path prefix: forward slashes, exactly one trailing slash. */
@@ -127,7 +120,7 @@ export class PlexConnector implements ConnectorAdapter {
     try {
       res = await fetchWithTimeout(`${this.baseUrl}/library/sections`, { headers: this.authHeaders }, CONNECTOR_TIMEOUT_MS);
     } catch (error: unknown) {
-      throw connectionError(error);
+      throw connectorConnectionError(error);
     }
     if (!res.ok) throw classifyStatus(res.status, null);
 
@@ -174,7 +167,7 @@ export class PlexConnector implements ConnectorAdapter {
     try {
       res = await fetchWithTimeout(`${this.baseUrl}/identity`, { headers: this.authHeaders }, CONNECTOR_TIMEOUT_MS);
     } catch (error: unknown) {
-      throw connectionError(error);
+      throw connectorConnectionError(error);
     }
     if (!res.ok) throw classifyStatus(res.status, null);
   }
@@ -252,7 +245,7 @@ export class PlexConnector implements ConnectorAdapter {
     try {
       res = await fetchWithTimeout(url, { headers: this.authHeaders }, CONNECTOR_TIMEOUT_MS, signal);
     } catch (error: unknown) {
-      throw connectionError(error);
+      throw connectorConnectionError(error);
     }
     if (!res.ok) throw classifyStatus(res.status, 'sectionId');
   }

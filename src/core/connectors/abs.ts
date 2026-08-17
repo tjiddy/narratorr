@@ -6,7 +6,7 @@ import type {
   ConnectorTarget,
   ConnectorTestResult,
 } from './types.js';
-import { ConnectorRequestError, connectorStatusError, type ConnectorStatusPresentation } from './errors.js';
+import { ConnectorRequestError, connectorConnectionError, connectorStatusError, type ConnectorStatusPresentation } from './errors.js';
 import { getErrorMessage } from '@shared/error-message.js';
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { CONNECTOR_TIMEOUT_MS } from '../utils/constants.js';
@@ -36,13 +36,6 @@ function classifyStatus(status: number, notFoundField: string | null): Connector
   return connectorStatusError(status, notFoundField, ABS_PRESENTATION);
 }
 
-function connectionError(error: unknown): ConnectorRequestError {
-  return new ConnectorRequestError(`Connection failed: ${getErrorMessage(error)}`, {
-    retryable: true,
-    fieldErrors: { baseUrl: 'Could not connect to server' },
-  });
-}
-
 export class AudiobookshelfConnector implements ConnectorAdapter {
   readonly type = 'audiobookshelf' as const;
 
@@ -65,7 +58,7 @@ export class AudiobookshelfConnector implements ConnectorAdapter {
     try {
       res = await fetchWithTimeout(`${this.baseUrl}/api/libraries`, { headers: this.authHeaders }, CONNECTOR_TIMEOUT_MS);
     } catch (error: unknown) {
-      throw connectionError(error);
+      throw connectorConnectionError(error);
     }
     if (!res.ok) throw classifyStatus(res.status, null);
 
@@ -113,7 +106,7 @@ export class AudiobookshelfConnector implements ConnectorAdapter {
         body: '{}',
       }, CONNECTOR_TIMEOUT_MS, signal);
     } catch (error: unknown) {
-      throw connectionError(error);
+      throw connectorConnectionError(error);
     }
     if (!res.ok) throw classifyStatus(res.status, 'libraryId');
     return { success: true };
