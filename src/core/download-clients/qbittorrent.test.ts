@@ -42,6 +42,41 @@ describe('QBittorrentClient', () => {
     server.use(loginHandler());
   });
 
+  /**
+   * MSW matches on path only, so the fast-path (`?hashes=`) and fallback (list) requests both land
+   * on ONE handler — discriminate inside the resolver. A handler that ignores `hashes` makes the
+   * fallback unreachable and every hybrid assertion below vacuous.
+   */
+  function trackInfoRequests(respond: (params: URLSearchParams) => Response) {
+    const urls: string[] = [];
+    server.use(
+      http.get(`${BASE_URL}/api/v2/torrents/info`, ({ request }) => {
+        urls.push(request.url);
+        return respond(new URL(request.url).searchParams);
+      }),
+    );
+    return {
+      urls,
+      params: (index: number) => new URL(urls[index]!).searchParams,
+    };
+  }
+
+  /** `?hashes=` answers `onFastPath`; the unfiltered fallback list answers `onFallback`. */
+  function byHashes(onFastPath: unknown[], onFallback: unknown[]) {
+    return (params: URLSearchParams) => HttpResponse.json(params.has('hashes') ? onFastPath : onFallback);
+  }
+
+  function trackControlPosts(action: string) {
+    const bodies: string[] = [];
+    server.use(
+      http.post(`${BASE_URL}/api/v2/torrents/${action}`, async ({ request }) => {
+        bodies.push(await request.text());
+        return new HttpResponse('');
+      }),
+    );
+    return bodies;
+  }
+
   describe('login', () => {
     it('extracts SID cookie on successful login', async () => {
       server.use(
@@ -577,51 +612,274 @@ describe('QBittorrentClient', () => {
     });
   });
 
+  // Controls resolve the caller hash to the client's canonical one (#2423 AC5), so each of these
+  // needs a torrents/info handler. Here nothing resolves, which pins the caller-hash fallback.
   describe('pauseDownload', () => {
-    it('sends pause request', async () => {
-      let called = false;
-
-      server.use(
-        http.post(`${BASE_URL}/api/v2/torrents/pause`, () => {
-          called = true;
-          return new HttpResponse('');
-        }),
-      );
+    it('sends pause request with the caller hash when nothing resolves', async () => {
+      const bodies = trackControlPosts('pause');
+      trackInfoRequests(() => HttpResponse.json([]));
 
       await client.pauseDownload('abc123');
-      expect(called).toBe(true);
+      expect(bodies).toHaveLength(1);
+      expect(new URLSearchParams(bodies[0]!).get('hashes')).toBe('abc123');
     });
   });
 
   describe('resumeDownload', () => {
-    it('sends resume request', async () => {
-      let called = false;
-
-      server.use(
-        http.post(`${BASE_URL}/api/v2/torrents/resume`, () => {
-          called = true;
-          return new HttpResponse('');
-        }),
-      );
+    it('sends resume request with the caller hash when nothing resolves', async () => {
+      const bodies = trackControlPosts('resume');
+      trackInfoRequests(() => HttpResponse.json([]));
 
       await client.resumeDownload('abc123');
-      expect(called).toBe(true);
+      expect(bodies).toHaveLength(1);
+      expect(new URLSearchParams(bodies[0]!).get('hashes')).toBe('abc123');
     });
   });
 
   describe('removeDownload', () => {
-    it('sends delete request', async () => {
-      let called = false;
-
-      server.use(
-        http.post(`${BASE_URL}/api/v2/torrents/delete`, () => {
-          called = true;
-          return new HttpResponse('');
-        }),
-      );
+    it('sends delete request with the caller hash when nothing resolves', async () => {
+      const bodies = trackControlPosts('delete');
+      trackInfoRequests(() => HttpResponse.json([]));
 
       await client.removeDownload('abc123');
-      expect(called).toBe(true);
+      expect(bodies).toHaveLength(1);
+      expect(new URLSearchParams(bodies[0]!).get('hashes')).toBe('abc123');
+      expect(new URLSearchParams(bodies[0]!).get('deleteFiles')).toBe('false');
+    });
+  });
+
+  /**
+   * #2423 — libtorrent 2.x re-keys a v1+v2 hybrid torrent's canonical API `hash` to the truncated
+   * v2 hash once metadata arrives, moving the grabbed v1 to `infohash_v1`. Tracking by the
+   * canonical hash alone lost the torrent 28 seconds after the add.
+   */
+  describe('hybrid v1/v2 hash identity (#2423)', () => {
+    const V1 = '351c0c2d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b';
+    const CANONICAL = 'aa11bb22cc33dd44ee55ff66aa77bb88cc99dd00';
+    const V2_FULL = `${CANONICAL}112233445566778899aabbcc`;
+
+    /** The payload qBittorrent serves for the grabbed torrent once it discovers it is a hybrid. */
+    const hybrid = {
+      ...mockTorrent,
+      hash: CANONICAL,
+      infohash_v1: V1,
+      infohash_v2: V2_FULL,
+      name: 'Hybrid Torrent',
+      state: 'metaDL',
+      progress: 0.25,
+      save_path: '/downloads/audiobooks',
+    };
+
+    describe('getDownload', () => {
+      it('resolves a hybrid via the fallback list when the canonical-hash filter misses', async () => {
+        const info = trackInfoRequests(byHashes([], [hybrid]));
+
+        const result = await client.getDownload(V1);
+
+        expect(result).not.toBeNull();
+        expect(result!.id).toBe(CANONICAL);
+        expect(result!.name).toBe('Hybrid Torrent');
+        expect(result!.progress).toBe(25);
+        expect(result!.status).toBe('downloading');
+        expect(result!.savePath).toBe('/downloads/audiobooks');
+        expect(info.urls).toHaveLength(2);
+        expect(info.params(0).get('hashes')).toBe(V1);
+        expect(info.params(1).has('hashes')).toBe(false);
+      });
+
+      // MAM torrents are v1-only; the pre-#2423 request shape must survive byte-identical.
+      it('answers a v1-only torrent on the fast path with exactly one request', async () => {
+        const info = trackInfoRequests(byHashes([{ ...mockTorrent, hash: V1, infohash_v1: V1, infohash_v2: '' }], []));
+
+        const result = await client.getDownload(V1.toUpperCase());
+
+        expect(result!.id).toBe(V1);
+        expect(info.urls).toHaveLength(1);
+        expect(info.params(0).get('hashes')).toBe(V1);
+      });
+
+      it('matches on the truncated infohash_v2 when the canonical hash is unrelated', async () => {
+        const reKeyed = { ...hybrid, hash: 'ffffffffffffffffffffffffffffffffffffffff', infohash_v1: '' };
+        const info = trackInfoRequests(byHashes([], [reKeyed]));
+
+        const result = await client.getDownload(CANONICAL);
+
+        expect(result!.id).toBe('ffffffffffffffffffffffffffffffffffffffff');
+        expect(info.urls).toHaveLength(2);
+      });
+
+      // F1 — without this arm an implementation that drops `hash` from the fallback matcher passes.
+      it('matches on the canonical hash inside the fallback list', async () => {
+        const plain = { ...mockTorrent, hash: V1, name: 'Slow To Register' };
+        const info = trackInfoRequests(byHashes([], [plain]));
+
+        const result = await client.getDownload(V1);
+
+        expect(result!.id).toBe(V1);
+        expect(result!.name).toBe('Slow To Register');
+        expect(info.urls).toHaveLength(2);
+      });
+
+      it('returns null and issues exactly two requests when the torrent is genuinely absent', async () => {
+        const info = trackInfoRequests(byHashes([], []));
+
+        expect(await client.getDownload(V1)).toBeNull();
+        expect(info.urls).toHaveLength(2);
+      });
+
+      it('matches an uppercase query against lowercase payload fields', async () => {
+        trackInfoRequests(byHashes([], [hybrid]));
+
+        const result = await client.getDownload(V1.toUpperCase());
+        expect(result!.id).toBe(CANONICAL);
+      });
+
+      it('matches a lowercase query against an uppercase infohash_v1', async () => {
+        trackInfoRequests(byHashes([], [{ ...hybrid, infohash_v1: V1.toUpperCase() }]));
+
+        const result = await client.getDownload(V1);
+        expect(result!.id).toBe(CANONICAL);
+      });
+
+      // Current builds emit "" for the axis a torrent does not have; that must never match.
+      it('never matches empty-string hash fields, including on the first list element', async () => {
+        const info = trackInfoRequests(byHashes([], [
+          { ...mockTorrent, hash: 'dddddddddddddddddddddddddddddddddddddddd', infohash_v1: '', infohash_v2: '' },
+          { ...mockTorrent, hash: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', infohash_v1: '', infohash_v2: '' },
+        ]));
+
+        expect(await client.getDownload(V1)).toBeNull();
+        expect(info.urls).toHaveLength(2);
+      });
+
+      // F2 — an unsafe matcher would pair an empty query with an empty candidate field.
+      it('never matches an empty queried hash against empty candidate fields', async () => {
+        trackInfoRequests(byHashes([], [
+          { ...mockTorrent, hash: 'dddddddddddddddddddddddddddddddddddddddd', infohash_v1: '', infohash_v2: '' },
+        ]));
+
+        expect(await client.getDownload('')).toBeNull();
+      });
+
+      // qBittorrent < 4.4 (libtorrent 1.2) omits both fields entirely.
+      it('parses an old-qBittorrent fallback payload that carries neither field', async () => {
+        trackInfoRequests(byHashes([], [{ ...mockTorrent, hash: 'cccccccccccccccccccccccccccccccccccccccc' }]));
+
+        expect(await client.getDownload(V1)).toBeNull();
+      });
+
+      it('throws rather than returning null when the FALLBACK payload is malformed', async () => {
+        trackInfoRequests(byHashes([], [{ unexpected: 'shape' }]));
+
+        const error = await client.getDownload(V1).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(DownloadClientError);
+        expect((error as DownloadClientError).message).toContain('unexpected torrent data');
+      });
+
+      it('re-logs in and retries when the fallback request 403s, still resolving the hybrid', async () => {
+        let fallbackCalls = 0;
+        const info = trackInfoRequests((params) => {
+          if (params.has('hashes')) return HttpResponse.json([]);
+          fallbackCalls++;
+          if (fallbackCalls === 1) return new HttpResponse(null, { status: 403 });
+          return HttpResponse.json([hybrid]);
+        });
+
+        const result = await client.getDownload(V1);
+
+        expect(result!.id).toBe(CANONICAL);
+        expect(info.urls).toHaveLength(3);
+      });
+    });
+
+    describe('schema typing', () => {
+      it('rejects a non-string infohash_v1', async () => {
+        trackInfoRequests(byHashes([{ ...mockTorrent, infohash_v1: 123 }], []));
+
+        await expect(client.getDownload(V1)).rejects.toThrow('unexpected torrent data');
+      });
+
+      // F4 — symmetric to the v1 case; proves infohash_v2 is a typed member, not passthrough.
+      it('rejects a non-string infohash_v2', async () => {
+        trackInfoRequests(byHashes([{ ...mockTorrent, infohash_v2: 456 }], []));
+
+        await expect(client.getDownload(V1)).rejects.toThrow('unexpected torrent data');
+      });
+    });
+
+    describe('fallback scoping', () => {
+      it('scopes the fallback to the configured category', async () => {
+        const scoped = new QBittorrentClient({ ...config, category: 'audio books' });
+        const info = trackInfoRequests(byHashes([], [hybrid]));
+
+        await scoped.getDownload(V1);
+
+        expect(info.urls).toHaveLength(2);
+        expect(info.urls[1]).toContain('category=audio%20books');
+        expect(info.params(1).has('hashes')).toBe(false);
+      });
+
+      it('leaves the fallback unscoped when no category is configured', async () => {
+        const info = trackInfoRequests(byHashes([], [hybrid]));
+
+        await client.getDownload(V1);
+
+        expect(info.params(1).has('category')).toBe(false);
+        expect(info.params(1).has('hashes')).toBe(false);
+      });
+    });
+
+    describe('control operations resolve to the canonical hash', () => {
+      it.each([
+        ['pauseDownload', 'pause'],
+        ['resumeDownload', 'resume'],
+      ] as const)('%s posts the canonical hash', async (method, action) => {
+        const bodies = trackControlPosts(action);
+        trackInfoRequests(byHashes([], [hybrid]));
+
+        await client[method](V1);
+
+        expect(bodies).toHaveLength(1);
+        expect(new URLSearchParams(bodies[0]!).get('hashes')).toBe(CANONICAL);
+      });
+
+      it('removeDownload posts the canonical hash and preserves deleteFiles', async () => {
+        const bodies = trackControlPosts('delete');
+        trackInfoRequests(byHashes([], [hybrid]));
+
+        await client.removeDownload(V1, true);
+
+        expect(bodies).toHaveLength(1);
+        const body = new URLSearchParams(bodies[0]!);
+        expect(body.get('hashes')).toBe(CANONICAL);
+        expect(body.get('deleteFiles')).toBe('true');
+      });
+
+      // An already-gone torrent stays a no-op delete, not an error.
+      it('removeDownload posts the caller hash unchanged when nothing resolves', async () => {
+        const bodies = trackControlPosts('delete');
+        trackInfoRequests(byHashes([], []));
+
+        await expect(client.removeDownload(V1, true)).resolves.toBeUndefined();
+
+        expect(new URLSearchParams(bodies[0]!).get('hashes')).toBe(V1);
+      });
+    });
+
+    // AC6 — composed behavior: adoptDuplicateOrRethrow goes through getDownload.
+    it('adopts a hybrid already present under its v2 canonical on an HTTP 409 add', async () => {
+      server.use(
+        http.post(`${BASE_URL}/api/v2/torrents/add`, () => new HttpResponse(null, { status: 409 })),
+      );
+      trackInfoRequests(byHashes([], [hybrid]));
+
+      const hash = await client.addDownload({
+        type: 'magnet-uri',
+        uri: `magnet:?xt=urn:btih:${V1}&dn=Hybrid`,
+        infoHash: V1,
+      });
+
+      expect(hash).toBe(V1);
     });
   });
 

@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { http, HttpResponse } from 'msw';
+import { useMswServer } from '../__tests__/msw/server.js';
 import { ADAPTER_FACTORIES } from './registry.js';
 import { downloadClientTypeSchema, type DownloadClientSettings } from '@shared/schemas/download-client.js';
 
@@ -89,6 +91,49 @@ describe('Download Client ADAPTER_FACTORIES', () => {
   describe('error handling', () => {
     it('returns undefined for unknown download client type (no factory)', () => {
       expect((ADAPTER_FACTORIES as Record<string, unknown>)['unknown']).toBeUndefined();
+    });
+  });
+
+  /**
+   * #2423 AC4 — the category scopes the hybrid-hash fallback list scan. It is private adapter
+   * config, so the fallback request URL is the only place the forwarding becomes observable.
+   */
+  describe('qbittorrent category forwarding', () => {
+    const server = useMswServer();
+    const BASE_URL = 'http://localhost:8080';
+
+    async function fallbackParamsFor(settings: DownloadClientSettings) {
+      let fallbackUrl: string | undefined;
+      server.use(
+        http.post(`${BASE_URL}/api/v2/auth/login`, () => new HttpResponse('Ok.', {
+          headers: { 'Set-Cookie': 'SID=test-session-id; path=/' },
+        })),
+        http.get(`${BASE_URL}/api/v2/torrents/info`, ({ request }) => {
+          if (!new URL(request.url).searchParams.has('hashes')) fallbackUrl = request.url;
+          return HttpResponse.json([]);
+        }),
+      );
+
+      // A miss on the fast path is what drives the scoped fallback request.
+      await ADAPTER_FACTORIES.qbittorrent(settings).getDownload('a'.repeat(40));
+
+      expect(fallbackUrl, 'no fallback request was issued').toBeDefined();
+      return new URL(fallbackUrl!).searchParams;
+    }
+
+    it('forwards a configured category, trimmed', async () => {
+      const params = await fallbackParamsFor({ ...configs.qbittorrent!, category: '  audio books  ' });
+      expect(params.get('category')).toBe('audio books');
+    });
+
+    it.each([['empty', ''], ['whitespace-only', '   ']])('maps a %s category to an unscoped fallback', async (_label, category) => {
+      const params = await fallbackParamsFor({ ...configs.qbittorrent!, category });
+      expect(params.has('category')).toBe(false);
+    });
+
+    it('leaves the fallback unscoped when the category key is absent', async () => {
+      const params = await fallbackParamsFor(configs.qbittorrent!);
+      expect(params.has('category')).toBe(false);
     });
   });
 });

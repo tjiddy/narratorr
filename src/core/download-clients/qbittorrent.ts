@@ -15,6 +15,8 @@ export interface QBittorrentConfig {
   username: string;
   password: string;
   useSsl: boolean;
+  // Scopes the hybrid-hash fallback list scan; absent means scan every category.
+  category?: string | undefined;
 }
 
 type QBTorrent = z.infer<typeof qbTorrentSchema>;
@@ -245,10 +247,8 @@ export class QBittorrentClient implements DownloadClientAdapter {
       },
     );
   }
-  async getDownload(hash: string): Promise<DownloadItemInfo | null> {
-    const raw = await this.request<unknown>(
-      `/api/v2/torrents/info?hashes=${hash.toLowerCase()}`
-    );
+  private async fetchTorrents(query: string): Promise<QBTorrent[]> {
+    const raw = await this.request<unknown>(`/api/v2/torrents/info${query}`);
 
     // Validate undefined too; empty/non-JSON responses are not an empty torrent list.
     const parsed = qbTorrentsResponseSchema.safeParse(raw);
@@ -260,31 +260,52 @@ export class QBittorrentClient implements DownloadClientAdapter {
       );
     }
 
-    if (parsed.data.length === 0) return null;
-    return this.mapItem(parsed.data[0]!);
+    return parsed.data;
+  }
+
+  // A hybrid torrent answers to three hashes; empty/absent candidate axes match nothing.
+  private isSameTorrent(torrent: QBTorrent, hash: string): boolean {
+    const wanted = hash.toLowerCase();
+    const candidates = [torrent.hash, torrent.infohash_v1, torrent.infohash_v2?.slice(0, 40)];
+    return candidates.some((candidate) => !!candidate && candidate.toLowerCase() === wanted);
+  }
+
+  /**
+   * The canonical-hash filter is the fast path and stays byte-identical for v1-only torrents. On a
+   * miss, scan the (optionally category-scoped) list for any of the three identities before
+   * concluding the torrent is gone — libtorrent 2.x re-keys a hybrid to its v2 hash (#2423).
+   */
+  private async resolveTorrent(hash: string): Promise<QBTorrent | null> {
+    const byCanonicalHash = await this.fetchTorrents(`?hashes=${hash.toLowerCase()}`);
+    if (byCanonicalHash.length > 0) return byCanonicalHash[0]!;
+
+    const scope = this.config.category ? `?category=${encodeURIComponent(this.config.category)}` : '';
+    const scanned = await this.fetchTorrents(scope);
+    return scanned.find((torrent) => this.isSameTorrent(torrent, hash)) ?? null;
+  }
+
+  async getDownload(hash: string): Promise<DownloadItemInfo | null> {
+    const torrent = await this.resolveTorrent(hash);
+    return torrent ? this.mapItem(torrent) : null;
   }
 
   async getAllDownloads(category?: string): Promise<DownloadItemInfo[]> {
     const params = category ? `?category=${encodeURIComponent(category)}` : '';
-    const raw = await this.request<unknown>(`/api/v2/torrents/info${params}`);
+    const torrents = await this.fetchTorrents(params);
+    return torrents.map((t) => this.mapItem(t));
+  }
 
-    const parsed = qbTorrentsResponseSchema.safeParse(raw);
-    if (!parsed.success) {
-      throw new DownloadClientError(
-        this.name,
-        `qBittorrent returned unexpected torrent data: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
-        { cause: parsed.error },
-      );
-    }
-
-    return parsed.data.map((t) => this.mapItem(t));
+  /** Controls take the same three-identity resolution; an unresolvable hash goes through as-is. */
+  private async canonicalHashFor(hash: string): Promise<string> {
+    const torrent = await this.resolveTorrent(hash);
+    return (torrent?.hash ?? hash).toLowerCase();
   }
 
   async pauseDownload(hash: string): Promise<void> {
     await this.request('/api/v2/torrents/pause', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ hashes: hash.toLowerCase() }),
+      body: new URLSearchParams({ hashes: await this.canonicalHashFor(hash) }),
     });
   }
 
@@ -292,7 +313,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
     await this.request('/api/v2/torrents/resume', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ hashes: hash.toLowerCase() }),
+      body: new URLSearchParams({ hashes: await this.canonicalHashFor(hash) }),
     });
   }
 
@@ -301,7 +322,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        hashes: hash.toLowerCase(),
+        hashes: await this.canonicalHashFor(hash),
         deleteFiles: deleteFiles.toString(),
       }),
     });
