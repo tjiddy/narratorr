@@ -3,6 +3,7 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { createMockSettings } from '@/__tests__/factories';
 import { DiscoverySettingsSection } from './DiscoverySettingsSection';
 
 vi.mock('@/lib/api', () => ({
@@ -28,27 +29,11 @@ const mockApi = api as unknown as {
   updateSettings: ReturnType<typeof vi.fn>;
 };
 
-function makeSettings(overrides = {}) {
-  return {
-    discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90 },
-    library: { rootFolder: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{title}' },
-    search: { enabled: true, intervalMinutes: 30, blacklistTtlDays: 30 },
-    import: { deleteAfterImport: false, importMode: 'copy' as const },
-    general: { logLevel: 'info' as const },
-    metadata: { provider: 'audible' as const, region: 'us' },
-    processing: { ffmpegPath: '/usr/bin/ffmpeg', filePermissions: '644', folderPermissions: '755', enableRetagging: false },
-    tagging: { writeTags: false, tags: [], clearExistingTags: false },
-    quality: {},
-    network: {},
-    rss: { enabled: false, intervalMinutes: 30 },
-    system: {},
-    ...overrides,
-  };
-}
-
+// The schema default is `enabled: true`; a fetched `false` is what makes "the card renders saved
+// config, not defaults" observable at all.
 beforeEach(() => {
   vi.resetAllMocks();
-  mockApi.getSettings.mockResolvedValue(makeSettings());
+  mockApi.getSettings.mockResolvedValue(createMockSettings({ discovery: { enabled: false } }));
 });
 
 describe('DiscoverySettingsSection', () => {
@@ -65,7 +50,7 @@ describe('DiscoverySettingsSection', () => {
   });
 
   it('toggling enable/disable persists via settings mutation', async () => {
-    mockApi.updateSettings.mockResolvedValue(makeSettings({ discovery: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: 5 } }));
+    mockApi.updateSettings.mockResolvedValue(createMockSettings({ discovery: { enabled: true } }));
 
     renderWithProviders(<DiscoverySettingsSection />);
 
@@ -84,7 +69,7 @@ describe('DiscoverySettingsSection', () => {
   });
 
   it('changing interval value persists via settings mutation', async () => {
-    mockApi.updateSettings.mockResolvedValue(makeSettings({ discovery: { enabled: false, intervalHours: 12, maxSuggestionsPerAuthor: 5 } }));
+    mockApi.updateSettings.mockResolvedValue(createMockSettings({ discovery: { enabled: false, intervalHours: 12 } }));
 
     renderWithProviders(<DiscoverySettingsSection />);
 
@@ -167,9 +152,7 @@ describe('DiscoverySettingsSection', () => {
   it('save success invalidates settings cache, resets dirty state, and shows success toast', async () => {
     const invalidateSpy = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
 
-    mockApi.updateSettings.mockResolvedValue(makeSettings({
-      discovery: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: 5 },
-    }));
+    mockApi.updateSettings.mockResolvedValue(createMockSettings({ discovery: { enabled: true } }));
 
     renderWithProviders(<DiscoverySettingsSection />);
 
@@ -207,8 +190,8 @@ describe('DiscoverySettingsSection', () => {
     });
 
     it('changing expiry days persists via settings mutation', async () => {
-      mockApi.updateSettings.mockResolvedValue(makeSettings({
-        discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 60 },
+      mockApi.updateSettings.mockResolvedValue(createMockSettings({
+        discovery: { enabled: false, expiryDays: 60 },
       }));
 
       renderWithProviders(<DiscoverySettingsSection />);
@@ -343,7 +326,7 @@ describe('DiscoverySettingsSection', () => {
     it('refetches and restores the saved discovery config when the operator clicks Retry', async () => {
       mockApi.getSettings
         .mockRejectedValueOnce(new Error('settings unreadable'))
-        .mockResolvedValue(makeSettings({ discovery: { enabled: true, intervalHours: 72, maxSuggestionsPerAuthor: 5, expiryDays: 90 } }));
+        .mockResolvedValue(createMockSettings({ discovery: { enabled: true, intervalHours: 72 } }));
       const user = userEvent.setup();
 
       renderWithProviders(<DiscoverySettingsSection />);
