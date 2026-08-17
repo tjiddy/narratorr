@@ -178,16 +178,41 @@ describe('retrySearch', () => {
   });
 
   it('returns no_candidates when all results are blacklisted', async () => {
+    const log = createMockLogger();
+    const retryBudget = new RetryBudget();
+    vi.spyOn(retryBudget, 'consumeAttempt');
     const deps = createDeps({
       blacklistService: inject<BlacklistService>({
         getBlacklistedHashes: vi.fn().mockResolvedValue(new Set(['def456'])),
         getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(['def456']), blacklistedGuids: new Set() }),
       }),
+      retryBudget,
+      log: inject<FastifyBaseLogger>(log),
     });
 
     const result = await retrySearch(1, deps);
 
     expect(result.outcome).toBe('no_candidates');
+    // #2336 AC5: the attempt the log reports is the one the budget just handed out.
+    expect(retryBudget.consumeAttempt).toHaveBeenCalledTimes(1);
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookId: 1,
+        title: 'The Way of Kings',
+        attempt: 1,
+        inputCount: 1,
+        droppedCount: 1,
+        reason: 'blacklist-match',
+        dropCounts: { 'blacklist-match': 1 },
+      }),
+      'All search results removed by the blacklist',
+    );
+    // AC5 forbids an early return: the path still falls through to ranking and records no event.
+    expect(log.debug).toHaveBeenCalledWith(
+      { bookId: 1, title: 'The Way of Kings', attempt: 1 },
+      'No viable candidates after filtering',
+    );
+    expect(deps.eventHistory.create).not.toHaveBeenCalled();
   });
 
   // `book.duration` is minutes while the quality floor consumes seconds.
@@ -232,6 +257,7 @@ describe('retrySearch', () => {
     const goodResult = { ...mockSearchResult, infoHash: 'def456', downloadUrl: 'magnet:?xt=urn:btih:def456' };
     const blacklistedResult = { ...mockSearchResult, infoHash: blacklistedHash, downloadUrl: 'magnet:?xt=urn:btih:abc123' };
 
+    const log = createMockLogger();
     const deps = createDeps({
       indexerSearchService: inject<IndexerSearchService>({
         searchAllWithStatus: mockSearchAllWithStatus([blacklistedResult, goodResult]),
@@ -240,6 +266,7 @@ describe('retrySearch', () => {
         getBlacklistedHashes: vi.fn().mockResolvedValue(new Set([blacklistedHash])),
         getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set([blacklistedHash]), blacklistedGuids: new Set() }),
       }),
+      log: inject<FastifyBaseLogger>(log),
     });
 
     const result = await retrySearch(1, deps);
@@ -248,6 +275,8 @@ describe('retrySearch', () => {
     expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:def456' }),
     );
+    // #2336 AC7: a survivor means the set was never emptied.
+    expect(log.info).not.toHaveBeenCalledWith(expect.anything(), 'All search results removed by the blacklist');
   });
 
   it('returns retry_error when book not found', async () => {

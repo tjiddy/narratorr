@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { summarizeDrops, withBlacklistDrops, describeEmptiedSet, type SearchDropCounts } from './search-drop-summary.js';
+import {
+  summarizeDrops,
+  withBlacklistDrops,
+  describeEmptiedSet,
+  describeBlacklistEmptiedSet,
+  BLACKLIST_EMPTIED_MESSAGE,
+  type SearchDropCounts,
+} from './search-drop-summary.js';
 import type { SearchFilterOptions } from './search-pipeline.js';
 
 const baseOptions: SearchFilterOptions = {
@@ -160,5 +167,43 @@ describe('describeEmptiedSet', () => {
       reason: 'reject-word-match',
       dropCounts: { 'reject-word-match': 2 },
     });
+  });
+});
+
+describe('describeBlacklistEmptiedSet', () => {
+  it('reports the single blacklist reason, the input count, and the per-reason counts', () => {
+    expect(describeBlacklistEmptiedSet(4, 4)).toEqual({
+      inputCount: 4,
+      droppedCount: 4,
+      reason: 'blacklist-match',
+      dropCounts: { 'blacklist-match': 4 },
+    });
+  });
+
+  it('omits the threshold key — blacklist-match has no settings-backed threshold', () => {
+    expect(describeBlacklistEmptiedSet(2, 2)).not.toHaveProperty('threshold');
+  });
+
+  // Anti-drift on the EMITTED KEY SET only: reject-word-match is the existing threshold-less quality
+  // reason, so the two shapes must agree. It cannot prove the helper delegates — a hand-rolled object
+  // with the same keys passes too; delegation is verified by reading the implementation (#2336 F1).
+  it('emits the same key set as the quality-gate line for a threshold-less reason', () => {
+    const qualityFields = describeEmptiedSet(summarizeDrops({ 'reject-word-match': 2 }, options()), 2);
+
+    expect(Object.keys(describeBlacklistEmptiedSet(2, 2)).sort()).toEqual(Object.keys(qualityFields).sort());
+  });
+
+  // Production is guarded by an earlier non-empty early return, but the helper stays total.
+  it('still names the reason for a zero count', () => {
+    expect(describeBlacklistEmptiedSet(0, 0)).toEqual({
+      inputCount: 0,
+      droppedCount: 0,
+      reason: 'blacklist-match',
+      dropCounts: { 'blacklist-match': 0 },
+    });
+  });
+
+  it('parallels the quality-filter phrasing so one grep family covers both signals', () => {
+    expect(BLACKLIST_EMPTIED_MESSAGE).toBe('All search results removed by the blacklist');
   });
 });

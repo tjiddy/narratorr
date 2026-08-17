@@ -25,7 +25,7 @@ import { buildGrabPayload } from './grab-payload.js';
 import { parseWordList, matchesWord } from '@shared/parse-word-list.js';
 import { BYTES_PER_GB, BYTES_PER_MB } from '@shared/constants.js';
 import type { SearchDropReason, SearchDropSummary } from '@shared/schemas/search-stream.js';
-import { summarizeDrops, withBlacklistDrops, describeEmptiedSet, type SearchDropCounts } from './search-drop-summary.js';
+import { summarizeDrops, withBlacklistDrops, describeEmptiedSet, describeBlacklistEmptiedSet, BLACKLIST_EMPTIED_MESSAGE, type SearchDropCounts } from './search-drop-summary.js';
 /** Compatibility re-export; the ladder imports indexer-query directly to avoid a cycle. */
 export { buildSearchQuery } from './indexer-query.js';
 
@@ -385,7 +385,7 @@ async function runSearchAndGrab(
 
   const afterBlacklist = await filterBlacklistedResults(rawResults, blacklistService, log);
   if (afterBlacklist.length === 0) {
-    log.debug({ bookId: book.id, title: book.title }, 'All results blacklisted');
+    log.info({ bookId: book.id, title: book.title, ...describeBlacklistEmptiedSet(rawResults.length, rawResults.length) }, BLACKLIST_EMPTIED_MESSAGE);
     sink.searchComplete('no_results');
     return { result: 'no_results' };
   }

@@ -10,6 +10,7 @@ import type { DownloadOrchestrator } from '../services/download-orchestrator.js'
 import type { BlacklistService } from '../services/blacklist.service.js';
 import { DuplicateDownloadError } from '../services/download-errors.js';
 import { buildNarratorPriority, applyMultiPartFilterAndRank, buildSearchFilterOptions, filterBlacklistedResults } from '../services/search-pipeline.js';
+import { describeBlacklistEmptiedSet, BLACKLIST_EMPTIED_MESSAGE } from '../services/search-drop-summary.js';
 import { buildGrabPayload } from '../services/grab-payload.js';
 import { AUTO_GRAB_PHASE2_CAP, enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
 import { getErrorMessage } from '../utils/error-message.js';
@@ -93,6 +94,10 @@ export async function runRssJob(
   }
 
   const filtered = await filterBlacklistedResults(allResults, blacklistService, log);
+  // Batch-wide and pre-matching, so no book can be named; the loop below no-ops on its own.
+  if (filtered.length === 0) {
+    log.info({ polled, skipped, ...describeBlacklistEmptiedSet(allResults.length, allResults.length) }, BLACKLIST_EMPTIED_MESSAGE);
+  }
 
   const itemsPerBook = new Map<number, { results: SearchResult[]; candidate: BookWithAuthor }>();
 

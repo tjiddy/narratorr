@@ -1,6 +1,6 @@
 import { describe, it, expect, expectTypeOf, vi, beforeEach, afterEach } from 'vitest';
 import { buildSearchQuery, buildNarratorPriority, filterAndRankResults, filterBlacklistedResults, searchAndGrabForBook, postProcessSearchResults, applyMultiPartFilterAndRank, buildSearchFilterOptions } from './search-pipeline.js';
-import type { SingleBookSearchResult } from './search-pipeline.js';
+import type { SingleBookSearchResult, SearchFilterOptions } from './search-pipeline.js';
 import type { SettingsService } from './settings.service.js';
 import type { IndexerSearchService } from './indexer-search.service.js';
 import type { IndexerService } from './indexer.service.js';
@@ -4201,6 +4201,128 @@ describe('searchAndGrabForBook — emptied-set info log reaches the auto-grab pa
       expect.objectContaining({ inputCount: 1, droppedCount: 1, reason: 'below-min-size', threshold: '50 MB' }),
       'All search results removed by quality filters',
     );
+  });
+});
+
+describe('searchAndGrabForBook — entirely-blacklisted info log (#2336 AC4)', () => {
+  const BLACKLIST_LINE = 'All search results removed by the blacklist';
+  const book = { id: 7, title: 'The Way of Kings' };
+
+  function run(results: SearchResult[], blacklist: { hashes?: string[]; guids?: string[] }, log: FastifyBaseLogger, quality: SearchFilterOptions = defaultQualitySettings) {
+    return searchAndGrabForBook(book, {
+      indexerSearchService: { searchAllWithStatus: vi.fn().mockResolvedValue(searchStatus(results)) } as unknown as IndexerSearchService,
+      downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 1 }) } as unknown as DownloadOrchestrator,
+      qualitySettings: quality,
+      log,
+      blacklistService: {
+        getBlacklistedIdentifiers: vi.fn().mockResolvedValue({
+          blacklistedHashes: new Set(blacklist.hashes ?? []),
+          blacklistedGuids: new Set(blacklist.guids ?? []),
+        }),
+      } as unknown as BlacklistService,
+      indexerService: mockIndexer,
+      eventHistory: createMockEventHistory(),
+    });
+  }
+
+  it('logs the blacklist line with the book context and still reports no_results', async () => {
+    const log = createMockLogger();
+
+    const outcome = await run(
+      [makeResult({ infoHash: 'h1' }), makeResult({ infoHash: 'h2' })],
+      { hashes: ['h1', 'h2'] },
+      log,
+    );
+
+    expect(outcome).toEqual({ result: 'no_results' });
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookId: 7,
+        title: 'The Way of Kings',
+        inputCount: 2,
+        droppedCount: 2,
+        reason: 'blacklist-match',
+        dropCounts: { 'blacklist-match': 2 },
+      }),
+      BLACKLIST_LINE,
+    );
+  });
+
+  // The level moved; a fix that adds the info line without retiring the debug one leaves two records.
+  it('no longer emits the debug-only line for the same run', async () => {
+    const log = createMockLogger();
+
+    await run([makeResult({ infoHash: 'h1' })], { hashes: ['h1'] }, log);
+
+    expect(log.debug).not.toHaveBeenCalledWith(expect.anything(), 'All results blacklisted');
+  });
+
+  it('fires for a usenet result blacklisted by guid alone', async () => {
+    const log = createMockLogger();
+
+    await run(
+      [makeResult({ protocol: 'usenet', guid: 'bad-guid', infoHash: undefined, downloadUrl: 'http://nzb.test/1' })],
+      { guids: ['bad-guid'] },
+      log,
+    );
+
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ inputCount: 1, droppedCount: 1, reason: 'blacklist-match' }),
+      BLACKLIST_LINE,
+    );
+  });
+
+  it('stays silent when a survivor remains, and grabs it (AC7)', async () => {
+    const log = createMockLogger();
+
+    const outcome = await run(
+      [makeResult({ infoHash: 'bad', title: 'Blacklisted' }), makeResult({ infoHash: 'good', title: 'Clean' })],
+      { hashes: ['bad'] },
+      log,
+    );
+
+    expect(outcome).toEqual({ result: 'grabbed', title: 'Clean' });
+    expect(log.info).not.toHaveBeenCalledWith(expect.anything(), BLACKLIST_LINE);
+  });
+
+  // AC8: only one empty-set signal per search, and the quality line counts POST-blacklist input.
+  it('yields to the quality-filter line when the blacklist drops only some results', async () => {
+    const log = createMockLogger();
+
+    await run(
+      [
+        makeResult({ infoHash: 'bad', title: 'Blacklisted', size: 500 * MB }),
+        makeResult({ infoHash: 'small1', title: 'Tiny One', size: 5 * MB }),
+        makeResult({ infoHash: 'small2', title: 'Tiny Two', size: 5 * MB }),
+      ],
+      { hashes: ['bad'] },
+      log,
+      { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 50 },
+    );
+
+    expect(log.info).not.toHaveBeenCalledWith(expect.anything(), BLACKLIST_LINE);
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ inputCount: 2, droppedCount: 2, reason: 'below-min-size' }),
+      'All search results removed by quality filters',
+    );
+  });
+
+  it('leaves a genuine answered zero on its existing debug line', async () => {
+    const log = createMockLogger();
+
+    await run([], {}, log);
+
+    expect(log.debug).toHaveBeenCalledWith({ bookId: 7, title: 'The Way of Kings' }, 'No results found');
+    expect(log.info).not.toHaveBeenCalledWith(expect.anything(), BLACKLIST_LINE);
+  });
+
+  // The gate short-circuits without consulting the service, so the set can never be emptied here.
+  it('stays silent when no result carries an infoHash or a guid', async () => {
+    const log = createMockLogger();
+
+    await run([makeResult({ title: 'No Identifiers' })], { hashes: ['h1'] }, log);
+
+    expect(log.info).not.toHaveBeenCalledWith(expect.anything(), BLACKLIST_LINE);
   });
 });
 

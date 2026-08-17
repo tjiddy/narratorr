@@ -1192,3 +1192,124 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     });
   });
 });
+
+describe('runRssJob — entirely-blacklisted feed batch (#2336 AC6)', () => {
+  const BLACKLIST_LINE = 'All search results removed by the blacklist';
+  let log: ReturnType<typeof createMockLogger>;
+
+  beforeEach(() => {
+    log = createMockLogger();
+    mockEnrichUsenet.mockReset();
+  });
+
+  function blacklistLineFields(): Record<string, unknown> | undefined {
+    const call = (log.info as Mock).mock.calls.find(([, message]) => message === BLACKLIST_LINE);
+    return call?.[0] as Record<string, unknown> | undefined;
+  }
+
+  function run(wanted: unknown[], rssResults: SearchResult[], blacklisted: Set<string>) {
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList } = createMockBookServices(wanted);
+    const download = createMockDownloadOrchestrator();
+    return {
+      download,
+      result: runRssJob(
+        settings,
+        bookList,
+        createMockIndexerService(rssResults),
+        download,
+        createMockBlacklistService(blacklisted),
+        mockIndexer,
+        inject<FastifyBaseLogger>(log),
+      ),
+    };
+  }
+
+  it('logs the blacklist line with the feed-batch counts', async () => {
+    const { result } = run(
+      [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')],
+      [
+        makeResult('The Way of Kings', 'Brandon Sanderson', { infoHash: 'bad1' }),
+        makeResult('The Way of Kings Unabridged', 'Brandon Sanderson', { infoHash: 'bad2' }),
+      ],
+      new Set(['bad1', 'bad2']),
+    );
+    await result;
+
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        polled: 1,
+        skipped: 0,
+        inputCount: 2,
+        droppedCount: 2,
+        reason: 'blacklist-match',
+        dropCounts: { 'blacklist-match': 2 },
+      }),
+      BLACKLIST_LINE,
+    );
+  });
+
+  // The gate runs once over the whole batch, before per-book matching — there is no book to name.
+  it('carries no bookId, because the batch predates matching', async () => {
+    const { result } = run(
+      [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')],
+      [makeResult('The Way of Kings', 'Brandon Sanderson', { infoHash: 'bad1' })],
+      new Set(['bad1']),
+    );
+    await result;
+
+    expect(blacklistLineFields()).not.toHaveProperty('bookId');
+    expect(blacklistLineFields()).not.toHaveProperty('title');
+  });
+
+  it('emits one batch-wide line, not one per candidate book', async () => {
+    const { result } = run(
+      [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson'), makeWantedBook(2, 'Words of Radiance', 'Brandon Sanderson')],
+      [
+        makeResult('The Way of Kings', 'Brandon Sanderson', { infoHash: 'bad1' }),
+        makeResult('Words of Radiance', 'Brandon Sanderson', { infoHash: 'bad2' }),
+      ],
+      new Set(['bad1', 'bad2']),
+    );
+    await result;
+
+    expect((log.info as Mock).mock.calls.filter(([, message]) => message === BLACKLIST_LINE)).toHaveLength(1);
+    expect(blacklistLineFields()).toMatchObject({ inputCount: 2 });
+  });
+
+  // AC6 forbids an early return: the loop no-ops, and the terminal record is byte-identical.
+  it('leaves the job result and the completion log untouched', async () => {
+    const { download, result } = run(
+      [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')],
+      [makeResult('The Way of Kings', 'Brandon Sanderson', { infoHash: 'bad1' })],
+      new Set(['bad1']),
+    );
+
+    expect(await result).toEqual({ polled: 1, skipped: 0, matched: 0, grabbed: 0 });
+    expect(log.info).toHaveBeenCalledWith({ polled: 1, skipped: 0, matched: 0, grabbed: 0 }, 'RSS sync completed');
+    expect(download.grab).not.toHaveBeenCalled();
+  });
+
+  it('leaves an empty feed batch on its existing no-items line', async () => {
+    const { result } = run([makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')], [], new Set(['bad1']));
+    await result;
+
+    expect(log.info).toHaveBeenCalledWith({ polled: 1, skipped: 0 }, 'RSS sync completed — no feed items');
+    expect(blacklistLineFields()).toBeUndefined();
+  });
+
+  it('stays silent when a survivor remains, and grabs it (AC7)', async () => {
+    const { download, result } = run(
+      [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')],
+      [
+        makeResult('The Way of Kings', 'Brandon Sanderson', { infoHash: 'bad1' }),
+        makeResult('The Way of Kings Unabridged', 'Brandon Sanderson', { infoHash: 'good1' }),
+      ],
+      new Set(['bad1']),
+    );
+
+    expect((await result).grabbed).toBe(1);
+    expect(blacklistLineFields()).toBeUndefined();
+    expect(download.grab).toHaveBeenCalledWith(expect.objectContaining({ bookId: 1, source: 'rss' }));
+  });
+});
