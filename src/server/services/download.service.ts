@@ -27,6 +27,7 @@ import type { BookRowPublic, DownloadRow } from './types.js';
 import { stripClearedFields } from './book-row-public.js';
 import type { BookStatus } from '@shared/schemas/book.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { applyPagination } from '../utils/db-helpers.js';
 import { DownloadError, DuplicateDownloadError } from './download-errors.js';
 
 export interface DownloadWithBook extends DownloadRow {
@@ -85,7 +86,7 @@ export class DownloadService {
       .from(downloads)
       .where(where);
 
-    let query = this.db
+    const query = this.db
       .select({
         download: downloads,
         book: books,
@@ -95,16 +96,10 @@ export class DownloadService {
       .leftJoin(books, eq(downloads.bookId, books.id))
       .leftJoin(indexers, eq(downloads.indexerId, indexers.id))
       .where(where)
-      .orderBy(desc(downloads.addedAt), desc(downloads.id));
+      .orderBy(desc(downloads.addedAt), desc(downloads.id))
+      .$dynamic();
 
-    if (pagination?.limit !== undefined) {
-      query = query.limit(pagination.limit) as typeof query;
-    }
-    if (pagination?.offset !== undefined) {
-      query = query.offset(pagination.offset) as typeof query;
-    }
-
-    const results = await query;
+    const results = await applyPagination(query, pagination);
 
     const data = results.map((r) => ({
       ...r.download,

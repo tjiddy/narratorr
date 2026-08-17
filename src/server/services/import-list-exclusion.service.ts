@@ -6,6 +6,7 @@ import { canonicalizeAsin } from '@shared/asin.js';
 import { matchesLibraryIdentity, resolveAuthorSlug, type DedupIdentity } from '@shared/dedup.js';
 import type { PaginatedResponse } from '@shared/schemas/common.js';
 import type { ImportListExclusionRow } from './types.js';
+import { applyPagination } from '../utils/db-helpers.js';
 
 /** What `recordExclusion` landed: `inserted` false means an existing row already covered the identity. */
 export interface ExclusionRecordResult {
@@ -66,19 +67,13 @@ export class ImportListExclusionService {
 
     // Second key because createdAt is a seconds-resolution default; without it a page boundary
     // can drop or repeat a row that shares its timestamp with the next one.
-    let query = this.db
+    const query = this.db
       .select()
       .from(importListExclusions)
-      .orderBy(desc(importListExclusions.createdAt), desc(importListExclusions.id));
+      .orderBy(desc(importListExclusions.createdAt), desc(importListExclusions.id))
+      .$dynamic();
 
-    if (pagination?.limit !== undefined) {
-      query = query.limit(pagination.limit) as typeof query;
-    }
-    if (pagination?.offset !== undefined) {
-      query = query.offset(pagination.offset) as typeof query;
-    }
-
-    const data = await query;
+    const data = await applyPagination(query, pagination);
     return { data, total };
   }
 

@@ -8,6 +8,7 @@ import { actionableEventTypes, type EventType, type EventSource } from '@shared/
 import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 import { WireOnce } from './wire-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { applyPagination } from '../utils/db-helpers.js';
 import type { BookEventRow, BookEventWithPath } from './types.js';
 
 export class EventHistoryServiceError extends Error {
@@ -111,21 +112,15 @@ export class EventHistoryService {
       .from(bookEvents)
       .where(where);
 
-    let query = this.db
+    const query = this.db
       .select(withCurrentBookPath())
       .from(bookEvents)
       .leftJoin(books, eq(bookEvents.bookId, books.id))
       .where(where)
-      .orderBy(desc(bookEvents.createdAt), desc(bookEvents.id));
+      .orderBy(desc(bookEvents.createdAt), desc(bookEvents.id))
+      .$dynamic();
 
-    if (pagination?.limit !== undefined) {
-      query = query.limit(pagination.limit) as typeof query;
-    }
-    if (pagination?.offset !== undefined) {
-      query = query.offset(pagination.offset) as typeof query;
-    }
-
-    const data = await query;
+    const data = await applyPagination(query, pagination);
     return { data, total };
   }
 
