@@ -889,6 +889,21 @@ describe('commitStagedImport', () => {
     vi.mocked(readdir).mockImplementation(async (p: unknown) => (map[p as string] ?? []) as never);
   }
 
+  const errno = (code: string, detail: string) => Object.assign(new Error(`${code}: ${detail}`), { code });
+
+  /** path.join yields backslashes on Windows; never compare a joined path verbatim. */
+  const normPath = (p: unknown): string => String(p).split('\\').join('/');
+
+  function calls(log: FastifyBaseLogger, level: 'warn' | 'debug'): unknown[][] {
+    return (log as unknown as Record<string, { mock: { calls: unknown[][] } }>)[level]!.mock.calls;
+  }
+
+  const closeWarns = (log: FastifyBaseLogger) =>
+    calls(log, 'warn').filter(([, message]) => message === 'Failed to close directory handle after fsync');
+
+  const fsyncDebugs = (log: FastifyBaseLogger) =>
+    calls(log, 'debug').filter(([, message]) => String(message).startsWith('Best-effort directory fsync failed'));
+
   it('same-path re-import: backs up old audio, moves staged files in, preserves cover, cleans siblings', async () => {
     const log = createMockLog();
     readdirByPath({
@@ -983,6 +998,63 @@ describe('commitStagedImport', () => {
     expect(rename).toHaveBeenCalledWith(join(target, 'old.mp3'), join(backup, 'old.mp3'));
     expect(rename).toHaveBeenCalledWith(join(staging, 'new.m4b'), join(target, 'new.m4b'));
     expect(close).toHaveBeenCalled();
+    expect(closeWarns(log)).toHaveLength(0);
+  });
+
+  it('a directory-handle close failure does NOT abort the commit — it warns and the marker is still removed (#2372)', async () => {
+    const log = createMockLog();
+    const marker = `${target}.import-commit-pending`;
+    readdirByPath({ [target]: [dirent('old.mp3')], [staging]: [dirent('new.m4b')] });
+    vi.mocked(open).mockResolvedValueOnce({
+      sync: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockRejectedValue(errno('EBADF', 'bad file descriptor')),
+    } as unknown as FileHandle);
+
+    await expect(
+      commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+    ).resolves.toBeUndefined();
+
+    const warns = closeWarns(log);
+    expect(warns).toHaveLength(1);
+    const [payload] = warns[0] as [Record<string, unknown>, string];
+    const logged = payload.error as Record<string, unknown>;
+    // `objectContaining({ message })` cannot tell a serialized error from a raw one — message and
+    // stack are non-enumerable own properties both matchers read straight through.
+    expect(logged).not.toBeInstanceOf(Error);
+    expect(logged.type).toBe('Error');
+    expect(logged.code).toBe('EBADF');
+    expect(normPath(payload.dirPath)).toBe('/library/Author');
+    expect(rm).toHaveBeenCalledWith(marker, { force: true });
+  });
+
+  it('a failing fsync and a failing close compose — both are logged, neither suppresses the other (#2372)', async () => {
+    const log = createMockLog();
+    readdirByPath({ [target]: [dirent('old.mp3')], [staging]: [dirent('new.m4b')] });
+    vi.mocked(open).mockResolvedValueOnce({
+      sync: vi.fn().mockRejectedValue(errno('EINVAL', 'fsync on dir')),
+      close: vi.fn().mockRejectedValue(errno('EBADF', 'bad file descriptor')),
+    } as unknown as FileHandle);
+
+    await expect(
+      commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+    ).resolves.toBeUndefined();
+
+    expect(fsyncDebugs(log)).toHaveLength(1);
+    expect(closeWarns(log)).toHaveLength(1);
+    expect(rename).toHaveBeenCalledWith(join(staging, 'new.m4b'), join(target, 'new.m4b'));
+  });
+
+  it('an open failure leaves nothing to close — fsync is logged, the close path never runs (#2372)', async () => {
+    const log = createMockLog();
+    readdirByPath({ [target]: [dirent('old.mp3')], [staging]: [dirent('new.m4b')] });
+    vi.mocked(open).mockRejectedValueOnce(errno('ENOENT', 'no such file or directory'));
+
+    await expect(
+      commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+    ).resolves.toBeUndefined();
+
+    expect(fsyncDebugs(log)).toHaveLength(1);
+    expect(closeWarns(log)).toHaveLength(0);
   });
 
   it('first import (empty target): never writes the commit-pending marker (#1290)', async () => {

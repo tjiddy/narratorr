@@ -351,7 +351,16 @@ async function syncDirectoryEntry(dirPath: string, log: FastifyBaseLogger): Prom
   } catch (syncError: unknown) {
     log.debug({ error: serializeError(syncError), dirPath }, 'Best-effort directory fsync failed — file flush already covers durability');
   } finally {
-    await handle?.close().catch(() => {});
+    // warn, not debug: a close can only fail after open() succeeded, so unlike the fsync above it is
+    // never routine — it leaks a descriptor. Containing it here keeps a rejection from escaping the
+    // finally and replacing the commit's own outcome.
+    if (handle) {
+      try {
+        await handle.close();
+      } catch (closeError: unknown) {
+        log.warn({ error: serializeError(closeError), dirPath }, 'Failed to close directory handle after fsync');
+      }
+    }
   }
 }
 
