@@ -2,12 +2,12 @@ import { useMemo, useState } from 'react';
 import { TagIcon } from '@/components/icons';
 import { useSettingsForm } from '@/hooks/useSettingsForm';
 import { useTokenInsertion, type SetFormatValue } from '@/hooks/useTokenInsertion';
-import { SAMPLE_EDITION, SAMPLE_TOKENS, SAMPLE_TOKENS_MULTIFILE, SAMPLE_TOKENS_NO_SERIES } from '@/lib/naming-samples';
+import { useNamingPreviews } from '@/hooks/useNamingPreviews';
 import { NamingTokenModal } from '@/components/settings/NamingTokenModal';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { SettingsRow, SettingsTable } from '@/components/settings/SettingsRow';
 import { FormatField, FormatFieldHeader } from './NamingFormatField';
-import { renderTemplate, renderFilename, NAMING_PRESETS, detectPreset, FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP, TOKEN_PATTERN_SOURCE, templateHasToken, composeEditionSuffixLeaf, sanitizeEditionDiscriminator } from '@core/utils/index.js';
+import { NAMING_PRESETS, detectPreset, FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP, TOKEN_PATTERN_SOURCE } from '@core/utils/index.js';
 import { DEFAULT_SETTINGS, namingSeparatorValues, namingCaseValues, namingFormSchema, hasTitle, hasAuthor, FOLDER_TITLE_MSG, AUTHOR_ADVISORY_MSG, type AppSettings } from '@shared/schemas.js';
 import type { NamingSeparator, NamingCase } from '@shared/schemas/settings/library.js';
 import type { NamingOptions } from '@core/utils/naming.js';
@@ -56,36 +56,6 @@ function createFormatKeyDownHandler(
       requestAnimationFrame(() => { input.setSelectionRange(pos, pos); input.focus(); });
     }
   };
-}
-
-function useNamingPreviews(folderFormat: string | undefined, fileFormat: string | undefined, namingOptions: NamingOptions) {
-  const folderPreview = useMemo(() => folderFormat ? renderTemplate(folderFormat, SAMPLE_TOKENS, namingOptions) : '', [folderFormat, namingOptions]);
-  const folderPreviewNoSeries = useMemo(() => folderFormat ? renderTemplate(folderFormat, SAMPLE_TOKENS_NO_SERIES, namingOptions) : '', [folderFormat, namingOptions]);
-  // Match buildTargetPath: explicit {edition} renders in place; otherwise suffix the folder leaf.
-  const folderPreviewMultiEdition = useMemo(() => {
-    if (!folderFormat) return '';
-    if (templateHasToken(folderFormat, 'edition')) {
-      return renderTemplate(folderFormat, { ...SAMPLE_TOKENS, edition: SAMPLE_EDITION }, namingOptions);
-    }
-    const discriminator = sanitizeEditionDiscriminator(SAMPLE_EDITION);
-    if (!discriminator) return folderPreview;
-    const segments = folderPreview.split('/');
-    segments[segments.length - 1] = composeEditionSuffixLeaf(segments[segments.length - 1] ?? '', discriminator);
-    return segments.join('/');
-  }, [folderFormat, namingOptions, folderPreview]);
-  const filePreview = useMemo(() => fileFormat ? renderFilename(fileFormat, SAMPLE_TOKENS, namingOptions) : '', [fileFormat, namingOptions]);
-  const filePreviewNoSeries = useMemo(() => fileFormat ? renderFilename(fileFormat, SAMPLE_TOKENS_NO_SERIES, namingOptions) : '', [fileFormat, namingOptions]);
-  const filePreviewMultiFile = useMemo(() => fileFormat ? renderFilename(fileFormat, SAMPLE_TOKENS_MULTIFILE, namingOptions) : '', [fileFormat, namingOptions]);
-  // Files never auto-append edition, so render it only when the template contains the token.
-  const filePreviewEdition = useMemo((): { hasToken: boolean; rendered: string } => {
-    const hasToken = !!fileFormat && templateHasToken(fileFormat, 'edition');
-    return {
-      hasToken,
-      rendered: hasToken ? renderFilename(fileFormat!, { ...SAMPLE_TOKENS, edition: SAMPLE_EDITION }, namingOptions) : '',
-    };
-  }, [fileFormat, namingOptions]);
-
-  return { folderPreview, folderPreviewNoSeries, folderPreviewMultiEdition, filePreview, filePreviewNoSeries, filePreviewMultiFile, filePreviewEdition };
 }
 
 const CARD_LABEL = 'File Naming';
