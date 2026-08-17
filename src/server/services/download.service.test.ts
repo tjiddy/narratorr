@@ -1648,14 +1648,19 @@ describe('DownloadService', () => {
       expect(result.total).toBe(10);
     });
 
-    it('combines section with pagination', async () => {
-      db.select
-        .mockReturnValueOnce(mockDbChain([{ value: 20 }]))
-        .mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: mockBook }]));
+    it('combines section with pagination, windowing the data query but not the count', async () => {
+      const countChain = mockDbChain([{ value: 20 }]);
+      const dataChain = mockDbChain([{ download: mockDownload, book: mockBook }]);
+      db.select.mockReturnValueOnce(countChain).mockReturnValueOnce(dataChain);
 
-      const result = await service.getAll(undefined, { limit: 10, offset: 0 }, 'queue');
+      const result = await service.getAll(undefined, { limit: 10, offset: 5 }, 'queue');
+
       expect(result.total).toBe(20);
       expect(result.data).toHaveLength(1);
+      expect(dataChain.limit).toHaveBeenCalledWith(10);
+      expect(dataChain.offset).toHaveBeenCalledWith(5);
+      expect(countChain.limit).not.toHaveBeenCalled();
+      expect(countChain.offset).not.toHaveBeenCalled();
     });
   });
 
