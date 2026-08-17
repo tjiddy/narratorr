@@ -72,9 +72,6 @@ export class WebhookNotifier implements NotifierAdapter {
 
       return { success: true };
     } catch (error: unknown) {
-      if (error instanceof DOMException && error.name === 'TimeoutError') {
-        return { success: false, message: 'Request timed out', failure: describeTransportError(error) };
-      }
       return { success: false, message: getErrorMessage(error), failure: describeTransportError(error) };
     }
   }
