@@ -26,6 +26,7 @@ import { recordDownloadFailedEvent } from '../utils/download-side-effects.js';
 import { applyPathMapping } from '@core/utils/path-mapping.js';
 import { join } from 'node:path';
 import { serializeError } from '../utils/serialize-error.js';
+import { isWithinMissingItemGrace } from '../utils/download-grace.js';
 
 export interface MonitorRetryDeps {
   blacklistService: BlacklistService;
@@ -70,6 +71,11 @@ export async function monitorDownloads(
 
       const item = await adapter.getDownload(download.externalId);
       if (!item) {
+        // The row keeps its polled status, so the next cycle re-polls and eventually fails it.
+        if (isWithinMissingItemGrace(download.addedAt, Date.now())) {
+          log.debug({ id: download.id, addedAt: download.addedAt }, 'Download not yet in client — within add grace window');
+          continue;
+        }
         await handleMissingItem(db, download, notifierService, log, retryDeps, eventHistory, broadcaster);
         continue;
       }
