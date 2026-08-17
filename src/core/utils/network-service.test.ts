@@ -236,6 +236,25 @@ describe('fetchWithTimeout', () => {
       vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Some other error'));
       await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow('Some other error');
     });
+
+    // #2317: the seven fetch notifiers deleted their `error instanceof DOMException` arms on
+    // the strength of this invariant. If a rewrite of mapNetworkError ever lets a raw
+    // DOMException back onto the throw path, this reds instead of silently resurrecting an
+    // unhandled case in seven adapters. Both names are covered because mapNetworkError
+    // collapses them — the deleted branch only ever tested TimeoutError.
+    it.each([
+      ['TimeoutError', 'The operation was aborted due to timeout'],
+      ['AbortError', 'The operation was aborted'],
+    ])('rethrows a %s DOMException as a plain coded Error, never a DOMException', async (name, message) => {
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(new DOMException(message, name));
+
+      const thrown: unknown = await fetchWithTimeout('https://example.com', {}, 5000).catch((e: unknown) => e);
+
+      expect(thrown).not.toBeInstanceOf(DOMException);
+      expect(thrown).toBeInstanceOf(Error);
+      expect((thrown as Error).message).toBe('Request timed out');
+      expect((thrown as Error & { code?: unknown }).code).toBe('ETIMEDOUT');
+    });
   });
 });
 

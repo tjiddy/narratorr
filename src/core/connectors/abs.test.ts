@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { AudiobookshelfConnector } from './abs.js';
@@ -19,7 +19,12 @@ const LIBRARIES_BODY = {
 const server = setupServer();
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
-afterEach(() => server.resetHandlers());
+afterEach(() => {
+  server.resetHandlers();
+  // The #2317 cases spy on globalThis.fetch directly. The spy is installed after
+  // server.listen(), so restoring it hands MSW's patched fetch back to the next test.
+  vi.restoreAllMocks();
+});
 afterAll(() => server.close());
 
 function makeConnector(libraryId = 'lib-1') {
@@ -249,6 +254,48 @@ describe('AudiobookshelfConnector', () => {
       server.use(http.post(SCAN_URL, () => HttpResponse.json({}, { status })));
       const error = await reject(() => makeConnector().refreshImport(BATCH, SIGNAL));
       expect(error.retryable).toBe(true);
+    });
+  });
+
+  // Pinned when connectionError moved into the shared connectorConnectionError (#2317). The
+  // pre-existing coverage asserts fieldErrors.baseUrl via expect.any(String), which cannot see
+  // a reworded field error or a dropped `Connection failed: ` prefix. Both rows stub
+  // globalThis.fetch rather than adding an MSW handler: HttpResponse.error() carries no
+  // transport code, so it could only ever reach mapNetworkError's pass-through arm.
+  describe('connection failure — exact copy and unconditional verdict (#2317 AC10)', () => {
+    async function rejectionFrom(run: () => Promise<unknown>): Promise<ConnectorRequestError> {
+      try {
+        await run();
+      } catch (error: unknown) {
+        return error as ConnectorRequestError;
+      }
+      throw new Error('expected the call to reject');
+    }
+
+    function rejectFetchWith(message: string, code: string): void {
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(Object.assign(new Error(message), { code }));
+    }
+
+    it('reports the mapped transport message behind the Connection failed prefix', async () => {
+      rejectFetchWith('connect ECONNREFUSED 127.0.0.1:8080', 'ECONNREFUSED');
+
+      const error = await rejectionFrom(() => makeConnector().listTargets());
+
+      expect(error.message).toBe('Connection failed: Connection refused on port 8080');
+      expect(error.fieldErrors).toEqual({ baseUrl: 'Could not connect to server' });
+      expect(error.retryable).toBe(true);
+    });
+
+    // A connector that never reached the server has learned nothing about whether a retry
+    // helps, so a terminal transport code must NOT flip the verdict. Routing this path
+    // through classifyFailure is the behaviour change #2312 AC1 excluded.
+    it('stays retryable for a transport code classifyFailure treats as terminal', async () => {
+      rejectFetchWith('authentication rejected', 'EAUTH');
+
+      const error = await rejectionFrom(() => makeConnector().refreshImport(BATCH, SIGNAL));
+
+      expect(error.retryable).toBe(true);
+      expect(error.fieldErrors).toEqual({ baseUrl: 'Could not connect to server' });
     });
   });
 });

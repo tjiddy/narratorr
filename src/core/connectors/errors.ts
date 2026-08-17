@@ -1,5 +1,6 @@
 import type { ConnectorFieldErrors } from './types.js';
 import { classifyFailure } from '../utils/failure-classification.js';
+import { getErrorMessage } from '@shared/error-message.js';
 
 // HTTP/transport failure from listTargets or refreshImport. retryable drives service
 // retries; routes and test() translate fieldErrors into results.
@@ -51,4 +52,17 @@ export function connectorStatusError(
     status >= 500 ? `Server error (HTTP ${status})` : `Request failed (HTTP ${status})`,
     { retryable },
   );
+}
+
+/**
+ * The connector's verdict for a request that never completed (#2317). Deliberately NOT routed
+ * through `classifyFailure`: a transport error carrying a terminal code (EAUTH, ETLS) would
+ * then be reported non-retryable, and a connector that could not reach the server has learned
+ * nothing about whether retrying will help. `retryable` stays unconditionally true.
+ */
+export function connectorConnectionError(error: unknown): ConnectorRequestError {
+  return new ConnectorRequestError(`Connection failed: ${getErrorMessage(error)}`, {
+    retryable: true,
+    fieldErrors: { baseUrl: 'Could not connect to server' },
+  });
 }
