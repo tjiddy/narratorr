@@ -9,6 +9,7 @@ import type { SettingsService } from './settings.service.js';
 import type { RetryBudget } from './retry-budget.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { buildNarratorPriority, applyMultiPartFilterAndRank, buildSearchFilterOptions, filterBlacklistedResults } from './search-pipeline.js';
+import { describeBlacklistEmptiedSet, BLACKLIST_EMPTIED_MESSAGE } from './search-drop-summary.js';
 import { buildQueryLadder, runQueryLadder, type LadderRun } from './search-query-ladder.js';
 import { applyUnsatisfiedLimitGate } from './unsatisfied-limit-gate.js';
 import { createAggregateExecutor } from './search-ladder-execution.js';
@@ -142,6 +143,10 @@ export async function retrySearch(
     }
 
     const filteredResults = await filterBlacklistedResults(rawResults, blacklistService, log);
+    // Report, don't return: the path still falls through to ranking so its own no-candidate line fires.
+    if (filteredResults.length === 0) {
+      log.info({ bookId, title: book.title, attempt, ...describeBlacklistEmptiedSet(rawResults.length, rawResults.length) }, BLACKLIST_EMPTIED_MESSAGE);
+    }
 
     // Permit configured private indexers and cap auto-grab phase-2 NZB fetches.
     await enrichUsenetLanguages(filteredResults, log, await indexerService.getLanAllowlist(), { maxPhase2Fetches: AUTO_GRAB_PHASE2_CAP });

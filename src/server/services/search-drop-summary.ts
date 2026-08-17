@@ -46,6 +46,18 @@ export function withBlacklistDrops(
   return summarizeDrops(counts, options);
 }
 
+/** Parallels 'All search results removed by quality filters' so one grep family covers both signals. */
+export const BLACKLIST_EMPTIED_MESSAGE = 'All search results removed by the blacklist';
+
+/**
+ * Log fields for a set the blacklist gate emptied, for the three paths that return before the quality
+ * gates ever see it. Delegates to describeEmptiedSet so the key set cannot drift from that line.
+ */
+export function describeBlacklistEmptiedSet(inputCount: number, blacklistedCount: number): Record<string, unknown> {
+  const summary: SearchDropSummary = { total: blacklistedCount, reasons: [{ reason: 'blacklist-match', count: blacklistedCount }] };
+  return describeEmptiedSet(summary, inputCount);
+}
+
 /** Log fields for a result set the filters emptied; the threshold key follows the AC4 rule. */
 export function describeEmptiedSet(summary: SearchDropSummary, inputCount: number): Record<string, unknown> {
   const dominant = summary.reasons[0];
