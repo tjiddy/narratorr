@@ -66,6 +66,18 @@ export type DownloadClientSettingsMap = {
 
 export type DownloadClientSettings = DownloadClientSettingsMap[DownloadClientType];
 
+/**
+ * The single home for the category decision (#2433). Takes an unvalidated settings record too —
+ * download.service reads the decrypted row without a Zod parse, so a non-string must yield
+ * undefined rather than throw.
+ */
+export function clientCategory(
+  settings: Record<string, unknown> | DownloadClientSettings | null | undefined,
+): string | undefined {
+  const raw = (settings as Record<string, unknown> | null | undefined)?.['category'];
+  return typeof raw === 'string' ? raw.trim() || undefined : undefined;
+}
+
 export const downloadClientSettingsSchemas: Record<DownloadClientType, z.ZodTypeAny> = {
   qbittorrent: qbittorrentSettingsSchema,
   transmission: transmissionSettingsSchema,

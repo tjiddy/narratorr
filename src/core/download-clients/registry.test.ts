@@ -108,8 +108,10 @@ describe('Download Client ADAPTER_FACTORIES', () => {
         http.post(`${BASE_URL}/api/v2/auth/login`, () => new HttpResponse('Ok.', {
           headers: { 'Set-Cookie': 'SID=test-session-id; path=/' },
         })),
+        // FIRST scan request only: since #2433 a configured category falls through to an unscoped
+        // second scan, and it is the first one that carries the forwarding decision under test.
         http.get(`${BASE_URL}/api/v2/torrents/info`, ({ request }) => {
-          if (!new URL(request.url).searchParams.has('hashes')) fallbackUrl = request.url;
+          if (!new URL(request.url).searchParams.has('hashes')) fallbackUrl ??= request.url;
           return HttpResponse.json([]);
         }),
       );
