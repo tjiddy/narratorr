@@ -19,6 +19,10 @@ import { generateOpf, sidecarLockKey, writeOpfSidecar, type OpfWriteOutcome } fr
 import { refreshOpfForBook } from './opf-refresh.js';
 import { hasPendingPathWrite, withPathWriteLock } from './path-write-lock.js';
 import { reconcileBookSidecars } from '../services/bulk-sidecar-reconcile.js';
+
+/** The reconcile re-reads the row inside its section (#2369 F2); this is that read. */
+const rowDb = (path: string): Db =>
+  ({ select: () => ({ from: () => ({ where: () => ({ limit: () => Promise.resolve([{ path, coverUrl: null }]) }) }) }) }) as unknown as Db;
 import { NARRATORR_OPF_MARKER, OPF_BACKUP_FILENAME, OPF_FILENAME } from '@core/utils/opf-regex.js';
 import type { Db } from '@db/index.js';
 import type { BookService, BookWithAuthor } from '../services/book.service.js';
@@ -532,7 +536,7 @@ describe('writeOpfSidecar — type-aware ownership (#2297 AC6)', () => {
     })).toBe('skipped');
     expect(await reconcileBookSidecars({
       bookId: 1, title: 'Mort', bookFolder: folder, coverUrl: null,
-      bookService: makeBookService(book), db: {} as Db, log: makeLog(),
+      bookService: makeBookService(book), db: rowDb(folder), log: makeLog(),
     })).toEqual({ failed: false });
 
     expect((await actualFs.lstat(opfPath)).isSymbolicLink()).toBe(true);
@@ -971,7 +975,7 @@ describe('the divergence guard is opt-in at the call site (#2297 AC9)', () => {
 
     const outcome = await reconcileBookSidecars({
       bookId: 1, title: 'Mort', bookFolder: folder, coverUrl: null,
-      bookService: makeBookService(book), db: {} as Db, log: makeLog(),
+      bookService: makeBookService(book), db: rowDb(folder), log: makeLog(),
     });
 
     expect(outcome).toEqual({ failed: false });

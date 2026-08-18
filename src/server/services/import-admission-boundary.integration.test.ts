@@ -12,7 +12,7 @@ import type { DownloadClientService } from './download-client.service.js';
 import type { BookImportService } from './book-import.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EnrichmentDeps } from './enrichment-orchestration.helpers.js';
-import type { ImportAdapterContext } from './import-adapters/types.js';
+import type { ImportAdapterContext, ImportJob } from './import-adapters/types.js';
 
 const actualFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
 
@@ -167,7 +167,7 @@ describe('both import homes serialize behind other mutators (#2369 AC6)', () => 
       .values({
         publicId: generatePublicId('dl'),
         bookId, indexerId: null, downloadClientId: client!.id, externalId: 'abc',
-        title: 'Wanderer', clientStatus: 'completed', pipelineStage: 'awaiting_import',
+        title: 'Wanderer', clientStatus: 'completed', pipelineStage: 'idle',
         completedAt: new Date(),
       })
       .returning();
@@ -213,7 +213,7 @@ describe('both import homes serialize behind other mutators (#2369 AC6)', () => 
     };
   };
 
-  const manualJob = (bookId: number, title: string) => ({
+  const manualJob = (bookId: number, title: string): ImportJob => inject<ImportJob>({
     id: 1,
     bookId,
     metadata: JSON.stringify({ path: source, title, authorName: 'Unknown Author', mode: 'copy' as const }),
@@ -245,7 +245,7 @@ describe('both import homes serialize behind other mutators (#2369 AC6)', () => 
       await settle();
 
       // Queued on admission: the import has not even claimed the pipeline, let alone staged bytes.
-      expect(await downloadStage(downloadId)).toBe('awaiting_import');
+      expect(await downloadStage(downloadId)).toBe('idle');
       expect(await exists(`${target}.import-staging`)).toBe(false);
       expect(norm((await bookRow(bookId))?.path)).toBe(norm(join(root, 'Wrong', 'Old')));
 
@@ -278,7 +278,7 @@ describe('both import homes serialize behind other mutators (#2369 AC6)', () => 
 
       const importRun = importService().importDownload(downloadId).catch((e: unknown) => e);
       await settle();
-      expect(await downloadStage(downloadId)).toBe('awaiting_import');
+      expect(await downloadStage(downloadId)).toBe('idle');
 
       parked.resolve();
       await holder;
