@@ -4999,16 +4999,17 @@ describe('gate interaction with the ABB metadata fields (#2365)', () => {
  * rework relies on, and each is paired with a control that a "keeps everything" regression fails.
  */
 describe('#2420 — the ABB result shape through the pipeline', () => {
-  const ABB_GUID = 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/';
+  const ABB_DETAILS_URL = 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/';
+  const ABB_GUID = 'abb:/audio-books/murder-in-the-new-forest/';
 
-  /** A post-#2420 ABB row: sentinel download URL, details-URL guid, no hash, peers or size. */
+  /** A post-#2420 ABB row: sentinel download URL, path-derived guid, no hash, peers or size. */
   function abbResult(overrides: MakeResultOverrides = {}): SearchResult {
     return makeResult({
       title: 'Murder in the New Forest',
       indexer: 'AudioBookBay',
       protocol: 'torrent',
       guid: ABB_GUID,
-      downloadUrl: `abb-details://${ABB_GUID}`,
+      downloadUrl: `abb-details://${ABB_DETAILS_URL}`,
       infoHash: undefined,
       seeders: undefined,
       leechers: undefined,
@@ -5130,7 +5131,7 @@ describe('#2420 — the ABB result shape through the pipeline', () => {
     const indexerSearchService = {
       searchAllWithStatus: vi.fn().mockResolvedValue(searchStatus([
         abbResult({ title: 'Best Match' }),
-        abbResult({ title: 'Runner Up', guid: `${ABB_GUID}other/`, downloadUrl: `abb-details://${ABB_GUID}other/` }),
+        abbResult({ title: 'Runner Up', guid: `${ABB_GUID}other/`, downloadUrl: `abb-details://${ABB_DETAILS_URL}other/` }),
       ])),
     } as unknown as IndexerSearchService;
     const resolveFailure = new Error('ABB detail fetch failed for https://audiobookbay.test/audio-books/x/: HTTP 500');

@@ -157,6 +157,70 @@ describe('#2420 — the real ABB adapter is actually paced', () => {
   });
 
   /**
+   * #2434 — the pacing guarantee under raw markup that disagrees with the configured origin.
+   *
+   * `abbThrottleKey` keys on `host:port`, so `http://www.<host>/x` and `https://<host>/x` are two
+   * queues, not one — and that is deliberate (widening the key would merge separately configured
+   * destinations). The convergence is bought upstream instead: every ABB request URL is composed
+   * from `baseUrl`, at parse time and at grab time, so the two land on one key by construction.
+   *
+   * The observation point must be CONCURRENT. Two sequential requests pass against a broken key,
+   * because the second one's queue is empty either way; only two in flight at once can see it.
+   *
+   * Reds against a reverted rewrite: the grab then fetches `http://www.<host>/...`, keys
+   * `www.audiobookbay.test:80` against the search's `audiobookbay.test:443`, and both dispatch
+   * together — the gap collapses to ~0 and the tripwire below records a request on the alias.
+   */
+  describe('raw markup that disagrees with the configured origin still shares one floor', () => {
+    const ALIASED_DETAILS_URL = `http://www.${ABB_HOST}/audio-books/murder-in-the-new-forest/`;
+    const ALIASED_SEARCH_HTML = `<html><body><div class="post"><div class="postTitle">
+      <h2><a href="${ALIASED_DETAILS_URL}" rel="bookmark">Murder in the New Forest</a></h2>
+    </div></div></body></html>`;
+
+    /**
+     * One wildcard handler discriminating on `request.url`, not two host-specific ones: MSW's path
+     * matching is case-insensitive and last-registered wins, so two handlers cannot separate two
+     * spellings of the same path.
+     */
+    function watchEveryHost(): { urls: string[] } {
+      const urls: string[] = [];
+      server.use(http.get('*', ({ request }) => {
+        urls.push(request.url);
+        const detail = new URL(request.url).pathname.startsWith('/audio-books/');
+        stamp(detail ? 'detail' : 'search');
+        return new HttpResponse(detail ? DETAIL_HTML : ALIASED_SEARCH_HTML, {
+          headers: { 'Content-Type': 'text/html' },
+        });
+      }));
+      return { urls };
+    }
+
+    it('spaces a search and a concurrent grab of its own aliased row by the full floor', async () => {
+      await warmFetchPath();
+      const seen = watchEveryHost();
+      const indexer = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 1 });
+
+      // Concurrent, and the sentinel carries the alias exactly as a row scraped from this markup
+      // would have persisted it.
+      const [{ results }] = await Promise.all([
+        indexer.search('murder'),
+        indexer.resolveDownloadUrl({
+          downloadUrl: abbDetailsSentinel(ALIASED_DETAILS_URL), protocol: 'torrent', isFreeleech: false,
+        }),
+      ]);
+
+      expect(dispatched.map((d) => d.label)).toEqual(['search', 'detail']);
+      expect(gapBetween('search', 'detail')).toBeGreaterThanOrEqual(INTERVAL - TOLERANCE);
+      // Nothing reached the alias, and the row's own identity is host-independent.
+      expect(seen.urls.every((u) => u.startsWith(ABB_BASE))).toBe(true);
+      expect(results[0]).toMatchObject({
+        guid: 'abb:/audio-books/murder-in-the-new-forest/',
+        detailsUrl: DETAILS_URL,
+      });
+    });
+  });
+
+  /**
    * The finding this block exists for. A pacer that runs BEFORE the solver slot is not a pacer:
    * two requests spaced 6.1s apart can both stall behind a saturated pool and be admitted together
    * the moment slots free — the ban-producing burst, reintroduced on exactly the transport an

@@ -30,6 +30,8 @@ const ABB_BASE = `https://${ABB_HOST}`;
 const MURDER_SLUG = 'murder-in-the-new-forest';
 const DETAILS_URL = `${ABB_BASE}/audio-books/${MURDER_SLUG}/`;
 const SENTINEL = `${ABB_DETAILS_SENTINEL_PREFIX}${DETAILS_URL}`;
+/** #2434 — the persisted identity is path-derived, so a mirror hop cannot invalidate it. */
+const DETAILS_GUID = `abb:/audio-books/${MURDER_SLUG}/`;
 const FIXTURE_HASH = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0';
 
 const SEARCH_HTML = `<html><body><div class="post"><div class="postTitle">
@@ -135,7 +137,7 @@ describe('#2420 — an ABB grab resolves its magnet at download time', () => {
     expect(row.infoHash).toBe(FIXTURE_HASH);
     // AC13: the guid reaches persistence with no explicit override, so the later blacklist entry
     // has something an ABB search result can still be matched on.
-    expect(row.guid).toBe(DETAILS_URL);
+    expect(row.guid).toBe(DETAILS_GUID);
   });
 
   it('fails the grab when the resolve fails, sending nothing and inserting nothing', async () => {
@@ -148,7 +150,7 @@ describe('#2420 — an ABB grab resolves its magnet at download time', () => {
       protocol: 'torrent',
       bookId: 1,
       indexerId: 7,
-      guid: DETAILS_URL,
+      guid: DETAILS_GUID,
     }).catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(IndexerError);

@@ -416,7 +416,7 @@ describe('ReleaseCard', () => {
       indexer: 'AudioBookBay',
       protocol: 'torrent',
       downloadUrl: 'abb-details://https://audiobookbay.test/audio-books/murder-in-the-new-forest/',
-      guid: 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/',
+      guid: 'abb:/audio-books/murder-in-the-new-forest/',
       detailsUrl: 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/',
       author: 'Carol Cole',
     };
@@ -442,9 +442,9 @@ describe('ReleaseCard', () => {
       expect(screen.getByText(/Murder in the New Forest/)).toBeInTheDocument();
     });
 
-    // AC7 — the previously-grabbed badge now keys on the details URL, since that is what an ABB
-    // grab persists as `books.lastGrabGuid`.
-    it('marks it as in library when lastGrabGuid is the details URL', () => {
+    // AC7 — the previously-grabbed badge keys on the guid an ABB grab persists as
+    // `books.lastGrabGuid`, which since #2434 is path-derived and survives a mirror hop.
+    it('marks it as in library when lastGrabGuid is the path-derived guid', () => {
       mockCalculateQuality.mockReturnValue(null);
       renderWithProviders(
         <ReleaseCard {...defaultProps} result={abbResult} lastGrabGuid={abbResult.guid} />,

@@ -50,6 +50,8 @@ vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
 const ABB_HOST = 'audiobookbay.test';
 const ABB_BASE = `https://${ABB_HOST}`;
 const DETAILS_URL = `${ABB_BASE}/audio-books/murder-in-the-new-forest/`;
+/** #2434 — path-derived, so the entry survives a mirror hop; the sentinel stays an absolute URL. */
+const DETAILS_GUID = 'abb:/audio-books/murder-in-the-new-forest/';
 const FIXTURE_HASH = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0';
 const BOOK_TITLE = 'Murder in the New Forest';
 
@@ -167,7 +169,7 @@ describe('#2420 — an RSS-origin ABB grab round-trips its guid through the blac
     return { result, grab: orchestrator.grab as Mock };
   }
 
-  it('builds the RSS payload with the details-URL guid and no explicit override', async () => {
+  it('builds the RSS payload with the path-derived guid and no explicit override', async () => {
     const feed = await abbFeed();
     expect(feed[0]!.downloadUrl).toBe(`abb-details://${DETAILS_URL}`);
     expect(feed[0]).not.toHaveProperty('infoHash');
@@ -175,7 +177,7 @@ describe('#2420 — an RSS-origin ABB grab round-trips its guid through the blac
     const { grab } = await runRss(feed);
 
     // `rss.ts` passes only `{ source: 'rss' }`; the guid can only have come from the shared helper.
-    expect(grab).toHaveBeenCalledWith(expect.objectContaining({ source: 'rss', guid: DETAILS_URL }));
+    expect(grab).toHaveBeenCalledWith(expect.objectContaining({ source: 'rss', guid: DETAILS_GUID }));
   });
 
   /**
@@ -183,7 +185,7 @@ describe('#2420 — an RSS-origin ABB grab round-trips its guid through the blac
    * payload-shape assertion short-circuits the run and leaves persistence, blacklist creation and
    * the next-pass gate unexercised, so a break in any of those would hide behind it.
    */
-  it('persists the details-URL guid, blacklists on it, and drops the same release next pass', async () => {
+  it('persists the path-derived guid, blacklists on it, and drops the same release next pass', async () => {
     // --- pass one: RSS grabs the sentinel-bearing release ---
     const first = await runRss(await abbFeed());
     expect(first.result.grabbed).toBe(1);
@@ -192,7 +194,7 @@ describe('#2420 — an RSS-origin ABB grab round-trips its guid through the blac
     const artifact = clientAdapter.addDownload.mock.calls[0]![0] as { type: string; infoHash: string };
     expect(artifact.type).toBe('magnet-uri');
     const [row] = await db.select().from(downloads);
-    expect(row!.guid).toBe(DETAILS_URL);
+    expect(row!.guid).toBe(DETAILS_GUID);
     expect(row!.infoHash).toBe(FIXTURE_HASH);
 
     // --- the operator marks it failed: the real bad_quality path writes the blacklist entry ---
@@ -204,7 +206,7 @@ describe('#2420 — an RSS-origin ABB grab round-trips its guid through the blac
     await eventHistory.markFailed(event!.id);
 
     const [entry] = await db.select().from(blacklist);
-    expect(entry!.guid).toBe(DETAILS_URL);
+    expect(entry!.guid).toBe(DETAILS_GUID);
     expect(entry!.reason).toBe('bad_quality');
 
     // --- pass two: the same feed is now dropped by the real blacklist gate ---
@@ -230,6 +232,51 @@ describe('#2420 — an RSS-origin ABB grab round-trips its guid through the blac
 
     expect(second.result.matched).toBe(1);
     expect(second.result.grabbed).toBe(1);
+  });
+
+  /**
+   * #2434 — the test problem 1 exists for. ABB's mirrors rotate, and a mirror hop is an operator
+   * config edit: a host-bearing guid would change with it, every stored blacklist entry would stop
+   * matching, and every known-bad release would silently re-enter grab eligibility on the one
+   * indexer where a wasted grab costs a paced fetch against a ban-sensitive site.
+   *
+   * Reds against a host-bearing guid: the mirror's feed then carries `https://<host B>/...`, the
+   * entry written under host A no longer matches, and pass two re-grabs the release.
+   */
+  it('keeps a blacklist entry matching after the operator reconfigures ABB onto a different mirror', async () => {
+    const MIRROR_HOST = 'audiobookbay.mirror';
+    const MIRROR_BASE = `https://${MIRROR_HOST}`;
+
+    // --- pass one on host A: grab, fail, blacklist ---
+    expect((await runRss(await abbFeed())).result.grabbed).toBe(1);
+    const [row] = await db.select().from(downloads);
+    const [event] = await db.insert(bookEvents).values({
+      downloadId: row!.id, bookTitle: BOOK_TITLE, eventType: 'grabbed', source: 'auto',
+    }).returning();
+    await eventHistory.markFailed(event!.id);
+    expect((await db.select().from(blacklist))[0]!.guid).toBe(DETAILS_GUID);
+
+    // The book's active download is what the duplicate guard keys on; clearing it leaves the
+    // blacklist gate as the only thing that can stop pass two.
+    await db.delete(downloads).where(eq(downloads.bookId, bookId));
+
+    // --- the operator moves to mirror B, which serves the same paths ---
+    server.use(
+      http.get(`${MIRROR_BASE}/`, () => new HttpResponse(SEARCH_HTML, { headers: { 'Content-Type': 'text/html' } })),
+      http.get(`${MIRROR_BASE}/audio-books/:slug/`, () => new HttpResponse(DETAIL_HTML, { headers: { 'Content-Type': 'text/html' } })),
+    );
+    const mirror = new AudioBookBayIndexer({ hostname: MIRROR_HOST, pageLimit: 1 });
+    const mirrorFeed = (await mirror.search(BOOK_TITLE)).results.map((r) => ({ ...r, indexerId: 7 }));
+
+    // The row genuinely came off the new host — otherwise the drop below proves nothing about hops.
+    expect(mirrorFeed[0]!.downloadUrl).toBe(`abb-details://${MIRROR_BASE}/audio-books/murder-in-the-new-forest/`);
+    expect(mirrorFeed[0]!.guid).toBe(DETAILS_GUID);
+
+    const second = await runRss(mirrorFeed);
+
+    expect(second.result.matched).toBe(0);
+    expect(second.result.grabbed).toBe(0);
+    expect(second.grab).not.toHaveBeenCalled();
   });
 
   // The identity the entry is keyed on must be ABB's search-time one. A hash-only entry — what a
