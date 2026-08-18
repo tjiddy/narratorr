@@ -255,7 +255,8 @@ function scheduleTimeoutLoop(
       }
       reg.setNextRun(name, new Date(Date.now() + intervalMs));
 
-      arm(async () => {
+      // Named so tests can attribute spy-observed timers to this loop among ambient ones (#2398).
+      const runScheduledTick = async (): Promise<void> => {
         if (stopped) return; // queued ticks must not fire after stop
         try {
           await reg.executeTracked(name);
@@ -263,7 +264,8 @@ function scheduleTimeoutLoop(
           log.error({ error: serializeError(error) }, `${name} job error`);
         }
         scheduleNext();
-      }, intervalMs);
+      };
+      arm(runScheduledTick, intervalMs);
     } catch (error: unknown) {
       log.error({ error: serializeError(error) }, `Failed to read ${name} interval, retrying in 5 minutes`);
       if (stopped) return;

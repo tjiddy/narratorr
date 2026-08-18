@@ -1451,6 +1451,16 @@ describe('startJobs', () => {
       return (spy.mock.calls as unknown as Array<[unknown, number | undefined]>).map(([, delay]) => delay);
     }
 
+    // #2398: the global spy also sees ambient library timers armed during a waitFor window under
+    // full-suite load. The loop only ever arms these two named callbacks, so filtering by name
+    // attributes a delay to the scheduler instead of asserting over the whole worker.
+    const SCHEDULER_CALLBACKS = new Set(['scheduleNext', 'runScheduledTick']);
+    function schedulerDelaysOf(spy: TimeoutSpy): Array<number | undefined> {
+      return (spy.mock.calls as unknown as Array<[{ name?: string }, number | undefined]>)
+        .filter(([cb]) => SCHEDULER_CALLBACKS.has(cb?.name ?? ''))
+        .map(([, delay]) => delay);
+    }
+
     function callbackFor(spy: TimeoutSpy, delay: number): () => Promise<void> {
       const call = (spy.mock.calls as unknown as Array<[() => Promise<void>, number | undefined]>)
         .find(([, d]) => d === delay);
@@ -1479,9 +1489,13 @@ describe('startJobs', () => {
 
         await vi.waitFor(() => expect(warnsFor(job).length).toBeGreaterThan(0));
 
-        expect(delaysOf(setTimeoutSpy)).toContain(RETRY_MS);
-        // "Armed the retry" alone still passes while a 1 ms timer spins alongside it.
-        const unrepresentable = delaysOf(setTimeoutSpy)
+        // "Armed the retry" alone still passes while a 1 ms timer spins alongside it. Scope the
+        // no-tiny-tick claim to scheduler-attributed timers: the raw spy list picks up ambient
+        // library timers under full-suite load (#2398), and the other three loops legitimately
+        // arm their own valid intervals in the same window.
+        const schedulerDelays = schedulerDelaysOf(setTimeoutSpy);
+        expect(schedulerDelays).toContain(RETRY_MS);
+        const unrepresentable = schedulerDelays
           .filter((d) => d === undefined || d === 0 || d === 1 || Number.isNaN(d));
         expect(unrepresentable).toEqual([]);
         expect(execSpy.mock.calls.filter(([name]) => name === job)).toEqual([]);
