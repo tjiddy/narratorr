@@ -1,5 +1,6 @@
 import type { DownloadClientAdapter } from './types.js';
 import type { DownloadClientType } from '@shared/download-client-registry.js';
+import { clientCategory } from '@shared/schemas/download-client.js';
 import type { DownloadClientSettingsMap, DownloadClientSettings } from '@shared/schemas/download-client.js';
 import { QBittorrentClient } from './qbittorrent.js';
 import { SABnzbdClient } from './sabnzbd.js';
@@ -19,7 +20,7 @@ const TYPED_FACTORIES: { [K in DownloadClientType]: (settings: DownloadClientSet
     username: s.username || 'admin',
     password: s.password || '',
     useSsl: s.useSsl || false,
-    category: s.category?.trim() || undefined,
+    category: clientCategory(s),
   }),
   sabnzbd: (s) => new SABnzbdClient({
     host: s.host || 'localhost',
