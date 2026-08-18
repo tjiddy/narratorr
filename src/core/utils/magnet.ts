@@ -5,7 +5,7 @@
  * that changes under us makes a failed download unreproducible. Refresh it by hand when entries
  * rot; `public.popcorn-tracker.org` (dead) and `tracker.dler.org` (flaky) were dropped in #2420.
  */
-const TRACKERS = [
+export const TRACKERS: readonly string[] = [
   'udp://tracker.opentrackr.org:1337/announce',
   'udp://open.stealth.si:80/announce',
   'udp://tracker.torrent.eu.org:451/announce',
@@ -16,9 +16,6 @@ const TRACKERS = [
   'udp://tracker.openbittorrent.com:6969/announce',
   'udp://explodie.org:6969/announce',
 ];
-
-/** Exposed for the structural invariants the suite asserts; production reads `TRACKERS` directly. */
-export const MAGNET_TRACKERS: readonly string[] = TRACKERS;
 
 export function buildMagnetUri(infoHash: string, name?: string): string {
   const params = new URLSearchParams();

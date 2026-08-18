@@ -391,7 +391,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
 
       const response = await fetch(this.baseUrl, {
         method: 'HEAD',
-        headers: { 'User-Agent': ABB_USER_AGENT },
+        headers: REQUEST_HEADERS,
         signal: controller.signal,
       });
 
@@ -438,7 +438,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       await abbThrottle.acquire(this.baseUrl);
       await fetchWithProxyAgent(this.baseUrl, {
         ...(this.proxyUrl !== undefined && { proxyUrl: this.proxyUrl }),
-        headers: { 'User-Agent': ABB_USER_AGENT },
+        headers: REQUEST_HEADERS,
       });
 
       // Not paced: this asks the proxy's exit-IP service, not ABB.

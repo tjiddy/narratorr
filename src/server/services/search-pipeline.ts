@@ -337,7 +337,7 @@ async function tryGrab(
 ): Promise<Exclude<SingleBookSearchResult, { result: 'no_results' }>> {
   try {
     await downloadOrchestrator.grab(
-      buildGrabPayload(best, book.id, { guid: best.guid }),
+      buildGrabPayload(best, book.id),
     );
     log.info({ bookId: book.id, title: best.title, seeders: best.seeders }, 'Auto-grabbed best result');
     return { result: 'grabbed', title: best.title };

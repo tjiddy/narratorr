@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { MAGNET_TRACKERS, buildMagnetUri, parseInfoHash } from './magnet.js';
+import { TRACKERS, buildMagnetUri, parseInfoHash } from './magnet.js';
 
 describe('buildMagnetUri', () => {
   it('builds a valid magnet URI from info hash', () => {
@@ -30,40 +30,22 @@ describe('buildMagnetUri', () => {
 
     const params = new URL(buildMagnetUri(hash)).searchParams;
 
-    expect(params.getAll('tr')).toEqual([...MAGNET_TRACKERS]);
+    expect(params.getAll('tr')).toEqual([...TRACKERS]);
   });
 });
 
 /**
  * #2420 — the list is refreshed by hand from ngosang/trackerslist, so what a test can hold it to is
- * structure and the two named removals, not liveness: reaching a tracker needs a network.
+ * structure, not membership: entry-restating assertions break by design on every legitimate
+ * refresh while the structural ones beside them carry the regression power.
  */
 describe('the tracker list', () => {
-  it('carries neither of the entries #2420 retired', () => {
-    const uri = buildMagnetUri('aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d');
-
-    expect(uri).not.toContain('popcorn-tracker');
-    expect(uri).not.toContain('dler.org');
-    expect(MAGNET_TRACKERS.some((t) => t.includes('popcorn-tracker') || t.includes('dler.org'))).toBe(false);
-  });
-
-  it('keeps the six entries that were still healthy', () => {
-    expect(MAGNET_TRACKERS).toEqual(expect.arrayContaining([
-      'udp://tracker.opentrackr.org:1337/announce',
-      'udp://open.stealth.si:80/announce',
-      'udp://tracker.torrent.eu.org:451/announce',
-      'udp://tracker.bittor.pw:1337/announce',
-      'udp://exodus.desync.com:6969/announce',
-      'udp://open.demonii.com:1337/announce',
-    ]));
-  });
-
   it('is non-empty and free of duplicates', () => {
-    expect(MAGNET_TRACKERS.length).toBeGreaterThan(0);
-    expect(new Set(MAGNET_TRACKERS).size).toBe(MAGNET_TRACKERS.length);
+    expect(TRACKERS.length).toBeGreaterThan(0);
+    expect(new Set(TRACKERS).size).toBe(TRACKERS.length);
   });
 
-  it.each([...MAGNET_TRACKERS])('parses %s as a udp/http/https announce URL with a host', (tracker) => {
+  it.each([...TRACKERS])('parses %s as a udp/http/https announce URL with a host', (tracker) => {
     const parsed = new URL(tracker);
 
     expect(['udp:', 'http:', 'https:']).toContain(parsed.protocol);

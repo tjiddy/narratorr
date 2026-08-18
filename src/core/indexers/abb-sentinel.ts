@@ -12,7 +12,7 @@
 export const ABB_DETAILS_SENTINEL_PREFIX = 'abb-details://';
 
 /** Greedy to end-of-string so a query, a fragment and percent-encoding all survive the capture. */
-export const ABB_SENTINEL_PATTERN = /^abb-details:\/\/(\S.*)$/;
+const ABB_SENTINEL_PATTERN = /^abb-details:\/\/(\S.*)$/;
 
 /** The details URL a sentinel carries, or `undefined` for any other download URL. */
 export function parseAbbDetailsUrl(downloadUrl: string): string | undefined {

@@ -228,10 +228,12 @@ export class IndexerSearchService {
     }
     const cleanedOptions = cleanIndexerSearchOptions(options);
     // A ladder rung supplies its own, carrying the variant text the rung was actually built from;
-    // every other caller gets it derived from this call's own raw query (#2422).
+    // every other caller gets it derived from this call's own raw query (#2422). The fold is
+    // idempotent, so cleaning the caller-supplied value too keeps this the one transport channel
+    // that can never carry unfolded punctuation.
     const withApostrophes: SearchOptions = {
       ...cleanedOptions,
-      queryWithApostrophes: options?.queryWithApostrophes ?? cleanIndexerQueryKeepingApostrophes(query),
+      queryWithApostrophes: cleanIndexerQueryKeepingApostrophes(options?.queryWithApostrophes ?? query),
     };
     const { enabledIndexers, searchOptions } = await this.getEnabledIndexerRows(withApostrophes);
     // Before the fan-out, not inside it: a run-excluded indexer must cost zero I/O, not a request

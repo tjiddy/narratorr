@@ -146,8 +146,11 @@ export function buildQueryLadder(input: LadderInput): Rung[] {
   const { title, author } = input;
   const rung1: Rung = {
     query: input.query ?? buildSearchQuery({ title, ...(author !== undefined && { authors: [{ name: author }] }) }),
+    // Prefer the caller's own query text over re-deriving from title+author, so a custom-query
+    // caller sends ABB the same rung-1 text as every other indexer instead of relying on the two
+    // constructions happening to agree. Identical output for every current caller.
     queryWithApostrophes: cleanIndexerQueryKeepingApostrophes(
-      input.queryWithApostrophes ?? [title, author].filter(Boolean).join(' '),
+      input.queryWithApostrophes ?? input.query ?? [title, author].filter(Boolean).join(' '),
     ),
     author,
     variant: null,

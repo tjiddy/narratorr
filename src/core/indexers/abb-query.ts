@@ -20,8 +20,9 @@ const STOPWORDS = new Set([
 /** Below this many meaningful survivors the fold has eaten the query; ask today's question instead. */
 const MIN_MEANINGFUL_TOKENS = 2;
 
-/** The same three characters `cleanIndexerQuery` treats as apostrophes; widening here would split the folds. */
-const CURLY_APOSTROPHES = /[‘’]/g;
+import { CURLY_APOSTROPHE_CHARS } from '@shared/apostrophes.js';
+
+const CURLY_APOSTROPHES = new RegExp(`[${CURLY_APOSTROPHE_CHARS}]`, 'g');
 
 function tokenize(query: string): string[] {
   return query.split(/\s+/).filter((token) => token.length > 0);

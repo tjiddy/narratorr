@@ -68,9 +68,9 @@ export interface IndexerTestResult {
 /**
  * Per-item parse outcome; rawTitleBytes preserves UTF-8 shape for encoding diagnostics.
  *
- * The four failure fields are optional because most producers never carry one — but a
- * `dropped:detail-fetch-failed` entry always sets `errorMessage` and `requestUrl`, and sets
- * `errorCode`/`httpStatus` whenever the error carried that structural identity (#2367).
+ * The four failure fields currently have no producer: #2420 moved ABB detail fetching to the
+ * grab seam, where a failure throws IndexerError (warned by resolveAdapterDownloadUrl) instead
+ * of emitting a trace. They stay for the next adapter that records per-row transport failures.
  */
 export interface IndexerParseTrace {
   source: 'item' | 'enclosure' | 'row';

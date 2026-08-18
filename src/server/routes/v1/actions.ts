@@ -160,9 +160,11 @@ export async function v1ActionsRoutes(app: FastifyInstance, deps: V1ActionsRoute
             return reply.status(400).send(envelope('BAD_REQUEST', 'Search query is empty after normalization'));
           }
 
-          // Discovery runs the full relaxation ladder without exposing rung metadata.
+          // Discovery runs the full relaxation ladder without exposing rung metadata. Rung 1
+          // derives the same buildSearchQuery(book) text internally — the empty-check above is
+          // the only consumer of the local `query`.
           const author = book.authors?.[0]?.name;
-          const ladder = buildQueryLadder({ title: book.title, author, query });
+          const ladder = buildQueryLadder({ title: book.title, author });
           const { results: allResults } = await runQueryLadder(
             ladder,
             createAggregateExecutor(book, deps.indexerSearchService, NOOP_SINK, request.log),

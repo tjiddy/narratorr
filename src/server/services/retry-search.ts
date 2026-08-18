@@ -172,7 +172,7 @@ export async function retrySearch(
     // grabForRetry acquires the book mutex and rechecks blockers. Because this payload bypasses
     // the normal duplicate guard, that in-lock check is what prevents sequential duplicates.
     const grabResult = await downloadOrchestrator.grabForRetry(
-      buildGrabPayload(best, book.id, { ...(best.guid !== undefined && { guid: best.guid }), skipDuplicateCheck: true }),
+      buildGrabPayload(best, book.id, { skipDuplicateCheck: true }),
     );
     if (grabResult === 'already_active') {
       log.info({ bookId, attempt }, 'Retry search: book gained a grab blocker during search — skipping (attempt consumed, not refunded)');

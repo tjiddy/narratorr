@@ -456,12 +456,12 @@ describe('searchAndGrabForBook', () => {
     );
   });
 
-  it('passes undefined guid to grab() when result has no guid', async () => {
+  it('omits guid from the grab payload when the result has none', async () => {
     vi.mocked(indexerSearchService.searchAllWithStatus).mockResolvedValue(searchStatus([makeResult({ guid: undefined })]));
     await searchAndGrabForBook(book, { indexerSearchService, downloadOrchestrator: downloadService, qualitySettings: defaultQualitySettings, log, blacklistService, indexerService: mockIndexer, eventHistory });
-    expect(downloadService.grab).toHaveBeenCalledWith(
-      expect.objectContaining({ guid: undefined, bookId: 1 }),
-    );
+    const payload = vi.mocked(downloadService.grab).mock.calls[0]![0];
+    expect(payload.bookId).toBe(1);
+    expect(payload).not.toHaveProperty('guid');
   });
 
   it('calls buildSearchQuery to construct the query', async () => {
