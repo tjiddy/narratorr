@@ -3211,3 +3211,122 @@ To name the duplicates, compare subjects of `git rev-list <merge-base>..HEAD` ag
 **Reverting the duplicated commits is the trap.** It produces the same correct delta by fast-forward, so it *looks* like the cheap fix — but the safety depends entirely on the merge strategy. Merge-commit and squash-merge are safe. **Rebase-merge is not**: the reverts replay onto the base tip and silently delete the base commits they reverted.
 
 **Verify three ways**, not one: (1) merge base equals base tip; (2) the delta's file list, filtered against the set your issue permits, is empty; (3) `git diff origin/<base> HEAD -- <foreign path>` is empty for each previously-leaking file, which distinguishes "present and unmodified" from "reverted". Then re-run the base's own suites — your commits now sit on code they were never tested against.
+
+## zod-object-superrefine-skipped-on-shape-failure
+
+**source:** #2392
+**added:** 2026-08-16
+**files:** src/shared/schemas/indexer.ts
+**tags:** zod, react-hook-form, form-validation
+
+---
+
+zod (4.4.3) does not run an object's `.superRefine()` at all when the object's own shape parse produced any issue. One bad field therefore suppresses EVERY cross-field message the refine would have added, not just its own. Verified: `createIndexerFormSchema.safeParse({type:'abb', settings:{hostname:'ftp://x', pageLimit: NaN}})` returns exactly one issue, at `['settings','pageLimit']`, and none at `['settings','hostname']`.
+
+The live trap in this repo is numeric inputs registered with `valueAsNumber: true` (e.g. `settings.pageLimit` in `src/client/components/settings/indexer-fields/abb-fields.tsx`): an emptied input yields NaN, `z.number()` rejects it, and the whole `createIndexerFormSchema` superRefine block in `src/shared/schemas/indexer.ts` — the `INDEXER_REGISTRY.requiredFields` loop, the `flareSolverrUrl` 'Must be a valid URL' check, and the #2392 ABB hostname check — goes silent. `INDEXER_REGISTRY.abb.defaultSettings` supplies `pageLimit: 2`, so it only surfaces when the operator clears the field.
+
+Consequences when working here: (1) don't put a validation rule in an object-level `.superRefine()` if it must fire independently of sibling field validity — put it on the field; (2) any `useForm` test fixture driving `zodResolver(createIndexerFormSchema)` must populate every numeric field, or the assertion is vacuous (this cost real debugging time on #2392 — see the `ValidatedAbbForm` wrapper in `src/client/components/settings/IndexerFields.test.tsx`, which sets `pageLimit: 2` for exactly this reason).
+
+This is one step earlier than `zod-type-scoped-settings-transform`, which covers `.transform()` running only when the preceding `.superRefine()` was clean. Related: `zod-resolver-effects-divergence`.
+
+## external-fifo-queue-excludes-primitive-acquire
+
+**source:** #2379
+**added:** 2026-08-16
+**files:** src/server/services/merge.service.ts
+**tags:** concurrency, semaphore, fifo, merge-service
+
+---
+
+**A service that layers its own FIFO queue on top of a bounded semaphore must use only the non-blocking admission path.** `MergeService` (`src/server/services/merge.service.ts`) owns `private queue: number[]` and admits exclusively through `semaphore.tryAcquire()` (`:152,187`), never `acquire()`. `drainQueue()` (`:184-192`) is the sole promoter. Adding one `acquire()` call would create a second, independent waiting list inside the primitive that promotes on its own schedule, and FIFO across the two queues is undefined — a book could start ahead of an older queued book with no code path expressing that decision.
+
+This stopped being structural and became a maintained invariant in #2379. `BoundedSemaphore.setMax` now calls `pump()`, so a capacity raise admits queued waiters immediately; the deleted `src/server/utils/semaphore.ts` had a mutation-only `setMax` that woke nobody, which made the two-queue hazard impossible by construction rather than by discipline. The pump is required for liveness in the general case — raising a bound that has already drained to `active === 0` has no holder left to release, so without pumping on resize the queue is stranded forever (pinned by `bounded-semaphore.test.ts` 'keeps a zero bound live: the queue survives the drain to empty and a later raise admits it', which reds if the `setMax` pump is removed).
+
+`MergeService` is safe because its primitive queue is provably always empty. When reviewing or extending it, treat `tryAcquire`-only as a contract, not a style choice; the reason is recorded at `merge.service.ts:141-142`. The end-to-end proof that `setMax` + `tryAcquire` + `drainQueue` still compose is the `#1302 maxConcurrentProcessing — semaphore sizing + FIFO under resize` block in `merge.service.test.ts`. Consumers that want the primitive's own FIFO should call `acquire()` and keep no external queue — the two designs do not mix. Related: [[vacuous-assertion-observation-points]] for why the resize cases are counterfactual-verified.
+
+## optional-interface-method-blocks-protected-hook
+
+**source:** #2391
+**added:** 2026-08-16
+**files:** src/core/indexers/newznab-family.ts
+**tags:** typescript, indexer-adapters, class-hierarchy
+
+---
+
+An OPTIONAL member on an interface is still a reserved name for any class that `implements` it. Optionality permits omitting the member; it does not permit redefining it with a different signature or a narrower visibility. A class that declares the name gets its signature checked against the interface and fails `TS2416` on any mismatch.
+
+This bites when extracting a shared base for adapters. `IndexerAdapter` (`src/core/indexers/types.ts:110-124`) declares `resolveDownloadUrl?(ctx: ResolveDownloadContext): Promise<ResolveDownloadResult>` for MAM's grab-time sentinel resolution, and `refreshStatus?(signal?)` alongside it. `NewznabFamilyIndexer implements IndexerAdapter`, so it cannot use `resolveDownloadUrl` as the name of its own per-item URL-derivation hook however protected that hook is — the shipped name is `resolveItemDownloadUrl`, with the reason in a doc comment at the declaration so nobody 'corrects' it later. #2391's approved spec named the hook `resolveDownloadUrl` in AC2 and its class sketch; the collision was found at implementation time and the rename was forced, since changing `types.ts` was explicitly out of scope.
+
+**When specifying a base class over `IndexerAdapter`, check its optional members before naming protected hooks.** When implementing one, expect a rename rather than a signature adjustment: the two members genuinely mean different things, so no parameter shape makes both work.
+
+Verification note: `pnpm exec tsc --noEmit <file>` refuses to load `tsconfig.json` when files are named on the command line (`TS5112`), and this repo's `@shared`/`@core` aliases live there — so a probe of this kind has to be dropped into the tree and checked with `pnpm typecheck`, then deleted.
+
+## exported-vifn-helper-needs-mock-annotation
+
+**source:** #2383
+**added:** 2026-08-16
+**files:** src/server/__tests__/helpers.ts
+**tags:** typescript, vitest, declaration-emit
+
+---
+
+`tsconfig.json` sets `declaration: true`, so `tsc --noEmit` still resolves declaration-emit names for every exported signature. An exported helper returning `vi.fn()` therefore fails with `TS2883: The inferred type of '<fn>' cannot be named without a reference to 'Procedure' from '.pnpm/@vitest+spy@<ver>/node_modules/@vitest/spy'` — `Procedure` is not reachable by name from the importing file under pnpm's nested layout.
+
+Fix: annotate the return type as `Mock` (imported from 'vitest'). Do not reach for `ReturnType<typeof vi.fn>` — it re-introduces the same unnameable type.
+
+This only bites when a per-suite mock factory is PROMOTED to a shared harness file: a module-local `function withStatus() { return vi.fn()... }` is never emitted to a `.d.ts`, so it typechecks fine in place and fails the moment you `export` it. That makes it a standing trap for fixture-consolidation chores (#2383 hit it moving three suites' `withStatus`/`answering` builders into `src/server/__tests__/helpers.ts`). Helpers returning plain values are unaffected. Reference: `mockSearchAllWithStatus` / `answeringSearchStatus` in `src/server/__tests__/helpers.ts`, both annotated `: Mock`.
+
+## drizzle-dynamic-mode-conditional-builders
+
+**source:** #2319
+**added:** 2026-08-17
+**files:** src/server/utils/db-helpers.ts
+**tags:** drizzle, typescript, query-builder
+
+---
+
+Conditionally applying `.limit()`, `.offset()` or `.where()` to a Drizzle select narrows the builder type at each step, which is why the codebase had accumulated `query = query.limit(n) as typeof query` at six sites. The cast is avoidable, not inherent: `.$dynamic()` switches the builder into dynamic mode, where `SQLiteSelectWithout<T, TDynamic, K>` resolves to plain `T` (drizzle-orm 0.45.2, `sqlite-core/query-builders/select.types.d.ts`), so those methods return the type they were called on and can be applied conditionally and repeatedly. `.$dynamic()` is runtime identity — the emitted SQL and bound parameters are byte-identical.
+
+A helper over such a builder needs no cast at all: constrain it as `<T extends SQLiteSelect>(query: T, ...): T` with `import type { SQLiteSelect } from 'drizzle-orm/sqlite-core'`. The type-only import matters — it keeps the module free of `@db/schema` runtime coupling, which is what `drizzle-schema-toplevel-deref-breaks-partial-mocks` warns about. `SQLiteSelect`'s default type arguments already fix `TDynamic = true`, so the constraint alone selects dynamic mode.
+
+Canonical example: `applyPagination` in `src/server/utils/db-helpers.ts`, used by the six paginated list services. Guard with `!== undefined`, never truthiness — `limit: 0` is a real window and a truthiness guard silently returns every row (pinned by `db-helpers.test.ts` 'binds limit 0 rather than dropping it'). Note that `offset: 0` is unobservable in emitted SQL because Drizzle's dialect drops a falsy offset, so assert it at the builder level; see [[vacuous-assertion-observation-points]].
+
+A site that forgets `.$dynamic()` fails `pnpm typecheck` (TS2345 at the helper call, plus a downstream TS2322 where the widened row type meets the method's declared return) — verify by exit code, not by grepping the output, since ANSI colour codes split the literal `error TS`. `mockDbChain` needs no change: its Proxy returns the chain for any unknown property, so `.$dynamic()` is transparent to every mock-based suite.
+
+## qbittorrent-hybrid-v2-hash-rekey
+
+**source:** #2423
+**added:** 2026-08-18
+**files:** src/core/download-clients/qbittorrent.ts
+**tags:** qbittorrent, bittorrent-v2, libtorrent, download-clients, hash-identity
+
+---
+
+**A BitTorrent v1+v2 hybrid torrent does not keep answering to the v1 hash you grabbed it by.** qBittorrent on libtorrent 2.x re-keys its canonical API `hash` to the TRUNCATED v2 hash (first 40 hex chars of the SHA-256 v2 infohash) once metadata is fetched, moving the SHA-1 v1 to `infohash_v1` and the full 64-char v2 to `infohash_v2`. The switch lands seconds after the add, while the torrent is still in `metaDL` — so a poller that stored the v1 at grab time gets `[]` from `torrents/info?hashes=<v1>` on its FIRST cycle, reads that as death, and fails/blacklists a download that is running fine (#2423, observed live).
+
+**Match on all three identities, never the canonical hash alone:** `hash`, `infohash_v1`, `infohash_v2.slice(0, 40)`, case-folded on both sides (magnet infohashes normalize lowercase via `normalizeInfoHash`, but `.torrent`-derived and operator-supplied values do not). Keep `?hashes=` as the fast path so v1-only torrents cost exactly one request and behave byte-identically; fall back to ONE (category-scoped) list scan only on a miss. Shipped as `isSameTorrent` / `resolveTorrent` in `src/core/download-clients/qbittorrent.ts`.
+
+**Both fields must be `.nullish()`, and empty must never match.** qBittorrent < 4.4 (libtorrent 1.2) omits them entirely; current builds emit `""` for the axis a torrent lacks. An `infohash_v1: ""` must match nothing — including an empty queried hash — or the first element of the fallback list becomes a false positive. `.passthrough()` alone is not enough: it lets the fields survive parsing but leaves them untyped and therefore unreachable from `mapItem`/matching code, so declare them explicitly on `qbTorrentSchema`.
+
+**The read path is not the whole defect.** qBittorrent resolves `hashes=` identically for `torrents/info`, `torrents/pause`, `torrents/resume` and `torrents/delete`. Fixing only `getDownload` makes the monitor track a hybrid all the way to a successful import and then silently fail to remove it — an orphan seeder plus a compensating-delete leak. Route the controls through the same resolution and POST the resolved canonical hash; when nothing resolves, send the caller's hash through unchanged so a delete for an already-gone torrent stays a no-op rather than an error.
+
+Scope this to qBittorrent — v2-hybrid re-keying is a libtorrent-2.x behavior; Transmission (`hashString`) and Deluge are unaffected. Sonarr and Radarr both hit this and both resolved it by multi-identity matching. Testing it needs a real adapter over MSW, not a fake ([[degrading-adapter-invisible-to-mock-suite]]): a double that returns the item only exercises the branch where resolution already succeeded. Exemplars: the `hybrid v1/v2 hash identity (#2423)` describe in `src/core/download-clients/qbittorrent.test.ts` and `src/server/jobs/monitor-hybrid.integration.test.ts`.
+
+## abb-tokenizer-keeps-apostrophe-in-word
+
+**source:** #2422
+**added:** 2026-08-18
+**files:** src/core/indexers/abb-query.ts
+**tags:** audiobookbay, indexer-query, search-ladder, tokenization
+
+---
+
+AudioBookBay's search is AND-over-stemmed-tokens, but its tokenizer treats the apostrophe as a WORD character: the indexed token for "Rider's" is matched by neither `rider` nor `riders`, and by no de-apostrophized spelling at all. Under AND semantics the only winning move is to omit the apostrophe-bearing word entirely — guessing its indexed form (straight vs curly, s vs no-s) is a losing bet.
+
+**The structural trap.** The fold cannot live inside `abb.ts` on the query it receives. `cleanIndexerQuery` (`src/server/services/indexer-query.ts`) DELETES apostrophes rather than substituting a space, and `IndexerSearchService.prepareSearch` derives `transportQuery` from it before every `adapter.search()` call — so `Riders` from `Rider's` is indistinguishable from a genuine `Riders` by the time any adapter runs. `buildQueryLadder` strips even earlier, at `rung.query`. The apostrophe-bearing text exists exactly one layer above every strip site: `normalizeTitleForVariantMatch` keeps `'` and folds `‘`/`’` to it (keep class `/[^a-z0-9' ]+/g`), so `variant.raw` retains it — lowercased, which is why relaxed rungs are mixed-case (lowercase title, source-cased author).
+
+**The shape that shipped (#2422):** an apostrophe-preserving twin cleaner (`cleanIndexerQueryKeepingApostrophes`, sharing the original's punctuation/whitespace tail so the two cannot drift), an optional `SearchOptions.queryWithApostrophes` populated in `prepareSearch` (caller-supplied wins), a REQUIRED `Rung.queryWithApostrophes` forwarded by all three rung-dispatch sites, and the pure fold `buildAbbQuery` in `src/core/indexers/abb-query.ts`. `rungDedupKey` stays keyed on `rung.query` alone — keying on the apostrophe form would split rung 1 from the equivalent full variant and lengthen the ladder.
+
+**Do not widen `cleanIndexerQuery` instead.** Newznab, Torznab and MAM all tokenize normally, so `riders` matches there; changing the shared cleaner changes every one of their requests for a bug scoped to one indexer. This is per-adapter query MAPPING, not shared-query-builder policy — expect future indexer quirks to want the same treatment.
+
+Related: [[degrading-adapter-invisible-to-mock-suite]] — the proof for this class has to drive the REAL adapter through the real service seam with MSW (`src/server/services/abb-apostrophe-query.integration.test.ts`), because a mock adapter builds whatever URL the test wants. [[ladder-rung-count-needs-colon-segments]] — the multi-rung half needs a colon-segmented fixture or it asserts nothing.
