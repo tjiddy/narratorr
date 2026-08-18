@@ -1149,6 +1149,127 @@ describe('fetchWithProxy', () => {
         expect(fresh.targets).not.toContain('https://indexer.test/api?q=overflow');
       });
     });
+
+    /**
+     * #2420 — a per-destination pacer that runs BEFORE the slot is held is not a pacer: two requests
+     * spaced correctly can both stall behind a saturated pool and be admitted together the moment
+     * slots free, which is exactly the burst the floor exists to prevent. The hook is the seam that
+     * lets a caller move its wait to the last moment before the wire.
+     */
+    describe('onBeforeDispatch (#2420)', () => {
+      it('runs after the slot is held and before the target POST', async () => {
+        const stub = useStub(`${PROXY_URL}/v1`);
+        const timers = captureTimers();
+        const inFlight = await saturate(stub, PROXY_URL);
+
+        let ranAt: 'never' | 'while-queued' | 'holding-a-slot' = 'never';
+        const gated = bound.track(fetchWithProxy({
+          url: 'https://indexer.test/api?q=paced',
+          proxyUrl: PROXY_URL,
+          timeoutMs: REQUEST_TIMEOUT_MS,
+          onBeforeDispatch: async () => {
+            ranAt = stub.live < N ? 'holding-a-slot' : 'while-queued';
+            await Promise.resolve();
+          },
+        }));
+        await accountedFor(stub, timers, { arrived: N, queued: 1 });
+
+        // Queued behind the bound, so the hook cannot have run yet — a pre-slot acquire reds here.
+        expect(ranAt).toBe('never');
+        expect(stub.targets).not.toContain('https://indexer.test/api?q=paced');
+
+        stub.releaseAll();
+        await Promise.allSettled(inFlight);
+        await gated;
+
+        expect(ranAt).toBe('holding-a-slot');
+        expect(stub.targets).toContain('https://indexer.test/api?q=paced');
+      });
+
+      it('releases the slot when the hook rejects, and surfaces the rejection verbatim', async () => {
+        const stub = useStub(`${PROXY_URL}/v1`);
+        const timers = captureTimers();
+        // Deliberately not an Error: a wrapped rejection would make an abort read as a transport
+        // failure, and `instanceof Error` cannot tell the two apart.
+        const reason = { cancelled: 'by the caller' };
+
+        await expect(fetchWithProxy({
+          url: 'https://indexer.test/api?q=cancelled',
+          proxyUrl: PROXY_URL,
+          timeoutMs: REQUEST_TIMEOUT_MS,
+          onBeforeDispatch: () => Promise.reject(reason),
+        })).rejects.toBe(reason);
+
+        expect(stub.observed).toBe(0);
+        // The slot the rejected request held must be back in the pool: N more must fit and the
+        // (N+1)th must queue.
+        await saturate(stub, PROXY_URL);
+        solverRequest(PROXY_URL, { url: 'https://indexer.test/api?q=overflow' });
+        await accountedFor(stub, timers, { arrived: N, queued: 1 });
+        expect(stub.observed).toBe(N);
+        expect(timers.pending()).toBe(1);
+      });
+
+      // The shared transport is used by every solver-bound adapter; only ABB passes the hook.
+      it('leaves a caller that omits it byte-for-byte unchanged', async () => {
+        const stub = useStub(`${PROXY_URL}/v1`, () => solverOk('<xml>newznab</xml>'));
+        const timers = captureTimers();
+        await saturate(stub, PROXY_URL);
+
+        const unhooked = solverRequest(PROXY_URL, { url: 'https://newznab.test/api?t=search' });
+        await accountedFor(stub, timers, { arrived: N, queued: 1 });
+        expect(timers.pending()).toBe(1);
+
+        stub.releaseAll();
+
+        await expect(unhooked).resolves.toMatchObject({
+          body: '<xml>newznab</xml>',
+          requestUrl: 'https://newznab.test/api?t=search',
+        });
+        expect(stub.targets).toContain('https://newznab.test/api?t=search');
+      });
+    });
+  });
+
+  describe('onBeforeDispatch on the direct path (#2420)', () => {
+    it('runs before the request goes on the wire when no proxy is configured', async () => {
+      const seen: string[] = [];
+      server.use(
+        http.get('https://indexer.test/api', () => {
+          seen.push('request');
+          return new HttpResponse('<xml>direct</xml>');
+        }),
+      );
+
+      const result = await fetchWithProxy({
+        url: TARGET_URL,
+        onBeforeDispatch: async () => {
+          seen.push('hook');
+          await Promise.resolve();
+        },
+      });
+
+      expect(seen).toEqual(['hook', 'request']);
+      expect(result.body).toBe('<xml>direct</xml>');
+    });
+
+    it('issues no request at all when the hook rejects', async () => {
+      const seen: string[] = [];
+      const reason = { cancelled: true };
+      server.use(
+        http.get('https://indexer.test/api', () => {
+          seen.push('request');
+          return new HttpResponse('<xml>direct</xml>');
+        }),
+      );
+
+      await expect(fetchWithProxy({
+        url: TARGET_URL,
+        onBeforeDispatch: () => Promise.reject(reason),
+      })).rejects.toBe(reason);
+
+      expect(seen).toEqual([]);
+    });
   });
 });
 
