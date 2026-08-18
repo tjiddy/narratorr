@@ -80,9 +80,12 @@ describe('enrichBookFromAudio', () => {
         audioChannels: 2,
         topLevelAudioFileCount: 2,
         enrichmentStatus: 'file-enriched',
-        duration: 600, // 36000 / 60
       }),
     );
+    // #2435: the bibliographic `duration` is a separate compare-and-set, so its emptiness test and
+    // its write are one statement. The technical stats stay unconditional.
+    expect(setCall.mock.calls[0]![0]).not.toHaveProperty('duration');
+    expect(setCall).toHaveBeenNthCalledWith(2, expect.objectContaining({ duration: 600 })); // 36000 / 60
   });
 
   it('#1852: excludes a born-hidden temp from topLevelAudioFileCount', async () => {
@@ -157,8 +160,10 @@ describe('enrichBookFromAudio', () => {
       log,
     );
 
-    const setArg = mockDb.update.mock.results[0]!.value.set.mock.calls[0]![0];
-    expect(setArg).toEqual(expect.objectContaining({ audioDuration: 36000, duration: 600 }));
+    const setCall = mockDb.update.mock.results[0]!.value.set;
+    // audioDuration is a technical statistic and always updates; duration is the guarded write.
+    expect(setCall.mock.calls[0]![0]).toEqual(expect.objectContaining({ audioDuration: 36000 }));
+    expect(setCall.mock.calls[1]![0]).toEqual(expect.objectContaining({ duration: 600 }));
   });
 
   it('returns not enriched when scan returns null', async () => {
