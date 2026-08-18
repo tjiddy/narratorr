@@ -49,26 +49,23 @@ const PINNED_PNPM_VERSION = /^\s+(version:\s*\S+)/gm;
 
 describe('Windows test workflow (.github/workflows/windows-tests.yml)', () => {
   describe('trigger coverage', () => {
-    it('runs on pull requests targeting exactly the two integration branches', () => {
-      expect(triggerBranches(windows, 'pull_request')).toEqual(['main', 'develop']);
+    // Pre-release smoke (2026-08-18): version tags only. A pull_request or branch-push trigger
+    // reintroduces the per-PR 22min run and the merge-gate false blocks that decision removed.
+    it('runs on version tags and nothing continuous', () => {
+      expect(windows).toMatch(/push:\s*\n\s+tags:\s*\['v\*'\]/);
+      expect(windows).not.toContain('pull_request');
+      expect(triggerBranches(windows, 'push')).toEqual([]);
     });
 
-    // The push block is independently deletable: narrowing it to `[main]` drops the post-merge
-    // develop run, and widening it to `['**']` would run Windows on every scratch-branch push.
-    // Pin the exact set so either edit reds.
-    it('runs on pushes to exactly the two integration branches, and no other branch', () => {
-      expect(triggerBranches(windows, 'push')).toEqual(['main', 'develop']);
-    });
-
-    it('confines every trigger to a branch list rather than a catch-all', () => {
+    it('confines the tag trigger to the release pattern rather than a catch-all', () => {
       expect(windows).not.toContain('branches-ignore');
       expect(windows).not.toContain("'**'");
       expect(windows).not.toContain('[**]');
     });
 
     // GitHub runs workflow_dispatch only for a workflow present on the default branch, so this is
-    // a post-merge operator affordance — NOT a pre-merge route for a scratch-branch experiment.
-    it('declares workflow_dispatch for manual post-merge runs', () => {
+    // an operator affordance for smoking a ref without cutting a tag.
+    it('declares workflow_dispatch for manual runs', () => {
       expect(windows).toContain('workflow_dispatch:');
     });
   });
