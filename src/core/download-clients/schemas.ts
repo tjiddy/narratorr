@@ -3,6 +3,11 @@ import { z } from 'zod';
 export const qbTorrentSchema = z.object({
   hash: z.string(),
   name: z.string(),
+  // libtorrent 2.x re-keys `hash` to the truncated v2 hash for a hybrid torrent and moves the v1
+  // here. Optional both ways: qBittorrent < 4.4 omits them, current builds emit "" for the missing
+  // axis. Typed rather than left to .passthrough() so the identity matcher can read them.
+  infohash_v1: z.string().nullish(),
+  infohash_v2: z.string().nullish(),
   state: z.string().default('unknown'),
   progress: z.number().default(0),
   total_size: z.number().default(0),

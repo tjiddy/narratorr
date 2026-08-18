@@ -19,6 +19,7 @@ const TYPED_FACTORIES: { [K in DownloadClientType]: (settings: DownloadClientSet
     username: s.username || 'admin',
     password: s.password || '',
     useSsl: s.useSsl || false,
+    category: s.category?.trim() || undefined,
   }),
   sabnzbd: (s) => new SABnzbdClient({
     host: s.host || 'localhost',
