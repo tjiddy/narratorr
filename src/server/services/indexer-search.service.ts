@@ -15,7 +15,7 @@ import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { logIndexerSearchTrace } from './indexer-search-trace.js';
 import { preSearchRefresh } from './indexer-pre-search-refresh.js';
-import { cleanIndexerQuery, cleanIndexerSearchOptions } from './indexer-query.js';
+import { cleanIndexerQuery, cleanIndexerQueryKeepingApostrophes, cleanIndexerSearchOptions } from './indexer-query.js';
 import type { IndexerService } from './indexer.service.js';
 import { deliverSearchReport } from './search-event-sink.js';
 import {
@@ -227,7 +227,13 @@ export class IndexerSearchService {
       return null;
     }
     const cleanedOptions = cleanIndexerSearchOptions(options);
-    const { enabledIndexers, searchOptions } = await this.getEnabledIndexerRows(cleanedOptions);
+    // A ladder rung supplies its own, carrying the variant text the rung was actually built from;
+    // every other caller gets it derived from this call's own raw query (#2422).
+    const withApostrophes: SearchOptions = {
+      ...cleanedOptions,
+      queryWithApostrophes: options?.queryWithApostrophes ?? cleanIndexerQueryKeepingApostrophes(query),
+    };
+    const { enabledIndexers, searchOptions } = await this.getEnabledIndexerRows(withApostrophes);
     // Before the fan-out, not inside it: a run-excluded indexer must cost zero I/O, not a request
     // that is started and discarded. An emptied set reports zero successes with no adapter call.
     const eligible = excludeIndexerIds?.size

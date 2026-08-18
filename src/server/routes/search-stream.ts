@@ -97,13 +97,14 @@ export async function searchStreamRoutes(
       // Reuse controllers across rungs so cancellation persists; the client replaces per-indexer counts.
       // The run exclusion policy is scoped to this request, exactly like the session's controllers.
       try {
-        const ladder = buildQueryLadder({ title: title ?? '', author, query: q });
+        // `q` has never been cleaned, only validated above, so it is the apostrophe-bearing source.
+        const ladder = buildQueryLadder({ title: title ?? '', author, query: q, queryWithApostrophes: q });
         const policy = createRunExclusionPolicy();
         const ran = await runQueryLadder(ladder, async (rung) => {
           let succeeded = 0;
           const results = await indexerSearchService.searchAllStreaming(
             rung.query,
-            { limit, author: rung.author, title, rankingAuthor: author },
+            { limit, author: rung.author, title, rankingAuthor: author, queryWithApostrophes: rung.queryWithApostrophes },
             session.controllers,
             {
               onComplete: (indexerId, name, resultCount, elapsedMs) => {

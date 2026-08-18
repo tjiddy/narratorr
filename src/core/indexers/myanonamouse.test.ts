@@ -204,6 +204,24 @@ describe('MyAnonamouseIndexer', () => {
       expect(url.searchParams.get('tor[main_cat][]')).toBe('13');
       expect(capturedCookie).toBe('mam_id=test-mam-id');
     });
+
+    // #2422 — the apostrophe-bearing channel is ABB's alone. MAM tokenizes, so `riders` matches
+    // there, and reading the option would change a request this issue is not allowed to touch.
+    it('ignores queryWithApostrophes and keeps the stripped positional query in tor[text]', async () => {
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+
+      await indexer.search('A Dragon Riders Guide', { queryWithApostrophes: "A Dragon Rider's Guide" });
+
+      const url = new URL(capturedUrl);
+      expect(url.searchParams.get('tor[text]')).toBe('A Dragon Riders Guide');
+      expect(capturedUrl).not.toContain('Rider%27s');
+    });
   });
 
   describe('search — sentinel emission (#1156)', () => {

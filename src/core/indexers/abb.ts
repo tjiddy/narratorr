@@ -9,6 +9,7 @@ import {
 } from './types.js';
 import { buildMagnetUri } from '../utils';
 import { readAbbMetadata } from './abb-fields.js';
+import { buildAbbQuery } from './abb-query.js';
 import { normalizeBaseUrl } from '@shared/normalize-base-url.js';
 import { fetchWithProxy } from './fetch.js';
 import { httpStatusOf, isProxyRelatedError } from './errors.js';
@@ -75,7 +76,10 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     const debugTrace: IndexerParseTrace[] = [];
     const dropped = { emptyTitle: 0, noUrl: 0, other: 0 };
     let itemsObserved = 0;
-    const encodedQuery = encodeURIComponent(query.toLowerCase()).replace(/%20/g, '+');
+    // The positional query has already had its apostrophes deleted, so the fold only has something
+    // to remove when the service handed down the apostrophe-bearing form (#2422).
+    const foldedQuery = buildAbbQuery(options?.queryWithApostrophes ?? query);
+    const encodedQuery = encodeURIComponent(foldedQuery.toLowerCase()).replace(/%20/g, '+');
     const limit = options?.limit || 50;
     const pageLimit = this.config.pageLimit || 2;
 
