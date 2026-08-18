@@ -26,6 +26,7 @@ describe('buildGrabPayload', () => {
         indexerId: 5,
         size: 500_000_000,
         seeders: 12,
+        guid: 'abc-123',
       });
     });
 
@@ -35,10 +36,33 @@ describe('buildGrabPayload', () => {
       expect(payload.bookId).toBe(99);
     });
 
-    it('does not include guid in base output', () => {
+    /**
+     * #2420 — the helper used to drop guid, so guid survived only where a caller overrode it.
+     * `rss.ts` does not, and `insertDownloadRecord` writes `params.guid` straight through, so an
+     * RSS-origin grab persisted `guid: null`. For ABB that is now the release's ONLY search-time
+     * identity: without it the blacklist entry a later "mark failed" writes can match on nothing,
+     * and the same release is re-grabbed on the next RSS pass.
+     */
+    it('copies guid off the SearchResult with no override needed', () => {
       const payload = buildGrabPayload(baseResult, 1);
 
+      expect(payload.guid).toBe('abc-123');
+    });
+
+    it('omits guid entirely when the SearchResult carries none', () => {
+      const { guid: _guid, ...noGuid } = baseResult;
+
+      const payload = buildGrabPayload(noGuid, 1);
+
       expect(payload).not.toHaveProperty('guid');
+    });
+
+    it('carries an ABB details-URL sentinel guid through verbatim', () => {
+      const detailsUrl = 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/';
+
+      const payload = buildGrabPayload({ ...baseResult, guid: detailsUrl }, 1);
+
+      expect(payload.guid).toBe(detailsUrl);
     });
   });
 
@@ -55,10 +79,10 @@ describe('buildGrabPayload', () => {
       expect(payload.source).toBe('rss');
     });
 
-    it('includes guid only when explicitly provided as override', () => {
-      const payload = buildGrabPayload(baseResult, 1, { guid: 'abc-123' });
+    it('lets an explicit guid override win over the result\'s own', () => {
+      const payload = buildGrabPayload(baseResult, 1, { guid: 'override-guid' });
 
-      expect(payload.guid).toBe('abc-123');
+      expect(payload.guid).toBe('override-guid');
     });
 
     it('#1156 forwards isFreeleech from SearchResult into the payload', () => {

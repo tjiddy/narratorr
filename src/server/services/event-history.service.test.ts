@@ -232,6 +232,47 @@ describe('EventHistoryService', () => {
       );
     });
 
+    /**
+     * #2420 — "mark failed" is the user-facing blacklist action, and it wrote infoHash with no
+     * guid. ABB search results no longer carry a hash, so without the guid the operator sees the
+     * action succeed and the same release grabbed again on the next cycle.
+     */
+    it('carries the download row\'s guid onto the bad_quality entry', async () => {
+      const guid = 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/';
+      const event = createMockDbBookEvent({ downloadId: 5 });
+      const download = { id: 5, infoHash: 'abc123', guid, title: 'The Way of Kings [MP3]' };
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([event]))
+        .mockReturnValueOnce(mockDbChain([download]));
+
+      await service.markFailed(1);
+
+      expect(blacklistService.create).toHaveBeenCalledWith({
+        infoHash: 'abc123',
+        guid,
+        title: 'The Way of Kings [MP3]',
+        bookId: 1,
+        reason: 'bad_quality',
+      });
+    });
+
+    // The fix must not make guid required.
+    it('still blacklists on infoHash alone when the download row has a null guid', async () => {
+      const event = createMockDbBookEvent({ downloadId: 5 });
+      const download = { id: 5, infoHash: 'abc123', guid: null, title: 'The Way of Kings [MP3]' };
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([event]))
+        .mockReturnValueOnce(mockDbChain([download]));
+
+      await service.markFailed(1);
+
+      const created = blacklistService.create.mock.calls[0]![0] as Record<string, unknown>;
+      expect(created.infoHash).toBe('abc123');
+      expect(created.guid).toBeUndefined();
+    });
+
     it('throws EventHistoryServiceError NOT_FOUND when event not found', async () => {
       db.select.mockReturnValue(mockDbChain([]));
       await expect(service.markFailed(999)).rejects.toThrow(EventHistoryServiceError);

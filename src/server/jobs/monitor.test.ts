@@ -1282,6 +1282,41 @@ describe('monitor job', () => {
       );
     });
 
+    /**
+     * #2420 — this creator wrote infoHash and no guid, which is invisible while every adapter
+     * carries a hash at search time. ABB's results no longer do, so the whole blacklist load moves
+     * to the guid arm: without the guid the entry can never match an ABB result again.
+     */
+    it('carries the download row\'s guid onto the infrastructure_error entry', async () => {
+      const guid = 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/';
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123', guid },
+      ]));
+      adapter.getDownload.mockRejectedValueOnce(new Error('Connection refused'));
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      expect(retryDeps.blacklistService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ infoHash: 'abc123', guid, reason: 'infrastructure_error' }),
+      );
+    });
+
+    // The fix must not make guid required: a Usenet or pre-#2420 row carries only a hash.
+    it('still blacklists on infoHash alone when the download row has a null guid', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123', guid: null },
+      ]));
+      adapter.getDownload.mockRejectedValueOnce(new Error('Connection refused'));
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      const created = retryDeps.blacklistService.create.mock.calls[0]![0] as Record<string, unknown>;
+      expect(created.infoHash).toBe('abc123');
+      expect(created.guid).toBeUndefined();
+    });
+
     it('adapter.getDownload() returns null → blacklists with reason download_failed, type temporary', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
