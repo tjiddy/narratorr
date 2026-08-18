@@ -1971,6 +1971,46 @@ describe('BookDetails — Import Files (#2435)', () => {
     await waitFor(() => expect(mockImport()).toHaveBeenCalledWith(42, { path: '/', mode: 'move' }));
   });
 
+  /**
+   * F1: the picker is rendered unconditionally by BookDetails, so `return null` while closed does
+   * NOT unmount it. A mode chosen in one session must not leak into the next — the retained value
+   * is `move`, which deletes the source, so the failure mode is silent and destructive.
+   */
+  it('restores the Copy default after a Move attempt is cancelled and the picker reopened', async () => {
+    const user = userEvent.setup();
+    mockImport().mockResolvedValue({ jobId: 7 });
+    renderBookDetails({ id: 42, path: null, status: 'wanted' });
+
+    await openPicker(user);
+    await user.click(screen.getByRole('radio', { name: 'Move' }));
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await openPicker(user);
+    // The user makes no mode choice this time, so the promised default must apply.
+    expect(screen.getByRole('radio', { name: 'Copy' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('radio', { name: 'Move' })).toHaveAttribute('aria-checked', 'false');
+
+    await user.click(screen.getByRole('button', { name: 'Import' }));
+
+    await waitFor(() => expect(mockImport()).toHaveBeenCalledWith(42, { path: '/', mode: 'copy' }));
+  });
+
+  it('restores the Copy default after a completed Move import', async () => {
+    const user = userEvent.setup();
+    mockImport().mockResolvedValue({ jobId: 7 });
+    renderBookDetails({ id: 42, path: null, status: 'wanted' });
+
+    await openPicker(user);
+    await user.click(screen.getByRole('radio', { name: 'Move' }));
+    await user.click(screen.getByRole('button', { name: 'Import' }));
+    await waitFor(() => expect(mockImport()).toHaveBeenCalledWith(42, { path: '/', mode: 'move' }));
+
+    await openPicker(user);
+    await user.click(screen.getByRole('button', { name: 'Import' }));
+
+    await waitFor(() => expect(mockImport()).toHaveBeenLastCalledWith(42, { path: '/', mode: 'copy' }));
+  });
+
   it('toasts success and closes the picker', async () => {
     const user = userEvent.setup();
     mockImport().mockResolvedValue({ jobId: 7 });

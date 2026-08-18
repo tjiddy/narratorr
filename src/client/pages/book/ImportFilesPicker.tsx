@@ -15,17 +15,12 @@ const MODES: { value: ImportFilesMode; label: string }[] = [
   { value: 'move', label: 'Move' },
 ];
 
-/**
- * #2435 AC19 — pick a manually-obtained file (or its folder) and the mode to place it with.
- *
- * `mode` is mandatory on the wire and defaults to Copy here, matching the vocabulary the
- * manual-import page already offers. File selection is the point of the action: a user with one
- * target M4B beside unrelated audio must be able to attach that file, not the whole folder.
- */
-export function ImportFilesPicker({ isOpen, isPending, onSubmit, onClose }: ImportFilesPickerProps) {
+// Mounting this inner component resets the mode to Copy each session without a syncing effect —
+// the same split DirectoryBrowserModal uses for `initialPath`. It is load-bearing rather than
+// stylistic: BookDetails renders the picker unconditionally, so returning null while closed leaves
+// the component mounted, and a retained `move` would silently delete the source on the next open.
+function ImportFilesPickerContent({ isOpen, isPending, onSubmit, onClose }: ImportFilesPickerProps) {
   const [mode, setMode] = useState<ImportFilesMode>('copy');
-
-  if (!isOpen) return null;
 
   return (
     <DirectoryBrowserModal
@@ -59,4 +54,17 @@ export function ImportFilesPicker({ isOpen, isPending, onSubmit, onClose }: Impo
       onClose={onClose}
     />
   );
+}
+
+/**
+ * #2435 AC19 — pick a manually-obtained file (or its folder) and the mode to place it with.
+ *
+ * `mode` is mandatory on the wire and defaults to Copy every time the picker opens, matching the
+ * vocabulary the manual-import page already offers. File selection is the point of the action: a
+ * user with one target M4B beside unrelated audio must be able to attach that file, not the whole
+ * folder.
+ */
+export function ImportFilesPicker({ isOpen, ...props }: ImportFilesPickerProps) {
+  if (!isOpen) return null;
+  return <ImportFilesPickerContent isOpen={isOpen} {...props} />;
 }
