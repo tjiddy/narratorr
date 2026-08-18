@@ -7,6 +7,22 @@ import { useFfmpegStatus } from '@/hooks/useFfmpegStatus';
 import { getErrorMessage } from '@/lib/error-message.js';
 import { describeKeptFiles } from '@/lib/kept-files-message.js';
 
+/** #2435 AC19 — attach a manually-obtained file to this book. Its own hook so `useBookActions`
+ * stays within the function-length rule rather than the rule being widened for it. */
+function useImportFilesMutation(bookId: number, invalidateBookQueries: () => void) {
+  return useMutation({
+    mutationFn: (vars: { path: string; mode: 'copy' | 'move' }) => api.importBookFiles(bookId, vars),
+    onSuccess: () => {
+      invalidateBookQueries();
+      toast.success('Import queued');
+    },
+    onError: (error: Error) => {
+      // Surface the server's own refusal message — it names which condition failed.
+      toast.error(`Import files failed: ${getErrorMessage(error)}`);
+    },
+  });
+}
+
 export function useBookActions(bookId: number) {
   const queryClient = useQueryClient();
   const [isSaving, setIsSaving] = useState(false);
@@ -147,6 +163,8 @@ export function useBookActions(bookId: number) {
     },
   });
 
+  const importFilesMutation = useImportFilesMutation(bookId, invalidateBookQueries);
+
   const retryImportMutation = useMutation({
     mutationFn: () => api.retryBookImport(bookId),
     onSuccess: () => { invalidateBookQueries(); toast.success('Import retry queued'); },
@@ -162,6 +180,7 @@ export function useBookActions(bookId: number) {
     deleteMutation,
     wrongReleaseMutation,
     retryImportMutation,
+    importFilesMutation,
     uploadCoverMutation,
     ffmpegConfigured,
     isSaving,
