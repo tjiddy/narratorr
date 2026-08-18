@@ -776,6 +776,42 @@ describe('selectRelaxedCandidate', () => {
     const results = [passing('Star Wars: The High Republic: Haunted Starlight')];
     expect(selectRelaxedCandidate(results, prefix2)).toEqual({ kind: 'grab', result: results[0] });
   });
+
+  /**
+   * #2420 — ABB stopped carrying a real download URL at search time and now ships an
+   * `abb-details://` sentinel that the adapter trades for a magnet at grab time. The sentinel is a
+   * non-empty string, so it satisfies this filter with no change here; the alternative design (no
+   * `downloadUrl` at all) would have made every ABB result ineligible on this line alone.
+   */
+  describe('an ABB details sentinel (#2420)', () => {
+    const sentinel = (title: string) => makeResult({
+      title,
+      protocol: 'torrent',
+      indexer: 'AudioBookBay',
+      downloadUrl: 'abb-details://https://audiobookbay.test/audio-books/haunted-starlight/',
+    });
+
+    it('is eligible on a full rung and grabbed', () => {
+      const result = sentinel('Star Wars: The Rising Storm (The High Republic)');
+      expect(selectRelaxedCandidate([result], full)).toEqual({ kind: 'grab', result });
+    });
+
+    it('is eligible on a relaxed rung and grabbed when it passes the segment floor', () => {
+      const result = sentinel('Star Wars: Haunted Starlight');
+      expect(selectRelaxedCandidate([result], cut)).toEqual({ kind: 'grab', result });
+    });
+
+    // The control: eligibility comes from the sentinel string, not from being an ABB result.
+    it('control: the same ABB result with no downloadUrl is not eligible at all', () => {
+      const result = makeResult({
+        title: 'Star Wars: Haunted Starlight',
+        protocol: 'torrent',
+        indexer: 'AudioBookBay',
+        downloadUrl: undefined,
+      });
+      expect(selectRelaxedCandidate([result], full)).toEqual({ kind: 'none' });
+    });
+  });
 });
 
 describe('countOccurrences self-overlap (the #2133 docblock claim)', () => {

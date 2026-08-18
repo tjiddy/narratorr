@@ -5121,6 +5121,43 @@ describe('#2420 — the ABB result shape through the pipeline', () => {
     expect(withoutAuthor).toBe(withAuthor);
   });
 
+  /**
+   * A resolve failure at grab time is a new way for `grab` to reject, and the scheduled surface's
+   * existing answer to that is `grab_error` on the one selected best result. Pinned here so the
+   * lazy-resolution change cannot quietly grow a next-candidate retry it never had.
+   */
+  it('reports a resolve failure as grab_error and does not try the next-best release', async () => {
+    const indexerSearchService = {
+      searchAllWithStatus: vi.fn().mockResolvedValue(searchStatus([
+        abbResult({ title: 'Best Match' }),
+        abbResult({ title: 'Runner Up', guid: `${ABB_GUID}other/`, downloadUrl: `abb-details://${ABB_GUID}other/` }),
+      ])),
+    } as unknown as IndexerSearchService;
+    const resolveFailure = new Error('ABB detail fetch failed for https://audiobookbay.test/audio-books/x/: HTTP 500');
+    const downloadOrchestrator = {
+      grab: vi.fn().mockRejectedValue(resolveFailure),
+    } as unknown as DownloadOrchestrator;
+    const blacklistService = {
+      getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }),
+    } as unknown as BlacklistService;
+
+    const result = await searchAndGrabForBook(
+      { id: 1, title: 'Murder in the New Forest', duration: 3600, authors: [{ name: 'Carol Cole' }] },
+      {
+        indexerSearchService,
+        downloadOrchestrator,
+        qualitySettings: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' },
+        log: createMockLogger(),
+        blacklistService,
+        indexerService: mockIndexer,
+        eventHistory: createMockEventHistory(),
+      },
+    );
+
+    expect(result.result).toBe('grab_error');
+    expect(downloadOrchestrator.grab).toHaveBeenCalledTimes(1);
+  });
+
   /** AC7 — the whole blacklist load moves from the hash arm to the guid arm. */
   describe('blacklist identity (AC7)', () => {
     let blacklistService: BlacklistService;

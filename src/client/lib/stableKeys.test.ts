@@ -106,6 +106,27 @@ describe('searchResultKey', () => {
     const result: SearchResult = { title: 'T', protocol: 'torrent', indexer: 'i', infoHash: 'abc' };
     expect(searchResultKey(result)).toBe('abc');
   });
+
+  /**
+   * #2420 — ABB results lost their infoHash, so every one of them now falls through to the
+   * downloadUrl arm. That arm has to separate them, or a whole result set collapses onto one React
+   * key and rows disappear.
+   */
+  it('keys two ABB sentinel results apart on their details URLs', () => {
+    const abb = (slug: string): SearchResult => ({
+      title: 'Murder in the New Forest',
+      protocol: 'torrent',
+      indexer: 'AudioBookBay',
+      downloadUrl: `abb-details://https://audiobookbay.test/audio-books/${slug}/`,
+      guid: `https://audiobookbay.test/audio-books/${slug}/`,
+    });
+
+    const first = searchResultKey(abb('murder-in-the-new-forest'));
+    const second = searchResultKey(abb('wish-you-were-here-yet'));
+
+    expect(first).not.toBe(second);
+    expect(first).toBe('abb-details://https://audiobookbay.test/audio-books/murder-in-the-new-forest/');
+  });
 });
 
 describe('importListItemKey', () => {
