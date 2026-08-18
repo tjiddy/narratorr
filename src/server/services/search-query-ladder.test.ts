@@ -71,6 +71,7 @@ describe('buildQueryLadder', () => {
 
     expect(ladder[0]).toEqual({
       query: buildSearchQuery(book),
+      queryWithApostrophes: 'Star Wars The High Republic Haunted Starlight George Mann',
       author: 'George Mann',
       variant: null,
       segments: [],
@@ -91,6 +92,7 @@ describe('buildQueryLadder', () => {
     expect(ladder).toEqual([
       {
         query: 'Star Wars The High Republic Haunted Starlight George Mann',
+        queryWithApostrophes: 'Star Wars The High Republic Haunted Starlight George Mann',
         author: 'George Mann',
         variant: null,
         segments: [],
@@ -98,6 +100,7 @@ describe('buildQueryLadder', () => {
       },
       {
         query: 'star wars the high republic George Mann',
+        queryWithApostrophes: 'star wars the high republic George Mann',
         author: 'George Mann',
         variant: { raw: 'star wars the high republic', tag: 'prefix(2)', parensStripped: true, lossy: false },
         segments: ['star wars', 'the high republic'],
@@ -105,6 +108,7 @@ describe('buildQueryLadder', () => {
       },
       {
         query: 'the high republic haunted starlight George Mann',
+        queryWithApostrophes: 'the high republic haunted starlight George Mann',
         author: 'George Mann',
         variant: { raw: 'the high republic haunted starlight', tag: 'suffix(2)', parensStripped: true, lossy: false },
         segments: ['the high republic', 'haunted starlight'],
@@ -112,6 +116,7 @@ describe('buildQueryLadder', () => {
       },
       {
         query: 'star wars haunted starlight George Mann',
+        queryWithApostrophes: 'star wars haunted starlight George Mann',
         author: 'George Mann',
         variant: { raw: 'star wars haunted starlight', tag: 'first+last', parensStripped: true, lossy: false },
         segments: ['star wars', 'haunted starlight'],
@@ -119,6 +124,7 @@ describe('buildQueryLadder', () => {
       },
       {
         query: 'haunted starlight George Mann',
+        queryWithApostrophes: 'haunted starlight George Mann',
         author: 'George Mann',
         variant: { raw: 'haunted starlight', tag: 'suffix(1)', parensStripped: true, lossy: false },
         segments: ['haunted starlight'],
@@ -126,6 +132,7 @@ describe('buildQueryLadder', () => {
       },
       {
         query: 'star wars the high republic haunted starlight',
+        queryWithApostrophes: 'star wars the high republic haunted starlight',
         author: undefined,
         variant: { raw: 'star wars the high republic haunted starlight', tag: 'full', parensStripped: false, lossy: false },
         segments: [],
@@ -133,6 +140,7 @@ describe('buildQueryLadder', () => {
       },
       {
         query: 'star wars the high republic',
+        queryWithApostrophes: 'star wars the high republic',
         author: undefined,
         variant: { raw: 'star wars the high republic', tag: 'prefix(2)', parensStripped: true, lossy: false },
         segments: ['star wars', 'the high republic'],
@@ -140,6 +148,7 @@ describe('buildQueryLadder', () => {
       },
       {
         query: 'the high republic haunted starlight',
+        queryWithApostrophes: 'the high republic haunted starlight',
         author: undefined,
         variant: { raw: 'the high republic haunted starlight', tag: 'suffix(2)', parensStripped: true, lossy: false },
         segments: ['the high republic', 'haunted starlight'],
@@ -409,6 +418,137 @@ describe('buildQueryLadder', () => {
     });
     expect(MAX_SEARCH_RUNGS).toBe(8);
     expect(ladder).toHaveLength(MAX_SEARCH_RUNGS);
+  });
+});
+
+/**
+ * #2422 — the apostrophe-bearing text rides down beside `query`, never in place of it. Casing is
+ * inherited from each rung's own source, so the literals below are asserted case-exactly: a ladder
+ * that started re-casing either field would red these rather than pass by coincidence.
+ */
+describe('buildQueryLadder — the apostrophe channel (#2422)', () => {
+  // A colon-segmented title, so relaxation rungs actually exist to assert on.
+  const TITLE = "A Dragon Rider's Guide: The Retirement Chronicles: Book One";
+  const AUTHOR = 'Julia Huni';
+
+  it('fills the eight-rung budget, so the per-rung assertions below are not vacuous', () => {
+    expect(buildQueryLadder({ title: TITLE, author: AUTHOR })).toHaveLength(MAX_SEARCH_RUNGS);
+  });
+
+  it('leaves every rung.query byte-identical to the pre-change ladder', () => {
+    const ladder = buildQueryLadder({ title: TITLE, author: AUTHOR });
+
+    expect(ladder.map((r) => r.query)).toEqual([
+      'A Dragon Riders Guide The Retirement Chronicles Book One Julia Huni',
+      'a dragon riders guide the retirement chronicles Julia Huni',
+      'the retirement chronicles book one Julia Huni',
+      'a dragon riders guide book one Julia Huni',
+      'book one Julia Huni',
+      'a dragon riders guide the retirement chronicles book one',
+      'a dragon riders guide the retirement chronicles',
+      'the retirement chronicles book one',
+    ]);
+  });
+
+  it('carries the apostrophe form on every rung, at that rung’s own casing', () => {
+    const ladder = buildQueryLadder({ title: TITLE, author: AUTHOR });
+
+    expect(ladder.map((r) => r.queryWithApostrophes)).toEqual([
+      "A Dragon Rider's Guide The Retirement Chronicles Book One Julia Huni",
+      "a dragon rider's guide the retirement chronicles Julia Huni",
+      'the retirement chronicles book one Julia Huni',
+      "a dragon rider's guide book one Julia Huni",
+      'book one Julia Huni',
+      "a dragon rider's guide the retirement chronicles book one",
+      "a dragon rider's guide the retirement chronicles",
+      'the retirement chronicles book one',
+    ]);
+  });
+
+  it('pairs the apostrophe-bearing token with its de-apostrophized twin on rung 1 and on a relaxed rung', () => {
+    const ladder = buildQueryLadder({ title: TITLE, author: AUTHOR });
+
+    expect(ladder[0]!.queryWithApostrophes).toContain("Rider's");
+    expect(ladder[0]!.query).toContain('Riders');
+    expect(ladder[1]!.queryWithApostrophes).toContain("rider's");
+    expect(ladder[1]!.query).toContain('riders');
+    // The author is passed through un-normalized on both fields, so it stays source-cased.
+    expect(ladder[1]!.queryWithApostrophes).toContain('Julia Huni');
+  });
+
+  it('folds a curly apostrophe in the title to U+0027 on every rung', () => {
+    const ladder = buildQueryLadder({ title: 'A Dragon Rider’s Guide: Book One', author: AUTHOR });
+
+    for (const rung of ladder) {
+      expect(rung.queryWithApostrophes).not.toContain('’');
+    }
+    expect(ladder[0]!.queryWithApostrophes).toContain("Rider's");
+  });
+
+  describe('rung 1 sourcing', () => {
+    it('uses the caller-supplied value, cleaned, without moving rung 1’s query', () => {
+      const ladder = buildQueryLadder({
+        title: TITLE,
+        author: AUTHOR,
+        query: 'Dragon Riders Guide',
+        queryWithApostrophes: "Dragon Rider's Guide (Unabridged)!",
+      });
+
+      expect(ladder[0]!.query).toBe('Dragon Riders Guide');
+      expect(ladder[0]!.queryWithApostrophes).toBe("Dragon Rider's Guide Unabridged");
+    });
+
+    it('derives from title and author when the caller supplies neither query nor apostrophe form', () => {
+      const ladder = buildQueryLadder({ title: TITLE, author: AUTHOR });
+
+      expect(ladder[0]!.queryWithApostrophes)
+        .toBe("A Dragon Rider's Guide The Retirement Chronicles Book One Julia Huni");
+    });
+
+    it('derives a title-only value when the author is undefined', () => {
+      const ladder = buildQueryLadder({ title: "A Dragon Rider's Guide" });
+
+      expect(ladder[0]!.queryWithApostrophes).toBe("A Dragon Rider's Guide");
+      expect(ladder[0]!.author).toBeUndefined();
+    });
+
+    it('survives search-stream’s empty-title shape and still produces no relaxation rungs', () => {
+      const ladder = buildQueryLadder({
+        title: '',
+        author: AUTHOR,
+        query: "Rider's Guide",
+        queryWithApostrophes: "Rider's Guide",
+      });
+
+      expect(ladder).toHaveLength(1);
+      expect(ladder[0]!.queryWithApostrophes).toBe("Rider's Guide");
+    });
+
+    it('falls back to the author alone when the title is empty and no apostrophe form is supplied', () => {
+      const ladder = buildQueryLadder({ title: '', author: AUTHOR });
+
+      expect(ladder).toHaveLength(1);
+      expect(ladder[0]!.queryWithApostrophes).toBe(AUTHOR);
+    });
+  });
+
+  it('keeps dedup keyed on rung.query alone — the new field cannot split a rung', () => {
+    const ladder = buildQueryLadder({ title: "'Salem's Lot", author: 'Stephen King' });
+
+    // Two rungs today: rung 1 plus the author-free full variant; the author-bearing full
+    // variant collapses onto rung 1. Keying on the apostrophe form must not change that.
+    expect(ladder.map((r) => r.query)).toEqual(['Salems Lot Stephen King', 'salems lot']);
+
+    const [rung] = ladder;
+    expect(rungDedupKey({ ...rung!, queryWithApostrophes: "'Salem's Lot Stephen King" }))
+      .toBe(rungDedupKey({ ...rung!, queryWithApostrophes: 'wholly different text' }));
+  });
+
+  it('gives a degenerate-fold title a well-formed apostrophe form on its single rung', () => {
+    const ladder = buildQueryLadder({ title: "World of Warcraft: Перед бурей O'Malley", author: 'Christie Golden' });
+
+    expect(ladder).toHaveLength(1);
+    expect(ladder[0]!.queryWithApostrophes).toBe("World of Warcraft Перед бурей O'Malley Christie Golden");
   });
 });
 

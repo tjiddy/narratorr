@@ -48,6 +48,13 @@ export interface SearchOptions {
   languages?: readonly string[] | undefined;
   /** Ranking-only author context. Adapters must ignore it; scoring falls back to author. */
   rankingAuthor?: string | undefined;
+  /**
+   * The same punctuation-cleaned query as the positional `query`, but with apostrophes kept.
+   * Only an adapter whose index cannot match a de-apostrophized token may read it (today: ABB,
+   * whose tokenizer treats the apostrophe as a word character, #2422). Every other adapter uses
+   * the positional `query` argument, so its request is unaffected by this field's presence.
+   */
+  queryWithApostrophes?: string | undefined;
 }
 
 export interface IndexerTestResult {

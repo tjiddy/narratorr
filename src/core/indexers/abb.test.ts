@@ -1546,4 +1546,113 @@ describe('AudioBookBayIndexer', () => {
       });
     });
   });
+
+  /**
+   * #2422 — ABB's tokenizer treats the apostrophe as a word character, so the de-apostrophized
+   * query the service builds carries a token nothing can match. Assertions here read the request
+   * URL that actually left, never a mock argument: the fold has to survive URL construction.
+   */
+  describe('apostrophe-bearing queries (#2422)', () => {
+    const STRIPPED = 'A Dragon Riders Guide to Retirement Julia Huni';
+    const WITH_APOSTROPHE = "A Dragon Rider's Guide to Retirement Julia Huni";
+
+    /** Records every search-page request URL ABB issues, in order. */
+    function captureSearchUrls(): string[] {
+      const urls: string[] = [];
+      server.use(
+        http.get(`${ABB_BASE}/`, ({ request }) => {
+          urls.push(request.url);
+          return new HttpResponse(searchHtml, { headers: { 'Content-Type': 'text/html' } });
+        }),
+        http.get(`${ABB_BASE}/page/:page/`, ({ request }) => {
+          urls.push(request.url);
+          return new HttpResponse(searchHtml, { headers: { 'Content-Type': 'text/html' } });
+        }),
+        http.get(`${ABB_BASE}/audio-books/:slug/`, () => new HttpResponse(detailHtml, { headers: { 'Content-Type': 'text/html' } })),
+      );
+      return urls;
+    }
+
+    function searchParamOf(url: string): string | null {
+      return new URL(url).searchParams.get('s');
+    }
+
+    it('folds the apostrophe word out of the request URL when the option carries it', async () => {
+      const urls = captureSearchUrls();
+
+      await indexer.search(STRIPPED, { queryWithApostrophes: WITH_APOSTROPHE });
+
+      expect(urls[0]).toContain('?s=a+dragon+guide+to+retirement+julia+huni&tt=1');
+      expect(searchParamOf(urls[0]!)).toBe('a dragon guide to retirement julia huni');
+    });
+
+    it('folds a lowercase relaxed-rung value to the identical URL as the source-cased rung-1 value', async () => {
+      const urls = captureSearchUrls();
+
+      await indexer.search(STRIPPED, { queryWithApostrophes: WITH_APOSTROPHE });
+      await indexer.search(STRIPPED.toLowerCase(), { queryWithApostrophes: WITH_APOSTROPHE.toLowerCase() });
+
+      expect(urls[1]).toBe(urls[0]);
+    });
+
+    it('issues today’s URL when no options object is passed at all', async () => {
+      const urls = captureSearchUrls();
+
+      await indexer.search('Brandon Sanderson');
+
+      expect(urls[0]).toBe(`${ABB_BASE}/?s=brandon+sanderson&tt=1`);
+    });
+
+    it('issues today’s URL when options are present but queryWithApostrophes is undefined', async () => {
+      const urls = captureSearchUrls();
+
+      await indexer.search(STRIPPED, { limit: 50 });
+
+      expect(searchParamOf(urls[0]!)).toBe('a dragon riders guide to retirement julia huni');
+    });
+
+    it('issues today’s empty-query request for the RSS-path shape without throwing', async () => {
+      const urls = captureSearchUrls();
+
+      await expect(indexer.search('')).resolves.toBeDefined();
+
+      expect(urls[0]).toBe(`${ABB_BASE}/?s=&tt=1`);
+    });
+
+    it('carries the folded query onto page two as well', async () => {
+      const twoPageIndexer = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 2 });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(twoPageIndexer as any, 'delay').mockResolvedValue(undefined);
+      const urls = captureSearchUrls();
+
+      await twoPageIndexer.search(STRIPPED, { queryWithApostrophes: WITH_APOSTROPHE });
+
+      expect(urls[1]).toContain('/page/2/');
+      expect(searchParamOf(urls[1]!)).toBe('a dragon guide to retirement julia huni');
+    });
+
+    it('carries the folded query into the URL handed to FlareSolverr', async () => {
+      const solverTargets: string[] = [];
+      const PROXY_URL = 'http://flaresolverr.test:8191';
+      const proxiedIndexer = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 1, flareSolverrUrl: PROXY_URL });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(proxiedIndexer as any, 'delay').mockResolvedValue(undefined);
+      server.use(
+        http.post(`${PROXY_URL}/v1`, async ({ request }) => {
+          const body = await request.json() as Record<string, unknown>;
+          const target = body.url as string;
+          solverTargets.push(target);
+          return HttpResponse.json({
+            status: 'ok',
+            solution: { response: target.includes('?s=') ? searchHtml : detailHtml, status: 200 },
+          });
+        }),
+      );
+
+      await proxiedIndexer.search(STRIPPED, { queryWithApostrophes: WITH_APOSTROPHE });
+
+      const searchTarget = solverTargets.find((target) => target.includes('?s='));
+      expect(searchTarget).toBe(`${ABB_BASE}/?s=a+dragon+guide+to+retirement+julia+huni&tt=1`);
+    });
+  });
 });

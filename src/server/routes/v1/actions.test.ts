@@ -229,7 +229,13 @@ describe('v1 action routes (search + grab)', () => {
       const [query, options] = calls[0]!;
       expect(query).toContain('Way of Kings');
       expect(query).toContain('Brandon Sanderson');
-      expect(options).toEqual({ title: 'The Way of Kings', author: 'Brandon Sanderson', rankingAuthor: 'Brandon Sanderson' });
+      expect(options).toEqual({
+        title: 'The Way of Kings',
+        author: 'Brandon Sanderson',
+        rankingAuthor: 'Brandon Sanderson',
+        // #2422 — the executor forwards the rung's apostrophe form; here nothing has one to keep.
+        queryWithApostrophes: 'The Way of Kings Brandon Sanderson',
+      });
 
       // The author-dropped transport rung still keeps the canonical author for ranking.
       expect(calls.map(([q, o]) => [q, (o as { author?: string }).author])).toEqual([

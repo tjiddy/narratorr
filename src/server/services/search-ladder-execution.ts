@@ -44,7 +44,12 @@ export async function createStreamingExecutor(
     let succeeded = 0;
     const results = await indexerSearchService.searchAllStreaming(
       rung.query,
-      { title: book.title, author: rung.author, rankingAuthor: book.authors?.[0]?.name },
+      {
+        title: book.title,
+        author: rung.author,
+        rankingAuthor: book.authors?.[0]?.name,
+        queryWithApostrophes: rung.queryWithApostrophes,
+      },
       controllers,
       {
         onComplete: (indexerId, name, resultCount, elapsedMs) => {
@@ -101,6 +106,7 @@ export function createAggregateExecutor(
         title: book.title,
         author: rung.author,
         rankingAuthor: book.authors?.[0]?.name,
+        queryWithApostrophes: rung.queryWithApostrophes,
         // Omitted rather than assigned undefined so callers without a deadline keep today's options.
         ...(signal !== undefined && { signal }),
       },

@@ -1677,7 +1677,7 @@ describe('IndexerSearchService', () => {
 
         expect(mockAdapter.search).toHaveBeenCalledWith(
           'Blood Ties World of Warcraft Midnight',
-          undefined,
+          { queryWithApostrophes: 'Blood Ties World of Warcraft Midnight' },
         );
       });
 
@@ -1694,8 +1694,44 @@ describe('IndexerSearchService', () => {
 
         expect(mockAdapter.search).toHaveBeenCalledWith(
           'Is She Really Going Out with Him Sophie Cousens',
-          undefined,
+          { queryWithApostrophes: 'Is She Really Going Out with Him Sophie Cousens' },
         );
+      });
+
+      // #2422 — the transport query still has its apostrophes deleted; the option carries the
+      // form ABB needs, derived from this call's own raw query when no caller supplied one.
+      it('derives queryWithApostrophes from the raw query, keeping the apostrophe the transport query lost', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const mockAdapter = {
+          type: 'abb', name: 'AudioBookBay',
+          search: vi.fn().mockResolvedValue(searchResponse([])),
+          test: vi.fn(),
+        };
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+        await searchService.searchAll("A Dragon Rider’s Guide (Unabridged) Julia Huni");
+
+        const [transportQuery, passedOptions] = mockAdapter.search.mock.calls[0]!;
+        expect(transportQuery).toBe('A Dragon Riders Guide Unabridged Julia Huni');
+        expect(passedOptions.queryWithApostrophes).toBe("A Dragon Rider's Guide Unabridged Julia Huni");
+      });
+
+      it('prefers a caller-supplied queryWithApostrophes over the derived one', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const mockAdapter = {
+          type: 'abb', name: 'AudioBookBay',
+          search: vi.fn().mockResolvedValue(searchResponse([])),
+          test: vi.fn(),
+        };
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+        await searchService.searchAll('a dragon riders guide', {
+          title: 'A Dragon Rider’s Guide',
+          queryWithApostrophes: "a dragon rider's guide",
+        });
+
+        const passedOptions = mockAdapter.search.mock.calls[0]![1];
+        expect(passedOptions.queryWithApostrophes).toBe("a dragon rider's guide");
       });
 
       it('#1904 drops apostrophes in options.author without splitting the token', async () => {
