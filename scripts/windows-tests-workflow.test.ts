@@ -40,6 +40,17 @@ function distinctValues(workflow: string, pattern: RegExp): string[] {
   return [...new Set([...workflow.matchAll(pattern)].map((match) => match[1]!.trim()))];
 }
 
+const GUARD_STEP = 'scripts/check-vitest-selection.ts vitest-windows.json';
+/** Each step's own YAML text, so an assertion about one step cannot be satisfied by another. */
+const step = (name: string): string => {
+  const start = windows.indexOf(`- name: ${name}`);
+  const next = windows.indexOf('\n      - name:', start + 1);
+  return windows.slice(start, next === -1 ? undefined : next);
+};
+const testStep = step('Test');
+const guardStep = step('Assert non-empty per-project selection');
+const gitignore = fs.readFileSync(path.join(repoRoot, '.gitignore'), 'utf-8');
+
 const SETUP_NODE = /uses:\s*(actions\/setup-node@\S+)/g;
 const NODE_VERSION = /node-version:\s*(\S+)/g;
 const SETUP_PNPM = /uses:\s*(pnpm\/action-setup@\S+)/g;
@@ -155,11 +166,13 @@ describe('Windows test workflow (.github/workflows/windows-tests.yml)', () => {
       );
     });
 
-    it('asserts on that report after the run, so a test failure reds first', () => {
-      const guardStep = 'scripts/check-vitest-selection.ts vitest-windows.json';
+    it('keeps every flag the guard and the runner budget depend on', () => {
+      expect(windows).toContain('--maxWorkers=2');
+    });
 
-      expect(windows).toContain(guardStep);
-      expect(windows.indexOf('--outputFile.json')).toBeLessThan(windows.indexOf(guardStep));
+    it('asserts on that report after the run, so the guard reads a report that exists', () => {
+      expect(windows).toContain(GUARD_STEP);
+      expect(windows.indexOf('--outputFile.json')).toBeLessThan(windows.indexOf(GUARD_STEP));
     });
 
     it('invokes a guard script that exists', () => {
@@ -167,9 +180,46 @@ describe('Windows test workflow (.github/workflows/windows-tests.yml)', () => {
     });
 
     it('keeps the report out of the working tree', () => {
-      expect(fs.readFileSync(path.join(repoRoot, '.gitignore'), 'utf-8')).toContain(
-        'vitest-windows.json',
-      );
+      expect(gitignore).toContain('vitest-windows.json');
+    });
+  });
+
+  // The fork pool crashes at teardown after a fully green suite roughly one run in four (#2445),
+  // so the test step can no longer be the thing that reds the job — the guard has to see the exit
+  // code and decide.
+  describe('teardown-crash capture', () => {
+    it('captures vitest exit code and combined output instead of failing the step', () => {
+      expect(testStep).toContain('2>&1 | tee vitest-windows.log');
+      expect(testStep).toContain('exit-code=${PIPESTATUS[0]}');
+      expect(testStep).toContain('>> "$GITHUB_OUTPUT"');
+    });
+
+    // GitHub's bash default is `-eo pipefail`: without `set +e` a red suite aborts the step before
+    // the guard runs, and `$?` after a pipe reports tee's status, not vitest's. Both mistakes make
+    // the captured code silently always zero, which turns the guard into a no-op.
+    it('runs the capture under bash with errexit disabled and reads PIPESTATUS', () => {
+      expect(testStep).toContain('shell: bash');
+      expect(testStep).toMatch(/set \+e\n/);
+      expect(testStep).toContain('PIPESTATUS[0]');
+      expect(testStep).not.toMatch(/exit-code=\$\?/);
+    });
+
+    it('hands the guard the captured exit code and the captured log', () => {
+      expect(guardStep).toContain('--exit-code=');
+      expect(guardStep).toContain('--log=vitest-windows.log');
+      expect(guardStep).toContain('vitest-windows.json');
+      expect(windows.indexOf('tee vitest-windows.log')).toBeLessThan(windows.indexOf(GUARD_STEP));
+    });
+
+    // Unconditional and ungated: the guard's exit code is the job's only verdict now.
+    it('leaves the guard step unconditional so its exit code is the job verdict', () => {
+      expect(guardStep).not.toMatch(/^\s+if:/m);
+      expect(guardStep).not.toContain('continue-on-error');
+    });
+
+    it('keeps the captured log out of the working tree', () => {
+      expect(gitignore).toContain('*.log');
+      expect(windows).toContain('vitest-windows.log');
     });
   });
 });
