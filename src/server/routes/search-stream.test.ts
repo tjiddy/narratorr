@@ -900,6 +900,34 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
     }
   });
 
+  /**
+   * #2422 — the raw `q` is the only apostrophe-bearing text this route ever sees; it is validated
+   * but never cleaned, so rung 1 must carry it down while `rung.query` stays exactly as it was.
+   */
+  it('forwards each rung’s apostrophe form into the search options without moving rung.query', async () => {
+    const RAW_Q = "A Dragon Rider's Guide: The Retirement Chronicles";
+    const { service } = serviceAnswering(null);
+    const app = await buildApp(service);
+    try {
+      await fetchSseEvents(app, url({ q: RAW_Q, title: "A Dragon Rider's Guide: The Retirement Chronicles", author: AUTHOR }));
+
+      const calls = vi.mocked(service.searchAllStreaming).mock.calls;
+      const [rung1Query, rung1Options] = calls[0]!;
+      expect(rung1Query).toBe(RAW_Q);
+      expect(rung1Options?.queryWithApostrophes).toBe("A Dragon Rider's Guide The Retirement Chronicles");
+
+      // Every rung, not only the first: a relaxed rung is where the fold matters most.
+      for (const [, options] of calls) expect(options?.queryWithApostrophes).toBeDefined();
+
+      // Rung 1's query is the caller's `q` verbatim; only relaxed rungs are cleaned (#2104).
+      const [relaxedQuery, relaxedOptions] = calls[1]!;
+      expect(relaxedQuery).not.toContain("'");
+      expect(relaxedOptions?.queryWithApostrophes).toContain("rider's");
+    } finally {
+      await app.close();
+    }
+  });
+
   it('sets relaxedQuery to the winning rung query when rungs 2+ produced the hits (AC24)', async () => {
     const { service } = serviceAnswering(RUNGS[3]!);
     const app = await buildApp(service);
