@@ -63,8 +63,12 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # Lint, typecheck and build are platform-neutral and already gated on Linux.
+      # maxWorkers=2: the 4-vCPU public runner is disk-bound, not core-bound — at its default
+      # worker count the DB-heavy integration tests time out (run 32109789777: two seed-loop
+      # timeouts incl. AC14 blowing its 60s ceiling) and fork-pool contention has produced
+      # post-suite worker crashes. Half the workers, each with double the disk budget.
       - name: Test
-        run: pnpm test --reporter=default --reporter=json --outputFile.json=vitest-windows.json
+        run: pnpm test --reporter=default --reporter=json --outputFile.json=vitest-windows.json --maxWorkers=2
 
       # `passWithNoTests: true` makes a zero-file glob exit green, so the step above cannot prove
       # the suite was selected. Ungated on purpose: if the tests failed, the job is already red for
