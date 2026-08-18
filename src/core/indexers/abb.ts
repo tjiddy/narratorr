@@ -14,6 +14,7 @@ import { readAbbMetadata } from './abb-fields.js';
 import { buildAbbQuery } from './abb-query.js';
 import { inlineReAbPosts } from './abb-re-ab.js';
 import { abbDetailsSentinel, parseAbbDetailsUrl } from './abb-sentinel.js';
+import { abbGuid, isAbbRootUrl, rewriteAbbUrl } from './abb-url.js';
 import { abbThrottle, acquireAbbSolverMutex } from './abb-throttle.js';
 import { normalizeBaseUrl } from '@shared/normalize-base-url.js';
 import { fetchWithProxy, type FetchResult } from './fetch.js';
@@ -147,9 +148,22 @@ export class AudioBookBayIndexer implements IndexerAdapter {
    * a magnet stored before this adapter went lazy, a v1 API payload — passes through untouched.
    */
   async resolveDownloadUrl(ctx: ResolveDownloadContext): Promise<ResolveDownloadResult> {
-    const detailsUrl = parseAbbDetailsUrl(ctx.downloadUrl);
-    if (detailsUrl === undefined) {
+    const payload = parseAbbDetailsUrl(ctx.downloadUrl);
+    if (payload === undefined) {
       return { downloadUrl: ctx.downloadUrl };
+    }
+
+    // The sentinel is persisted state: its payload names whichever mirror was configured when the
+    // row was scraped. Rewriting it here is what makes a grab follow a mirror hop, and what keeps
+    // the detail fetch on the same throttle key as the search page.
+    const detailsUrl = rewriteAbbUrl(payload, this.baseUrl);
+    if (detailsUrl === undefined) {
+      throw new IndexerError(this.name, `ABB details URL is not a usable http(s) URL: ${payload}`);
+    }
+    // A sentinel written before this guard existed can still address the homepage, and spending a
+    // paced fetch on it costs the same as a real one on a site that bans for exactly that.
+    if (isAbbRootUrl(detailsUrl)) {
+      throw new IndexerError(this.name, `ABB details URL addresses no release page: ${payload}`);
     }
 
     let detail: { infoHash?: string; title?: string };
@@ -283,9 +297,9 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       }
 
       const title = titleEl.text().trim();
-      let detailsUrl = titleEl.attr('href');
+      const href = titleEl.attr('href');
 
-      if (!title || !detailsUrl) {
+      if (!title || !href) {
         // A surviving `re-ab` class means the decode pass refused the payload — the marker that
         // separates "this blob would not decode" from "this row simply has no title". One branch,
         // so the two counters cannot both claim the same row.
@@ -299,8 +313,20 @@ export class AudioBookBayIndexer implements IndexerAdapter {
         return;
       }
 
-      if (!detailsUrl.startsWith('http')) {
-        detailsUrl = `${this.baseUrl}${detailsUrl.startsWith('/') ? '' : '/'}${detailsUrl}`;
+      // Every identity field below derives from this one string, and every one of them is on the
+      // operator's configured origin whatever host the scraped markup carried.
+      const detailsUrl = rewriteAbbUrl(href, this.baseUrl);
+      if (detailsUrl === undefined) {
+        droppedOther++;
+        debugTrace.push({ source: 'row', reason: 'dropped:non-http-href' });
+        return;
+      }
+      // A property of the resolved URL, not of the href's spelling: `#`, `/`, `"   "` and an
+      // off-host hash-routed link all collapse here, and so does every spelling nobody has named.
+      if (isAbbRootUrl(detailsUrl)) {
+        droppedOther++;
+        debugTrace.push({ source: 'row', reason: 'dropped:no-release-path' });
+        return;
       }
 
       const coverUrl = $el.find('img').first().attr('src') ||
@@ -314,9 +340,11 @@ export class AudioBookBayIndexer implements IndexerAdapter {
         title,
         ...fields,
         protocol: 'torrent',
-        // The details URL is ABB's only search-time identity now that the hash is not read until
-        // grab time — it is what the blacklist and the previously-grabbed badge match on.
-        guid: detailsUrl,
+        // ABB's only search-time identity, now that the hash is not read until grab time — the
+        // blacklist and the previously-grabbed badge both match on it. Host-independent by
+        // construction, so a mirror hop is a config edit and not a silent history wipe. The
+        // URL-shaped guids the unreleased lazy-resolve build wrote are a one-time erosion.
+        guid: abbGuid(detailsUrl),
         downloadUrl: abbDetailsSentinel(detailsUrl),
         detailsUrl,
         ...(coverUrl !== undefined && { coverUrl }),

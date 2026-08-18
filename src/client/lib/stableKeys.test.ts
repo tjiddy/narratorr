@@ -118,7 +118,7 @@ describe('searchResultKey', () => {
       protocol: 'torrent',
       indexer: 'AudioBookBay',
       downloadUrl: `abb-details://https://audiobookbay.test/audio-books/${slug}/`,
-      guid: `https://audiobookbay.test/audio-books/${slug}/`,
+      guid: `abb:/audio-books/${slug}/`,
     });
 
     const first = searchResultKey(abb('murder-in-the-new-forest'));

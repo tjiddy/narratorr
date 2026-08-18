@@ -319,6 +319,7 @@ describe('retrySearch', () => {
    */
   it('returns retry_error when the ABB sentinel fails to resolve at grab time', async () => {
     const detailsUrl = 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/';
+    const abbGuid = 'abb:/audio-books/murder-in-the-new-forest/';
     const resolveFailure = new IndexerError(
       'AudioBookBay',
       `ABB detail fetch failed for ${detailsUrl}: HTTP 500`,
@@ -326,8 +327,8 @@ describe('retrySearch', () => {
     const deps = createDeps({
       indexerSearchService: inject<IndexerSearchService>({
         searchAllWithStatus: mockSearchAllWithStatus([
-          { ...mockSearchResult, title: 'Best Match', downloadUrl: `abb-details://${detailsUrl}`, guid: detailsUrl, infoHash: undefined },
-          { ...mockSearchResult, title: 'Runner Up', downloadUrl: `abb-details://${detailsUrl}other/`, guid: `${detailsUrl}other/`, infoHash: undefined },
+          { ...mockSearchResult, title: 'Best Match', downloadUrl: `abb-details://${detailsUrl}`, guid: abbGuid, infoHash: undefined },
+          { ...mockSearchResult, title: 'Runner Up', downloadUrl: `abb-details://${detailsUrl}other/`, guid: `${abbGuid}other/`, infoHash: undefined },
         ]),
       }),
       downloadOrchestrator: inject<DownloadOrchestrator>({
@@ -350,10 +351,11 @@ describe('retrySearch', () => {
   // cannot pass for the reason "this fixture never grabs anything".
   it('control: the same sentinel-bearing set retries normally when the resolve succeeds', async () => {
     const detailsUrl = 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/';
+    const abbGuid = 'abb:/audio-books/murder-in-the-new-forest/';
     const deps = createDeps({
       indexerSearchService: inject<IndexerSearchService>({
         searchAllWithStatus: mockSearchAllWithStatus([
-          { ...mockSearchResult, title: 'Best Match', downloadUrl: `abb-details://${detailsUrl}`, guid: detailsUrl, infoHash: undefined },
+          { ...mockSearchResult, title: 'Best Match', downloadUrl: `abb-details://${detailsUrl}`, guid: abbGuid, infoHash: undefined },
         ]),
       }),
     });
@@ -362,7 +364,7 @@ describe('retrySearch', () => {
 
     expect(result.outcome).toBe('retried');
     expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
-      expect.objectContaining({ downloadUrl: `abb-details://${detailsUrl}`, guid: detailsUrl }),
+      expect.objectContaining({ downloadUrl: `abb-details://${detailsUrl}`, guid: abbGuid }),
     );
   });
 

@@ -146,6 +146,22 @@ describe('AbbRequestThrottle', () => {
       expect(abbThrottleKey('https://abb.test:8443')).not.toBe(abbThrottleKey('https://abb.test'));
     });
 
+    /**
+     * #2434 — these record why rewriting every ABB request URL onto the configured origin is
+     * required rather than optional: raw markup that disagrees on scheme or www keys a queue of its
+     * own here, and the key is deliberately NOT widened to absorb it. Widening would need
+     * `normalizedHostPortFromUrl` to drop the port, which would merge two separately configured
+     * destinations — and would not fix www-vs-apex anyway. The adapter-level convergence claim is
+     * discharged in `abb-throttle.integration.test.ts`, not here.
+     */
+    it('keeps http and https on one host distinct, which is what the rewrite converges upstream', () => {
+      expect(abbThrottleKey('http://abb.test/x')).not.toBe(abbThrottleKey('https://abb.test/x'));
+    });
+
+    it('keeps www and apex distinct, which no port-dropping key change would fix', () => {
+      expect(abbThrottleKey('https://www.abb.test/x')).not.toBe(abbThrottleKey('https://abb.test/x'));
+    });
+
     it('never throws on an unparseable URL and keys it self-consistently', () => {
       expect(() => abbThrottleKey('not a url')).not.toThrow();
       expect(abbThrottleKey('not a url')).toBe(abbThrottleKey('not a url'));

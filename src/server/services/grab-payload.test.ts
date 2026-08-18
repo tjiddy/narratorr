@@ -57,12 +57,12 @@ describe('buildGrabPayload', () => {
       expect(payload).not.toHaveProperty('guid');
     });
 
-    it('carries an ABB details-URL sentinel guid through verbatim', () => {
-      const detailsUrl = 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/';
+    it('carries an ABB path-derived guid through verbatim', () => {
+      const abbGuid = 'abb:/audio-books/murder-in-the-new-forest/';
 
-      const payload = buildGrabPayload({ ...baseResult, guid: detailsUrl }, 1);
+      const payload = buildGrabPayload({ ...baseResult, guid: abbGuid }, 1);
 
-      expect(payload.guid).toBe(detailsUrl);
+      expect(payload.guid).toBe(abbGuid);
     });
   });
 

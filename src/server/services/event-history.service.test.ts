@@ -238,7 +238,7 @@ describe('EventHistoryService', () => {
      * action succeed and the same release grabbed again on the next cycle.
      */
     it('carries the download row\'s guid onto the bad_quality entry', async () => {
-      const guid = 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/';
+      const guid = 'abb:/audio-books/murder-in-the-new-forest/';
       const event = createMockDbBookEvent({ downloadId: 5 });
       const download = { id: 5, infoHash: 'abc123', guid, title: 'The Way of Kings [MP3]' };
 

@@ -1288,7 +1288,7 @@ describe('monitor job', () => {
      * to the guid arm: without the guid the entry can never match an ABB result again.
      */
     it('carries the download row\'s guid onto the infrastructure_error entry', async () => {
-      const guid = 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/';
+      const guid = 'abb:/audio-books/murder-in-the-new-forest/';
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123', guid },
       ]));

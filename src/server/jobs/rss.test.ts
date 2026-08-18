@@ -391,10 +391,11 @@ describe('runRssJob', () => {
    */
   it('advances to the next book when a grab fails, without trying the same book\'s runner-up', async () => {
     const detailsUrl = 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/';
+    const abbGuid = 'abb:/audio-books/murder-in-the-new-forest/';
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author'), makeWantedBook(2, 'Other Book', 'Author')];
     const rssResults = [
-      makeResult('Test Book', 'Author', { downloadUrl: `abb-details://${detailsUrl}`, guid: detailsUrl, indexer: 'AudioBookBay' }),
-      makeResult('Test Book', 'Author', { downloadUrl: `abb-details://${detailsUrl}runner-up/`, guid: `${detailsUrl}runner-up/`, indexer: 'AudioBookBay' }),
+      makeResult('Test Book', 'Author', { downloadUrl: `abb-details://${detailsUrl}`, guid: abbGuid, indexer: 'AudioBookBay' }),
+      makeResult('Test Book', 'Author', { downloadUrl: `abb-details://${detailsUrl}runner-up/`, guid: `${abbGuid}runner-up/`, indexer: 'AudioBookBay' }),
       makeResult('Other Book', 'Author'),
       makeResult('Other Book', 'Author', { downloadUrl: 'magnet:?xt=urn:btih:otherrunnerup' }),
     ];
