@@ -29,6 +29,16 @@ export const CONNECTOR_SHUTDOWN_DRAIN_MS = 5_000;
 export const MAM_MIN_REQUEST_INTERVAL_MS = 250;
 
 /**
+ * AudioBookBay's minimum interval between any two requests from one client. A constant, not a
+ * setting, on `MAM_MIN_REQUEST_INTERVAL_MS`'s reasoning — and the value is not ours to pick: Jackett
+ * has ratcheted its ABB `requestDelay` against real blocks for years (2.1s -> 3.1s in Feb 2023 after
+ * ABB blocked Prowlarr at 2s, -> 5.1s in Dec 2023, -> 6.1s, held through mid-2025). Narratorr's own
+ * 2026-08 temp IP ban was earned firing 4-12x hotter than that, so 6.1s is the floor the community's
+ * evidence supports and an operator-tunable value would invite a too-tight one.
+ */
+export const ABB_MIN_REQUEST_INTERVAL_MS = 6_100;
+
+/**
  * How many requests one FlareSolverr-compatible solver may hold at once. A constant, not a setting:
  * it bounds browser memory inside the solver process (byparr allocates one browser per request and
  * budgets ~512MB each, so three is ~1.5GB), and it protects against a failure mode the operator
