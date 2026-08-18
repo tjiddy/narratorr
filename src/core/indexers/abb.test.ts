@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi, type MockInstance } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -54,7 +54,7 @@ const PINNED_USER_AGENT =
 describe('AudioBookBayIndexer', () => {
   const server = useMswServer();
   let indexer: AudioBookBayIndexer;
-  let acquire: ReturnType<typeof vi.spyOn<typeof abbThrottle, 'acquire'>>;
+  let acquire: MockInstance<typeof abbThrottle.acquire>;
 
   beforeEach(() => {
     _resetAbbThrottleForTesting();
