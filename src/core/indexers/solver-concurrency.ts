@@ -44,9 +44,11 @@ const pools = new Map<string, BoundedSemaphore>();
  * verbatim if the caller cancels, or with a `ProxyError` if no slot frees within
  * `SOLVER_SLOT_WAIT_TIMEOUT_MS`.
  *
- * `ProxyError` is load-bearing, not cosmetic: ABB's search loop and `enrichAndCollect` rethrow only
- * what `isProxyRelatedError` accepts and swallow everything else, and a swallowed slot-wait failure
- * would read downstream as an answered zero and send the query ladder on to more solver requests.
+ * `ProxyError` is load-bearing, not cosmetic: ABB's search loop rethrows only what
+ * `isProxyRelatedError` accepts and degrades everything else on a later page, and a swallowed
+ * slot-wait failure would read downstream as an answered zero and send the query ladder on to more
+ * solver requests. (ABB's grab path wraps every failure instead — it has no degrade arm — so the
+ * discrimination there rides on `.cause`.)
  */
 export function acquireSolverSlot(proxyUrl: string, signal?: AbortSignal): Promise<SlotRelease> {
   const key = solverConcurrencyKey(proxyUrl);

@@ -20,6 +20,7 @@ import { initializeKey, _resetKey } from '../utils/secret-codec.js';
 import { indexerErrorEventSchema } from '@shared/schemas/search-stream.js';
 import { httpStatusError, IndexerError } from '@core/indexers/errors.js';
 import { AudioBookBayIndexer } from '@core/indexers/abb.js';
+import { abbThrottle, _resetAbbThrottleForTesting } from '@core/indexers/abb-throttle.js';
 import { useMswServer } from '@core/__tests__/msw/server.js';
 import { http, HttpResponse } from 'msw';
 import type { FastifyBaseLogger } from 'fastify';
@@ -372,11 +373,15 @@ describe.each(SURFACES)('#2375 AC1/AC9 — the real AudioBookBay adapter, on the
   const server = useMswServer();
   const ABB_HOST = 'abb.test';
 
-  // The adapter is constructed inside getAdapter, so its inter-request pause is stubbed on the
-  // prototype; the outer afterEach restores it.
+  // ABB's 6.1s floor would make an eight-rung run a 48-second test. The gate is module-level, so
+  // one spy covers every adapter `getAdapter` builds; its own timing lives in `abb-throttle.test.ts`.
   beforeEach(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    vi.spyOn(AudioBookBayIndexer.prototype as any, 'delay').mockResolvedValue(undefined);
+    _resetAbbThrottleForTesting();
+    vi.spyOn(abbThrottle, 'acquire').mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    _resetAbbThrottleForTesting();
   });
 
   /** Indexer 1 is the real ABB over MSW; indexer 2 is a healthy companion so the ladder advances. */
@@ -430,23 +435,31 @@ describe.each(SURFACES)('#2375 AC1/AC9 — the real AudioBookBay adapter, on the
   });
 
   /**
-   * #2367 AC8 — the search page answered, so this is a partial result, not a failed leg. Recording
-   * the detail failure must not turn it into one: the indexer stays eligible for every later rung.
+   * #2367 AC8 asked what a detail failure did to ladder eligibility. #2420 dissolved the question
+   * rather than answering it: search never fetches a detail page, so a detail page that 500s
+   * cannot reach the ladder's verdict at all — the row is admitted on its sentinel and the ladder
+   * stops on rung 1. The failure is re-pinned at the grab seam instead, in `abb.test.ts`.
    */
-  it('stays eligible when the search page answers and only the detail fetch fails', async () => {
+  it('never asks a detail page during the run, so a broken one cannot affect eligibility', async () => {
+    let detailRequests = 0;
     const oneRow = `<html><body><div class="post"><div class="postTitle">
       <h2><a href="/audio-books/murder-in-the-new-forest/" rel="bookmark">Murder in the New Forest</a></h2>
     </div></div></body></html>`;
     const { harness, alive, abbRequests } = buildWithRealAbb(
       () => new HttpResponse(oneRow, { headers: { 'Content-Type': 'text/html' } }),
     );
-    server.use(http.get(`https://${ABB_HOST}/audio-books/:slug/`, () => new HttpResponse(null, { status: 500 })));
+    server.use(http.get(`https://${ABB_HOST}/audio-books/:slug/`, () => {
+      detailRequests++;
+      return new HttpResponse(null, { status: 500 });
+    }));
 
     const ran = await runQueryLadder(LADDER, await executorFor(surface, harness));
 
-    expect(abbRequests()).toBe(8);
-    expect(alive).toHaveBeenCalledTimes(8);
-    expect(ran.exhausted).toBe(true);
+    expect(detailRequests).toBe(0);
+    expect(abbRequests()).toBe(1);
+    expect(ran.index).toBe(0);
+    expect(ran.results.length).toBeGreaterThan(0);
+    expect(alive).toHaveBeenCalledTimes(1);
   });
 });
 

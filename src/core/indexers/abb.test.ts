@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi, type MockInstance } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -15,7 +15,10 @@ vi.mock('../utils/network-service.js', async (importActual) => {
 });
 
 import { AudioBookBayIndexer } from './abb.js';
-import { ProxyError } from './errors.js';
+import { IndexerError, ProxyError, isProxyRelatedError } from './errors.js';
+import { ABB_DETAILS_SENTINEL_PREFIX, abbDetailsSentinel } from './abb-sentinel.js';
+import { abbThrottle, _resetAbbThrottleForTesting } from './abb-throttle.js';
+import { parseInfoHash } from '../utils/magnet.js';
 import { solverOk, useSolverBound } from '../__tests__/solver-bound.js';
 import {
   abortRejection,
@@ -33,8 +36,6 @@ import type { SearchResult } from './types.js';
 const fixturesDir = resolve(import.meta.dirname, '../__tests__/fixtures');
 const searchHtml = readFileSync(resolve(fixturesDir, 'abb-search.html'), 'utf-8');
 const detailHtml = readFileSync(resolve(fixturesDir, 'abb-detail.html'), 'utf-8');
-const samePersonHtml = readFileSync(resolve(fixturesDir, 'abb-detail-same-person.html'), 'utf-8');
-const perRequestHtml = readFileSync(resolve(fixturesDir, 'abb-detail-per-request.html'), 'utf-8');
 const noResultsHtml = readFileSync(resolve(fixturesDir, 'abb-no-results.html'), 'utf-8');
 
 /** Every string a downstream gate, score or badge can read off a result. */
@@ -44,17 +45,57 @@ function stringFieldsOf(result: SearchResult): string[] {
 
 const ABB_HOST = 'audiobookbay.test';
 const ABB_BASE = `https://${ABB_HOST}`;
+const MURDER_URL = `${ABB_BASE}/audio-books/murder-in-the-new-forest/`;
+const WISH_URL = `${ABB_BASE}/audio-books/wish-you-were-here-yet/`;
+const FIXTURE_HASH = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0';
+const PINNED_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 describe('AudioBookBayIndexer', () => {
   const server = useMswServer();
   let indexer: AudioBookBayIndexer;
+  let acquire: MockInstance<typeof abbThrottle.acquire>;
 
   beforeEach(() => {
+    _resetAbbThrottleForTesting();
+    // The 6.1s floor would make every multi-request case here a six-second test. Its timing lives
+    // in `abb-throttle.test.ts` under fake timers; this suite proves the wiring, and the spy is
+    // what makes "which requests acquire, with what URL" directly observable.
+    acquire = vi.spyOn(abbThrottle, 'acquire').mockResolvedValue(undefined);
     indexer = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 1 });
-    // Eliminate scraper throttling in tests.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    vi.spyOn(indexer as any, 'delay').mockResolvedValue(undefined);
   });
+
+  afterEach(() => {
+    _resetAbbThrottleForTesting();
+    vi.restoreAllMocks();
+  });
+
+  /** Counts every request to a detail page, which `search()` must never make. */
+  function countDetailRequests(): { count: number } {
+    const seen = { count: 0 };
+    server.use(
+      http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
+        seen.count++;
+        return new HttpResponse(detailHtml, { headers: { 'Content-Type': 'text/html' } });
+      }),
+    );
+    return seen;
+  }
+
+  function serveSearchPages(body = searchHtml): { urls: string[] } {
+    const urls: string[] = [];
+    server.use(
+      http.get(`${ABB_BASE}/`, ({ request }) => {
+        urls.push(request.url);
+        return new HttpResponse(body, { headers: { 'Content-Type': 'text/html' } });
+      }),
+      http.get(`${ABB_BASE}/page/:page/`, ({ request }) => {
+        urls.push(request.url);
+        return new HttpResponse(body, { headers: { 'Content-Type': 'text/html' } });
+      }),
+    );
+    return { urls };
+  }
 
   describe('properties', () => {
     it('has correct type and name', () => {
@@ -63,148 +104,218 @@ describe('AudioBookBayIndexer', () => {
     });
   });
 
-  describe('search', () => {
-    it('parses search results from HTML', async () => {
-      server.use(
-        http.get(`${ABB_BASE}/`, () => {
-          return new HttpResponse(searchHtml, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
-          return new HttpResponse(detailHtml, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-      );
+  /**
+   * AC1 — a detail fetch per row, up to 50 of them per search, is what earned the 2026-08 ban. Both
+   * mature community integrations resolve the magnet at download time instead.
+   */
+  describe('search issues search-page requests only (AC1, AC11)', () => {
+    it('makes no request to any detail URL while still returning both rows', async () => {
+      serveSearchPages();
+      const details = countDetailRequests();
 
       const { results } = await indexer.search('Brandon Sanderson');
 
-      expect(results.length).toBeGreaterThan(0);
-      expect(results[0]!.indexer).toBe('AudioBookBay');
+      expect(details.count).toBe(0);
+      expect(results.map((r) => r.title)).toEqual(['Murder in the New Forest', 'Wish You Were Here Yet?']);
     });
 
-    it('extracts info hash from detail page', async () => {
-      server.use(
-        http.get(`${ABB_BASE}/`, () => {
-          return new HttpResponse(searchHtml, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
-          return new HttpResponse(detailHtml, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-      );
+    it('costs exactly one HTTP request for a one-page search', async () => {
+      const { urls } = serveSearchPages();
+      countDetailRequests();
 
-      const { results } = await indexer.search('Brandon Sanderson');
+      await indexer.search('Brandon Sanderson');
 
-      expect(results[0]!.infoHash).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');
-      expect(results[0]!.downloadUrl).toContain('magnet:?');
+      expect(urls).toEqual([`${ABB_BASE}/?s=brandon+sanderson&tt=1`]);
     });
 
-    it('extracts size, seeders, leechers from detail page', async () => {
-      server.use(
-        http.get(`${ABB_BASE}/`, () => {
-          return new HttpResponse(searchHtml, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
-          return new HttpResponse(detailHtml, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-      );
+    it('costs exactly two for a two-page search whose limit is not reached on page one', async () => {
+      const twoPage = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 2 });
+      const { urls } = serveSearchPages();
+      countDetailRequests();
 
-      const { results } = await indexer.search('Brandon Sanderson');
+      const { results } = await twoPage.search('Brandon Sanderson');
 
-      expect(results[0]!.size).toBeGreaterThan(1_000_000_000);
-      expect(results[0]!.seeders).toBe(42);
-      expect(results[0]!.leechers).toBe(5);
+      expect(urls).toHaveLength(2);
+      expect(urls[1]).toContain('/page/2/');
+      expect(results).toHaveLength(4);
     });
 
-    it('returns empty array when no results found', async () => {
-      server.use(
-        http.get(`${ABB_BASE}/`, () => {
-          return new HttpResponse(noResultsHtml, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-      );
+    it('returns zero results and stops paginating on an empty page, with no detail request', async () => {
+      const twoPage = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 2 });
+      const { urls } = serveSearchPages(noResultsHtml);
+      const details = countDetailRequests();
 
-      const { results } = await indexer.search('nonexistent book');
+      const { results, parseStats } = await twoPage.search('nonexistent book');
+
       expect(results).toEqual([]);
+      expect(urls).toHaveLength(1);
+      expect(details.count).toBe(0);
+      expect(parseStats.kept).toBe(0);
     });
 
-    // #2367 AC4: a detail page that loads but carries no hash is a book with no torrent, which is
-    // a different story from a page that never loaded — and must keep its own attribution.
-    it('only includes results with download URLs', async () => {
-      const noHashHtml = `
+    // Every titled row now yields a sentinel, so `dropped:no-url` is unreachable for ABB. The field
+    // stays because the interface is shared with the other adapters.
+    it('drops a row with no href as empty-title and never as no-url', async () => {
+      serveSearchPages(`
         <html><body>
-          <h1>Some Book</h1>
-          <p>No hash here</p>
-        </body></html>
-      `;
+          <div class="post"><div class="postTitle"><h2><a rel="bookmark">Titled But Unlinked</a></h2></div></div>
+          <div class="post"><div class="postTitle"><h2><a href="/audio-books/real/" rel="bookmark">Real Row</a></h2></div></div>
+        </body></html>`);
 
-      server.use(
-        http.get(`${ABB_BASE}/`, () => {
-          return new HttpResponse(searchHtml, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
-          return new HttpResponse(noHashHtml, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-      );
+      const { results, parseStats, debugTrace } = await indexer.search('test');
 
-      const response = await indexer.search('test');
-
-      expect(response.results).toEqual([]);
-      expect(response.debugTrace.map((trace) => trace.reason)).toEqual(['dropped:no-url', 'dropped:no-url']);
-      expect(response.parseStats.dropped.noUrl).toBe(2);
-      expect(response.parseStats.dropped.other).toBe(0);
-    });
-
-    it('respects limit option', async () => {
-      server.use(
-        http.get(`${ABB_BASE}/`, () => {
-          return new HttpResponse(searchHtml, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
-          return new HttpResponse(detailHtml, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-      );
-
-      const { results } = await indexer.search('Brandon Sanderson', { limit: 1 });
       expect(results).toHaveLength(1);
+      expect(parseStats.dropped.emptyTitle).toBe(1);
+      expect(parseStats.dropped.noUrl).toBe(0);
+      expect(parseStats.dropped.other).toBe(0);
+      expect(debugTrace.map((t) => t.reason)).toEqual(['dropped:empty-title', 'kept']);
+    });
+  });
+
+  describe('search-row identity (AC2)', () => {
+    it('sets guid to the absolute details URL and downloadUrl to its sentinel', async () => {
+      serveSearchPages();
+
+      const { results } = await indexer.search('test');
+
+      expect(results[0]).toMatchObject({
+        guid: MURDER_URL,
+        downloadUrl: `${ABB_DETAILS_SENTINEL_PREFIX}${MURDER_URL}`,
+        detailsUrl: MURDER_URL,
+      });
+      expect(results[1]).toMatchObject({
+        guid: WISH_URL,
+        downloadUrl: abbDetailsSentinel(WISH_URL),
+        detailsUrl: WISH_URL,
+      });
     });
 
-    // #2375: an empty success here would read to the query ladder as an answered zero, so the
-    // ladder would advance and re-ask a dead indexer once per relaxed rung.
+    // `toBeUndefined()` passes against a present-and-undefined key and cannot discriminate under
+    // exactOptionalPropertyTypes, which is what every downstream `in`/spread check keys on.
+    it('leaves infoHash, seeders, leechers and size absent rather than present-and-undefined', async () => {
+      serveSearchPages();
+
+      const { results } = await indexer.search('test');
+
+      for (const result of results) {
+        expect(result).not.toHaveProperty('infoHash');
+        expect(result).not.toHaveProperty('seeders');
+        expect(result).not.toHaveProperty('leechers');
+        expect(result).not.toHaveProperty('size');
+      }
+    });
+
+    it('absolutizes a relative href and leaves a fully-qualified one alone, on both guid and sentinel', async () => {
+      serveSearchPages(`
+        <html><body>
+          <div class="post"><div class="postTitle"><h2><a href="/audio-books/relative/" rel="bookmark">Relative</a></h2></div></div>
+          <div class="post"><div class="postTitle"><h2><a href="audio-books/no-slash/" rel="bookmark">No Slash</a></h2></div></div>
+          <div class="post"><div class="postTitle"><h2><a href="https://other.test/audio-books/absolute/" rel="bookmark">Absolute</a></h2></div></div>
+        </body></html>`);
+
+      const { results } = await indexer.search('test');
+
+      expect(results.map((r) => r.guid)).toEqual([
+        `${ABB_BASE}/audio-books/relative/`,
+        `${ABB_BASE}/audio-books/no-slash/`,
+        'https://other.test/audio-books/absolute/',
+      ]);
+      expect(results.map((r) => r.downloadUrl)).toEqual(results.map((r) => abbDetailsSentinel(r.guid!)));
+    });
+
+    /**
+     * The positive observation point for `readAbbMetadata($, $el)`. Without it an implementation
+     * that drops the row-scoped metadata read satisfies every other row assertion here — the values
+     * come off the row's own annotated elements, and the fixture writes the block on one source
+     * line so a regression to a `.text()`-run regex reds on exact values.
+     */
+    it('reads author, narrator and format off the row\'s own elements, with no detail request', async () => {
+      serveSearchPages();
+      const details = countDetailRequests();
+
+      const { results } = await indexer.search('test');
+
+      expect(results[0]).toMatchObject({
+        author: 'Carol Cole',
+        narrator: 'James MacNaughton',
+        format: 'm4b',
+      });
+      expect(details.count).toBe(0);
+    });
+
+    it('leaves author and narrator absent on a row carrying no annotated block', async () => {
+      serveSearchPages();
+
+      const { results } = await indexer.search('test');
+
+      expect(results[1]).not.toHaveProperty('author');
+      expect(results[1]).not.toHaveProperty('narrator');
+    });
+
+    it('never reports the uploader byline as the author', async () => {
+      serveSearchPages();
+
+      const { results } = await indexer.search('test');
+
+      for (const result of results) {
+        expect(stringFieldsOf(result).join(' | ')).not.toContain('uploader123');
+      }
+    });
+
+    it('still carries the row cover and indexer name', async () => {
+      serveSearchPages();
+
+      const { results } = await indexer.search('test');
+
+      expect(results[0]!.coverUrl).toBe('https://example.com/covers/murder-in-the-new-forest.jpg');
+      expect(results[0]!.indexer).toBe('AudioBookBay');
+      expect(results[0]!.protocol).toBe('torrent');
+    });
+  });
+
+  describe('the limit option keeps an owner (AC12)', () => {
+    it('caps results and records no kept trace for the row past the budget', async () => {
+      serveSearchPages();
+
+      const { results, debugTrace, parseStats } = await indexer.search('Brandon Sanderson', { limit: 1 });
+
+      expect(results).toHaveLength(1);
+      expect(results[0]!.title).toBe('Murder in the New Forest');
+      expect(debugTrace.filter((t) => t.reason === 'kept')).toHaveLength(1);
+      expect(parseStats.kept).toBe(1);
+      expect(parseStats.itemsObserved).toBe(2);
+    });
+
+    // The ban-safe half: a spent request is exactly what this rework exists to avoid.
+    it('breaks before requesting page two once page one has filled the budget', async () => {
+      const twoPage = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 2 });
+      const { urls } = serveSearchPages();
+
+      const { results } = await twoPage.search('test', { limit: 1 });
+
+      expect(results).toHaveLength(1);
+      expect(urls).toHaveLength(1);
+      expect(urls[0]).not.toContain('/page/2/');
+    });
+
+    it('defaults to 50 when no limit is given', async () => {
+      serveSearchPages();
+
+      const { results } = await indexer.search('test');
+
+      expect(results).toHaveLength(2);
+    });
+  });
+
+  describe('page failures and cancellation', () => {
     it('propagates a first-page fetch error instead of reporting an answered zero', async () => {
-      server.use(
-        http.get(`${ABB_BASE}/`, () => {
-          return new HttpResponse(null, { status: 503 });
-        }),
-      );
+      server.use(http.get(`${ABB_BASE}/`, () => new HttpResponse(null, { status: 503 })));
 
       await expect(indexer.search('test')).rejects.toThrow('HTTP 503');
     });
 
     it('keeps the structural status on the propagated first-page error', async () => {
-      server.use(
-        http.get(`${ABB_BASE}/`, () => {
-          return new HttpResponse(null, { status: 503 });
-        }),
-      );
+      server.use(http.get(`${ABB_BASE}/`, () => new HttpResponse(null, { status: 503 })));
 
       const error = await indexer.search('test').catch((e: unknown) => e);
 
@@ -212,185 +323,375 @@ describe('AudioBookBayIndexer', () => {
     });
 
     it('still returns the pages it did get when a LATER page fails', async () => {
-      const twoPageIndexer = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 2 });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      vi.spyOn(twoPageIndexer as any, 'delay').mockResolvedValue(undefined);
+      const twoPage = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 2 });
       server.use(
         http.get(`${ABB_BASE}/`, () => new HttpResponse(searchHtml, { headers: { 'Content-Type': 'text/html' } })),
         http.get(`${ABB_BASE}/page/2/`, () => new HttpResponse(null, { status: 503 })),
-        http.get(`${ABB_BASE}/audio-books/:slug/`, () => new HttpResponse(detailHtml, { headers: { 'Content-Type': 'text/html' } })),
       );
 
       // The indexer demonstrably answered page one, so this is partial success, not a failure.
-      const { results } = await twoPageIndexer.search('test');
+      const { results } = await twoPage.search('test');
 
-      expect(results.length).toBeGreaterThan(0);
+      expect(results).toHaveLength(2);
     });
 
-    it('handles detail page fetch error gracefully', async () => {
+    /**
+     * The later-page catch degrades ordinary errors by design, so without an explicit
+     * `signal?.aborted` re-check an abort is swallowed into a partial success — and every pacer
+     * unit test still passes. The reason is deliberately not an `Error`: an `instanceof` assertion
+     * would pass against a wrapped rejection, which is the shape the abort contract forbids.
+     */
+    it('rejects with the caller\'s own reason when page two is cancelled while queued on the pacer', async () => {
+      const reason = { cancelled: 'search deadline' };
+      const controller = new AbortController();
+      const twoPage = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 2 });
+      serveSearchPages();
+
+      acquire.mockResolvedValueOnce(undefined);
+      acquire.mockImplementationOnce((_url, signal) => new Promise<void>((_res, rej) => {
+        signal?.addEventListener('abort', () => { rej(signal.reason); }, { once: true });
+      }));
+
+      const searching = twoPage.search('test', { signal: controller.signal });
+      await vi.waitFor(() => { expect(acquire).toHaveBeenCalledTimes(2); });
+      controller.abort(reason);
+
+      await expect(searching).rejects.toBe(reason);
+    });
+
+    it('control: an ordinary later-page failure under a LIVE signal still degrades to page one', async () => {
+      const controller = new AbortController();
+      const twoPage = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 2 });
       server.use(
-        http.get(`${ABB_BASE}/`, () => {
-          return new HttpResponse(searchHtml, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
-          return new HttpResponse(null, { status: 500 });
+        http.get(`${ABB_BASE}/`, () => new HttpResponse(searchHtml, { headers: { 'Content-Type': 'text/html' } })),
+        http.get(`${ABB_BASE}/page/2/`, () => new HttpResponse(null, { status: 503 })),
+      );
+
+      const { results } = await twoPage.search('test', { signal: controller.signal });
+
+      expect(results).toHaveLength(2);
+    });
+  });
+
+  /** AC3 — the other half of lazy resolution: one detail fetch, at grab time. */
+  describe('resolveDownloadUrl (AC3)', () => {
+    const grabCtx = (downloadUrl: string) => ({ downloadUrl, protocol: 'torrent' as const, isFreeleech: false });
+
+    it('fetches the details URL once and returns the detail page\'s magnet', async () => {
+      const details = countDetailRequests();
+
+      const result = await indexer.resolveDownloadUrl(grabCtx(abbDetailsSentinel(MURDER_URL)));
+
+      expect(details.count).toBe(1);
+      expect(parseInfoHash(result.downloadUrl)).toBe(FIXTURE_HASH);
+      expect(result.downloadUrl).toContain('dn=Murder+in+the+New+Forest');
+      expect(result).not.toHaveProperty('wedgeRequested');
+    });
+
+    // A stored download re-grabbed after this change, or a v1 API payload, already holds a magnet.
+    it('returns a non-sentinel downloadUrl unchanged and issues no request', async () => {
+      const details = countDetailRequests();
+      const magnet = `magnet:?xt=urn:btih:${FIXTURE_HASH}&dn=Stored`;
+
+      const result = await indexer.resolveDownloadUrl(grabCtx(magnet));
+
+      expect(result.downloadUrl).toBe(magnet);
+      expect(details.count).toBe(0);
+    });
+
+    it('throws an IndexerError naming the details URL when the fetch fails, keeping the cause', async () => {
+      server.use(http.get(`${ABB_BASE}/audio-books/:slug/`, () => new HttpResponse(null, { status: 500 })));
+
+      const error = await indexer.resolveDownloadUrl(grabCtx(abbDetailsSentinel(MURDER_URL))).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(IndexerError);
+      expect((error as IndexerError).message).toContain(MURDER_URL);
+      expect((error as IndexerError).message).toContain('HTTP 500');
+      expect((error as IndexerError).cause).toBeInstanceOf(Error);
+    });
+
+    /**
+     * The case that must NOT degrade into a successful return: a swallowed no-hash would hand the
+     * download client the sentinel string itself.
+     */
+    it('throws a distinguishable IndexerError when the page loads but carries no hash', async () => {
+      server.use(
+        http.get(`${ABB_BASE}/audio-books/:slug/`, () => new HttpResponse(
+          '<html><body><h1>Some Book</h1><p>No hash here</p></body></html>',
+          { headers: { 'Content-Type': 'text/html' } },
+        )),
+      );
+
+      const error = await indexer.resolveDownloadUrl(grabCtx(abbDetailsSentinel(MURDER_URL))).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(IndexerError);
+      expect((error as IndexerError).message).toContain('no info hash');
+      expect((error as IndexerError).message).not.toContain('detail fetch failed');
+      expect((error as IndexerError).cause).toBeUndefined();
+    });
+
+    it('reads a hash that appears only in the page body text', async () => {
+      server.use(
+        http.get(`${ABB_BASE}/audio-books/:slug/`, () => new HttpResponse(
+          `<html><body><h1>Rare Book</h1><p>Some random text ${FIXTURE_HASH} more text</p></body></html>`,
+          { headers: { 'Content-Type': 'text/html' } },
+        )),
+      );
+
+      const result = await indexer.resolveDownloadUrl(grabCtx(abbDetailsSentinel(MURDER_URL)));
+
+      expect(parseInfoHash(result.downloadUrl)).toBe(FIXTURE_HASH);
+      expect(result.downloadUrl).toContain('dn=Rare+Book');
+    });
+
+    /**
+     * The deliberate asymmetry with `search()`: resolve has no degrade arm underneath, so every
+     * failure already fails the grab and wrapping buys the `warn` line only the `IndexerError` arm
+     * emits. A single-sided assertion would pass against "wrap everywhere" or "wrap nowhere", so
+     * the search-side control below is what pins the pair.
+     */
+    describe('proxy failures — wrapped here, bare on the search path', () => {
+      const PROXY_URL = 'http://flaresolverr.test:8191';
+      let solverIndexer: AudioBookBayIndexer;
+
+      beforeEach(() => {
+        solverIndexer = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 1, flareSolverrUrl: PROXY_URL });
+        server.use(http.post(`${PROXY_URL}/v1`, () => HttpResponse.error()));
+      });
+
+      it('wraps a proxy failure in IndexerError while keeping the classification on the cause', async () => {
+        const error = await solverIndexer
+          .resolveDownloadUrl(grabCtx(abbDetailsSentinel(MURDER_URL)))
+          .catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(IndexerError);
+        expect(isProxyRelatedError(error)).toBe(false);
+        expect(isProxyRelatedError((error as IndexerError).cause)).toBe(true);
+      });
+
+      it('control: search() still rejects with the bare proxy error, unwrapped', async () => {
+        const error = await solverIndexer.search('test').catch((e: unknown) => e);
+
+        expect(error).not.toBeInstanceOf(IndexerError);
+        expect(isProxyRelatedError(error)).toBe(true);
+      });
+    });
+
+    it('routes the resolve fetch through FlareSolverr when one is configured', async () => {
+      const PROXY_URL = 'http://flaresolverr.test:8191';
+      const solverIndexer = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 1, flareSolverrUrl: PROXY_URL });
+      const solverTargets: string[] = [];
+      const direct = countDetailRequests();
+      server.use(
+        http.post(`${PROXY_URL}/v1`, async ({ request }) => {
+          const body = await request.json() as { url: string };
+          solverTargets.push(body.url);
+          return solverOk(detailHtml);
         }),
       );
 
-      const response = await indexer.search('test');
+      const result = await solverIndexer.resolveDownloadUrl(grabCtx(abbDetailsSentinel(MURDER_URL)));
 
-      expect(response.results).toEqual([]);
-      // Both fixture rows fail, and each is attributed to the fetch rather than to a missing torrent.
-      const failures = response.debugTrace.filter((trace) => trace.reason === 'dropped:detail-fetch-failed');
-      expect(failures).toHaveLength(2);
-      expect(failures[0]).toMatchObject({
-        source: 'row',
-        rawTitle: 'Murder in the New Forest',
-        rawTitleBytes: '4d757264657220696e20746865204e657720466f72657374',
-        httpStatus: 500,
-        requestUrl: `${ABB_BASE}/audio-books/murder-in-the-new-forest/`,
-      });
-      expect(failures[0]!.errorMessage).toContain('HTTP 500');
-      expect(response.parseStats.dropped.other).toBe(2);
-      expect(response.parseStats.dropped.noUrl).toBe(0);
+      expect(solverTargets).toEqual([MURDER_URL]);
+      expect(direct.count).toBe(0);
+      expect(parseInfoHash(result.downloadUrl)).toBe(FIXTURE_HASH);
     });
   });
 
   /**
-   * #2367 — the detail catch used to swallow every non-proxy failure, and the row then fell through
-   * to admission with no `downloadUrl`, so a 500, a timeout and a book with genuinely no torrent
-   * were all recorded as `dropped:no-url`. Classification keys on structure, never on message text.
+   * AC4 wiring. The interval's own behaviour lives in `abb-throttle.test.ts`; what has to be pinned
+   * here is that EVERY outbound ABB request passes through the gate — a request that skips it is
+   * invisible to any timing assertion made on the requests that do not.
    */
-  describe('detail-fetch failure attribution (#2367)', () => {
-    const MURDER_SLUG = 'murder-in-the-new-forest';
-    const MURDER_TITLE = 'Murder in the New Forest';
-    const WISH_TITLE = 'Wish You Were Here Yet?';
-    let routed: RoutedFetch | undefined;
+  describe('every ABB request is paced (AC4)', () => {
+    it('acquires once per search page, keyed on the page URL', async () => {
+      const twoPage = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 2 });
+      serveSearchPages();
 
-    afterEach(() => {
-      routed?.restore();
-      routed = undefined;
-    });
+      await twoPage.search('test');
 
-    function serveSearchPage() {
-      server.use(
-        http.get(`${ABB_BASE}/`, () => new HttpResponse(searchHtml, { headers: { 'Content-Type': 'text/html' } })),
-      );
-    }
-
-    /**
-     * `HttpResponse.error()` carries no transport code, so a coded failure has to be stubbed at the
-     * fetch boundary. Routing only the detail URLs leaves the search page falling through to MSW —
-     * which requires the spy to be installed after `server.listen()`, i.e. inside the test.
-     */
-    function rejectDetailWith(error: Error) {
-      serveSearchPage();
-      routed = routeFetch((url) => (url.includes('/audio-books/') ? error : undefined));
-    }
-
-    /** The first fixture row's detail page 500s; the second serves a real detail body. */
-    function failFirstRowDetail() {
-      server.use(
-        http.get(`${ABB_BASE}/`, () => new HttpResponse(searchHtml, { headers: { 'Content-Type': 'text/html' } })),
-        http.get(`${ABB_BASE}/audio-books/:slug/`, ({ params }) => (
-          params.slug === MURDER_SLUG
-            ? new HttpResponse(null, { status: 500 })
-            : new HttpResponse(detailHtml, { headers: { 'Content-Type': 'text/html' } })
-        )),
-      );
-    }
-
-    async function firstFailure() {
-      const response = await indexer.search('test');
-      const failures = response.debugTrace.filter((trace) => trace.reason === 'dropped:detail-fetch-failed');
-      expect(failures.length).toBeGreaterThan(0);
-      return failures[0]!;
-    }
-
-    it('reads the transport code off a refused connection', async () => {
-      rejectDetailWith(codedRejection('ECONNREFUSED'));
-
-      const failure = await firstFailure();
-
-      expect(failure.errorCode).toBe('ECONNREFUSED');
-      expect(failure.requestUrl).toBe(`${ABB_BASE}/audio-books/${MURDER_SLUG}/`);
-    });
-
-    it('reads an aborted detail fetch as a timeout', async () => {
-      rejectDetailWith(abortRejection());
-
-      const failure = await firstFailure();
-
-      expect(failure.errorCode).toBe('ETIMEDOUT');
-    });
-
-    it('omits errorCode and httpStatus entirely when the failure carries neither', async () => {
-      rejectDetailWith(uncodedRejection());
-
-      const failure = await firstFailure();
-
-      expect(failure.errorMessage).toBe('socket hang up');
-      expect(failure).not.toHaveProperty('errorCode');
-      expect(failure).not.toHaveProperty('httpStatus');
-    });
-
-    // rawTitleBytes exists so an encoding fault is legible in the log even when the rendered title
-    // is not; an ASCII-only assertion cannot tell UTF-8 bytes from a latin1 round-trip.
-    it('records the title\'s UTF-8 bytes on a failed row, truncated at the byte limit', async () => {
-      const cyrillic = 'Мурдер: Мгла над Лондоном';
-      server.use(
-        http.get(`${ABB_BASE}/`, () => new HttpResponse(
-          `<html><body><div class="post"><div class="postTitle">
-            <h2><a href="/audio-books/mgla/" rel="bookmark">${cyrillic}</a></h2>
-          </div></div></body></html>`,
-          { headers: { 'Content-Type': 'text/html; charset=utf-8' } },
-        )),
-        http.get(`${ABB_BASE}/audio-books/:slug/`, () => new HttpResponse(null, { status: 500 })),
-      );
-
-      const failure = await firstFailure();
-
-      expect(failure.rawTitle).toBe(cyrillic);
-      // Two bytes per Cyrillic character, cut at the 32-byte limit mid-word.
-      expect(failure.rawTitleBytes).toBe('d09cd183d180d0b4d0b5d1803a20d09cd0b3d0bbd0b020d0bdd0b0d0b420d09b');
-    });
-
-    it('returns the rows whose detail pages did load', async () => {
-      failFirstRowDetail();
-
-      const response = await indexer.search('test');
-
-      expect(response.results).toHaveLength(1);
-      expect(response.results[0]!.title).toBe(WISH_TITLE);
-      expect(response.results[0]!.downloadUrl).toContain('magnet:?');
-      expect(response.debugTrace.filter((trace) => trace.reason === 'kept')).toHaveLength(1);
-      expect(response.parseStats.dropped.other).toBe(1);
-      expect(response.parseStats.dropped.noUrl).toBe(0);
-    });
-
-    it('records exactly one trace entry for the failed row', async () => {
-      failFirstRowDetail();
-
-      const response = await indexer.search('test');
-
-      expect(response.debugTrace.filter((trace) => trace.rawTitle === MURDER_TITLE)).toEqual([
-        expect.objectContaining({ reason: 'dropped:detail-fetch-failed' }),
+      expect(acquire.mock.calls.map((call) => call[0])).toEqual([
+        `${ABB_BASE}/?s=test&tt=1`,
+        `${ABB_BASE}/page/2/?s=test&tt=1`,
       ]);
     });
 
-    it('does not let a failed row consume the result budget', async () => {
-      failFirstRowDetail();
+    it('acquires exactly once for a grab, keyed on the details URL', async () => {
+      countDetailRequests();
 
-      const response = await indexer.search('test', { limit: 1 });
+      await indexer.resolveDownloadUrl({ downloadUrl: abbDetailsSentinel(MURDER_URL), protocol: 'torrent', isFreeleech: false });
 
-      expect(response.results).toHaveLength(1);
-      expect(response.results[0]!.title).toBe(WISH_TITLE);
+      expect(acquire.mock.calls.map((call) => call[0])).toEqual([MURDER_URL]);
+    });
+
+    it('does not acquire for a non-sentinel resolve, which issues no request at all', async () => {
+      await indexer.resolveDownloadUrl({
+        downloadUrl: `magnet:?xt=urn:btih:${FIXTURE_HASH}`,
+        protocol: 'torrent',
+        isFreeleech: false,
+      });
+
+      expect(acquire).not.toHaveBeenCalled();
+    });
+
+    it('forwards the caller\'s signal to the gate alongside the transport', async () => {
+      const controller = new AbortController();
+      serveSearchPages();
+
+      await indexer.search('test', { signal: controller.signal });
+
+      expect(acquire).toHaveBeenCalledWith(`${ABB_BASE}/?s=test&tt=1`, controller.signal);
+    });
+
+    // The throwaway `test()` adapter used to bypass the queue entirely; a module-level gate keyed by
+    // destination closes that leak on all three transports.
+    describe('the connection test is paced on every transport', () => {
+      it('direct', async () => {
+        server.use(http.head(`${ABB_BASE}/`, () => new HttpResponse(null, { status: 200 })));
+
+        await indexer.test();
+
+        expect(acquire.mock.calls.map((call) => call[0])).toEqual([ABB_BASE]);
+      });
+
+      it('standard proxy', async () => {
+        const proxied = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 1, proxyUrl: 'http://proxy.test:8080' });
+        server.use(
+          http.get(`${ABB_BASE}/`, () => new HttpResponse('<html>ok</html>', { headers: { 'Content-Type': 'text/html' } })),
+          http.get('https://api.ipify.org', () => HttpResponse.json({ ip: '1.2.3.4' })),
+        );
+
+        await proxied.test();
+
+        expect(acquire.mock.calls.map((call) => call[0])).toEqual([ABB_BASE]);
+      });
+
+      it('FlareSolverr', async () => {
+        const PROXY_URL = 'http://flaresolverr.test:8191';
+        const solverIndexer = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 1, flareSolverrUrl: PROXY_URL });
+        server.use(http.post(`${PROXY_URL}/v1`, () => solverOk('<html>ok</html>')));
+
+        const result = await solverIndexer.test();
+
+        expect(result.success).toBe(true);
+        expect(acquire.mock.calls.map((call) => call[0])).toEqual([ABB_BASE]);
+      });
+    });
+
+    // One acquire per request, never two: the solver path pays inside the slot via the shared
+    // transport's hook, so acquiring in `fetchPage` as well would double-charge every request.
+    it('charges the solver path exactly one acquire per request', async () => {
+      const PROXY_URL = 'http://flaresolverr.test:8191';
+      const solverIndexer = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 1, flareSolverrUrl: PROXY_URL });
+      server.use(http.post(`${PROXY_URL}/v1`, () => solverOk(searchHtml)));
+
+      await solverIndexer.search('test');
+
+      expect(acquire).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  /**
+   * AC8 — rotating four User-Agents from one IP is a bot fingerprint, not camouflage. The specific
+   * value is asserted too, so a silent swap reds rather than passing on self-consistency.
+   */
+  describe('one pinned User-Agent (AC8)', () => {
+    it('sends the identical UA on every request of a search and a grab', async () => {
+      const seen: string[] = [];
+      server.use(
+        http.get(`${ABB_BASE}/`, ({ request }) => {
+          seen.push(request.headers.get('User-Agent') ?? '');
+          return new HttpResponse(searchHtml, { headers: { 'Content-Type': 'text/html' } });
+        }),
+        http.get(`${ABB_BASE}/page/:page/`, ({ request }) => {
+          seen.push(request.headers.get('User-Agent') ?? '');
+          return new HttpResponse(searchHtml, { headers: { 'Content-Type': 'text/html' } });
+        }),
+        http.get(`${ABB_BASE}/audio-books/:slug/`, ({ request }) => {
+          seen.push(request.headers.get('User-Agent') ?? '');
+          return new HttpResponse(detailHtml, { headers: { 'Content-Type': 'text/html' } });
+        }),
+      );
+      const twoPage = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 2 });
+
+      await twoPage.search('test');
+      await twoPage.resolveDownloadUrl({ downloadUrl: abbDetailsSentinel(MURDER_URL), protocol: 'torrent', isFreeleech: false });
+
+      expect(seen).toHaveLength(3);
+      expect(new Set(seen).size).toBe(1);
+      expect(seen[0]).toBe(PINNED_USER_AGENT);
+    });
+
+    it('sends the same UA from the direct connection test', async () => {
+      let seen: string | null = null;
+      server.use(
+        http.head(`${ABB_BASE}/`, ({ request }) => {
+          seen = request.headers.get('User-Agent');
+          return new HttpResponse(null, { status: 200 });
+        }),
+      );
+
+      await indexer.test();
+
+      expect(seen).toBe(PINNED_USER_AGENT);
+    });
+
+    it('sends the same UA from the standard-proxy connection test', async () => {
+      let seen: string | null = null;
+      const proxied = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 1, proxyUrl: 'http://proxy.test:8080' });
+      server.use(
+        http.get(`${ABB_BASE}/`, ({ request }) => {
+          seen = request.headers.get('User-Agent');
+          return new HttpResponse('<html>ok</html>', { headers: { 'Content-Type': 'text/html' } });
+        }),
+        http.get('https://api.ipify.org', () => HttpResponse.json({ ip: '1.2.3.4' })),
+      );
+
+      await proxied.test();
+
+      expect(seen).toBe(PINNED_USER_AGENT);
+    });
+
+    it('sends the same UA in the headers handed to FlareSolverr for the connection test', async () => {
+      const PROXY_URL = 'http://flaresolverr.test:8191';
+      const solverIndexer = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 1, flareSolverrUrl: PROXY_URL });
+      let forwarded: Record<string, string> | undefined;
+      server.use(
+        http.post(`${PROXY_URL}/v1`, async ({ request }) => {
+          const body = await request.json() as { headers?: Record<string, string> };
+          forwarded = body.headers;
+          return solverOk('<html>ok</html>');
+        }),
+      );
+
+      await solverIndexer.test();
+
+      expect(forwarded?.['User-Agent']).toBe(PINNED_USER_AGENT);
+    });
+  });
+
+  describe('parse trace shape (#932 AC1)', () => {
+    it('populates parseStats and per-row debugTrace including search-page transport metadata', async () => {
+      serveSearchPages();
+
+      const response = await indexer.search('Brandon Sanderson');
+
+      expect(response.requestUrl).toContain(ABB_BASE);
+      expect(response.httpStatus).toBe(200);
+      expect(response.parseStats.kept).toBe(response.results.length);
+      expect(response.debugTrace.some((t) => t.reason === 'kept' && t.rawTitleBytes)).toBe(true);
+    });
+
+    it('carries the details-URL guid on every kept trace entry', async () => {
+      serveSearchPages();
+
+      const { debugTrace } = await indexer.search('test');
+
+      expect(debugTrace.filter((t) => t.reason === 'kept').map((t) => t.guid)).toEqual([MURDER_URL, WISH_URL]);
     });
 
     it('conserves the counters across kept and dropped rows', async () => {
-      failFirstRowDetail();
+      serveSearchPages();
 
       const { parseStats, results } = await indexer.search('test');
       const { dropped } = parseStats;
@@ -401,34 +702,9 @@ describe('AudioBookBayIndexer', () => {
     });
   });
 
-  describe('parse trace shape (#932 AC1)', () => {
-    it('populates parseStats and per-row debugTrace including search-page transport metadata', async () => {
-      server.use(
-        http.get(`${ABB_BASE}/`, () => {
-          return new HttpResponse(searchHtml, { headers: { 'Content-Type': 'text/html' } });
-        }),
-        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
-          return new HttpResponse(detailHtml, { headers: { 'Content-Type': 'text/html' } });
-        }),
-      );
-
-      const response = await indexer.search('Brandon Sanderson');
-
-      expect(response.requestUrl).toBeDefined();
-      expect(response.requestUrl).toContain(ABB_BASE);
-      expect(response.httpStatus).toBe(200);
-      expect(response.parseStats.kept).toBe(response.results.length);
-      expect(response.debugTrace.some((t) => t.reason === 'kept' && t.rawTitleBytes)).toBe(true);
-    });
-  });
-
   describe('test', () => {
     it('returns success on HTTP 200', async () => {
-      server.use(
-        http.head(`${ABB_BASE}/`, () => {
-          return new HttpResponse(null, { status: 200 });
-        }),
-      );
+      server.use(http.head(`${ABB_BASE}/`, () => new HttpResponse(null, { status: 200 })));
 
       const result = await indexer.test();
       expect(result.success).toBe(true);
@@ -436,22 +712,14 @@ describe('AudioBookBayIndexer', () => {
     });
 
     it('returns success on HTTP 405 (Method Not Allowed)', async () => {
-      server.use(
-        http.head(`${ABB_BASE}/`, () => {
-          return new HttpResponse(null, { status: 405 });
-        }),
-      );
+      server.use(http.head(`${ABB_BASE}/`, () => new HttpResponse(null, { status: 405 })));
 
       const result = await indexer.test();
       expect(result.success).toBe(true);
     });
 
     it('returns failure on HTTP error', async () => {
-      server.use(
-        http.head(`${ABB_BASE}/`, () => {
-          return new HttpResponse(null, { status: 503 });
-        }),
-      );
+      server.use(http.head(`${ABB_BASE}/`, () => new HttpResponse(null, { status: 503 })));
 
       const result = await indexer.test();
       expect(result.success).toBe(false);
@@ -459,14 +727,19 @@ describe('AudioBookBayIndexer', () => {
     });
 
     it('returns failure on network error', async () => {
-      server.use(
-        http.head(`${ABB_BASE}/`, () => {
-          return HttpResponse.error();
-        }),
-      );
+      server.use(http.head(`${ABB_BASE}/`, () => HttpResponse.error()));
 
       const result = await indexer.test();
       expect(result.success).toBe(false);
+    });
+
+    it('reports a pacer rejection as a failed test rather than throwing', async () => {
+      acquire.mockRejectedValueOnce(new Error('ABB throttle reset'));
+
+      const result = await indexer.test();
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('ABB throttle reset');
     });
   });
 
@@ -480,33 +753,22 @@ describe('AudioBookBayIndexer', () => {
         pageLimit: 1,
         flareSolverrUrl: PROXY_URL,
       });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      vi.spyOn(proxiedIndexer as any, 'delay').mockResolvedValue(undefined);
     });
 
     it('routes search through proxy when flareSolverrUrl configured', async () => {
-      let searchCaptured = false;
+      const solverTargets: string[] = [];
       server.use(
         http.post(`${PROXY_URL}/v1`, async ({ request }) => {
-          const body = await request.json() as Record<string, unknown>;
-          if ((body.url as string).includes('?s=')) {
-            searchCaptured = true;
-            return HttpResponse.json({
-              status: 'ok',
-              solution: { response: searchHtml, status: 200 },
-            });
-          }
-          return HttpResponse.json({
-            status: 'ok',
-            solution: { response: detailHtml, status: 200 },
-          });
+          const body = await request.json() as { url: string };
+          solverTargets.push(body.url);
+          return solverOk(searchHtml);
         }),
       );
 
       const { results } = await proxiedIndexer.search('Brandon Sanderson');
 
-      expect(searchCaptured).toBe(true);
-      expect(results.length).toBeGreaterThan(0);
+      expect(solverTargets).toEqual([`${ABB_BASE}/?s=brandon+sanderson&tt=1`]);
+      expect(results).toHaveLength(2);
     });
 
     it('uses GET (request.get) for proxied test, not HEAD', async () => {
@@ -514,10 +776,7 @@ describe('AudioBookBayIndexer', () => {
       server.use(
         http.post(`${PROXY_URL}/v1`, async ({ request }) => {
           capturedBody = await request.json() as Record<string, unknown>;
-          return HttpResponse.json({
-            status: 'ok',
-            solution: { response: '<html>ok</html>', status: 200 },
-          });
+          return solverOk('<html>ok</html>');
         }),
       );
 
@@ -528,11 +787,7 @@ describe('AudioBookBayIndexer', () => {
     });
 
     it('direct test still uses HEAD/405', async () => {
-      server.use(
-        http.head(`${ABB_BASE}/`, () => {
-          return new HttpResponse(null, { status: 405 });
-        }),
-      );
+      server.use(http.head(`${ABB_BASE}/`, () => new HttpResponse(null, { status: 405 })));
 
       const result = await indexer.test();
       expect(result.success).toBe(true);
@@ -540,38 +795,14 @@ describe('AudioBookBayIndexer', () => {
     });
 
     it('throws proxy errors from search page fetch (not swallowed)', async () => {
-      server.use(
-        http.post(`${PROXY_URL}/v1`, () => {
-          return HttpResponse.error();
-        }),
-      );
+      server.use(http.post(`${PROXY_URL}/v1`, () => HttpResponse.error()));
 
       await expect(proxiedIndexer.search('test')).rejects.toThrow('FlareSolverr');
     });
 
-    it('throws proxy errors from detail page fetch (not swallowed)', async () => {
-      let callCount = 0;
-      server.use(
-        http.post(`${PROXY_URL}/v1`, () => {
-          callCount++;
-          if (callCount === 1) {
-            return HttpResponse.json({
-              status: 'ok',
-              solution: { response: searchHtml, status: 200 },
-            });
-          }
-          return HttpResponse.error();
-        }),
-      );
-
-      await expect(proxiedIndexer.search('Brandon Sanderson')).rejects.toThrow('FlareSolverr');
-    });
-
     it('returns failure on proxy error during test', async () => {
       server.use(
-        http.post(`${PROXY_URL}/v1`, () => {
-          return HttpResponse.json({ status: 'error', message: 'Challenge failed' });
-        }),
+        http.post(`${PROXY_URL}/v1`, () => HttpResponse.json({ status: 'error', message: 'Challenge failed' })),
       );
 
       const result = await proxiedIndexer.test();
@@ -580,364 +811,20 @@ describe('AudioBookBayIndexer', () => {
     });
   });
 
-  describe('edge cases — NaN parsing and malformed HTML', () => {
-    it('handles NaN seeders from non-numeric text', async () => {
-      const detailWithBadSeeders = `
-        <html><body>
-          <h1>Test Book</h1>
-          <pre>Info Hash: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0</pre>
-          <p>Seeders: N/A</p>
-          <p>Size: 1.5 GB</p>
-        </body></html>`;
-
-      server.use(
-        http.get(`${ABB_BASE}/`, () => {
-          return new HttpResponse(searchHtml, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
-          return new HttpResponse(detailWithBadSeeders, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-      );
-
-      const { results } = await indexer.search('test');
-      expect(results.length).toBeGreaterThan(0);
-      expect(results[0]!.seeders).toBeUndefined();
-    });
-
-    it('handles NaN size from malformed size text', async () => {
-      const detailWithBadSize = `
-        <html><body>
-          <h1>Test Book</h1>
-          <pre>Info Hash: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0</pre>
-          <p>Size: unknown</p>
-        </body></html>`;
-
-      server.use(
-        http.get(`${ABB_BASE}/`, () => {
-          return new HttpResponse(searchHtml, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
-          return new HttpResponse(detailWithBadSize, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-      );
-
-      const { results } = await indexer.search('test');
-      expect(results.length).toBeGreaterThan(0);
-      expect(results[0]!.size).toBeUndefined();
-    });
-
-    it('handles detail page with hash only in body text (fallback regex)', async () => {
-      const detailHashInBody = `
-        <html><body>
-          <h1>Rare Book</h1>
-          <p>Some random text a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 more text</p>
-        </body></html>`;
-
-      server.use(
-        http.get(`${ABB_BASE}/`, () => {
-          return new HttpResponse(searchHtml, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
-          return new HttpResponse(detailHashInBody, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-      );
-
-      const { results } = await indexer.search('test');
-      expect(results.length).toBeGreaterThan(0);
-      expect(results[0]!.infoHash).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');
-    });
-
-    it('handles MB size parsing', async () => {
-      const detailWithMBSize = `
-        <html><body>
-          <h1>Small Book</h1>
-          <pre>Info Hash: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0</pre>
-          <p>Size: 500 MB</p>
-        </body></html>`;
-
-      server.use(
-        http.get(`${ABB_BASE}/`, () => {
-          return new HttpResponse(searchHtml, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
-          return new HttpResponse(detailWithMBSize, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-      );
-
-      const { results } = await indexer.search('test');
-      expect(results.length).toBeGreaterThan(0);
-      // 500 MB * 1024 * 1024
-      expect(results[0]!.size).toBe(524288000);
-    });
-
-    it('extracts author and narrator from the detail page structured block', async () => {
-      const detailWithMetadata = `
-        <html><body>
-          <h1>Test Book</h1>
-          <pre>Info Hash: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0</pre>
-          <p>Written by <a href="/a/"><span class="author" itemprop="author">Brandon Sanderson</span></a>
-          <br>Read by <a href="/n/"><span class="narrator" itemprop="author">Michael Kramer</span></a></p>
-          <p>Size: 1.0 GB</p>
-        </body></html>`;
-
-      server.use(
-        http.get(`${ABB_BASE}/`, () => {
-          return new HttpResponse(searchHtml, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
-          return new HttpResponse(detailWithMetadata, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-      );
-
-      const { results } = await indexer.search('test');
-      expect(results.length).toBeGreaterThan(0);
-      expect(results[0]!.author).toBe('Brandon Sanderson');
-      expect(results[0]!.narrator).toBe('Michael Kramer');
-    });
-  });
-
-  describe('structured metadata block (#2365)', () => {
-    /** Both fixture rows resolve through the same detail handler, so one body serves the whole page. */
-    function serveDetail(html: string) {
-      server.use(
-        http.get(`${ABB_BASE}/`, () => new HttpResponse(searchHtml, { headers: { 'Content-Type': 'text/html' } })),
-        http.get(`${ABB_BASE}/audio-books/:slug/`, () => new HttpResponse(html, { headers: { 'Content-Type': 'text/html' } })),
-      );
-    }
-
-    it('reads author, narrator and format from the page\'s own elements', async () => {
-      serveDetail(detailHtml);
-
-      const { results } = await indexer.search('Murder in the New Forest');
-
-      expect(results[0]!.author).toBe('Carol Cole');
-      expect(results[0]!.narrator).toBe('James MacNaughton');
-      expect(results[0]!.format).toBe('m4b');
-    });
-
-    it('never reports the uploader as the author', async () => {
-      serveDetail(detailHtml);
-
-      const { results } = await indexer.search('Murder in the New Forest');
-
-      expect(results[0]!.author).toBe('Carol Cole');
-      for (const result of results) {
-        expect(stringFieldsOf(result).join(' | ')).not.toContain('greads123');
-        expect(stringFieldsOf(result).join(' | ')).not.toContain('uploader123');
-      }
-    });
-
-    it('keeps both roles on a page where the author narrates their own book', async () => {
-      serveDetail(samePersonHtml);
-
-      const { results } = await indexer.search('Wish You Were Here Yet?');
-
-      expect(results[0]!.author).toBe('James Crookes');
-      expect(results[0]!.narrator).toBe('James Crookes');
-      expect(results[0]!.format).toBe('m4b');
-    });
-
-    it('parses the post body\'s three shapes identically — colons, no colons, and no boilerplate', async () => {
-      for (const [html, expected] of [
-        [detailHtml, { author: 'Carol Cole', narrator: 'James MacNaughton' }],
-        [samePersonHtml, { author: 'James Crookes', narrator: 'James Crookes' }],
-        [perRequestHtml, { author: 'Marilyn Ross', narrator: 'Kathleen Gati' }],
-      ] as const) {
-        serveDetail(html);
-        const { results } = await indexer.search('test');
-
-        expect(results[0]!.author).toBe(expected.author);
-        expect(results[0]!.narrator).toBe(expected.narrator);
-        expect(results[0]!.format).toBe('m4b');
-      }
-    });
-
-    it('is unmoved by what the uploader wrote in the post body', async () => {
-      serveDetail(detailHtml.replace('By: Carol Cole', 'By: Someone Else Entirely'));
-
-      const { results } = await indexer.search('Murder in the New Forest');
-
-      expect(results[0]!.author).toBe('Carol Cole');
-    });
-
-    it('reads exact values from a block whose <br> separators flatten with no whitespace', async () => {
-      // The shipped fixture writes the whole block on one source line — the shape that made
-      // /Format:\s*([^\n]+)/i capture "M4BBitrate: 128 KbpsUnabridged".
-      expect(detailHtml).toContain('</span></a><br>Read by');
-      serveDetail(detailHtml);
-
-      const { results } = await indexer.search('Murder in the New Forest');
-
-      expect(results[0]!.format).toBe('m4b');
-      expect(results[0]!.author).toBe('Carol Cole');
-    });
-
-    it('lowercases a format the page already wrote in lowercase', async () => {
-      serveDetail(detailHtml.replace('>M4B<', '>m4b<'));
-
-      const { results } = await indexer.search('Murder in the New Forest');
-
-      expect(results[0]!.format).toBe('m4b');
-    });
-
-    it('takes the container format, not the abridgement wording', async () => {
-      serveDetail(detailHtml.replace('<span class="is_abridged">Unabridged</span>', 'Format<br> Unabridged Audiobook'));
-
-      const { results } = await indexer.search('Murder in the New Forest');
-
-      expect(results[0]!.format).toBe('m4b');
-    });
-
-    it('leaves narrator absent when the page carries no narrator span', async () => {
-      serveDetail(detailHtml.replace(/<a href="\/audio-books\/narrator\/[^"]+\/"><span class="narrator"[^>]*>[^<]*<\/span><\/a>/, ''));
-
-      const { results } = await indexer.search('Murder in the New Forest');
-
-      expect(results[0]).not.toHaveProperty('narrator');
-      expect(results[0]!.author).toBe('Carol Cole');
-    });
-
-    it('leaves author absent when the page carries no author span', async () => {
-      serveDetail(detailHtml.replace(/<a href="\/audio-books\/author\/[^"]+\/"><span class="author"[^>]*>[^<]*<\/span><\/a>/, ''));
-
-      const { results } = await indexer.search('Murder in the New Forest');
-
-      expect(results[0]).not.toHaveProperty('author');
-      expect(results[0]!.narrator).toBe('James MacNaughton');
-    });
-
-    it('leaves format absent when the page carries no format span', async () => {
-      serveDetail(detailHtml.replace(/<span class="format"[^>]*>[^<]*<\/span>/, ''));
-
-      const { results } = await indexer.search('Murder in the New Forest');
-
-      expect(results[0]).not.toHaveProperty('format');
-      expect(results[0]!.author).toBe('Carol Cole');
-    });
-
-    it('folds whitespace-only spans to absence, never to an empty string', async () => {
-      serveDetail(
-        detailHtml
-          .replace('>Carol Cole<', '>   <')
-          .replace('>James MacNaughton<', '> <')
-          .replace('>M4B<', '>  <'),
-      );
-
-      const { results } = await indexer.search('Murder in the New Forest');
-
-      expect(results[0]).not.toHaveProperty('author');
-      expect(results[0]).not.toHaveProperty('narrator');
-      expect(results[0]).not.toHaveProperty('format');
-    });
-
-    it('reads an author-only detail block past the page\'s annotated uploader byline', async () => {
-      // The narrator and format spans are what usually anchor the block; strip them and the byline's
-      // own annotated `.author` becomes the only other candidate on the page.
-      const authorOnly = detailHtml
-        .replace('Shared by: <span class="author">', 'Shared by: <span class="author" itemprop="author">')
-        .replace(/<br>Read by <a[^>]*><span class="narrator"[^>]*>[^<]*<\/span><\/a>/, '')
-        .replace(/<br>Format: <span class="format"[^>]*>[^<]*<\/span>/, '');
-      serveDetail(authorOnly);
-
-      const { results } = await indexer.search('Murder in the New Forest');
-
-      expect(results[0]!.author).toBe('Carol Cole');
-      expect(results[0]).not.toHaveProperty('narrator');
-      expect(stringFieldsOf(results[0]!).join(' | ')).not.toContain('greads123');
-    });
-
-    it('reports no author at all for an author-only block the page never scopes to its content region', async () => {
-      const noRegion = `
-        <html><body>
-          <h1>Murder in the New Forest</h1>
-          <div class="postInfo">Shared by: <span class="author" itemprop="author">greads123</span> On: 12 Dec 2022</div>
-          <pre>Info Hash: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0</pre>
-          <p>Written by <a href="/a/"><span class="author" itemprop="author">Carol Cole</span></a></p>
-        </body></html>`;
-      serveDetail(noRegion);
-
-      const { results } = await indexer.search('Murder in the New Forest');
-
-      expect(results[0]!.downloadUrl).toContain('magnet:?');
-      expect(results[0]).not.toHaveProperty('author');
-      expect(stringFieldsOf(results[0]!).join(' | ')).not.toContain('greads123');
-    });
-
-    it('emits no author from a search row when the detail page carries no structured block', async () => {
-      const detailNoBlock = `
-        <html><body>
-          <h1>Murder in the New Forest</h1>
-          <div class="postInfo">Shared by: <span class="author"><a href="/member/uploader123/">uploader123</a></span> On: 12 Dec 2022</div>
-          <pre>Info Hash: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0</pre>
-          <p>Whatever the uploader felt like typing.</p>
-        </body></html>`;
-      serveDetail(detailNoBlock);
-
-      const { results } = await indexer.search('Murder in the New Forest');
-
-      expect(results.length).toBeGreaterThan(0);
-      expect(results[0]!.downloadUrl).toContain('magnet:?');
-      expect(results[0]).not.toHaveProperty('author');
-      expect(results[0]).not.toHaveProperty('narrator');
-      expect(stringFieldsOf(results[0]!).join(' | ')).not.toContain('uploader123');
-    });
-
-    it('emits no author from a search row when the detail block carries only a narrator', async () => {
-      const detailNarratorOnly = `
-        <html><body>
-          <h1>Murder in the New Forest</h1>
-          <div class="postInfo">Shared by: <span class="author"><a href="/member/uploader123/">uploader123</a></span> On: 12 Dec 2022</div>
-          <pre>Info Hash: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0</pre>
-          <p>Read by <a href="/n/"><span class="narrator" itemprop="author">James MacNaughton</span></a></p>
-        </body></html>`;
-      serveDetail(detailNarratorOnly);
-
-      const { results } = await indexer.search('Murder in the New Forest');
-
-      expect(results[0]!.narrator).toBe('James MacNaughton');
-      expect(results[0]).not.toHaveProperty('author');
-      expect(stringFieldsOf(results[0]!).join(' | ')).not.toContain('uploader123');
-    });
-  });
-
   describe('AbortSignal threading', () => {
-    it('forwards signal to search page fetch and detail page fetch', async () => {
+    it('forwards the signal to the search page fetch', async () => {
       const capturedSignals: AbortSignal[] = [];
       server.use(
         http.get(`${ABB_BASE}/`, ({ request }) => {
           capturedSignals.push(request.signal);
           return new HttpResponse(searchHtml, { headers: { 'Content-Type': 'text/html' } });
         }),
-        http.get(`${ABB_BASE}/audio-books/:slug/`, ({ request }) => {
-          capturedSignals.push(request.signal);
-          return new HttpResponse(detailHtml, { headers: { 'Content-Type': 'text/html' } });
-        }),
       );
 
       const controller = new AbortController();
       await indexer.search('test', { signal: controller.signal });
 
-      expect(capturedSignals.length).toBeGreaterThan(0);
+      expect(capturedSignals).toHaveLength(1);
       controller.abort();
       expect(capturedSignals[0]!.aborted).toBe(true);
     });
@@ -953,30 +840,18 @@ describe('AudioBookBayIndexer', () => {
         pageLimit: 1,
         proxyUrl: PROXY_URL,
       });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      vi.spyOn(proxiedIndexer as any, 'delay').mockResolvedValue(undefined);
     });
 
     it('search rethrows ProxyError when fetch connection fails', async () => {
-      server.use(
-        http.get(`${ABB_BASE}/`, () => HttpResponse.error()),
-      );
+      server.use(http.get(`${ABB_BASE}/`, () => HttpResponse.error()));
 
       await expect(proxiedIndexer.search('test')).rejects.toThrow(ProxyError);
     });
 
     // Direct mode has no ProxyError to raise, which is exactly why this used to degrade silently.
     it('search propagates a direct network error rather than returning empty results', async () => {
-      const directIndexer = new AudioBookBayIndexer({
-        hostname: ABB_HOST,
-        pageLimit: 1,
-      });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      vi.spyOn(directIndexer as any, 'delay').mockResolvedValue(undefined);
-
-      server.use(
-        http.get(`${ABB_BASE}/`, () => HttpResponse.error()),
-      );
+      const directIndexer = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 1 });
+      server.use(http.get(`${ABB_BASE}/`, () => HttpResponse.error()));
 
       await expect(directIndexer.search('test')).rejects.toThrow();
     });
@@ -984,10 +859,7 @@ describe('AudioBookBayIndexer', () => {
     it('test with proxy returns success with exit IP', async () => {
       server.use(
         http.get(`${ABB_BASE}/`, () =>
-          new HttpResponse('<html>ok</html>', {
-            status: 200,
-            headers: { 'Content-Type': 'text/html' },
-          }),
+          new HttpResponse('<html>ok</html>', { status: 200, headers: { 'Content-Type': 'text/html' } }),
         ),
         http.get('https://api.ipify.org', () => HttpResponse.json({ ip: '1.2.3.4' })),
       );
@@ -1002,39 +874,17 @@ describe('AudioBookBayIndexer', () => {
   describe('proxy dispatcher option (fetch-spy exception)', () => {
     // MSW cannot inspect undici's dispatcher option, so this block spies on fetch directly.
     const PROXY_URL = 'http://proxy.test:8080';
-    let proxiedIndexer: AudioBookBayIndexer;
-
-    beforeEach(() => {
-      proxiedIndexer = new AudioBookBayIndexer({
-        hostname: ABB_HOST,
-        pageLimit: 1,
-        proxyUrl: PROXY_URL,
-      });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      vi.spyOn(proxiedIndexer as any, 'delay').mockResolvedValue(undefined);
-    });
 
     it('passes a dispatcher fetch option when constructed with proxyUrl', async () => {
-      let callCount = 0;
-      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
-        callCount++;
-        if (callCount === 1) {
-          return new Response(searchHtml, {
-            status: 200,
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }
-        return new Response(detailHtml, {
-          status: 200,
-          headers: { 'Content-Type': 'text/html' },
-        });
-      });
+      const proxiedIndexer = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 1, proxyUrl: PROXY_URL });
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(searchHtml, { status: 200, headers: { 'Content-Type': 'text/html' } }),
+      );
 
       const { results } = await proxiedIndexer.search('Brandon Sanderson');
 
-      expect(results.length).toBeGreaterThan(0);
+      expect(results).toHaveLength(2);
       expect(results[0]!.indexer).toBe('AudioBookBay');
-      expect(fetchSpy).toHaveBeenCalled();
       const callArgs = fetchSpy.mock.calls[0];
       expect((callArgs![1] as Record<string, unknown>).dispatcher).toBeDefined();
 
@@ -1042,81 +892,12 @@ describe('AudioBookBayIndexer', () => {
     });
   });
 
-  describe('guid population (#410)', () => {
-    it('search results include guid matching infoHash from detail page', async () => {
-      server.use(
-        http.get(`${ABB_BASE}/`, () => {
-          return new HttpResponse(searchHtml, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
-          return new HttpResponse(detailHtml, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-      );
-
-      const { results } = await indexer.search('Brandon Sanderson');
-
-      expect(results.length).toBeGreaterThan(0);
-      expect(results[0]!.guid).toBe(results[0]!.infoHash);
-      expect(results[0]!.guid).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');
-    });
-
-    it('guid is a lowercase 40-char hex string on returned results', async () => {
-      server.use(
-        http.get(`${ABB_BASE}/`, () => {
-          return new HttpResponse(searchHtml, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
-          return new HttpResponse(detailHtml, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-      );
-
-      const { results } = await indexer.search('Brandon Sanderson');
-
-      expect(results[0]!.guid).toMatch(/^[a-f0-9]{40}$/);
-    });
-
-    it('detail page with hash in body text (fallback regex) populates guid', async () => {
-      const detailHashInBody = `
-        <html><body>
-          <h1>Rare Book</h1>
-          <p>Some random text a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 more text</p>
-        </body></html>`;
-
-      server.use(
-        http.get(`${ABB_BASE}/`, () => {
-          return new HttpResponse(searchHtml, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
-          return new HttpResponse(detailHashInBody, {
-            headers: { 'Content-Type': 'text/html' },
-          });
-        }),
-      );
-
-      const { results } = await indexer.search('test');
-
-      expect(results.length).toBeGreaterThan(0);
-      expect(results[0]!.guid).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');
-      expect(results[0]!.guid).toBe(results[0]!.infoHash);
-    });
-  });
-
   /**
-   * The amplification guard (#2373 AC5). Both catches in this adapter rethrow only what
-   * `isProxyRelatedError` accepts and swallow everything else, so a slot-wait failure typed as a
-   * plain `Error` would be dropped, ABB would report an empty result set, the search service would
-   * count it as `succeeded`, and the query ladder would read an answered zero and advance — issuing
-   * more solver requests, which is exactly the amplification the bound exists to prevent.
+   * The amplification guard (#2373 AC5). `search()` rethrows only what `isProxyRelatedError` accepts
+   * and degrades everything else on a later page, so a slot-wait failure typed as a plain `Error`
+   * would be dropped, ABB would report an empty result set, the search service would count it as
+   * `succeeded`, and the query ladder would read an answered zero and advance — issuing more solver
+   * requests, which is exactly the amplification the bound exists to prevent.
    */
   describe('solver concurrency bound (#2373)', () => {
     const PROXY_URL = 'http://flaresolverr.test:8191';
@@ -1130,16 +911,6 @@ describe('AudioBookBayIndexer', () => {
         flareSolverrUrl: PROXY_URL,
       });
     });
-
-    /** Replaces the inter-request pause with a gate, so enrichment can be held mid-loop. */
-    function gateEnrichmentDelay(indexerUnderTest: AudioBookBayIndexer): { open: () => void } {
-      let resume: (() => void) | undefined;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      vi.spyOn(indexerUnderTest as any, 'delay').mockImplementation(
-        () => new Promise<void>((resolve) => { resume = resolve; }),
-      );
-      return { open: () => resume?.() };
-    }
 
     it('propagates a slot-wait timeout from the search page out of search()', async () => {
       const stub = bound.stub(`${PROXY_URL}/v1`);
@@ -1158,38 +929,29 @@ describe('AudioBookBayIndexer', () => {
       expect(stub.targets.some((target) => target.includes('?s='))).toBe(false);
     });
 
-    it('propagates a slot-wait timeout from detail-page enrichment out of search()', async () => {
-      const stub = bound.stub(`${PROXY_URL}/v1`, {
-        immediate: (targetUrl) => (targetUrl.includes('?s=') ? solverOk(searchHtml) : undefined),
-      });
-      const enrichment = gateEnrichmentDelay(proxiedIndexer);
-
-      const searching = bound.track(proxiedIndexer.search('Brandon Sanderson'));
-      await stub.reaches(1);
-      expect(stub.targets.some((target) => target.includes('?s='))).toBe(true);
-
-      // The search page has released its slot; fill the pool before enrichment resumes.
+    // The resolve seam replaces the deleted search-time enrichment as the second solver-bound path.
+    it('surfaces a slot-wait timeout from a grab as an IndexerError over a ProxyError cause', async () => {
+      const stub = bound.stub(`${PROXY_URL}/v1`);
       await bound.saturate(stub, PROXY_URL);
+
       const timer = bound.captureTimers();
-      enrichment.open();
-      await bound.accountedFor(stub, timer, { arrived: bound.max + 1, queued: 1 });
-      expect(timer.pending()).toBe(1);
+      const resolving = bound.track(proxiedIndexer.resolveDownloadUrl({
+        downloadUrl: abbDetailsSentinel(MURDER_URL),
+        protocol: 'torrent',
+        isFreeleech: false,
+      }));
+      await bound.accountedFor(stub, timer, { arrived: bound.max, queued: 1 });
       timer.fire();
 
-      await expect(searching).rejects.toThrow(/waiting for a request slot/);
-      await expect(searching).rejects.toBeInstanceOf(ProxyError);
+      const error = await resolving.catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(IndexerError);
+      expect((error as IndexerError).cause).toBeInstanceOf(ProxyError);
+      expect(stub.targets).not.toContain(MURDER_URL);
     });
 
-    it('makes the connection test queue behind search traffic and reports the slot wait', async () => {
+    it('makes the connection test queue behind other solver traffic and reports the slot wait', async () => {
       const stub = bound.stub(`${PROXY_URL}/v1`);
-
-      const searchers = Array.from({ length: bound.max }, () => {
-        const searcher = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 1, flareSolverrUrl: PROXY_URL });
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        vi.spyOn(searcher as any, 'delay').mockResolvedValue(undefined);
-        return bound.track(searcher.search('Brandon Sanderson'));
-      });
-      await stub.reaches(bound.max);
+      await bound.saturate(stub, PROXY_URL);
 
       const timer = bound.captureTimers();
       const testing = proxiedIndexer.test();
@@ -1202,7 +964,6 @@ describe('AudioBookBayIndexer', () => {
       expect(result.message).toMatch(/waiting for a request slot/);
       expect(result.message).toContain(PROXY_URL);
       expect(stub.observed).toBe(bound.max);
-      expect(searchers).toHaveLength(bound.max);
     });
 
     // #2374 AC10 — the slot wait already names the right component, so spending a probe on it (or
@@ -1243,8 +1004,6 @@ describe('AudioBookBayIndexer', () => {
 
     beforeEach(() => {
       solverIndexer = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 1, flareSolverrUrl: SOLVER_URL });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      vi.spyOn(solverIndexer as any, 'delay').mockResolvedValue(undefined);
     });
 
     afterEach(() => {
@@ -1452,6 +1211,7 @@ describe('AudioBookBayIndexer', () => {
         const result = await testing;
         expect(result.message).toMatch(/^Could not determine which component failed: /);
         expect(result.message).toContain(TIMED_OUT);
+        vi.mocked(globalThis.setTimeout).mockRestore();
       });
     });
 
@@ -1465,8 +1225,6 @@ describe('AudioBookBayIndexer', () => {
           flareSolverrUrl: SOLVER_URL,
           proxyUrl: STANDARD_PROXY,
         });
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        vi.spyOn(proxiedSolverIndexer as any, 'delay').mockResolvedValue(undefined);
       });
 
       it.each(['ECONNREFUSED', 'ENOTFOUND'])('never blames the target for a %s through the dispatcher', async (code) => {
@@ -1556,29 +1314,12 @@ describe('AudioBookBayIndexer', () => {
     const STRIPPED = 'A Dragon Riders Guide to Retirement Julia Huni';
     const WITH_APOSTROPHE = "A Dragon Rider's Guide to Retirement Julia Huni";
 
-    /** Records every search-page request URL ABB issues, in order. */
-    function captureSearchUrls(): string[] {
-      const urls: string[] = [];
-      server.use(
-        http.get(`${ABB_BASE}/`, ({ request }) => {
-          urls.push(request.url);
-          return new HttpResponse(searchHtml, { headers: { 'Content-Type': 'text/html' } });
-        }),
-        http.get(`${ABB_BASE}/page/:page/`, ({ request }) => {
-          urls.push(request.url);
-          return new HttpResponse(searchHtml, { headers: { 'Content-Type': 'text/html' } });
-        }),
-        http.get(`${ABB_BASE}/audio-books/:slug/`, () => new HttpResponse(detailHtml, { headers: { 'Content-Type': 'text/html' } })),
-      );
-      return urls;
-    }
-
     function searchParamOf(url: string): string | null {
       return new URL(url).searchParams.get('s');
     }
 
     it('folds the apostrophe word out of the request URL when the option carries it', async () => {
-      const urls = captureSearchUrls();
+      const { urls } = serveSearchPages();
 
       await indexer.search(STRIPPED, { queryWithApostrophes: WITH_APOSTROPHE });
 
@@ -1587,7 +1328,7 @@ describe('AudioBookBayIndexer', () => {
     });
 
     it('folds a lowercase relaxed-rung value to the identical URL as the source-cased rung-1 value', async () => {
-      const urls = captureSearchUrls();
+      const { urls } = serveSearchPages();
 
       await indexer.search(STRIPPED, { queryWithApostrophes: WITH_APOSTROPHE });
       await indexer.search(STRIPPED.toLowerCase(), { queryWithApostrophes: WITH_APOSTROPHE.toLowerCase() });
@@ -1596,7 +1337,7 @@ describe('AudioBookBayIndexer', () => {
     });
 
     it('issues today’s URL when no options object is passed at all', async () => {
-      const urls = captureSearchUrls();
+      const { urls } = serveSearchPages();
 
       await indexer.search('Brandon Sanderson');
 
@@ -1604,7 +1345,7 @@ describe('AudioBookBayIndexer', () => {
     });
 
     it('issues today’s URL when options are present but queryWithApostrophes is undefined', async () => {
-      const urls = captureSearchUrls();
+      const { urls } = serveSearchPages();
 
       await indexer.search(STRIPPED, { limit: 50 });
 
@@ -1612,7 +1353,7 @@ describe('AudioBookBayIndexer', () => {
     });
 
     it('issues today’s empty-query request for the RSS-path shape without throwing', async () => {
-      const urls = captureSearchUrls();
+      const { urls } = serveSearchPages();
 
       await expect(indexer.search('')).resolves.toBeDefined();
 
@@ -1621,9 +1362,7 @@ describe('AudioBookBayIndexer', () => {
 
     it('carries the folded query onto page two as well', async () => {
       const twoPageIndexer = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 2 });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      vi.spyOn(twoPageIndexer as any, 'delay').mockResolvedValue(undefined);
-      const urls = captureSearchUrls();
+      const { urls } = serveSearchPages();
 
       await twoPageIndexer.search(STRIPPED, { queryWithApostrophes: WITH_APOSTROPHE });
 
@@ -1635,24 +1374,17 @@ describe('AudioBookBayIndexer', () => {
       const solverTargets: string[] = [];
       const PROXY_URL = 'http://flaresolverr.test:8191';
       const proxiedIndexer = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 1, flareSolverrUrl: PROXY_URL });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      vi.spyOn(proxiedIndexer as any, 'delay').mockResolvedValue(undefined);
       server.use(
         http.post(`${PROXY_URL}/v1`, async ({ request }) => {
-          const body = await request.json() as Record<string, unknown>;
-          const target = body.url as string;
-          solverTargets.push(target);
-          return HttpResponse.json({
-            status: 'ok',
-            solution: { response: target.includes('?s=') ? searchHtml : detailHtml, status: 200 },
-          });
+          const body = await request.json() as { url: string };
+          solverTargets.push(body.url);
+          return solverOk(searchHtml);
         }),
       );
 
       await proxiedIndexer.search(STRIPPED, { queryWithApostrophes: WITH_APOSTROPHE });
 
-      const searchTarget = solverTargets.find((target) => target.includes('?s='));
-      expect(searchTarget).toBe(`${ABB_BASE}/?s=a+dragon+guide+to+retirement+julia+huni&tt=1`);
+      expect(solverTargets).toEqual([`${ABB_BASE}/?s=a+dragon+guide+to+retirement+julia+huni&tt=1`]);
     });
   });
 });

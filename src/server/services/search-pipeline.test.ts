@@ -12,6 +12,7 @@ import type { EventHistoryService } from './event-history.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '@core/index.js';
 import { parseMamSize } from '@core/indexers/mam-helpers.js';
+import { scoreResult } from '@core/utils/similarity.js';
 import { BYTES_PER_GB as GB, BYTES_PER_MB as MB } from '@shared/constants.js';
 import type { SearchResponsePayload, SearchResultPayload } from '@shared/schemas/search-stream.js';
 import { SearchLadderCooldown } from './search-ladder-cooldown.js';
@@ -4988,5 +4989,214 @@ describe('gate interaction with the ABB metadata fields (#2365)', () => {
       { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'greads123' },
     );
     expect(results).toHaveLength(0);
+  });
+});
+
+/**
+ * #2420 — ABB search results stopped carrying `infoHash`, `seeders`, `leechers` and `size`, and
+ * carry `author`/`narrator` only on rows whose markup does. Each of those absences lands on a gate
+ * that already has a rule for missing data; what these cases pin is that the rule is the one the
+ * rework relies on, and each is paired with a control that a "keeps everything" regression fails.
+ */
+describe('#2420 — the ABB result shape through the pipeline', () => {
+  const ABB_GUID = 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/';
+
+  /** A post-#2420 ABB row: sentinel download URL, details-URL guid, no hash, peers or size. */
+  function abbResult(overrides: MakeResultOverrides = {}): SearchResult {
+    return makeResult({
+      title: 'Murder in the New Forest',
+      indexer: 'AudioBookBay',
+      protocol: 'torrent',
+      guid: ABB_GUID,
+      downloadUrl: `abb-details://${ABB_GUID}`,
+      infoHash: undefined,
+      seeders: undefined,
+      leechers: undefined,
+      size: undefined,
+      ...overrides,
+    });
+  }
+
+  describe('absent seeders (AC5)', () => {
+    it('keeps a seeder-less ABB result at minSeeders 5 while dropping a 1-seeder peer', () => {
+      const { results } = filterAndRankResults(
+        [abbResult(), makeResult({ title: 'Other Indexer', indexer: 'torznab', seeders: 1 })],
+        undefined,
+        { grabFloor: 0, minSeeders: 5, protocolPreference: 'none' },
+      );
+
+      expect(results.map((r) => r.title)).toEqual(['Murder in the New Forest']);
+    });
+
+    it('keeps both when the gate is disabled at minSeeders 0', () => {
+      const { results } = filterAndRankResults(
+        [abbResult(), makeResult({ title: 'Other Indexer', indexer: 'torznab', seeders: 1 })],
+        undefined,
+        { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' },
+      );
+
+      expect(results).toHaveLength(2);
+    });
+
+    // Jackett fakes Seeders = 1 for ABB; this is what that choice would have cost.
+    it('control: a faked seeders:1 WOULD be dropped at minSeeders 5', () => {
+      const { results } = filterAndRankResults(
+        [abbResult({ seeders: 1 })],
+        undefined,
+        { grabFloor: 0, minSeeders: 5, protocolPreference: 'none' },
+      );
+
+      expect(results).toHaveLength(0);
+    });
+  });
+
+  describe('absent size (AC6)', () => {
+    it('keeps a size-less ABB result under the grab floor while dropping a sized result below it', () => {
+      const { results } = filterAndRankResults(
+        [abbResult(), makeResult({ title: 'Tiny Sized', indexer: 'torznab', size: 5 * MB })],
+        3600,
+        { grabFloor: 30, minSeeders: 0, protocolPreference: 'none' },
+      );
+
+      expect(results.map((r) => r.title)).toEqual(['Murder in the New Forest']);
+    });
+
+    it('keeps a size-less ABB result under minDownloadSize while dropping an undersized result', () => {
+      const { results } = filterAndRankResults(
+        [abbResult(), makeResult({ title: 'Too Small', indexer: 'torznab', size: 10 * MB })],
+        undefined,
+        { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', minDownloadSize: 100 },
+      );
+
+      expect(results.map((r) => r.title)).toEqual(['Murder in the New Forest']);
+    });
+
+    it('keeps a size-less ABB result under maxDownloadSize while dropping an oversized result', () => {
+      const { results } = filterAndRankResults(
+        [abbResult(), makeResult({ title: 'Too Big', indexer: 'torznab', size: 20 * GB })],
+        undefined,
+        { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5 },
+      );
+
+      expect(results.map((r) => r.title)).toEqual(['Murder in the New Forest']);
+    });
+  });
+
+  /**
+   * Both word gates read `author`/`narrator` as match surfaces, so a row that no longer carries an
+   * author changes behaviour in BOTH directions. Asserted deliberately here rather than discovered
+   * in production.
+   */
+  describe('absent author on the word gates (AC6)', () => {
+    it('requiredWords matching only the author now drops the author-less result', () => {
+      const { results } = filterAndRankResults(
+        [abbResult(), abbResult({ title: 'Same Title', author: 'Carol Cole' })],
+        undefined,
+        { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', requiredWords: 'Cole' },
+      );
+
+      expect(results.map((r) => r.title)).toEqual(['Same Title']);
+    });
+
+    it('rejectWords matching only the author no longer drops the author-less result', () => {
+      const { results } = filterAndRankResults(
+        [abbResult(), abbResult({ title: 'Same Title', author: 'Carol Cole' })],
+        undefined,
+        { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'Cole' },
+      );
+
+      expect(results.map((r) => r.title)).toEqual(['Murder in the New Forest']);
+    });
+  });
+
+  // `scoreResult` renormalizes by the weight it actually used, so a missing author costs the
+  // result nothing rather than scaling its title score by 0.6.
+  it('scores a result with no author on title alone, not at 0.6x', () => {
+    const context = { title: 'Murder in the New Forest', author: 'Carol Cole' };
+
+    const withoutAuthor = scoreResult({ title: 'Murder in the New Forest' }, context);
+    const withAuthor = scoreResult({ title: 'Murder in the New Forest', author: 'Carol Cole' }, context);
+
+    expect(withoutAuthor).toBe(1);
+    expect(withoutAuthor).toBe(withAuthor);
+  });
+
+  /**
+   * A resolve failure at grab time is a new way for `grab` to reject, and the scheduled surface's
+   * existing answer to that is `grab_error` on the one selected best result. Pinned here so the
+   * lazy-resolution change cannot quietly grow a next-candidate retry it never had.
+   */
+  it('reports a resolve failure as grab_error and does not try the next-best release', async () => {
+    const indexerSearchService = {
+      searchAllWithStatus: vi.fn().mockResolvedValue(searchStatus([
+        abbResult({ title: 'Best Match' }),
+        abbResult({ title: 'Runner Up', guid: `${ABB_GUID}other/`, downloadUrl: `abb-details://${ABB_GUID}other/` }),
+      ])),
+    } as unknown as IndexerSearchService;
+    const resolveFailure = new Error('ABB detail fetch failed for https://audiobookbay.test/audio-books/x/: HTTP 500');
+    const downloadOrchestrator = {
+      grab: vi.fn().mockRejectedValue(resolveFailure),
+    } as unknown as DownloadOrchestrator;
+    const blacklistService = {
+      getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }),
+    } as unknown as BlacklistService;
+
+    const result = await searchAndGrabForBook(
+      { id: 1, title: 'Murder in the New Forest', duration: 3600, authors: [{ name: 'Carol Cole' }] },
+      {
+        indexerSearchService,
+        downloadOrchestrator,
+        qualitySettings: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' },
+        log: createMockLogger(),
+        blacklistService,
+        indexerService: mockIndexer,
+        eventHistory: createMockEventHistory(),
+      },
+    );
+
+    expect(result.result).toBe('grab_error');
+    expect(downloadOrchestrator.grab).toHaveBeenCalledTimes(1);
+  });
+
+  /** AC7 — the whole blacklist load moves from the hash arm to the guid arm. */
+  describe('blacklist identity (AC7)', () => {
+    let blacklistService: BlacklistService;
+
+    beforeEach(() => {
+      blacklistService = {
+        getBlacklistedIdentifiers: vi.fn().mockResolvedValue({
+          blacklistedHashes: new Set<string>(),
+          blacklistedGuids: new Set<string>(),
+        }),
+      } as unknown as BlacklistService;
+    });
+
+    it('drops an ABB result whose details URL is blacklisted, with the hash set empty', async () => {
+      vi.mocked(blacklistService.getBlacklistedIdentifiers).mockResolvedValue({
+        blacklistedHashes: new Set(),
+        blacklistedGuids: new Set([ABB_GUID]),
+      });
+
+      const filtered = await filterBlacklistedResults([abbResult()], blacklistService);
+
+      expect(filtered).toHaveLength(0);
+      expect(blacklistService.getBlacklistedIdentifiers).toHaveBeenCalledWith([], [ABB_GUID]);
+    });
+
+    /**
+     * The accepted one-time break: rows written before #2420 carry `guid` = a 40-hex info hash, and
+     * an ABB result no longer exposes anything that can match one. Pinned so the consequence is a
+     * stated decision rather than a surprise.
+     */
+    it('does NOT drop an ABB result when only a stale pre-#2420 hash row exists', async () => {
+      vi.mocked(blacklistService.getBlacklistedIdentifiers).mockResolvedValue({
+        blacklistedHashes: new Set(['a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0']),
+        blacklistedGuids: new Set(['a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0']),
+      });
+
+      const filtered = await filterBlacklistedResults([abbResult()], blacklistService);
+
+      expect(filtered).toHaveLength(1);
+    });
   });
 });

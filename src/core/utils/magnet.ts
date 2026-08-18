@@ -1,13 +1,24 @@
+/**
+ * Announce URLs appended to every magnet we build, since ABB's detail page gives us an info hash
+ * and nothing else. Sourced by hand from ngosang/trackerslist `trackers_best` — deliberately NOT
+ * fetched at runtime: a self-hosted app must not phone a third party on every grab, and a list
+ * that changes under us makes a failed download unreproducible. Refresh it by hand when entries
+ * rot; `public.popcorn-tracker.org` (dead) and `tracker.dler.org` (flaky) were dropped in #2420.
+ */
 const TRACKERS = [
   'udp://tracker.opentrackr.org:1337/announce',
   'udp://open.stealth.si:80/announce',
   'udp://tracker.torrent.eu.org:451/announce',
   'udp://tracker.bittor.pw:1337/announce',
-  'udp://public.popcorn-tracker.org:6969/announce',
-  'udp://tracker.dler.org:6969/announce',
   'udp://exodus.desync.com:6969/announce',
   'udp://open.demonii.com:1337/announce',
+  'udp://open.tracker.cl:1337/announce',
+  'udp://tracker.openbittorrent.com:6969/announce',
+  'udp://explodie.org:6969/announce',
 ];
+
+/** Exposed for the structural invariants the suite asserts; production reads `TRACKERS` directly. */
+export const MAGNET_TRACKERS: readonly string[] = TRACKERS;
 
 export function buildMagnetUri(infoHash: string, name?: string): string {
   const params = new URLSearchParams();

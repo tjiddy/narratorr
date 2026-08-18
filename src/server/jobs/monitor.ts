@@ -296,6 +296,9 @@ async function blacklistOnInfraError(
   try {
     await retryDeps.blacklistService.create({
       infoHash: download.infoHash,
+      // An adapter whose search results carry no hash (ABB, #2420) can only ever be matched on
+      // guid, so an entry written without it silently blacklists nothing.
+      guid: download.guid ?? undefined,
       title: download.title,
       bookId: download.bookId ?? undefined,
       reason: 'infrastructure_error',

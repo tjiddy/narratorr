@@ -204,6 +204,9 @@ export class EventHistoryService {
       try {
         await this.blacklistService.create({
           infoHash: download.infoHash,
+          // An adapter whose search results carry no hash (ABB, #2420) can only ever be matched on
+          // guid, so without it the operator's "mark failed" succeeds and re-grabs the same release.
+          guid: download.guid ?? undefined,
           title: download.title,
           bookId: event.bookId ?? undefined,
           reason: 'bad_quality',

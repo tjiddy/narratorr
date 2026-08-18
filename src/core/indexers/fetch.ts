@@ -27,6 +27,14 @@ export interface FetchWithProxyOptions {
   timeoutMs?: number | undefined;
   proxyUrl?: string | undefined;
   signal?: AbortSignal | undefined;
+  /**
+   * Awaited as the last thing before this request goes on the wire — on the solver path that means
+   * after a slot is held, not before it. A caller pacing a destination must wait here rather than
+   * around this call: a wait taken before the slot lets two correctly-spaced requests stall behind
+   * a saturated pool and dispatch together the moment slots free (#2420). A rejection propagates
+   * verbatim and issues no request, releasing anything already held.
+   */
+  onBeforeDispatch?: (() => Promise<void>) | undefined;
 }
 
 /** Response body plus the target URL and upstream status. */
@@ -38,12 +46,14 @@ export interface FetchResult {
 
 /** Fetch directly or via FlareSolverr while preserving caller cancellation. */
 export async function fetchWithProxy(options: FetchWithProxyOptions): Promise<FetchResult> {
-  const { url, headers, proxyUrl } = options;
+  const { url, headers, proxyUrl, onBeforeDispatch } = options;
 
   if (proxyUrl) {
-    return fetchViaProxy(url, headers, proxyUrl, options.timeoutMs ?? PROXY_TIMEOUT_MS, options.signal);
+    return fetchViaProxy(url, headers, proxyUrl, options.timeoutMs ?? PROXY_TIMEOUT_MS, options.signal, onBeforeDispatch);
   }
 
+  // Nothing intervenes on the direct path, so here the hook is simply the last step before the wire.
+  if (onBeforeDispatch) await onBeforeDispatch();
   return fetchDirect(url, headers, options.timeoutMs ?? INDEXER_TIMEOUT_MS, options.signal);
 }
 
@@ -87,6 +97,9 @@ async function fetchDirect(
  * would hand a request that waited 55s for a slot a 5s solver budget — and released in the `finally`
  * below, after the body has been read and parsed. A leaked slot permanently shrinks the pool and is
  * strictly worse than no bound at all, because it fails closed and silently.
+ *
+ * `onBeforeDispatch` runs inside that same `try`, so a caller's own wait sits between the slot and
+ * the POST and a rejection there still releases the slot through the existing `finally`.
  */
 async function fetchViaProxy(
   targetUrl: string,
@@ -94,9 +107,11 @@ async function fetchViaProxy(
   proxyUrl: string,
   timeoutMs: number,
   callerSignal?: AbortSignal,
+  onBeforeDispatch?: () => Promise<void>,
 ): Promise<FetchResult> {
   const releaseSlot = await acquireSolverSlot(proxyUrl, callerSignal);
   try {
+    if (onBeforeDispatch) await onBeforeDispatch();
     return await postToSolver(targetUrl, headers, proxyUrl, timeoutMs, callerSignal);
   } finally {
     releaseSlot();

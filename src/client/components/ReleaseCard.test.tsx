@@ -404,4 +404,53 @@ describe('ReleaseCard', () => {
       expect(onGrab).not.toHaveBeenCalled();
     });
   });
+  /**
+   * #2420 — an ABB result now arrives with an `abb-details://` sentinel instead of a magnet, no
+   * seeder count and no size. The sentinel is a non-empty string, so the Grab control stays live
+   * with no change to this component; the alternative design (no `downloadUrl` at all) would have
+   * disabled the button for every ABB release.
+   */
+  describe('#2420 — an ABB sentinel-bearing result', () => {
+    const abbResult: SearchResult = {
+      title: 'Murder in the New Forest',
+      indexer: 'AudioBookBay',
+      protocol: 'torrent',
+      downloadUrl: 'abb-details://https://audiobookbay.test/audio-books/murder-in-the-new-forest/',
+      guid: 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/',
+      detailsUrl: 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/',
+      author: 'Carol Cole',
+    };
+
+    it('leaves the Grab button enabled and fires onGrab', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      const onGrab = vi.fn();
+      renderWithProviders(<ReleaseCard {...defaultProps} onGrab={onGrab} result={abbResult} />);
+
+      const button = screen.getByRole('button', { name: /Grab/ });
+      expect(button).not.toBeDisabled();
+      button.click();
+
+      expect(onGrab).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows no seeder count and no quality badge for a result carrying neither', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(<ReleaseCard {...defaultProps} result={abbResult} bookDurationSeconds={36000} />);
+
+      expect(screen.queryByText(/seeders/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/MB\/hr/)).not.toBeInTheDocument();
+      expect(screen.getByText(/Murder in the New Forest/)).toBeInTheDocument();
+    });
+
+    // AC7 — the previously-grabbed badge now keys on the details URL, since that is what an ABB
+    // grab persists as `books.lastGrabGuid`.
+    it('marks it as in library when lastGrabGuid is the details URL', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(
+        <ReleaseCard {...defaultProps} result={abbResult} lastGrabGuid={abbResult.guid} />,
+      );
+
+      expect(screen.getByText(/In library/i)).toBeInTheDocument();
+    });
+  });
 });

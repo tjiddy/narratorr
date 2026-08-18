@@ -10,6 +10,7 @@ import type { BlacklistService } from '../services/blacklist.service.js';
 import type { SearchResult } from '@core/index.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { BYTES_PER_GB } from '@shared/constants.js';
+import { IndexerError } from '@core/indexers/errors.js';
 
 vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
   ...(await importActual<typeof import('../utils/enrich-usenet-languages.js')>()),
@@ -376,6 +377,48 @@ describe('runRssJob', () => {
     const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 1 }),
+      'RSS grab failed (possible concurrent race)',
+    );
+  });
+
+  /**
+   * #2420 test 47 — the RSS surface's answer to a failed grab is to advance to the NEXT BOOK, not
+   * to try another release for the same book. The pre-existing race test cannot see that: it has
+   * one book and one release, so "advance to the next book", "try the runner-up" and "abandon the
+   * cycle" are all indistinguishable. Two books × two releases separates all three.
+   */
+  it('advances to the next book when a grab fails, without trying the same book\'s runner-up', async () => {
+    const detailsUrl = 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/';
+    const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author'), makeWantedBook(2, 'Other Book', 'Author')];
+    const rssResults = [
+      makeResult('Test Book', 'Author', { downloadUrl: `abb-details://${detailsUrl}`, guid: detailsUrl, indexer: 'AudioBookBay' }),
+      makeResult('Test Book', 'Author', { downloadUrl: `abb-details://${detailsUrl}runner-up/`, guid: `${detailsUrl}runner-up/`, indexer: 'AudioBookBay' }),
+      makeResult('Other Book', 'Author'),
+      makeResult('Other Book', 'Author', { downloadUrl: 'magnet:?xt=urn:btih:otherrunnerup' }),
+    ];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    // Only book 1's grab fails, and it fails the way a grab-time ABB resolve failure does.
+    (download.grab as Mock).mockImplementation(async (params: { bookId: number }) => {
+      if (params.bookId === 1) {
+        throw new IndexerError('AudioBookBay', `ABB detail fetch failed for ${detailsUrl}: HTTP 500`);
+      }
+      return { id: 2 };
+    });
+    const blacklist = createMockBlacklistService();
+
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
+
+    expect(result.matched).toBe(2);
+    expect(result.grabbed).toBe(1);
+    // Exactly one attempt per book: book 1's failure did NOT fall back to its runner-up, and did
+    // not abandon the cycle before book 2.
+    const grabbedBookIds = (download.grab as Mock).mock.calls.map((call) => (call[0] as { bookId: number }).bookId);
+    expect(grabbedBookIds).toEqual([1, 2]);
     expect(log.info).toHaveBeenCalledWith(
       expect.objectContaining({ bookId: 1 }),
       'RSS grab failed (possible concurrent race)',
