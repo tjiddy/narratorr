@@ -463,7 +463,9 @@ describe('MatchJobService', () => {
       const meta = makeBookMetadata({ title: 'Tehanu', authors: [{ name: 'Ursula K. Le Guin' }], asin: 'B01G9EPERE', providerId: 'p1' });
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([meta]);
       (metadataService.getBook as ReturnType<typeof vi.fn>).mockResolvedValue({ asin: 'B01G9EPERE', duration: 600 });
-      (bookService.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'same-recording', book: { id: 421, title: 'Tehanu' }, hasIncumbent: true });
+      // A file-holding incumbent: #2435 made "holds a file" the axis this arm turns on, and this
+      // case is about a book already sitting in the library.
+      (bookService.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'same-recording', book: { id: 421, title: 'Tehanu', path: '/library/Le Guin/Tehanu' }, hasIncumbent: true });
 
       const id = service.createJob([{ path: '/downloads/01 Tehanu.m4b', title: 'Tehanu' }]);
       await waitForJob(service, id);

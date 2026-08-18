@@ -195,6 +195,14 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
       expect(nudge).not.toHaveBeenCalled();
     });
 
+    // The cross-surface whitespace case for this gate: a bare `!path` check would read a
+    // whitespace-only path as file-holding here and refuse an attachable book.
+    it('treats a whitespace-only books.path as fileless and accepts', async () => {
+      const id = await seedBook({ path: '   ' });
+      const res = await post(id, { path: seedAudioDir('ws-src'), mode: 'copy' });
+      expect(res.statusCode).toBe(202);
+    });
+
     it('400 source_inside_library for a path under the library root', async () => {
       const id = await seedBook();
       const inside = join(libraryRoot, 'Some Book');
