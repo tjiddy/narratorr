@@ -12,6 +12,7 @@ import {
 import { buildMagnetUri } from '../utils';
 import { readAbbMetadata } from './abb-fields.js';
 import { buildAbbQuery } from './abb-query.js';
+import { inlineReAbPosts } from './abb-re-ab.js';
 import { abbDetailsSentinel, parseAbbDetailsUrl } from './abb-sentinel.js';
 import { abbThrottle, acquireAbbSolverMutex } from './abb-throttle.js';
 import { normalizeBaseUrl } from '@shared/normalize-base-url.js';
@@ -95,6 +96,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
         const parsed = this.parseSearchPage(fetched.body);
         itemsObserved += parsed.observed;
         dropped.emptyTitle += parsed.droppedEmptyTitle;
+        dropped.other += parsed.droppedOther;
         debugTrace.push(...parsed.debugTrace);
 
         if (parsed.results.length === 0) {
@@ -238,11 +240,15 @@ export class AudioBookBayIndexer implements IndexerAdapter {
    * Jackett does would be worse than absence — `search-pipeline.ts` treats unknown as "keep", so an
    * absent count survives every `minSeeders`, while a faked `1` is dropped at `minSeeders >= 2`.
    */
-  private parseSearchPage(html: string): { results: SearchResult[]; observed: number; droppedEmptyTitle: number; debugTrace: IndexerParseTrace[] } {
+  private parseSearchPage(html: string): { results: SearchResult[]; observed: number; droppedEmptyTitle: number; droppedOther: number; debugTrace: IndexerParseTrace[] } {
     const $ = cheerio.load(html);
+    // Ahead of row selection, and in place: an obfuscated post is the same node afterwards, still in
+    // the same selector family, so neither `observed` nor the preference chain below can shift.
+    inlineReAbPosts($);
     const results: SearchResult[] = [];
     const debugTrace: IndexerParseTrace[] = [];
     let droppedEmptyTitle = 0;
+    let droppedOther = 0;
 
     // ABB markup varies; try selectors in preference order.
     const postSelectors = [
@@ -280,8 +286,16 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       let detailsUrl = titleEl.attr('href');
 
       if (!title || !detailsUrl) {
-        droppedEmptyTitle++;
-        debugTrace.push({ source: 'row', reason: 'dropped:empty-title' });
+        // A surviving `re-ab` class means the decode pass refused the payload — the marker that
+        // separates "this blob would not decode" from "this row simply has no title". One branch,
+        // so the two counters cannot both claim the same row.
+        if ($el.hasClass('re-ab')) {
+          droppedOther++;
+          debugTrace.push({ source: 'row', reason: 'dropped:re-ab-undecodable' });
+        } else {
+          droppedEmptyTitle++;
+          debugTrace.push({ source: 'row', reason: 'dropped:empty-title' });
+        }
         return;
       }
 
@@ -310,7 +324,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       });
     });
 
-    return { results, observed: posts.length, droppedEmptyTitle, debugTrace };
+    return { results, observed: posts.length, droppedEmptyTitle, droppedOther, debugTrace };
   }
 
   /** The detail page's grab identity: the info hash, and the title the magnet's `dn` carries. */
