@@ -13,6 +13,7 @@ import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { BYTES_PER_GB } from '@shared/constants.js';
+import { IndexerError } from '@core/indexers/errors.js';
 import { MAX_SEARCH_RUNGS } from './search-query-ladder.js';
 
 vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
@@ -307,6 +308,62 @@ describe('retrySearch', () => {
     if (result.outcome === 'retry_error') {
       expect(result.error).toContain('Connection refused');
     }
+  });
+
+  /**
+   * #2420 test 47 — a grab-time adapter resolve failure is a NEW way for `grabForRetry` to reject,
+   * and it reaches this surface after the search already succeeded. The existing `retry_error`
+   * cases both fail before the grab (book missing, search throwing), so neither can detect drift
+   * in what retry does when the grab itself rejects. Asserted here as the exact current outcome:
+   * no next-candidate fallback exists on this surface and none is added.
+   */
+  it('returns retry_error when the ABB sentinel fails to resolve at grab time', async () => {
+    const detailsUrl = 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/';
+    const resolveFailure = new IndexerError(
+      'AudioBookBay',
+      `ABB detail fetch failed for ${detailsUrl}: HTTP 500`,
+    );
+    const deps = createDeps({
+      indexerSearchService: inject<IndexerSearchService>({
+        searchAllWithStatus: mockSearchAllWithStatus([
+          { ...mockSearchResult, title: 'Best Match', downloadUrl: `abb-details://${detailsUrl}`, guid: detailsUrl, infoHash: undefined },
+          { ...mockSearchResult, title: 'Runner Up', downloadUrl: `abb-details://${detailsUrl}other/`, guid: `${detailsUrl}other/`, infoHash: undefined },
+        ]),
+      }),
+      downloadOrchestrator: inject<DownloadOrchestrator>({
+        grabForRetry: vi.fn().mockRejectedValue(resolveFailure),
+        hasGrabBlocker: vi.fn().mockResolvedValue(false),
+      }),
+    });
+
+    const result = await retrySearch(1, deps);
+
+    expect(result.outcome).toBe('retry_error');
+    if (result.outcome === 'retry_error') {
+      expect(result.error).toContain(detailsUrl);
+    }
+    // One attempt only — the runner-up is never tried.
+    expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledTimes(1);
+  });
+
+  // The control: the same two-result set with a working grab still retries, so the case above
+  // cannot pass for the reason "this fixture never grabs anything".
+  it('control: the same sentinel-bearing set retries normally when the resolve succeeds', async () => {
+    const detailsUrl = 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/';
+    const deps = createDeps({
+      indexerSearchService: inject<IndexerSearchService>({
+        searchAllWithStatus: mockSearchAllWithStatus([
+          { ...mockSearchResult, title: 'Best Match', downloadUrl: `abb-details://${detailsUrl}`, guid: detailsUrl, infoHash: undefined },
+        ]),
+      }),
+    });
+
+    const result = await retrySearch(1, deps);
+
+    expect(result.outcome).toBe('retried');
+    expect(deps.downloadOrchestrator.grabForRetry).toHaveBeenCalledWith(
+      expect.objectContaining({ downloadUrl: `abb-details://${detailsUrl}`, guid: detailsUrl }),
+    );
   });
 
   it('returns no_candidates when no results have downloadUrl', async () => {
