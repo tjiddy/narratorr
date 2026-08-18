@@ -276,6 +276,14 @@ describe('booksApi', () => {
     expect(mockFetchApi).toHaveBeenCalledWith('/library/books?status=wanted&search=tolkien&sortField=title&sortDirection=asc&limit=10&offset=20');
   });
 
+  it('importBookFiles → POST /books/:id/import-files with the path and mode', async () => {
+    await booksApi.importBookFiles(42, { path: '/media/book.m4b', mode: 'move' });
+    expect(mockFetchApi).toHaveBeenCalledWith('/books/42/import-files', {
+      method: 'POST',
+      body: JSON.stringify({ path: '/media/book.m4b', mode: 'move' }),
+    });
+  });
+
   it('getBookStats → GET /books/stats', async () => {
     await booksApi.getBookStats();
     expect(mockFetchApi).toHaveBeenCalledWith('/books/stats');
@@ -467,6 +475,17 @@ describe('downloadClientsApi', () => {
 describe('filesystemApi', () => {
   it('browseDirectory → GET /filesystem/browse?path=...', async () => {
     await filesystemApi.browseDirectory('/home/user');
+    expect(mockFetchApi).toHaveBeenCalledWith('/filesystem/browse?path=%2Fhome%2Fuser');
+  });
+
+  // #2435 AC20: the legacy call must stay byte-identical, so the opt-in is asserted both ways.
+  it('browseDirectory with the audio capability → adds include=audio', async () => {
+    await filesystemApi.browseDirectory('/home/user', 'audio');
+    expect(mockFetchApi).toHaveBeenCalledWith('/filesystem/browse?path=%2Fhome%2Fuser&include=audio');
+  });
+
+  it('browseDirectory with the legacy capability → sends no include parameter', async () => {
+    await filesystemApi.browseDirectory('/home/user', 'legacy');
     expect(mockFetchApi).toHaveBeenCalledWith('/filesystem/browse?path=%2Fhome%2Fuser');
   });
 });

@@ -406,6 +406,8 @@ export const booksApi = {
     fetchApi<{ success: boolean }>(`/books/${id}/merge-to-m4b`, { method: 'DELETE' }),
   markBookAsWrongRelease: (id: number) =>
     fetchApi<{ success: boolean }>(`/books/${id}/wrong-release`, { method: 'POST' }),
+  importBookFiles: (id: number, body: { path: string; mode: 'copy' | 'move' }) =>
+    fetchApi<{ jobId: number }>(`/books/${id}/import-files`, { method: 'POST', body: JSON.stringify(body) }),
   retryBookImport: (id: number) =>
     fetchApi<{ jobId: number }>(`/books/${id}/retry-import`, { method: 'POST' }),
   checkRetryImportAvailable: (id: number) =>

@@ -20,6 +20,8 @@ import { useMergeProgress, type MergeProgress } from '@/hooks/useMergeProgress.j
 import { useBookModals } from '@/hooks/useBookModals.js';
 import { formatMergePhase } from '@/lib/format/merge.js';
 import { AudioPreview } from './AudioPreview.js';
+import { ImportFilesPicker } from './ImportFilesPicker.js';
+import { canAttachFile } from '@shared/attach-eligibility.js';
 import { useCoverPaste } from '@/hooks/useCoverPaste.js';
 import { useCoverDraft } from '@/hooks/useCoverDraft.js';
 import { useRetryImportAvailable } from '@/hooks/useRetryImportAvailable.js';
@@ -48,8 +50,11 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const merged = mergeBookData(libraryBook, metadataBook);
   // Modal prefill/diff and header visibility share this resolver to prevent drift.
   const displayed = resolveDisplayedFields(libraryBook, metadataBook);
-  const { renameMutation, mergeMutation, cancelMergeMutation, retagMutation, refreshScanMutation, deleteMutation, wrongReleaseMutation, retryImportMutation, uploadCoverMutation, ffmpegConfigured, isSaving, handleSave } =
+  const { renameMutation, mergeMutation, cancelMergeMutation, retagMutation, refreshScanMutation, deleteMutation, wrongReleaseMutation, retryImportMutation, importFilesMutation, uploadCoverMutation, ffmpegConfigured, isSaving, handleSave } =
     useBookActions(libraryBook.id);
+  const [importFilesOpen, setImportFilesOpen] = useState(false);
+  // The same two conditions the route enforces, from the same shared predicate.
+  const canImportFiles = canAttachFile(libraryBook);
 
   const showWrongRelease = canShowWrongRelease(libraryBook);
 
@@ -114,9 +119,20 @@ export function BookDetails({ libraryBook, metadataBook }: {
         isUploadingCover={uploadCoverMutation.isPending}
         onRetryImportClick={canRetryImport ? () => retryImportMutation.mutate() : undefined}
         isRetryingImport={retryImportMutation.isPending}
+        onImportFilesClick={canImportFiles ? () => setImportFilesOpen(true) : undefined}
+        isImportingFiles={importFilesMutation.isPending}
       >
         <AudioPreview source={{ kind: 'book', bookId: libraryBook.id, enabled: libraryBook.status === 'imported' && !!libraryBook.path }} />
       </BookHero>
+
+      <ImportFilesPicker
+        isOpen={importFilesOpen}
+        isPending={importFilesMutation.isPending}
+        onClose={() => setImportFilesOpen(false)}
+        onSubmit={(vars) => {
+          importFilesMutation.mutate(vars, { onSuccess: () => setImportFilesOpen(false) });
+        }}
+      />
 
       {mergeProgress && (
         <MergeProgressIndicator

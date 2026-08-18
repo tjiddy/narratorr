@@ -5,7 +5,10 @@ import type { BookService } from './book.service.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 
-vi.mock('./enrichment-utils.js', () => ({
+// Extend, don't replace: the module also exports the live narrator re-read this suite exercises for
+// real, and a factory that drops it fails at call time rather than at load.
+vi.mock('./enrichment-utils.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./enrichment-utils.js')>()),
   enrichBookFromAudio: vi.fn(),
 }));
 
@@ -97,6 +100,8 @@ describe('orchestrateBookEnrichment', () => {
         deps.log,
         deps.bookService,
         '/usr/bin/ffprobe',
+        // #2435: the attach options are forwarded verbatim; a non-attach caller passes none.
+        undefined,
       );
     });
 
@@ -107,7 +112,18 @@ describe('orchestrateBookEnrichment', () => {
 
       expect(mockResolveFfprobePath).toHaveBeenCalledWith('/usr/bin/ffmpeg');
       expect(mockEnrichBookFromAudio).toHaveBeenCalledWith(
-        42, '/path', expect.anything(), deps.db, deps.log, deps.bookService, '/custom/ffprobe',
+        42, '/path', expect.anything(), deps.db, deps.log, deps.bookService, '/custom/ffprobe', undefined,
+      );
+    });
+
+    it('forwards the attach option through to the audio enrichment (#2435)', async () => {
+      await orchestrateBookEnrichment(
+        42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null },
+        deps, { primaryAsin: null }, { attach: true },
+      );
+
+      expect(mockEnrichBookFromAudio).toHaveBeenCalledWith(
+        42, '/path', expect.anything(), deps.db, deps.log, deps.bookService, expect.anything(), { attach: true },
       );
     });
 

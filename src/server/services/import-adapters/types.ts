@@ -38,6 +38,9 @@ export const manualImportJobPayloadSchema = importConfirmItemSchema.extend({
   metadata: z.custom<BookMetadata>().optional(),
   mode: importModeSchema.optional(),
   narratorSource: narratorSourceSchema.optional(),
+  // #2435: the job targets an EXISTING book. Carried explicitly rather than inferred from the
+  // book's status, which races with any other writer between enqueue and processing.
+  attach: z.literal(true).optional(),
 });
 
 export const autoImportJobPayloadSchema = z.object({

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { BookMetadata } from '@core/metadata/index.js';
 import type { DuplicateCandidate } from './book-dedup.js';
+import { BOOK_STATUSES } from '@shared/schemas/book.js';
 import { classifyConfirmItem } from './import-confirm-item.helpers.js';
 import type { ImportConfirmItem } from './library-scan.service.js';
 
@@ -78,6 +79,84 @@ describe('classifyConfirmItem — classification', () => {
     const { bookService, log } = setup({ verdict: 'different-recording', book: null, hasIncumbent: true });
 
     expect(await classifyConfirmItem(makeItem(), bookService, log)).toBe('proceed');
+  });
+});
+
+/**
+ * #2435 AC4: a `same-recording` incumbent that holds no file is the record this file should fulfil.
+ * The status matrix is the same one the book-scoped route applies at its own entry point.
+ */
+describe('classifyConfirmItem — attach classification', () => {
+  const fileless = (overrides: Record<string, unknown> = {}) =>
+    ({ id: 421, title: 'Tehanu (1990 recording)', path: null, status: 'wanted', ...overrides });
+
+  it.each(BOOK_STATUSES)('classifies a fileless %s incumbent', async (status) => {
+    const { bookService, log } = setup({ verdict: 'same-recording', book: fileless({ status }), hasIncumbent: true });
+
+    const out = await classifyConfirmItem(makeItem(), bookService, log);
+
+    if (['wanted', 'searching', 'failed', 'missing'].includes(status)) {
+      expect(out).toEqual({ attach: true, bookId: 421, title: 'Tehanu (1990 recording)', status });
+    } else {
+      // downloading/importing are owned by a live acquisition; imported is already fulfilled.
+      expect(out).toEqual({ skip: true, existingBookId: 421, existingTitle: 'Tehanu (1990 recording)' });
+    }
+  });
+
+  it.each([
+    ['null', null],
+    ['empty string', ''],
+    ['whitespace only', '   '],
+  ])('treats a %s path as fileless and attaches', async (_label, path) => {
+    const { bookService, log } = setup({ verdict: 'same-recording', book: fileless({ path }), hasIncumbent: true });
+
+    const out = await classifyConfirmItem(makeItem(), bookService, log);
+
+    expect(out).toEqual({ attach: true, bookId: 421, title: 'Tehanu (1990 recording)', status: 'wanted' });
+  });
+
+  it('still skips an incumbent that holds a file', async () => {
+    const { bookService, log } = setup({
+      verdict: 'same-recording', book: fileless({ path: '/library/A/B' }), hasIncumbent: true,
+    });
+
+    const out = await classifyConfirmItem(makeItem(), bookService, log);
+
+    expect(out).toEqual({ skip: true, existingBookId: 421, existingTitle: 'Tehanu (1990 recording)' });
+  });
+
+  it('logs the attach at info and emits no debug skip line', async () => {
+    const { bookService, log } = setup({ verdict: 'same-recording', book: fileless(), hasIncumbent: true });
+
+    await classifyConfirmItem(makeItem(), bookService, log);
+
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ existingBookId: 421, title: 'Tehanu' }),
+      expect.stringContaining('Attaching'),
+    );
+    expect(log.debug).not.toHaveBeenCalled();
+  });
+
+  it('keeps the owned-duplicate skip on debug', async () => {
+    const { bookService, log } = setup({
+      verdict: 'same-recording', book: fileless({ path: '/library/A/B' }), hasIncumbent: true,
+    });
+
+    await classifyConfirmItem(makeItem(), bookService, log);
+
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ existingBookId: 421 }),
+      expect.stringContaining('Skipping owned duplicate'),
+    );
+  });
+
+  it('does not attach when forceImport bypasses the decision entirely', async () => {
+    const { bookService, findDuplicate, log } = setup({ verdict: 'same-recording', book: fileless(), hasIncumbent: true });
+
+    const out = await classifyConfirmItem(makeItem({ forceImport: true }), bookService, log);
+
+    expect(out).toBe('proceed');
+    expect(findDuplicate).not.toHaveBeenCalled();
   });
 });
 

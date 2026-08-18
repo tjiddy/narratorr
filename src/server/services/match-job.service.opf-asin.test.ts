@@ -498,7 +498,7 @@ describe('MatchJobService — OPF/tag ASIN identification rung (#2292)', () => {
       vi.mocked(readOpfMetadata).mockResolvedValue(makeOpf({ asin: GUNSLINGER_ASIN }));
       vi.mocked(metadataService.getBook).mockResolvedValue(darkTowerI());
       vi.mocked(bookService.findDuplicate).mockResolvedValue({
-        verdict: 'same-recording', book: { id: 421, title: 'Dark Tower I' }, hasIncumbent: true,
+        verdict: 'same-recording', book: { id: 421, title: 'Dark Tower I', path: '/library/King/Dark Tower I' }, hasIncumbent: true,
       } as unknown as Awaited<ReturnType<BookService['findDuplicate']>>);
 
       const result = await runSingle();

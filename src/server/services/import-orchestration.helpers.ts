@@ -23,6 +23,7 @@ import type { ImportConfirmItem, ImportMode } from './library-scan.service.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 import { resolveImportSeries } from './resolve-import-series.js';
+import type { AttachNaming } from './attach-naming.js';
 
 
 export interface ImportPipelineDeps {
@@ -104,6 +105,19 @@ function buildRecordingCandidate(item: ImportConfirmItem, meta: BookMetadata | n
   };
 }
 
+/** The second naming consumer: what the keep-both edition label is derived FROM (#2435 AC23). */
+function resolveCollisionIdentity(
+  item: ImportConfirmItem,
+  meta: BookMetadata | null,
+  naming: AttachNaming | undefined,
+): { candidate: RecordingCandidate; productionType: string | undefined } {
+  if (naming) return { candidate: naming.candidate, productionType: naming.productionType };
+  return {
+    candidate: buildRecordingCandidate(item, meta),
+    productionType: meta?.formatType ? normalizeProductionType(meta.formatType) : undefined,
+  };
+}
+
 // Build a deterministic safe edition folder; an unusable label or conflicting destination requires review.
 async function disambiguateTarget(
   candidate: RecordingCandidate,
@@ -169,6 +183,7 @@ export async function copyToLibrary(
   mode: ImportMode,
   deps: ImportPipelineDeps,
   onProgress?: (progress: number, byteCounter: { current: number; total: number }) => void,
+  naming?: AttachNaming,
 ): Promise<{ targetPath: string; editionLabel?: string }> {
   const { log, settingsService } = deps;
 
@@ -176,7 +191,8 @@ export async function copyToLibrary(
   const namingOptions = toNamingOptions(librarySettings);
   // Match DB creation: explicit item series wins, otherwise use metadata primary; only path building normalizes it.
   const series = resolveImportSeries(item, pickPrimarySeries(meta));
-  const targetBook = {
+  // #2435: on an attach the incumbent row supersedes item/meta wherever naming is derived.
+  const targetBook = naming?.targetBook ?? {
     title: item.title,
     seriesName: series.name,
     seriesPosition: series.position,
@@ -185,9 +201,11 @@ export async function copyToLibrary(
       : (meta?.narrators?.length ? meta.narrators.map(n => ({ name: n })) : undefined),
     publishedDate: meta?.publishedDate,
   };
+  const authorName = naming ? naming.authorName : (item.authorName ?? null);
   const rebuild = (label: string): string =>
-    buildTargetPath(librarySettings.path, librarySettings.folderFormat, targetBook, item.authorName ?? null, namingOptions, label);
-  let targetPath = rebuild('');
+    buildTargetPath(librarySettings.path, librarySettings.folderFormat, targetBook, authorName, namingOptions, label);
+  // A stored editionLabel seeds the base target, so the folder and any `{edition}` token agree.
+  let targetPath = rebuild(naming?.seedEditionLabel ?? '');
   let editionLabel: string | undefined;
 
   if (resolve(item.path) === resolve(targetPath)) {
@@ -203,7 +221,7 @@ export async function copyToLibrary(
   // A coalesced row points only at the lowest disc; reconstruct every member before flattening.
   const memberPaths = await reconstructDiscGroup(item.path);
   if (memberPaths.length >= 2) {
-    return copyDiscGroupToLibrary(item, meta, targetPath, memberPaths, mode, deps, librarySettings.path, rebuild, onProgress);
+    return copyDiscGroupToLibrary(item, meta, targetPath, memberPaths, mode, deps, librarySettings.path, rebuild, onProgress, naming);
   }
 
   // Recover marker-armed commits before occupancy checks, or an audio-empty target takes the orphaning fast path.
@@ -211,8 +229,7 @@ export async function copyToLibrary(
 
   // Occupied audio swaps only for one same-recording owner; differences disambiguate and uncertainty throws.
   if (await getTargetAudioSize(targetPath) > 0) {
-    const candidate = buildRecordingCandidate(item, meta);
-    const productionType = meta?.formatType ? normalizeProductionType(meta.formatType) : undefined;
+    const { candidate, productionType } = resolveCollisionIdentity(item, meta, naming);
     const occ = await resolveOccupiedTarget(targetPath, candidate, productionType, deps, rebuild);
     if (occ.swap) {
       const sourceStats = await stat(item.path);
@@ -265,6 +282,7 @@ async function copyDiscGroupToLibrary(
   libraryRoot: string,
   rebuild: (label: string) => string,
   onProgress?: (progress: number, byteCounter: { current: number; total: number }) => void,
+  naming?: AttachNaming,
 ): Promise<{ targetPath: string; editionLabel?: string }> {
   const { log } = deps;
   let targetPath = baseTargetPath;
@@ -276,8 +294,7 @@ async function copyDiscGroupToLibrary(
 
   // Disc groups use the same collision fence as single-source imports.
   if (await getTargetAudioSize(targetPath) > 0) {
-    const candidate = buildRecordingCandidate(item, meta);
-    const productionType = meta?.formatType ? normalizeProductionType(meta.formatType) : undefined;
+    const { candidate, productionType } = resolveCollisionIdentity(item, meta, naming);
     const occ = await resolveOccupiedTarget(targetPath, candidate, productionType, deps, rebuild);
     if (!occ.swap) {
       log.info({ source: item.path, base: targetPath, disambiguated: occ.targetPath, editionLabel: occ.editionLabel }, 'Different recording on occupied disc-group target — copying into a disambiguated folder (keep-both)');

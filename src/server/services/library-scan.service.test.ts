@@ -2187,7 +2187,7 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       // Null title/slug puts the incumbent only in the ASIN map, not the title bucket.
       mockDb.select
         .mockReturnValueOnce(mockDbChain([]))
-        .mockReturnValueOnce(mockDbChain([{ id: 90, title: null, slug: null, asin: 'B01ABC0001' }]));
+        .mockReturnValueOnce(mockDbChain([{ id: 90, title: null, slug: null, asin: 'B01ABC0001', path: '/library/Author/Series' }]));
 
       const result = await service.scanDirectory('/audiobooks');
 
@@ -2320,6 +2320,73 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
       expect(result.discoveries[0]!.existingBookId).toBe(100);
     });
 
+    /**
+     * #2435 AC12/AC13: the ASIN still decides WHICH book a folder is; what changed is that a book
+     * owning no folder is no longer a reason to drop the row from selection.
+     */
+    describe('decisive-ASIN precedence against a fileless incumbent (#2435)', () => {
+      const scanOne = (folderParts: string[]) =>
+        vi.mocked(discoverBooks).mockResolvedValue([
+          { path: '/audiobooks/Author/Target', folderParts, audioFileCount: 3, totalSize: 100 },
+        ]);
+
+      it('AC13: a path match still outranks a fileless decisive ASIN and still reads duplicateReason path', async () => {
+        scanOne(['Author', 'Conflict [B0FILE0001]']);
+        mockDb.select
+          .mockReturnValueOnce(mockDbChain([{ id: 100, path: '/audiobooks/Author/Target' }]))
+          .mockReturnValueOnce(mockDbChain([{ id: 200, title: 'Conflict', slug: 'author', asin: 'B0FILE0001', path: null }]));
+
+        const result = await service.scanDirectory('/audiobooks');
+
+        expect(result.discoveries[0]!.isDuplicate).toBe(true);
+        expect(result.discoveries[0]!.duplicateReason).toBe('path');
+        expect(result.discoveries[0]!.existingBookId).toBe(100);
+      });
+
+      it.each([
+        ['null', null],
+        ['empty string', ''],
+        ['whitespace only', '   '],
+      ])('a decisive ASIN on a %s-path book is importable and still names the incumbent', async (_label, path) => {
+        scanOne(['Author', 'Conflict [B0FILE0002]']);
+        mockDb.select
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([{ id: 200, title: 'Conflict', slug: 'author', asin: 'B0FILE0002', path }]));
+
+        const result = await service.scanDirectory('/audiobooks');
+
+        expect(result.discoveries[0]!.isDuplicate).toBe(false);
+        expect(result.discoveries[0]!.existingBookId).toBe(200);
+        expect(result.discoveries[0]).not.toHaveProperty('duplicateReason');
+      });
+
+      it('a decisive ASIN on a FILE-HOLDING book is still a hard duplicate', async () => {
+        scanOne(['Author', 'Conflict [B0FILE0003]']);
+        mockDb.select
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([{ id: 200, title: 'Conflict', slug: 'author', asin: 'B0FILE0003', path: '/library/Author/Conflict' }]));
+
+        const result = await service.scanDirectory('/audiobooks');
+
+        expect(result.discoveries[0]!.isDuplicate).toBe(true);
+        expect(result.discoveries[0]!.duplicateReason).toBe('slug');
+        expect(result.discoveries[0]!.existingBookId).toBe(200);
+      });
+
+      it('the title+author hint branch is unchanged by a fileless row', async () => {
+        scanOne(['Author', 'Conflict']);
+        mockDb.select
+          .mockReturnValueOnce(mockDbChain([]))
+          .mockReturnValueOnce(mockDbChain([{ id: 200, title: 'Conflict', slug: 'author', asin: null, path: null }]));
+
+        const result = await service.scanDirectory('/audiobooks');
+
+        expect(result.discoveries[0]!.isDuplicate).toBe(false);
+        expect(result.discoveries[0]!.existingBookId).toBe(200);
+        expect(result.discoveries[0]!.reviewReason).toBe(SCAN_RECORDING_REVIEW_HINT);
+      });
+    });
+
     it('decisive ASIN outranks a simultaneous title+author review hint (F6)', async () => {
       vi.mocked(discoverBooks).mockResolvedValue([
         { path: '/audiobooks/Author/AsinWins', folderParts: ['Author', 'Conflict [B0DEC00002]'], audioFileCount: 3, totalSize: 100 },
@@ -2328,7 +2395,7 @@ describe('scanDirectory() — within-scan duplicate detection (#342)', () => {
         .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([
           { id: 300, title: 'Conflict', slug: 'author', asin: null },
-          { id: 200, title: 'Conflict', slug: 'author', asin: 'B0DEC00002' },
+          { id: 200, title: 'Conflict', slug: 'author', asin: 'B0DEC00002', path: '/library/Author/Conflict' },
         ]));
 
       const result = await service.scanDirectory('/audiobooks');

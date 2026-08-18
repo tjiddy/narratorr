@@ -1,12 +1,12 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { eq } from 'drizzle-orm';
 import type { Db, DbOrTx } from '@db/index.js';
-import { books, bookNarrators } from '@db/schema.js';
+import { books } from '@db/schema.js';
 import type { BookService } from './book.service.js';
 import type { NarratorSource } from './import-adapters/types.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
-import { enrichBookFromAudio } from './enrichment-utils.js';
+import { enrichBookFromAudio, rowHasNarrators, type AudioEnrichmentOptions } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
 import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
 import type { BookMetadata } from '@core/metadata/index.js';
@@ -56,6 +56,7 @@ export async function orchestrateBookEnrichment(
   book: EnrichmentBookInput,
   deps: EnrichmentDeps,
   audnexusConfig: AudnexusConfig,
+  opts?: AudioEnrichmentOptions,
 ): Promise<{ audioEnriched: boolean }> {
   const ffprobePath = resolveFfprobePathFromSettings(await resolveFfmpegPath());
   const audioResult = await enrichBookFromAudio(
@@ -72,6 +73,7 @@ export async function orchestrateBookEnrichment(
     deps.log,
     deps.bookService,
     ffprobePath,
+    opts,
   );
 
   await applyAudnexusEnrichment(bookId, audnexusConfig, deps);
@@ -163,8 +165,18 @@ async function applyEnrichmentData(
   const asinToWrite = await resolveAsinWriteback(bookId, resolvedAsin, opts.primaryAsin, deps);
 
   const committed = await deps.db.transaction(async (tx) => {
+    // #2435 AC28: the projection covers every field this transaction writes, so each guard reads
+    // the LIVE row. The caller's `opts.existing*` were snapshotted before the audio scan and the
+    // provider round-trip, and an operator can populate any of them while the import is in flight.
     const rows = await tx
-      .select({ asin: books.asin, userClearedFields: books.userClearedFields })
+      .select({
+        asin: books.asin,
+        userClearedFields: books.userClearedFields,
+        duration: books.duration,
+        subtitle: books.subtitle,
+        publisher: books.publisher,
+        genres: books.genres,
+      })
       .from(books)
       .where(eq(books.id, bookId))
       .limit(1);
@@ -179,17 +191,19 @@ async function applyEnrichmentData(
       updatedAt: new Date(),
     };
     if (asinToWrite) updates.asin = asinToWrite;
-    if (!opts.existingDuration && data.duration) {
+    // The stale snapshot is kept as an additional condition: it can only narrow the write, never
+    // authorise one the live row forbids.
+    if (!opts.existingDuration && !row.duration && data.duration) {
       updates.duration = data.duration;
     }
-    if (!opts.existingSubtitle && data.subtitle && !cleared.has('subtitle')) {
+    if (!opts.existingSubtitle && !row.subtitle && data.subtitle && !cleared.has('subtitle')) {
       updates.subtitle = data.subtitle;
     }
-    if (!opts.existingPublisher && data.publisher && !cleared.has('publisher')) {
+    if (!opts.existingPublisher && !row.publisher && data.publisher && !cleared.has('publisher')) {
       updates.publisher = data.publisher;
     }
     await tx.update(books).set(updates).where(eq(books.id, bookId));
-    const genresWritten = await applyEnrichmentArrayFields(bookId, data, opts, deps, cleared, tx);
+    const genresWritten = await applyEnrichmentArrayFields(bookId, data, opts, deps, cleared, tx, row.genres);
     return { applied: true, genresWritten };
   });
 
@@ -211,16 +225,6 @@ async function applyEnrichmentData(
   );
 }
 
-/** Use the caller's transaction; the pre-fetch narrator snapshot may miss audio-tag writes. */
-async function rowHasNarrators(tx: DbOrTx, bookId: number): Promise<boolean> {
-  const rows = await tx
-    .select({ narratorId: bookNarrators.narratorId })
-    .from(bookNarrators)
-    .where(eq(bookNarrators.bookId, bookId))
-    .limit(1);
-  return rows.length > 0;
-}
-
 async function applyEnrichmentArrayFields(
   bookId: number,
   data: { narrators?: string[] | undefined; genres?: string[] | undefined },
@@ -228,11 +232,12 @@ async function applyEnrichmentArrayFields(
   deps: Pick<EnrichmentDeps, 'bookService'>,
   cleared: ReadonlySet<ClearableBookField>,
   tx: DbOrTx,
+  liveGenres: string[] | null,
 ): Promise<string[] | null> {
   if (!opts.existingNarrator && data.narrators?.length && !(await rowHasNarrators(tx, bookId))) {
     await deps.bookService.update(bookId, { narrators: data.narrators }, { tx });
   }
-  if (data.genres?.length && !opts.existingGenres?.length && !cleared.has('genres')) {
+  if (data.genres?.length && !opts.existingGenres?.length && !liveGenres?.length && !cleared.has('genres')) {
     await deps.bookService.update(bookId, { genres: data.genres }, { tx });
     return data.genres;
   }
