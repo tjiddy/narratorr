@@ -121,12 +121,21 @@ export function formatSelectionVerdict(verdict: SelectionVerdict): string {
   );
 }
 
+/**
+ * JavaScript can throw anything, and every `GuardIo` seam is ordinary caller-supplied code, so a
+ * bare `.message` read would report a non-Error throw as `undefined` — losing the only diagnostic
+ * a failed CI step gets.
+ */
+function describeThrown(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** `null` when the report could not be read or parsed; the path and reason are already logged. */
 function parseReport(reportPath: string, io: GuardIo): { value: unknown } | null {
   try {
     return { value: JSON.parse(io.readReport(reportPath)) };
-  } catch (error) {
-    io.log(`could not read the vitest JSON report at ${reportPath}: ${(error as Error).message}`);
+  } catch (error: unknown) {
+    io.log(`could not read the vitest JSON report at ${reportPath}: ${describeThrown(error)}`);
     return null;
   }
 }
@@ -364,8 +373,8 @@ function readCapturedLog(logPath: string, io: GuardIo): string | null {
   if (io.readLog === undefined) return null;
   try {
     return io.readLog(logPath);
-  } catch (error) {
-    io.log(`could not read the captured test log at ${logPath}: ${(error as Error).message}`);
+  } catch (error: unknown) {
+    io.log(`could not read the captured test log at ${logPath}: ${describeThrown(error)}`);
     return null;
   }
 }
@@ -375,8 +384,8 @@ function appendStepSummary(io: GuardIo, line: string): void {
   if (io.appendStepSummary === undefined) return;
   try {
     io.appendStepSummary(line);
-  } catch (error) {
-    io.log(`could not append to the GitHub step summary: ${(error as Error).message}`);
+  } catch (error: unknown) {
+    io.log(`could not append to the GitHub step summary: ${describeThrown(error)}`);
   }
 }
 

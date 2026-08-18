@@ -224,6 +224,18 @@ describe('runVitestSelectionGuard', () => {
     expect(lines.join('\n')).toContain('ENOENT');
   });
 
+  // A `GuardIo` seam is ordinary JavaScript and may throw anything; reading `.message` off a
+  // non-Error would report the failure as `undefined` and lose the only diagnostic there is.
+  it('reports a non-Error report-read throw rather than logging undefined', () => {
+    const { io: guardIo, lines } = io(() => {
+      throw 'EACCES from a native binding';
+    });
+
+    expect(runVitestSelectionGuard('vitest-windows.json', guardIo)).toBe(1);
+    expect(lines.join('\n')).toContain('EACCES from a native binding');
+    expect(lines.join('\n')).not.toContain('undefined');
+  });
+
   it('exits nonzero when the report is not parseable JSON', () => {
     const { io: guardIo, lines } = io(() => 'not json');
 
@@ -727,6 +739,18 @@ describe('runVitestGuard', () => {
     expect(lines.join('\n')).toContain('EACCES');
   });
 
+  it('reports a non-Error step-summary throw rather than logging undefined', () => {
+    const { io, lines } = harness({
+      appendStepSummary: () => {
+        throw { code: 'EROFS' };
+      },
+    });
+
+    expect(runVitestGuard(['vitest-windows.json', '--exit-code=1'], io)).toBe(0);
+    expect(lines).toContain('could not append to the GitHub step summary: [object Object]');
+    expect(lines.join('\n')).not.toContain('undefined');
+  });
+
   it('still swallows when no step-summary seam is wired at all', () => {
     const lines: string[] = [];
     const io: GuardIo = {
@@ -748,6 +772,18 @@ describe('runVitestGuard', () => {
     expect(runVitestGuard(['vitest-windows.json', '--exit-code=1', '--log=run.log'], io)).toBe(1);
     expect(lines.join('\n')).toContain('run.log');
     expect(lines.join('\n')).toContain('ENOENT');
+  });
+
+  it('reports a non-Error log-read throw rather than logging undefined', () => {
+    const { io, lines } = harness({
+      readLog: () => {
+        throw 'EPERM from a native binding';
+      },
+    });
+
+    expect(runVitestGuard(['vitest-windows.json', '--exit-code=1', '--log=run.log'], io)).toBe(1);
+    expect(lines.join('\n')).toContain('EPERM from a native binding');
+    expect(lines.join('\n')).not.toContain('undefined');
   });
 
   // One log has to be enough to diagnose a crash that also emptied a project (AC12).
