@@ -19,6 +19,7 @@ import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests_
 import { createMockDbIndexer } from '../__tests__/factories.js';
 import { initializeKey, _resetKey } from '../utils/secret-codec.js';
 import { AudioBookBayIndexer } from '@core/indexers/abb.js';
+import { abbThrottle, _resetAbbThrottleForTesting } from '@core/indexers/abb-throttle.js';
 import { TorznabIndexer } from '@core/indexers/torznab.js';
 import { useMswServer } from '@core/__tests__/msw/server.js';
 import type { Db } from '@db/index.js';
@@ -93,11 +94,12 @@ describe('#2422 — the folded ABB query through the real service seam', () => {
   beforeEach(() => {
     initializeKey(TEST_KEY);
     captured = { abb: [], torznab: [] };
-    // The adapters are built inside getAdapter, so the inter-request pause is stubbed on the prototype.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    vi.spyOn(AudioBookBayIndexer.prototype as any, 'delay').mockResolvedValue(undefined);
+    // ABB's 6.1s floor would make an eight-rung run a 48-second test. The gate is module-level, so
+    // one spy covers every adapter `getAdapter` builds; its timing lives in `abb-throttle.test.ts`.
+    _resetAbbThrottleForTesting();
+    vi.spyOn(abbThrottle, 'acquire').mockResolvedValue(undefined);
   });
-  afterEach(() => { _resetKey(); vi.restoreAllMocks(); });
+  afterEach(() => { _resetAbbThrottleForTesting(); _resetKey(); vi.restoreAllMocks(); });
 
   /** ABB answers a genuine, empty search page; Torznab answers an empty feed. Both record their URL. */
   function serveEmpty(): void {
@@ -155,10 +157,6 @@ describe('#2422 — the folded ABB query through the real service seam', () => {
         captured.abb.push(request.url);
         return new HttpResponse(oneRow, { headers: { 'Content-Type': 'text/html' } });
       }),
-      http.get(`https://${ABB_HOST}/audio-books/:slug/`, () => new HttpResponse(
-        '<html><body><td>Info Hash:</td><td>a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0</td></body></html>',
-        { headers: { 'Content-Type': 'text/html' } },
-      )),
       http.get(`${TORZNAB_URL}/api`, ({ request }) => {
         captured.torznab.push(request.url);
         return new HttpResponse(EMPTY_RSS, { headers: { 'Content-Type': 'application/xml' } });
