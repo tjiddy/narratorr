@@ -6,7 +6,7 @@
  *
  * **The lock order is admission (book id) → claim key (path) → file key (sidecar / audio file),
  * outermost to innermost.** The claim-key tier is `withFreshClaimLock` / `claimLockKey`
- * (`../utils/claim-lock.ts`); the file tier is `withPathWriteLock` (`../utils/path-write-lock.ts`).
+ * (`./claim-lock.ts`); the file tier is `withPathWriteLock` (`./path-write-lock.ts`).
  * A holder of either path-domain lock must NEVER acquire this one — that inversion is the
  * deadlock, because the two domains key on different things and neither can see the other.
  *
@@ -15,7 +15,7 @@
  * `bookService.delete`, `findOrCreateNarrator` and `replaceFileAtomically` are reached from inside
  * held spans everywhere and would deadlock the first locked caller. A mutator reachable from both a
  * locked and an unlocked caller exposes an already-locked inner method instead of nesting —
- * `grabWithinAdmissionLock` (`download-orchestrator.ts`) is the reference shape.
+ * `grabWithinAdmissionLock` (`../services/download-orchestrator.ts`) is the reference shape.
  *
  * Whatever row, path, library root or naming options the operation's later filesystem and DB work
  * derives from must be read, or revalidated, INSIDE the section. A mutator that wraps only its
@@ -47,7 +47,7 @@ export function resetBookAdmissionLocks(): void {
 /**
  * Test-only: proves the key is evicted rather than leaked. A follow-up acquisition completing is
  * not the same evidence — a settled promise left in the map still lets the next caller through.
- * Mirrors `hasPendingPathWrite` (`../utils/path-write-lock.ts`).
+ * Mirrors `hasPendingPathWrite` (`./path-write-lock.ts`).
  */
 export function hasPendingBookAdmission(bookId: number): boolean {
   return bookAdmissionLocks.has(bookId);
