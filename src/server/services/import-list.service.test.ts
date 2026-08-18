@@ -632,6 +632,39 @@ describe('ImportListService', () => {
         );
       });
 
+      // #2435 AC3: import-list sync reaches the decision through addBook, not a direct
+      // findDuplicate call, so it inherits addBook's answer — a fileless incumbent is still owned.
+      // Driven through the real syncDueLists path; a stubbed findDuplicate would prove nothing
+      // about the surface this fences.
+      it('still skips a FILELESS wanted incumbent — no second book (#2435 AC3)', async () => {
+        const mockProvider = {
+          fetchItems: vi.fn().mockResolvedValue([{ title: 'Already Wanted', author: 'Someone', asin: 'B_WANT' }]),
+          test: vi.fn(),
+        };
+        mockFactories.nyt!.mockReturnValue(mockProvider);
+
+        const db = createMockDb();
+        db.select.mockReturnValue(mockDbChain([dueNytList()]));
+        db.insert.mockReturnValue(mockDbChain([]));
+        db.update.mockReturnValue(mockDbChain([]));
+
+        const findDuplicate = vi.fn().mockResolvedValue({
+          verdict: 'same-recording',
+          book: { id: 999, title: 'Already Wanted', path: null, status: 'wanted' },
+        });
+        const create = vi.fn();
+        service = new ImportListService(
+          inject<Db>(db), mockLog, makeBookService({ findDuplicate, create }),
+          { resolveBook: vi.fn().mockResolvedValue(null) } as unknown as MetadataService,
+          makeSearchDeps({ searchImmediately: true }),
+        );
+
+        await service.syncDueLists();
+
+        expect(create).not.toHaveBeenCalled();
+        expect(mockRunImmediateSearch).not.toHaveBeenCalled();
+      });
+
       // The candidate carried no `authors` key before #2246 and carries `[]` after it, because the
       // shared write item requires an author list. `gatherIncumbentIds` gates on `length > 0` and
       // `toRecordingCandidate` coalesces to `[]`, so both reach the resolver as "no author

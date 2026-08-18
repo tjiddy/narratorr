@@ -46,7 +46,7 @@ describe('decideIntake — verdict arms', () => {
 
     const decision = await decideIntake(deps, { item: MINIMAL });
 
-    expect(decision).toEqual({ kind: 'same-recording', incumbent, existingBookId: 421 });
+    expect(decision).toEqual({ kind: 'same-recording', incumbent, existingBookId: 421, incumbentHoldsFile: false });
     // An id-only projection cannot be told apart from a hydrated one by an id assertion.
     expect(decision.kind === 'same-recording' && decision.incumbent).toBe(incumbent);
   });
@@ -101,6 +101,67 @@ describe('decideIntake — verdict arms', () => {
 
     // `book` is null in both different-recording producers, so this flag is the only signal.
     expect(decision).toEqual({ kind: 'admit', hasIncumbent: true });
+  });
+});
+
+/**
+ * #2435: a `same-recording` incumbent that holds no file is the record an offered file should
+ * FULFIL, not a duplicate of it. The distinction is computed here, once, from the already-hydrated
+ * row; only the two import-path consumers read it.
+ */
+describe('decideIntake — incumbentHoldsFile', () => {
+  it('reports a file-holding incumbent without disturbing the rest of the arm', async () => {
+    const incumbent = makeIncumbent({ path: '/library/A/B' });
+    const { deps } = makeDeps({ verdict: 'same-recording', book: incumbent, hasIncumbent: true });
+
+    const decision = await decideIntake(deps, { item: MINIMAL });
+
+    expect(decision).toEqual({
+      kind: 'same-recording', incumbent, existingBookId: 421, incumbentHoldsFile: true,
+    });
+  });
+
+  // Whitespace is the value a bare `!path` check and a trimming one disagree about.
+  it.each([
+    ['null', null, false],
+    ['empty string', '', false],
+    ['whitespace only', '   ', false],
+    ['a real path', '/library/A/B', true],
+  ])('classifies a %s path as holdsFile=%s', async (_label, path, expected) => {
+    const incumbent = makeIncumbent({ path: path as string | null });
+    const { deps } = makeDeps({ verdict: 'same-recording', book: incumbent, hasIncumbent: true });
+
+    const decision = await decideIntake(deps, { item: MINIMAL });
+
+    expect(decision.kind === 'same-recording' && decision.incumbentHoldsFile).toBe(expected);
+  });
+
+  it('treats a same-recording verdict with NO incumbent row as not-file-holding', async () => {
+    // There is no id to attach to, so the consumers must fall back to their skip behaviour.
+    const { deps } = makeDeps({ verdict: 'same-recording', book: null, hasIncumbent: true });
+
+    const decision = await decideIntake(deps, { item: MINIMAL });
+
+    expect(decision).toEqual({
+      kind: 'same-recording', incumbent: null, existingBookId: null, incumbentHoldsFile: false,
+    });
+  });
+
+  it('does not put incumbentHoldsFile on the review arm', async () => {
+    const { deps } = makeDeps({ verdict: 'review', book: makeIncumbent({ path: '/library/A/B' }), hasIncumbent: true });
+
+    const decision = await decideIntake(deps, { item: MINIMAL });
+
+    // Key absence: `not.objectContaining` passes on a present-but-undefined key.
+    expect(decision).not.toHaveProperty('incumbentHoldsFile');
+  });
+
+  it('does not put incumbentHoldsFile on the admit arm', async () => {
+    const { deps } = makeDeps({ verdict: 'different-recording', book: null, hasIncumbent: true });
+
+    const decision = await decideIntake(deps, { item: MINIMAL });
+
+    expect(decision).not.toHaveProperty('incumbentHoldsFile');
   });
 });
 

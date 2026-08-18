@@ -25,7 +25,14 @@ export interface IntakeDeps {
  * two different-recording producers, and the hydrated row carries fields an id cannot. */
 export type IntakeDecision =
   | { kind: 'admit'; hasIncumbent: boolean }
-  | { kind: 'same-recording'; incumbent: BookWithAuthor | null; existingBookId: number | null }
+  | {
+      kind: 'same-recording';
+      incumbent: BookWithAuthor | null;
+      existingBookId: number | null;
+      /** #2435: a fileless incumbent is the record an offered file fulfils, not a duplicate of it.
+       * Import-path consumers branch on this; the add-a-book consumers ignore it. */
+      incumbentHoldsFile: boolean;
+    }
   | {
       kind: 'review';
       incumbent: BookWithAuthor | null;
