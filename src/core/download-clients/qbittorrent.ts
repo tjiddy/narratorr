@@ -31,6 +31,18 @@ export class QBittorrentClient implements DownloadClientAdapter {
   private cookie?: string | undefined;
   private loginPromise?: Promise<void> | undefined;
 
+  /**
+   * Requested hash -> the canonical hash a fallback scan resolved it to (#2433), both lowercased.
+   * An INSTANCE field: two clients configured against different qBittorrent hosts must never share
+   * entries. `DownloadClientService` caches one adapter per clientId and drops it on a settings
+   * change, which is what makes this survive monitor polls and self-clear on reconfiguration.
+   *
+   * Deliberately uncapped — no LRU, no TTL. The bound is the distinct hashes THIS instance resolved
+   * via fallback since the last settings change or restart, trimmed further by removeDownload's
+   * eviction; an eviction policy would add its own failure modes to guard nothing.
+   */
+  private readonly canonicalHashes = new Map<string, string>();
+
   constructor(private config: QBittorrentConfig) {
     const protocol = config.useSsl ? 'https' : 'http';
     this.baseUrl = `${protocol}://${config.host}:${config.port}`;
@@ -270,17 +282,54 @@ export class QBittorrentClient implements DownloadClientAdapter {
     return candidates.some((candidate) => !!candidate && candidate.toLowerCase() === wanted);
   }
 
+  /** A blank hash matches nothing, so it never keys the memo (#2433 A9). */
+  private memoKey(hash: string): string | undefined {
+    return hash.trim().toLowerCase() || undefined;
+  }
+
   /**
    * The canonical-hash filter is the fast path and stays byte-identical for v1-only torrents. On a
    * miss, scan the (optionally category-scoped) list for any of the three identities before
    * concluding the torrent is gone — libtorrent 2.x re-keys a hybrid to its v2 hash (#2423).
+   * Once a scan has resolved one, the memo puts it back on the fast path (#2433).
    */
   private async resolveTorrent(hash: string): Promise<QBTorrent | null> {
-    const byCanonicalHash = await this.fetchTorrents(`?hashes=${hash.toLowerCase()}`);
-    if (byCanonicalHash.length > 0) return byCanonicalHash[0]!;
+    const key = this.memoKey(hash);
+    const memoized = key ? this.canonicalHashes.get(key) : undefined;
 
-    const scope = this.config.category ? `?category=${encodeURIComponent(this.config.category)}` : '';
-    const scanned = await this.fetchTorrents(scope);
+    const probed = await this.fetchTorrents(`?hashes=${memoized ?? hash.toLowerCase()}`);
+    // A memo hit is NOT re-checked against isSameTorrent: a re-keyed hybrid whose client reports
+    // `infohash_v1: ""` would fail that check and permanently lose the mapping in exactly the case
+    // the memo exists for. Infohashes are content-derived, so a canonical hash that has come to
+    // point at unrelated content is not a real failure mode.
+    if (probed.length > 0) return probed[0]!;
+    // Stale: drop it and rescan on the CALLER's hash, never the memoized one.
+    if (key && memoized) this.canonicalHashes.delete(key);
+
+    const scanned = await this.scanForTorrent(hash);
+    if (scanned && key) {
+      const canonical = scanned.hash.toLowerCase();
+      // An identity mapping already costs one request; only a re-key is worth remembering.
+      if (canonical !== key) this.canonicalHashes.set(key, canonical);
+    }
+    return scanned;
+  }
+
+  /**
+   * A torrent's real category is whatever it was added under or later moved to, so a miss in the
+   * configured one must not read as absence — fall through to exactly ONE unscoped scan (#2433).
+   * With no category configured the first scan already is that unscoped scan; issuing it twice
+   * would double the cost of every genuine absence.
+   */
+  private async scanForTorrent(hash: string): Promise<QBTorrent | null> {
+    const category = this.config.category;
+    if (category) {
+      const scoped = await this.fetchTorrents(`?category=${encodeURIComponent(category)}`);
+      const hit = scoped.find((torrent) => this.isSameTorrent(torrent, hash));
+      if (hit) return hit;
+    }
+
+    const scanned = await this.fetchTorrents('');
     return scanned.find((torrent) => this.isSameTorrent(torrent, hash)) ?? null;
   }
 
@@ -289,7 +338,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
     return torrent ? this.mapItem(torrent) : null;
   }
 
-  async getAllDownloads(category?: string): Promise<DownloadItemInfo[]> {
+  async getAllDownloads(category = this.config.category): Promise<DownloadItemInfo[]> {
     const params = category ? `?category=${encodeURIComponent(category)}` : '';
     const torrents = await this.fetchTorrents(params);
     return torrents.map((t) => this.mapItem(t));
@@ -326,6 +375,11 @@ export class QBittorrentClient implements DownloadClientAdapter {
         deleteFiles: deleteFiles.toString(),
       }),
     });
+
+    // A re-add of the same infohash must start from a clean mapping, and the memo must not keep
+    // entries for torrents this app deleted.
+    const key = this.memoKey(hash);
+    if (key) this.canonicalHashes.delete(key);
   }
 
   async getCategories(): Promise<string[]> {

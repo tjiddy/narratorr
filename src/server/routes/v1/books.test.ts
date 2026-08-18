@@ -441,7 +441,8 @@ describe('v1 books routes', () => {
     // The probe is the only part of the intake pipeline v1 adopts: its lookup, quality gate and
     // create stay put because the published contract depends on their order and their taxonomy.
     describe('the duplicate probe runs through decideIntake (#2251)', () => {
-      const ownedRow = () => hydratedRow({ publicId: 'bk_existing0000000000' });
+      const ownedRow = (overrides?: Record<string, unknown>) =>
+        hydratedRow({ publicId: 'bk_existing0000000000', ...overrides });
       const candidate = () => (bookService.findDuplicate as Mock).mock.calls[0]![0];
 
       it('probes with title and asin ONLY — no authors/narrators/duration/productionType keys', async () => {
@@ -496,6 +497,24 @@ describe('v1 books routes', () => {
           expect(bookService.create as Mock).toHaveBeenCalledTimes(1);
         },
       );
+
+      // #2435 gave `decideIntake` a fileless-incumbent distinction for the IMPORT path. v1's
+      // published 409 is a different question — "is this already in your library?" — and a wanted
+      // book is. This is the fence that keeps the attach work out of the API contract.
+      it('409s a FILELESS wanted incumbent — adding is still a duplicate (#2435 AC3)', async () => {
+        (bookService.findDuplicate as Mock).mockResolvedValue({
+          verdict: 'same-recording',
+          book: ownedRow({ path: null, status: 'wanted' }),
+        });
+
+        const res = await post({ asin: ASIN });
+
+        expect(res.statusCode).toBe(409);
+        const body = res.json();
+        expect(body.error.code).toBe('book_exists');
+        expect(body.existingId).toBe('bk_existing0000000000');
+        expect(bookService.create as Mock).not.toHaveBeenCalled();
+      });
 
       it('creates on a different-recording resolution that carries no hasIncumbent key at all', async () => {
         (bookService.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });

@@ -527,6 +527,16 @@ describe('ImportService', () => {
       return allSetArgs.find((a: Record<string, unknown>) => a.audioCodec);
     }
 
+    /** #2435 split the bibliographic `duration` into its own compare-and-set statement, so it is
+     * no longer part of the technical-stats update above. */
+    function getDurationUpdate(): Record<string, unknown> | undefined {
+      const allSetArgs = db.update.mock.results
+        .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
+        .filter(Boolean)
+        .flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      return allSetArgs.find((a: Record<string, unknown>) => a.duration !== undefined && a.audioCodec === undefined);
+    }
+
     it('converts duration from seconds to minutes when writing to books.duration', async () => {
       setupImportMocks();
       const mockScan = vi.mocked(scanAudioDirectory);
@@ -536,8 +546,9 @@ describe('ImportService', () => {
 
       const enrichmentCall = getEnrichmentUpdate();
       expect(enrichmentCall).toBeDefined();
-      expect(enrichmentCall!.duration).toBe(120); // 7200 seconds / 60 = 120 minutes
-      expect(enrichmentCall!.audioDuration).toBe(7200); // stays in seconds
+      expect(enrichmentCall!.audioDuration).toBe(7200); // technical stat, stays in seconds
+      // The bibliographic minute value now lands as its own guarded statement.
+      expect(getDurationUpdate()?.duration).toBe(120); // 7200 seconds / 60 = 120 minutes
     });
 
     it('does not overwrite existing narrator', async () => {

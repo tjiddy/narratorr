@@ -610,6 +610,44 @@ describe('QBittorrentClient', () => {
       await client.getAllDownloads('audiobooks');
       expect(capturedUrl).toContain('category=audiobooks');
     });
+
+    // #2433 C5 — one category home: an omitted argument scopes to the configured category.
+    describe('category defaulting (#2433)', () => {
+      function captureUrl() {
+        const urls: string[] = [];
+        server.use(
+          http.get(`${BASE_URL}/api/v2/torrents/info`, ({ request }) => {
+            urls.push(request.url);
+            return HttpResponse.json([mockTorrent]);
+          }),
+        );
+        return urls;
+      }
+
+      it('defaults the scope to the configured category', async () => {
+        const urls = captureUrl();
+
+        await new QBittorrentClient({ ...config, category: 'audiobooks' }).getAllDownloads();
+
+        expect(new URL(urls[0]!).searchParams.get('category')).toBe('audiobooks');
+      });
+
+      it('lets an explicit category win over the configured one', async () => {
+        const urls = captureUrl();
+
+        await new QBittorrentClient({ ...config, category: 'audiobooks' }).getAllDownloads('other');
+
+        expect(new URL(urls[0]!).searchParams.get('category')).toBe('other');
+      });
+
+      it('treats an explicit empty category as unscoped', async () => {
+        const urls = captureUrl();
+
+        await new QBittorrentClient({ ...config, category: 'audiobooks' }).getAllDownloads('');
+
+        expect(new URL(urls[0]!).searchParams.has('category')).toBe(false);
+      });
+    });
   });
 
   // Controls resolve the caller hash to the client's canonical one (#2423 AC5), so each of these
@@ -880,6 +918,406 @@ describe('QBittorrentClient', () => {
       });
 
       expect(hash).toBe(V1);
+    });
+  });
+
+  /**
+   * #2433 — nothing remembered the hash a hybrid actually resolved to, so every 30s monitor poll
+   * and every control call re-paid the full fallback scan for the life of the download.
+   *
+   * Request counts here are order-dependent (the memo changes what the NEXT call costs), so every
+   * case asserts the delta around its own call rather than one total at the end.
+   */
+  describe('canonical-hash memo (#2433)', () => {
+    const V1 = '351c0c2d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b';
+    const CANONICAL = 'aa11bb22cc33dd44ee55ff66aa77bb88cc99dd00';
+    const REKEYED = 'bb22cc33dd44ee55ff66aa77bb88cc99dd00aa11';
+
+    const hybrid = {
+      ...mockTorrent,
+      hash: CANONICAL,
+      infohash_v1: V1,
+      infohash_v2: `${CANONICAL}112233445566778899aabbcc`,
+      name: 'Hybrid Torrent',
+    };
+
+    /** The fast path answers by the requested `hashes` VALUE; the unfiltered scan answers `onScan`. */
+    function trackByHash(onFastPath: (hashes: string) => unknown[], onScan: () => unknown[]) {
+      return trackInfoRequests((params) => HttpResponse.json(
+        params.has('hashes') ? onFastPath(params.get('hashes')!) : onScan(),
+      ));
+    }
+
+    /** Only the canonical hash answers the fast path — the grabbed v1 misses, as libtorrent 2.x leaves it. */
+    function serveHybrid() {
+      return trackByHash((hashes) => (hashes === CANONICAL ? [hybrid] : []), () => [hybrid]);
+    }
+
+    it('resolves a memoized hybrid in one request, keyed on the canonical hash', async () => {
+      const info = serveHybrid();
+
+      expect((await client.getDownload(V1))!.id).toBe(CANONICAL);
+      expect(info.urls).toHaveLength(2);
+
+      const second = await client.getDownload(V1);
+
+      expect(second!.id).toBe(CANONICAL);
+      expect(second!.name).toBe('Hybrid Torrent');
+      expect(info.urls).toHaveLength(3);
+      expect(info.params(2).get('hashes')).toBe(CANONICAL);
+    });
+
+    it.each([
+      ['pauseDownload', 'pause'],
+      ['resumeDownload', 'resume'],
+    ] as const)('%s rides the memo: one request, posting the canonical hash', async (method, action) => {
+      const info = serveHybrid();
+      const bodies = trackControlPosts(action);
+      await client.getDownload(V1);
+      expect(info.urls).toHaveLength(2);
+
+      await client[method](V1);
+
+      expect(info.urls).toHaveLength(3);
+      expect(info.params(2).get('hashes')).toBe(CANONICAL);
+      expect(bodies).toHaveLength(1);
+      expect(new URLSearchParams(bodies[0]!).get('hashes')).toBe(CANONICAL);
+    });
+
+    it('removeDownload rides the memo and preserves deleteFiles', async () => {
+      const info = serveHybrid();
+      const bodies = trackControlPosts('delete');
+      await client.getDownload(V1);
+      expect(info.urls).toHaveLength(2);
+
+      await client.removeDownload(V1, true);
+
+      expect(info.urls).toHaveLength(3);
+      expect(info.params(2).get('hashes')).toBe(CANONICAL);
+      const body = new URLSearchParams(bodies[0]!);
+      expect(body.get('hashes')).toBe(CANONICAL);
+      expect(body.get('deleteFiles')).toBe('true');
+    });
+
+    // A fast-path hit is already one request; memoizing an identity mapping would buy nothing.
+    it('writes nothing on a fast-path hit, so a v1-only torrent stays at one request per call', async () => {
+      const v1Only = { ...mockTorrent, hash: V1, infohash_v1: V1, infohash_v2: '' };
+      const info = trackByHash(() => [v1Only], () => []);
+
+      await client.getDownload(V1);
+      await client.getDownload(V1);
+      await client.getDownload(V1);
+
+      expect(info.urls).toHaveLength(3);
+      expect([0, 1, 2].map((i) => info.params(i).get('hashes'))).toEqual([V1, V1, V1]);
+    });
+
+    it('re-resolves on the caller hash and re-keys when the memoized canonical goes stale', async () => {
+      const reKeyed = { ...hybrid, hash: REKEYED };
+      let live = hybrid;
+      const info = trackByHash(
+        (hashes) => (hashes === live.hash ? [live] : []),
+        () => [live],
+      );
+
+      expect((await client.getDownload(V1))!.id).toBe(CANONICAL);
+      expect(info.urls).toHaveLength(2);
+
+      live = reKeyed;
+      const afterRekey = await client.getDownload(V1);
+
+      expect(afterRekey!.id).toBe(REKEYED);
+      expect(info.urls).toHaveLength(4);
+      expect(info.params(2).get('hashes')).toBe(CANONICAL);
+      expect(info.params(3).has('hashes')).toBe(false);
+
+      expect((await client.getDownload(V1))!.id).toBe(REKEYED);
+      expect(info.urls).toHaveLength(5);
+      expect(info.params(4).get('hashes')).toBe(REKEYED);
+    });
+
+    it('clears a stale entry on a genuine absence, so the next call probes the caller hash', async () => {
+      let present = true;
+      const info = trackByHash(
+        (hashes) => (present && hashes === CANONICAL ? [hybrid] : []),
+        () => (present ? [hybrid] : []),
+      );
+      await client.getDownload(V1);
+      expect(info.urls).toHaveLength(2);
+
+      present = false;
+      expect(await client.getDownload(V1)).toBeNull();
+      expect(info.urls).toHaveLength(4);
+      expect(info.params(2).get('hashes')).toBe(CANONICAL);
+
+      expect(await client.getDownload(V1)).toBeNull();
+      expect(info.urls).toHaveLength(6);
+      expect(info.params(4).get('hashes')).toBe(V1);
+    });
+
+    // Positive control for the clear above: absence must not be recorded either way.
+    it('memoizes nothing on absence, so a torrent that appears later still resolves', async () => {
+      let present = false;
+      const info = trackByHash(() => [], () => (present ? [hybrid] : []));
+
+      expect(await client.getDownload(V1)).toBeNull();
+      expect(info.urls).toHaveLength(2);
+
+      present = true;
+      expect((await client.getDownload(V1))!.id).toBe(CANONICAL);
+      expect(info.urls).toHaveLength(4);
+      expect(info.params(2).get('hashes')).toBe(V1);
+    });
+
+    // The map is an instance field: two clients pointed at different hosts must never share entries.
+    it('keeps the memo per instance', async () => {
+      const info = serveHybrid();
+      await client.getDownload(V1);
+      expect(info.urls).toHaveLength(2);
+
+      const other = new QBittorrentClient(config);
+      expect((await other.getDownload(V1))!.id).toBe(CANONICAL);
+
+      expect(info.urls).toHaveLength(4);
+      expect(info.params(2).get('hashes')).toBe(V1);
+    });
+
+    it('evicts on removeDownload so a later re-add starts from a clean mapping', async () => {
+      const info = serveHybrid();
+      trackControlPosts('delete');
+      await client.getDownload(V1);
+      await client.removeDownload(V1);
+      expect(info.urls).toHaveLength(3);
+
+      expect((await client.getDownload(V1))!.id).toBe(CANONICAL);
+
+      expect(info.urls).toHaveLength(5);
+      expect(info.params(3).get('hashes')).toBe(V1);
+    });
+
+    it('leaves one consistent entry when two resolutions race', async () => {
+      const info = serveHybrid();
+
+      const [first, second] = await Promise.all([client.getDownload(V1), client.getDownload(V1)]);
+
+      expect(first!.id).toBe(CANONICAL);
+      expect(second!.id).toBe(CANONICAL);
+      expect(info.urls).toHaveLength(4);
+
+      expect((await client.getDownload(V1))!.id).toBe(CANONICAL);
+      expect(info.urls).toHaveLength(5);
+      expect(info.params(4).get('hashes')).toBe(CANONICAL);
+    });
+
+    // A9 — a blank hash matches nothing, so it must never read or write the memo.
+    it.each([['empty', ''], ['whitespace-only', '   ']])('never consumes the memo for a %s hash', async (_label, blank) => {
+      const info = serveHybrid();
+      await client.getDownload(V1);
+      expect(info.urls).toHaveLength(2);
+
+      expect(await client.getDownload(blank)).toBeNull();
+
+      // it fell through to a scan on its own hash rather than probing the memoized canonical
+      expect(info.urls).toHaveLength(4);
+      expect(info.params(2).get('hashes')).not.toBe(CANONICAL);
+      // and the V1 entry is untouched by the blank call
+      expect((await client.getDownload(V1))!.id).toBe(CANONICAL);
+      expect(info.urls).toHaveLength(5);
+      expect(info.params(4).get('hashes')).toBe(CANONICAL);
+    });
+
+    /**
+     * F3 — the write half of A9. A guard on `!key` rather than `!key.trim()` passes every other
+     * case here, so the fence needs a whitespace hash that actually RESOLVES: a candidate axis of
+     * '   ' matches a queried '   ' (the matcher only rejects empty axes), which under a
+     * non-trimming guard would record '   ' -> CANONICAL and make the second call cost one request.
+     * The request COUNT is the observable — the URL parser strips trailing spaces out of the query,
+     * so the blank `hashes` value itself reads back as ''.
+     */
+    it('never writes the memo for a whitespace-only hash, even when the scan resolves one', async () => {
+      const blankAxis = { ...hybrid, infohash_v1: '   ' };
+      const info = trackByHash((hashes) => (hashes === CANONICAL ? [blankAxis] : []), () => [blankAxis]);
+
+      expect((await client.getDownload('   '))!.id).toBe(CANONICAL);
+      expect(info.urls).toHaveLength(2);
+
+      expect((await client.getDownload('   '))!.id).toBe(CANONICAL);
+
+      expect(info.urls).toHaveLength(4);
+      expect(info.params(2).get('hashes')).not.toBe(CANONICAL);
+    });
+
+    it('keys the memo case-insensitively', async () => {
+      const info = serveHybrid();
+      await client.getDownload(V1.toUpperCase());
+      expect(info.urls).toHaveLength(2);
+
+      expect((await client.getDownload(V1))!.id).toBe(CANONICAL);
+
+      expect(info.urls).toHaveLength(3);
+      expect(info.params(2).get('hashes')).toBe(CANONICAL);
+    });
+
+    /**
+     * F2 — A4: a memo probe hit is returned WITHOUT re-running isSameTorrent. A re-keyed hybrid
+     * whose client reports `infohash_v1: ""` would fail that verification and permanently lose the
+     * mapping in exactly the case the memo exists for; infohashes are content-derived, so a
+     * canonical hash pointing at unrelated content is not a real failure mode.
+     */
+    it('trusts a memo hit whose canonical response reports a blank infohash_v1', async () => {
+      const blankAxes = { ...hybrid, infohash_v1: '', infohash_v2: '' };
+      const info = trackByHash((hashes) => (hashes === CANONICAL ? [blankAxes] : []), () => [hybrid]);
+      await client.getDownload(V1);
+      expect(info.urls).toHaveLength(2);
+
+      expect((await client.getDownload(V1))!.id).toBe(CANONICAL);
+
+      expect(info.urls).toHaveLength(3);
+      expect(info.params(2).get('hashes')).toBe(CANONICAL);
+
+      // and the entry survived the unverifiable response
+      expect((await client.getDownload(V1))!.id).toBe(CANONICAL);
+      expect(info.urls).toHaveLength(4);
+      expect(info.params(3).get('hashes')).toBe(CANONICAL);
+    });
+
+    it('composes with the 409 duplicate-add adoption on a second add of the same hash', async () => {
+      server.use(
+        http.post(`${BASE_URL}/api/v2/torrents/add`, () => new HttpResponse(null, { status: 409 })),
+      );
+      const info = serveHybrid();
+      const artifact: DownloadArtifact = {
+        type: 'magnet-uri',
+        uri: `magnet:?xt=urn:btih:${V1}&dn=Hybrid`,
+        infoHash: V1,
+      };
+
+      expect(await client.addDownload(artifact)).toBe(V1);
+      expect(info.urls).toHaveLength(2);
+
+      expect(await client.addDownload(artifact)).toBe(V1);
+      expect(info.urls).toHaveLength(3);
+      expect(info.params(2).get('hashes')).toBe(CANONICAL);
+    });
+  });
+
+  /**
+   * #2433 — the scoped scan looks in `config.category`, but a torrent's real category is whatever
+   * it was added under or later moved to. A scoped miss on a LIVE hybrid used to read as death.
+   */
+  describe('unscoped fall-through on a scoped miss (#2433)', () => {
+    const V1 = '351c0c2d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b';
+    const CANONICAL = 'aa11bb22cc33dd44ee55ff66aa77bb88cc99dd00';
+
+    const hybrid = {
+      ...mockTorrent,
+      hash: CANONICAL,
+      infohash_v1: V1,
+      infohash_v2: `${CANONICAL}112233445566778899aabbcc`,
+      name: 'Hybrid Torrent',
+    };
+
+    function scopedClient(category = 'audiobooks') {
+      return new QBittorrentClient({ ...config, category });
+    }
+
+    /** Discriminates the three phases of one resolution; `onScan` sees the scoped category, if any. */
+    function trackScans(onScan: (category: string | null) => unknown[]) {
+      return trackInfoRequests((params) => HttpResponse.json(
+        params.has('hashes') ? [] : onScan(params.get('category')),
+      ));
+    }
+
+    it('resolves a re-categorized hybrid through one unscoped scan', async () => {
+      const info = trackScans((category) => (category ? [] : [hybrid]));
+
+      const result = await scopedClient().getDownload(V1);
+
+      expect(result!.id).toBe(CANONICAL);
+      expect(info.urls).toHaveLength(3);
+      expect(info.params(1).get('category')).toBe('audiobooks');
+      expect(info.params(2).has('category')).toBe(false);
+      expect(info.params(2).has('hashes')).toBe(false);
+    });
+
+    it('does not escalate when the scoped scan already carries the torrent', async () => {
+      const info = trackScans((category) => (category === 'audiobooks' ? [hybrid] : []));
+
+      const result = await scopedClient().getDownload(V1);
+
+      expect(result!.id).toBe(CANONICAL);
+      expect(info.urls).toHaveLength(2);
+    });
+
+    /**
+     * B2 regression fence — with no category configured the scoped scan IS the unscoped one, so an
+     * implementation that unconditionally appends a third request passes every other case here.
+     */
+    it('issues no duplicate scan when no category is configured', async () => {
+      const info = trackScans(() => []);
+
+      expect(await client.getDownload(V1)).toBeNull();
+
+      expect(info.urls).toHaveLength(2);
+      expect(info.params(1).has('category')).toBe(false);
+    });
+
+    it('costs exactly three requests and returns null on a genuine absence under a category', async () => {
+      const info = trackScans(() => []);
+
+      expect(await scopedClient().getDownload(V1)).toBeNull();
+
+      expect(info.urls).toHaveLength(3);
+      expect(info.params(2).has('category')).toBe(false);
+    });
+
+    it('encodes the scoped category and drops it entirely from the unscoped scan', async () => {
+      const info = trackScans((category) => (category ? [] : [hybrid]));
+
+      await scopedClient('audio books').getDownload(V1);
+
+      expect(info.urls[1]).toContain('category=audio%20books');
+      expect(info.urls[2]).not.toContain('category');
+    });
+
+    it('throws rather than returning null when the UNSCOPED payload is malformed', async () => {
+      trackScans((category) => (category ? [] : [{ unexpected: 'shape' }]));
+
+      const error = await scopedClient().getDownload(V1).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect((error as DownloadClientError).message).toContain('unexpected torrent data');
+    });
+
+    it('re-logs in and retries when the unscoped scan 403s, still resolving the hybrid', async () => {
+      let unscopedCalls = 0;
+      const info = trackInfoRequests((params) => {
+        if (params.has('hashes') || params.has('category')) return HttpResponse.json([]);
+        unscopedCalls++;
+        if (unscopedCalls === 1) return new HttpResponse(null, { status: 403 });
+        return HttpResponse.json([hybrid]);
+      });
+
+      const result = await scopedClient().getDownload(V1);
+
+      expect(result!.id).toBe(CANONICAL);
+      expect(info.urls).toHaveLength(4);
+    });
+
+    it('memoizes an unscoped resolution exactly like a scoped one', async () => {
+      const scoped = scopedClient();
+      const info = trackInfoRequests((params) => {
+        if (params.get('hashes') === CANONICAL) return HttpResponse.json([hybrid]);
+        if (params.has('hashes') || params.has('category')) return HttpResponse.json([]);
+        return HttpResponse.json([hybrid]);
+      });
+      await scoped.getDownload(V1);
+      expect(info.urls).toHaveLength(3);
+
+      expect((await scoped.getDownload(V1))!.id).toBe(CANONICAL);
+
+      expect(info.urls).toHaveLength(4);
+      expect(info.params(3).get('hashes')).toBe(CANONICAL);
     });
   });
 

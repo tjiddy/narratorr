@@ -39,6 +39,74 @@ describe('filesystem routes', () => {
   });
 
   describe('GET /api/filesystem/browse', () => {
+    /**
+     * #2435 AC20 — an opt-in `files` array, added without touching the legacy shape.
+     */
+    describe('opt-in audio file listing', () => {
+      const MIXED = () => [
+        makeDirent('book.m4b', false),
+        makeDirent('notes.txt', false),
+        makeDirent('.hidden.m4b', false),
+        makeDirent('Disc 1', true),
+        makeDirent('.hidden-dir', true),
+      ];
+
+      it('returns exactly { dirs, parent } with no opt-in parameter', async () => {
+        mockReaddir.mockResolvedValue(MIXED());
+
+        const res = await app.inject({ method: 'GET', url: '/api/filesystem/browse?path=/media' });
+
+        const body = res.json();
+        expect(res.statusCode).toBe(200);
+        // Key absence, not undefined-ness: PathInput and the settings browser must be provably
+        // unaffected, and `not.objectContaining` passes on a present-but-undefined key.
+        expect(body).not.toHaveProperty('files');
+        expect(Object.keys(body).sort()).toEqual(['dirs', 'parent']);
+      });
+
+      it('adds supported, non-hidden, readable audio files when opted in', async () => {
+        mockReaddir.mockResolvedValue(MIXED());
+
+        const res = await app.inject({ method: 'GET', url: '/api/filesystem/browse?path=/media&include=audio' });
+
+        const body = res.json();
+        expect(res.statusCode).toBe(200);
+        expect(body.files).toEqual(['book.m4b']);
+        expect(body.dirs).toContain('Disc 1');
+      });
+
+      // Proves this AC added a capability rather than silently narrowing an existing one.
+      it('leaves the legacy dirs filtering untouched in BOTH modes', async () => {
+        mockReaddir.mockResolvedValue(MIXED());
+
+        const legacy = await app.inject({ method: 'GET', url: '/api/filesystem/browse?path=/media' });
+        const optedIn = await app.inject({ method: 'GET', url: '/api/filesystem/browse?path=/media&include=audio' });
+
+        // A readable `.hidden-dir` is returned today; hidden-name filtering applies to `files` only.
+        expect(legacy.json().dirs).toEqual(optedIn.json().dirs);
+        expect(legacy.json().dirs).toContain('.hidden-dir');
+      });
+
+      it('skips an unreadable file silently rather than failing the listing', async () => {
+        mockReaddir.mockResolvedValue([makeDirent('ok.m4b', false), makeDirent('locked.m4b', false)]);
+        mockAccess.mockImplementation((p: string) =>
+          String(p).includes('locked.m4b') ? Promise.reject(new Error('EACCES')) : Promise.resolve(undefined));
+
+        const res = await app.inject({ method: 'GET', url: '/api/filesystem/browse?path=/media&include=audio' });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.json().files).toEqual(['ok.m4b']);
+      });
+
+      it('400s an unrecognized include value instead of falling back to the legacy shape', async () => {
+        mockReaddir.mockResolvedValue(MIXED());
+
+        const res = await app.inject({ method: 'GET', url: '/api/filesystem/browse?path=/media&include=video' });
+
+        expect(res.statusCode).toBe(400);
+      });
+    });
+
     it('returns directory listing for a valid path', async () => {
       mockReaddir.mockResolvedValue([
         makeDirent('audiobooks', true),

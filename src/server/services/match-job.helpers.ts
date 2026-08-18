@@ -40,6 +40,15 @@ export async function applyLibraryDuplicate(
       },
     });
     if (decision.kind === 'same-recording' && decision.incumbent) {
+      // #2435: an incumbent holding no file is the record this folder fulfils, not a duplicate of
+      // it. The row stays importable, and keeps naming the incumbent so the confirm pass can attach.
+      if (!decision.incumbentHoldsFile) {
+        log.info(
+          { path: result.path, existingBookId: decision.incumbent.id, title: result.bestMatch.title },
+          'Post-match: same recording as a FILELESS incumbent — importable as an attach',
+        );
+        return { ...result, isDuplicate: false, existingBookId: decision.incumbent.id, recordingVerdict: 'same-recording' };
+      }
       log.debug(
         { path: result.path, existingBookId: decision.incumbent.id, title: result.bestMatch.title },
         'Post-match library duplicate detected (same recording)',

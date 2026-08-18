@@ -1258,8 +1258,10 @@ describe('applyLibraryDuplicate', () => {
     };
   }
 
-  function makeIncumbent(id: number) {
-    return { id, title: 'Tehanu', authors: [], narrators: [] };
+  // Defaults to a file-holding incumbent: #2435 made "holds a file" the axis these arms turn on,
+  // and every pre-existing case here is about a book already sitting in the library.
+  function makeIncumbent(id: number, path: string | null = '/library/Le Guin/Tehanu') {
+    return { id, title: 'Tehanu', authors: [], narrators: [], path };
   }
 
   /** Drives the port through the real decision module; only the duplicate primitive is doubled. */
@@ -1280,6 +1282,31 @@ describe('applyLibraryDuplicate', () => {
     expect(out.existingBookId).toBe(421);
     expect(out.duplicateReason).toBe('slug');
     expect(out.recordingVerdict).toBe('same-recording');
+  });
+
+  // #2435 AC11: a fileless incumbent is the record this folder should fulfil, so the row must stay
+  // importable — but it stays IDENTIFIABLE too, or the confirm pass cannot find the book to attach.
+  it('does NOT flag a fileless incumbent, while still naming it (#2435 AC11)', async () => {
+    const { bookService, log } = setup({ verdict: 'same-recording', book: makeIncumbent(421, null), hasIncumbent: true });
+
+    const out = await applyLibraryDuplicate(makeResult(), bookService, log);
+
+    expect(out.isDuplicate).toBe(false);
+    expect(out.existingBookId).toBe(421);
+    expect(out.recordingVerdict).toBe('same-recording');
+    expect(out.duplicateReason).toBeUndefined();
+  });
+
+  it.each([
+    ['empty string', ''],
+    ['whitespace only', '   '],
+  ])('treats a %s path as fileless too (#2435 AC11)', async (_label, path) => {
+    const { bookService, log } = setup({ verdict: 'same-recording', book: makeIncumbent(421, path), hasIncumbent: true });
+
+    const out = await applyLibraryDuplicate(makeResult(), bookService, log);
+
+    expect(out.isDuplicate).toBe(false);
+    expect(out.existingBookId).toBe(421);
   });
 
   it('sets the GENERIC review text and keeps the machine reason in the log only', async () => {

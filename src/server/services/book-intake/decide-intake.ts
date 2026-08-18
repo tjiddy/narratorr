@@ -1,3 +1,4 @@
+import { bookHoldsFile } from '@shared/book-holds-file.js';
 import type { DuplicateResolution } from '../book-dedup.js';
 import { buildDuplicateCandidate } from './candidate.js';
 import type { IntakeDecision, IntakeDeps, IntakeRequest } from './types.js';
@@ -8,7 +9,14 @@ import type { IntakeDecision, IntakeDeps, IntakeRequest } from './types.js';
 function toIntakeDecision(resolution: DuplicateResolution): IntakeDecision {
   const existingBookId = resolution.book?.id ?? null;
   if (resolution.verdict === 'same-recording') {
-    return { kind: 'same-recording', incumbent: resolution.book, existingBookId };
+    // Computed here so the two import consumers cannot each re-derive it and drift (#2435).
+    // A null book has no id to attach to, so it reads as not-file-holding.
+    return {
+      kind: 'same-recording',
+      incumbent: resolution.book,
+      existingBookId,
+      incumbentHoldsFile: bookHoldsFile(resolution.book?.path),
+    };
   }
   if (resolution.verdict === 'review') {
     return {

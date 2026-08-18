@@ -209,6 +209,24 @@ describe('addBook — the duplicate decision', () => {
     expect(deps.eventHistory.create).not.toHaveBeenCalled();
   });
 
+  // #2435 AC3: a fileless incumbent is attachable on the IMPORT path only. For "add this book",
+  // a wanted row is still already-in-your-library, and import-list sync rides this exact call path.
+  it('still refuses a FILELESS wanted incumbent as a duplicate (#2435 AC3)', async () => {
+    const incumbent = makeBook({ id: 3, status: 'wanted', path: null } as Partial<BookDetail>);
+    const deps = makeDeps();
+    vi.mocked(deps.bookService.findDuplicate).mockResolvedValue({
+      verdict: 'same-recording', book: incumbent, hasIncumbent: true,
+    });
+
+    const result = await addBook(deps, request(), makeLog());
+
+    expect(result).toEqual({
+      outcome: 'duplicate', verdict: 'same-recording', book: incumbent, existingBookId: 3,
+    });
+    expect(deps.bookService.create).not.toHaveBeenCalled();
+    expect(deps.eventHistory.create).not.toHaveBeenCalled();
+  });
+
   it('carries the recording review reason on a review verdict', async () => {
     const incumbent = makeBook({ id: 5 });
     const deps = makeDeps();

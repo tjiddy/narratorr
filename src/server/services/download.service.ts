@@ -5,6 +5,7 @@ import { downloads, books, indexers } from '@db/schema.js';
 import type { DownloadProtocol } from '@core/index.js';
 import type { DownloadArtifact, StagedHandoff } from '@core/download-clients/types.js';
 import { isTerminalState, deriveDisplayStatus } from '@shared/download-status-registry.js';
+import { clientCategory } from '@shared/schemas/download-client.js';
 import {
   inProgressDownloadCondition,
   terminalDownloadCondition,
@@ -217,7 +218,7 @@ export class DownloadService {
     const adapter = await this.downloadClientService.getAdapter(client.id);
     if (!adapter) throw new Error('Could not initialize download client');
     const settings = (client.settings ?? {}) as Record<string, unknown>;
-    const category = (settings.category as string | undefined)?.trim() || undefined;
+    const category = clientCategory(settings);
     const addOptions = { ...(category ? { category } : {}) };
     const options = Object.keys(addOptions).length > 0 ? addOptions : undefined;
     const identity = { clientId: client.id, clientType: client.type, clientName: client.name };

@@ -5,6 +5,7 @@ import { manualImportJobPayloadSchema, type ImportAdapter, type ImportAdapterCon
 import type { ImportPipelineDeps } from '../import-orchestration.helpers.js';
 import type { AppSettings } from '@shared/schemas/settings/registry.js';
 import { copyToLibrary } from '../import-orchestration.helpers.js';
+import { buildAttachNaming, type AttachNaming } from '../attach-naming.js';
 import type { ImportConfirmItem } from '../library-scan.service.js';
 import { getAudioStats } from '../library-scan.helpers.js';
 import { orchestrateBookEnrichment, buildEnrichmentBookInput, buildBackgroundAudnexusConfig, buildImportedEventPayload, extractImportMetadata } from '../enrichment-orchestration.helpers.js';
@@ -69,6 +70,37 @@ function toImportConfirmItem(payload: ManualImportJobPayload): ImportConfirmItem
   };
 }
 
+/**
+ * #2435 AC27 — substitute the offered identity at its SOURCE.
+ *
+ * The adapter carries offered data in exactly two variables (`payload` and the `item` derived from
+ * it) and every downstream consumer reads one of them. Rebinding both to incumbent-derived values
+ * makes every consumer — named or not yet written — read the incumbent by construction, which is
+ * why this is a substitution rather than a list of redirected call sites: four review rounds each
+ * found another member the list was missing.
+ *
+ * The reviewable invariant: after hydration, no expression on the attach path reads the offered
+ * payload for anything but `path`, `mode` and the marker. `metadata` is dropped outright — a
+ * sidecar of unknown provenance has no authority over an existing book's bibliography, and its
+ * absence is also what drops `alternateAsins` from the provider lookup (AC28).
+ */
+function toAttachPayload(raw: ManualImportJobPayload, book: BookWithAuthor): ManualImportJobPayload {
+  const authorName = book.authors?.[0]?.name;
+  const narrators = book.narrators?.map((n) => n.name) ?? [];
+  return {
+    path: raw.path,
+    ...(raw.mode !== undefined && { mode: raw.mode }),
+    attach: true,
+    title: book.title,
+    ...(authorName ? { authorName } : {}),
+    ...(book.seriesName != null && { seriesName: book.seriesName }),
+    ...(book.seriesPosition != null && { seriesPosition: book.seriesPosition }),
+    ...(narrators.length > 0 && { narrators }),
+    ...(book.asin != null && { asin: book.asin }),
+    ...(book.coverUrl != null && { coverUrl: book.coverUrl }),
+  };
+}
+
 export class ManualImportAdapter implements ImportAdapter {
   readonly type = 'manual' as const;
 
@@ -79,36 +111,40 @@ export class ManualImportAdapter implements ImportAdapter {
   }
 
   async process(job: ImportJob, ctx: ImportAdapterContext): Promise<void> {
-    const payload: ManualImportJobPayload = parseManualPayload(job.id, job.metadata);
+    const offered: ManualImportJobPayload = parseManualPayload(job.id, job.metadata);
     const bookId = job.bookId;
 
     if (bookId == null) {
       throw new Error('ManualImportAdapter requires a bookId on the job');
     }
 
-    return withBookAdmissionLock(bookId, () => this.processWithinAdmissionLock(bookId, payload, ctx));
+    return withBookAdmissionLock(bookId, () => this.processWithinAdmissionLock(bookId, offered, ctx));
   }
 
   /**
-   * Caller must hold the admission lock for `bookId`. The row read, the library root and the copy
-   * all sit inside it, so an import queued behind a rename or a delete cannot copy into — or
-   * commit a `path` naming — a folder the row no longer owns.
+   * Caller must hold the admission lock for `bookId`. The row read, the attach hydration, the
+   * library root and the copy all sit inside it, so an import queued behind a rename or a delete
+   * cannot copy into — or commit a `path` naming — a folder the row no longer owns, and an attach
+   * cannot substitute an incumbent identity that a queued mutation is about to change.
    */
   private async processWithinAdmissionLock(
     bookId: number,
-    payload: ManualImportJobPayload,
+    offered: ManualImportJobPayload,
     ctx: ImportAdapterContext,
   ): Promise<void> {
     const { db, log } = ctx;
-    const { eventHistory, enrichmentDeps, broadcaster } = this.deps;
-    const mode = payload.mode; // undefined = pointer mode
+    const { eventHistory, broadcaster } = this.deps;
+    const mode = offered.mode; // undefined = pointer mode
+    const attach = offered.attach === true;
 
-    log.info({ bookId, title: payload.title, mode: mode ?? 'pointer' }, 'Processing manual import');
+    log.info({ bookId, title: offered.title, mode: mode ?? 'pointer', attach }, 'Processing manual import');
 
     const [bookRow] = await db.select().from(books).where(eq(books.id, bookId)).limit(1);
     if (!bookRow) {
       throw new Error(`Book ${bookId} not found — may have been deleted after import was queued`);
     }
+
+    const { payload, naming } = await this.resolveAttachContext(offered, bookId, attach);
 
     try {
       await ctx.setPhase('analyzing');
@@ -122,24 +158,12 @@ export class ManualImportAdapter implements ImportAdapter {
       }
 
       const finalPath = mode
-        ? await this.commitCopyUnderRootCommit(item, extracted.meta ?? null, mode, bookId, bookRow, payload, ctx)
+        ? await this.commitCopyUnderRootCommit(item, extracted.meta ?? null, mode, bookId, bookRow, payload, ctx, naming)
         : await this.commitImportedPath(bookId, payload.path, undefined, ctx);
 
       await ctx.setPhase('fetching_metadata');
 
-      const [currentBook] = await db.select({ genres: books.genres, subtitle: books.subtitle, publisher: books.publisher }).from(books).where(eq(books.id, bookId)).limit(1);
-
-      await orchestrateBookEnrichment(
-        bookId, finalPath,
-        // Runner-computed narrator provenance lives on the job payload, not the confirm item.
-        buildEnrichmentBookInput({
-          ...extracted.bookInput,
-          genres: currentBook?.genres ?? null,
-          ...(payload.narratorSource !== undefined && { narratorSource: payload.narratorSource }),
-        }),
-        enrichmentDeps,
-        buildBackgroundAudnexusConfig(payload, extracted, currentBook?.genres ?? null, currentBook),
-      );
+      await this.enrich(db, bookId, finalPath, payload, extracted, attach);
 
       await transitionBookStatus(db, bookId, { status: 'imported' });
       safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing', new_status: 'imported' }, log);
@@ -157,6 +181,50 @@ export class ManualImportAdapter implements ImportAdapter {
     }
   }
 
+  /** On an attach `payload` is already incumbent-derived, so every input built here is too. */
+  private async enrich(
+    db: ImportAdapterContext['db'], bookId: number, finalPath: string,
+    payload: ManualImportJobPayload, extracted: ReturnType<typeof extractImportMetadata>, attach: boolean,
+  ): Promise<void> {
+    const [currentBook] = await db
+      .select({ genres: books.genres, subtitle: books.subtitle, publisher: books.publisher })
+      .from(books).where(eq(books.id, bookId)).limit(1);
+
+    await orchestrateBookEnrichment(
+      bookId, finalPath,
+      // Runner-computed narrator provenance lives on the job payload, not the confirm item.
+      buildEnrichmentBookInput({
+        ...extracted.bookInput,
+        genres: currentBook?.genres ?? null,
+        ...(payload.narratorSource !== undefined && { narratorSource: payload.narratorSource }),
+      }),
+      this.deps.enrichmentDeps,
+      buildBackgroundAudnexusConfig(payload, extracted, currentBook?.genres ?? null, currentBook),
+      attach ? { attach: true } : undefined,
+    );
+  }
+
+  /**
+   * Hydrate the incumbent BEFORE any target calculation, then substitute. Called outside the try
+   * on purpose: a row deleted between enqueue and processing must fail the job having written
+   * nothing at all — no files, no `books` update and no `book_events` row — exactly as the
+   * missing-row throw already does today. (`book_events.book_id` is an FK, so an event for a
+   * deleted book could not be written even if it were wanted.) Runs inside the admission section,
+   * so the incumbent read here is the controlling snapshot for the whole import (#2369 AC3).
+   */
+  private async resolveAttachContext(
+    offered: ManualImportJobPayload, bookId: number, attach: boolean,
+  ): Promise<{ payload: ManualImportJobPayload; naming: AttachNaming | undefined }> {
+    if (!attach) return { payload: offered, naming: undefined };
+    // A genuinely new read: the bare row above carries no author/narrator relations, and the only
+    // existing `getById` sits inside renameIfConfigured, which runs after the copy.
+    const incumbent = await this.deps.bookService.getById(bookId);
+    if (!incumbent) {
+      throw new Error(`Book ${bookId} not found — may have been deleted after import was queued`);
+    }
+    return { payload: toAttachPayload(offered, incumbent), naming: buildAttachNaming(incumbent) };
+  }
+
   /**
    * Copy mode derives its target from the library root, so it registers as a root-dependent commit,
    * takes the canonical root from the gate — no second settings read — and holds the registration
@@ -172,13 +240,14 @@ export class ManualImportAdapter implements ImportAdapter {
     bookRow: { title: string; seriesName: string | null; seriesPosition: number | null; publishedDate: string | null },
     payload: ManualImportJobPayload,
     ctx: ImportAdapterContext,
+    naming: AttachNaming | undefined,
   ): Promise<string> {
     const rootCommit = await beginRootCommit(this.deps.settingsService);
     try {
       await ctx.setPhase('copying');
       const copyResult = await copyToLibrary(item, extractedMeta, mode, this.deps, rootCommit.library, (progress, byteCounter) => {
         ctx.emitProgress('copying', progress, byteCounter);
-      });
+      }, naming);
       await this.renameIfConfigured(
         copyResult.targetPath, bookId, bookRow, payload, ctx, rootCommit.library, copyResult.editionLabel,
       );

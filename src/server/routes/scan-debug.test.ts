@@ -579,6 +579,25 @@ describe('POST /api/library/scan-debug', () => {
       expect(body.duplicate.reason).toBe('same-recording');
     });
 
+    // #2435 AC3: the diagnostic answers "would the matcher call this the same recording?", which a
+    // fileless incumbent still is. Only the two import consumers act on the attach distinction.
+    it('still reports isDuplicate true for a FILELESS wanted incumbent (#2435 AC3)', async () => {
+      (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (services.book.findDuplicate as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ verdict: 'same-recording', book: { id: 42, title: 'Title', path: null, status: 'wanted' } });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/scan-debug',
+        payload: { folderName: 'Author/Title' },
+      });
+
+      const body = JSON.parse(res.payload);
+      expect(body.duplicate.isDuplicate).toBe(true);
+      expect(body.duplicate.existingBookId).toBe(42);
+      expect(body.duplicate.reason).toBe('same-recording');
+    });
+
     it('reports isDuplicate false when no match', async () => {
       (services.metadata.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       (services.book.findDuplicate as ReturnType<typeof vi.fn>).mockResolvedValue({ verdict: 'different-recording', book: null });

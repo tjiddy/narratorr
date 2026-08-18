@@ -1,21 +1,19 @@
 name: Windows Tests
 run-name: Windows tests for ${{ github.ref_name }}
 
-# Separate from ci.yml because triggers are workflow-level: ci.yml is main-only, and every PR in
-# this repository targets develop, so a Windows job living inside it would never run on the PRs
-# that matter. Widening ci.yml's own triggers would drag the whole Linux gate and the Playwright
-# e2e job onto every develop PR — a different decision with a different cost.
+# Pre-release smoke, not a per-PR gate (decided 2026-08-18). The per-PR/per-merge triggers this
+# shipped with ran ~22min on the free 4-vCPU runner, false-blocked the merge gate on every
+# approved PR, and priced every story at two or three Windows runs. Release tags are where a
+# Windows-only regression must be caught; day-to-day compatibility is upheld by the fleet testing
+# standards (workflume refs/testing.md, Windows section) that the pipeline agents write under.
+# Advisory by design: docker.yml builds the image on the same tag push with no dependency edge,
+# so a red run here is a do-not-pull signal for the manual deploy, not a build blocker.
 on:
-  pull_request:
-    branches: [main, develop]
-  # develop mirrors docker.yml's Linux quality gate on the integration branch: a merge commit is
-  # not the head that was reviewed.
   push:
-    branches: [main, develop]
-  # Post-merge affordance only: GitHub runs workflow_dispatch for a workflow present on the DEFAULT
-  # branch, so this cannot dispatch a scratch ref until the file reaches main. A pre-merge
-  # experiment on a scratch branch needs a draft PR into develop, which the pull_request block
-  # above already covers.
+    tags: ['v*']
+  # Operator affordance: GitHub runs workflow_dispatch for a workflow present on the DEFAULT
+  # branch, so this works once the file reaches main via the release PR. Use it to smoke a ref
+  # on Windows without cutting a tag.
   workflow_dispatch:
 
 permissions:

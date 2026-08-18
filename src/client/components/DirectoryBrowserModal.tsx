@@ -1,12 +1,13 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, type BrowseResult } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { getErrorMessage } from '@/lib/error-message.js';
 import {
   XIcon,
   FolderIcon,
   FolderOpenIcon,
+  HeadphonesIcon,
   ChevronRightIcon,
   LoadingSpinner,
   AlertCircleIcon,
@@ -18,6 +19,15 @@ interface DirectoryBrowserModalProps {
   initialPath: string;
   onSelect: (path: string) => void;
   onClose: () => void;
+  /** #2435 AC20: also list supported audio files and let one be chosen. Existing callers omit it
+   * and keep today's directory-only behaviour with no prop change. */
+  selectableFiles?: boolean | undefined;
+  title?: string | undefined;
+  subtitle?: string | undefined;
+  /** Rendered beside the path in the footer; used for the copy/move choice. */
+  footerExtra?: ReactNode | undefined;
+  selectLabel?: string | undefined;
+  selectDisabled?: boolean | undefined;
 }
 
 function parseBreadcrumbs(path: string): { label: string; path: string }[] {
@@ -37,28 +47,129 @@ function parseBreadcrumbs(path: string): { label: string; path: string }[] {
   return crumbs;
 }
 
-// Mounting this inner component resets initialPath state without a syncing effect.
-function DirectoryBrowserContent({ initialPath, onSelect, onClose }: DirectoryBrowserModalProps) {
-  const [currentPath, setCurrentPath] = useState(initialPath || '/');
+/** Opt-in audio entries; selecting one narrows the chosen path from the folder to that file. */
+function AudioFileList({ files, selectedFile, onFileClick }: {
+  files: string[];
+  selectedFile: string | null;
+  onFileClick: (file: string) => void;
+}) {
+  return (
+    <div className="divide-y divide-white/5 border-t border-white/5">
+      {files.map((file) => (
+        <button
+          type="button"
+          key={file}
+          aria-pressed={selectedFile === file}
+          onClick={() => onFileClick(file)}
+          className={`w-full flex items-center gap-3 px-6 py-2.5 text-sm text-left transition-colors focus-ring group ${
+            selectedFile === file ? 'bg-primary/10 text-foreground' : 'hover:bg-white/5'
+          }`}
+        >
+          <HeadphonesIcon className="w-4 h-4 text-primary/60 shrink-0" />
+          <span className="truncate">{file}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
 
+interface BrowserEntriesProps {
+  data: BrowseResult | undefined;
+  isLoading: boolean;
+  error: unknown;
+  selectedFile: string | null;
+  onDirClick: (dir: string) => void;
+  onFileClick: (file: string) => void;
+}
+
+/** The scrollable listing: loading, error, empty, directories, and (when opted in) audio files. */
+/** Directory entries; navigating into one clears any pending file selection. */
+function DirList({ dirs, onDirClick }: { dirs: string[]; onDirClick: (dir: string) => void }) {
+  return (
+    <div className="divide-y divide-white/5">
+      {dirs.map((dir) => (
+        <button
+          type="button"
+          key={dir}
+          onClick={() => onDirClick(dir)}
+          className="w-full flex items-center gap-3 px-6 py-2.5 text-sm text-left hover:bg-white/5 transition-colors focus-ring group"
+        >
+          <FolderIcon className="w-4 h-4 text-primary/60 group-hover:text-primary/90 shrink-0 transition-colors" />
+          <span className="truncate">{dir}</span>
+          <ChevronRightIcon className="w-3 h-3 ml-auto text-muted-foreground/0 group-hover:text-muted-foreground/50 shrink-0 transition-colors" />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function BrowserEntries({ data, isLoading, error, selectedFile, onDirClick, onFileClick }: BrowserEntriesProps) {
+  const dirs = data?.dirs ?? [];
+  const files = data?.files ?? [];
+  const settled = data !== undefined && !isLoading;
+  return (
+    <div className="flex-1 overflow-y-auto min-h-[200px] max-h-[400px]">
+      {isLoading && (
+        <div className="flex items-center justify-center py-12">
+          <LoadingSpinner className="w-5 h-5 text-muted-foreground" />
+        </div>
+      )}
+
+      {error != null && (
+        <div className="flex items-start gap-2.5 mx-6 my-4 px-3 py-2.5 rounded-xl bg-destructive/5 border border-destructive/20">
+          <AlertCircleIcon className="w-4 h-4 mt-0.5 shrink-0 text-destructive" />
+          <span className="text-sm text-destructive/90">{getErrorMessage(error)}</span>
+        </div>
+      )}
+
+      {settled && dirs.length === 0 && files.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+          <FolderOpenIcon className="w-8 h-8 mb-2 text-muted-foreground/40" />
+          <p className="text-sm">No subdirectories</p>
+        </div>
+      )}
+
+      {settled && dirs.length > 0 && <DirList dirs={dirs} onDirClick={onDirClick} />}
+
+      {settled && files.length > 0 && (
+        <AudioFileList files={files} selectedFile={selectedFile} onFileClick={onFileClick} />
+      )}
+    </div>
+  );
+}
+
+// Mounting this inner component resets initialPath state without a syncing effect.
+function DirectoryBrowserContent({ initialPath, onSelect, onClose, selectableFiles, title, subtitle, footerExtra, selectLabel, selectDisabled }: DirectoryBrowserModalProps) {
+  const [currentPath, setCurrentPath] = useState(initialPath || '/');
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+
+  const capability = selectableFiles ? 'audio' : 'legacy';
   const { data, isLoading, error } = useQuery({
-    queryKey: queryKeys.filesystem.browse(currentPath),
-    queryFn: () => api.browseDirectory(currentPath),
+    // The capability rides in the key as well as the request: the two shapes must not share a
+    // cache entry for the same path.
+    queryKey: queryKeys.filesystem.browse(currentPath, capability),
+    queryFn: () => api.browseDirectory(currentPath, capability),
     retry: false,
   });
 
+  const joinPath = useCallback(
+    (name: string) => (currentPath.endsWith('/') ? currentPath : currentPath + '/') + name,
+    [currentPath],
+  );
+
   const handleSelect = useCallback(() => {
-    onSelect(currentPath);
-  }, [currentPath, onSelect]);
+    onSelect(selectedFile ? joinPath(selectedFile) : currentPath);
+  }, [currentPath, joinPath, onSelect, selectedFile]);
 
   const handleNavigate = useCallback((path: string) => {
+    setSelectedFile(null);
     setCurrentPath(path);
   }, []);
 
   const handleDirClick = useCallback((dirName: string) => {
-    const separator = currentPath.endsWith('/') ? '' : '/';
-    setCurrentPath(currentPath + separator + dirName);
-  }, [currentPath]);
+    setSelectedFile(null);
+    setCurrentPath(joinPath(dirName));
+  }, [joinPath]);
 
   const breadcrumbs = parseBreadcrumbs(currentPath);
 
@@ -74,8 +185,8 @@ function DirectoryBrowserContent({ initialPath, onSelect, onClose }: DirectoryBr
       >
         <div className="px-6 pt-5 pb-4 flex items-center justify-between shrink-0">
           <div>
-            <h2 id="directory-browser-modal-title" className="font-display text-lg font-semibold tracking-tight">Browse Directories</h2>
-            <p className="text-xs text-muted-foreground/50 truncate mt-0.5">Select a folder to scan</p>
+            <h2 id="directory-browser-modal-title" className="font-display text-lg font-semibold tracking-tight">{title ?? 'Browse Directories'}</h2>
+            <p className="text-xs text-muted-foreground/50 truncate mt-0.5">{subtitle ?? 'Select a folder to scan'}</p>
           </div>
           <button
             type="button"
@@ -110,53 +221,24 @@ function DirectoryBrowserContent({ initialPath, onSelect, onClose }: DirectoryBr
 
         <div className="border-t border-white/5" />
 
-        <div className="flex-1 overflow-y-auto min-h-[200px] max-h-[400px]">
-          {isLoading && (
-            <div className="flex items-center justify-center py-12">
-              <LoadingSpinner className="w-5 h-5 text-muted-foreground" />
-            </div>
-          )}
-
-          {error && (
-            <div className="flex items-start gap-2.5 mx-6 my-4 px-3 py-2.5 rounded-xl bg-destructive/5 border border-destructive/20">
-              <AlertCircleIcon className="w-4 h-4 mt-0.5 shrink-0 text-destructive" />
-              <span className="text-sm text-destructive/90">
-                {getErrorMessage(error)}
-              </span>
-            </div>
-          )}
-
-          {data && !isLoading && data.dirs.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-              <FolderOpenIcon className="w-8 h-8 mb-2 text-muted-foreground/40" />
-              <p className="text-sm">No subdirectories</p>
-            </div>
-          )}
-
-          {data && !isLoading && data.dirs.length > 0 && (
-            <div className="divide-y divide-white/5">
-              {data.dirs.map((dir) => (
-                <button
-                  type="button"
-                  key={dir}
-                  onClick={() => handleDirClick(dir)}
-                  className="w-full flex items-center gap-3 px-6 py-2.5 text-sm text-left hover:bg-white/5 transition-colors focus-ring group"
-                >
-                  <FolderIcon className="w-4 h-4 text-primary/60 group-hover:text-primary/90 shrink-0 transition-colors" />
-                  <span className="truncate">{dir}</span>
-                  <ChevronRightIcon className="w-3 h-3 ml-auto text-muted-foreground/0 group-hover:text-muted-foreground/50 shrink-0 transition-colors" />
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        <BrowserEntries
+          data={data}
+          isLoading={isLoading}
+          error={error}
+          selectedFile={selectedFile}
+          onDirClick={handleDirClick}
+          onFileClick={(file) => setSelectedFile(selectedFile === file ? null : file)}
+        />
 
         <div className="border-t border-white/5" />
 
         <div className="px-6 py-4 flex items-center justify-between shrink-0">
-          <p className="text-xs text-muted-foreground/50 truncate mr-4 font-mono" title={currentPath}>
-            {currentPath}
-          </p>
+          <div className="min-w-0 mr-4">
+            {footerExtra}
+            <p className="text-xs text-muted-foreground/50 truncate font-mono" title={selectedFile ? joinPath(selectedFile) : currentPath}>
+              {selectedFile ? joinPath(selectedFile) : currentPath}
+            </p>
+          </div>
           <div className="flex items-center gap-3 shrink-0">
             <button
               type="button"
@@ -168,9 +250,10 @@ function DirectoryBrowserContent({ initialPath, onSelect, onClose }: DirectoryBr
             <button
               type="button"
               onClick={handleSelect}
-              className="px-5 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 transition-all focus-ring"
+              disabled={selectDisabled}
+              className="px-5 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 transition-all focus-ring disabled:opacity-50 disabled:pointer-events-none"
             >
-              Select
+              {selectLabel ?? 'Select'}
             </button>
           </div>
         </div>
