@@ -211,6 +211,38 @@ describe('useManualImport', () => {
     expect(result.current.counts.selectedCount).toBe(2);
   });
 
+  /**
+   * #2435 AC14: a fileless same-recording match now arrives as `isDuplicate: false` carrying
+   * `existingBookId`. It must stay selectable and reach the matcher; the owned duplicate must not.
+   */
+  it('pre-selects a non-duplicate row that names an existing book, and matches only it (#2435 AC14)', async () => {
+    vi.mocked(api.scanDirectory).mockResolvedValue({
+      discoveries: [
+        { path: '/audiobooks/Attachable', parsedTitle: 'Attachable', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: false, existingBookId: 42 },
+        { path: '/audiobooks/Owned', parsedTitle: 'Owned', parsedAuthor: 'Author B', parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: true, existingBookId: 43 },
+      ],
+      totalFolders: 2,
+    });
+
+    const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
+
+    const attachRow = result.current.state.rows.find(r => r.book.path === '/audiobooks/Attachable');
+    const ownedRow = result.current.state.rows.find(r => r.book.path === '/audiobooks/Owned');
+    expect(attachRow?.selected).toBe(true);
+    expect(attachRow?.book.existingBookId).toBe(42);
+    expect(ownedRow?.selected).toBe(false);
+    expect(result.current.counts.selectedCount).toBe(1);
+    expect(result.current.counts.duplicateCount).toBe(1);
+
+    await waitFor(() => expect(api.startMatchJob).toHaveBeenCalled());
+    const [candidates] = vi.mocked(api.startMatchJob).mock.calls[0]! as [Array<{ path: string }>];
+    expect(candidates.map(c => c.path)).toEqual(['/audiobooks/Attachable']);
+  });
+
   it('sets scanError when scan finds no discoveries', async () => {
     vi.mocked(api.scanDirectory).mockResolvedValue({
       discoveries: [],

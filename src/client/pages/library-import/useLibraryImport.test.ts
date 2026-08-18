@@ -139,6 +139,49 @@ describe('useLibraryImport hook (#133)', () => {
     });
   });
 
+  /**
+   * #2435 AC14: the server now returns a fileless same-recording match as `isDuplicate: false`
+   * carrying `existingBookId`. Asserted rather than assumed — the row must be SELECTABLE, and
+   * `existingBookId` alone must not be read as "already in the library".
+   */
+  it('pre-selects a non-duplicate row that names an existing book (#2435 AC14)', async () => {
+    mockScanDirectory.mockResolvedValue({
+      discoveries: [
+        { path: '/audiobooks/AuthorA/Attach', parsedTitle: 'Attachable', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: false, existingBookId: 42 },
+        { path: '/audiobooks/AuthorB/Owned', parsedTitle: 'Owned', parsedAuthor: 'Author B', parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: true, duplicateReason: 'slug', existingBookId: 43 },
+      ],
+      totalFolders: 2,
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
+
+    const attachRow = result.current.state.rows.find(r => r.book.path === '/audiobooks/AuthorA/Attach');
+    const ownedRow = result.current.state.rows.find(r => r.book.path === '/audiobooks/AuthorB/Owned');
+    expect(attachRow?.selected).toBe(true);
+    expect(attachRow?.book.existingBookId).toBe(42);
+    expect(ownedRow?.selected).toBe(false);
+  });
+
+  it('sends the attachable row for matching, not the owned duplicate (#2435 AC14)', async () => {
+    mockScanDirectory.mockResolvedValue({
+      discoveries: [
+        { path: '/audiobooks/AuthorA/Attach', parsedTitle: 'Attachable', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: false, existingBookId: 42 },
+        { path: '/audiobooks/AuthorB/Owned', parsedTitle: 'Owned', parsedAuthor: 'Author B', parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: true, duplicateReason: 'slug', existingBookId: 43 },
+      ],
+      totalFolders: 2,
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.state.step).toBe('review'));
+    await waitFor(() => expect(mockStartMatchJob).toHaveBeenCalled());
+
+    const [candidates] = mockStartMatchJob.mock.calls[0]! as [Array<{ path: string }>];
+    expect(candidates.map(c => c.path)).toEqual(['/audiobooks/AuthorA/Attach']);
+  });
+
   it('match results merge: confidence=none result deselects non-duplicate row; duplicate row stays unselected', async () => {
     mockGetMatchJob.mockResolvedValue({
       id: 'job-1',
