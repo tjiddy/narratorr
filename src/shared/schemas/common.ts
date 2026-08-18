@@ -15,9 +15,9 @@ export const idParamSchema = z.object({
 });
 
 /**
- * The `{ error }` body `plugins/error-handler.ts` sends for every registered error. Register it as
- * a route's response schema for a status the handler produces, or that status serializes through
- * Fastify's default and the contract stays unpinned.
+ * The `{ error }` body `plugins/error-handler.ts` sends for every error in its registry. Deliberately
+ * NOT registered as a route response schema: the handler is the only producer of these bodies, so a
+ * per-route registration pins nothing a test can red. It is the oracle route tests assert against.
  */
 export const apiErrorResponseSchema = z.object({
   error: z.string(),

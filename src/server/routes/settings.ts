@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { type FastifyInstance } from 'fastify';
 import { type SettingsService, type AppSettings } from '../services';
-import { updateSettingsSchema, apiErrorResponseSchema, type UpdateSettingsInput } from '@shared/schemas.js';
+import { updateSettingsSchema, type UpdateSettingsInput } from '@shared/schemas.js';
 import type { IndexerService } from '../services/indexer.service.js';
 import type { HealthCheckService } from '../services/health-check.service.js';
 import { maskFields, isSentinel } from '../utils/secret-codec.js';
@@ -77,9 +77,6 @@ export async function settingsRoutes(
     {
       schema: {
         body: updateSettingsSchema,
-        // Pins the root-gate refusal body; without it the 409 serializes through Fastify's default
-        // and nothing fails when the shape drifts.
-        response: { 409: apiErrorResponseSchema },
       },
     },
     async (request) => {
