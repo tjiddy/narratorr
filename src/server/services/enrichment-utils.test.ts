@@ -15,7 +15,7 @@ vi.mock('node:fs/promises', () => ({
 
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { writeFile, readdir } from 'node:fs/promises';
-import { enrichBookFromAudio } from './enrichment-utils.js';
+import { enrichBookFromAudio, enrichBookFromAudioWithinAdmissionLock } from './enrichment-utils.js';
 
 function createMockLogger() {
   return inject<FastifyBaseLogger>({
@@ -31,7 +31,7 @@ function createMockLogger() {
   });
 }
 
-describe('enrichBookFromAudio', () => {
+describe('enrichBookFromAudioWithinAdmissionLock', () => {
   let mockDb: { update: ReturnType<typeof vi.fn> };
   let log: FastifyBaseLogger;
 
@@ -62,7 +62,7 @@ describe('enrichBookFromAudio', () => {
     });
     vi.mocked(readdir).mockResolvedValue(['01.mp3', '02.mp3', 'cover.jpg'] as never);
 
-    const result = await enrichBookFromAudio(
+    const result = await enrichBookFromAudioWithinAdmissionLock(
       1,
       '/books/test',
       { narrators: null, duration: null, coverUrl: null },
@@ -92,7 +92,7 @@ describe('enrichBookFromAudio', () => {
     } as never);
     vi.mocked(readdir).mockResolvedValue(['01.mp3', '.01.tmp.mp3', 'cover.jpg'] as never);
 
-    await enrichBookFromAudio(
+    await enrichBookFromAudioWithinAdmissionLock(
       1, '/books/test', { narrators: null, duration: null, coverUrl: null }, inject<Db>(mockDb), log,
     );
 
@@ -118,7 +118,7 @@ describe('enrichBookFromAudio', () => {
     });
     vi.mocked(readdir).mockResolvedValue(['01.mp3'] as never);
 
-    const result = await enrichBookFromAudio(
+    const result = await enrichBookFromAudioWithinAdmissionLock(
       1,
       '/books/test',
       { narrators: null, duration: null, coverUrl: null },
@@ -149,7 +149,7 @@ describe('enrichBookFromAudio', () => {
     });
     vi.mocked(readdir).mockResolvedValue(['01.mp3'] as never);
 
-    await enrichBookFromAudio(
+    await enrichBookFromAudioWithinAdmissionLock(
       1,
       '/books/test',
       { narrators: null, duration: null, coverUrl: null },
@@ -164,7 +164,7 @@ describe('enrichBookFromAudio', () => {
   it('returns not enriched when scan returns null', async () => {
     vi.mocked(scanAudioDirectory).mockResolvedValue(null);
 
-    const result = await enrichBookFromAudio(
+    const result = await enrichBookFromAudioWithinAdmissionLock(
       1,
       '/books/empty',
       { narrators: null, duration: null, coverUrl: null },
@@ -194,7 +194,7 @@ describe('enrichBookFromAudio', () => {
 
     const mockBookService = inject<BookService>({ update: vi.fn().mockResolvedValue(null) });
 
-    await enrichBookFromAudio(
+    await enrichBookFromAudioWithinAdmissionLock(
       1,
       '/books/test',
       { narrators: null, duration: null, coverUrl: null },
@@ -225,7 +225,7 @@ describe('enrichBookFromAudio', () => {
 
     const mockBookService = inject<BookService>({ update: vi.fn().mockResolvedValue(null) });
 
-    await enrichBookFromAudio(
+    await enrichBookFromAudioWithinAdmissionLock(
       1,
       '/books/test',
       { narrators: [{ name: 'Correct Narrator' }], duration: null, coverUrl: null },
@@ -253,7 +253,7 @@ describe('enrichBookFromAudio', () => {
       hasCoverArt: true,
     });
 
-    await enrichBookFromAudio(
+    await enrichBookFromAudioWithinAdmissionLock(
       42,
       '/books/test',
       { narrators: null, duration: null, coverUrl: null },
@@ -283,7 +283,7 @@ describe('enrichBookFromAudio', () => {
       hasCoverArt: true,
     });
 
-    await enrichBookFromAudio(
+    await enrichBookFromAudioWithinAdmissionLock(
       1,
       '/books/test',
       { narrators: null, duration: null, coverUrl: '/api/books/1/cover' },
@@ -301,7 +301,7 @@ describe('enrichBookFromAudio', () => {
       totalSize: 1000, totalDuration: 100, hasCoverArt: false,
     });
 
-    await enrichBookFromAudio(
+    await enrichBookFromAudioWithinAdmissionLock(
       1, '/books/test',
       { narrators: null, duration: null, coverUrl: null },
       inject<Db>(mockDb), log, undefined, '/usr/bin/ffprobe',
@@ -327,7 +327,7 @@ describe('enrichBookFromAudio', () => {
       totalSize: 1000, totalDuration: 100, hasCoverArt: false,
     });
 
-    await enrichBookFromAudio(
+    await enrichBookFromAudioWithinAdmissionLock(
       1, '/books/test',
       { narrators: null, duration: null, coverUrl: null },
       inject<Db>(mockDb), log,
@@ -349,7 +349,7 @@ describe('enrichBookFromAudio', () => {
   it('returns error info when scan throws', async () => {
     vi.mocked(scanAudioDirectory).mockRejectedValue(new Error('Permission denied'));
 
-    const result = await enrichBookFromAudio(
+    const result = await enrichBookFromAudioWithinAdmissionLock(
       1,
       '/books/locked',
       { narrators: null, duration: null, coverUrl: null },
@@ -378,7 +378,7 @@ describe('enrichBookFromAudio', () => {
       hasCoverArt: true,
     });
 
-    await enrichBookFromAudio(
+    await enrichBookFromAudioWithinAdmissionLock(
       1,
       '/books/test',
       { narrators: null, duration: null, coverUrl: null },
@@ -420,7 +420,7 @@ describe('enrichment-utils — narrator junction writes (#71)', () => {
 
     const mockBookService = inject<BookService>({ update: vi.fn().mockResolvedValue(null) });
 
-    await enrichBookFromAudio(
+    await enrichBookFromAudioWithinAdmissionLock(
       5,
       '/books/test',
       { narrators: null, duration: null, coverUrl: null },
@@ -443,7 +443,7 @@ describe('enrichment-utils — narrator junction writes (#71)', () => {
 
     const mockBookService = inject<BookService>({ update: vi.fn().mockResolvedValue(null) });
 
-    await enrichBookFromAudio(
+    await enrichBookFromAudioWithinAdmissionLock(
       5,
       '/books/test',
       { narrators: null, duration: null, coverUrl: null },
@@ -465,12 +465,12 @@ describe('enrichment-utils — narrator junction writes (#71)', () => {
     });
 
     await expect(
-      enrichBookFromAudio(5, '/books/test', { narrators: null, duration: null, coverUrl: null }, inject<Db>(mockDb), log),
+      enrichBookFromAudioWithinAdmissionLock(5, '/books/test', { narrators: null, duration: null, coverUrl: null }, inject<Db>(mockDb), log),
     ).resolves.toEqual({ enriched: true });
   });
 });
 
-describe('enrichBookFromAudio narrator splitting (issue #79)', () => {
+describe('enrichBookFromAudioWithinAdmissionLock narrator splitting (issue #79)', () => {
   let mockDb: { update: ReturnType<typeof vi.fn> };
   let log: FastifyBaseLogger;
   let mockBookService: { update: ReturnType<typeof vi.fn> };
@@ -500,7 +500,7 @@ describe('enrichBookFromAudio narrator splitting (issue #79)', () => {
 
   async function callEnrich(tagNarrator: string | undefined) {
     scanWithNarrator(tagNarrator);
-    return enrichBookFromAudio(
+    return enrichBookFromAudioWithinAdmissionLock(
       5, '/books/test',
       { narrators: null, duration: null, coverUrl: null },
       inject<Db>(mockDb),
@@ -546,7 +546,7 @@ describe('enrichBookFromAudio narrator splitting (issue #79)', () => {
 });
 
 // Gate tag fill on provenance, not array emptiness: auto-matched provider narrators arrive nonempty.
-describe('enrichBookFromAudio — narratorSource gate (#2158 AC8)', () => {
+describe('enrichBookFromAudioWithinAdmissionLock — narratorSource gate (#2158 AC8)', () => {
   let mockDb: { update: ReturnType<typeof vi.fn> };
   let log: FastifyBaseLogger;
   let mockBookService: { update: ReturnType<typeof vi.fn> };
@@ -571,8 +571,8 @@ describe('enrichBookFromAudio — narratorSource gate (#2158 AC8)', () => {
     });
   });
 
-  const run = (book: Parameters<typeof enrichBookFromAudio>[2]) =>
-    enrichBookFromAudio(5, '/books/test', book, inject<Db>(mockDb), log, inject<BookService>(mockBookService));
+  const run = (book: Parameters<typeof enrichBookFromAudioWithinAdmissionLock>[2]) =>
+    enrichBookFromAudioWithinAdmissionLock(5, '/books/test', book, inject<Db>(mockDb), log, inject<BookService>(mockBookService));
 
   const PROVIDER_NARRATORS = [{ name: 'Provider Narrator' }];
 
@@ -623,7 +623,7 @@ vi.mock('./cover-download.js', () => ({
 
 import { downloadRemoteCoverWithinAdmissionLock } from './cover-download.js';
 
-describe('enrichBookFromAudio — remote cover download integration (#369)', () => {
+describe('enrichBookFromAudioWithinAdmissionLock — remote cover download integration (#369)', () => {
   let mockDb: { update: ReturnType<typeof vi.fn> };
   let log: FastifyBaseLogger;
 
@@ -662,7 +662,7 @@ describe('enrichBookFromAudio — remote cover download integration (#369)', () 
   it('fires downloadRemoteCover when book has remote coverUrl and no embedded cover', async () => {
     scanWithNoEmbeddedCover();
 
-    await enrichBookFromAudio(
+    await enrichBookFromAudioWithinAdmissionLock(
       42, '/books/test',
       { narrators: null, duration: null, coverUrl: 'https://cdn.example.com/cover.jpg' },
       inject<Db>(mockDb), log,
@@ -677,7 +677,7 @@ describe('enrichBookFromAudio — remote cover download integration (#369)', () 
   it('does not fire downloadRemoteCover when coverUrl is already local', async () => {
     scanWithNoEmbeddedCover();
 
-    await enrichBookFromAudio(
+    await enrichBookFromAudioWithinAdmissionLock(
       42, '/books/test',
       { narrators: null, duration: null, coverUrl: '/api/books/42/cover' },
       inject<Db>(mockDb), log,
@@ -689,7 +689,7 @@ describe('enrichBookFromAudio — remote cover download integration (#369)', () 
   it('does not fire downloadRemoteCover when embedded cover was saved', async () => {
     scanWithEmbeddedCover();
 
-    await enrichBookFromAudio(
+    await enrichBookFromAudioWithinAdmissionLock(
       42, '/books/test',
       { narrators: null, duration: null, coverUrl: null },
       inject<Db>(mockDb), log,
@@ -701,7 +701,7 @@ describe('enrichBookFromAudio — remote cover download integration (#369)', () 
   it('does not fire downloadRemoteCover when coverUrl is null', async () => {
     scanWithNoEmbeddedCover();
 
-    await enrichBookFromAudio(
+    await enrichBookFromAudioWithinAdmissionLock(
       42, '/books/test',
       { narrators: null, duration: null, coverUrl: null },
       inject<Db>(mockDb), log,
@@ -714,7 +714,7 @@ describe('enrichBookFromAudio — remote cover download integration (#369)', () 
     scanWithNoEmbeddedCover();
     vi.mocked(downloadRemoteCoverWithinAdmissionLock).mockRejectedValueOnce(new Error('Network failure'));
 
-    const result = await enrichBookFromAudio(
+    const result = await enrichBookFromAudioWithinAdmissionLock(
       42, '/books/test',
       { narrators: null, duration: null, coverUrl: 'https://cdn.example.com/cover.jpg' },
       inject<Db>(mockDb), log,
@@ -746,7 +746,7 @@ describe('enrichBookFromAudio — remote cover download integration (#369)', () 
     });
 
     let settled = false;
-    const enrichment = enrichBookFromAudio(
+    const enrichment = enrichBookFromAudioWithinAdmissionLock(
       42, '/books/test',
       { narrators: null, duration: null, coverUrl: 'https://cdn.example.com/cover.jpg' },
       inject<Db>(mockDb), log,
@@ -759,5 +759,117 @@ describe('enrichBookFromAudio — remote cover download integration (#369)', () 
     releaseDownload();
     await enrichment;
     expect(order).toEqual(['download:start', 'download:end', 'enrichment:end']);
+  });
+});
+
+/**
+ * #2369 F15 / AC3. The unlocked entry is the one audio-enrichment surface whose caller cannot have
+ * held the book. Whatever folder or row state such a caller read was read before the section, so
+ * this form takes neither: it re-derives both from the row after admission. The contended proof —
+ * the same call queued behind a real rename — lives in `admission-lock-protocol.integration.test.ts`.
+ */
+describe('enrichBookFromAudio — the unlocked entry reads its snapshot in-section (#2369 F15)', () => {
+  let log: FastifyBaseLogger;
+  let updateSet: ReturnType<typeof vi.fn>;
+
+  /** One row read, one narrator join, one update — the three statements the entry performs. */
+  function makeDb(row: { path: string | null; duration: number | null; coverUrl: string | null } | null, narratorNames: string[] = []) {
+    updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
+    return inject<Db>({
+      select: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue(row ? [row] : []) }),
+          innerJoin: vi.fn().mockReturnValue({
+            where: vi.fn().mockResolvedValue(narratorNames.map((name) => ({ name }))),
+          }),
+        }),
+      }),
+      update: vi.fn().mockReturnValue({ set: updateSet }),
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    log = createMockLogger();
+    vi.mocked(readdir).mockResolvedValue(['01.mp3'] as never);
+    vi.mocked(scanAudioDirectory).mockResolvedValue({
+      codec: 'mp3', bitrate: 128000, sampleRate: 44100, channels: 2, bitrateMode: 'cbr' as const,
+      fileFormat: 'MPEG', fileCount: 1, totalSize: 1000, totalDuration: 600, hasCoverArt: false,
+      tagNarrator: 'Tag Narrator',
+    });
+  });
+
+  it('scans the folder the row names now, with no folder argument to go stale', async () => {
+    const result = await enrichBookFromAudio(
+      7, makeDb({ path: '/library/Author/Current', duration: null, coverUrl: null }), log,
+    );
+
+    expect(result.enriched).toBe(true);
+    expect(vi.mocked(scanAudioDirectory).mock.calls.map((c) => String(c[0]).split('\\').join('/')))
+      .toEqual(['/library/Author/Current']);
+  });
+
+  it('takes the fill-empty duration and cover state from that same row read', async () => {
+    const mockBookService = { update: vi.fn().mockResolvedValue(null) };
+
+    await enrichBookFromAudio(
+      7,
+      // A row that already carries a duration and a localized cover: both fills must be suppressed.
+      makeDb({ path: '/library/Author/Current', duration: 42, coverUrl: '/api/books/7/cover' }, ['Existing Narrator']),
+      log,
+      inject<BookService>(mockBookService),
+    );
+
+    const written = updateSet.mock.calls[0]![0] as Record<string, unknown>;
+    expect(written).not.toHaveProperty('duration');
+    expect(written).toHaveProperty('audioDuration', 600);
+    expect(written).not.toHaveProperty('coverUrl');
+    // Narrators come from the junction read: a book that already has one is not tag-filled.
+    expect(mockBookService.update).not.toHaveBeenCalled();
+  });
+
+  it('tag-fills narrators when the junction read comes back empty', async () => {
+    const mockBookService = { update: vi.fn().mockResolvedValue(null) };
+
+    await enrichBookFromAudio(
+      7,
+      makeDb({ path: '/library/Author/Current', duration: null, coverUrl: null }, []),
+      log,
+      inject<BookService>(mockBookService),
+    );
+
+    expect(mockBookService.update).toHaveBeenCalledWith(7, { narrators: ['Tag Narrator'] });
+  });
+
+  it('scans and writes nothing for a book whose row vanished while it was queued', async () => {
+    const result = await enrichBookFromAudio(7, makeDb(null), log);
+
+    expect(result).toEqual({ enriched: false });
+    expect(vi.mocked(scanAudioDirectory)).not.toHaveBeenCalled();
+    expect(updateSet).not.toHaveBeenCalled();
+  });
+
+  it('scans and writes nothing for a book that no longer owns a folder', async () => {
+    const result = await enrichBookFromAudio(7, makeDb({ path: null, duration: null, coverUrl: null }), log);
+
+    expect(result).toEqual({ enriched: false });
+    expect(vi.mocked(scanAudioDirectory)).not.toHaveBeenCalled();
+    expect(updateSet).not.toHaveBeenCalled();
+  });
+
+  // Per-import provenance is job state with no column, so it stays a parameter — and still gates.
+  it('honours a caller-supplied curated narratorSource against a tag narrator', async () => {
+    const mockBookService = { update: vi.fn().mockResolvedValue(null) };
+
+    await enrichBookFromAudio(
+      7,
+      makeDb({ path: '/library/Author/Current', duration: null, coverUrl: null }, []),
+      log,
+      inject<BookService>(mockBookService),
+      undefined,
+      'curated',
+    );
+
+    expect(mockBookService.update).not.toHaveBeenCalled();
   });
 });

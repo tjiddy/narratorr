@@ -3,7 +3,7 @@ import { join, extname } from 'node:path';
 import { eq } from 'drizzle-orm';
 import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books } from '@db/schema.js';
+import { bookNarrators, books, narrators } from '@db/schema.js';
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
 import { tokenizeNarrators } from '@core/utils/similarity.js';
@@ -54,18 +54,67 @@ function applyDurationFields(
   }
 }
 
-/** Serialized entry point for callers that hold no admission lock. */
+/**
+ * The controlling snapshot the unlocked entry substitutes for its caller's: folder, fill-empty
+ * duration and cover, and the narrator provenance the tag-fill gate reads. Null when the row is
+ * gone or owns no folder.
+ */
+async function readEnrichmentSnapshot(
+  db: Db,
+  bookId: number,
+  narratorSource: NarratorSource | undefined,
+): Promise<{ targetPath: string; book: AudioEnrichmentBook } | null> {
+  const rows = await db
+    .select({ path: books.path, duration: books.duration, coverUrl: books.coverUrl })
+    .from(books)
+    .where(eq(books.id, bookId))
+    .limit(1);
+  const row = rows[0];
+  if (!row?.path) return null;
+
+  const narratorRows = await db
+    .select({ name: narrators.name })
+    .from(bookNarrators)
+    .innerJoin(narrators, eq(narrators.id, bookNarrators.narratorId))
+    .where(eq(bookNarrators.bookId, bookId));
+
+  return {
+    targetPath: row.path,
+    book: {
+      narrators: narratorRows,
+      duration: row.duration,
+      coverUrl: row.coverUrl,
+      ...(narratorSource !== undefined && { narratorSource }),
+    },
+  };
+}
+
+/**
+ * Serialized entry point for callers that hold no admission lock. Like `downloadRemoteCover`, it
+ * takes no folder or row snapshot: anything an unlocked caller could hand in was read before the
+ * section, so a call queued behind a rename would scan the vacated folder, drop its cover there and
+ * then commit that scan to the row it no longer describes (AC3). `narratorSource` is the exception —
+ * it is per-import provenance carried on the job payload, not a column, so there is no row to read
+ * it from.
+ */
 export async function enrichBookFromAudio(
   bookId: number,
-  targetPath: string,
-  book: AudioEnrichmentBook,
   db: Db,
   log: FastifyBaseLogger,
   bookService?: BookService,
   ffprobePath?: string,
+  narratorSource?: NarratorSource,
 ): Promise<EnrichmentResult> {
-  return withBookAdmissionLock(bookId, () =>
-    enrichBookFromAudioWithinAdmissionLock(bookId, targetPath, book, db, log, bookService, ffprobePath));
+  return withBookAdmissionLock(bookId, async () => {
+    const snapshot = await readEnrichmentSnapshot(db, bookId, narratorSource);
+    if (!snapshot) {
+      log.debug({ bookId }, 'Audio enrichment skipped — the book owns no folder now');
+      return { enriched: false };
+    }
+    return enrichBookFromAudioWithinAdmissionLock(
+      bookId, snapshot.targetPath, snapshot.book, db, log, bookService, ffprobePath,
+    );
+  });
 }
 
 /**

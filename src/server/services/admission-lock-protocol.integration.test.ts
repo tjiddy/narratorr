@@ -11,6 +11,7 @@ import { BookDeletionService } from './book-deletion.service.js';
 import { RenameService, RenameError } from './rename.service.js';
 import { refreshScanBook, RefreshScanError } from './refresh-scan.service.js';
 import { TaggingService, RetagError } from './tagging.service.js';
+import { enrichBookFromAudio } from './enrichment-utils.js';
 import { writeOpfSidecar } from '../utils/opf-writer.js';
 import type { CoverUploadError } from './cover-upload.js';
 import { generatePublicId } from '../utils/public-id.js';
@@ -376,6 +377,70 @@ describe('admission-lock protocol — every folder and identity mutator serializ
       expect(error).toBeInstanceOf(RetagError);
       expect((error as RetagError).code).toBe('NOT_FOUND');
       expect(vi.mocked(writeTagsWithMutagen)).not.toHaveBeenCalled();
+    });
+
+    /**
+     * F15. The unlocked audio-enrichment entry is the last surface that could have carried a
+     * caller's pre-lock folder into the section. Its scan, its embedded-cover write and its scalar
+     * commit all key on one snapshot, so a stale one writes an entire enrichment — cover included —
+     * into the vacated folder and then commits it to a row that names somewhere else.
+     */
+    it('makes an unlocked audio enrichment queued behind a rename scan and write the post-rename folder', async () => {
+      const bookId = await seedBook('Wanderer', join('Wrong', 'Old'));
+      const oldPath = join(root, 'Wrong', 'Old');
+      const target = join(root, 'Unknown Author', 'Wanderer');
+      vi.mocked(scanAudioDirectory).mockResolvedValue({
+        codec: 'aac', bitrate: 64000, sampleRate: 44100, channels: 2, bitrateMode: 'cbr',
+        fileFormat: 'M4B', fileCount: 1, totalSize: 1000, totalDuration: 600, hasCoverArt: true,
+        coverImage: Buffer.from('embedded'), coverMimeType: 'image/jpeg',
+      } as never);
+
+      const { gate, entered } = gateNextRename();
+      const renameRun = renameService.renameBook(bookId);
+      await entered.promise;
+
+      const enrichRun = enrichBookFromAudio(bookId, db, inject<FastifyBaseLogger>(log), bookService);
+      await settle();
+      // Queued: it has not read the row, so nothing has been scanned against either folder.
+      expect(vi.mocked(scanAudioDirectory)).not.toHaveBeenCalled();
+
+      gate.resolve();
+      await renameRun;
+      const result = await enrichRun;
+
+      expect(result.enriched).toBe(true);
+      const scanned = vi.mocked(scanAudioDirectory).mock.calls.map((c) => norm(String(c[0])));
+      expect(scanned).toEqual([norm(target)]);
+      expect(scanned).not.toContain(norm(oldPath));
+      // The embedded cover landed in the folder the row names, and the vacated one is gone.
+      expect(await exists(join(target, 'cover.jpg'))).toBe(true);
+      expect(await exists(oldPath)).toBe(false);
+      // The scan it committed is the one it took against that same folder.
+      const [row] = await db.select({ audioFileCount: books.audioFileCount, coverUrl: books.coverUrl })
+        .from(books).where(eq(books.id, bookId));
+      expect(row?.audioFileCount).toBe(1);
+      expect(row?.coverUrl).toBe(`/api/books/${bookId}/cover`);
+    });
+
+    // The delete direction: an enrichment with no row left writes nothing and reports nothing.
+    it('makes an unlocked audio enrichment queued behind a delete skip instead of scanning a dead path', async () => {
+      const bookId = await seedBook('Wanderer', join('Wrong', 'Old'));
+
+      const parked = deferred();
+      const holder = withBookAdmissionLock(bookId, async () => {
+        await parked.promise;
+        await deletionService.deleteBookWithinAdmissionLock(bookId, { deleteFiles: true });
+      });
+
+      const enrichRun = enrichBookFromAudio(bookId, db, inject<FastifyBaseLogger>(log), bookService);
+      await settle();
+      expect(vi.mocked(scanAudioDirectory)).not.toHaveBeenCalled();
+
+      parked.resolve();
+      await holder;
+
+      expect(await enrichRun).toEqual({ enriched: false });
+      expect(vi.mocked(scanAudioDirectory)).not.toHaveBeenCalled();
     });
 
     // Case 12 — cover upload behind a rename localizes against the folder the book owns now.
