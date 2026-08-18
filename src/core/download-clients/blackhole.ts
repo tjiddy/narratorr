@@ -12,6 +12,25 @@ export interface BlackholeConfig {
   protocol: DownloadProtocol;
 }
 
+/** Windows-only failure family: MoveFileEx rejects while the destination is mid-replace by a
+ *  concurrent rename or briefly held by a watcher. POSIX rename replaces atomically, so the
+ *  retry path is never entered on Linux (#2396). */
+const TRANSIENT_RENAME_CODES = new Set(['EPERM', 'EACCES']);
+const RENAME_RETRY_LIMIT = 5;
+const RENAME_RETRY_BASE_DELAY_MS = 15;
+
+async function renameWithTransientRetry(from: string, to: string): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await rename(from, to);
+    } catch (error: unknown) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === undefined || !TRANSIENT_RENAME_CODES.has(code) || attempt >= RENAME_RETRY_LIMIT) throw error;
+      await new Promise((resolve) => setTimeout(resolve, RENAME_RETRY_BASE_DELAY_MS * attempt));
+    }
+  }
+}
+
 /**
  * The rename is the publish, so it is also the only defensible commit point. Neither half logs:
  * `src/core` adapters throw, and the server catch that receives the rejection owns the record.
@@ -21,7 +40,7 @@ function stagedHandoff(tempPath: string, finalPath: string): StagedHandoff {
   return {
     async commit(): Promise<void> {
       if (published) return;
-      await rename(tempPath, finalPath);
+      await renameWithTransientRetry(tempPath, finalPath);
       published = true;
     },
     async abort(): Promise<void> {

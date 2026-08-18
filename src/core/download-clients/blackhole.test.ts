@@ -811,6 +811,51 @@ describe('BlackholeClient', () => {
       expect(await tempNames()).toHaveLength(1);
     });
 
+    // #2396: Windows MoveFileEx transiently rejects a rename whose destination is mid-replace by
+    // a concurrent rename or held by a watcher. Fault-injected rather than raced, so the retry is
+    // exercised deterministically on every platform, including the Linux pipeline.
+    it('publishes after a transient EPERM on the commit rename, setting published exactly once', async () => {
+      const staged = await realClient.stageDownload({ type: 'torrent-bytes', data: Buffer.from('d8'), infoHash: 'a' });
+      vi.mocked(rename).mockClear();
+      vi.mocked(rename).mockRejectedValueOnce(Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' }));
+
+      await staged.commit();
+
+      expect(vi.mocked(rename)).toHaveBeenCalledTimes(2);
+      expect(await finalNames()).toHaveLength(1);
+      expect(await tempNames()).toEqual([]);
+
+      // published guards the retry-published handoff too: a second commit is a no-op.
+      await staged.commit();
+      expect(vi.mocked(rename)).toHaveBeenCalledTimes(2);
+    });
+
+    it('rejects when the EPERM persists past the retry bound, and abort still cleans the staged file', async () => {
+      const staged = await realClient.stageDownload({ type: 'torrent-bytes', data: Buffer.from('d8'), infoHash: 'a' });
+      vi.mocked(rename).mockClear();
+      vi.mocked(rename).mockRejectedValue(Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' }));
+
+      await expect(staged.commit()).rejects.toThrow('EPERM');
+
+      // Bounded: exactly the limit, not one-and-done and not forever.
+      expect(vi.mocked(rename)).toHaveBeenCalledTimes(5);
+      expect(await finalNames()).toEqual([]);
+
+      await staged.abort();
+      expect(await tempNames()).toEqual([]);
+    });
+
+    it('rejects a non-transient rename error immediately without consuming retries', async () => {
+      const staged = await realClient.stageDownload({ type: 'torrent-bytes', data: Buffer.from('d8'), infoHash: 'a' });
+      vi.mocked(rename).mockClear();
+      vi.mocked(rename).mockRejectedValueOnce(Object.assign(new Error('ENOENT: no such file or directory, rename'), { code: 'ENOENT' }));
+
+      await expect(staged.commit()).rejects.toThrow('ENOENT');
+      expect(vi.mocked(rename)).toHaveBeenCalledTimes(1);
+      expect(await finalNames()).toEqual([]);
+      expect(await tempNames()).toHaveLength(1);
+    });
+
     it('publishes nothing while the commit rename is still in flight', async () => {
       const staged = await realClient.stageDownload({ type: 'torrent-bytes', data: Buffer.from('d8'), infoHash: 'a' });
       let releaseRename!: () => void;
