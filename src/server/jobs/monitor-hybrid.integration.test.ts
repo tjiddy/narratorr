@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { Mock } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '@core/__tests__/msw/server.js';
@@ -42,12 +42,19 @@ describe('#2423 monitor over the real QBittorrentClient', () => {
     completion_on: 0,
   };
 
+  const FROZEN_NOW = new Date('2026-08-17T23:09:30.000Z');
+
   let db: ReturnType<typeof createMockDb>;
   let log: ReturnType<typeof createMockLogger>;
   let notifierService: { notify: Mock };
   let updateChain: ReturnType<typeof mockDbChain>;
 
+  // seedRow and monitorDownloads both read Date.now(); freeze it so the genuine-absence control is
+  // outside grace by construction. Fake ONLY Date — full fake timers stall MSW and the native
+  // AbortSignal.timeout inside fetchWithTimeout that the real adapter's requests depend on.
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(FROZEN_NOW);
     db = createMockDb();
     log = createMockLogger();
     notifierService = { notify: vi.fn().mockResolvedValue(undefined) };
@@ -59,6 +66,10 @@ describe('#2423 monitor over the real QBittorrentClient', () => {
         headers: { 'Set-Cookie': 'SID=test-session-id; path=/' },
       })),
     );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   /** The row stores the grabbed v1 hash and is well outside the grace window (#2423 Part B). */

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { Mock } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService, searchStatus, mockSearchAllWithStatus } from '../__tests__/helpers.js';
@@ -2018,6 +2018,7 @@ describe('#2423 missing-item grace window', () => {
   };
 
   const GRACE_MS = 120_000;
+  const FROZEN_NOW = new Date('2026-08-17T23:09:30.000Z');
   const fresh = () => new Date(Date.now() - 5_000);
   const stale = () => new Date(Date.now() - 10 * 60_000);
 
@@ -2031,7 +2032,11 @@ describe('#2423 missing-item grace window', () => {
     };
   }
 
+  // Fixtures and monitorDownloads both read Date.now(), so the host clock would otherwise pick the
+  // branch. Fake ONLY Date — full fake timers stall promise-driven job code and MSW-backed suites.
   beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(FROZEN_NOW);
     const { RetryBudget } = await import('../services/retry-budget.js');
     db = createMockDb();
     log = createMockLogger();
@@ -2053,6 +2058,10 @@ describe('#2423 missing-item grace window', () => {
         log: createMockLogger(),
       },
     };
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   async function runMonitor() {
@@ -2194,15 +2203,19 @@ describe('#2423 missing-item grace window', () => {
     expect(retryDeps.blacklistService.create).toHaveBeenCalledWith(expect.objectContaining({ infoHash: 'def456' }));
   });
 
+  // The SAME row polled twice, with only wall time moving — the frozen clock is what makes the
+  // window's expiry (rather than a swapped fixture) the thing that flips the branch.
   it('suppresses the first poll then fails the row once the window has elapsed', async () => {
-    db.select.mockReturnValueOnce(mockDbChain([row()]));
+    const flapping = row();
+    db.select.mockReturnValueOnce(mockDbChain([flapping]));
     adapter.getDownload.mockResolvedValueOnce(null);
     db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
     await runMonitor();
     expectNoFailureSideEffects();
 
-    db.select.mockReturnValueOnce(mockDbChain([row({ addedAt: stale() })]));
+    vi.setSystemTime(new Date(FROZEN_NOW.getTime() + GRACE_MS));
+    db.select.mockReturnValueOnce(mockDbChain([flapping]));
     adapter.getDownload.mockResolvedValueOnce(null);
 
     await runMonitor();
