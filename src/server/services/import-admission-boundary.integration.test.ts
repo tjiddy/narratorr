@@ -60,6 +60,7 @@ vi.mock('../utils/import-steps.js', async (importOriginal) => {
 
 import { rename } from 'node:fs/promises';
 import { checkDiskSpace } from '../utils/import-steps.js';
+import { orchestrateBookEnrichment } from './enrichment-orchestration.helpers.js';
 import { ImportService } from './import.service.js';
 import { ManualImportAdapter } from './import-adapters/manual.js';
 import { BookService } from './book.service.js';
@@ -217,6 +218,25 @@ describe('both import homes serialize behind other mutators (#2369 AC6)', () => 
     id: 1,
     bookId,
     metadata: JSON.stringify({ path: source, title, authorName: 'Unknown Author', mode: 'copy' as const }),
+  });
+
+  /**
+   * An attach hydrates from the incumbent's author relation, which `seedBook`'s bare row insert
+   * cannot carry — `buildAttachNaming` reads `book.authors[0]`, not a column.
+   */
+  const seedAttachIncumbent = async (title: string, authorName: string, asin: string): Promise<number> => {
+    const created = await bookService.create(inject({ title, authors: [{ name: authorName }], asin }));
+    await db.update(books).set({ path: null, status: 'importing' }).where(eq(books.id, created.id));
+    return created.id;
+  };
+
+  /** The offer is deliberately wrong on every hydrated field, so believing it is visible. */
+  const attachJob = (bookId: number): ImportJob => inject<ImportJob>({
+    id: 2,
+    bookId,
+    metadata: JSON.stringify({
+      path: source, title: 'Offered Title', authorName: 'Offered Author', mode: 'copy' as const, attach: true,
+    }),
   });
 
   /** Park the next `fs.rename` so the rename sits inside the section it holds. */
@@ -415,6 +435,57 @@ describe('both import homes serialize behind other mutators (#2369 AC6)', () => 
       expect(norm(row?.path)).toBe(norm(join(root, 'Unknown Author', 'Wanderer')));
       // The file template ran against the post-edit identity, not the queued payload's title.
       expect(await actualFs.readdir(join(root, 'Unknown Author', 'Wanderer'))).toEqual(['Renamed By Operator.m4b']);
+    });
+
+    /**
+     * F16. The attach hydration is a SECOND controlling snapshot, and the case above cannot stand in
+     * for it: an ordinary manual import never calls `resolveAttachContext`, so moving that call out
+     * of the section leaves every non-attach case green. An attach derives its folder naming, its
+     * file naming and its provider identity from the incumbent ROW, so a queued one must read the
+     * row the edit ahead of it left behind — not the pre-edit row, and never the offer, which an
+     * attach has no authority to believe.
+     */
+    it('hydrates a queued attach from the post-edit incumbent for naming and provider identity', async () => {
+      const bookId = await seedAttachIncumbent('Pre-Edit Title', 'Pre-Edit Author', 'B00PREEDIT');
+      const { adapter, ctx } = manualAdapter();
+
+      const parked = deferred();
+      const holder = withBookAdmissionLock(bookId, async () => {
+        await parked.promise;
+        await bookService.update(bookId, {
+          title: 'Post-Edit Title', asin: 'B00POSTED1', authors: [{ name: 'Post-Edit Author' }],
+        }, { userAsserted: true });
+      });
+
+      const importRun = adapter.process(attachJob(bookId), ctx);
+      await settle();
+
+      // Waiting on admission with nothing hydrated: neither incumbent's folder has been derived.
+      expect(await exists(join(root, 'Pre-Edit Author'))).toBe(false);
+      expect(await exists(join(root, 'Post-Edit Author'))).toBe(false);
+      expect(vi.mocked(orchestrateBookEnrichment)).not.toHaveBeenCalled();
+
+      parked.resolve();
+      await holder;
+      await importRun;
+
+      const target = join(root, 'Post-Edit Author', 'Post-Edit Title');
+      const row = await bookRow(bookId);
+      expect(norm(row?.path)).toBe(norm(target));
+      expect(row?.status).toBe('imported');
+      // Both naming consumers — the folder template and the file template — took the post-edit row.
+      expect(await actualFs.readdir(target)).toEqual(['Post-Edit Title.m4b']);
+      expect(await exists(join(root, 'Pre-Edit Author'))).toBe(false);
+      expect(await exists(join(root, 'Offered Author'))).toBe(false);
+
+      // Provider identity: the background lookup keys on the post-edit row on all three fields.
+      const call = vi.mocked(orchestrateBookEnrichment).mock.calls[0]!;
+      expect(call[4]).toMatchObject({
+        primaryAsin: 'B00POSTED1', title: 'Post-Edit Title', author: 'Post-Edit Author',
+      });
+      // Pins that the attach arm actually ran; otherwise the assertions above could pass on the
+      // ordinary path, where `payload.title` happens to agree with the row for a different reason.
+      expect(call[5]).toEqual({ attach: true });
     });
   });
 });
