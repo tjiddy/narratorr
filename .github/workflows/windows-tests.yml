@@ -65,12 +65,29 @@ jobs:
       # worker count the DB-heavy integration tests time out (run 32109789777: two seed-loop
       # timeouts incl. AC14 blowing its 60s ceiling) and fork-pool contention has produced
       # post-suite worker crashes. Half the workers, each with double the disk budget.
+      #
+      # This step never fails: it hands vitest's exit code and its combined output to the guard,
+      # which is the only thing that can red the job (#2445). GitHub's bash default is `-eo
+      # pipefail`, so without `set +e` a non-zero vitest aborts the step before the guard runs,
+      # and `$?` after a pipe reports tee's status rather than vitest's — hence PIPESTATUS[0].
       - name: Test
-        run: pnpm test --reporter=default --reporter=json --outputFile.json=vitest-windows.json --maxWorkers=2
+        id: test
+        shell: bash
+        run: |
+          set +e
+          pnpm test --reporter=default --reporter=json --outputFile.json=vitest-windows.json --maxWorkers=2 2>&1 | tee vitest-windows.log
+          echo "exit-code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
 
-      # `passWithNoTests: true` makes a zero-file glob exit green, so the step above cannot prove
-      # the suite was selected. Ungated on purpose: if the tests failed, the job is already red for
-      # the right reason and this step should not run at all.
+      # Two things the test step's own exit code cannot tell apart from a healthy run.
+      # `passWithNoTests: true` makes a zero-file glob exit green, so a green exit does not prove
+      # the suite was selected; and the fork pool crashes at teardown after a fully green suite
+      # roughly one run in four, so a red exit does not prove a test failed. The guard adjudicates
+      # both from the JSON report and the captured log, and its exit code is the job's verdict.
       - name: Assert non-empty per-project selection
         shell: bash
-        run: pnpm exec tsx scripts/check-vitest-selection.ts vitest-windows.json
+        env:
+          VITEST_EXIT_CODE: ${{ steps.test.outputs.exit-code }}
+        run: >
+          pnpm exec tsx scripts/check-vitest-selection.ts vitest-windows.json
+          --exit-code="$VITEST_EXIT_CODE"
+          --log=vitest-windows.log
