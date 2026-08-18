@@ -17,6 +17,7 @@ import { decryptFields, getKey } from '../utils/secret-codec.js';
 import { resolveAndEncryptSettings } from '../utils/sentinel-resolver.js';
 import { SECRET_CATEGORIES } from '../utils/secret-category-map.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { withLibraryRootWrite } from './library-root-gate.js';
 
 
 export type { AppSettings };
@@ -136,7 +137,21 @@ export class SettingsService {
     return merged;
   }
 
+  /**
+   * A request touching `library` goes through the root-scope gate, which refuses while an import,
+   * merge or rename is deriving paths from the current root. The gate wraps the WHOLE loop, not the
+   * `library` iteration, because the loop is nontransactional: a refusal decided mid-loop would
+   * leave earlier categories written. Scoped to the category rather than to `path` alone because
+   * `folderFormat`/`fileFormat` are part of the same controlling snapshot a commit derives from.
+   */
   async update(partial: UpdateSettingsInput): Promise<AppSettings> {
+    if (partial.library !== undefined) {
+      return withLibraryRootWrite(() => this.applyUpdate(partial));
+    }
+    return this.applyUpdate(partial);
+  }
+
+  private async applyUpdate(partial: UpdateSettingsInput): Promise<AppSettings> {
     for (const [key, value] of Object.entries(partial)) {
       if (value !== undefined) {
         const category = key as SettingsCategory;

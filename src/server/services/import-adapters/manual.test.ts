@@ -14,7 +14,7 @@ import type { ImportPipelineDeps } from '../import-orchestration.helpers.js';
 import type { ImportAdapterContext, ImportJob, ManualImportJobPayload } from './types.js';
 import { ManualImportAdapter } from './manual.js';
 import * as importOrchestration from '../import-orchestration.helpers.js';
-import { writeOpfForImport } from '../../utils/opf-writer.js';
+import { writeOpfForImportWithinAdmissionLock } from '../../utils/opf-writer.js';
 
 // Keep pipeline copy/rename real while mocking fs, audio staging, and sizing so adapter↔helper seam regressions surface.
 // Lower-level filtering/streaming has dedicated suites. Only #1740 spies on pipeline copyToLibrary because occupied-target
@@ -63,7 +63,7 @@ vi.mock('../../utils/delete-managed-files.js', () => ({
 
 // Assert OPF wiring here; opf-writer.test.ts covers reload, XML, and nonfatal writes (#1669).
 vi.mock('../../utils/opf-writer.js', () => ({
-  writeOpfForImport: vi.fn().mockResolvedValue(undefined),
+  writeOpfForImportWithinAdmissionLock: vi.fn().mockResolvedValue(undefined),
 }));
 
 function createMockLogger(): FastifyBaseLogger {
@@ -252,8 +252,8 @@ describe('ManualImportAdapter', () => {
       it('writes the OPF sidecar into the copy/move finalPath when writeOpf is enabled', async () => {
         await makeOpfAdapter(true).process(makeJob(), ctx);
 
-        expect(writeOpfForImport).toHaveBeenCalledTimes(1);
-        const arg = vi.mocked(writeOpfForImport).mock.calls[0]![0];
+        expect(writeOpfForImportWithinAdmissionLock).toHaveBeenCalledTimes(1);
+        const arg = vi.mocked(writeOpfForImportWithinAdmissionLock).mock.calls[0]![0];
         expect(arg.enabled).toBe(true);
         expect(arg.bookId).toBe(42);
         expect(arg.bookService).toBe(deps.bookService);
@@ -264,7 +264,7 @@ describe('ManualImportAdapter', () => {
         await makeOpfAdapter(true).process(makeJob(), ctx);
 
         // A hard-coded 'auto' in the writer would attribute an operator's import to the wrong path.
-        expect(vi.mocked(writeOpfForImport).mock.calls[0]![0].preserve)
+        expect(vi.mocked(writeOpfForImportWithinAdmissionLock).mock.calls[0]![0].preserve)
           .toEqual({ source: 'manual', eventHistory: deps.eventHistory });
       });
 
@@ -272,7 +272,7 @@ describe('ManualImportAdapter', () => {
         const job = makeJob({ metadata: JSON.stringify({ path: '/audiobooks/Author/Title', title: 'Test Book', authorName: 'Author' }) });
         await makeOpfAdapter(true).process(job, ctx);
 
-        const arg = vi.mocked(writeOpfForImport).mock.calls[0]![0];
+        const arg = vi.mocked(writeOpfForImportWithinAdmissionLock).mock.calls[0]![0];
         expect(arg.enabled).toBe(true);
         expect(normPath(arg.bookFolder)).toBe('/audiobooks/Author/Title');
       });
@@ -280,11 +280,11 @@ describe('ManualImportAdapter', () => {
       it('passes enabled:false to the OPF helper when writeOpf is disabled (default)', async () => {
         await adapter.process(makeJob(), ctx);
 
-        expect(writeOpfForImport).toHaveBeenCalledWith(expect.objectContaining({ enabled: false, bookId: 42 }));
+        expect(writeOpfForImportWithinAdmissionLock).toHaveBeenCalledWith(expect.objectContaining({ enabled: false, bookId: 42 }));
       });
 
       it('OPF write failure is nonfatal — import still completes and a warning is logged', async () => {
-        vi.mocked(writeOpfForImport).mockRejectedValueOnce(new Error('disk full'));
+        vi.mocked(writeOpfForImportWithinAdmissionLock).mockRejectedValueOnce(new Error('disk full'));
 
         await expect(makeOpfAdapter(true).process(makeJob(), ctx)).resolves.toBeUndefined();
         expect(mockConnectorService.notifyRefresh).toHaveBeenCalled();

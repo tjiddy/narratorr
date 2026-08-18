@@ -2,7 +2,7 @@ import type { Mock } from 'vitest';
 import { readdir, mkdir, cp, unlink, stat, rm, rename } from 'node:fs/promises';
 import { processAudioFiles } from '@core/utils/audio-processor.js';
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
-import { enrichBookFromAudio } from '../enrichment-utils.js';
+import { enrichBookFromAudioWithinAdmissionLock } from '../enrichment-utils.js';
 import { dotPrefixBasename } from '@core/utils/hidden-staging.js';
 import { createMockDbBook, createMockDbAuthor } from '../../__tests__/factories.js';
 
@@ -64,7 +64,7 @@ export function setupHappyPath() {
   (unlink as Mock).mockResolvedValue(undefined);
   (rm as Mock).mockResolvedValue(undefined);
   (stat as Mock).mockResolvedValue({ size: 500_000_000 });
-  (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+  (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
 }
 
 export function setupBlockingMerge() {
@@ -76,7 +76,7 @@ export function setupBlockingMerge() {
   (rename as Mock).mockResolvedValue(undefined);
   (unlink as Mock).mockResolvedValue(undefined);
   (stat as Mock).mockResolvedValue({ size: 100 });
-  (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+  (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
   let release!: () => void;
   const blocked = new Promise<void>((resolve) => { release = resolve; });
   (processAudioFiles as Mock).mockImplementation(async () => {

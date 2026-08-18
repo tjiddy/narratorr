@@ -16,6 +16,7 @@ import { preserveBookCover } from '../utils/cover-cache.js';
 import { config } from '../config.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { BookRowPublic } from './types.js';
+import { withBookAdmissionLock } from './book-admission.js';
 
 /**
  * The rejected release left the book while the blacklist and retry search were in flight. Never
@@ -35,8 +36,19 @@ export class BookRejectionService {
     private companionEbook?: CompanionBookReconcileTrigger,
   ) {}
 
-  /** Blacklist first, reset DB before filesystem work, then clean up and record best-effort. */
+  /**
+   * Blacklist first, reset DB before filesystem work, then clean up and record best-effort.
+   *
+   * Admission outside the claim key. The blacklist/retry await is inside it too: the identity
+   * re-read that decides whether the rejected release is still on the book is only meaningful if
+   * nothing else can repoint the row while this runs.
+   */
   async rejectAsWrongRelease(bookId: number): Promise<void> {
+    return withBookAdmissionLock(bookId, () => this.rejectWithinAdmissionLock(bookId));
+  }
+
+  /** Caller must hold the admission lock for `bookId`. */
+  private async rejectWithinAdmissionLock(bookId: number): Promise<void> {
     const book = await this.bookService.getById(bookId);
     if (!book) throw new BookRejectionError('Book not found', 'NOT_FOUND');
     if (book.status !== 'imported') throw new BookRejectionError('Book is not imported', 'NOT_IMPORTED');

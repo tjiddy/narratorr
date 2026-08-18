@@ -41,7 +41,7 @@ vi.mock('@core/utils/audio-scanner.js', () => ({
 }));
 
 vi.mock('./enrichment-utils.js', () => ({
-  enrichBookFromAudio: vi.fn(),
+  enrichBookFromAudioWithinAdmissionLock: vi.fn(),
 }));
 
 // Marker recovery touches real fs and short-circuits incorrectly under this suite's fs mocks.

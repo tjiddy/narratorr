@@ -8,7 +8,8 @@ import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
 import { tokenizeNarrators } from '@core/utils/similarity.js';
 import type { BookService } from './book.service.js';
-import { downloadRemoteCover, isRemoteCoverUrl } from './cover-download.js';
+import { downloadRemoteCoverWithinAdmissionLock, isRemoteCoverUrl } from './cover-download.js';
+import { withBookAdmissionLock } from './book-admission.js';
 import { mimeToExt } from '../utils/mime.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -53,7 +54,28 @@ function applyDurationFields(
   }
 }
 
+/** Serialized entry point for callers that hold no admission lock. */
 export async function enrichBookFromAudio(
+  bookId: number,
+  targetPath: string,
+  book: AudioEnrichmentBook,
+  db: Db,
+  log: FastifyBaseLogger,
+  bookService?: BookService,
+  ffprobePath?: string,
+): Promise<EnrichmentResult> {
+  return withBookAdmissionLock(bookId, () =>
+    enrichBookFromAudioWithinAdmissionLock(bookId, targetPath, book, db, log, bookService, ffprobePath));
+}
+
+/**
+ * Caller must hold the admission lock for `bookId`.
+ *
+ * The scan, the embedded cover-art extraction, the narrator writeback and the scalar row update are
+ * one operation: they all target `targetPath` and the same row, and splitting them would let a
+ * rename land between the cover write and the row update.
+ */
+export async function enrichBookFromAudioWithinAdmissionLock(
   bookId: number,
   targetPath: string,
   book: AudioEnrichmentBook,
@@ -113,9 +135,13 @@ export async function enrichBookFromAudio(
       }
     }
 
+    // Awaited, not fired and forgotten: an un-awaited download outlives whatever lock its caller
+    // holds, so its file write and DB localization would land unserialized by construction.
+    // The `catch` keeps the previous error isolation — the writer never throws by contract, but a
+    // cover failure must not become an enrichment failure if that ever changes.
     if (isRemoteCoverUrl(book.coverUrl) && !update.coverUrl) {
-      downloadRemoteCover(bookId, targetPath, book.coverUrl!, db, log)
-        .catch((err: unknown) => log.warn({ error: serializeError(err), bookId }, 'Fire-and-forget remote cover download failed'));
+      await downloadRemoteCoverWithinAdmissionLock(bookId, targetPath, book.coverUrl!, db, log)
+        .catch((err: unknown) => log.warn({ error: serializeError(err), bookId }, 'Remote cover download failed'));
     }
 
     await db.update(books).set(update).where(eq(books.id, bookId));

@@ -4,7 +4,10 @@ import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads } from '@db/schema.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
-import { enrichBookFromAudio } from './enrichment-utils.js';
+import { enrichBookFromAudioWithinAdmissionLock } from './enrichment-utils.js';
+import { withBookAdmissionLock } from './book-admission.js';
+import { beginRootCommit } from './library-root-gate.js';
+import type { AppSettings } from '@shared/schemas/settings/registry.js';
 import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
 import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
 import type { DownloadClientService } from './download-client.service.js';
@@ -110,14 +113,55 @@ export class ImportService {
     };
   }
 
-  /** Execute filesystem/DB import; the orchestrator owns external side effects. */
+  /**
+   * Execute filesystem/DB import; the orchestrator owns external side effects.
+   *
+   * Download resolution stays outside the lock — it names the book, so it has to run first — and
+   * everything the target is derived from runs inside it.
+   */
   async importDownload(downloadId: number, callbacks?: ImportProgressCallbacks): Promise<ImportResult> {
-    const startMs = Date.now();
     const download = await this.getDownload(downloadId);
     if (!download) throw new Error(`Download ${downloadId} not found`);
     if (!download.bookId) throw new Error(`Download ${downloadId} has no linked book`);
 
-    const book = await this.bookService!.getById(download.bookId);
+    return withBookAdmissionLock(download.bookId, () =>
+      this.importWithinAdmissionLock(downloadId, download, callbacks));
+  }
+
+  /**
+   * Caller must hold the admission lock for `download.bookId`.
+   *
+   * The row read, the canonical library root, the naming options, the target, `protectTarget`, the
+   * marker preflight and the root-dependent disk-space check all sit inside the section and ahead of
+   * the first target mutation. An import that woke behind a rename would otherwise build its target
+   * — and prove its free space — against a root or a `book.path` that no longer applies.
+   */
+  private async importWithinAdmissionLock(
+    downloadId: number,
+    download: DownloadRow,
+    callbacks?: ImportProgressCallbacks,
+  ): Promise<ImportResult> {
+    const startMs = Date.now();
+    // `import.minFreeSpaceGB` is a threshold, not a root, so it is safe to read before registering;
+    // the check that consumes it is not, because its `libraryPath` argument is the root.
+    const importSettings = await this.settingsService.get('import');
+    const rootCommit = await beginRootCommit(this.settingsService);
+    try {
+      return await this.runImportCommit(downloadId, download, importSettings, rootCommit.library, startMs, callbacks);
+    } finally {
+      rootCommit.release();
+    }
+  }
+
+  private async runImportCommit(
+    downloadId: number,
+    download: DownloadRow,
+    importSettings: { minFreeSpaceGB: number; deleteAfterImport: boolean; minSeedTime: number; minSeedRatio: number },
+    librarySettings: AppSettings['library'],
+    startMs: number,
+    callbacks?: ImportProgressCallbacks,
+  ): Promise<ImportResult> {
+    const book = await this.bookService!.getById(download.bookId!);
     if (!book) throw new Error(`Book ${download.bookId} not found`);
     const authorName = book.authors[0]?.name ?? null;
 
@@ -131,10 +175,6 @@ export class ImportService {
     try {
       const { resolvedPath: savePath, originalPath } = await resolveSavePath(download, this.downloadClientService, this.remotePathMappingService);
       this.log.debug({ downloadId, bookTitle: book.title, resolvedPath: savePath, originalPath }, 'Resolved save path');
-      const [librarySettings, importSettings] = await Promise.all([
-        this.settingsService.get('library'),
-        this.settingsService.get('import'),
-      ]);
       const namingOptions = toNamingOptions(librarySettings);
       libraryRoot = librarySettings.path;
       targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, book, authorName, namingOptions, book.editionLabel);
@@ -206,7 +246,7 @@ export class ImportService {
 
   private async enrichAfterImport(bookId: number, targetPath: string, book: BookWithAuthor, ffprobePath?: string): Promise<void> {
     try {
-      const enrichResult = await enrichBookFromAudio(bookId, targetPath, book, this.db, this.log, this.bookService, ffprobePath);
+      const enrichResult = await enrichBookFromAudioWithinAdmissionLock(bookId, targetPath, book, this.db, this.log, this.bookService, ffprobePath);
       if (enrichResult && typeof enrichResult === 'object' && 'enriched' in enrichResult && !enrichResult.enriched) {
         this.log.warn({ bookId, error: (enrichResult as { error?: string }).error }, 'Audio enrichment failed — import successful but metadata incomplete');
       }

@@ -777,7 +777,7 @@ describe('BookDeletionService.deleteMissingBooks — the sweep (#2329)', () => {
 
   it('routes through the shared single-book routine, never touching disk', async () => {
     const { service } = sweep([1, 2]);
-    const deleteBook = vi.spyOn(service, 'deleteBook');
+    const deleteBook = vi.spyOn(service, 'deleteBookWithinAdmissionLock');
 
     await service.deleteMissingBooks();
 
@@ -894,7 +894,7 @@ describe('BookDeletionService.deleteMissingBooks — the sweep (#2329)', () => {
       // the arm is stubbed. AC7 still specifies the bucket, and mis-bucketing it under-reports
       // the operator-visible failure count.
       const { service, log } = sweep([1, 2]);
-      vi.spyOn(service, 'deleteBook')
+      vi.spyOn(service, 'deleteBookWithinAdmissionLock')
         .mockResolvedValueOnce(result)
         .mockResolvedValueOnce({ outcome: 'deleted', bookTitle: 'Book 2' });
 

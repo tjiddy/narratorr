@@ -10,6 +10,8 @@ export interface BookStatusTransition {
   status?: BookStatus;
   path?: string | null;
   size?: number;
+  /** The import commit's folder discriminator; travels with `path` so rescans reuse it. */
+  editionLabel?: string;
   lastGrabGuid?: string | null;
   lastGrabInfoHash?: string | null;
 }
@@ -23,6 +25,7 @@ export async function transitionBookStatus(
   if (t.status !== undefined) set.status = t.status;
   if (t.path !== undefined) set.path = t.path;
   if (t.size !== undefined) set.size = t.size;
+  if (t.editionLabel !== undefined) set.editionLabel = t.editionLabel;
   if (t.lastGrabGuid !== undefined) set.lastGrabGuid = t.lastGrabGuid;
   if (t.lastGrabInfoHash !== undefined) set.lastGrabInfoHash = t.lastGrabInfoHash;
 

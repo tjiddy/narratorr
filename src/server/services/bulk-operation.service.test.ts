@@ -10,8 +10,8 @@ import { createMockDbBook } from '../__tests__/factories.js';
 import { BulkOperationService, BulkOpError } from './bulk-operation.service.js';
 import { RenameError } from './rename.service.js';
 import { RetagError } from './tagging.service.js';
-import { writeOpfSidecar } from '../utils/opf-writer.js';
-import { downloadRemoteCover } from './cover-download.js';
+import { writeOpfSidecarWithinAdmissionLock } from '../utils/opf-writer.js';
+import { downloadRemoteCoverWithinAdmissionLock } from './cover-download.js';
 import { readdir } from 'node:fs/promises';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@db/index.js';
@@ -30,11 +30,11 @@ function toSQL(expr: unknown): { sql: string; params: unknown[] } {
 
 // Mock outcome-producing I/O while keeping isRemoteCoverUrl's gating logic real.
 vi.mock('../utils/opf-writer.js', () => ({
-  writeOpfSidecar: vi.fn().mockResolvedValue('written'),
+  writeOpfSidecarWithinAdmissionLock: vi.fn().mockResolvedValue('written'),
 }));
 vi.mock('./cover-download.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./cover-download.js')>()),
-  downloadRemoteCover: vi.fn().mockResolvedValue('written'),
+  downloadRemoteCoverWithinAdmissionLock: vi.fn().mockResolvedValue('written'),
 }));
 
 
@@ -1027,8 +1027,8 @@ describe('TTL cleanup', () => {
 });
 
 describe('BulkOperationService — startWriteMetadataSidecarsJob (#1670)', () => {
-  const writeOpfMock = vi.mocked(writeOpfSidecar);
-  const downloadMock = vi.mocked(downloadRemoteCover);
+  const writeOpfMock = vi.mocked(writeOpfSidecarWithinAdmissionLock);
+  const downloadMock = vi.mocked(downloadRemoteCoverWithinAdmissionLock);
 
   beforeEach(() => {
     vi.resetAllMocks();
@@ -1164,8 +1164,8 @@ function renameRow(id: number, title: string) {
 }
 
 describe('BulkOperationService — named failure details (#2159)', () => {
-  const writeOpfMock = vi.mocked(writeOpfSidecar);
-  const downloadMock = vi.mocked(downloadRemoteCover);
+  const writeOpfMock = vi.mocked(writeOpfSidecarWithinAdmissionLock);
+  const downloadMock = vi.mocked(downloadRemoteCoverWithinAdmissionLock);
 
   beforeEach(() => {
     vi.resetAllMocks();
@@ -1390,8 +1390,8 @@ describe('BulkOperationService — named failure details (#2159)', () => {
 
 // Logs retain full serialized errors; failureDetails intentionally store only the short form.
 describe('BulkOperationService — per-book failure logs are unchanged (#2159 AC14)', () => {
-  const writeOpfMock = vi.mocked(writeOpfSidecar);
-  const downloadMock = vi.mocked(downloadRemoteCover);
+  const writeOpfMock = vi.mocked(writeOpfSidecarWithinAdmissionLock);
+  const downloadMock = vi.mocked(downloadRemoteCoverWithinAdmissionLock);
 
   beforeEach(() => {
     vi.resetAllMocks();

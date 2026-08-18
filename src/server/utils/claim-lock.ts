@@ -12,6 +12,11 @@ import { withPathWriteLock } from './path-write-lock.js';
  *    source/target pair through one sorted `withPathWriteLocks` acquisition.
  *  - Acquisition is one-directional: a claim-key holder may nest a FILE key (the EXDEV sidecar
  *    fallback), but a file-key holder never acquires anything further.
+ *
+ * **This tier is the MIDDLE of one order: admission (book id) → claim key (path) → file key.**
+ * `withBookAdmissionLock` (`../services/book-admission.ts`) is the outer tier and carries the full
+ * statement of the rule. A claim-key holder must never acquire the admission lock — enrolled
+ * operations take admission first, at their entry point, and only then reach this protocol.
  */
 export const MAX_CLAIM_KEY_REACQUIRES = 3;
 

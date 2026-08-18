@@ -14,6 +14,17 @@ export const idParamSchema = z.object({
   }),
 });
 
+/**
+ * The `{ error }` body `plugins/error-handler.ts` sends for every registered error. Register it as
+ * a route's response schema for a status the handler produces, or that status serializes through
+ * Fastify's default and the contract stays unpinned.
+ */
+export const apiErrorResponseSchema = z.object({
+  error: z.string(),
+});
+
+export type ApiErrorResponse = z.infer<typeof apiErrorResponseSchema>;
+
 export const DEFAULT_LIMITS = {
   books: 120,
   blacklist: 100,

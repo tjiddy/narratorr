@@ -12,6 +12,7 @@ import {
   fetchWithSsrfRedirect,
 } from '@core/utils/network-service.js';
 import { finalizeCoverWrite, type CoverWriteOutcome } from './cover-write.js';
+import { withBookAdmissionLock } from './book-admission.js';
 
 export function isRemoteCoverUrl(url: string | null | undefined): boolean {
   if (!url) return false;
@@ -80,11 +81,30 @@ async function readBodyWithCap(response: Response): Promise<Buffer> {
 }
 
 /**
+ * Serialized entry point for callers that hold no lock. The write and its `finalizeCoverWrite`
+ * localization share one admission section, so a rename or delete can neither move the folder
+ * between them nor leave a `cover.<ext>` in a folder the book no longer owns.
+ */
+export async function downloadRemoteCover(
+  bookId: number,
+  bookPath: string,
+  remoteUrl: string,
+  db: Db,
+  log: FastifyBaseLogger,
+  onFailure?: ((cause: unknown) => void) | undefined,
+): Promise<CoverWriteOutcome> {
+  return withBookAdmissionLock(bookId, () =>
+    downloadRemoteCoverWithinAdmissionLock(bookId, bookPath, remoteUrl, db, log, onFailure));
+}
+
+/**
+ * Caller must hold the admission lock for `bookId`.
+ *
  * Fetch through SSRF-safe redirect validation with a hard size cap, then atomically rename into
  * `cover.{ext}`. Rename commits `written`; later cleanup/DB failures cannot downgrade it. Returns
  * `failed` before that point and `skipped` for nonremote input; never throws.
  */
-export async function downloadRemoteCover(
+export async function downloadRemoteCoverWithinAdmissionLock(
   bookId: number,
   bookPath: string,
   remoteUrl: string,

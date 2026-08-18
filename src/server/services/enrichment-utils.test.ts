@@ -614,14 +614,14 @@ describe('enrichBookFromAudio — narratorSource gate (#2158 AC8)', () => {
 });
 
 vi.mock('./cover-download.js', () => ({
-  downloadRemoteCover: vi.fn().mockResolvedValue('written'),
+  downloadRemoteCoverWithinAdmissionLock: vi.fn().mockResolvedValue('written'),
   isRemoteCoverUrl: vi.fn((url: string | null | undefined) => {
     if (!url) return false;
     return url.startsWith('http://') || url.startsWith('https://');
   }),
 }));
 
-import { downloadRemoteCover } from './cover-download.js';
+import { downloadRemoteCoverWithinAdmissionLock } from './cover-download.js';
 
 describe('enrichBookFromAudio — remote cover download integration (#369)', () => {
   let mockDb: { update: ReturnType<typeof vi.fn> };
@@ -668,7 +668,7 @@ describe('enrichBookFromAudio — remote cover download integration (#369)', () 
       inject<Db>(mockDb), log,
     );
 
-    expect(downloadRemoteCover).toHaveBeenCalledWith(
+    expect(downloadRemoteCoverWithinAdmissionLock).toHaveBeenCalledWith(
       42, '/books/test', 'https://cdn.example.com/cover.jpg',
       expect.anything(), log,
     );
@@ -683,7 +683,7 @@ describe('enrichBookFromAudio — remote cover download integration (#369)', () 
       inject<Db>(mockDb), log,
     );
 
-    expect(downloadRemoteCover).not.toHaveBeenCalled();
+    expect(downloadRemoteCoverWithinAdmissionLock).not.toHaveBeenCalled();
   });
 
   it('does not fire downloadRemoteCover when embedded cover was saved', async () => {
@@ -695,7 +695,7 @@ describe('enrichBookFromAudio — remote cover download integration (#369)', () 
       inject<Db>(mockDb), log,
     );
 
-    expect(downloadRemoteCover).not.toHaveBeenCalled();
+    expect(downloadRemoteCoverWithinAdmissionLock).not.toHaveBeenCalled();
   });
 
   it('does not fire downloadRemoteCover when coverUrl is null', async () => {
@@ -707,12 +707,12 @@ describe('enrichBookFromAudio — remote cover download integration (#369)', () 
       inject<Db>(mockDb), log,
     );
 
-    expect(downloadRemoteCover).not.toHaveBeenCalled();
+    expect(downloadRemoteCoverWithinAdmissionLock).not.toHaveBeenCalled();
   });
 
-  it('download failure does not affect enrichment result (fire-and-forget)', async () => {
+  it('download failure does not affect enrichment result', async () => {
     scanWithNoEmbeddedCover();
-    vi.mocked(downloadRemoteCover).mockRejectedValueOnce(new Error('Network failure'));
+    vi.mocked(downloadRemoteCoverWithinAdmissionLock).mockRejectedValueOnce(new Error('Network failure'));
 
     const result = await enrichBookFromAudio(
       42, '/books/test',
@@ -721,12 +721,43 @@ describe('enrichBookFromAudio — remote cover download integration (#369)', () 
     );
 
     expect(result.enriched).toBe(true);
-
-    // Flush the fire-and-forget rejection handler.
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    // No flush needed any more: the call is awaited, so the warning is already recorded.
     expect((log.warn as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
       expect.objectContaining({ bookId: 42 }),
       expect.stringContaining('cover'),
     );
+  });
+
+  /**
+   * #2369 AC12. The un-awaited form outlived its caller's admission section, so the file write and
+   * the `coverUrl` localization landed unserialized. Observed on resolution order, not call order:
+   * an un-awaited call is still *made* before enrichment returns.
+   */
+  it('does not resolve enrichment until the cover download has settled', async () => {
+    scanWithNoEmbeddedCover();
+    const order: string[] = [];
+    let releaseDownload!: () => void;
+    const downloadGate = new Promise<void>((resolve) => { releaseDownload = resolve; });
+    vi.mocked(downloadRemoteCoverWithinAdmissionLock).mockImplementationOnce(async () => {
+      order.push('download:start');
+      await downloadGate;
+      order.push('download:end');
+      return 'written';
+    });
+
+    let settled = false;
+    const enrichment = enrichBookFromAudio(
+      42, '/books/test',
+      { narrators: null, duration: null, coverUrl: 'https://cdn.example.com/cover.jpg' },
+      inject<Db>(mockDb), log,
+    ).then((r) => { settled = true; order.push('enrichment:end'); return r; });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(order).toEqual(['download:start']);
+    expect(settled).toBe(false);
+
+    releaseDownload();
+    await enrichment;
+    expect(order).toEqual(['download:start', 'download:end', 'enrichment:end']);
   });
 });

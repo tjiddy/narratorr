@@ -17,7 +17,9 @@ import type { ProcessingResult } from '@core/utils/audio-processor.js';
 import { buildNamingContext, type RenameableBook } from '../utils/paths.js';
 import { toNamingOptions, type NamingOptions } from '@core/utils/naming.js';
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
-import { enrichBookFromAudio } from './enrichment-utils.js';
+import { enrichBookFromAudioWithinAdmissionLock } from './enrichment-utils.js';
+import { withBookAdmissionLock } from './book-admission.js';
+import { beginRootCommit } from './library-root-gate.js';
 import { dotPrefixBasename } from '@core/utils/hidden-staging.js';
 import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
 import { removeTree } from '@core/utils/remove-tree.js';
@@ -238,7 +240,20 @@ export class MergeService {
     }
   }
 
+  /**
+   * The whole execution — controlling snapshot, recovery, staging, ffmpeg, commit and post-tag —
+   * runs under one admission acquisition, so a rename or delete can neither move the folder out
+   * from under it nor land in the folder mid-merge. `enqueueMerge`'s synchronous pre-flight and its
+   * ALREADY_QUEUED / ALREADY_IN_PROGRESS arms stay outside; only execution is serialized.
+   *
+   * The lock is held across the ffmpeg run, deliberately. The bound that makes that acceptable is
+   * stated on {@link MergeService} and pinned by the reconciler's semaphore ordering (AC17).
+   */
   private async executeMerge(bookId: number): Promise<MergeResult> {
+    return withBookAdmissionLock(bookId, () => this.executeMergeLocked(bookId));
+  }
+
+  private async executeMergeLocked(bookId: number): Promise<MergeResult> {
     const controller = new AbortController();
     this.abortControllers.set(bookId, controller);
 
@@ -248,8 +263,19 @@ export class MergeService {
 
     // Assign inside try so a rejected read still emits failure and clears controller/phase state.
     let book: Awaited<ReturnType<BookService['getById']>> = null;
+    // A closure rather than a nullable registration: the `finally` must not branch.
+    let releaseRootCommit: () => void = () => undefined;
 
     try {
+      // Recovery, staging and naming all derive from the library root, so merge is a root-dependent
+      // commit: register first, then take the canonical root the gate returns. A failed read here
+      // takes the same merge_failed arm any other settings failure would.
+      const rootCommit = await beginRootCommit(this.settingsService);
+      releaseRootCommit = rootCommit.release;
+      const librarySettings = rootCommit.library;
+
+      // Read under the lock, not before it: a merge queued behind a rename must derive its staging
+      // and recovery from the path the row names NOW, never the vacated one.
       book = await this.bookService.getById(bookId);
       // Throw guards through the common merge_failed path; success-shaped returns made the client chip vanish silently (#2142).
       if (!book || !book.path) throw new MergeError('Book not found', 'NOT_FOUND');
@@ -258,8 +284,6 @@ export class MergeService {
       const processingSettings = await this.settingsService.get('processing');
       const ffmpegPath = await resolveFfmpegPath();
       if (!ffmpegPath) throw new MergeError('ffmpeg is not available', 'FFMPEG_NOT_CONFIGURED');
-
-      const librarySettings = await this.settingsService.get('library');
 
       // Dot-hide staging from scanners while keeping it a same-filesystem sibling for atomic rename (AC11).
       stagingDir = dotPrefixBasename(bookPath + '.merge-tmp');
@@ -298,7 +322,7 @@ export class MergeService {
       }, bookId, outputPath);
 
       const ffprobePath = resolveFfprobePathFromSettings(ffmpegPath);
-      const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService, ffprobePath);
+      const enrichResult = await enrichBookFromAudioWithinAdmissionLock(bookId, bookPath, book, this.db, this.log, this.bookService, ffprobePath);
       let enrichmentWarning: string | undefined;
       if (!enrichResult.enriched) {
         enrichmentWarning = 'Merge succeeded but metadata update failed — audio fields may be stale';
@@ -328,6 +352,7 @@ export class MergeService {
       }
       throw error;
     } finally {
+      releaseRootCommit();
       this.abortControllers.delete(bookId);
       this.currentPhase.delete(bookId);
     }

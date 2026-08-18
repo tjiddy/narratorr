@@ -6,7 +6,7 @@ import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 
 vi.mock('./enrichment-utils.js', () => ({
-  enrichBookFromAudio: vi.fn(),
+  enrichBookFromAudioWithinAdmissionLock: vi.fn(),
 }));
 
 vi.mock('@core/utils/ffprobe-path.js', () => ({
@@ -17,7 +17,7 @@ vi.mock('@core/utils/audio-processor.js', async (importOriginal) => {
   return { ...actual, resolveFfmpegPath: () => Promise.resolve('/usr/bin/ffmpeg') };
 });
 
-import { enrichBookFromAudio } from './enrichment-utils.js';
+import { enrichBookFromAudioWithinAdmissionLock } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
 import { orchestrateBookEnrichment, applyAudnexusEnrichment } from './enrichment-orchestration.helpers.js';
 import { mockDbChain } from '../__tests__/helpers.js';
@@ -56,7 +56,7 @@ function dbWithUpdateChain(
   return { db: db as unknown as Db, root: db as MockHandle, tx, updateChain };
 }
 
-const mockEnrichBookFromAudio = vi.mocked(enrichBookFromAudio);
+const mockEnrichBookFromAudio = vi.mocked(enrichBookFromAudioWithinAdmissionLock);
 const mockResolveFfprobePath = vi.mocked(resolveFfprobePathFromSettings);
 
 function createMockDeps() {
@@ -80,7 +80,7 @@ describe('orchestrateBookEnrichment', () => {
   });
 
   describe('audio enrichment', () => {
-    it('calls enrichBookFromAudio with correct book ID, path, and existing metadata', async () => {
+    it('calls enrichBookFromAudioWithinAdmissionLock with correct book ID, path, and existing metadata', async () => {
       await orchestrateBookEnrichment(
         42,
         '/audiobooks/MyBook',
@@ -100,7 +100,7 @@ describe('orchestrateBookEnrichment', () => {
       );
     });
 
-    it('resolves ffprobe path from the auto-detected ffmpeg before calling enrichBookFromAudio', async () => {
+    it('resolves ffprobe path from the auto-detected ffmpeg before calling enrichBookFromAudioWithinAdmissionLock', async () => {
       mockResolveFfprobePath.mockReturnValue('/custom/ffprobe');
 
       await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null }, deps, { primaryAsin: null });
@@ -111,7 +111,7 @@ describe('orchestrateBookEnrichment', () => {
       );
     });
 
-    it('returns audioEnriched: true when enrichBookFromAudio reports enrichment', async () => {
+    it('returns audioEnriched: true when enrichBookFromAudioWithinAdmissionLock reports enrichment', async () => {
       mockEnrichBookFromAudio.mockResolvedValue({ enriched: true });
 
       const result = await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null }, deps, { primaryAsin: null });
@@ -119,7 +119,7 @@ describe('orchestrateBookEnrichment', () => {
       expect(result).toEqual({ audioEnriched: true });
     });
 
-    it('returns audioEnriched: false when enrichBookFromAudio reports no enrichment', async () => {
+    it('returns audioEnriched: false when enrichBookFromAudioWithinAdmissionLock reports no enrichment', async () => {
       mockEnrichBookFromAudio.mockResolvedValue({ enriched: false });
 
       const result = await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null }, deps, { primaryAsin: null });

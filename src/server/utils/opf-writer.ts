@@ -12,6 +12,7 @@ import { buildDivergenceReason, detectSidecarDivergence, type SidecarDivergence 
 import { claimOpfBackupDestination, OpfBackupClaimError, readOpfEntry } from './opf-entry-policy.js';
 import { parseOpfWithDiagnostics, type OpfParseOutcome } from './opf-reader.js';
 import { withPathWriteLock } from './path-write-lock.js';
+import { withBookAdmissionLock } from './book-admission-lock.js';
 import { serializeError } from './serialize-error.js';
 
 /** XML 1.0 forbids these C0 controls but permits tab, LF, and CR. */
@@ -115,25 +116,49 @@ export function sidecarLockKey(bookFolder: string): string {
   return resolve(join(bookFolder, OPF_FILENAME));
 }
 
-/**
- * Load fresh metadata and await the canonical sidecar write. Return an outcome instead of
- * throwing, and never overwrite a foreign OPF.
- */
-export async function writeOpfSidecar(args: WriteOpfForImportArgs): Promise<OpfWriteOutcome> {
+/** Both entry points share these; neither acquires anything before they decide. */
+function opfEarlySkip(args: WriteOpfForImportArgs): OpfWriteOutcome | null {
   const { enabled, bookId, bookFolder, log } = args;
   if (!enabled) return 'skipped';
 
   // A pointer import has no dedicated folder; writing beside it could clobber shared metadata.
-  // It returns before acquiring anything.
   if (AUDIO_EXTENSIONS.has(extname(bookFolder).toLowerCase())) {
     log.warn({ bookId, bookFolder }, 'OPF write skipped — pointer single-file import has no dedicated book folder');
     return 'skipped';
   }
+  return null;
+}
 
-  // All four writers serialize, including the two that never preserve: those are exactly the
-  // writers that would otherwise land inside an import's read-to-write window and make the
-  // backup capture bytes that were never the ones replaced.
-  return withPathWriteLock(sidecarLockKey(bookFolder), () => runSidecarWrite(args));
+/**
+ * Load fresh metadata and await the canonical sidecar write. Return an outcome instead of
+ * throwing, and never overwrite a foreign OPF.
+ *
+ * Serialized entry point for callers that hold no admission lock.
+ */
+export async function writeOpfSidecar(args: WriteOpfForImportArgs): Promise<OpfWriteOutcome> {
+  const early = opfEarlySkip(args);
+  if (early) return early;
+  return withBookAdmissionLock(args.bookId, () => runSidecarWriteUnderFileKey(args));
+}
+
+/**
+ * Caller must hold the admission lock for `args.bookId`.
+ *
+ * `runSidecarWrite`'s `ownsFolder` re-read narrows the moved-folder window but cannot close it —
+ * the folder can still move between that check and `replaceFileAtomically`. Holding admission
+ * across both is what closes it; the file key below is only the innermost tier.
+ */
+export async function writeOpfSidecarWithinAdmissionLock(args: WriteOpfForImportArgs): Promise<OpfWriteOutcome> {
+  const early = opfEarlySkip(args);
+  if (early) return early;
+  return runSidecarWriteUnderFileKey(args);
+}
+
+// All four writers serialize on the file key, including the two that never preserve: those are
+// exactly the writers that would otherwise land inside an import's read-to-write window and make
+// the backup capture bytes that were never the ones replaced.
+function runSidecarWriteUnderFileKey(args: WriteOpfForImportArgs): Promise<OpfWriteOutcome> {
+  return withPathWriteLock(sidecarLockKey(args.bookFolder), () => runSidecarWrite(args));
 }
 
 function ownsFolder(book: BookWithAuthor, bookFolder: string): boolean {
@@ -293,4 +318,9 @@ async function recordDivergence(
 /** Preserve the nonfatal void contract used by imports and per-book edits. */
 export async function writeOpfForImport(args: WriteOpfForImportArgs): Promise<void> {
   await writeOpfSidecar(args);
+}
+
+/** Caller must hold the admission lock for `args.bookId`. */
+export async function writeOpfForImportWithinAdmissionLock(args: WriteOpfForImportArgs): Promise<void> {
+  await writeOpfSidecarWithinAdmissionLock(args);
 }

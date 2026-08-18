@@ -10,6 +10,7 @@ import type { BookEventRow } from './types.js';
 import { basename } from 'node:path';
 import { PathOutsideLibraryError } from '../utils/paths.js';
 import { ClaimKeyChurnError, withFreshClaimLock } from '../utils/claim-lock.js';
+import { withBookAdmissionLock } from './book-admission.js';
 import { findOtherPathOwner } from '../utils/path-identity.js';
 import { snapshotBookForEvent } from '../utils/event-helpers.js';
 import { cleanCoverCache } from '../utils/cover-cache.js';
@@ -76,7 +77,19 @@ export class BookDeletionService {
     private exclusions?: ImportListExclusionService,
   ) {}
 
-  async deleteBook(id: number, { deleteFiles }: DeleteBookOptions): Promise<BookDeletionResult> {
+  /**
+   * Admission outside the claim keys. The claim protocol already serializes deletion against rename
+   * and the other destroyers; the outer acquisition adds everything else — a merge, an import, a
+   * retag or a cover write can no longer be mid-flight in the folder this is about to sweep.
+   * `withFreshClaimLock`'s re-acquire loop and its `ClaimKeyChurnError` arm are unchanged.
+   */
+  async deleteBook(id: number, options: DeleteBookOptions): Promise<BookDeletionResult> {
+    return withBookAdmissionLock(id, () => this.deleteBookWithinAdmissionLock(id, options));
+  }
+
+  /** Caller must hold the admission lock for `id`. Public so `deleteMissingBooks`, which acquires
+   * per book itself, can reach it without nesting a second acquisition on the same id. */
+  async deleteBookWithinAdmissionLock(id: number, { deleteFiles }: DeleteBookOptions): Promise<BookDeletionResult> {
     const book = await this.bookService.getById(id);
 
     // Abort before any DB mutation if on-disk deletion fails.
@@ -159,6 +172,11 @@ export class BookDeletionService {
    * implementation. Sequential and transaction-free: `deleteBook` owns one transaction per book,
    * and a wrapping one would nest and throw.
    *
+   * The admission lock is taken PER BOOK inside the loop, never once around the sweep: one long
+   * hold would stall every other mutator in the library, and the batch has no shared state to
+   * protect. The status re-check moves inside each acquisition — outside it, a merge or import
+   * holding the book could promote it out of `missing` after the check and before the delete.
+   *
    * `deleteFiles: false` is load-bearing — a `missing` book's files are already gone from disk.
    */
   async deleteMissingBooks(): Promise<BulkDeletionSummary> {
@@ -168,14 +186,17 @@ export class BookDeletionService {
 
     for (const id of ids) {
       try {
-        // A concurrent library scan legitimately restores `missing → imported` when the path
-        // reappears; deleting that book would drop a row whose files are back AND exclude it.
-        const status = await this.bookService.getStatusById(id);
-        if (status !== 'missing') {
-          this.log.info({ bookId: id, status }, 'Skipped book that is no longer missing');
-          continue;
-        }
-        this.countOutcome(id, await this.deleteBook(id, { deleteFiles: false }), summary);
+        const result = await withBookAdmissionLock(id, async () => {
+          // A concurrent library scan legitimately restores `missing → imported` when the path
+          // reappears; deleting that book would drop a row whose files are back AND exclude it.
+          const status = await this.bookService.getStatusById(id);
+          if (status !== 'missing') {
+            this.log.info({ bookId: id, status }, 'Skipped book that is no longer missing');
+            return null;
+          }
+          return this.deleteBookWithinAdmissionLock(id, { deleteFiles: false });
+        });
+        if (result) this.countOutcome(id, result, summary);
       } catch (error: unknown) {
         summary.failed++;
         this.log.error({ bookId: id, error: serializeError(error) }, 'Failed to delete missing book');

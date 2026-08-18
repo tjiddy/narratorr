@@ -5,21 +5,21 @@ import type { BookService } from './book.service.js';
 
 // Mock cross-module seams so orchestration and failure accounting remain observable.
 vi.mock('../utils/opf-writer.js', () => ({
-  writeOpfSidecar: vi.fn().mockResolvedValue('written'),
+  writeOpfSidecarWithinAdmissionLock: vi.fn().mockResolvedValue('written'),
 }));
 vi.mock('./cover-download.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./cover-download.js')>()),
-  downloadRemoteCover: vi.fn().mockResolvedValue('written'),
+  downloadRemoteCoverWithinAdmissionLock: vi.fn().mockResolvedValue('written'),
 }));
 
 import { reconcileBookSidecars, runSidecarReconcile } from './bulk-sidecar-reconcile.js';
 import type { BulkJobFailure } from './bulk-job.js';
-import { writeOpfSidecar } from '../utils/opf-writer.js';
-import { downloadRemoteCover } from './cover-download.js';
+import { writeOpfSidecarWithinAdmissionLock } from '../utils/opf-writer.js';
+import { downloadRemoteCoverWithinAdmissionLock } from './cover-download.js';
 import type { ConnectorService } from './connector.service.js';
 
-const writeOpfMock = vi.mocked(writeOpfSidecar);
-const downloadMock = vi.mocked(downloadRemoteCover);
+const writeOpfMock = vi.mocked(writeOpfSidecarWithinAdmissionLock);
+const downloadMock = vi.mocked(downloadRemoteCoverWithinAdmissionLock);
 
 function makeLog(): FastifyBaseLogger {
   return { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), fatal: vi.fn(), trace: vi.fn(), child: vi.fn().mockReturnThis(), silent: vi.fn(), level: 'info' } as unknown as FastifyBaseLogger;

@@ -26,6 +26,7 @@ import { trackUnmatchedGenres } from './unmatched-genres.js';
 import { buildNewBookValues, type CreateBookInput, type ResolvedBookCreateInput } from './book-create.js';
 import { buildFixMatchScalarUpdates, buildReplaceSeriesLinkArgs, type FixMatchReplacement } from './book-fix-match.js';
 import { usefulString } from './metadata-recording-collapse.js';
+import { withBookAdmissionLock } from './book-admission.js';
 import { canonicalizeAsin } from '@shared/asin.js';
 import { isUniqueViolation } from '@shared/error-message.js';
 import {
@@ -369,8 +370,16 @@ export class BookService {
   }
 
   /** Atomically replace bibliographic identity while preserving local/audio state. The caller must
-   * preflight ASIN collisions; enrichment resets to pending for the new identity. */
+   * preflight ASIN collisions; enrichment resets to pending for the new identity.
+   *
+   * The acquisition sits here, at the operation entry point, and NOT inside the transaction:
+   * `syncNarrators` and `replaceSeriesLink` are shared primitives reached from locked callers. */
   async fixMatch(id: number, replacement: FixMatchReplacement): Promise<BookDetail | null> {
+    return withBookAdmissionLock(id, () => this.fixMatchWithinAdmissionLock(id, replacement));
+  }
+
+  /** Caller must hold the admission lock for `id`. */
+  private async fixMatchWithinAdmissionLock(id: number, replacement: FixMatchReplacement): Promise<BookDetail | null> {
     const scalarUpdates = buildFixMatchScalarUpdates(replacement);
     const seriesArgs = buildReplaceSeriesLinkArgs(replacement);
 
@@ -440,7 +449,11 @@ export class BookService {
   }
 
   /** Return the writer outcome even if its post-rename DB update failed, so the route can refresh
-   * connectors whenever the cover file actually materialized. */
+   * connectors whenever the cover file actually materialized.
+   *
+   * The MIME check is pure input validation and stays outside the lock; the path read and the write
+   * it feeds are inside, so an upload queued behind a rename cannot drop `cover.<ext>` in the
+   * vacated folder. */
   async uploadCover(
     bookId: number,
     buffer: Buffer,
@@ -449,7 +462,15 @@ export class BookService {
     if (!SUPPORTED_COVER_MIMES.has(mimeType)) {
       throw new CoverUploadError('Only JPG, PNG, and WebP images are supported', 'INVALID_MIME');
     }
+    return withBookAdmissionLock(bookId, () => this.uploadCoverWithinAdmissionLock(bookId, buffer, mimeType));
+  }
 
+  /** Caller must hold the admission lock for `bookId`. */
+  private async uploadCoverWithinAdmissionLock(
+    bookId: number,
+    buffer: Buffer,
+    mimeType: string,
+  ): Promise<{ book: BookDetail; coverOutcome: CoverWriteOutcome }> {
     const book = await this.getById(bookId);
     if (!book) {
       throw new CoverUploadError('Book not found', 'NOT_FOUND');

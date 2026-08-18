@@ -1,22 +1,8 @@
-// Process-local locking is sufficient because Narratorr runs as one Node process.
+import { withBookAdmissionLock, hasPendingBookAdmission } from '../utils/book-admission-lock.js';
 
-/**
- * Serializes duplicate-check → client-add → insert per book.
- * Non-reentrant: holders must call unlocked primitives or deadlock.
- */
-const bookAdmissionLocks = new Map<number, Promise<unknown>>();
-
-export async function withBookAdmissionLock<T>(bookId: number, fn: () => Promise<T>): Promise<T> {
-  const prev = bookAdmissionLocks.get(bookId) ?? Promise.resolve();
-  // Run after the predecessor settles so a failing section never poisons the next caller.
-  const run = prev.then(() => fn(), () => fn());
-  const tail = run.then(() => undefined, () => undefined);
-  bookAdmissionLocks.set(bookId, tail);
-  void tail.then(() => {
-    if (bookAdmissionLocks.get(bookId) === tail) bookAdmissionLocks.delete(bookId);
-  });
-  return run;
-}
+// The per-book mutex lives beside the other lock primitives in utils/ so utils-layer writers (the
+// OPF sidecar) can acquire it; re-exported here because this is the name every service imports.
+export { withBookAdmissionLock, hasPendingBookAdmission };
 
 export interface ReleaseIdentityFields {
   guid?: string | undefined;

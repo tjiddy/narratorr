@@ -12,7 +12,7 @@ import { findCommitPendingMarkers } from '../utils/import-marker-sweep.js';
 import { deriveImportSiblings } from '../utils/import-sibling-paths.js';
 import { processAudioFiles } from '@core/utils/audio-processor.js';
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
-import { enrichBookFromAudio } from './enrichment-utils.js';
+import { enrichBookFromAudioWithinAdmissionLock } from './enrichment-utils.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
@@ -25,7 +25,7 @@ import type { FastifyBaseLogger } from 'fastify';
  */
 vi.mock('@core/utils/audio-processor.js', () => ({ processAudioFiles: vi.fn(), resolveFfmpegPath: () => Promise.resolve('/usr/bin/ffmpeg') }));
 vi.mock('@core/utils/audio-scanner.js', () => ({ scanAudioDirectory: vi.fn() }));
-vi.mock('./enrichment-utils.js', () => ({ enrichBookFromAudio: vi.fn() }));
+vi.mock('./enrichment-utils.js', () => ({ enrichBookFromAudioWithinAdmissionLock: vi.fn() }));
 
 const SCAN_RESULT = {
   codec: 'aac', bitrate: 128000, sampleRate: 44100, channels: 2, bitrateMode: 'cbr' as const,
@@ -74,7 +74,7 @@ describe('MergeService marker convergence (#1418, real tmpdir)', () => {
       return { success: true };
     });
     (scanAudioDirectory as Mock).mockResolvedValue(SCAN_RESULT);
-    (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+    (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
   });
 
   afterEach(async () => {

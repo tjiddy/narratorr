@@ -53,6 +53,7 @@ export default defineConfig({
         test: {
           name: 'server',
           environment: 'node',
+          setupFiles: ['src/server/__tests__/setup.ts'],
           // Full-app setup exceeded the default only under suite parallelism; retain bounded headroom.
           testTimeout: 15000,
           hookTimeout: 30000,
