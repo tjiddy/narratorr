@@ -1,0 +1,74 @@
+name: Windows Tests
+run-name: Windows tests for ${{ github.ref_name }}
+
+# Separate from ci.yml because triggers are workflow-level: ci.yml is main-only, and every PR in
+# this repository targets develop, so a Windows job living inside it would never run on the PRs
+# that matter. Widening ci.yml's own triggers would drag the whole Linux gate and the Playwright
+# e2e job onto every develop PR — a different decision with a different cost.
+on:
+  pull_request:
+    branches: [main, develop]
+  # develop mirrors docker.yml's Linux quality gate on the integration branch: a merge commit is
+  # not the head that was reviewed.
+  push:
+    branches: [main, develop]
+  # Post-merge affordance only: GitHub runs workflow_dispatch for a workflow present on the DEFAULT
+  # branch, so this cannot dispatch a scratch ref until the file reaches main. A pre-merge
+  # experiment on a scratch branch needs a draft PR into develop, which the pull_request block
+  # above already covers.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Concurrency groups are repository-scoped, not workflow-scoped. This must not be ci.yml's
+# `ci-${{ github.ref }}` or the two workflows would cancel each other on every run.
+concurrency:
+  group: windows-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-tests:
+    runs-on: windows-latest
+    # Tests only, but Windows filesystem and process-spawn costs run materially above Linux for
+    # this suite; the Linux gate's 30 covers lint+typecheck+test+build on a faster runner.
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
+
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        # The Windows runner defaults to pwsh, where this line does not mean the same thing.
+        shell: bash
+        run: echo "store=$(pnpm store path)" >> $GITHUB_OUTPUT
+
+      - name: Cache pnpm dependencies
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-cache.outputs.store }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Lint, typecheck and build are platform-neutral and already gated on Linux.
+      - name: Test
+        run: pnpm test --reporter=default --reporter=json --outputFile.json=vitest-windows.json
+
+      # `passWithNoTests: true` makes a zero-file glob exit green, so the step above cannot prove
+      # the suite was selected. Ungated on purpose: if the tests failed, the job is already red for
+      # the right reason and this step should not run at all.
+      - name: Assert non-empty per-project selection
+        shell: bash
+        run: pnpm exec tsx scripts/check-vitest-selection.ts vitest-windows.json

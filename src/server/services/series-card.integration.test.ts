@@ -1603,7 +1603,12 @@ describe('SeriesCardService — integration', () => {
         expect(pool[0]!.sql).toMatch(/"series_name" is not null/i);
         expect(pool[0]!.sql).not.toMatch(/ in \(/i);
         expect(card!.members.map((m) => m.libraryBookId)).toEqual([anchor, ...siblings]);
-      });
+        // 301 sequential libSQL inserts before a single assertion: 7,339ms isolated on a fast dev
+        // machine, i.e. a 2x margin under the 15s default that full-suite pressure or a slower
+        // runner erases — it timed out on the windows-tests runner. The ceiling is raised rather
+        // than the row count lowered because 300 is what makes "zero bind parameters" evidence of
+        // JS filtering rather than of a small IN list.
+      }, 60_000);
 
       it('an empty name list returns an empty pool without issuing a query', async () => {
         await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });

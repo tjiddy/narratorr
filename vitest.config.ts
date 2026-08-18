@@ -63,6 +63,7 @@ export default defineConfig({
             'src/core/**/*.test.ts',
             'src/db/**/*.test.ts',
             'docker/**/*.test.ts',
+            'scripts/**/*.test.ts',
             // E2E helpers use `.test.ts`; browser specs use `.spec.ts`.
             'e2e/fixtures/**/*.test.ts',
             'e2e/fakes/**/*.test.ts',
