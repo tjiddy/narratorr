@@ -291,11 +291,11 @@ async function blacklistOnInfraError(
   retryDeps: MonitorRetryDeps | undefined,
   log: FastifyBaseLogger,
 ): Promise<void> {
-  if (!download.infoHash || !retryDeps) return;
+  if ((!download.infoHash && !download.guid) || !retryDeps) return;
 
   try {
     await retryDeps.blacklistService.create({
-      infoHash: download.infoHash,
+      infoHash: download.infoHash ?? undefined,
       // An adapter whose search results carry no hash (ABB, #2420) can only ever be matched on
       // guid, so an entry written without it silently blacklists nothing.
       guid: download.guid ?? undefined,
@@ -304,7 +304,7 @@ async function blacklistOnInfraError(
       reason: 'infrastructure_error',
       blacklistType: 'temporary',
     });
-    log.info({ downloadId: download.id, infoHash: download.infoHash }, 'Blacklisted release as infrastructure_error (temporary)');
+    log.info({ downloadId: download.id, infoHash: download.infoHash, guid: download.guid }, 'Blacklisted release as infrastructure_error (temporary)');
   } catch (error: unknown) {
     log.warn({ downloadId: download.id, error: serializeError(error) }, 'Failed to blacklist release on infrastructure error');
   }

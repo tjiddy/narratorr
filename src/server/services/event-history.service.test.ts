@@ -295,9 +295,33 @@ describe('EventHistoryService', () => {
       await expect(service.markFailed(1)).rejects.toMatchObject({ code: 'NO_DOWNLOAD' });
     });
 
-    it('skips blacklist and reverts book when download has no infoHash (Usenet)', async () => {
+    // Usenet rows are guid-only: mark-failed must blacklist them by guid, or the retry
+    // re-grabs the exact NZB the operator just rejected.
+    it('blacklists a guid-only row (no infoHash) by guid and reverts the book', async () => {
+      const guid = 'https://indexer.test/nzb/details/abc';
       const event = createMockDbBookEvent({ downloadId: 5 });
-      const download = { id: 5, infoHash: null, title: 'Usenet Download' };
+      const download = { id: 5, infoHash: null, guid, title: 'Usenet Download' };
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([event]))
+        .mockReturnValueOnce(mockDbChain([download]));
+
+      const result = await service.markFailed(1);
+
+      expect(result).toEqual({ success: true });
+      expect(blacklistService.create).toHaveBeenCalledWith({
+        infoHash: undefined,
+        guid,
+        title: 'Usenet Download',
+        bookId: 1,
+        reason: 'bad_quality',
+      });
+      expect(bookService.updateStatus).toHaveBeenCalledWith(1, 'wanted');
+    });
+
+    it('skips blacklist and still reverts the book when the download carries neither identifier', async () => {
+      const event = createMockDbBookEvent({ downloadId: 5 });
+      const download = { id: 5, infoHash: null, guid: null, title: 'Identity-less Download' };
 
       db.select
         .mockReturnValueOnce(mockDbChain([event]))
@@ -309,7 +333,7 @@ describe('EventHistoryService', () => {
       expect(blacklistService.create).not.toHaveBeenCalled();
       expect(log.debug).toHaveBeenCalledWith(
         { downloadId: 5 },
-        'Skipping blacklist — no infoHash (Usenet download)',
+        'Skipping blacklist — download carries no infoHash or guid',
       );
       expect(bookService.updateStatus).toHaveBeenCalledWith(1, 'wanted');
     });

@@ -199,11 +199,12 @@ export class EventHistoryService {
     // Resolve late-bound deps before mutation; an unwired service must not partially blacklist/revert.
     const retrySearchDeps = event.bookId ? this.wired.require().retrySearchDeps : null;
 
-    // Usenet has no infoHash; blacklist failure is nonfatal so revert and retry still run.
-    if (download.infoHash) {
+    // Usenet rows are guid-only, ABB rows guid-first — gate on either identity, like
+    // monitor.ts blacklistRelease. Blacklist failure is nonfatal so revert and retry still run.
+    if (download.infoHash || download.guid) {
       try {
         await this.blacklistService.create({
-          infoHash: download.infoHash,
+          infoHash: download.infoHash ?? undefined,
           // An adapter whose search results carry no hash (ABB, #2420) can only ever be matched on
           // guid, so without it the operator's "mark failed" succeeds and re-grabs the same release.
           guid: download.guid ?? undefined,
@@ -218,7 +219,7 @@ export class EventHistoryService {
         );
       }
     } else {
-      this.log.debug({ downloadId: download.id }, 'Skipping blacklist — no infoHash (Usenet download)');
+      this.log.debug({ downloadId: download.id }, 'Skipping blacklist — download carries no infoHash or guid');
     }
 
     if (event.bookId) {

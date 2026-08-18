@@ -1317,6 +1317,25 @@ describe('monitor job', () => {
       expect(created.guid).toBeUndefined();
     });
 
+    // Guid-only rows (Usenet, post-#2420 ABB) must not skip the infra-error blacklist: the gate
+    // matches blacklistRelease's either-identity rule, not infoHash-only.
+    it('blacklists a guid-only row (no infoHash) on infrastructure_error', async () => {
+      const guid = 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/';
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: null, guid },
+      ]));
+      adapter.getDownload.mockRejectedValueOnce(new Error('Connection refused'));
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      expect(retryDeps.blacklistService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ guid, reason: 'infrastructure_error', blacklistType: 'temporary' }),
+      );
+      const created = retryDeps.blacklistService.create.mock.calls[0]![0] as Record<string, unknown>;
+      expect(created.infoHash).toBeUndefined();
+    });
+
     it('adapter.getDownload() returns null → blacklists with reason download_failed, type temporary', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
