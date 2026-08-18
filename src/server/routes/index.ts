@@ -84,6 +84,7 @@ import { registerImportAdapter } from '../services/import-adapters/registry.js';
 import { ManualImportAdapter } from '../services/import-adapters/manual.js';
 import { AutoImportAdapter } from '../services/import-adapters/auto.js';
 import { retryImportRoute } from './retry-import.js';
+import { bookImportFilesRoute } from './book-import-files.js';
 import { importPreviewRoute } from './import-preview.js';
 import { v1BooksRoutes } from './v1/books.js';
 import { v1AuthorsRoutes } from './v1/authors.js';
@@ -269,6 +270,13 @@ const routeRegistry: RouteFactory[] = [
   }),
   (app, s) => bulkOperationsRoutes(app, s.bulkOperation),
   (app, s) => retryImportRoute(app, s.bookImport, () => s.importQueueWorker.nudge()),
+  (app, s, db) => bookImportFilesRoute(app, {
+    db,
+    bookService: s.book,
+    bookImportService: s.bookImport,
+    settingsService: s.settings,
+    nudgeImportWorker: () => s.importQueueWorker.nudge(),
+  }),
   (app) => importPreviewRoute(app),
   (app, s, db) => v1BooksRoutes(app, {
     bookService: s.book,
