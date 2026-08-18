@@ -102,6 +102,48 @@ async function fillDurationIfEmpty(
     .where(and(eq(books.id, bookId), or(isNull(books.duration), eq(books.duration, 0))));
 }
 
+type AudioScan = NonNullable<Awaited<ReturnType<typeof scanAudioDirectory>>>;
+
+/** Narrators write through the junction table. An attach keys on the incumbent's own list, read
+ * live; every other caller keeps the provenance rule. */
+async function applyTagNarrators(
+  db: Db, bookId: number, tagNarrator: string | null | undefined, book: AudioEnrichmentBook,
+  bookService: BookService | undefined, opts: AudioEnrichmentOptions | undefined,
+): Promise<void> {
+  if (!tagNarrator || !bookService) return;
+  const narratorNames = tokenizeNarrators(tagNarrator);
+  if (opts?.attach) {
+    await attachNarratorFill(db, bookId, narratorNames, bookService);
+    return;
+  }
+  if (tagNarratorFillAllowed(book)) {
+    await bookService.update(bookId, { narrators: narratorNames });
+  }
+}
+
+/** Embedded-art extraction plus remote localization; mutates `update` with the resulting coverUrl. */
+async function acquireCoverArt(
+  update: Record<string, unknown>, bookId: number, targetPath: string, scanResult: AudioScan,
+  book: AudioEnrichmentBook, db: Db, log: FastifyBaseLogger,
+): Promise<void> {
+  if (!book.coverUrl && scanResult.coverImage) {
+    try {
+      const ext = mimeToExt(scanResult.coverMimeType) ?? 'jpg';
+      const coverPath = join(targetPath, `cover.${ext}`);
+      await writeFile(coverPath, scanResult.coverImage);
+      update.coverUrl = `/api/books/${bookId}/cover`;
+      log.info({ bookId, coverPath }, 'Saved embedded cover art');
+    } catch (coverError: unknown) {
+      log.warn({ error: serializeError(coverError), bookId }, 'Failed to save embedded cover art');
+    }
+  }
+
+  if (isRemoteCoverUrl(book.coverUrl) && !update.coverUrl) {
+    downloadRemoteCover(bookId, targetPath, book.coverUrl!, db, log)
+      .catch((err: unknown) => log.warn({ error: serializeError(err), bookId }, 'Fire-and-forget remote cover download failed'));
+  }
+}
+
 export async function enrichBookFromAudio(
   bookId: number,
   targetPath: string,
@@ -145,37 +187,13 @@ export async function enrichBookFromAudio(
 
     applyDurationFields(update, scanResult.totalDuration, log, bookId, targetPath);
 
-    // Narrators write through the junction table. An attach keys on the incumbent's own list, read
-    // live; every other caller keeps the provenance rule.
-    if (scanResult.tagNarrator && bookService) {
-      const narratorNames = tokenizeNarrators(scanResult.tagNarrator);
-      if (opts?.attach) {
-        await attachNarratorFill(db, bookId, narratorNames, bookService);
-      } else if (tagNarratorFillAllowed(book)) {
-        await bookService.update(bookId, { narrators: narratorNames });
-      }
-    }
+    await applyTagNarrators(db, bookId, scanResult.tagNarrator, book, bookService, opts);
 
     // An attach acquires NO cover: covers commit on the filesystem, where three writers target the
     // same canonical `cover.<ext>`, so a row guard is the wrong altitude and the safe protocol is
     // cross-cutting work fenced to #2369. Not acquiring beats acquiring unsafely.
     if (!opts?.attach) {
-      if (!book.coverUrl && scanResult.coverImage) {
-        try {
-          const ext = mimeToExt(scanResult.coverMimeType) ?? 'jpg';
-          const coverPath = join(targetPath, `cover.${ext}`);
-          await writeFile(coverPath, scanResult.coverImage);
-          update.coverUrl = `/api/books/${bookId}/cover`;
-          log.info({ bookId, coverPath }, 'Saved embedded cover art');
-        } catch (coverError: unknown) {
-          log.warn({ error: serializeError(coverError), bookId }, 'Failed to save embedded cover art');
-        }
-      }
-
-      if (isRemoteCoverUrl(book.coverUrl) && !update.coverUrl) {
-        downloadRemoteCover(bookId, targetPath, book.coverUrl!, db, log)
-          .catch((err: unknown) => log.warn({ error: serializeError(err), bookId }, 'Fire-and-forget remote cover download failed'));
-      }
+      await acquireCoverArt(update, bookId, targetPath, scanResult, book, db, log);
     }
 
     await db.update(books).set(update).where(eq(books.id, bookId));

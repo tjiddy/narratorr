@@ -6,7 +6,7 @@ import type { BookService } from './book.service.js';
 import type { NarratorSource } from './import-adapters/types.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
-import { enrichBookFromAudio, rowHasNarrators } from './enrichment-utils.js';
+import { enrichBookFromAudio, rowHasNarrators, type AudioEnrichmentOptions } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
 import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
 import type { BookMetadata } from '@core/metadata/index.js';
@@ -56,6 +56,7 @@ export async function orchestrateBookEnrichment(
   book: EnrichmentBookInput,
   deps: EnrichmentDeps,
   audnexusConfig: AudnexusConfig,
+  opts?: AudioEnrichmentOptions,
 ): Promise<{ audioEnriched: boolean }> {
   const ffprobePath = resolveFfprobePathFromSettings(await resolveFfmpegPath());
   const audioResult = await enrichBookFromAudio(
@@ -72,6 +73,7 @@ export async function orchestrateBookEnrichment(
     deps.log,
     deps.bookService,
     ffprobePath,
+    opts,
   );
 
   await applyAudnexusEnrichment(bookId, audnexusConfig, deps);
