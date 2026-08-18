@@ -10,6 +10,7 @@ import { BookService } from './book.service.js';
 import { BookDeletionService } from './book-deletion.service.js';
 import { RenameService, RenameError } from './rename.service.js';
 import { refreshScanBook, RefreshScanError } from './refresh-scan.service.js';
+import { TaggingService, RetagError } from './tagging.service.js';
 import { writeOpfSidecar } from '../utils/opf-writer.js';
 import type { CoverUploadError } from './cover-upload.js';
 import { generatePublicId } from '../utils/public-id.js';
@@ -47,7 +48,12 @@ vi.mock('../utils/find-or-create-person.js', async (importOriginal) => ({
 }));
 vi.mock('@core/utils/audio-processor.js', () => ({ resolveFfmpegPath: vi.fn().mockResolvedValue(undefined) }));
 
+// Retag's own writes are the observable for AC13; the mutagen subprocess is not under test.
+vi.mock('@core/utils/mutagen-resolver.js', () => ({ resolveMutagenPython: vi.fn().mockResolvedValue('python3') }));
+vi.mock('./mutagen-tag-writer.js', () => ({ writeTagsWithMutagen: vi.fn() }));
+
 import { rename } from 'node:fs/promises';
+import { writeTagsWithMutagen } from './mutagen-tag-writer.js';
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { findOrCreateNarrator } from '../utils/find-or-create-person.js';
 
@@ -84,10 +90,16 @@ describe('admission-lock protocol — every folder and identity mutator serializ
     get: vi.fn().mockResolvedValue({ path: root, folderFormat: '{author}/{title}', fileFormat: '' }),
   });
 
+  /** Overwrite mode with no cover keeps the writer the only filesystem observable retag produces. */
+  const taggingSettings = () => inject<SettingsService>({
+    get: vi.fn().mockResolvedValue({ enabled: true, mode: 'overwrite', embedCover: false, writeOpf: false }),
+  });
+
   beforeEach(async () => {
     vi.clearAllMocks();
     (rename as Mock).mockImplementation(actualFs.rename as never);
     vi.mocked(findOrCreateNarrator).mockImplementation(actualPerson.findOrCreateNarrator);
+    vi.mocked(writeTagsWithMutagen).mockResolvedValue({ ok: true } as never);
     vi.mocked(scanAudioDirectory).mockResolvedValue({
       codec: 'aac', bitrate: 64000, sampleRate: 44100, channels: 2, bitrateMode: 'cbr',
       fileFormat: 'M4B', fileCount: 1, totalSize: 1000, totalDuration: 600, hasCoverArt: false,
@@ -312,6 +324,60 @@ describe('admission-lock protocol — every folder and identity mutator serializ
       expect(await exists(join(oldPath, 'metadata.opf'))).toBe(false);
     });
 
+    /**
+     * Case 10 / F13. Retag holds per-audio-FILE keys; rename holds the folder claim key. Different
+     * keys exclude nothing, so before the outer acquisition a retag could resolve `book.path`, then
+     * write tags into files a rename was in the middle of moving.
+     */
+    it('makes a retag queued behind a rename tag the post-rename files, never the vacated ones', async () => {
+      const bookId = await seedBook('Wanderer', join('Wrong', 'Old'));
+      const oldPath = join(root, 'Wrong', 'Old');
+      const target = join(root, 'Unknown Author', 'Wanderer');
+      const taggingService = new TaggingService(db, taggingSettings(), inject<FastifyBaseLogger>(log), bookService);
+
+      const { gate, entered } = gateNextRename();
+      const renameRun = renameService.renameBook(bookId);
+      await entered.promise;
+
+      const retagRun = taggingService.retagBook(bookId);
+      await settle();
+      // Queued on admission: it has not resolved its inputs, let alone written a tag.
+      expect(vi.mocked(writeTagsWithMutagen)).not.toHaveBeenCalled();
+
+      gate.resolve();
+      await renameRun;
+      const result = await retagRun;
+
+      expect(result.tagged).toBe(1);
+      const tagged = vi.mocked(writeTagsWithMutagen).mock.calls.map((c) => norm(String(c[1]?.path)));
+      expect(tagged).toEqual([norm(join(target, 'Wanderer.m4b'))]);
+      expect(tagged).not.toContain(norm(join(oldPath, 'Wanderer.m4b')));
+    });
+
+    // Case 10, delete direction — the existing error arm, not a write into a swept folder.
+    it('makes a retag queued behind a delete take NOT_FOUND rather than tagging a dead path', async () => {
+      const bookId = await seedBook('Wanderer', join('Wrong', 'Old'));
+      const taggingService = new TaggingService(db, taggingSettings(), inject<FastifyBaseLogger>(log), bookService);
+
+      const parked = deferred();
+      const holder = withBookAdmissionLock(bookId, async () => {
+        await parked.promise;
+        await deletionService.deleteBookWithinAdmissionLock(bookId, { deleteFiles: true });
+      });
+
+      const retagRun = taggingService.retagBook(bookId).catch((e: unknown) => e);
+      await settle();
+      expect(vi.mocked(writeTagsWithMutagen)).not.toHaveBeenCalled();
+
+      parked.resolve();
+      await holder;
+      const error = await retagRun;
+
+      expect(error).toBeInstanceOf(RetagError);
+      expect((error as RetagError).code).toBe('NOT_FOUND');
+      expect(vi.mocked(writeTagsWithMutagen)).not.toHaveBeenCalled();
+    });
+
     // Case 12 — cover upload behind a rename localizes against the folder the book owns now.
     it('makes a cover upload queued behind a rename write into the post-rename folder', async () => {
       const bookId = await seedBook('Wanderer', join('Wrong', 'Old'));
@@ -376,6 +442,38 @@ describe('admission-lock protocol — every folder and identity mutator serializ
       // Fill-empty semantics: the field the owner filled is no longer empty, so the provider value
       // must not land. The field the owner left alone still fills.
       expect(row?.subtitle).toBe('Owner Subtitle');
+      expect(row?.publisher).toBe('Provider Publisher');
+    });
+
+    /**
+     * The genre half of the same obligation. Genres do not travel with the scalar fill: they are
+     * prepared from their own `existing.genres` read and committed through `BookService.update`
+     * inside the transaction, so reverting only that read would leave the scalar case above green
+     * while an operator's genre edit was overwritten by the provider's list.
+     */
+    it('does not overwrite an owner genre edit that landed during the provider round trip', async () => {
+      const bookId = await seedRow('Genreless', null);
+      await db.update(books).set({ asin: 'B0000001', enrichmentStatus: 'pending', genres: [], publisher: null })
+        .where(eq(books.id, bookId));
+
+      const gate = deferred();
+      const metadata = gatedMetadata(gate.promise, {
+        asin: 'B0000001', genres: ['Provider Genre'], publisher: 'Provider Publisher',
+      });
+
+      const sweep = runEnrichment(db, metadata, bookService, inject<FastifyBaseLogger>(log));
+      await settle();
+
+      await withBookAdmissionLock(bookId, () =>
+        bookService.update(bookId, { genres: ['Owner Genre'] }, { userAsserted: true }));
+
+      gate.resolve();
+      await sweep;
+
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      // The genre list is no longer empty, so fill-empty must leave it alone…
+      expect(row?.genres).toEqual(['Owner Genre']);
+      // …while the field the owner never touched still fills, proving the pass itself ran.
       expect(row?.publisher).toBe('Provider Publisher');
     });
 
