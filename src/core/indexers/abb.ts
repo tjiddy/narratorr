@@ -4,20 +4,22 @@ import {
   type IndexerAdapter,
   type IndexerParseTrace,
   type IndexerSearchResponse,
+  type ResolveDownloadContext,
+  type ResolveDownloadResult,
   type SearchOptions,
   type SearchResult,
 } from './types.js';
 import { buildMagnetUri } from '../utils';
 import { readAbbMetadata } from './abb-fields.js';
 import { buildAbbQuery } from './abb-query.js';
+import { abbDetailsSentinel, parseAbbDetailsUrl } from './abb-sentinel.js';
+import { abbThrottle, acquireAbbSolverMutex } from './abb-throttle.js';
 import { normalizeBaseUrl } from '@shared/normalize-base-url.js';
-import { fetchWithProxy } from './fetch.js';
-import { httpStatusOf, isProxyRelatedError } from './errors.js';
-import { describeTransportError } from '../utils/failure-classification.js';
+import { fetchWithProxy, type FetchResult } from './fetch.js';
+import { IndexerError, isProxyRelatedError } from './errors.js';
 import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
 import { describeSolverFailure } from './solver-diagnosis.js';
 import { getErrorMessage } from '@shared/error-message.js';
-import { requireDefined } from '@shared/utils/assert.js';
 import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 
 export interface ABBConfig {
@@ -27,39 +29,28 @@ export interface ABBConfig {
   proxyUrl?: string | undefined;
 }
 
-const DEFAULT_USER_AGENTS = [
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
-];
-
 /**
- * A detail fetch that never answered. The identity comes off the error's structure — a transport
- * code or an HTTP status — never off its message, which is operator text and free to be reworded.
+ * One pinned UA for every ABB request. Rotating four of them from a single IP is a bot fingerprint,
+ * not camouflage — no real browser changes identity between page loads — and it is part of what
+ * earned the 2026-08 ban. audiobookbay-automated pins one Chrome UA for the same reason.
  */
-function detailFetchFailure(error: unknown, rawTitle: string, requestUrl: string): IndexerParseTrace {
-  const rawTitleBytes = rawTitleBytesHex(rawTitle);
-  const { errorCode } = describeTransportError(error);
-  const httpStatus = httpStatusOf(error);
-  return {
-    source: 'row',
-    reason: 'dropped:detail-fetch-failed',
-    rawTitle,
-    ...(rawTitleBytes !== undefined && { rawTitleBytes }),
-    errorMessage: getErrorMessage(error),
-    ...(errorCode !== undefined && { errorCode }),
-    ...(httpStatus !== undefined && { httpStatus }),
-    requestUrl,
-  };
-}
+const ABB_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+const REQUEST_HEADERS: Record<string, string> = {
+  'User-Agent': ABB_USER_AGENT,
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Accept-Encoding': 'gzip, deflate, br',
+  Connection: 'keep-alive',
+  'Upgrade-Insecure-Requests': '1',
+};
 
 export class AudioBookBayIndexer implements IndexerAdapter {
   readonly type = 'abb';
   readonly name = 'AudioBookBay';
 
   private baseUrl: string;
-  private userAgentIndex = 0;
   private flareSolverrUrl?: string;
   private proxyUrl?: string;
 
@@ -70,7 +61,11 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     if (config.proxyUrl !== undefined) this.proxyUrl = config.proxyUrl;
   }
 
-  // eslint-disable-next-line complexity -- multi-page pagination with conditional-spread for transport metadata
+  /**
+   * Search-page requests only. A detail fetch per row — up to 50 of them — is what earned the ban,
+   * and both mature community integrations (Jackett, audiobookbay-automated) resolve the magnet at
+   * download time instead; `resolveDownloadUrl` is that half.
+   */
   async search(query: string, options?: SearchOptions): Promise<IndexerSearchResponse> {
     const results: SearchResult[] = [];
     const debugTrace: IndexerParseTrace[] = [];
@@ -83,8 +78,9 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     const limit = options?.limit || 50;
     const pageLimit = this.config.pageLimit || 2;
 
-    let firstPageRequestUrl: string | undefined;
-    let firstPageHttpStatus: number | undefined;
+    // The canonical request metadata the response reports; both halves come from one fetch, so they
+    // are present or absent together.
+    let firstPage: { requestUrl: string; httpStatus: number } | undefined;
 
     for (let page = 1; page <= pageLimit; page++) {
       const url = page === 1
@@ -94,8 +90,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       try {
         const fetched = await this.fetchPage(url, options?.signal);
         if (page === 1) {
-          firstPageRequestUrl = fetched.requestUrl;
-          firstPageHttpStatus = fetched.httpStatus;
+          firstPage = { requestUrl: fetched.requestUrl, httpStatus: fetched.httpStatus };
         }
         const parsed = this.parseSearchPage(fetched.body);
         itemsObserved += parsed.observed;
@@ -106,25 +101,14 @@ export class AudioBookBayIndexer implements IndexerAdapter {
           break;
         }
 
-        const done = await this.enrichAndCollect(parsed.results, results, debugTrace, dropped, limit, options?.signal);
-        if (done) {
-          return {
-            results,
-            parseStats: { itemsObserved, kept: results.length, dropped },
-            debugTrace,
-            ...(firstPageRequestUrl !== undefined && { requestUrl: firstPageRequestUrl }),
-            ...(firstPageHttpStatus !== undefined && { httpStatus: firstPageHttpStatus }),
-          };
+        this.collectRows(parsed.results, results, debugTrace, limit);
+        // Break BEFORE asking for another page: a spent request is the thing this design exists to
+        // avoid, so filling the budget on page one must cost one request, not two.
+        if (results.length >= limit) {
+          break;
         }
       } catch (error: unknown) {
-        if (isProxyRelatedError(error)) {
-          throw error;
-        }
-        // Page one failing IS the search failing. Nothing came back, so returning an empty
-        // success tells the caller this indexer answered a genuine zero — and the query ladder
-        // believes it, advances, and asks again on every relaxed rung (#2375). A later page is
-        // a different story: the indexer demonstrably answered, so keep the pages we did get.
-        if (page === 1) {
+        if (this.mustPropagate(error, page, options?.signal)) {
           throw error;
         }
         break;
@@ -135,90 +119,125 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       results,
       parseStats: { itemsObserved, kept: results.length, dropped },
       debugTrace,
-      ...(firstPageRequestUrl !== undefined && { requestUrl: firstPageRequestUrl }),
-      ...(firstPageHttpStatus !== undefined && { httpStatus: firstPageHttpStatus }),
+      ...firstPage,
     };
   }
 
-  /** Return true once the result limit is reached. */
-  private async enrichAndCollect(
+  /**
+   * Whether a page failure ends the whole search or only the pagination.
+   *
+   * Page one failing IS the search failing: nothing came back, so returning an empty success tells
+   * the caller this indexer answered a genuine zero — and the query ladder believes it, advances,
+   * and asks a dead indexer again on every relaxed rung (#2375). A later page is a different story,
+   * since the indexer demonstrably answered, so the pages already collected stand.
+   *
+   * Cancellation is not a page failure at all. Without the abort arm the later-page break degrades
+   * an abort into a partial success, which the caller reads as a legitimate answer.
+   */
+  private mustPropagate(error: unknown, page: number, signal?: AbortSignal): boolean {
+    if (signal?.aborted) return true;
+    if (isProxyRelatedError(error)) return true;
+    return page === 1;
+  }
+
+  /**
+   * Trades the search-time sentinel for a real magnet, one detail fetch per grab. Anything else —
+   * a magnet stored before this adapter went lazy, a v1 API payload — passes through untouched.
+   */
+  async resolveDownloadUrl(ctx: ResolveDownloadContext): Promise<ResolveDownloadResult> {
+    const detailsUrl = parseAbbDetailsUrl(ctx.downloadUrl);
+    if (detailsUrl === undefined) {
+      return { downloadUrl: ctx.downloadUrl };
+    }
+
+    let detail: { infoHash?: string; title?: string };
+    try {
+      const fetched = await this.fetchPage(detailsUrl);
+      detail = this.parseDetailPage(fetched.body);
+    } catch (error: unknown) {
+      // Wrapped even for a proxy failure, unlike `search()`: there is no degrade arm here, so the
+      // discrimination buys nothing while the `IndexerError` type is what earns the `warn` line in
+      // `resolveAdapterDownloadUrl`. `isProxyRelatedError(err.cause)` still answers true.
+      throw new IndexerError(
+        this.name,
+        `ABB detail fetch failed for ${detailsUrl}: ${getErrorMessage(error)}`,
+        { cause: error instanceof Error ? error : undefined },
+      );
+    }
+
+    // Degrading to a success here would send the sentinel string itself to the download client.
+    if (!detail.infoHash) {
+      throw new IndexerError(this.name, `ABB detail page carried no info hash: ${detailsUrl}`);
+    }
+    return { downloadUrl: buildMagnetUri(detail.infoHash, detail.title) };
+  }
+
+  /**
+   * Admits rows up to the remaining budget. Rows past it are not admitted and produce no trace
+   * entry — they were never candidates, so recording them as kept or dropped would both lie.
+   */
+  private collectRows(
     pageResults: SearchResult[],
     results: SearchResult[],
     debugTrace: IndexerParseTrace[],
-    dropped: { emptyTitle: number; noUrl: number; other: number },
     limit: number,
-    signal?: AbortSignal,
-  ): Promise<boolean> {
+  ): void {
     for (const result of pageResults) {
-      const detailsUrl = result.detailsUrl;
-      if (detailsUrl) {
-        try {
-          await this.delay(500);
-          const detail = await this.fetchPage(detailsUrl, signal);
-          const details = this.parseDetailPage(detail.body);
-          Object.assign(result, details);
-        } catch (error: unknown) {
-          if (isProxyRelatedError(error)) {
-            throw error;
-          }
-          // Falling through would admit the row to the no-URL arm, which claims the book has no
-          // torrent. Nothing was pushed, so skipping the limit check leaves the count unchanged.
-          dropped.other++;
-          debugTrace.push(detailFetchFailure(error, result.title, detailsUrl));
-          continue;
-        }
-      }
-
-      if (result.downloadUrl) {
-        results.push(result);
-        const keptRawTitleBytes = rawTitleBytesHex(result.title);
-        debugTrace.push({
-          source: 'row',
-          reason: 'kept',
-          rawTitle: result.title,
-          ...(keptRawTitleBytes !== undefined && { rawTitleBytes: keptRawTitleBytes }),
-          ...(result.guid !== undefined && { guid: result.guid }),
-        });
-      } else {
-        dropped.noUrl++;
-        const droppedRawTitleBytes = rawTitleBytesHex(result.title);
-        debugTrace.push({
-          source: 'row',
-          reason: 'dropped:no-url',
-          rawTitle: result.title,
-          ...(droppedRawTitleBytes !== undefined && { rawTitleBytes: droppedRawTitleBytes }),
-        });
-      }
-
-      if (results.length >= limit) {
-        return true;
-      }
+      if (results.length >= limit) return;
+      results.push(result);
+      const keptRawTitleBytes = rawTitleBytesHex(result.title);
+      debugTrace.push({
+        source: 'row',
+        reason: 'kept',
+        rawTitle: result.title,
+        ...(keptRawTitleBytes !== undefined && { rawTitleBytes: keptRawTitleBytes }),
+        ...(result.guid !== undefined && { guid: result.guid }),
+      });
     }
-    return false;
   }
 
-  private async fetchPage(url: string, signal?: AbortSignal) {
-    const headers = {
-      'User-Agent': this.getNextUserAgent(),
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Accept-Encoding': 'gzip, deflate, br',
-      Connection: 'keep-alive',
-      'Upgrade-Insecure-Requests': '1',
-    };
-
+  private async fetchPage(url: string, signal?: AbortSignal): Promise<FetchResult> {
     // FlareSolverr takes precedence over the standard proxy.
     if (this.flareSolverrUrl) {
-      return fetchWithProxy({ url, headers, proxyUrl: this.flareSolverrUrl, ...(signal !== undefined && { signal }) });
+      return this.fetchViaSolver(url, this.flareSolverrUrl, signal);
     }
 
+    // Nothing intervenes between here and the wire on the direct and standard-proxy paths, so the
+    // pacing wait is adjacent to the request it spaces.
+    await abbThrottle.acquire(url, signal);
     return fetchWithProxyAgent(url, {
-      headers,
+      headers: REQUEST_HEADERS,
       ...(this.proxyUrl !== undefined && { proxyUrl: this.proxyUrl }),
       ...(signal !== undefined && { signal }),
     });
   }
 
+  /**
+   * The solver path has a queue of its own between us and the wire, so the pacing wait moves inside
+   * the slot via `onBeforeDispatch` and the mutex keeps ABB from holding more than one slot while
+   * it waits. Acquiring the interval here as well would double-charge every request.
+   */
+  private async fetchViaSolver(url: string, solverUrl: string, signal?: AbortSignal): Promise<FetchResult> {
+    const releaseMutex = await acquireAbbSolverMutex(url, signal);
+    try {
+      return await fetchWithProxy({
+        url,
+        headers: REQUEST_HEADERS,
+        proxyUrl: solverUrl,
+        ...(signal !== undefined && { signal }),
+        onBeforeDispatch: () => abbThrottle.acquire(url, signal),
+      });
+    } finally {
+      releaseMutex();
+    }
+  }
+
+  /**
+   * Size, seeders and leechers are deliberately absent from every row: ABB's search markup carries
+   * none of them, and the repo's own row fixture is the evidence. Faking a seeder count the way
+   * Jackett does would be worse than absence — `search-pipeline.ts` treats unknown as "keep", so an
+   * absent count survives every `minSeeders`, while a faked `1` is dropped at `minSeeders >= 2`.
+   */
   private parseSearchPage(html: string): { results: SearchResult[]; observed: number; droppedEmptyTitle: number; debugTrace: IndexerParseTrace[] } {
     const $ = cheerio.load(html);
     const results: SearchResult[] = [];
@@ -266,7 +285,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
         return;
       }
 
-      if (detailsUrl && !detailsUrl.startsWith('http')) {
+      if (!detailsUrl.startsWith('http')) {
         detailsUrl = `${this.baseUrl}${detailsUrl.startsWith('/') ? '' : '/'}${detailsUrl}`;
       }
 
@@ -274,13 +293,17 @@ export class AudioBookBayIndexer implements IndexerAdapter {
                        $el.find('img').first().attr('data-src');
 
       // Row metadata comes from the row's own annotated elements or not at all: its post text is
-      // free prose over an uploader byline, and a value set here survives the detail merge.
+      // free prose over an uploader byline.
       const fields = readAbbMetadata($, $el);
 
       results.push({
         title,
         ...fields,
         protocol: 'torrent',
+        // The details URL is ABB's only search-time identity now that the hash is not read until
+        // grab time — it is what the blacklist and the previously-grabbed badge match on.
+        guid: detailsUrl,
+        downloadUrl: abbDetailsSentinel(detailsUrl),
         detailsUrl,
         ...(coverUrl !== undefined && { coverUrl }),
         indexer: this.name,
@@ -290,10 +313,9 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     return { results, observed: posts.length, droppedEmptyTitle, debugTrace };
   }
 
-  // eslint-disable-next-line complexity -- HTML scraping with optional element extraction
-  private parseDetailPage(html: string): Partial<SearchResult> {
+  /** The detail page's grab identity: the info hash, and the title the magnet's `dn` carries. */
+  private parseDetailPage(html: string): { infoHash?: string; title?: string } {
     const $ = cheerio.load(html);
-    const result: Partial<SearchResult> = {};
 
     const infoHashPatterns = [
       /Info\s*Hash[:\s]*([a-f0-9]{40})/i,
@@ -310,82 +332,28 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       '#info-hash',
       'pre',
       'code',
+      'body',
     ];
 
-    let foundHash = false;
+    let infoHash: string | undefined;
     for (const container of hashContainers) {
       const text = $(container).text();
       for (const pattern of infoHashPatterns) {
         const match = text.match(pattern);
-        if (match && match[1]) {
-          result.infoHash = match[1].toLowerCase();
-          foundHash = true;
+        if (match?.[1]) {
+          infoHash = match[1].toLowerCase();
           break;
         }
       }
-      if (foundHash) break;
+      if (infoHash !== undefined) break;
     }
 
-    const pageText = $('body').text();
+    const title = $('h1, .postTitle h2, article h2').first().text().trim();
 
-    if (!foundHash) {
-      for (const pattern of infoHashPatterns) {
-        const match = pageText.match(pattern);
-        if (match && match[1]) {
-          result.infoHash = match[1].toLowerCase();
-          break;
-        }
-      }
-    }
-
-    if (result.infoHash) {
-      result.guid = result.infoHash;
-      const title = $('h1, .postTitle h2, article h2').first().text().trim();
-      result.downloadUrl = buildMagnetUri(result.infoHash, title || undefined);
-    }
-
-    Object.assign(result, readAbbMetadata($));
-
-    const sizeMatch = pageText.match(/Size[:\s]*([\d.]+)\s*(MB|GB|TB)/i);
-    if (sizeMatch?.[1] && sizeMatch[2]) {
-      result.size = this.parseSize(sizeMatch[1], sizeMatch[2]);
-    }
-
-    const seedersMatch = pageText.match(/Seeders?[:\s]*(\d+)/i);
-    if (seedersMatch) {
-      result.seeders = parseInt(seedersMatch[1]!, 10);
-    }
-
-    const leechersMatch = pageText.match(/Leechers?[:\s]*(\d+)/i);
-    if (leechersMatch) {
-      result.leechers = parseInt(leechersMatch[1]!, 10);
-    }
-
-    return result;
-  }
-
-  private parseSize(value: string, unit: string): number {
-    const num = parseFloat(value);
-    const multipliers: Record<string, number> = {
-      KB: 1024,
-      MB: 1024 * 1024,
-      GB: 1024 * 1024 * 1024,
-      TB: 1024 * 1024 * 1024 * 1024,
+    return {
+      ...(infoHash !== undefined && { infoHash }),
+      ...(title ? { title } : {}),
     };
-    return Math.round(num * (multipliers[unit.toUpperCase()] || 1));
-  }
-
-  private getNextUserAgent(): string {
-    const ua = requireDefined(
-      DEFAULT_USER_AGENTS[this.userAgentIndex],
-      `ABBIndexer: DEFAULT_USER_AGENTS[userAgentIndex=${this.userAgentIndex}] out of range (len=${DEFAULT_USER_AGENTS.length})`,
-    );
-    this.userAgentIndex = (this.userAgentIndex + 1) % DEFAULT_USER_AGENTS.length;
-    return ua;
-  }
-
-  private delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   async test(): Promise<{ success: boolean; message?: string; ip?: string }> {
@@ -400,14 +368,16 @@ export class AudioBookBayIndexer implements IndexerAdapter {
 
   private async testDirect(): Promise<{ success: boolean; message?: string }> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), INDEXER_TIMEOUT_MS);
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
     try {
+      // Before the timer is armed, so a request that waited out the floor still gets its full budget.
+      await abbThrottle.acquire(this.baseUrl);
+      timeoutId = setTimeout(() => controller.abort(), INDEXER_TIMEOUT_MS);
+
       const response = await fetch(this.baseUrl, {
         method: 'HEAD',
-        headers: {
-          'User-Agent': this.getNextUserAgent(),
-        },
+        headers: { 'User-Agent': ABB_USER_AGENT },
         signal: controller.signal,
       });
 
@@ -426,18 +396,15 @@ export class AudioBookBayIndexer implements IndexerAdapter {
         message: getErrorMessage(error),
       };
     } finally {
-      clearTimeout(timeoutId);
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
     }
   }
 
   private async testViaFlareSolverr(solverUrl: string): Promise<{ success: boolean; message?: string }> {
     try {
-      // FlareSolverr has no request.head; use request.get.
-      await fetchWithProxy({
-        url: this.baseUrl,
-        headers: { 'User-Agent': this.getNextUserAgent() },
-        proxyUrl: solverUrl,
-      });
+      // Through the same mutex-and-hook path as search, or a connection test would be the one
+      // solver-bound ABB request that paces before the slot rather than inside it.
+      await this.fetchViaSolver(this.baseUrl, solverUrl);
       return { success: true, message: `Connected to ${this.config.hostname} via FlareSolverr` };
     } catch (error: unknown) {
       return {
@@ -454,11 +421,13 @@ export class AudioBookBayIndexer implements IndexerAdapter {
 
   private async testViaStandardProxy(): Promise<{ success: boolean; message?: string; ip?: string }> {
     try {
+      await abbThrottle.acquire(this.baseUrl);
       await fetchWithProxyAgent(this.baseUrl, {
         ...(this.proxyUrl !== undefined && { proxyUrl: this.proxyUrl }),
-        headers: { 'User-Agent': this.getNextUserAgent() },
+        headers: { 'User-Agent': ABB_USER_AGENT },
       });
 
+      // Not paced: this asks the proxy's exit-IP service, not ABB.
       const ip = await resolveProxyIp(this.proxyUrl!);
       return { success: true, message: `Connected to ${this.config.hostname} via proxy`, ip };
     } catch (error: unknown) {
