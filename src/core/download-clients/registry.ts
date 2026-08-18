@@ -1,7 +1,6 @@
 import type { DownloadClientAdapter } from './types.js';
 import type { DownloadClientType } from '@shared/download-client-registry.js';
-import { clientCategory } from '@shared/schemas/download-client.js';
-import type { DownloadClientSettingsMap, DownloadClientSettings } from '@shared/schemas/download-client.js';
+import { clientCategory, type DownloadClientSettingsMap, type DownloadClientSettings } from '@shared/schemas/download-client.js';
 import { QBittorrentClient } from './qbittorrent.js';
 import { SABnzbdClient } from './sabnzbd.js';
 import { NZBGetClient } from './nzbget.js';
