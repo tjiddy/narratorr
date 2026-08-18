@@ -3137,7 +3137,7 @@ Verified against vitest@4.1.10, the report is `{ numTotalTests, numPassedTests, 
 
 `testResults[].name` is an **absolute** path, so on Windows it arrives backslash-separated: fold with `.split('\\').join('/')` before the prefix test, per [[posix-resolve-ignores-backslash]].
 
-The implementation is `scripts/vitest-selection-guard.ts` (pure, unit-tested at `scripts/vitest-selection-guard.test.ts`) with the CI entry `scripts/check-vitest-selection.ts`; `.github/workflows/windows-tests.yml` runs it as the step after the test step, deliberately ungated — if the tests failed the job is already red for the right reason.
+The implementation is `scripts/vitest-selection-guard.ts` (pure, unit-tested at `scripts/vitest-selection-guard.test.ts`) with the CI entry `scripts/check-vitest-selection.ts`; `.github/workflows/windows-tests.yml` runs it as the step after the test step. Since #2445 it is no longer merely informational: it is the job's verdict, adjudicating a non-zero vitest exit against the per-test records (teardown-crash tolerance), so it must never be made skippable on failure.
 
 **Do not add a global numeric floor and do not assert the skip count.** A magic total (`>= 4000`) catches nothing the per-project check misses and reds on legitimate shrinkage. The skip count moves with hosted-runner capabilities — `describe.skipIf(!FFMPEG_PRESENT)`, the `CAN_RUN` mutagen gate, `CAN_SYMLINK` flipping with Developer Mode — not with selection correctness; print it as a diagnostic and let the per-project check be the only thing that can fail. See [[windows-hostile-test-primitives]].
 
@@ -3348,3 +3348,129 @@ Validity has to be an explicit test, on both sides of the decode:
 2. **After** — a decode that produced characters is not the same as a decode that produced what you asked for. For HTML, `cheerio.load(decoded, null, false)('*').length > 0` is the observation point: it answers `0` for `Hello`, `''` and mojibake, and `> 0` for any real markup fragment (cheerio@1.2.0).
 
 Shipped at `src/core/indexers/abb-re-ab.ts:41-48` (#2421). The failure mode a guard invites in the other direction is over-rejection, so pin positive controls alongside the reject table — a padded blob, an **unpadded** blob, and a whitespace-split blob are all shapes `Buffer` accepts and a hand-tightened guard tends to refuse. Both tables live in `src/core/indexers/abb-re-ab.test.ts`. Same family as [[cheerio-br-zero-width-text]]: measure the library's actual behaviour before building code or tests on what it looks like it should do.
+
+## url-setters-noop-on-opaque-path
+
+**source:** #2434  
+**added:** 2026-08-18  
+**files:** src/core/indexers/abb-url.ts  
+**tags:** whatwg-url, node-24, url-normalization, scheme-validation
+
+---
+
+**The WHATWG `URL` `protocol` and `host` setters are specified as no-ops when the URL has an opaque path** — every non-special scheme, including `javascript:`, `mailto:` and `data:`. `const u = new URL('javascript:alert(1)'); u.protocol = 'https:'; u.host = 'abb.test';` leaves `u.href === 'javascript:alert(1)'`. The same assignments on `https://other.test/x` work normally, which is what makes the trap survive a casual test.
+
+**So never re-host a URL by assignment when the input is untrusted.** The natural rewrite — `const u = new URL(href, base); u.protocol = base.protocol; u.host = base.host; return u.href;` — returns the attacker/markup-supplied `javascript:` URL completely unchanged, and any downstream `startsWith('https://')` check becomes the only guard between it and a `fetch`. Instead: check `resolved.protocol` against `http:`/`https:` first, then COMPOSE the output as a string from the parts you want — `` `${base.origin}${resolved.pathname}${resolved.search}${resolved.hash}` ``. `rewriteAbbUrl` in `src/core/indexers/abb-url.ts` (#2434) is the model.
+
+**This is a different branch from a constructor failure, and both need their own cases.** `new URL('http://[::1', base)`, `new URL('http://a b', base)`, `new URL('http://', base)` and `new URL('//', base)` all throw `Invalid URL` on Node 24 and never reach the scheme guard, so an implementation with no `try`/`catch` passes every wrong-scheme test and then throws out of the caller's loop. See the separate 'Arm A' and 'Arm B' describes in `src/core/indexers/abb-url.test.ts` — folding them into one table is exactly how the missing `catch` stays green.
+
+Related, same file: `new URL('#', base)` and `new URL('?', base)` both resolve to `pathname === '/'` with an EMPTY `hash`/`search`, while `new URL('/?p=1', base)` keeps a non-empty `search`. That asymmetry is why a 'does this address a real page' predicate has to be `pathname === '/' && search === ''` and not `pathname === '/'`.
+
+## render-template-drops-empty-segments
+
+**source:** #2435  
+**added:** 2026-08-18  
+**files:** src/core/utils/naming.ts  
+**tags:** naming, folder-format, path-rendering
+
+---
+
+`renderTemplate` (src/core/utils/naming.ts:304-317) filters empty path segments BEFORE calling `sanitizePath`, so a folder token with no value causes its entire segment to be dropped — `sanitizePath`'s `|| 'Unknown'` fallback (:143) is not reachable that way.
+
+Measured against the real module:
+- `renderTemplate('{author}/{year}/{title}', {author:'A', year:undefined, title:'T'})` → `'A/T'` (no `Unknown` segment)
+- `renderTemplate('{author}/{title}', {author:undefined, title:'T'})` → `'T'`
+- `renderTemplate('{author}/{title}', {author:':::', title:'T'})` → `'Unknown/T'` — the fallback fires only for a segment that is non-empty but sanitizes to empty.
+- `renderFilename('{author} - {title}', {author:undefined, title:undefined})` → `'-'` — it does not split, so its single segment does reach the fallback.
+
+Two consequences. First, do not write "an absent token renders Unknown" into a spec or a test for FOLDER templates; assert the segment's absence instead. #2435's AC25 asserted the fallback and was wrong, caught only because the test reded. Second, `{author}` looks like a counterexample but is not: `buildTargetPath` (src/server/utils/import-helpers.ts:108) defaults it to `'Unknown Author'` before templating, so it never reaches the template empty.
+
+Worked reference: 'renders no year at all for a dateless incumbent (AC25)' in src/server/services/import-adapters/manual-attach.integration.test.ts, which drives a conflicting source-supplied year through to prove the outcome is absence rather than substitution.
+
+## modal-null-return-keeps-usestate
+
+**source:** #2435  
+**added:** 2026-08-18  
+**files:** src/client/pages/book/ImportFilesPicker.tsx  
+**tags:** react, modal-state, component-lifecycle
+
+---
+
+`if (!isOpen) return null` does NOT unmount a React component — the fiber and its hook state survive, so a `useState` initializer runs once per mount rather than once per open. A modal holding a user choice therefore leaks that choice into its next session whenever the parent renders it unconditionally.
+
+**The repo's convention is the outer-gate/inner-content split, not a reset effect.** `DirectoryBrowserModal` (src/client/components/DirectoryBrowserModal.tsx) is the reference:
+
+```tsx
+export function DirectoryBrowserModal({ isOpen, ...props }) {
+  if (!isOpen) return null;
+  return <DirectoryBrowserContent isOpen={isOpen} {...props} />;   // all state lives here
+}
+```
+
+with the comment *'Mounting this inner component resets initialPath state without a syncing effect'*. Prefer it over `useEffect(() => setMode('copy'), [isOpen])`, which must be updated every time new state is added.
+
+**When it actually bites.** Only when the parent mounts the modal unconditionally. In this codebase:
+- unconditional (hazardous): `ImportFilesPicker` (BookDetails.tsx:128), `ManualAddFormModal` (SearchTabContent).
+- conditionally rendered by the parent, so they genuinely unmount: `BookMetadataModal`, `BookFixMatchModal`, `RetagPreviewModal`, `BookEditModal` — their internal `return null` guard is belt-and-braces.
+
+**Measured instance (#2435 / PR #2438, caught in review).** `ImportFilesPicker` defaulted its copy/move control to the safe `copy`. Selecting `move`, cancelling, and reopening retained `move`, so accepting the apparent default would have deleted the source. Fixed by the split above.
+
+**Testing it.** `rerender` from `renderWithProviders` replaces the root and drops the provider wrapper, so it cannot express open→close→open here. Use a harness component that owns the flag and mounts the modal unconditionally, then assert the SUBMITTED payload (`onSubmit` args), not the control's `aria-checked` — the latter can pass while the value sent on submit is stale. Reference: src/client/pages/book/ImportFilesPicker.test.tsx.
+
+## url-strips-trailing-query-whitespace
+
+**source:** #2433  
+**added:** 2026-08-18  
+**files:** src/core/download-clients/qbittorrent.test.ts  
+**tags:** whatwg-url, msw, query-params, test-observability
+
+---
+
+The WHATWG URL parser strips leading/trailing C0-control-or-space from its input string, so a whitespace-only query value in the LAST position of a URL is unobservable: `new URL('http://h/p?hashes=   ').searchParams.get('hashes')` returns `''` and href normalizes to `?hashes=`. Mid-URL it survives — `new URL('http://h/p?hashes=   &x=1')` gives `'   '`, percent-encoded as `%20%20%20`. Verified on Node 24.
+
+Why it costs time: in an MSW test that inspects the outgoing request, the stripped value reads as an empty param, which is indistinguishable from production having dropped or mis-encoded it. A test asserting `params.get('x')).toBe('   ')` fails against correct production code.
+
+**Rule.** When pinning empty/whitespace/blank input behavior at an HTTP seam, choose an observation point that survives URL normalization — assert the request COUNT delta (or a `.not.toBe(<the value the broken impl would send>)`), not the param value. Exemplars: the #2433 A9 cases in `src/core/download-clients/qbittorrent.test.ts`, where the count delta is exactly what separates a `!key` guard from a `!key.trim()` guard in `memoKey`. Distinct from [[msw-url-matching-ipv6-and-path-case]], which covers handler-side URL matching rather than request-side readback.
+
+## layered-lock-boundary-park-point
+
+**source:** #2369  
+**added:** 2026-08-18  
+**files:** src/server/services/claim-lock-protocol.integration.test.ts  
+**tags:** locking, mutation-testing, test-observability, concurrency
+
+---
+
+**The trap.** When a system has more than one lock tier and you add or verify one of them, an ordered-boundary test observes only the tier that is actually held at the point you parked the first mutator. If an inner tier is also sufficient to produce the asserted ordering, deleting the outer one leaves the test green — the redundant-sites failure mode of [[symmetric-mutation-cannot-observe-shared-derivation]] arm B, in the locking medium.
+
+**Measured instance (#2369).** Narratorr's three tiers are `withBookAdmissionLock` (book id, `src/server/utils/book-admission-lock.ts`) → the claim-key protocol (`src/server/utils/claim-lock.ts`) → the file key (`src/server/utils/path-write-lock.ts`). `renameBook` holds admission for the whole operation but its claim keys only from `withPathWriteLocks` onward. Parking the rename inside `fs.rename` — the gate `claim-lock-protocol.integration.test.ts` already provides — sits inside both tiers, so a delete issued against it blocks on the CLAIM key: removing deletion's admission acquisition left the suite 12/12 green. Parking inside `planApply` instead (gate the first `bookService.getById`) leaves the rename holding admission alone, and the same mutation reds.
+
+**The rule.** Before writing an ordered-boundary case for a lock, enumerate every tier the parked mutator holds at the park point, and move the park to a moment where only the tier under test is held. If no such moment exists, the tier may be genuinely redundant for that pair — which is itself the finding.
+
+**Observation points that discriminate.** Assert the contender has not reached its own first read — `expect(getById).toHaveBeenCalledTimes(1)` plus the durable row still naming the pre-mutation path — rather than asserting completion order, which both tiers produce. For a sweep bounded by a semaphore, count the participants that reached the lock (`events.filter(e => e.startsWith('lock.acquire:')).length`) rather than racing a timer; the deterministic count reds when the bound is removed and a wall-clock probe does not.
+
+**Related.** Adding an outer lock to nearly every mutator also makes the lock registry shared suite state: a case that leaves a section running queues the next case's mutator behind it forever, surfacing as unrelated assertion failures in other files ([[shared-suite-state-inflates-counterfactual]]). Reset it in a `setupFiles` hook. See also [[vacuous-assertion-observation-points]].
+
+## vitest-fork-teardown-crash-reds-green-suite
+
+**source:** #2445  
+**added:** 2026-08-18  
+**files:** scripts/vitest-selection-guard.ts  
+**tags:** vitest, ci, forks-pool, windows, json-reporter
+
+---
+
+Vitest's forks pool can crash at TEARDOWN — after every test file has already reported — and vitest counts the unhandled error and exits non-zero on a fully green suite. Observed ~1 run in 4 on `windows-latest` at vitest 4.1.10 (#2445). Signature: `Errors  1 error` / `Error: [vitest-pool]: Worker forks emitted error.` / `Caused by: Error: Worker exited unexpectedly`. Upstream vitest-dev/vitest#9762 is byte-identical on 4.0.18 and was closed as not planned, so a version bump is not a fix; #8861 (truncated module transfer) and #8766 (worker termination timeout) are different failures.
+
+**Rule: to tell a post-suite teardown crash from a mid-run worker death, read the JSON report's per-test records — never its aggregate counters.** Both directions were measured on 4.1.10:
+
+- A real mid-run kill (`process.kill(process.pid, 'SIGKILL')` inside a test, `--pool=forks --maxWorkers=1 --fileParallelism=false`): every selected file is still present (vitest enumerates modules up front, so a worker death omits nothing), the killed file's `status` is `'passed'`, `success` is `true`, and `numFailedTests`/`numFailedTestSuites` are 0. The only evidence is the killed test's `assertionResults[].status === 'pending'`.
+- A clean run containing `describe.todo` (exit 0): `numPendingTestSuites` is 2 and the todo-only file's `assertionResults` is `[]`. So `numPendingTestSuites === 0` and 'reject an empty `assertionResults`' each false-red a healthy run.
+
+Adjudicate with a CLOSED allowlist over `assertionResults[].status` — exactly `passed`, `skipped`, `todo`. Vitest's `StatusMap` maps `pass`→`passed`, `fail`→`failed`, `run`/`queued`/`only`→`pending`, `skip`→`skipped`, `todo`→`todo`, so deliberate work and unfinished work stay distinct where the counters collapse them. Anything unrecognized reds, which is what makes the rule fail closed against a future vitest. Also require `Array.isArray(testResults[].assertionResults)` (vitest always builds it with `tests.map(...)`) while ACCEPTING `[]`, and require at least one `passed` assertion so a record-stripped report cannot pass vacuously. Never gate on `numTotalTestSuites === testResults.length` — that counter counts `describe` blocks, not files (a 7-file run reports 40).
+
+Implementation: `evaluateTeardownCrash` in `scripts/vitest-selection-guard.ts` (pure; all I/O injected via `GuardIo`), composed by `runVitestGuard`, CI entry `scripts/check-vitest-selection.ts`. Two deliberate positive fixtures in `scripts/vitest-selection-guard.test.ts` swallow reports whose counters are omitted and whose counters are mutually incoherent — they exist to red any future change that reintroduces counter arithmetic.
+
+**Capturing the exit code in GitHub Actions:** the bash default is `-eo pipefail`, so `set +e` must precede the pipeline and the code must be read from `${PIPESTATUS[0]}`, not `$?`. Without `set +e` a non-zero run aborts the step before the guard sees it; with `$?` you get tee's status. Either mistake yields a silently-always-zero code, which turns the guard into a no-op that swallows real failures.
+
+Stated limit: a file the run never SELECTED does not appear in the report at all, and a file enumerated but never COLLECTED is indistinguishable from a legitimate `describe.todo`-only file (both `assertionResults: []`). Neither is covered by this rule; the first stays covered by the per-project selection checks plus the `REQUIRED_FILES` control. See [[vitest-passwithnotests-hides-empty-selection]] — whose 'deliberately ungated — if the tests failed the job is already red for the right reason' sentence is now false: the guard step is the job's only verdict and adjudicates the exit code.
