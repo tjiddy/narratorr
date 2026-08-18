@@ -227,7 +227,18 @@ export class CompanionEbookReconciler {
     );
   }
 
-  /** Acquire a sweep slot before the admission lock so queued background work cannot block direct work. */
+  /**
+   * Acquire a sweep slot before the admission lock so queued background work cannot block direct
+   * work. Inverting the two would let a queued reconciliation sit on a book's admission lock while
+   * waiting for a slot.
+   *
+   * The cost of that ordering, now that #2369 puts every mutator inside the admission lock: a
+   * reconciliation blocked on a held book still consumes one of {@link RECONCILE_CONCURRENCY}
+   * slots. One long hold — a merge, a mass copy — leaves three, and four concurrently-held books
+   * saturate the semaphore and stall the rest of the sweep for as long as those holds last. That is
+   * the accepted bound, not an unbounded stall: the sweep is idempotent background work and drains
+   * when a hold releases. No timeout, abandonment or lock-stealing is introduced to shorten it.
+   */
   private async sweepBook(bookId: number, libraryRoot: string): Promise<BookDisposition> {
     if (this.stopping) return 'stopped';
     const release = await sweepSemaphore.acquire();
