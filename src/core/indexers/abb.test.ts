@@ -1387,4 +1387,257 @@ describe('AudioBookBayIndexer', () => {
       expect(solverTargets).toEqual([`${ABB_BASE}/?s=a+dragon+guide+to+retirement+julia+huni&tt=1`]);
     });
   });
+
+  /**
+   * #2421 — a slice of ABB's results arrives as anti-scraper chaff: the row's markup is base64
+   * inside a `div.post.re-ab`, which the row loop dropped as `empty-title`. The DOM contract lives
+   * in `abb-re-ab.test.ts`; what is pinned here is the wiring — ordering, identity, counters and
+   * the drop reason as a real `search()` produces them.
+   */
+  describe('base64-obfuscated re-ab posts (#2421)', () => {
+    const b64 = (markup: string): string => Buffer.from(markup, 'utf-8').toString('base64');
+    const plainPost = (inner: string): string => `<div class="post">${inner}</div>`;
+    const reAbPost = (inner: string): string => `<div class="post re-ab">${b64(inner)}</div>`;
+    const rawReAbPost = (payload: string): string => `<div class="post re-ab">${payload}</div>`;
+    const page = (...posts: string[]): string => `<html><body>${posts.join('')}</body></html>`;
+
+    /**
+     * The row's own markup, with the metadata block on one source line exactly as `abb-search.html`
+     * writes it: a regression to a flattened `.text()` read then reds on exact author/narrator.
+     */
+    function rowMarkup(slug: string, title: string, author = 'Ada Lovelace', narrator = 'Grace Hopper'): string {
+      return [
+        `<div class="postTitle"><h2><a href="/audio-books/${slug}/" rel="bookmark">${title}</a></h2></div>`,
+        '<div class="postContent">',
+        `<div class="postImg"><img src="https://example.com/covers/${slug}.jpg" alt="cover" /></div>`,
+        `<p>Written by <a href="/a/"><span class="author" itemprop="author">${author}</span></a><br>Read by <a href="/n/"><span class="narrator" itemprop="author">${narrator}</span></a><br>Format: <span class="format" itemprop="encodingFormat">M4B</span><br>Bitrate: <span class="bitrate" itemprop="bitrate">128 Kbps</span></p>`,
+        '</div>',
+        '<div class="postInfo">Shared by: <span class="author"><a href="/member/uploader123/">uploader123</a></span> On: 12 Dec 2022</div>',
+      ].join('');
+    }
+
+    /** Alphabet-clean, so a guard that only tries `Buffer.from` and shrugs still has to reject it. */
+    const UNDECODABLE = b64('just some prose, not markup');
+
+    it('returns the decoded row alongside a plain one, fully populated and in document order', async () => {
+      serveSearchPages(page(plainPost(rowMarkup('plain-row', 'Plain Row')), reAbPost(rowMarkup('obfuscated-row', 'Obfuscated Row'))));
+      const details = countDetailRequests();
+
+      const { results } = await indexer.search('test');
+
+      expect(results.map((r) => r.title)).toEqual(['Plain Row', 'Obfuscated Row']);
+      expect(results[1]).toMatchObject({
+        title: 'Obfuscated Row',
+        guid: `${ABB_BASE}/audio-books/obfuscated-row/`,
+        detailsUrl: `${ABB_BASE}/audio-books/obfuscated-row/`,
+        downloadUrl: abbDetailsSentinel(`${ABB_BASE}/audio-books/obfuscated-row/`),
+        coverUrl: 'https://example.com/covers/obfuscated-row.jpg',
+        author: 'Ada Lovelace',
+        narrator: 'Grace Hopper',
+        format: 'm4b',
+        indexer: 'AudioBookBay',
+        protocol: 'torrent',
+      });
+      expect(details.count).toBe(0);
+    });
+
+    /**
+     * The observable form of "indistinguishable": same own keys, same values, same keys ABSENT —
+     * without which AC2 is satisfiable by a decoded row that quietly gains or loses a field.
+     */
+    it('produces a result object with the same key set and values as a byte-identical plain row', async () => {
+      serveSearchPages(page(
+        plainPost(rowMarkup('plain-parity', 'Parity Row')),
+        reAbPost(rowMarkup('encoded-parity', 'Parity Row')),
+      ));
+
+      const { results } = await indexer.search('test');
+      const [plain, decoded] = results as [SearchResult, SearchResult];
+
+      expect(Object.keys(decoded).sort()).toEqual(Object.keys(plain).sort());
+      const identityFields = new Set(['guid', 'downloadUrl', 'detailsUrl', 'coverUrl']);
+      const shared = (result: SearchResult) =>
+        Object.fromEntries(Object.entries(result).filter(([key]) => !identityFields.has(key)));
+      expect(shared(decoded)).toEqual(shared(plain));
+      for (const result of [plain, decoded]) {
+        expect(result).not.toHaveProperty('infoHash');
+        expect(result).not.toHaveProperty('seeders');
+        expect(result).not.toHaveProperty('leechers');
+        expect(result).not.toHaveProperty('size');
+      }
+    });
+
+    it('counts a decoded row as kept, with no correction term on itemsObserved', async () => {
+      serveSearchPages(page(plainPost(rowMarkup('plain-row', 'Plain Row')), reAbPost(rowMarkup('obfuscated-row', 'Obfuscated Row'))));
+
+      const { parseStats, debugTrace } = await indexer.search('test');
+
+      expect(parseStats).toEqual({
+        itemsObserved: 2,
+        kept: 2,
+        dropped: { emptyTitle: 0, noUrl: 0, other: 0 },
+      });
+      expect(debugTrace.map((t) => t.reason)).toEqual(['kept', 'kept']);
+    });
+
+    it('drops an undecodable blob under its own reason without disturbing the healthy rows', async () => {
+      serveSearchPages(page(plainPost(rowMarkup('plain-row', 'Plain Row')), rawReAbPost(UNDECODABLE)));
+
+      const { results, parseStats, debugTrace } = await indexer.search('test');
+
+      expect(results.map((r) => r.title)).toEqual(['Plain Row']);
+      expect(debugTrace.map((t) => t.reason)).toEqual(['dropped:re-ab-undecodable', 'kept']);
+      expect(debugTrace.filter((t) => t.reason === 'dropped:empty-title')).toEqual([]);
+      expect(parseStats.dropped.other).toBe(1);
+      expect(parseStats.dropped.emptyTitle).toBe(0);
+      expect(parseStats.itemsObserved).toBe(2);
+    });
+
+    // Paired with the case above: this is what proves the reason is chosen on the SURVIVING class,
+    // not on "the element started life as a re-ab row".
+    it('drops a blob that decodes to titleless markup as empty-title, not as undecodable', async () => {
+      serveSearchPages(page(reAbPost('<div class="postContent"><p>No anchor anywhere here.</p></div>')));
+
+      const { results, parseStats, debugTrace } = await indexer.search('test');
+
+      expect(results).toEqual([]);
+      expect(debugTrace.map((t) => t.reason)).toEqual(['dropped:empty-title']);
+      expect(parseStats.dropped.emptyTitle).toBe(1);
+      expect(parseStats.dropped.other).toBe(0);
+    });
+
+    // The regression case for any implementation that REMOVES the undecodable node: the preference
+    // chain would then fall through to `.post-content` and parse an element it never parses today.
+    it('keeps the selector family and itemsObserved invariant when the only post is undecodable', async () => {
+      serveSearchPages(page(
+        rawReAbPost(UNDECODABLE),
+        '<div class="post-content"><div class="postTitle"><h2><a href="/audio-books/decoy/" rel="bookmark">Decoy</a></h2></div></div>',
+      ));
+
+      const { results, parseStats, debugTrace } = await indexer.search('test');
+
+      expect(results).toEqual([]);
+      expect(parseStats.itemsObserved).toBe(1);
+      expect(parseStats.dropped.other).toBe(1);
+      expect(debugTrace).toHaveLength(1);
+    });
+
+    // A per-page counter that is computed but never summed is invisible to any single-page test.
+    it('accumulates dropped.other across every page it parses', async () => {
+      const twoPage = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 2 });
+      // A kept row per page is load-bearing: a page parsing to zero results breaks pagination, and
+      // page two would never be fetched.
+      const { urls } = serveSearchPages(page(plainPost(rowMarkup('kept-row', 'Kept Row')), rawReAbPost(UNDECODABLE)));
+
+      const { results, parseStats } = await twoPage.search('test');
+
+      expect(urls).toHaveLength(2);
+      expect(urls[1]).toContain('/page/2/');
+      expect(results).toHaveLength(2);
+      expect(parseStats.dropped.other).toBe(2);
+    });
+
+    it('returns every row of an all-obfuscated page and keeps paginating', async () => {
+      const twoPage = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 2 });
+      const { urls } = serveSearchPages(page(
+        reAbPost(rowMarkup('obfuscated-one', 'Obfuscated One')),
+        reAbPost(rowMarkup('obfuscated-two', 'Obfuscated Two')),
+      ));
+
+      const { results, parseStats } = await twoPage.search('test');
+
+      expect(results.map((r) => r.title)).toEqual(['Obfuscated One', 'Obfuscated Two', 'Obfuscated One', 'Obfuscated Two']);
+      expect(urls).toHaveLength(2);
+      expect(parseStats.kept).toBe(4);
+    });
+
+    it('stops paginating on an all-undecodable page exactly as it does on an empty one', async () => {
+      const twoPage = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 2 });
+      const { urls } = serveSearchPages(page(rawReAbPost(UNDECODABLE), rawReAbPost(UNDECODABLE)));
+
+      const { results, parseStats } = await twoPage.search('test');
+
+      expect(results).toEqual([]);
+      expect(urls).toHaveLength(1);
+      expect(parseStats.kept).toBe(0);
+      expect(parseStats.dropped.other).toBe(2);
+    });
+
+    // The decoded row must not vanish because the preference chain stopped at `div.post`: the row
+    // is still read from the original node, and the decoded `article.post` wrapper is made inert.
+    it('returns both rows when a blob decodes to an article.post wrapper beside a plain div.post', async () => {
+      serveSearchPages(page(
+        plainPost(rowMarkup('plain-row', 'Plain Row')),
+        reAbPost(`<article class="post">${rowMarkup('wrapped-row', 'Wrapped Row')}</article>`),
+      ));
+
+      const { results, parseStats } = await indexer.search('test');
+
+      expect(results.map((r) => r.title)).toEqual(['Plain Row', 'Wrapped Row']);
+      expect(results.map((r) => r.guid)).toEqual([
+        `${ABB_BASE}/audio-books/plain-row/`,
+        `${ABB_BASE}/audio-books/wrapped-row/`,
+      ]);
+      expect(parseStats.itemsObserved).toBe(2);
+    });
+
+    /**
+     * F10 — the precedence this pins is `titleSelectors`, which is private to `parseSearchPage`, so
+     * it can only be observed through a real search. A multi-wrapper blob resolves by selector
+     * family, NOT by document order: `.postTitle h2 a` is tried before `h3 a`.
+     */
+    it('resolves a two-wrapper blob by titleSelectors precedence, not document order', async () => {
+      serveSearchPages(page(reAbPost(
+        '<div class="post"><h3><a href="/audio-books/first/" rel="bookmark">First</a></h3></div>' +
+        '<div class="post"><div class="postTitle"><h2><a href="/audio-books/second/" rel="bookmark">Second</a></h2></div></div>',
+      )));
+
+      const { results } = await indexer.search('test');
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({
+        title: 'Second',
+        guid: `${ABB_BASE}/audio-books/second/`,
+      });
+    });
+
+    it('leaves a decoded row past the budget unadmitted and untraced', async () => {
+      serveSearchPages(page(plainPost(rowMarkup('plain-row', 'Plain Row')), reAbPost(rowMarkup('obfuscated-row', 'Obfuscated Row'))));
+
+      const { results, debugTrace } = await indexer.search('test', { limit: 1 });
+
+      expect(results.map((r) => r.title)).toEqual(['Plain Row']);
+      expect(debugTrace).toHaveLength(1);
+      expect(debugTrace[0]!.reason).toBe('kept');
+    });
+
+    // #2420's request guarantees: the decode is a pure in-document transform, so it buys no fetch.
+    it('costs one search request, zero detail requests and one acquire on an obfuscated page', async () => {
+      const { urls } = serveSearchPages(page(reAbPost(rowMarkup('obfuscated-row', 'Obfuscated Row'))));
+      const details = countDetailRequests();
+
+      const { results } = await indexer.search('test');
+
+      expect(results).toHaveLength(1);
+      expect(urls).toEqual([`${ABB_BASE}/?s=test&tt=1`]);
+      expect(details.count).toBe(0);
+      expect(acquire).toHaveBeenCalledTimes(1);
+    });
+
+    // The control for the whole transform: a page with no `re-ab` element must parse identically.
+    it('is inert on a document carrying no re-ab element', async () => {
+      serveSearchPages();
+
+      const { results, parseStats, debugTrace } = await indexer.search('test');
+
+      expect(results.map((r) => r.title)).toEqual(['Murder in the New Forest', 'Wish You Were Here Yet?']);
+      expect(parseStats).toEqual({
+        itemsObserved: 2,
+        kept: 2,
+        dropped: { emptyTitle: 0, noUrl: 0, other: 0 },
+      });
+      expect(debugTrace.map((t) => t.reason)).toEqual(['kept', 'kept']);
+    });
+  });
+
 });

@@ -78,6 +78,28 @@ describe('logIndexerSearchTrace', () => {
     });
   });
 
+  /**
+   * #2421 — an obfuscated ABB post that would not base64-decode leaves no result and no other
+   * trace of itself, so the generic debug branch plus the `other` count in the summary is the whole
+   * of what an operator can see. Asserted rather than assumed to fall out of the generic branch.
+   */
+  it('reports an undecodable re-ab row on the debug line and in the summary\'s other count', () => {
+    const log = run(
+      [{ source: 'row', reason: 'dropped:re-ab-undecodable' }],
+      { emptyTitle: 0, noUrl: 0, other: 1 },
+    );
+
+    expect(log.warn).not.toHaveBeenCalled();
+    const drops = callsWith(log, 'debug', 'Indexer dropped item');
+    expect(drops).toHaveLength(1);
+    expect(drops[0]![0].reason).toBe('dropped:re-ab-undecodable');
+    expect(callsWith(log, 'debug', 'Indexer search complete')[0]![0].dropped).toEqual({
+      emptyTitle: 0,
+      noUrl: 0,
+      other: 1,
+    });
+  });
+
   it('logs the request URL with its query string stripped', () => {
     const log = run([{ ...FAILURE, requestUrl: 'https://abb.test/audio-books/murder/?apikey=hunter2#frag' }]);
 
