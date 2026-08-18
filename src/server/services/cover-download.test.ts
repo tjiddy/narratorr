@@ -84,14 +84,30 @@ function createMockLogger() {
   });
 }
 
+/**
+ * `downloadRemoteCover` reads `books.path` inside its section (#2369 AC3/AC12), so the row read is
+ * part of every case's fixture now; `stubBookPath` re-points or removes it per case.
+ */
 function createMockDb() {
+  const limit = vi.fn().mockResolvedValue([{ path: '/books/test' }]);
   return {
+    select: vi.fn().mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({ limit }),
+      }),
+    }),
     update: vi.fn().mockReturnValue({
       set: vi.fn().mockReturnValue({
         where: vi.fn().mockResolvedValue(undefined),
       }),
     }),
+    limit,
   };
+}
+
+/** Point the in-section row read at another folder, or at a book that no longer owns one. */
+function stubBookPath(db: ReturnType<typeof createMockDb>, path: string | null): void {
+  db.limit.mockResolvedValue(path === null ? [] : [{ path }]);
 }
 
 function createImageResponse(contentType = 'image/jpeg', body: BodyInit = Buffer.from('fake-image-data')) {
@@ -131,7 +147,7 @@ describe('downloadRemoteCover', () => {
     mockFetch.mockResolvedValue(createImageResponse('image/jpeg'));
 
     const result = await downloadRemoteCover(
-      42, '/books/test', 'https://cdn.example.com/cover.jpg',
+      42, 'https://cdn.example.com/cover.jpg',
       inject<Db>(mockDb), log,
     );
 
@@ -147,7 +163,7 @@ describe('downloadRemoteCover', () => {
     mockFetch.mockResolvedValue(createImageResponse());
 
     await downloadRemoteCover(
-      42, '/books/test', 'https://cdn.example.com/cover.jpg',
+      42, 'https://cdn.example.com/cover.jpg',
       inject<Db>(mockDb), log,
     );
 
@@ -162,7 +178,7 @@ describe('downloadRemoteCover', () => {
 
   it('skips download when coverUrl is null', async () => {
     const result = await downloadRemoteCover(
-      1, '/books/test', null as unknown as string,
+      1, null as unknown as string,
       inject<Db>(mockDb), log,
     );
 
@@ -172,7 +188,7 @@ describe('downloadRemoteCover', () => {
 
   it('skips download when coverUrl is empty string', async () => {
     const result = await downloadRemoteCover(
-      1, '/books/test', '',
+      1, '',
       inject<Db>(mockDb), log,
     );
 
@@ -182,7 +198,7 @@ describe('downloadRemoteCover', () => {
 
   it('skips download when coverUrl is already local (/api/books/:id/cover)', async () => {
     const result = await downloadRemoteCover(
-      1, '/books/test', '/api/books/1/cover',
+      1, '/api/books/1/cover',
       inject<Db>(mockDb), log,
     );
 
@@ -190,21 +206,44 @@ describe('downloadRemoteCover', () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
-  it('skips download when book.path is null', async () => {
+  it('skips download when the book has no path', async () => {
+    stubBookPath(mockDb, null);
+
     const result = await downloadRemoteCover(
-      1, null as unknown as string, 'https://cdn.example.com/cover.jpg',
+      1, 'https://cdn.example.com/cover.jpg',
       inject<Db>(mockDb), log,
     );
 
     expect(result).toBe('skipped');
     expect(mockFetch).not.toHaveBeenCalled();
+    expect(vi.mocked(writeFile)).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #2369 F1. The folder comes from the row read inside the section, so a rename that lands while
+   * the call is queued moves the write with it — there is no caller snapshot left to go stale.
+   */
+  it('writes into the folder the row names when the section opens, not the pre-queue one', async () => {
+    mockFetch.mockResolvedValue(createImageResponse('image/jpeg'));
+    stubBookPath(mockDb, '/books/renamed');
+
+    const result = await downloadRemoteCover(
+      42, 'https://cdn.example.com/cover.jpg',
+      inject<Db>(mockDb), log,
+    );
+
+    expect(result).toBe('written');
+    const renameDest = String(vi.mocked(rename).mock.calls[0]![1]).split('\\').join('/');
+    expect(renameDest).toBe('/books/renamed/cover.jpg');
+    const written = vi.mocked(writeFile).mock.calls.map((c) => String(c[0]).split('\\').join('/'));
+    expect(written.every((p) => p.startsWith('/books/renamed/'))).toBe(true);
   });
 
   it('preserves external coverUrl when network error occurs', async () => {
     mockFetch.mockRejectedValue(new Error('Network error'));
 
     const result = await downloadRemoteCover(
-      1, '/books/test', 'https://cdn.example.com/cover.jpg',
+      1, 'https://cdn.example.com/cover.jpg',
       inject<Db>(mockDb), log,
     );
 
@@ -217,7 +256,7 @@ describe('downloadRemoteCover', () => {
     vi.mocked(writeFile).mockRejectedValueOnce(new Error('Disk full'));
 
     const result = await downloadRemoteCover(
-      1, '/books/test', 'https://cdn.example.com/cover.jpg',
+      1, 'https://cdn.example.com/cover.jpg',
       inject<Db>(mockDb), log,
     );
 
@@ -232,7 +271,7 @@ describe('downloadRemoteCover', () => {
     });
 
     const result = await downloadRemoteCover(
-      7, '/books/test', 'https://cdn.example.com/cover.jpg',
+      7, 'https://cdn.example.com/cover.jpg',
       inject<Db>(mockDb), log,
     );
 
@@ -244,7 +283,7 @@ describe('downloadRemoteCover', () => {
     mockFetch.mockRejectedValue(new Error('Connection refused'));
 
     const result = await downloadRemoteCover(
-      1, '/books/test', 'https://cdn.example.com/cover.jpg',
+      1, 'https://cdn.example.com/cover.jpg',
       inject<Db>(mockDb), log,
     );
 
@@ -262,7 +301,7 @@ describe('downloadRemoteCover', () => {
     }));
 
     const result = await downloadRemoteCover(
-      1, '/books/test', 'https://cdn.example.com/cover.jpg',
+      1, 'https://cdn.example.com/cover.jpg',
       inject<Db>(mockDb), log,
     );
 
@@ -276,7 +315,7 @@ describe('downloadRemoteCover', () => {
       .mockResolvedValueOnce(createImageResponse('image/jpeg'));
 
     const result = await downloadRemoteCover(
-      1, '/books/test', 'https://cdn.example.com/cover.jpg',
+      1, 'https://cdn.example.com/cover.jpg',
       inject<Db>(mockDb), log,
     );
 
@@ -298,7 +337,7 @@ describe('downloadRemoteCover', () => {
     mockFetch.mockResolvedValue(createImageResponse('image/png'));
 
     await downloadRemoteCover(
-      42, '/books/test', 'https://cdn.example.com/cover.png',
+      42, 'https://cdn.example.com/cover.png',
       inject<Db>(mockDb), log,
     );
 
@@ -313,7 +352,7 @@ describe('downloadRemoteCover', () => {
     }));
 
     await downloadRemoteCover(
-      42, '/books/test', 'https://cdn.example.com/cover',
+      42, 'https://cdn.example.com/cover',
       inject<Db>(mockDb), log,
     );
 
@@ -328,7 +367,7 @@ describe('downloadRemoteCover', () => {
     }));
 
     await downloadRemoteCover(
-      42, '/books/test', 'https://cdn.example.com/cover',
+      42, 'https://cdn.example.com/cover',
       inject<Db>(mockDb), log,
     );
 
@@ -340,7 +379,7 @@ describe('downloadRemoteCover', () => {
     mockFetch.mockResolvedValue(createImageResponse());
 
     await downloadRemoteCover(
-      42, '/books/test', 'https://cdn.example.com/new-cover.jpg',
+      42, 'https://cdn.example.com/new-cover.jpg',
       inject<Db>(mockDb), log,
     );
 
@@ -362,7 +401,7 @@ describe('downloadRemoteCover', () => {
       mockedDnsLookup.mockResolvedValueOnce([{ address, family }]);
 
       const result = await downloadRemoteCover(
-        1, '/books/test', 'https://attacker.example.com/cover.jpg',
+        1, 'https://attacker.example.com/cover.jpg',
         inject<Db>(mockDb), log,
       );
 
@@ -387,7 +426,7 @@ describe('downloadRemoteCover', () => {
       ]);
 
       const result = await downloadRemoteCover(
-        1, '/books/test', 'https://rebind.example.com/cover.jpg',
+        1, 'https://rebind.example.com/cover.jpg',
         inject<Db>(mockDb), log,
       );
 
@@ -402,7 +441,7 @@ describe('downloadRemoteCover', () => {
       'http://[::]/cover.jpg',
     ])('refuses bracketed IPv6 literal URL %s without doing DNS', async (url) => {
       const result = await downloadRemoteCover(
-        1, '/books/test', url,
+        1, url,
         inject<Db>(mockDb), log,
       );
 
@@ -414,7 +453,7 @@ describe('downloadRemoteCover', () => {
 
     it('refuses metadata.google.internal hostname pre-check (no DNS lookup)', async () => {
       const result = await downloadRemoteCover(
-        1, '/books/test', 'https://metadata.google.internal/computeMetadata/v1/',
+        1, 'https://metadata.google.internal/computeMetadata/v1/',
         inject<Db>(mockDb), log,
       );
 
@@ -432,7 +471,7 @@ describe('downloadRemoteCover', () => {
       mockFetch.mockResolvedValueOnce(createRedirectResponse('https://internal.attacker.example/admin'));
 
       const result = await downloadRemoteCover(
-        1, '/books/test', 'https://cdn.example.com/cover.jpg',
+        1, 'https://cdn.example.com/cover.jpg',
         inject<Db>(mockDb), log,
       );
 
@@ -465,7 +504,7 @@ describe('downloadRemoteCover', () => {
       mockFetch.mockResolvedValue(response);
 
       const result = await downloadRemoteCover(
-        1, '/books/test', 'https://cdn.example.com/huge.jpg',
+        1, 'https://cdn.example.com/huge.jpg',
         inject<Db>(mockDb), log,
       );
 
@@ -495,7 +534,7 @@ describe('downloadRemoteCover', () => {
       mockFetch.mockResolvedValue(response);
 
       const result = await downloadRemoteCover(
-        1, '/books/test', 'https://cdn.example.com/cover.jpg',
+        1, 'https://cdn.example.com/cover.jpg',
         inject<Db>(mockDb), log,
       );
 
@@ -517,7 +556,7 @@ describe('downloadRemoteCover', () => {
       mockFetch.mockResolvedValue(response);
 
       const result = await downloadRemoteCover(
-        1, '/books/test', 'https://cdn.example.com/cover.jpg',
+        1, 'https://cdn.example.com/cover.jpg',
         inject<Db>(mockDb), log,
       );
 
@@ -529,7 +568,7 @@ describe('downloadRemoteCover', () => {
       mockFetch.mockResolvedValue(createImageResponse('image/jpeg'));
 
       const result = await downloadRemoteCover(
-        1, '/books/test', 'https://cdn.example.com/cover.jpg',
+        1, 'https://cdn.example.com/cover.jpg',
         inject<Db>(mockDb), log,
       );
 
@@ -555,7 +594,7 @@ describe('downloadRemoteCover', () => {
         mockFetch.mockResolvedValue(response);
 
         const result = await downloadRemoteCover(
-          7, '/books/test', 'https://cdn.example.com/cover.jpg',
+          7, 'https://cdn.example.com/cover.jpg',
           inject<Db>(mockDb), log,
         );
 
@@ -583,7 +622,7 @@ describe('downloadRemoteCover', () => {
         mockFetch.mockResolvedValue(response);
 
         await downloadRemoteCover(
-          1, '/books/test', 'https://user:secret@cdn.example.com/cover.jpg',
+          1, 'https://user:secret@cdn.example.com/cover.jpg',
           inject<Db>(mockDb), log,
         );
 
@@ -618,7 +657,7 @@ describe('downloadRemoteCover', () => {
         mockFetch.mockResolvedValue(response);
 
         const result = await downloadRemoteCover(
-          1, '/books/test', 'https://cdn.example.com/cover.jpg',
+          1, 'https://cdn.example.com/cover.jpg',
           inject<Db>(mockDb), log,
         );
 
@@ -646,7 +685,7 @@ describe('downloadRemoteCover', () => {
       mockFetch.mockResolvedValueOnce(createImageResponse('image/jpeg'));
 
       const result = await downloadRemoteCover(
-        1, '/books/test', 'https://cdn1.example.com/cover.jpg',
+        1, 'https://cdn1.example.com/cover.jpg',
         inject<Db>(mockDb), log,
       );
 
@@ -661,7 +700,7 @@ describe('downloadRemoteCover', () => {
         .mockResolvedValueOnce(createRedirectResponse('https://b.example.com/cover.jpg'));
 
       const result = await downloadRemoteCover(
-        1, '/books/test', 'https://a.example.com/cover.jpg',
+        1, 'https://a.example.com/cover.jpg',
         inject<Db>(mockDb), log,
       );
 
@@ -678,7 +717,7 @@ describe('downloadRemoteCover', () => {
       }));
 
       await downloadRemoteCover(
-        1, '/books/test', 'https://cdn.example.com/cover.jpg?apikey=secret',
+        1, 'https://cdn.example.com/cover.jpg?apikey=secret',
         inject<Db>(mockDb), log,
       );
 
@@ -697,7 +736,7 @@ describe('downloadRemoteCover', () => {
       }));
 
       await downloadRemoteCover(
-        1, '/books/test', 'https://cdn.example.com/cover.jpg?apikey=secret',
+        1, 'https://cdn.example.com/cover.jpg?apikey=secret',
         inject<Db>(mockDb), log,
       );
 
@@ -713,7 +752,7 @@ describe('downloadRemoteCover', () => {
       mockFetch.mockRejectedValue(new Error('Network error'));
 
       await downloadRemoteCover(
-        1, '/books/test', 'https://cdn.example.com/cover.jpg?apikey=secret',
+        1, 'https://cdn.example.com/cover.jpg?apikey=secret',
         inject<Db>(mockDb), log,
       );
 
@@ -732,7 +771,7 @@ describe('downloadRemoteCover', () => {
       }));
 
       await downloadRemoteCover(
-        1, '/books/test', 'https://cdn.example.com/cover.jpg',
+        1, 'https://cdn.example.com/cover.jpg',
         inject<Db>(mockDb), log,
       );
 
@@ -750,7 +789,7 @@ describe('downloadRemoteCover', () => {
       }));
 
       await downloadRemoteCover(
-        1, '/books/test', 'https://user:pass@cdn.example.com/cover.jpg',
+        1, 'https://user:pass@cdn.example.com/cover.jpg',
         inject<Db>(mockDb), log,
       );
 
@@ -769,7 +808,7 @@ describe('downloadRemoteCover', () => {
       mockFetch.mockResolvedValue(createImageResponse());
 
       await downloadRemoteCover(
-        1, '/books/test', 'https://cdn.example.com/cover.jpg',
+        1, 'https://cdn.example.com/cover.jpg',
         inject<Db>(mockDb), log,
       );
 
@@ -785,7 +824,7 @@ describe('downloadRemoteCover', () => {
     }));
 
     const result = await downloadRemoteCover(
-      1, '/books/test', 'https://cdn.example.com/cover.jpg',
+      1, 'https://cdn.example.com/cover.jpg',
       inject<Db>(mockDb), log,
     );
 
@@ -803,7 +842,7 @@ describe('downloadRemoteCover', () => {
     vi.mocked(readdir).mockResolvedValueOnce(['cover.png', 'cover.jpg', 'audiofile.mp3'] as never);
 
     await downloadRemoteCover(
-      42, '/books/test', 'https://cdn.example.com/cover.jpg',
+      42, 'https://cdn.example.com/cover.jpg',
       inject<Db>(mockDb), log,
     );
 
@@ -816,7 +855,7 @@ describe('downloadRemoteCover', () => {
     mockFetch.mockResolvedValue(createImageResponse());
 
     await downloadRemoteCover(
-      42, '/books/test', 'https://cdn.example.com/cover.jpg',
+      42, 'https://cdn.example.com/cover.jpg',
       inject<Db>(mockDb), log,
     );
 
@@ -829,7 +868,7 @@ describe('downloadRemoteCover', () => {
     mockFetch.mockResolvedValue(createImageResponse());
 
     await downloadRemoteCover(
-      1, '/books/test', 'https://cdn.example.com/cover.jpg',
+      1, 'https://cdn.example.com/cover.jpg',
       inject<Db>(mockDb), log,
     );
 
@@ -845,7 +884,7 @@ describe('downloadRemoteCover', () => {
     mockFetch.mockResolvedValue(createImageResponse());
 
     await downloadRemoteCover(
-      1, '/books/test', 'https://cdn.example.com/cover.jpg',
+      1, 'https://cdn.example.com/cover.jpg',
       inject<Db>(mockDb), log,
     );
 
@@ -860,7 +899,7 @@ describe('downloadRemoteCover', () => {
       mockFetch.mockResolvedValue(createImageResponse());
 
       await downloadRemoteCover(
-        1, '/books/test', 'https://cdn.example.com/cover.jpg',
+        1, 'https://cdn.example.com/cover.jpg',
         inject<Db>(mockDb), log,
       );
 
@@ -871,7 +910,7 @@ describe('downloadRemoteCover', () => {
       mockFetch.mockRejectedValue(new Error('Network error'));
 
       await downloadRemoteCover(
-        1, '/books/test', 'https://cdn.example.com/cover.jpg',
+        1, 'https://cdn.example.com/cover.jpg',
         inject<Db>(mockDb), log,
       );
 
@@ -883,7 +922,7 @@ describe('downloadRemoteCover', () => {
       mockedDnsLookup.mockResolvedValueOnce([{ address: '192.168.1.1', family: 4 }]);
 
       await downloadRemoteCover(
-        1, '/books/test', 'https://attacker.example.com/cover.jpg',
+        1, 'https://attacker.example.com/cover.jpg',
         inject<Db>(mockDb), log,
       );
 
@@ -905,7 +944,7 @@ describe('downloadRemoteCover', () => {
       mockFetch.mockResolvedValue(response);
 
       const result = await downloadRemoteCover(
-        1, '/books/test', 'https://cdn.example.com/cover.jpg',
+        1, 'https://cdn.example.com/cover.jpg',
         inject<Db>(mockDb), log,
       );
 
@@ -961,7 +1000,7 @@ describe('downloadRemoteCover — onFailure side channel (#2159)', () => {
 
   function download() {
     return downloadRemoteCover(
-      1, '/books/test', 'https://cdn.example.com/cover.jpg',
+      1, 'https://cdn.example.com/cover.jpg',
       inject<Db>(mockDb), log, onFailure,
     );
   }
@@ -1012,7 +1051,7 @@ describe('downloadRemoteCover — onFailure side channel (#2159)', () => {
 
   it('is NOT invoked on the caller-gated skip', async () => {
     const result = await downloadRemoteCover(
-      1, '/books/test', '/api/books/1/cover', inject<Db>(mockDb), log, onFailure,
+      1, '/api/books/1/cover', inject<Db>(mockDb), log, onFailure,
     );
     expect(result).toBe('skipped');
     expect(onFailure).not.toHaveBeenCalled();
@@ -1021,7 +1060,7 @@ describe('downloadRemoteCover — onFailure side channel (#2159)', () => {
   it('omitting it is a no-op — the failing arm still returns the same string outcome', async () => {
     mockFetch.mockRejectedValue(new Error('Connection refused'));
     const result = await downloadRemoteCover(
-      1, '/books/test', 'https://cdn.example.com/cover.jpg', inject<Db>(mockDb), log,
+      1, 'https://cdn.example.com/cover.jpg', inject<Db>(mockDb), log,
     );
     expect(result).toBe('failed');
   });

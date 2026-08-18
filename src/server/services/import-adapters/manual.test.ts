@@ -720,20 +720,31 @@ describe('ManualImportAdapter', () => {
         expect(phases).toEqual(['analyzing', 'copying', 'renaming', 'fetching_metadata']);
       });
 
-      it('mode=copy + fileFormat set: adapter snapshots settingsService.get(library) once for rename (copyToLibrary fetches its own)', async () => {
+      /**
+       * #2369 AC15/F4. The root-commit registration is the single sequencing point for the
+       * canonical root: it reads `library` once and both the copy's target derivation and the
+       * template rename consume THAT value. A second read — by the adapter or inside
+       * `copyToLibrary` — would derive the target from a snapshot the registration does not cover.
+       */
+      it('mode=copy + fileFormat set: reads library exactly once, through the root-commit registration', async () => {
         await mockReaddirAudioFiles(['a.mp3']);
         const settingsSvc = makeRenameSettingsService('{title}');
         deps.settingsService = inject<SettingsService>(settingsSvc);
         deps.bookService = makeBookServiceWithNarrators([]);
         adapter = new ManualImportAdapter(deps);
+        const copySpy = vi.spyOn(importOrchestration, 'copyToLibrary');
 
         const job = makeJob();
         await adapter.process(job, ctx);
 
-        // Real copy takes one snapshot; adapter rename must add exactly one more, not two.
-        const libraryCalls = (settingsSvc.get as ReturnType<typeof vi.fn>).mock.calls
-          .filter((c: unknown[]) => c[0] === 'library');
-        expect(libraryCalls).toHaveLength(2);
+        const getMock = settingsSvc.get as ReturnType<typeof vi.fn>;
+        const libraryReads = getMock.mock.calls
+          .map((c: unknown[], i: number) => ({ category: c[0], result: getMock.mock.results[i]! }))
+          .filter((r) => r.category === 'library');
+        expect(libraryReads).toHaveLength(1);
+
+        // And that one read is the registration's: the copy consumed that exact object.
+        expect(copySpy.mock.calls[0]![4]).toBe(await libraryReads[0]!.result.value);
       });
 
       it('mode=copy + fileFormat=\'{title}\' + 3 audio files: fs.rename called 3 times with (target/oldName, target/newName)', async () => {

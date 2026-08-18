@@ -11,6 +11,7 @@ import { toLibraryRecording } from './book-dedup.js';
 import type { BookImportService } from './book-import.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '@core/metadata/index.js';
+import type { AppSettings } from '@shared/schemas/settings/registry.js';
 import { buildTargetPath, getAudioPathSize, assertCopyVerified, reconstructDiscGroup, copyDiscGroup } from '../utils/import-helpers.js';
 import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js';
 import { deleteManagedBookFiles } from '../utils/delete-managed-files.js';
@@ -162,17 +163,23 @@ async function resolveOccupiedTarget(
   throw new OwnedRecordingError({ existingBookId: owners[0]!.id, title: owners[0]!.title, reason: 'recording-review-ambiguous-owner' });
 }
 
+/**
+ * `librarySettings` is the caller's root-commit registration snapshot (#2369 AC3/AC15), never a
+ * read of its own: the gate is the single sequencing point for the canonical root, so a second
+ * `settingsService.get('library')` here would make the target derivation answer to a read the
+ * registration does not cover.
+ */
 // eslint-disable-next-line complexity -- copy/move pipeline with verification and retry logic
 export async function copyToLibrary(
   item: ImportConfirmItem,
   meta: BookMetadata | null,
   mode: ImportMode,
   deps: ImportPipelineDeps,
+  librarySettings: AppSettings['library'],
   onProgress?: (progress: number, byteCounter: { current: number; total: number }) => void,
 ): Promise<{ targetPath: string; editionLabel?: string }> {
-  const { log, settingsService } = deps;
+  const { log } = deps;
 
-  const librarySettings = await settingsService.get('library');
   const namingOptions = toNamingOptions(librarySettings);
   // Match DB creation: explicit item series wins, otherwise use metadata primary; only path building normalizes it.
   const series = resolveImportSeries(item, pickPrimarySeries(meta));

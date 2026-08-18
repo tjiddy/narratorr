@@ -1,5 +1,5 @@
 import { extname } from 'node:path';
-import type { SQL } from 'drizzle-orm';
+import { eq, type SQL } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@db/index.js';
 import { books } from '@db/schema.js';
@@ -49,9 +49,23 @@ export async function reconcileBookSidecars(args: ReconcileBookSidecarsArgs): Pr
   return withBookAdmissionLock(bookId, () => reconcileWithinAdmissionLock(args));
 }
 
-/** Caller must hold the admission lock for `args.bookId`. */
+/**
+ * Caller must hold the admission lock for `args.bookId`.
+ *
+ * The folder and cover URL are re-read here, not taken from the batch query: that query is a
+ * pre-lock snapshot by construction, so a book renamed since it ran would otherwise have its OPF
+ * skipped by the writer's own ownership check while the cover half still landed in the vacated
+ * folder — two sidecars, two folders (AC3 / AC12).
+ */
 async function reconcileWithinAdmissionLock(args: ReconcileBookSidecarsArgs): Promise<SidecarReconcileOutcome> {
-  const { bookId, title, bookFolder, coverUrl, bookService, db, log, connectorService } = args;
+  const { bookId, title, bookService, db, log, connectorService } = args;
+
+  const fresh = await readFreshSidecarTarget(db, bookId);
+  if (!fresh) {
+    log.debug({ bookId, snapshotFolder: args.bookFolder }, 'Sidecar reconcile skipped — the book owns no book folder now');
+    return { failed: false };
+  }
+  const { bookFolder, coverUrl } = fresh;
 
   const reasons: string[] = [];
   let wrote = false;
@@ -77,6 +91,21 @@ async function reconcileWithinAdmissionLock(args: ReconcileBookSidecarsArgs): Pr
 
   if (reasons.length > 0) return { failed: true, reason: reasons.join('; ') };
   return { failed: false };
+}
+
+/** Null when the row vanished, lost its path, or now points at a loose audio file. */
+async function readFreshSidecarTarget(
+  db: Db,
+  bookId: number,
+): Promise<{ bookFolder: string; coverUrl: string | null } | null> {
+  const rows = await db
+    .select({ path: books.path, coverUrl: books.coverUrl })
+    .from(books)
+    .where(eq(books.id, bookId))
+    .limit(1);
+  const row = rows[0];
+  if (!row?.path || AUDIO_EXTENSIONS.has(extname(row.path).toLowerCase())) return null;
+  return { bookFolder: row.path, coverUrl: row.coverUrl };
 }
 
 // Older or mocked writers may report failure without invoking the sink.

@@ -121,28 +121,9 @@ export class ManualImportAdapter implements ImportAdapter {
         throw new Error('Cannot import a multi-disc set in pointer (in-place) mode — re-import with copy or move so the discs flatten into one book folder');
       }
 
-      let finalPath = payload.path;
-      // Persist the edition discriminator so rescans reuse it instead of re-deriving it.
-      let editionLabel: string | undefined;
-      if (mode) {
-        ({ finalPath, editionLabel } = await this.copyUnderRootCommit(
-          item, extracted.meta ?? null, mode, bookId, bookRow, payload, ctx,
-        ));
-      }
-
-      const stats = await getAudioStats(finalPath, log);
-      log.debug({ bookId, finalPath, fileCount: stats.fileCount, totalSize: stats.totalSize }, 'Audio stats collected');
-
-      // Half of the import commit; the `imported` transition below is the other half. They are two
-      // statements because enrichment runs between them and a failure there must not leave the row
-      // claiming `imported` — this is NOT atomic. What makes the intermediate `path=new,
-      // status=importing` state unobservable is the admission lock: every other mutator of this
-      // book, including the reconciler and rename, has to wait for the section to finish.
-      await transitionBookStatus(db, bookId, {
-        path: finalPath,
-        size: stats.totalSize,
-        ...(editionLabel !== undefined && { editionLabel }),
-      });
+      const finalPath = mode
+        ? await this.commitCopyUnderRootCommit(item, extracted.meta ?? null, mode, bookId, bookRow, payload, ctx)
+        : await this.commitImportedPath(bookId, payload.path, undefined, ctx);
 
       await ctx.setPhase('fetching_metadata');
 
@@ -177,11 +158,13 @@ export class ManualImportAdapter implements ImportAdapter {
   }
 
   /**
-   * Copy mode derives its target from the library root, so it registers as a root-dependent commit
-   * and takes the canonical root from the gate instead of reading settings for itself. Pointer mode
-   * never reads the root and registers nothing.
+   * Copy mode derives its target from the library root, so it registers as a root-dependent commit,
+   * takes the canonical root from the gate — no second settings read — and holds the registration
+   * from that derivation through the `path` commit. Releasing at the end of the copy would let a
+   * `library` write land between the files committing under the old root and the row committing
+   * that old-root path. Pointer mode never reads the root and registers nothing.
    */
-  private async copyUnderRootCommit(
+  private async commitCopyUnderRootCommit(
     item: ImportConfirmItem,
     extractedMeta: BookMetadata | null,
     mode: NonNullable<ManualImportJobPayload['mode']>,
@@ -189,20 +172,44 @@ export class ManualImportAdapter implements ImportAdapter {
     bookRow: { title: string; seriesName: string | null; seriesPosition: number | null; publishedDate: string | null },
     payload: ManualImportJobPayload,
     ctx: ImportAdapterContext,
-  ): Promise<{ finalPath: string; editionLabel: string | undefined }> {
+  ): Promise<string> {
     const rootCommit = await beginRootCommit(this.deps.settingsService);
     try {
       await ctx.setPhase('copying');
-      const copyResult = await copyToLibrary(item, extractedMeta, mode, this.deps, (progress, byteCounter) => {
+      const copyResult = await copyToLibrary(item, extractedMeta, mode, this.deps, rootCommit.library, (progress, byteCounter) => {
         ctx.emitProgress('copying', progress, byteCounter);
       });
       await this.renameIfConfigured(
         copyResult.targetPath, bookId, bookRow, payload, ctx, rootCommit.library, copyResult.editionLabel,
       );
-      return { finalPath: copyResult.targetPath, editionLabel: copyResult.editionLabel };
+      return await this.commitImportedPath(bookId, copyResult.targetPath, copyResult.editionLabel, ctx);
     } finally {
       rootCommit.release();
     }
+  }
+
+  /**
+   * Half of the import commit; the `imported` transition in the caller is the other half. They are
+   * two statements because enrichment runs between them and a failure there must not leave the row
+   * claiming `imported` — this is NOT atomic. What makes the intermediate `path=new,
+   * status=importing` state unobservable is the admission lock: every other mutator of this book,
+   * including the reconciler and rename, has to wait for the section to finish.
+   */
+  private async commitImportedPath(
+    bookId: number,
+    finalPath: string,
+    editionLabel: string | undefined,
+    ctx: ImportAdapterContext,
+  ): Promise<string> {
+    const stats = await getAudioStats(finalPath, ctx.log);
+    ctx.log.debug({ bookId, finalPath, fileCount: stats.fileCount, totalSize: stats.totalSize }, 'Audio stats collected');
+
+    await transitionBookStatus(ctx.db, bookId, {
+      path: finalPath,
+      size: stats.totalSize,
+      ...(editionLabel !== undefined && { editionLabel }),
+    });
+    return finalPath;
   }
 
   private async writeOpfSidecar(bookId: number, finalPath: string, log: ImportAdapterContext['log']): Promise<void> {

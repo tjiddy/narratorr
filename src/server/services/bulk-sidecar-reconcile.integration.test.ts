@@ -57,8 +57,14 @@ type ReconcileRow = { id: number; path: string; coverUrl: string | null };
 
 function makeDb(rows: ReconcileRow[]) {
   const captured: { coverUrl?: string | null | undefined } = {};
+  // The batch query resolves every row; each section then re-reads its own row (#2369 F2).
+  const singleRow = (): Promise<ReconcileRow[]> => Promise.resolve(rows.slice(0, 1));
   const db = {
-    select: vi.fn(() => ({ from: vi.fn(() => ({ where: vi.fn().mockResolvedValue(rows) })) })),
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => Object.assign(Promise.resolve(rows), { limit: singleRow })),
+      })),
+    })),
     update: vi.fn(() => ({
       set: vi.fn((vals: { coverUrl?: string | null }) => {
         captured.coverUrl = vals.coverUrl;

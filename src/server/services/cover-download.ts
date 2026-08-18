@@ -1,6 +1,8 @@
 import { writeFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
+import { books } from '@db/schema.js';
 import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { MAX_COVER_SIZE } from '@shared/constants.js';
@@ -81,20 +83,28 @@ async function readBodyWithCap(response: Response): Promise<Buffer> {
 }
 
 /**
- * Serialized entry point for callers that hold no lock. The write and its `finalizeCoverWrite`
- * localization share one admission section, so a rename or delete can neither move the folder
- * between them nor leave a `cover.<ext>` in a folder the book no longer owns.
+ * Serialized entry point for callers that hold no lock. It takes no folder argument on purpose:
+ * anything an unlocked caller could hand in was read before the section, so a call queued behind a
+ * rename would target the vacated folder. The folder comes from the row read INSIDE the section,
+ * which is also where `finalizeCoverWrite` localizes it (AC3 / AC12) — the shape `uploadCover`
+ * already uses. A book with no row or no path left by the time the section opens writes nothing.
  */
 export async function downloadRemoteCover(
   bookId: number,
-  bookPath: string,
   remoteUrl: string,
   db: Db,
   log: FastifyBaseLogger,
   onFailure?: ((cause: unknown) => void) | undefined,
 ): Promise<CoverWriteOutcome> {
-  return withBookAdmissionLock(bookId, () =>
-    downloadRemoteCoverWithinAdmissionLock(bookId, bookPath, remoteUrl, db, log, onFailure));
+  return withBookAdmissionLock(bookId, async () => {
+    const rows = await db.select({ path: books.path }).from(books).where(eq(books.id, bookId)).limit(1);
+    const bookPath = rows[0]?.path;
+    if (!bookPath) {
+      log.debug({ bookId }, 'Remote cover download skipped — the book owns no folder now');
+      return 'skipped';
+    }
+    return downloadRemoteCoverWithinAdmissionLock(bookId, bookPath, remoteUrl, db, log, onFailure);
+  });
 }
 
 /**
