@@ -17,6 +17,7 @@ vi.mock('../utils/network-service.js', async (importActual) => {
 import { AudioBookBayIndexer } from './abb.js';
 import { IndexerError, ProxyError, isProxyRelatedError } from './errors.js';
 import { ABB_DETAILS_SENTINEL_PREFIX, abbDetailsSentinel } from './abb-sentinel.js';
+import { abbGuid } from './abb-url.js';
 import { abbThrottle, _resetAbbThrottleForTesting } from './abb-throttle.js';
 import { parseInfoHash } from '../utils/magnet.js';
 import { solverOk, useSolverBound } from '../__tests__/solver-bound.js';
@@ -47,6 +48,8 @@ const ABB_HOST = 'audiobookbay.test';
 const ABB_BASE = `https://${ABB_HOST}`;
 const MURDER_URL = `${ABB_BASE}/audio-books/murder-in-the-new-forest/`;
 const WISH_URL = `${ABB_BASE}/audio-books/wish-you-were-here-yet/`;
+const MURDER_GUID = 'abb:/audio-books/murder-in-the-new-forest/';
+const WISH_GUID = 'abb:/audio-books/wish-you-were-here-yet/';
 const FIXTURE_HASH = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0';
 const PINNED_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -173,18 +176,18 @@ describe('AudioBookBayIndexer', () => {
   });
 
   describe('search-row identity (AC2)', () => {
-    it('sets guid to the absolute details URL and downloadUrl to its sentinel', async () => {
+    it('sets guid to the path-derived identity and downloadUrl to the details sentinel', async () => {
       serveSearchPages();
 
       const { results } = await indexer.search('test');
 
       expect(results[0]).toMatchObject({
-        guid: MURDER_URL,
+        guid: MURDER_GUID,
         downloadUrl: `${ABB_DETAILS_SENTINEL_PREFIX}${MURDER_URL}`,
         detailsUrl: MURDER_URL,
       });
       expect(results[1]).toMatchObject({
-        guid: WISH_URL,
+        guid: WISH_GUID,
         downloadUrl: abbDetailsSentinel(WISH_URL),
         detailsUrl: WISH_URL,
       });
@@ -205,22 +208,68 @@ describe('AudioBookBayIndexer', () => {
       }
     });
 
-    it('absolutizes a relative href and leaves a fully-qualified one alone, on both guid and sentinel', async () => {
+    /**
+     * #2434 — replaces the case that asserted an off-host href survived verbatim, which is exactly
+     * the behavior being removed. A mirror's markup routinely disagrees with the configured origin
+     * on host, scheme and www; all three must land on `ABB_BASE` or the detail fetch keys its own
+     * throttle queue and the guid dies at the next hop.
+     */
+    it('rewrites every scraped href onto the configured origin, whatever the markup carried', async () => {
       serveSearchPages(`
         <html><body>
           <div class="post"><div class="postTitle"><h2><a href="/audio-books/relative/" rel="bookmark">Relative</a></h2></div></div>
           <div class="post"><div class="postTitle"><h2><a href="audio-books/no-slash/" rel="bookmark">No Slash</a></h2></div></div>
           <div class="post"><div class="postTitle"><h2><a href="https://other.test/audio-books/absolute/" rel="bookmark">Absolute</a></h2></div></div>
+          <div class="post"><div class="postTitle"><h2><a href="http://www.${ABB_HOST}/audio-books/aliased/" rel="bookmark">Aliased</a></h2></div></div>
+          <div class="post"><div class="postTitle"><h2><a href="//other.test/audio-books/protocol-relative/" rel="bookmark">Protocol Relative</a></h2></div></div>
         </body></html>`);
 
       const { results } = await indexer.search('test');
 
-      expect(results.map((r) => r.guid)).toEqual([
+      expect(results.map((r) => r.detailsUrl)).toEqual([
         `${ABB_BASE}/audio-books/relative/`,
         `${ABB_BASE}/audio-books/no-slash/`,
-        'https://other.test/audio-books/absolute/',
+        `${ABB_BASE}/audio-books/absolute/`,
+        `${ABB_BASE}/audio-books/aliased/`,
+        `${ABB_BASE}/audio-books/protocol-relative/`,
       ]);
-      expect(results.map((r) => r.downloadUrl)).toEqual(results.map((r) => abbDetailsSentinel(r.guid!)));
+    });
+
+    // Deriving any two of the three independently is how they drift; one rewritten string feeds all.
+    it('keeps guid, detailsUrl and the sentinel mutually consistent on every kept row', async () => {
+      serveSearchPages(`
+        <html><body>
+          <div class="post"><div class="postTitle"><h2><a href="https://other.test/audio-books/absolute/?p=1#frag" rel="bookmark">Absolute</a></h2></div></div>
+          <div class="post"><div class="postTitle"><h2><a href="audio-books/no-slash/" rel="bookmark">No Slash</a></h2></div></div>
+        </body></html>`);
+
+      const { results } = await indexer.search('test');
+
+      expect(results).toHaveLength(2);
+      for (const result of results) {
+        expect(result.downloadUrl).toBe(abbDetailsSentinel(result.detailsUrl!));
+        expect(result.guid).toBe(abbGuid(result.detailsUrl!));
+      }
+      expect(results[0]!.guid).toBe('abb:/audio-books/absolute/?p=1');
+    });
+
+    // A mirror hop is a config edit, so the same release under two hostnames must be one identity.
+    it('gives the same release one guid under two different configured mirrors', async () => {
+      const MIRROR_HOST = 'audiobookbay.mirror';
+      const row = '<html><body><div class="post"><div class="postTitle"><h2><a href="/audio-books/murder-in-the-new-forest/" rel="bookmark">Murder</a></h2></div></div></body></html>';
+      server.use(
+        http.get(`${ABB_BASE}/`, () => new HttpResponse(row, { headers: { 'Content-Type': 'text/html' } })),
+        http.get(`https://${MIRROR_HOST}/`, () => new HttpResponse(row, { headers: { 'Content-Type': 'text/html' } })),
+      );
+      const mirror = new AudioBookBayIndexer({ hostname: MIRROR_HOST, pageLimit: 1 });
+
+      const here = await indexer.search('test');
+      const there = await mirror.search('test');
+
+      expect(here.results[0]!.guid).toBe(MURDER_GUID);
+      expect(there.results[0]!.guid).toBe(MURDER_GUID);
+      // ...while the link the operator actually follows still points at their own configured host.
+      expect(there.results[0]!.detailsUrl).toBe(`https://${MIRROR_HOST}/audio-books/murder-in-the-new-forest/`);
     });
 
     /**
@@ -270,6 +319,140 @@ describe('AudioBookBayIndexer', () => {
       expect(results[0]!.coverUrl).toBe('https://example.com/covers/murder-in-the-new-forest.jpg');
       expect(results[0]!.indexer).toBe('AudioBookBay');
       expect(results[0]!.protocol).toBe('torrent');
+    });
+  });
+
+  /**
+   * #2434 AC3 — the row loop's two gates and their precedence. Gate A is the existing
+   * `!title || !detailsUrl`; Gate B rejects an href that cannot address a release once resolved.
+   * They share the `dropped.other` counter but carry different trace reasons, because "the link was
+   * not a usable URL" and "the link pointed at the homepage" are different diagnoses when a
+   * mirror's markup changes.
+   */
+  describe('drop-disposition precedence (AC3)', () => {
+    const titledRow = (href: string, title = 'Titled Row'): string =>
+      `<div class="post"><div class="postTitle"><h2><a href="${href}" rel="bookmark">${title}</a></h2></div></div>`;
+    const page = (...posts: string[]): string => `<html><body>${posts.join('')}</body></html>`;
+
+    /**
+     * Arm C. A row-count assertion alone would pass against a fake root release whenever some other
+     * row also dropped, so the absence of the collapsed identity is asserted directly.
+     */
+    describe('Arm C — an href that resolves to the bare site root', () => {
+      for (const href of ['#', '#fragment', '/', '   ', '/.', '?']) {
+        it(`drops ${JSON.stringify(href)} as no-release-path rather than keeping a homepage row`, async () => {
+          serveSearchPages(page(titledRow(href)));
+
+          const { results, parseStats, debugTrace } = await indexer.search('test');
+
+          expect(results).toEqual([]);
+          expect(parseStats.dropped.other).toBe(1);
+          expect(parseStats.dropped.emptyTitle).toBe(0);
+          expect(debugTrace.map((t) => t.reason)).toEqual(['dropped:no-release-path']);
+        });
+      }
+
+      it('produces no row carrying the collapsed root identity, even beside a healthy row', async () => {
+        serveSearchPages(page(titledRow('#', 'Root Row'), titledRow('/audio-books/real/', 'Real Row')));
+
+        const { results, parseStats } = await indexer.search('test');
+
+        expect(results.map((r) => r.title)).toEqual(['Real Row']);
+        expect(results.some((r) => r.guid === 'abb:/')).toBe(false);
+        expect(results.some((r) => r.detailsUrl === `${ABB_BASE}/`)).toBe(false);
+        expect(parseStats.dropped.other).toBe(1);
+      });
+    });
+
+    /**
+     * The keep-side control that bounds the rule. ABB's markup is WordPress-shaped, so a mirror on
+     * default permalinks serves real posts at `/?p=N`; without this case an implementation that
+     * rejects on `pathname === '/'` alone passes every rejection above and silently makes such a
+     * mirror unusable.
+     */
+    it('keeps a query-addressed default-permalink row', async () => {
+      serveSearchPages(page(titledRow('/?p=12345', 'Default Permalink')));
+
+      const { results, parseStats } = await indexer.search('test');
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({
+        guid: 'abb:/?p=12345',
+        detailsUrl: `${ABB_BASE}/?p=12345`,
+        downloadUrl: abbDetailsSentinel(`${ABB_BASE}/?p=12345`),
+      });
+      expect(parseStats.dropped.other).toBe(0);
+    });
+
+    describe('Gate B arms A and B — an href that is not a usable http(s) URL', () => {
+      for (const href of ['javascript:void(0)', 'mailto:a@b.test', 'data:text/html,x', 'http://[::1']) {
+        it(`drops ${JSON.stringify(href)} as non-http-href`, async () => {
+          serveSearchPages(page(titledRow(href)));
+
+          const { results, parseStats, debugTrace } = await indexer.search('test');
+
+          expect(results).toEqual([]);
+          expect(parseStats.dropped.other).toBe(1);
+          expect(debugTrace.map((t) => t.reason)).toEqual(['dropped:non-http-href']);
+        });
+      }
+
+      it('isolates the bad row and still returns the two around it', async () => {
+        serveSearchPages(page(
+          titledRow('/audio-books/first/', 'First'),
+          titledRow('javascript:void(0)', 'Middle'),
+          titledRow('/audio-books/third/', 'Third'),
+        ));
+
+        const { results, parseStats, debugTrace } = await indexer.search('test');
+
+        expect(results.map((r) => r.title)).toEqual(['First', 'Third']);
+        expect(parseStats.itemsObserved).toBe(3);
+        expect(parseStats.dropped.other).toBe(1);
+        expect(parseStats.dropped.emptyTitle).toBe(0);
+        expect(debugTrace.map((t) => t.reason)).toEqual(['dropped:non-http-href', 'kept', 'kept']);
+      });
+    });
+
+    /**
+     * The case that discriminates a title-first implementation from a rewrite-first one — every
+     * other case in this block passes against both. Gate A wins unconditionally, so an empty-title
+     * row keeps today's classification no matter what its href would have resolved to.
+     */
+    it('classifies an empty-title row with a javascript: href under Gate A, not Gate B', async () => {
+      serveSearchPages(page(titledRow('javascript:alert(1)', '')));
+
+      const { parseStats, debugTrace } = await indexer.search('test');
+
+      expect(parseStats.dropped.emptyTitle).toBe(1);
+      expect(parseStats.dropped.other).toBe(0);
+      expect(debugTrace.map((t) => t.reason)).toEqual(['dropped:empty-title']);
+    });
+
+    it('conserves the counters across a page carrying one row of every class', async () => {
+      const undecodable = Buffer.from('just some prose, not markup', 'utf-8').toString('base64');
+      serveSearchPages(page(
+        titledRow('/audio-books/kept/', 'Kept Row'),
+        titledRow('/audio-books/ignored/', ''),
+        titledRow('javascript:void(0)', 'Non HTTP'),
+        titledRow('#', 'Root Collapse'),
+        `<div class="post re-ab">${undecodable}</div>`,
+      ));
+
+      const { results, parseStats, debugTrace } = await indexer.search('test');
+
+      const { dropped } = parseStats;
+      expect(parseStats.itemsObserved).toBe(5);
+      expect(parseStats.kept + dropped.emptyTitle + dropped.noUrl + dropped.other).toBe(5);
+      expect(parseStats).toMatchObject({ kept: 1, dropped: { emptyTitle: 1, noUrl: 0, other: 3 } });
+      expect(results.map((r) => r.title)).toEqual(['Kept Row']);
+      expect(debugTrace.map((t) => t.reason)).toEqual([
+        'dropped:empty-title',
+        'dropped:non-http-href',
+        'dropped:no-release-path',
+        'dropped:re-ab-undecodable',
+        'kept',
+      ]);
     });
   });
 
@@ -442,6 +625,66 @@ describe('AudioBookBayIndexer', () => {
 
       expect(parseInfoHash(result.downloadUrl)).toBe(FIXTURE_HASH);
       expect(result.downloadUrl).toContain('dn=Rare+Book');
+    });
+
+    /**
+     * #2434 AC4 — the sentinel is persisted state, so its payload can name a mirror the operator
+     * has since replaced, or a shape written by a build that predates Gate B. Both are decided
+     * before any request: spending a paced fetch on the wrong host, or on the homepage, is the cost
+     * this issue exists to avoid.
+     */
+    describe('grab-time rewrite onto the configured origin (AC4)', () => {
+      const OLD_MIRROR = 'https://old-mirror.test';
+
+      /** One wildcard handler per host, so a request to either is observable by count and by URL. */
+      function watchBothHosts(): { configured: string[]; oldMirror: string[] } {
+        const configured: string[] = [];
+        const oldMirror: string[] = [];
+        server.use(
+          http.get(`${ABB_BASE}/*`, ({ request }) => {
+            configured.push(request.url);
+            return new HttpResponse(detailHtml, { headers: { 'Content-Type': 'text/html' } });
+          }),
+          http.get(`${OLD_MIRROR}/*`, ({ request }) => {
+            oldMirror.push(request.url);
+            return new HttpResponse(detailHtml, { headers: { 'Content-Type': 'text/html' } });
+          }),
+        );
+        return { configured, oldMirror };
+      }
+
+      it('fetches a sentinel persisted against a previous mirror from the currently configured host', async () => {
+        const seen = watchBothHosts();
+
+        const result = await indexer.resolveDownloadUrl(
+          grabCtx(abbDetailsSentinel(`${OLD_MIRROR}/audio-books/murder-in-the-new-forest/`)),
+        );
+
+        expect(seen.configured).toEqual([MURDER_URL]);
+        expect(seen.oldMirror).toEqual([]);
+        expect(parseInfoHash(result.downloadUrl)).toBe(FIXTURE_HASH);
+      });
+
+      // Zero requests, not merely a throw: a guard placed after the fetch would still spend it.
+      const rejected: Array<[arm: string, payload: string]> = [
+        ['Arm B — a non-http(s) scheme', 'javascript:alert(1)'],
+        ['Arm A — an unresolvable URL', 'http://[::1'],
+        ['Arm C — a root URL persisted against an old mirror', `${OLD_MIRROR}/`],
+      ];
+
+      for (const [arm, payload] of rejected) {
+        it(`throws an IndexerError naming the payload and issues no request for ${arm}`, async () => {
+          const seen = watchBothHosts();
+
+          const error = await indexer.resolveDownloadUrl(grabCtx(abbDetailsSentinel(payload)))
+            .catch((e: unknown) => e);
+
+          expect(error).toBeInstanceOf(IndexerError);
+          expect((error as IndexerError).message).toContain(payload);
+          expect(seen.configured).toEqual([]);
+          expect(seen.oldMirror).toEqual([]);
+        });
+      }
     });
 
     /**
@@ -682,12 +925,12 @@ describe('AudioBookBayIndexer', () => {
       expect(response.debugTrace.some((t) => t.reason === 'kept' && t.rawTitleBytes)).toBe(true);
     });
 
-    it('carries the details-URL guid on every kept trace entry', async () => {
+    it('carries the path-derived guid on every kept trace entry', async () => {
       serveSearchPages();
 
       const { debugTrace } = await indexer.search('test');
 
-      expect(debugTrace.filter((t) => t.reason === 'kept').map((t) => t.guid)).toEqual([MURDER_URL, WISH_URL]);
+      expect(debugTrace.filter((t) => t.reason === 'kept').map((t) => t.guid)).toEqual([MURDER_GUID, WISH_GUID]);
     });
 
     it('conserves the counters across kept and dropped rows', async () => {
@@ -1428,7 +1671,7 @@ describe('AudioBookBayIndexer', () => {
       expect(results.map((r) => r.title)).toEqual(['Plain Row', 'Obfuscated Row']);
       expect(results[1]).toMatchObject({
         title: 'Obfuscated Row',
-        guid: `${ABB_BASE}/audio-books/obfuscated-row/`,
+        guid: 'abb:/audio-books/obfuscated-row/',
         detailsUrl: `${ABB_BASE}/audio-books/obfuscated-row/`,
         downloadUrl: abbDetailsSentinel(`${ABB_BASE}/audio-books/obfuscated-row/`),
         coverUrl: 'https://example.com/covers/obfuscated-row.jpg',
@@ -1575,8 +1818,8 @@ describe('AudioBookBayIndexer', () => {
 
       expect(results.map((r) => r.title)).toEqual(['Plain Row', 'Wrapped Row']);
       expect(results.map((r) => r.guid)).toEqual([
-        `${ABB_BASE}/audio-books/plain-row/`,
-        `${ABB_BASE}/audio-books/wrapped-row/`,
+        'abb:/audio-books/plain-row/',
+        'abb:/audio-books/wrapped-row/',
       ]);
       expect(parseStats.itemsObserved).toBe(2);
     });
@@ -1597,7 +1840,24 @@ describe('AudioBookBayIndexer', () => {
       expect(results).toHaveLength(1);
       expect(results[0]).toMatchObject({
         title: 'Second',
-        guid: `${ABB_BASE}/audio-books/second/`,
+        guid: 'abb:/audio-books/second/',
+      });
+    });
+
+    // The decode path must not bypass the rewrite: a blob whose markup carries an off-host absolute
+    // href would otherwise reintroduce exactly the aliasing the plain path no longer has.
+    it('rewrites an off-host absolute href carried inside a decoded blob', async () => {
+      serveSearchPages(page(reAbPost(
+        '<div class="postTitle"><h2><a href="https://other.test/audio-books/decoded-absolute/" rel="bookmark">Decoded</a></h2></div>',
+      )));
+
+      const { results } = await indexer.search('test');
+
+      expect(results[0]).toMatchObject({
+        title: 'Decoded',
+        guid: 'abb:/audio-books/decoded-absolute/',
+        detailsUrl: `${ABB_BASE}/audio-books/decoded-absolute/`,
+        downloadUrl: abbDetailsSentinel(`${ABB_BASE}/audio-books/decoded-absolute/`),
       });
     });
 
