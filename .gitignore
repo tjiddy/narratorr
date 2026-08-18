@@ -28,6 +28,8 @@ npm-debug.log*
 pnpm-debug.log*
 
 coverage/
+# The Windows job's Vitest JSON report; also written when reproducing that run locally.
+vitest-windows.json
 lighthouse-reports/
 .lighthouseci/
 .lighthouserc.json

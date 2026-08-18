@@ -80,6 +80,38 @@ describe('withPathWriteLock', () => {
     await expect(following).resolves.toBe('ok');
   });
 
+  // #2301's defect, and the reason #2358 exists: the primitive keyed on the exact string handed to
+  // it while three spellings of one file reached it, so one file got two chains and mutual
+  // exclusion was silently off. Every other suite stayed green under that mutation on Linux — all
+  // 24995 of them — because `resolve` alone already collapses `/a/../b`. The backslash-parent form
+  // below is the ONLY shape that discriminates: `resolve` treats `\` as an ordinary character on
+  // POSIX, so it cannot collapse it, and folding separators BEFORE resolving is what makes the two
+  // spellings one key. The primitive touches no filesystem, so this reads identically on Windows —
+  // deliberately the platform-neutral control for the Windows job.
+  it('holds one chain for two spellings of one path, so a raw-keyed writer cannot enter beside a canonical holder', async () => {
+    const events: string[] = [];
+    const held = deferred<void>();
+    const canonical = '/books/Mort/Mort.m4b';
+    const legacy = '/books/Mort\\Sourcery\\..\\Mort.m4b';
+
+    const holder = withPathWriteLock(canonical, async () => {
+      events.push('canonical:start');
+      await held.promise;
+      events.push('canonical:end');
+    });
+    const contender = withPathWriteLock(legacy, async () => {
+      events.push('legacy:start');
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(events).toEqual(['canonical:start']);
+
+    held.resolve();
+    await Promise.all([holder, contender]);
+    expect(events).toEqual(['canonical:start', 'canonical:end', 'legacy:start']);
+  });
+
   it('evicts the key once the chain drains', async () => {
     await withPathWriteLock('/books/drained.m4b', () => Promise.resolve());
     // The eviction rides a `.then` on the settled slot, so let the queue flush.

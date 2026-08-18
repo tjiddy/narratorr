@@ -117,7 +117,8 @@ describe('#2309 end-to-end — the MAM gate spaces one search\'s own refresh/sea
     const status = dispatched.find((d) => d.label === 'mam:status')!;
     const search = dispatched.find((d) => d.label === 'mam:search')!;
     const torznab = dispatched.find((d) => d.label === 'torznab:search')!;
-    // Date.now() granularity is ~15.6ms on Windows, so a strict >= interval flakes there.
+    // The remaining tolerance is clock granularity only: Date.now() ticks every ~15.6ms on
+    // Windows, so either stamp can quantize down by up to one tick.
     expect(search.at - status.at).toBeGreaterThanOrEqual(MAM_MIN_REQUEST_INTERVAL_MS - 20);
     expect(torznab.at - startedAt).toBeLessThan(MAM_MIN_REQUEST_INTERVAL_MS);
   });
