@@ -48,6 +48,7 @@ describe('#2423 monitor over the real QBittorrentClient', () => {
   let log: ReturnType<typeof createMockLogger>;
   let notifierService: { notify: Mock };
   let updateChain: ReturnType<typeof mockDbChain>;
+  let client: QBittorrentClient;
 
   // seedRow and monitorDownloads both read Date.now(); freeze it so the genuine-absence control is
   // outside grace by construction. Fake ONLY Date — full fake timers stall MSW and the native
@@ -60,6 +61,7 @@ describe('#2423 monitor over the real QBittorrentClient', () => {
     notifierService = { notify: vi.fn().mockResolvedValue(undefined) };
     updateChain = mockDbChain([{ id: 1 }]);
     db.update.mockReturnValue(updateChain);
+    client = buildClient();
 
     server.use(
       http.post(`${BASE_URL}/api/v2/auth/login`, () => new HttpResponse('Ok.', {
@@ -83,10 +85,18 @@ describe('#2423 monitor over the real QBittorrentClient', () => {
     }]));
   }
 
-  async function runCycle() {
-    const client = new QBittorrentClient({
+  function buildClient(category?: string) {
+    return new QBittorrentClient({
       host: 'localhost', port: 8080, username: 'admin', password: 'password', useSsl: false,
+      ...(category ? { category } : {}),
     });
+  }
+
+  /**
+   * ONE adapter instance across cycles, mirroring the per-clientId cache in
+   * DownloadClientService.getAdapter — that lifetime is what makes the #2433 memo survive polls.
+   */
+  async function runCycle() {
     await monitorDownloads(
       inject<Db>(db),
       inject<DownloadClientService>({ getAdapter: vi.fn().mockResolvedValue(client) }),
@@ -120,9 +130,7 @@ describe('#2423 monitor over the real QBittorrentClient', () => {
   // Without this the assertion above passes just as well against "the monitor never fails anything".
   it('control: still fails the row when the client genuinely holds no matching torrent', async () => {
     seedRow();
-    server.use(
-      http.get(`${BASE_URL}/api/v2/torrents/info`, () => HttpResponse.json([])),
-    );
+    const info = trackInfo(() => HttpResponse.json([]));
 
     await runCycle();
 
@@ -130,5 +138,66 @@ describe('#2423 monitor over the real QBittorrentClient', () => {
       expect.objectContaining({ clientStatus: 'failed', errorMessage: 'Download not found in download client' }),
     );
     expect(log.warn).toHaveBeenCalledWith({ id: 1 }, 'Download not found in client');
+    // #2433 — absence stays observable under the new request shape: with no category configured the
+    // scan is already unscoped, so a genuine absence still costs exactly two requests.
+    expect(info.urls).toHaveLength(2);
+  });
+
+  function trackInfo(respond: (params: URLSearchParams) => Response) {
+    const urls: string[] = [];
+    server.use(
+      http.get(`${BASE_URL}/api/v2/torrents/info`, ({ request }) => {
+        urls.push(request.url);
+        return respond(new URL(request.url).searchParams);
+      }),
+    );
+    return { urls, params: (index: number) => new URL(urls[index]!).searchParams };
+  }
+
+  /**
+   * #2433 — every 30s poll re-paid the full fallback scan for the life of a hybrid download, and
+   * unscoped that is the entire /torrents/info payload per hybrid per cycle.
+   */
+  describe('the canonical-hash memo across polls', () => {
+    it('re-resolves a hybrid in one request on the second cycle, persisting nothing', async () => {
+      const info = trackInfo((params) => HttpResponse.json(
+        params.has('hashes')
+          ? (params.get('hashes') === CANONICAL ? [hybridTorrent] : [])
+          : [hybridTorrent],
+      ));
+
+      seedRow();
+      await runCycle();
+      expect(info.urls).toHaveLength(2);
+
+      seedRow();
+      await runCycle();
+
+      expect(info.urls).toHaveLength(3);
+      expect(info.params(2).get('hashes')).toBe(CANONICAL);
+      expect(writtenPayloads().filter((p) => p.clientStatus === 'downloading')).toHaveLength(2);
+      expect(writtenPayloads().some((p) => p.clientStatus === 'failed')).toBe(false);
+      expect(log.warn).not.toHaveBeenCalledWith({ id: 1 }, 'Download not found in client');
+      // A11 — the memo is transient state; the row's identity is never rewritten.
+      expect(writtenPayloads().every((p) => !('externalId' in p))).toBe(true);
+    });
+
+    it('does not false-fail a hybrid sitting under a category other than the configured one', async () => {
+      client = buildClient('audiobooks');
+      seedRow();
+      const info = trackInfo((params) => HttpResponse.json(
+        params.has('hashes') || params.has('category') ? [] : [hybridTorrent],
+      ));
+
+      await runCycle();
+
+      expect(info.urls).toHaveLength(3);
+      expect(writtenPayloads()).toContainEqual(
+        expect.objectContaining({ clientStatus: 'downloading', progress: 0.25 }),
+      );
+      expect(writtenPayloads().some((p) => p.clientStatus === 'failed')).toBe(false);
+      expect(log.warn).not.toHaveBeenCalledWith({ id: 1 }, 'Download not found in client');
+      expect(notifierService.notify).not.toHaveBeenCalled();
+    });
   });
 });
