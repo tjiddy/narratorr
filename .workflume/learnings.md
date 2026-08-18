@@ -3330,3 +3330,21 @@ AudioBookBay's search is AND-over-stemmed-tokens, but its tokenizer treats the a
 **Do not widen `cleanIndexerQuery` instead.** Newznab, Torznab and MAM all tokenize normally, so `riders` matches there; changing the shared cleaner changes every one of their requests for a bug scoped to one indexer. This is per-adapter query MAPPING, not shared-query-builder policy — expect future indexer quirks to want the same treatment.
 
 Related: [[degrading-adapter-invisible-to-mock-suite]] — the proof for this class has to drive the REAL adapter through the real service seam with MSW (`src/server/services/abb-apostrophe-query.integration.test.ts`), because a mock adapter builds whatever URL the test wants. [[ladder-rung-count-needs-colon-segments]] — the multi-rung half needs a colon-segmented fixture or it asserts nothing.
+
+## buffer-base64-never-throws
+
+**source:** #2421  
+**added:** 2026-08-18  
+**files:** src/core/indexers/abb-re-ab.ts  
+**tags:** node, base64, buffer, input-validation
+
+---
+
+**`Buffer.from(x, 'base64')` never throws.** Measured on Node 24: `Buffer.from('not base64!!!***', 'base64')` returns mojibake bytes, `Buffer.from('', 'base64')` returns an empty buffer, and embedded whitespace is ignored entirely. A `try/catch` around a base64 decode is therefore not a guard — it can never fire — and any port of a decoder from a platform whose base64 function DOES throw (.NET's `Convert.FromBase64String`, which Jackett relies on) silently accepts every malformed payload.
+
+Validity has to be an explicit test, on both sides of the decode:
+
+1. **Before** — reject empty/whitespace-only, and require the alphabet: `/^[A-Za-z0-9+/]+={0,2}$/` over the whitespace-stripped payload. Strip whitespace first rather than rejecting on it: `Buffer` tolerates a blob split across newlines and indentation, and real payloads are formatted that way.
+2. **After** — a decode that produced characters is not the same as a decode that produced what you asked for. For HTML, `cheerio.load(decoded, null, false)('*').length > 0` is the observation point: it answers `0` for `Hello`, `''` and mojibake, and `> 0` for any real markup fragment (cheerio@1.2.0).
+
+Shipped at `src/core/indexers/abb-re-ab.ts:41-48` (#2421). The failure mode a guard invites in the other direction is over-rejection, so pin positive controls alongside the reject table — a padded blob, an **unpadded** blob, and a whitespace-split blob are all shapes `Buffer` accepts and a hand-tightened guard tends to refuse. Both tables live in `src/core/indexers/abb-re-ab.test.ts`. Same family as [[cheerio-br-zero-width-text]]: measure the library's actual behaviour before building code or tests on what it looks like it should do.
