@@ -1,7 +1,8 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { SettingsService } from './settings.service.js';
-import type { UpdateSettingsInput } from '@shared/schemas/settings/registry.js';
+import { DEFAULT_SETTINGS, SETTINGS_CATEGORIES, type SettingsCategory, type UpdateSettingsInput } from '@shared/schemas/settings/registry.js';
+import { createMockSettings } from '@shared/schemas/settings/create-mock-settings.fixtures.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@db/index.js';
 import { settings, settingsMigrations } from '@db/schema.js';
@@ -1327,12 +1328,30 @@ describe('migrateMaxConcurrentProcessingDefaults (#1367)', () => {
 
 describe('SettingsService — cache (#554)', () => {
   let db: ReturnType<typeof createMockDb>;
+  let log: ReturnType<typeof createMockLogger>;
   let service: SettingsService;
+
+  /** A complete row set — the only shape getAll() may cache once a missing row is uncacheable (#2451). */
+  function allCategoryRows(overrides?: Partial<Record<SettingsCategory, unknown>>): Array<{ key: string; value: unknown }> {
+    const all = createMockSettings();
+    return SETTINGS_CATEGORIES.map((key) => ({
+      key,
+      value: overrides && key in overrides ? overrides[key] : all[key],
+    }));
+  }
+
+  // Isolates parse fallbacks from the decrypt and migration warnings sharing this logger.
+  function parseWarns(): Array<Array<unknown>> {
+    return (log.warn as Mock).mock.calls.filter(
+      (call) => call[1] === 'Settings parse failed, using defaults',
+    );
+  }
 
   beforeEach(() => {
     initializeKey(TEST_KEY);
     db = createMockDb();
-    service = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()));
+    log = createMockLogger();
+    service = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(log));
   });
 
   afterEach(() => {
@@ -1382,7 +1401,7 @@ describe('SettingsService — cache (#554)', () => {
     });
 
     it('getAll() caches aggregate independently from per-category cache', async () => {
-      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: { path: '/lib' } }]));
+      db.select.mockReturnValue(mockDbChain(allCategoryRows({ library: { path: '/lib' } })));
 
       await service.getAll();
       expect(db.select).toHaveBeenCalledTimes(1);
@@ -1393,7 +1412,7 @@ describe('SettingsService — cache (#554)', () => {
     });
 
     it('getAll() returns cached aggregate on second call within TTL', async () => {
-      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: { path: '/custom' } }]));
+      db.select.mockReturnValue(mockDbChain(allCategoryRows({ library: { path: '/custom' } })));
 
       const first = await service.getAll();
       db.select.mockClear();
@@ -1420,7 +1439,8 @@ describe('SettingsService — cache (#554)', () => {
     });
 
     it('set() invalidates getAll() aggregate cache', async () => {
-      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: { path: '/old' } }]));
+      // All 13 rows: a partial set is uncacheable post-#2451, which would pass this for the wrong reason.
+      db.select.mockReturnValue(mockDbChain(allCategoryRows({ library: { path: '/old' } })));
       db.insert.mockReturnValue(mockDbChain());
 
       await service.getAll();
@@ -1451,7 +1471,8 @@ describe('SettingsService — cache (#554)', () => {
     });
 
     it('patch() invalidates getAll() aggregate cache', async () => {
-      db.select.mockReturnValue(mockDbChain([]));
+      // All 13 rows: a partial set is uncacheable post-#2451, which would pass this for the wrong reason.
+      db.select.mockReturnValue(mockDbChain(allCategoryRows()));
       db.insert.mockReturnValue(mockDbChain());
 
       await service.getAll();
@@ -1537,14 +1558,13 @@ describe('SettingsService — cache (#554)', () => {
     });
 
     it('getAll() aggregate cache has independent TTL', async () => {
-      db.select.mockReturnValue(mockDbChain([]));
+      db.select.mockReturnValue(mockDbChain(allCategoryRows()));
 
       await service.getAll();
       db.select.mockClear();
 
       vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31_000);
 
-      db.select.mockReturnValue(mockDbChain([]));
       await service.getAll();
       expect(db.select).toHaveBeenCalled();
 
@@ -1553,7 +1573,7 @@ describe('SettingsService — cache (#554)', () => {
   });
 
   describe('boundary values', () => {
-    it('get() for category with no DB row returns DEFAULT_SETTINGS and caches the default', async () => {
+    it('get() for category with no DB row returns DEFAULT_SETTINGS', async () => {
       db.select.mockReturnValue(mockDbChain([]));
 
       const result = await service.get('library');
@@ -1562,7 +1582,7 @@ describe('SettingsService — cache (#554)', () => {
 
       const result2 = await service.get('library');
       expect(result2.path).toBe('/audiobooks');
-      expect(db.select).not.toHaveBeenCalled();
+      expect(db.select).toHaveBeenCalled();
     });
 
     it('get() for category with malformed JSON returns default via safeParse fallback', async () => {
@@ -1575,6 +1595,249 @@ describe('SettingsService — cache (#554)', () => {
       const result2 = await service.get('library');
       expect(result2.path).toBe('/audiobooks');
       expect(db.select).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * The select count is the observation point throughout: `categoryCache` is private, so an
+   * assertion reading it through a cast would pin the implementation rather than the behavior.
+   */
+  describe('get() — a missing row is never cached (#2451)', () => {
+    it('returns defaults and re-reads the DB on the next call', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      expect((await service.get('library')).path).toBe('/audiobooks');
+      expect(db.select).toHaveBeenCalledTimes(1);
+
+      db.select.mockClear();
+      expect((await service.get('library')).path).toBe('/audiobooks');
+      expect(db.select).toHaveBeenCalledTimes(1);
+    });
+
+    // Counts, not "called again": a cache-with-zero-TTL half-fix still coalesces within one tick.
+    it('three consecutive misses issue exactly three selects', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      await service.get('library');
+      await service.get('library');
+      await service.get('library');
+
+      expect(db.select).toHaveBeenCalledTimes(3);
+    });
+
+    it('sees a row written by another connection with no invalidation call', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([{ key: 'library', value: { path: '/from-other-connection' } }]));
+
+      expect((await service.get('library')).path).toBe('/audiobooks');
+      expect((await service.get('library')).path).toBe('/from-other-connection');
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('leaves a present category cached while a missing one keeps re-reading', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([{ key: 'search', value: { intervalMinutes: 120 } }]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      await service.get('library');
+      await service.get('search');
+      db.select.mockClear();
+
+      expect((await service.get('search')).intervalMinutes).toBe(120);
+      expect(db.select).not.toHaveBeenCalled();
+
+      expect((await service.get('library')).path).toBe('/audiobooks');
+      expect(db.select).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * Catches a fix gated on cache-entry absence instead of row absence: an expired entry lingers
+     * (get() compares `expiresAt` without deleting), so such an implementation would refresh it into
+     * a fresh 30s defaults entry here while the empty-map miss cases above stay green.
+     */
+    it('never refreshes a lingering expired entry when the row has vanished', async () => {
+      const baseNow = Date.now();
+      vi.spyOn(Date, 'now').mockReturnValue(baseNow);
+      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: { path: '/stored' } }]));
+      expect((await service.get('library')).path).toBe('/stored');
+
+      vi.spyOn(Date, 'now').mockReturnValue(baseNow + 31_000);
+      db.select.mockReturnValue(mockDbChain([]));
+      db.select.mockClear();
+
+      expect((await service.get('library')).path).toBe('/audiobooks');
+      expect(db.select).toHaveBeenCalledTimes(1);
+
+      db.select.mockClear();
+      expect((await service.get('library')).path).toBe('/audiobooks');
+      expect(db.select).toHaveBeenCalledTimes(1);
+
+      vi.restoreAllMocks();
+    });
+
+    it('patch() on a never-written category persists the merge without mutating DEFAULT_SETTINGS', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+      db.insert.mockReturnValue(mockDbChain());
+
+      const merged = await service.patch('library', { path: '/patched' });
+
+      expect(merged).toEqual({ ...DEFAULT_SETTINGS.library, path: '/patched' });
+      expect(getInsertCall(db, 0).row).toEqual({
+        key: 'library',
+        value: { ...DEFAULT_SETTINGS.library, path: '/patched' },
+      });
+      expect(DEFAULT_SETTINGS.library.path).toBe('/audiobooks');
+    });
+
+    it('two concurrent misses both return defaults and both select — no coalescing guard', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const [a, b] = await Promise.all([service.get('library'), service.get('library')]);
+
+      expect(a.path).toBe('/audiobooks');
+      expect(b.path).toBe('/audiobooks');
+      expect(db.select).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('getAll() — a partial composition is never cached (#2451)', () => {
+    it('composes full defaults from zero rows and does not cache them', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const first = await service.getAll();
+      expect(Object.keys(first).sort()).toEqual([...SETTINGS_CATEGORIES].sort());
+      expect(first.library.path).toBe('/audiobooks');
+
+      db.select.mockClear();
+      await service.getAll();
+      expect(db.select).toHaveBeenCalledTimes(1);
+    });
+
+    // The boundary a naive `results.length === 0` check would miss.
+    it('does not cache when a single category is absent', async () => {
+      db.select.mockReturnValue(mockDbChain(allCategoryRows().filter((r) => r.key !== 'companionEpub')));
+
+      const first = await service.getAll();
+      expect(first.companionEpub).toEqual(DEFAULT_SETTINGS.companionEpub);
+
+      db.select.mockClear();
+      await service.getAll();
+      expect(db.select).toHaveBeenCalledTimes(1);
+    });
+
+    it('caches and expires on the 30s TTL when every category is present', async () => {
+      const baseNow = Date.now();
+      vi.spyOn(Date, 'now').mockReturnValue(baseNow);
+      db.select.mockReturnValue(mockDbChain(allCategoryRows({ library: { path: '/all' } })));
+
+      expect((await service.getAll()).library.path).toBe('/all');
+      db.select.mockClear();
+      await service.getAll();
+      expect(db.select).not.toHaveBeenCalled();
+
+      vi.spyOn(Date, 'now').mockReturnValue(baseNow + 31_000);
+      await service.getAll();
+      expect(db.select).toHaveBeenCalledTimes(1);
+
+      vi.restoreAllMocks();
+    });
+
+    it('decides on row presence, not parse fallback — an all-present set with a malformed row caches', async () => {
+      db.select.mockReturnValue(mockDbChain(allCategoryRows({ library: 'not-an-object' })));
+
+      expect((await service.getAll()).library).toEqual(DEFAULT_SETTINGS.library);
+
+      db.select.mockClear();
+      await service.getAll();
+      expect(db.select).not.toHaveBeenCalled();
+    });
+
+    it('sees a row written by another connection for a previously-absent category', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([{ key: 'library', value: { path: '/from-other-connection' } }]));
+
+      expect((await service.getAll()).library.path).toBe('/audiobooks');
+      expect((await service.getAll()).library.path).toBe('/from-other-connection');
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('keeps categoryCache and allCache independent in both directions', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([{ key: 'library', value: { path: '/lib' } }]));
+      await service.getAll();
+      db.select.mockClear();
+
+      // The uncached aggregate populated no per-category entry.
+      db.select.mockReturnValueOnce(mockDbChain([{ key: 'library', value: { path: '/lib' } }]));
+      expect((await service.get('library')).path).toBe('/lib');
+      expect(db.select).toHaveBeenCalledTimes(1);
+
+      // And that live per-category entry cannot satisfy getAll().
+      db.select.mockClear();
+      db.select.mockReturnValueOnce(mockDbChain(allCategoryRows()));
+      await service.getAll();
+      expect(db.select).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('parse-warning cadence (#2451)', () => {
+    it('warns once per DB read-through for a malformed present row', async () => {
+      const baseNow = Date.now();
+      vi.spyOn(Date, 'now').mockReturnValue(baseNow);
+      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: 'not-an-object' }]));
+
+      expect((await service.get('library')).path).toBe('/audiobooks');
+      expect(db.select).toHaveBeenCalledTimes(1);
+      expect(parseWarns()).toHaveLength(1);
+
+      db.select.mockClear();
+      await service.get('library');
+      expect(db.select).not.toHaveBeenCalled();
+      expect(parseWarns()).toHaveLength(1);
+
+      vi.spyOn(Date, 'now').mockReturnValue(baseNow + 31_000);
+      await service.get('library');
+      expect(db.select).toHaveBeenCalledTimes(1);
+      expect(parseWarns()).toHaveLength(2);
+
+      vi.restoreAllMocks();
+    });
+
+    // Losing the cache write must not turn a re-read into log volume.
+    it('never warns from the miss arm, however often it re-reads', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      await service.get('library');
+      await service.get('library');
+      await service.get('library');
+
+      expect(db.select).toHaveBeenCalledTimes(3);
+      expect(parseWarns()).toHaveLength(0);
+    });
+
+    // Accepted consequence of the uncached partial aggregate; deliberately not deduplicated.
+    it('re-warns per getAll() when a malformed row shares the DB with an absent category', async () => {
+      db.select.mockReturnValue(mockDbChain(
+        allCategoryRows({ library: 'not-an-object' }).filter((r) => r.key !== 'companionEpub'),
+      ));
+
+      await service.getAll();
+      await service.getAll();
+
+      expect(db.select).toHaveBeenCalledTimes(2);
+      expect(parseWarns()).toHaveLength(2);
+    });
+
+    it('warns once per TTL window for the same malformed row when every category is present', async () => {
+      db.select.mockReturnValue(mockDbChain(allCategoryRows({ library: 'not-an-object' })));
+
+      await service.getAll();
+      await service.getAll();
+
+      expect(db.select).toHaveBeenCalledTimes(1);
+      expect(parseWarns()).toHaveLength(1);
     });
   });
 });

@@ -68,10 +68,12 @@ export class SettingsService {
 
     const result = await this.db.select().from(settings).where(eq(settings.key, key)).limit(1);
 
+    // Never cache a missing row: a row inserted by another connection (restore-from-backup, a
+    // migration backfill, an external write) has no invalidation path, so a cached default would
+    // hide it for the full TTL. Gate on the DB result, not on whether an entry already exists —
+    // an expired entry lingers here (the hit check above compares expiresAt without deleting).
     if (result.length === 0) {
-      const defaultVal = DEFAULT_SETTINGS[key];
-      this.categoryCache.set(key, { value: defaultVal, expiresAt: Date.now() + CACHE_TTL_MS });
-      return defaultVal;
+      return DEFAULT_SETTINGS[key];
     }
 
     let raw = result[0]!.value;
@@ -93,6 +95,9 @@ export class SettingsService {
     const results = await this.db.select().from(settings);
 
     const settingsMap = new Map(results.map((r) => [r.key, r.value]));
+    // `has`, not a nullish check on the value: a stored JSON null is a present row and stays
+    // cacheable, matching get()'s row-presence rule.
+    const complete = SETTINGS_CATEGORIES.every((key) => settingsMap.has(key));
 
     const all = Object.fromEntries(
       SETTINGS_CATEGORIES.map((key) => {
@@ -105,7 +110,10 @@ export class SettingsService {
       }),
     ) as AppSettings;
 
-    this.allCache = { value: all, expiresAt: Date.now() + CACHE_TTL_MS };
+    // A partial composition carries the same uncacheable defaults get()'s miss arm refuses to pin.
+    if (complete) {
+      this.allCache = { value: all, expiresAt: Date.now() + CACHE_TTL_MS };
+    }
     return all;
   }
 
