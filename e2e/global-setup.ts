@@ -1,45 +1,40 @@
 import { resolve, dirname, join } from 'node:path';
 import { copyFileSync, mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { getCurrentRun, getRun } from './fixtures/temp-dirs.js';
-import { SUBPATH_RUN } from './fixtures/subpath.js';
-import { FORMS_RUN } from './fixtures/auth.js';
+import { getCurrentRun } from './fixtures/temp-dirs.js';
 import { registerFake } from './fixtures/run-state.js';
 import { createMAMFake } from './fakes/mam.js';
 import { createQBitFake } from './fakes/qbit.js';
 import { createAudibleFake } from './fakes/audible.js';
-import { seedE2ERun, SEED_SEARCH_QUERY } from './fixtures/seed.js';
+import { SEED_SEARCH_QUERY } from './fixtures/seed.js';
+import { E2E_DEFAULT_PORTS, resolvePort } from './fixtures/ports.js';
 
-/** Runs before web-server boot: starts/registers fakes, stages fixtures, and seeds each run's DB. */
-
-const DEFAULT_MAM_PORT = 4100;
-const DEFAULT_QBIT_PORT = 4200;
-const DEFAULT_AUDIBLE_PORT = 4300;
+/**
+ * Starts/registers the fakes, stages the manual-import fixture tree, and publishes the worker
+ * handoff. Seeding lives in the `seed-and-serve` wrapper instead: Playwright starts `webServer`
+ * entries BEFORE globalSetup, so anything seeded here lands after the servers have already booted
+ * against an empty DB (#2452).
+ */
 
 export const SEED_MANUAL_IMPORT_AUTHOR = 'E2E Manual Author';
 export const SEED_MANUAL_IMPORT_TITLE = 'E2E Manual Import Book';
 const MANUAL_IMPORT_FOLDER = `${SEED_MANUAL_IMPORT_AUTHOR} - ${SEED_MANUAL_IMPORT_TITLE}`;
 
-// Env overrides give parallel unit tests unique ports; the harness uses fixed defaults referenced by its seed.
-function resolvePort(envVar: string, defaultValue: number): number {
-  const raw = process.env[envVar];
-  if (!raw) return defaultValue;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultValue;
-}
+// Re-exported so the seed wrapper and this file cannot disagree about which port a fake binds.
+export { E2E_DEFAULT_PORTS, resolvePort };
 
 export default async function globalSetup(): Promise<void> {
   const run = getCurrentRun();
   if (!run) {
     throw new Error(
       'globalSetup: temp-dir state not initialized. ' +
-      'playwright.config.ts must call createRunTempDirs() at module load before registering globalSetup.',
+      'playwright.config.ts must call resolveRunTempDirs() at module load before registering globalSetup.',
     );
   }
 
-  const mamPort = resolvePort('E2E_MAM_PORT', DEFAULT_MAM_PORT);
-  const qbitPort = resolvePort('E2E_QBIT_PORT', DEFAULT_QBIT_PORT);
-  const audiblePort = resolvePort('E2E_AUDIBLE_PORT', DEFAULT_AUDIBLE_PORT);
+  const mamPort = resolvePort('E2E_MAM_PORT', E2E_DEFAULT_PORTS.mam);
+  const qbitPort = resolvePort('E2E_QBIT_PORT', E2E_DEFAULT_PORTS.qbit);
+  const audiblePort = resolvePort('E2E_AUDIBLE_PORT', E2E_DEFAULT_PORTS.audible);
 
   // Module-relative resolution works for both tsx and compiled invocations.
   const fixturePath = resolve(
@@ -87,38 +82,6 @@ export default async function globalSetup(): Promise<void> {
     },
   ]);
 
-  await seedE2ERun({
-    dbPath: run.dbPath,
-    mamUrl: mam.url,
-    qbitHost: 'localhost',
-    qbitPort: qbitPort,
-    libraryPath: run.libraryPath,
-  });
-
-  // Seed the isolated subpath DB; its read-only smoke can share fake services.
-  const subpathRun = getRun(SUBPATH_RUN);
-  if (subpathRun) {
-    await seedE2ERun({
-      dbPath: subpathRun.dbPath,
-      mamUrl: mam.url,
-      qbitHost: 'localhost',
-      qbitPort: qbitPort,
-      libraryPath: subpathRun.libraryPath,
-    });
-  }
-
-  // Forms boots in `none`; auth setup creates the user and flips the seeded DB to `forms`.
-  const formsRun = getRun(FORMS_RUN);
-  if (formsRun) {
-    await seedE2ERun({
-      dbPath: formsRun.dbPath,
-      mamUrl: mam.url,
-      qbitHost: 'localhost',
-      qbitPort: qbitPort,
-      libraryPath: formsRun.libraryPath,
-    });
-  }
-
   // Global-setup env mutations are same-process only; workers need config-time env, static defaults, or a state file.
   process.env.E2E_DOWNLOADS_PATH = run.downloadsPath;
   process.env.E2E_LIBRARY_PATH = run.libraryPath;
@@ -131,15 +94,9 @@ export default async function globalSetup(): Promise<void> {
   writeFileSync(join(run.configPath, '.run-paths.json'), JSON.stringify({ sourcePath: run.sourcePath }), 'utf-8');
 }
 
-export const E2E_DEFAULT_PORTS = {
-  mam: DEFAULT_MAM_PORT,
-  qbit: DEFAULT_QBIT_PORT,
-  audible: DEFAULT_AUDIBLE_PORT,
-} as const;
-
 /** Workers use the fixed-port fallback because global-setup env mutations do not propagate. */
 export function qbitControlUrl(path: string): string {
-  const base = process.env.E2E_QBIT_URL ?? `http://localhost:${DEFAULT_QBIT_PORT}`;
+  const base = process.env.E2E_QBIT_URL ?? `http://localhost:${E2E_DEFAULT_PORTS.qbit}`;
   return `${base}${path}`;
 }
 
