@@ -136,10 +136,15 @@ describe('seedAndServe', () => {
       return result;
     });
     const startServer = vi.fn(async () => { order.push('start'); });
+    const log = vi.fn((message: string) => { order.push(message.trim()); });
 
-    await seedAndServe(readSeedInputs({ DATABASE_URL: dbPath, [SEED_LIBRARY_DIR_ENV]: libraryPath }), { startServer });
+    await seedAndServe(
+      readSeedInputs({ DATABASE_URL: dbPath, [SEED_LIBRARY_DIR_ENV]: libraryPath }),
+      { startServer, log },
+    );
 
-    expect(order).toEqual(['seed', 'start']);
+    // The middle entry is the line the captured webServer stdout carries as the ordering evidence.
+    expect(order).toEqual(['seed', `[seed-and-serve] seed verified for ${dbPath}; starting the server`, 'start']);
     expect(startServer).toHaveBeenCalledTimes(1);
   });
 
@@ -261,13 +266,15 @@ describe('runSeedAndServeCli', () => {
     vi.mocked(seedE2ERun).mockRejectedValueOnce(new Error('seed exploded'));
     const exit = vi.fn();
     const writeStderr = vi.fn();
+    const writeStdout = vi.fn();
     const startServer = vi.fn(async () => { /* must not run */ });
 
-    await runSeedAndServeCli({ env: cliEnv(dbPath, libraryPath), exit, writeStderr, startServer });
+    await runSeedAndServeCli({ env: cliEnv(dbPath, libraryPath), exit, writeStderr, writeStdout, startServer });
 
     expect(exit).toHaveBeenCalledTimes(1);
     expect(exit).toHaveBeenCalledWith(1);
     expect(startServer).not.toHaveBeenCalled();
+    expect(writeStdout).not.toHaveBeenCalled();
     const [message] = writeStderr.mock.calls.at(-1)!;
     expect(message).toContain(dbPath);
     expect(message).toContain('seed exploded');
@@ -285,17 +292,19 @@ describe('runSeedAndServeCli', () => {
     expect(writeStderr.mock.calls.at(-1)![0]).toContain('DATABASE_URL');
   });
 
-  it('neither exits nor writes to stderr on the success path', async () => {
+  it('neither exits nor writes to stderr on the success path, and announces the verified seed', async () => {
     // The observation point that keeps the failure cases above non-vacuous.
     const { dbPath, libraryPath } = makeRunDirs();
     const exit = vi.fn();
     const writeStderr = vi.fn();
+    const writeStdout = vi.fn();
     const startServer = vi.fn(async () => { /* no server in unit scope */ });
 
-    await runSeedAndServeCli({ env: cliEnv(dbPath, libraryPath), exit, writeStderr, startServer });
+    await runSeedAndServeCli({ env: cliEnv(dbPath, libraryPath), exit, writeStderr, writeStdout, startServer });
 
     expect(startServer).toHaveBeenCalledTimes(1);
     expect(exit).not.toHaveBeenCalled();
     expect(writeStderr).not.toHaveBeenCalled();
+    expect(writeStdout.mock.calls.at(-1)![0]).toContain('seed verified');
   });
 });

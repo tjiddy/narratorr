@@ -30,12 +30,15 @@ export interface SeedInputs {
 export interface SeedAndServeDeps {
   /** Injected so the core is unit-testable; the CLI defaults it to importing the production bundle. */
   startServer: () => Promise<void>;
+  /** Emitted between the marker check and the boot, so captured stdout carries the ordering proof. */
+  log?: (message: string) => void;
 }
 
 export interface SeedAndServeCliHooks {
   env?: NodeJS.ProcessEnv;
   exit?: (code: number) => void;
   writeStderr?: (message: string) => void;
+  writeStdout?: (message: string) => void;
   startServer?: () => Promise<void>;
 }
 
@@ -75,6 +78,7 @@ export async function seedAndServe(inputs: SeedInputs, deps: SeedAndServeDeps): 
     libraryPath: inputs.libraryPath,
   });
   await assertSeedVisible(inputs.dbPath);
+  deps.log?.(`[seed-and-serve] seed verified for ${inputs.dbPath}; starting the server\n`);
 
   await deps.startServer();
 }
@@ -85,11 +89,12 @@ export async function runSeedAndServeCli(hooks: SeedAndServeCliHooks = {}): Prom
     env = process.env,
     exit = (code: number): void => { process.exit(code); },
     writeStderr = (message: string): void => { process.stderr.write(message); },
+    writeStdout = (message: string): void => { process.stdout.write(message); },
     startServer = importServerBundle,
   } = hooks;
 
   try {
-    await seedAndServe(readSeedInputs(env), { startServer });
+    await seedAndServe(readSeedInputs(env), { startServer, log: writeStdout });
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
     writeStderr(

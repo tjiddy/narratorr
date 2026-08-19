@@ -41,9 +41,19 @@ pnpm exec playwright install chromium
 ## How the harness is wired
 
 `playwright.config.ts` uses Playwright's `webServer` (an array of three entries —
-root + subpath + forms) to launch `node ../dist/server/index.js` per server, with
-these env vars (the root server's values shown; the subpath/forms servers differ
-in `PORT`, `URL_BASE`, `AUTH_BYPASS`, and their isolated temp-dir paths). The
+root + subpath + forms) to launch `node --import tsx ./fixtures/seed-and-serve.ts`
+per server. That wrapper — **not** the bundle directly — is the entry point:
+Playwright starts `webServer` entries *before* `globalSetup`, and that is not
+configurable, so seeding anywhere else lets the health probe reach a server that
+booted against an empty DB (#2452). In one process the wrapper (a) seeds its own
+run's DB from its own env, (b) proves the marker rows are readable through a
+**fresh** connection, then (c) `import`s `../../dist/server/index.js`. Any failure
+in (a) or (b) exits non-zero with a diagnostic naming the db path and never starts
+the server. `--import tsx` registers the loader in-process, so Playwright still
+manages exactly one PID per server and its existing kill path keeps working.
+
+These are the env vars (the root server's values shown; the subpath/forms servers
+differ in `PORT`, `URL_BASE`, `AUTH_BYPASS`, and their isolated temp-dir paths). The
 shared env builder lives in `fixtures/server-env.ts`, which takes an `authBypass`
 flag (the forms server passes `false`, omitting `AUTH_BYPASS` entirely):
 
@@ -57,33 +67,62 @@ flag (the forms server passes `false`, omitting `AUTH_BYPASS` entirely):
 | `URL_BASE`              | `/` root / `/narratorr` subpath / `/` forms                 |
 | `MONITOR_INTERVAL_CRON` | `*/2 * * * * *` — override of prod's 30s cadence            |
 | `E2E_DOWNLOADS_PATH`    | per-run downloads temp dir (surfaced for spec forensics)    |
+| `E2E_SEED_LIBRARY_DIR`  | per-run library temp dir — read by the **seed wrapper**, ignored by the server |
+
+Note the library key is deliberately not spelled `LIBRARY_PATH`: the server
+ignores that variable (`settings.library.path` is what it reads), and
+`global-setup.test.ts` pins its absence from `playwright.config.ts`.
 
 ### Ownership model
 
-Three files split the harness lifecycle along natural sync/async boundaries:
+Four files split the harness lifecycle:
 
 1. **`playwright.config.ts`** (module load, synchronous): calls
-   `createRunTempDirs()` once per server (root + a named `subpath` run), each
-   creating five directories via `mkdtempSync` and stored under its run name in
-   module-level state. Paths must exist by the time `webServer.env` is
-   evaluated, so this can't move to `globalSetup`. The `E2E_RUN_STATE_DIR`
-   handoff stays pointed at the **root** run's config path.
-2. **`global-setup.ts`** (async, before webServer boots): reads
-   `getCurrentRun()` for the root paths, starts the MAM + qBit fakes on their
-   fixed ports, runs Drizzle migrations, and seeds the `indexers` /
-   `download_clients` / `authors` / `books` rows the spec test depends on. When
-   a subpath run exists it seeds that server's isolated DB the same way (the
-   read-only subpath smoke shares the fakes). Fake handles are registered with
-   `fixtures/run-state.ts` so teardown can reach them.
-3. **`global-teardown.ts`** (after tests): closes the registered fake handles,
-   then removes the temp dirs of **every** recorded run (root + subpath),
-   including libSQL `-wal`/`-shm` sidecars.
+   `resolveRunTempDirs([root, subpath, forms])`. The **first** config load of an
+   invocation allocates five `mkdtempSync` directories per run (15 total),
+   publishes a **run manifest** recording every path, and exports its location on
+   `process.env.E2E_RUN_MANIFEST`; every later config load in the same invocation
+   — worker processes, tooling — adopts that manifest and allocates nothing. An
+   unconditional allocation here is what previously leaked ~15 directories per
+   config load. Paths must exist by the time `webServer.env` is evaluated, so this
+   can't move to `globalSetup`. The `E2E_RUN_STATE_DIR` handoff stays pointed at
+   the **root** run's config path.
+2. **`fixtures/seed-and-serve.ts`** (per server, before the server exists): seeds
+   that server's DB, verifies the seed through a fresh connection, then boots the
+   bundle. This is where the seed-before-boot guarantee lives — structurally, in
+   one process, not by assumption about setup ordering.
+3. **`global-setup.ts`** (async, after webServer boots): starts the MAM + qBit +
+   Audible fakes on their fixed ports, pre-seeds MAM with the search fixture,
+   stages the manual-import tree under `sourcePath`, publishes the `E2E_*` env
+   handoff, and writes `.run-paths.json`. It does **no** DB seeding — anything
+   seeded here would land after the servers have already booted.
+4. **`global-teardown.ts`** (after tests): three independently guarded stages, in
+   order — close the registered fake handles; remove every path the manifest
+   records (plus anything this process allocated itself), including libSQL
+   `-wal`/`-shm` sidecars; then sweep stale `narratorr-e2e-*` directories in
+   `os.tmpdir()`. A failure in one stage never skips a later one, and teardown
+   never rejects: a Windows `EPERM` on a directory that held a libSQL database is
+   expected, not an error.
 
-Module state keyed by run name is sufficient because Playwright's global
-teardown runs in the same Node process that loaded the config, and it avoids
-the concurrent-run footgun a shared state file would create. (The only on-disk
-state is the per-run `.run-paths.json` inside each run's `configPath`, written
-by `global-setup.ts` so manual-import workers can resolve the source path.)
+**Confinement.** The manifest is durable state on disk and `removeTreeSync` does
+no validation of its own, so one lexical predicate — `isHarnessTempRoot` in
+`fixtures/temp-dirs.ts`, built on the repo's `canonicalPath` — gates both cleanup
+consumers. A manifest that is missing, unreadable, malformed, or names any path
+outside `os.tmpdir()/narratorr-e2e-*` yields **zero** manifest-owned removals
+rather than an error. The sweep's floor is strictly exclusive (`mtime < now -
+SWEEP_MAX_AGE_MS`, 24h) so a concurrent invocation's directories are never
+touched, and it runs even when no manifest is found — it is the second line for
+batches allocated by tooling processes that never run teardown.
+
+Allocation is all-or-nothing: if any `mkdtempSync` or the manifest publication
+fails, every directory recorded so far is removed, the env var stays unpublished,
+and the original error is rethrown. The manifest itself is written to a temporary
+sibling and `renameSync`d into place, so no reader can observe a torn file.
+
+(The other on-disk state is the per-run `.run-paths.json` inside each run's
+`configPath`, written by `global-setup.ts` so manual-import workers can resolve
+the source path. Both files live in the root run's `configPath`, so removing that
+directory removes them.)
 
 `reuseExistingServer: false` — local `--ui` mode still boots its own hermetic
 server. This prevents silent attachment to a `pnpm dev:server` / `pnpm dev:client`
@@ -109,13 +148,16 @@ coverage without requiring a browser.
 e2e/
 ├── playwright.config.ts          # Playwright config + webServer wiring
 ├── tsconfig.json                 # extends root tsconfig, scopes to e2e/**
-├── global-setup.ts               # starts fakes + seeds DB (async, pre-webServer)
-├── global-setup.test.ts          # vitest — setup orchestration contract
-├── global-teardown.ts            # closes fakes + cleans temp dirs after the run
+├── global-setup.ts               # starts fakes + stages fixtures (async, runs AFTER webServer boots)
+├── global-setup.test.ts          # vitest — setup orchestration + webServer wiring sentinels
+├── global-teardown.ts            # closes fakes, removes manifest-owned dirs, sweeps stale strays
 ├── global-teardown.test.ts       # vitest — cleanup contract regression tests
 ├── fixtures/
-│   ├── temp-dirs.ts              # creates per-run DB/library/config/downloads/source dirs (named multi-run)
-│   ├── temp-dirs.test.ts         # vitest — temp-dir lifecycle tests
+│   ├── temp-dirs.ts              # allocate-once run manifest, per-run dirs, and the confinement predicate
+│   ├── temp-dirs.test.ts         # vitest — allocation, manifest validation, and rollback tests
+│   ├── seed-and-serve.ts         # the webServer entry: seed → verify through a fresh conn → boot the bundle
+│   ├── seed-and-serve.test.ts    # vitest — ordering, fail-closed, port resolution, CLI adapter
+│   ├── ports.ts                  # fake-service default ports + resolvePort, shared by setup and the wrapper
 │   ├── run-state.ts              # fake-server handle registry
 │   ├── run-state.test.ts         # vitest
 │   ├── subpath.ts                # single source of truth for the subpath topology (port/prefix/baseURL)
@@ -262,9 +304,18 @@ practical, fall back to polling `/api/books/:id` — but default to the UI.
 
 ### DB seed pattern
 
-Indexers, download clients, authors, and books are seeded pre-boot via
-`fixtures/seed.ts`. Narratorr's migrations re-run idempotently at boot (Drizzle
-journal handles dedup), so seeding first is safe.
+Indexers, download clients, authors, and books are seeded via `fixtures/seed.ts`,
+called by the **seed wrapper** (`fixtures/seed-and-serve.ts`) inside each server's
+own launch process — not by `global-setup.ts`, which Playwright runs *after* the
+servers boot. The wrapper will not start the server until it has re-read the
+`settings.general` and `books` marker rows through a connection that did not write
+them, so a boot-time reader (log level, job recovery, welcome gate) can never
+observe a pre-seed world. Narratorr's migrations re-run idempotently at boot
+(Drizzle journal handles dedup), so seeding first is safe.
+
+The seed's inserts are not upserts, so seeding the same DB twice fails on a
+duplicate row and the transaction rolls back — deliberate, so a retried server
+start has defined behaviour rather than silently double-seeding.
 
 **Do not** add a `savePath` field to the seeded `download_clients.settings` —
 `qbittorrentSettingsSchema` is `.strict()` and has no such field. The fake qBit
