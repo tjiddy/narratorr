@@ -187,7 +187,7 @@ export class ManualImportAdapter implements ImportAdapter {
     payload: ManualImportJobPayload, extracted: ReturnType<typeof extractImportMetadata>, attach: boolean,
   ): Promise<void> {
     const [currentBook] = await db
-      .select({ genres: books.genres, subtitle: books.subtitle, publisher: books.publisher })
+      .select({ genres: books.genres })
       .from(books).where(eq(books.id, bookId)).limit(1);
 
     await orchestrateBookEnrichment(
@@ -199,7 +199,7 @@ export class ManualImportAdapter implements ImportAdapter {
         ...(payload.narratorSource !== undefined && { narratorSource: payload.narratorSource }),
       }),
       this.deps.enrichmentDeps,
-      buildBackgroundAudnexusConfig(payload, extracted, currentBook?.genres ?? null, currentBook),
+      buildBackgroundAudnexusConfig(payload, extracted),
       attach ? { attach: true } : undefined,
     );
   }

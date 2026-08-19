@@ -39,13 +39,29 @@ function narratorReads(handle: MockHandle): unknown[] {
 }
 
 /** Root and transaction handles are distinct so routing regressions are observable. Narrator
- * reads are selected by projection; both update spies share the assertion chain. */
+ * reads are selected by projection; both update spies share the assertion chain. The projected
+ * row carries every column the fill guards read, so a suppression assertion observes the LIVE
+ * value rather than passing because the column was absent from the double. */
 function dbWithUpdateChain(
-  row?: { asin?: string | null; userClearedFields?: string | null },
+  row?: {
+    asin?: string | null;
+    userClearedFields?: string | null;
+    duration?: number | null;
+    subtitle?: string | null;
+    publisher?: string | null;
+    genres?: string[] | null;
+  },
   narratorRows: { narratorId: number }[] = [],
 ) {
   const updateChain = mockDbChain();
-  const selectRow = { asin: row?.asin ?? null, userClearedFields: row?.userClearedFields ?? null };
+  const selectRow = {
+    asin: row?.asin ?? null,
+    userClearedFields: row?.userClearedFields ?? null,
+    duration: row?.duration ?? null,
+    subtitle: row?.subtitle ?? null,
+    publisher: row?.publisher ?? null,
+    genres: row?.genres ?? null,
+  };
   const makeHandle = (): MockHandle => ({
     update: vi.fn().mockReturnValue(updateChain),
     select: vi.fn().mockImplementation((projection?: Record<string, unknown>) =>
@@ -89,7 +105,7 @@ describe('orchestrateBookEnrichment', () => {
         '/audiobooks/MyBook',
         { narrators: [{ name: 'Jim Dale' }], duration: 3600, coverUrl: 'http://cover.jpg', existingGenres: ['Fantasy'] },
         deps,
-        { primaryAsin: 'B001', alternateAsins: [], existingNarrator: 'Jim Dale', existingDuration: 3600, existingGenres: ['Fantasy'] },
+        { primaryAsin: 'B001', alternateAsins: [], existingNarrator: 'Jim Dale' },
       );
 
       expect(mockEnrichBookFromAudio).toHaveBeenCalledWith(
@@ -152,8 +168,6 @@ describe('orchestrateBookEnrichment', () => {
         primaryAsin: 'B001',
         alternateAsins: [],
         existingNarrator: null,
-        existingDuration: null,
-        existingGenres: null,
       });
 
       expect(deps.metadataService.enrichBook).toHaveBeenCalledWith('B001');
@@ -235,7 +249,7 @@ describe('applyAudnexusEnrichment', () => {
     const { db, updateChain } = dbWithUpdateChain();
     (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ subtitle: 'Filled Subtitle', publisher: 'Filled Publisher' });
 
-    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingSubtitle: null, existingPublisher: null }, { ...deps, db });
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001' }, { ...deps, db });
 
     expect(updateChain.set).toHaveBeenCalledWith(
       expect.objectContaining({ subtitle: 'Filled Subtitle', publisher: 'Filled Publisher' }),
@@ -243,14 +257,103 @@ describe('applyAudnexusEnrichment', () => {
   });
 
   it('does NOT overwrite an existing subtitle/publisher (#1614)', async () => {
-    const { db, updateChain } = dbWithUpdateChain();
+    const { db, updateChain } = dbWithUpdateChain({ subtitle: 'Kept Subtitle', publisher: 'Kept Publisher' });
     (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ subtitle: 'Provider Subtitle', publisher: 'Provider Publisher' });
 
-    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingSubtitle: 'Kept Subtitle', existingPublisher: 'Kept Publisher' }, { ...deps, db });
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001' }, { ...deps, db });
 
     const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
     expect(setArg).not.toHaveProperty('subtitle');
     expect(setArg).not.toHaveProperty('publisher');
+  });
+
+  it('an empty-string live subtitle is falsy, so the provider value fills', async () => {
+    const { db, updateChain } = dbWithUpdateChain({ subtitle: '' });
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ subtitle: 'Provider Subtitle' });
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001' }, { ...deps, db });
+
+    expect((updateChain.set.mock.calls[0]![0] as Record<string, unknown>).subtitle).toBe('Provider Subtitle');
+  });
+
+  // `books.duration` is MINUTES, so these literals are 0 and 1 minutes, not seconds.
+  it('a live duration of 0 is falsy, so the provider duration fills', async () => {
+    const { db, updateChain } = dbWithUpdateChain({ duration: 0 });
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ duration: 600 });
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001' }, { ...deps, db });
+
+    expect((updateChain.set.mock.calls[0]![0] as Record<string, unknown>).duration).toBe(600);
+  });
+
+  it('a live duration of 1 suppresses the provider duration', async () => {
+    const { db, updateChain } = dbWithUpdateChain({ duration: 1 });
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ duration: 600 });
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001' }, { ...deps, db });
+
+    expect(updateChain.set.mock.calls[0]![0] as Record<string, unknown>).not.toHaveProperty('duration');
+  });
+
+  it('an empty live genres array still fills, a populated one suppresses the write and its telemetry', async () => {
+    const empty = dbWithUpdateChain({ genres: [] });
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ genres: ['Fantasy'] });
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001' }, { ...deps, db: empty.db });
+    expect(deps.bookService.update).toHaveBeenCalledWith(42, { genres: ['Fantasy'] }, { tx: expect.anything() });
+    expect(deps.bookService.trackUnmatchedGenres).toHaveBeenCalledWith(['Fantasy']);
+
+    vi.clearAllMocks();
+
+    const populated = dbWithUpdateChain({ genres: ['Kept'] });
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ genres: ['Fantasy'] });
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001' }, { ...deps, db: populated.db });
+    expect(deps.bookService.update).not.toHaveBeenCalled();
+    expect(deps.bookService.trackUnmatchedGenres).not.toHaveBeenCalled();
+  });
+
+  it('all four live columns empty and no tombstones — every field fills and the genres are tracked', async () => {
+    const { db, updateChain } = dbWithUpdateChain();
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      duration: 600, subtitle: 'Sub', publisher: 'Pub', genres: ['Fantasy'], narrators: ['Michael Kramer'],
+    });
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001' }, { ...deps, db });
+
+    expect(updateChain.set.mock.calls[0]![0]).toMatchObject({
+      duration: 600, subtitle: 'Sub', publisher: 'Pub', enrichmentStatus: 'enriched',
+    });
+    expect(deps.bookService.update).toHaveBeenCalledWith(42, { genres: ['Fantasy'] }, { tx: expect.anything() });
+    expect(deps.bookService.trackUnmatchedGenres).toHaveBeenCalledWith(['Fantasy']);
+  });
+
+  it('a field missing from the provider payload stays off the set while its siblings fill', async () => {
+    const { db, updateChain } = dbWithUpdateChain();
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ duration: 600, publisher: 'Pub' });
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001' }, { ...deps, db });
+
+    const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(setArg).not.toHaveProperty('subtitle');
+    expect(setArg).toMatchObject({ duration: 600, publisher: 'Pub' });
+  });
+
+  // The pre-fetch read cannot be the gate: an operator can populate the column while provider I/O runs.
+  it('reads the value the TRANSACTION projects, not the one the root handle saw', async () => {
+    const updateChain = mockDbChain();
+    const tx = {
+      update: vi.fn().mockReturnValue(updateChain),
+      select: vi.fn().mockReturnValue(mockDbChain([{ asin: null, userClearedFields: null, duration: null, subtitle: 'Landed Mid-Flight', publisher: null, genres: null }])),
+    };
+    const root = {
+      update: vi.fn().mockReturnValue(updateChain),
+      select: vi.fn().mockReturnValue(mockDbChain([{ asin: null, userClearedFields: null, duration: null, subtitle: null, publisher: null, genres: null }])),
+    } as unknown as Db & { transaction: unknown };
+    root.transaction = vi.fn().mockImplementation((cb: (h: Db) => Promise<unknown>) => cb(tx as unknown as Db));
+    (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ subtitle: 'Provider Subtitle' });
+
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001' }, { ...deps, db: root as Db });
+
+    expect(updateChain.set.mock.calls[0]![0] as Record<string, unknown>).not.toHaveProperty('subtitle');
   });
 
   const mockEnrichBook = (d: typeof deps) => d.metadataService.enrichBook as ReturnType<typeof vi.fn>;
@@ -503,13 +606,14 @@ describe('applyAudnexusEnrichment', () => {
   });
 
   it('conditional fill guards hold even when the search fallback returns values', async () => {
-    const { db, updateChain } = dbWithUpdateChain();
+    const { db, updateChain } = dbWithUpdateChain({
+      duration: 1000, subtitle: 'Kept Sub', publisher: 'Kept Pub', genres: ['Kept Genre'],
+    });
     mockEnrichBook(deps).mockResolvedValue(null);
     mockResolveBook(deps).mockResolvedValueOnce({ duration: 3600, subtitle: 'New Sub', publisher: 'New Pub', narrators: ['New Narrator'], genres: ['New Genre'] });
 
     await applyAudnexusEnrichment(42, {
-      primaryAsin: 'B001', title: 'My Book',
-      existingDuration: 1000, existingSubtitle: 'Kept Sub', existingPublisher: 'Kept Pub', existingNarrator: 'Kept Narrator', existingGenres: ['Kept Genre'],
+      primaryAsin: 'B001', title: 'My Book', existingNarrator: 'Kept Narrator',
     }, { ...deps, db });
 
     const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
@@ -517,6 +621,20 @@ describe('applyAudnexusEnrichment', () => {
     expect(setArg).not.toHaveProperty('subtitle');
     expect(setArg).not.toHaveProperty('publisher');
     expect(deps.bookService.update).not.toHaveBeenCalled();
+  });
+
+  // #2440: the staged item's provider duration is not `books.duration`, so a config built from it
+  // used to refuse the Audnexus duration for a row whose own column was empty.
+  it('#2440: a staged provider duration no longer suppresses the fill on an empty duration column', async () => {
+    const { buildBackgroundAudnexusConfig, extractImportMetadata } = await import('./enrichment-orchestration.helpers.js');
+    const { db, updateChain } = dbWithUpdateChain({ duration: null });
+    const item = { path: '/x', title: 'Tress of the Emerald Sea', asin: 'B001' };
+    const config = buildBackgroundAudnexusConfig(item, extractImportMetadata({ ...item, metadata: { title: item.title, authors: [], duration: 1000 } }));
+    mockEnrichBook(deps).mockResolvedValueOnce({ duration: 600 });
+
+    await applyAudnexusEnrichment(42, config, { ...deps, db });
+
+    expect((updateChain.set.mock.calls[0]![0] as Record<string, unknown>).duration).toBe(600);
   });
 });
 
@@ -526,10 +644,31 @@ describe('buildBackgroundAudnexusConfig (#1625 — search-fallback title/author 
     const item = { path: '/x', title: 'Mistborn', authorName: 'Brandon Sanderson', asin: 'B001' };
     const extracted = extractImportMetadata(item);
 
-    const config = buildBackgroundAudnexusConfig(item, extracted, null);
+    const config = buildBackgroundAudnexusConfig(item, extracted);
 
     expect(config.title).toBe('Mistborn');
     expect(config.author).toBe('Brandon Sanderson');
+  });
+
+  it('#2440: emits none of the four snapshot fields, and still carries the five it gates on', async () => {
+    const { buildBackgroundAudnexusConfig, extractImportMetadata } = await import('./enrichment-orchestration.helpers.js');
+    const item = { path: '/x', title: 'Mistborn', authorName: 'Brandon Sanderson', asin: 'B001' };
+    const extracted = extractImportMetadata({
+      ...item,
+      narrators: ['Michael Kramer'],
+      metadata: { title: 'Mistborn', authors: [], alternateAsins: ['B002'], duration: 1000 },
+    });
+
+    const config = buildBackgroundAudnexusConfig(item, extracted) as Record<string, unknown>;
+
+    expect(config).not.toHaveProperty('existingDuration');
+    expect(config).not.toHaveProperty('existingGenres');
+    expect(config).not.toHaveProperty('existingSubtitle');
+    expect(config).not.toHaveProperty('existingPublisher');
+    expect(config).toMatchObject({
+      primaryAsin: 'B001', alternateAsins: ['B002'], title: 'Mistborn',
+      author: 'Brandon Sanderson', existingNarrator: 'Michael Kramer',
+    });
   });
 
   it('leaves author null when the payload omits authorName (title still threaded)', async () => {
@@ -537,7 +676,7 @@ describe('buildBackgroundAudnexusConfig (#1625 — search-fallback title/author 
     const item = { path: '/x', title: 'Mistborn' };
     const extracted = extractImportMetadata(item);
 
-    const config = buildBackgroundAudnexusConfig(item, extracted, null);
+    const config = buildBackgroundAudnexusConfig(item, extracted);
 
     expect(config.title).toBe('Mistborn');
     expect(config.author).toBeNull();
@@ -787,7 +926,7 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
     const { db, updateChain } = dbWithUpdateChain({ userClearedFields: '["subtitle"]' });
     (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
 
-    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingSubtitle: null, existingPublisher: null }, { ...deps, db });
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001' }, { ...deps, db });
 
     const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
     expect(setArg).not.toHaveProperty('subtitle');
@@ -799,7 +938,7 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
     const { db, updateChain } = dbWithUpdateChain({ userClearedFields: '["publisher"]' });
     (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
 
-    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingSubtitle: null, existingPublisher: null }, { ...deps, db });
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001' }, { ...deps, db });
 
     const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
     expect(setArg).not.toHaveProperty('publisher');
@@ -810,7 +949,7 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
     const { db } = dbWithUpdateChain({ userClearedFields: '["genres"]' });
     (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
 
-    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null }, { ...deps, db });
 
     const calls = (deps.bookService.update as ReturnType<typeof vi.fn>).mock.calls;
     expect(calls.map((c) => Object.keys(c[1] as object)[0])).toEqual(['narrators']);
@@ -820,7 +959,7 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
     const { db, updateChain } = dbWithUpdateChain({ userClearedFields: '["seriesName"]' });
     (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
 
-    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingSubtitle: null, existingPublisher: null, existingGenres: null, existingNarrator: null }, { ...deps, db });
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null }, { ...deps, db });
 
     const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
     expect(setArg.subtitle).toBe('Provider Subtitle');
@@ -834,7 +973,7 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
     const { db } = dbWithUpdateChain();
     (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
 
-    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null }, { ...deps, db });
 
     expect((db as unknown as { transaction: ReturnType<typeof vi.fn> }).transaction).toHaveBeenCalledTimes(1);
     for (const call of (deps.bookService.update as ReturnType<typeof vi.fn>).mock.calls) {
@@ -858,7 +997,7 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
         .mockImplementation(async () => { order.push('telemetry'); });
       (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
 
-      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null }, { ...deps, db });
 
       expect(deps.bookService.trackUnmatchedGenres).toHaveBeenCalledWith(['Fantasy']);
       expect(order).toEqual(['tx-committed', 'telemetry']);
@@ -868,7 +1007,7 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
       const { db } = dbWithUpdateChain({ userClearedFields: '["genres"]' });
       (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
 
-      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null }, { ...deps, db });
 
       expect(deps.bookService.trackUnmatchedGenres).not.toHaveBeenCalled();
     });
@@ -884,7 +1023,7 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
       db.transaction = vi.fn().mockImplementation((cb: (tx: Db) => Promise<unknown>) => cb(db as Db));
       (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
 
-      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db: db as Db });
+      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null }, { ...deps, db: db as Db });
 
       expect(deps.bookService.trackUnmatchedGenres).not.toHaveBeenCalled();
     });
@@ -894,7 +1033,7 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
       (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce({ narrators: ['Michael Kramer'] });
 
-      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null }, { ...deps, db });
 
       expect(deps.bookService.update).toHaveBeenCalledWith(42, { narrators: ['Michael Kramer'] }, { tx: expect.anything() });
       expect(deps.bookService.trackUnmatchedGenres).not.toHaveBeenCalled();
@@ -907,7 +1046,7 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
       (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce({ narrators: ['Audnexus Narrator'] });
 
-      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null }, { ...deps, db });
 
       expect(deps.bookService.update).not.toHaveBeenCalledWith(42, { narrators: ['Audnexus Narrator'] }, expect.anything());
     });
@@ -917,7 +1056,7 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
       (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce({ narrators: ['Audnexus Narrator'] });
 
-      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null }, { ...deps, db });
 
       expect(deps.bookService.update).toHaveBeenCalledWith(42, { narrators: ['Audnexus Narrator'] }, { tx: expect.anything() });
     });
@@ -927,7 +1066,7 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
       (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce({ narrators: ['Audnexus Narrator'] });
 
-      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null }, { ...deps, db });
 
       // Root reads miss uncommitted libSQL state; distinct spies make this routing observable.
       expect(narratorReads(tx)).toHaveLength(1);
@@ -943,7 +1082,7 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
         .mockRejectedValueOnce(new Error('telemetry boom'));
       (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
 
-      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+      await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null }, { ...deps, db });
 
       expect(deps.log.info).toHaveBeenCalledWith(expect.anything(), 'Audnexus enrichment applied');
     });
@@ -961,7 +1100,7 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
     db.transaction = vi.fn().mockImplementation((cb: (tx: Db) => Promise<unknown>) => cb(db as Db));
     (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
 
-    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db: db as Db });
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null }, { ...deps, db: db as Db });
 
     expect(updateChain.set).not.toHaveBeenCalled();
     expect(deps.bookService.update).not.toHaveBeenCalled();
@@ -982,7 +1121,7 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
 
     await applyAudnexusEnrichment(
       42,
-      { primaryAsin: 'B001', title: 'My Book', author: 'An Author', existingNarrator: null, existingGenres: null },
+      { primaryAsin: 'B001', title: 'My Book', author: 'An Author', existingNarrator: null },
       { ...deps, db: db as Db },
     );
 
@@ -995,7 +1134,7 @@ describe('applyAudnexusEnrichment — user-cleared fields (#2069)', () => {
     const { db, updateChain } = dbWithUpdateChain({ asin: 'B001' });
     (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerData);
 
-    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null, existingGenres: null }, { ...deps, db });
+    await applyAudnexusEnrichment(42, { primaryAsin: 'B001', existingNarrator: null }, { ...deps, db });
 
     expect(updateChain.set).toHaveBeenCalled();
     expect(deps.log.info).toHaveBeenCalledWith(expect.anything(), 'Audnexus enrichment applied');
