@@ -111,11 +111,18 @@ export async function probeReachable(
  * Which probes an arm's own evidence leaves unanswered. A `solver-answered` arm already proves
  * something answered at the solver address, and a `solver-no-answer` arm already carries a transport
  * code; only the round-trip timeout retains nothing at all, so only it needs both.
+ *
+ * The single decision point, deliberately: the delivered-status case is decided HERE rather than by
+ * a short-circuit at the call site, so the pure function cannot advertise a probe requirement
+ * production does not honour. The status is consulted only in the `solver-answered` arm — no other
+ * arm can carry one, and none of them may start reading it.
  */
 export function probesNeededFor(failure: SolverFailure): { target: boolean; solver: boolean } {
   switch (failure.origin) {
     case 'solver-answered':
-      return { target: true, solver: false };
+      // A delivered status came from the target, through the solver: the observation a target probe
+      // exists to make has already been made, so making it again can only muddy the verdict (#2483).
+      return { target: failure.httpStatus === undefined, solver: false };
     case 'round-trip-timeout':
       return { target: true, solver: true };
     default:
@@ -166,6 +173,10 @@ function fromRetainedCause(input: SolverDiagnosisInput): SolverDiagnosis {
 }
 
 function fromSolverAnswered(input: SolverDiagnosisInput): SolverDiagnosis {
+  const delivered = input.failure.httpStatus;
+  if (delivered !== undefined) {
+    return { verdict: 'target', message: deliveredStatusMessage(input, delivered) };
+  }
   const target = input.targetProbe ?? PROBE_NOT_RUN;
   if (target.state === 'unreachable') return { verdict: 'target', message: targetMessage(input, target.code) };
   if (target.state === 'reachable') {
@@ -196,6 +207,19 @@ function refusal(code: AttributingCode): string {
 /** Names the host and nothing else — a Target verdict makes no claim about the solver either way. */
 function targetMessage(input: SolverDiagnosisInput, code: AttributingCode): string {
   return `Target unreachable: ${input.targetHost} ${refusal(code)}. Probed directly, not through the solver.`;
+}
+
+/**
+ * The other Target arm (#2483). It cannot reuse `targetMessage`, whose `Probed directly` clause is
+ * plainly false here: no probe ran, because the status IS the observation — the target answered,
+ * through the solver, with that status rather than a page.
+ */
+function deliveredStatusMessage(input: SolverDiagnosisInput, status: number): string {
+  return [
+    `Target answered HTTP ${status}:`,
+    `${input.targetHost} returned that status through the solver rather than a page.`,
+    'No probe was run — the status came from the target itself.',
+  ].join(' ');
 }
 
 function solverMessage(

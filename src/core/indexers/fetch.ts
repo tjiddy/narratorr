@@ -1,5 +1,6 @@
 /** Fetch indexer content directly or through a FlareSolverr-compatible proxy. */
 
+import { STATUS_CODES } from 'node:http';
 import { z } from 'zod';
 
 import { mapNetworkError } from '../utils/map-network-error.js';
@@ -179,10 +180,35 @@ async function postToSolver(
     }
 
     const parsedBody = await parseFlareSolverrResponse(response);
+    rejectDeliveredNonOk(parsedBody.upstreamStatus);
     return { body: parsedBody.body, requestUrl: targetUrl, httpStatus: parsedBody.upstreamStatus };
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+/**
+ * The origin's own status, delivered inside the solver's 200 envelope — so it fails the way the
+ * direct path's `!response.ok` does (#2483). Without this a Cloudflare challenge or a maintenance
+ * page parses as zero rows, is recorded as an *answered* empty search, and resets the breaker
+ * against a site that is telling us to back off.
+ *
+ * The message leads with the status rather than `FlareSolverr`, and that is load-bearing:
+ * `isProxyRelatedError` matches a leading `FlareSolverr`, and ABB propagates any proxy-related
+ * error from any page, so a prefixed message would make a page-two 503 discard the page-one rows
+ * the direct path keeps. A delivered status means the origin ANSWERED, on either transport.
+ *
+ * Called last in the parse path by construction: an effective status exists only once the JSON has
+ * parsed and the schema has validated, so the four envelope throws keep their precedence. Placed
+ * inside `postToSolver`'s `try` so its `finally` still clears the request timer.
+ */
+function rejectDeliveredNonOk(status: number): void {
+  if (status >= 200 && status <= 299) return;
+  const statusText = STATUS_CODES[status] ?? 'Unexpected status';
+  throw markSolverFailure(
+    httpStatusError(status, `${statusText} (via FlareSolverr)`),
+    'solver-answered',
+  );
 }
 
 /** Every throw here follows a `Response`, so all four carry the `solver-answered` discriminant. */

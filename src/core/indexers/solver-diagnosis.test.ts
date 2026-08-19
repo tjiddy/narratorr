@@ -27,7 +27,8 @@ import {
   probesNeededFor,
   type ProbeOutcome,
 } from './solver-diagnosis.js';
-import { markSolverFailure, SOLVER_FAILURE_ORIGINS, type SolverFailure } from './solver-failure.js';
+import { markSolverFailure, SOLVER_FAILURE_ORIGINS, solverFailureOf, type SolverFailure } from './solver-failure.js';
+import { routeFetch } from '../__tests__/solver-routes.js';
 import { MAPPED_TRANSPORT_CODES } from '../utils/map-network-error.js';
 import { REACHABILITY_PROBE_TIMEOUT_MS } from '../utils/constants.js';
 
@@ -169,6 +170,34 @@ describe('solver diagnosis — transport code policy (AC12)', () => {
   });
 });
 
+/** #2483 — the seam the delivered status travels on, read as an own property like the other two. */
+describe('solver failure identity — the delivered upstream status', () => {
+  it('recovers a delivered status from the error onto SolverFailure', () => {
+    const error = markSolverFailure(
+      Object.assign(new Error('HTTP 503: Service Unavailable (via FlareSolverr)'), { httpStatus: 503 }),
+      'solver-answered',
+    );
+
+    expect(solverFailureOf(error)).toEqual({ origin: 'solver-answered', httpStatus: 503 });
+  });
+
+  it('omits the field entirely when the error carries none', () => {
+    const error = markSolverFailure(new Error('FlareSolverr returned empty response'), 'solver-answered');
+
+    expect(solverFailureOf(error)).toEqual({ origin: 'solver-answered' });
+  });
+
+  /** A non-numeric own property is not a status; trusting one would let any error fake the arm. */
+  it('ignores a non-numeric httpStatus', () => {
+    const error = markSolverFailure(
+      Object.assign(new Error('boom'), { httpStatus: '503' }),
+      'solver-answered',
+    );
+
+    expect(solverFailureOf(error)).toEqual({ origin: 'solver-answered' });
+  });
+});
+
 describe('solver diagnosis — which probes each arm needs (AC2, AC9)', () => {
   it.each([
     ['slot-wait', { target: false, solver: false }],
@@ -178,6 +207,24 @@ describe('solver diagnosis — which probes each arm needs (AC2, AC9)', () => {
   ] as const)('%s', (origin, expected) => {
     expect(probesNeededFor({ origin })).toEqual(expected);
   });
+
+  /**
+   * #2483 — a delivered upstream status came FROM the target, through the solver, so the
+   * observation the target probe exists to obtain has already been made. The status-free row sits
+   * beside it deliberately: the two arms differ only by that field.
+   */
+  it('needs no probe at all when the solver delivered an upstream status (#2483)', () => {
+    expect(probesNeededFor({ origin: 'solver-answered', httpStatus: 503 })).toEqual({ target: false, solver: false });
+    expect(probesNeededFor({ origin: 'solver-answered' })).toEqual({ target: true, solver: false });
+  });
+
+  /** No other origin can carry one, and none of them may start consulting it either. */
+  it.each(['slot-wait', 'solver-no-answer', 'round-trip-timeout'] as const)(
+    'keeps %s probe behaviour unconditional even if a status is present',
+    (origin) => {
+      expect(probesNeededFor({ origin, httpStatus: 503 })).toEqual(probesNeededFor({ origin }));
+    },
+  );
 
   /**
    * Enumerates the real registry rather than the four cases above, so an arm added to `fetch.ts`
@@ -247,6 +294,54 @@ describe('solver diagnosis — the AC1 verdict table', () => {
     it("quotes the solver's own words in the No-page message", () => {
       const result = classify({ origin: 'solver-answered' }, SOLVER_SAID, { targetProbe: reachable() });
       expect(result.message).toContain(`"${SOLVER_SAID}"`);
+    });
+
+    /**
+     * #2483 — the branch this finding exists for. A delivered 503 whose direct probe is refused
+     * used to render `Target unreachable: … refused the connection (ECONNREFUSED). Probed
+     * directly, not through the solver.`: no status at all, and a flat misdescription of an origin
+     * that demonstrably answered.
+     */
+    describe('a delivered upstream status is conclusive on its own (#2483)', () => {
+      const DELIVERED = { origin: 'solver-answered', httpStatus: 503 } as const;
+      const SAID_503 = 'HTTP 503: Service Unavailable (via FlareSolverr)';
+
+      it.each([
+        ['unreachable (ECONNREFUSED)', unreachable('ECONNREFUSED')],
+        ['unreachable (ENOTFOUND)', unreachable('ENOTFOUND')],
+        ['reachable (HTTP 200)', reachable()],
+        ['not run', undefined],
+      ] as const)('names the status whatever the target probe saw — %s', (_label, targetProbe) => {
+        const result = classify(DELIVERED, SAID_503, targetProbe ? { targetProbe } : {});
+
+        expect(result.verdict).toBe('target');
+        expect(result.message).toContain('503');
+        expect(result.message).toContain(HOST);
+        expect(result.message).not.toContain('Probed directly, not through the solver.');
+      });
+
+      /**
+       * The only assertion that can distinguish a structural read from a message parse: the raw
+       * text omits the status entirely while the delivered status is 503.
+       */
+      it('reads the status structurally rather than out of the message text', () => {
+        const result = classify(DELIVERED, 'upstream refused', { targetProbe: unreachable('ECONNREFUSED') });
+
+        expect(result.message).toContain('503');
+      });
+
+      it('says the status arrived through the solver', () => {
+        expect(classify(DELIVERED, SAID_503).message).toMatch(/through the solver/);
+      });
+
+      /** AC10's negative control: the four status-free arms keep their exact current verdicts. */
+      it('leaves every status-free solver-answered failure byte-identical', () => {
+        for (const probe of [unreachable('ECONNREFUSED'), reachable(), inconclusive(), undefined]) {
+          const probes = probe ? { targetProbe: probe } : {};
+          expect(classify({ origin: 'solver-answered' }, SOLVER_SAID, probes).message)
+            .not.toContain('503');
+        }
+      });
     });
   });
 
@@ -584,6 +679,29 @@ describe('describeSolverFailure — orchestration (AC3, AC9, AC10)', () => {
     const byUrl = new Map(fetchSpy.mock.calls.map((call) => [String(call[0]), call[1] as Record<string, unknown>]));
     expect(byUrl.get(TARGET_URL)?.dispatcher).toBeDefined();
     expect(byUrl.get(SOLVER_ENDPOINT)?.dispatcher).toBeUndefined();
+  });
+
+  /**
+   * The pure-function half is `probesNeededFor`'s own table row; this is the end-to-end half. Both
+   * observation points are needed because AC9 fixes `probesNeededFor` as the SINGLE decision point:
+   * a short-circuit inside this orchestrator would satisfy one and leave the other advertising a
+   * probe requirement production never honours.
+   */
+  it('issues no probe at all when the solver delivered an upstream status (#2483)', async () => {
+    const calls = routeFetch(() => new Response(null, { status: 200 }));
+    try {
+      const error = markSolverFailure(
+        Object.assign(new Error('HTTP 503: Service Unavailable (via FlareSolverr)'), { httpStatus: 503 }),
+        'solver-answered',
+      );
+
+      const message = await describeSolverFailure(error, context);
+
+      expect(message).toContain('503');
+      expect(calls.calls).toEqual([]);
+    } finally {
+      calls.restore();
+    }
   });
 
   it('degrades to the verbatim error plus a could-not-determine statement when every probe fails (AC6)', async () => {

@@ -5,7 +5,7 @@ import { useMswServer } from '../__tests__/msw/server.js';
 import { getErrorMessage } from '@shared/error-message.js';
 import { fetchWithProxy } from './fetch.js';
 import { fetchWithProxyAgent } from './proxy.js';
-import { isProxyRelatedError, ProxyError } from './errors.js';
+import { httpStatusOf, isProxyRelatedError, ProxyError } from './errors.js';
 import { solverFailureOf } from './solver-failure.js';
 import { _resetSolverConcurrencyForTesting } from './solver-concurrency.js';
 import {
@@ -515,20 +515,38 @@ describe('fetchWithProxy', () => {
   });
 
   describe('FetchResult metadata', () => {
+    /**
+     * Rewritten for #2483: this used to pin a delivered 503 arriving as a SUCCESSFUL FetchResult,
+     * which is the defect. A 206 keeps the property the case was actually for — `solution.status`
+     * is preferred over the proxy response's own status — on a status the gate admits.
+     */
     it('uses the FlareSolverr solution.status as httpStatus when available', async () => {
       server.use(
         http.post(`${PROXY_URL}/v1`, () => {
           return HttpResponse.json({
             status: 'ok',
-            solution: { response: '<html>via proxy</html>', status: 503 },
-          });
+            solution: { response: '<html>via proxy</html>', status: 206 },
+          }, { status: 200 });
         }),
       );
 
       const result = await fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL });
       expect(result.body).toBe('<html>via proxy</html>');
       expect(result.requestUrl).toBe(TARGET_URL);
-      expect(result.httpStatus).toBe(503);
+      expect(result.httpStatus).toBe(206);
+    });
+
+    it('rejects instead of returning a delivered non-2xx as a successful fetch (#2483)', async () => {
+      server.use(
+        http.post(`${PROXY_URL}/v1`, () => {
+          return HttpResponse.json({
+            status: 'ok',
+            solution: { response: '<html>Cloudflare</html>', status: 503 },
+          });
+        }),
+      );
+
+      await expect(fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL })).rejects.toThrow('503');
     });
 
     it('returns requestUrl matching the target URL even when redirects happen at the transport layer', async () => {
@@ -539,6 +557,228 @@ describe('fetchWithProxy', () => {
       );
       const result = await fetchWithProxy({ url: TARGET_URL });
       expect(result.requestUrl).toBe(TARGET_URL);
+    });
+  });
+
+  /**
+   * #2483 — the solver delivers the ORIGIN's status inside a 200 envelope. The direct path throws
+   * on `!response.ok`; this path returned the delivered status inside a successful `FetchResult`,
+   * so a Cloudflare challenge parsed as an answered zero and reset the breaker against a site that
+   * was telling us to back off.
+   */
+  describe('solver-delivered upstream status (#2483)', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    /** An `ok` envelope carrying `status`, or omitting `solution.status` entirely when undefined. */
+    function serveDelivered(status?: number | null, body = '<html>page</html>'): void {
+      server.use(
+        http.post(`${PROXY_URL}/v1`, () => HttpResponse.json({
+          status: 'ok',
+          solution: { response: body, ...(status !== undefined && { status }) },
+        })),
+      );
+    }
+
+    function caught(): Promise<unknown> {
+      return fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL }).then(
+        () => { throw new Error('expected the fetch to reject'); },
+        (error: unknown) => error,
+      );
+    }
+
+    /**
+     * The 199/200 and 299/300 pairs are the inclusive-boundary proof; 201/206 guard against a
+     * `=== 200` implementation, which `newznab-family.test.ts`'s delivered-201 case also depends on.
+     */
+    const RANGE: Array<{ status: number; accepted: boolean }> = [
+      { status: 199, accepted: false },
+      { status: 200, accepted: true },
+      { status: 201, accepted: true },
+      { status: 206, accepted: true },
+      { status: 299, accepted: true },
+      { status: 300, accepted: false },
+      { status: 302, accepted: false },
+      { status: 399, accepted: false },
+      { status: 403, accepted: false },
+      { status: 429, accepted: false },
+      { status: 503, accepted: false },
+    ];
+
+    it.each(RANGE.filter((row) => row.accepted))('resolves a delivered $status', async ({ status }) => {
+      serveDelivered(status);
+
+      const result = await fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL });
+
+      expect(result.httpStatus).toBe(status);
+      expect(result.body).toBe('<html>page</html>');
+    });
+
+    it.each(RANGE.filter((row) => !row.accepted))('rejects a delivered $status', async ({ status }) => {
+      serveDelivered(status);
+
+      const error = await caught();
+
+      expect(httpStatusOf(error)).toBe(status);
+    });
+
+    /**
+     * AC4's negative control: `response.ok` was already checked upstream, so an envelope that omits
+     * the delivered status still succeeds on the proxy response's own status.
+     */
+    it.each([
+      ['omitted entirely', undefined],
+      ['explicitly null', null],
+    ] as const)('resolves when solution.status is %s', async (_label, status) => {
+      serveDelivered(status);
+
+      const result = await fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL });
+
+      expect(result.httpStatus).toBe(200);
+      expect(result.body).toBe('<html>page</html>');
+    });
+
+    /**
+     * All four on the SAME caught error. A test asserting only "it rejects" cannot tell this fix
+     * from a bare `throw new Error()`, and the `isProxyRelatedError` half is load-bearing rather
+     * than cosmetic: ABB's `mustPropagate` discards page-one rows for any proxy-related error.
+     */
+    it('carries the status, the solver-answered marker, and does not classify as proxy-related', async () => {
+      serveDelivered(503);
+
+      const error = await caught();
+
+      expect(httpStatusOf(error)).toBe(503);
+      expect(solverFailureOf(error)?.origin).toBe('solver-answered');
+      expect(isProxyRelatedError(error)).toBe(false);
+      expect(getErrorMessage(error)).toContain('503');
+    });
+
+    /**
+     * AC5 — an effective status exists only after JSON parsing and schema validation both succeed,
+     * so exactly two envelope defects can be paired with a delivered status. Both keep their own
+     * message: the range check is the LAST thing the parse path decides.
+     */
+    describe('the two envelope throws a delivered status can compete with keep precedence', () => {
+      it('reports the error envelope, not the delivered status', async () => {
+        server.use(
+          http.post(`${PROXY_URL}/v1`, () => HttpResponse.json({
+            status: 'error',
+            message: 'solver failed',
+            solution: { response: '<html/>', status: 503 },
+          })),
+        );
+
+        const error = await caught();
+
+        expect(getErrorMessage(error)).toBe('FlareSolverr error: solver failed');
+      });
+
+      it('reports the empty response, not the delivered status', async () => {
+        server.use(
+          http.post(`${PROXY_URL}/v1`, () => HttpResponse.json({ status: 'ok', solution: { status: 503 } })),
+        );
+
+        const error = await caught();
+
+        expect(getErrorMessage(error)).toBe('FlareSolverr returned empty response');
+      });
+    });
+
+    /**
+     * The other half of AC5: where no TRUSTED status exists the error carries none at all. The
+     * schema-invalid row is the assertion that pins "an unvalidated status is never trusted" — its
+     * payload textually contains a 503 that a `raw`-reading gate would happily attach.
+     */
+    describe('parsing and validation win because no trusted status exists', () => {
+      it('keeps the not-JSON message and attaches no httpStatus', async () => {
+        server.use(
+          http.post(`${PROXY_URL}/v1`, () => new HttpResponse('<html>503 Service Unavailable</html>', {
+            headers: { 'Content-Type': 'text/html' },
+          })),
+        );
+
+        const error = await caught();
+
+        expect(getErrorMessage(error)).toBe('FlareSolverr returned invalid response (not JSON)');
+        expect(httpStatusOf(error)).toBeUndefined();
+      });
+
+      it('keeps the unexpected-shape message and attaches no httpStatus', async () => {
+        server.use(
+          // `status` as a number fails the schema while `solution.status: 503` sits right there.
+          http.post(`${PROXY_URL}/v1`, () => HttpResponse.json({
+            status: 200,
+            solution: { response: '<html/>', status: 503 },
+          })),
+        );
+
+        const error = await caught();
+
+        expect(getErrorMessage(error)).toContain('FlareSolverr returned unexpected response shape');
+        expect(httpStatusOf(error)).toBeUndefined();
+      });
+    });
+
+    /** The two status planes are different observations: the proxy's own status is not delivered. */
+    it('leaves the proxy\'s own non-2xx untouched, with no delivered status attached', async () => {
+      server.use(
+        http.post(`${PROXY_URL}/v1`, () => HttpResponse.json(
+          { status: 'ok', solution: { response: '<html/>', status: 200 } },
+          { status: 502 },
+        )),
+      );
+
+      const error = await caught();
+
+      expect(getErrorMessage(error)).toBe('FlareSolverr proxy HTTP error 502');
+      expect(solverFailureOf(error)?.origin).toBe('solver-answered');
+      expect(httpStatusOf(error)).toBeUndefined();
+    });
+
+    /**
+     * AC17 — the gate derives its status only from a parsed, schema-validated envelope, so it can
+     * never manufacture one out of an `AbortError`. Deliberately NOT asserted: the converse, that a
+     * status-bearing error implies the request was not cancelled. That would pin a race, and the
+     * cancellation verdict is `signal.aborted`'s alone.
+     */
+    describe('cancellation (AC17)', () => {
+      it('keeps its existing arm and carries no status when the abort lands before a Response', async () => {
+        // Aborting once the POST is genuinely in flight, not merely once `fetchWithProxy` returned:
+        // the slot acquisition sits in between, and an abort taken there never reaches this arm.
+        let onWire = () => {};
+        const inFlight = new Promise<void>((resolve) => { onWire = resolve; });
+        vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => new Promise((_resolve, reject) => {
+          const abort = () => reject(new DOMException('The operation was aborted', 'AbortError'));
+          const signal = (init as RequestInit).signal;
+          if (signal?.aborted) return abort();
+          signal?.addEventListener('abort', abort);
+          onWire();
+        }));
+        const controller = new AbortController();
+
+        const pending = fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL, signal: controller.signal })
+          .catch((error: unknown) => error);
+        await inFlight;
+        controller.abort();
+        const error = await pending;
+
+        expect(solverFailureOf(error)?.origin).toBe('round-trip-timeout');
+        expect(httpStatusOf(error)).toBeUndefined();
+      });
+
+      it('control: a delivered 503 under a live signal still produces the status arm', async () => {
+        serveDelivered(503);
+        const controller = new AbortController();
+
+        const error = await fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL, signal: controller.signal })
+          .then(() => { throw new Error('expected the fetch to reject'); }, (e: unknown) => e);
+
+        expect(controller.signal.aborted).toBe(false);
+        expect(httpStatusOf(error)).toBe(503);
+        expect(solverFailureOf(error)?.origin).toBe('solver-answered');
+      });
     });
   });
 
@@ -609,6 +849,10 @@ describe('fetchWithProxy', () => {
         { name: 'solver HTTP 500', respond: () => new HttpResponse(null, { status: 500 }) },
         { name: 'a 200 error envelope', respond: () => HttpResponse.json({ status: 'error', message: 'solver failed' }) },
         { name: 'a 200 ok envelope with no solution.response', respond: () => HttpResponse.json({ status: 'ok' }) },
+        {
+          name: 'a delivered non-2xx (solution.status 503)',
+          respond: () => HttpResponse.json({ status: 'ok', solution: { response: '<html/>', status: 503 } }),
+        },
         {
           name: 'a 200 with a non-JSON body',
           respond: () => new HttpResponse('<html>nope</html>', { headers: { 'Content-Type': 'text/html' } }),
