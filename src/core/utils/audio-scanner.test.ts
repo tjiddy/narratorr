@@ -1750,6 +1750,138 @@ describe('scanAudioDirectory codec fallback (xHE-AAC / USAC, #1667)', () => {
   });
 });
 
+describe('scanAudioDirectory — bare .mp4 audiobooks (#2495)', () => {
+  const FFPROBE_PATH = '/usr/bin/ffprobe';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function setupDirectory(name: string) {
+    mockReaddir.mockResolvedValue([makeDirent(name, true)] as never);
+    mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 400_000_000 } as never);
+  }
+
+  function setupDirectFile(path: string) {
+    mockStat.mockResolvedValue({ isFile: () => true, isDirectory: () => false, size: 400_000_000 } as never);
+    return path;
+  }
+
+  /**
+   * Answers ffprobe by the stream selector rather than unconditionally: a build that stopped
+   * passing `-select_streams a:0` would read the video stream of a video-bearing .mp4, which is
+   * exactly the tradeoff this extension accepts. Without the routing the assertion cannot see it.
+   */
+  function routeByStreamSelector(audio: Record<string, unknown>, video: Record<string, unknown>) {
+    mockExecFile.mockImplementation((...args: unknown[]) => {
+      const callback = args[args.length - 1] as (...a: unknown[]) => void;
+      const argv = (args[1] as string[]) ?? [];
+      const selectsAudio = argv.includes('a:0');
+      callback(null, JSON.stringify({ streams: [selectsAudio ? audio : video] }), '');
+      return {} as never;
+    });
+  }
+
+  it('scans a directory holding one .mp4 and reports its codec', async () => {
+    setupDirectory('FortuneFunhouseMissFortuneMysteriesBook19.mp4');
+    mockParseFile.mockResolvedValue(makeMetadata({
+      format: { codec: 'AAC', bitrate: 64_000, sampleRate: 44_100, numberOfChannels: 2, duration: 21_600, container: 'MPEG-4' },
+    }) as never);
+
+    const result = await scanAudioDirectory('/downloads/fortune');
+
+    expect(result).not.toBeNull();
+    expect(result!.codec).toBe('AAC');
+    expect(result!.fileCount).toBe(1);
+  });
+
+  it('scans a .mp4 passed directly as a file path', async () => {
+    const path = setupDirectFile('/downloads/FortuneFunhouseMissFortuneMysteriesBook19.mp4');
+    mockParseFile.mockResolvedValue(makeMetadata({
+      format: { codec: 'AAC', bitrate: 64_000, sampleRate: 44_100, numberOfChannels: 2, duration: 21_600, container: 'MPEG-4' },
+    }) as never);
+
+    const result = await scanAudioDirectory(path);
+
+    expect(result).not.toBeNull();
+    expect(result!.codec).toBe('AAC');
+  });
+
+  it('returns null for a born-hidden .Book.mp4 passed directly (transient, never scanned)', async () => {
+    const path = setupDirectFile('/downloads/.Book.mp4');
+
+    expect(await scanAudioDirectory(path)).toBeNull();
+    expect(mockParseFile).not.toHaveBeenCalled();
+  });
+
+  it('persists fileFormat as the bare "mp4" string', async () => {
+    setupDirectory('Book.mp4');
+    mockParseFile.mockResolvedValue(makeMetadata({
+      format: { codec: 'AAC', bitrate: 64_000, sampleRate: 44_100, numberOfChannels: 2, duration: 21_600, container: 'MPEG-4' },
+    }) as never);
+
+    const result = await scanAudioDirectory('/downloads/fortune');
+
+    expect(result!.fileFormat).toBe('mp4');
+  });
+
+  it('reads the audio stream, not the video stream, of a video-bearing .mp4', async () => {
+    setupDirectory('Book.mp4');
+    mockParseFile.mockResolvedValue(makeMetadata({
+      format: { codec: undefined, bitrate: undefined, sampleRate: undefined, numberOfChannels: undefined, duration: undefined },
+    }) as never);
+    routeByStreamSelector(
+      { codec_name: 'aac', bit_rate: '64000', sample_rate: '44100', channels: 2 },
+      { codec_name: 'h264', bit_rate: '2500000', sample_rate: '0', channels: 0 },
+    );
+
+    const result = await scanAudioDirectory('/downloads/video-bearing', { ffprobePath: FFPROBE_PATH });
+
+    expect(result!.codec).toBe('aac');
+    expect(result!.bitrate).toBe(64_000);
+    expect(result!.sampleRate).toBe(44_100);
+    expect(result!.channels).toBe(2);
+  });
+
+  // AC9 in-scope arm: a .mp4 with no audio stream must not pass the automatic gate as a good
+  // download. `unreadable_codec` (files present, nothing readable), never `probe_failed`.
+  it('signals onFilesWithoutCodec and returns null for a .mp4 with no audio stream', async () => {
+    setupDirectory('NoAudio.mp4');
+    mockParseFile.mockResolvedValue(makeMetadata({
+      format: { codec: undefined, bitrate: undefined, sampleRate: undefined, numberOfChannels: undefined, duration: undefined },
+    }) as never);
+    // `-select_streams a:0` on an audio-less container yields an empty streams array.
+    mockExecFile.mockImplementation((...args: unknown[]) => {
+      const callback = args[args.length - 1] as (...a: unknown[]) => void;
+      callback(null, JSON.stringify({ streams: [] }), '');
+      return {} as never;
+    });
+    const onFilesWithoutCodec = vi.fn();
+
+    const result = await scanAudioDirectory('/downloads/no-audio', { ffprobePath: FFPROBE_PATH, onFilesWithoutCodec });
+
+    expect(result).toBeNull();
+    expect(onFilesWithoutCodec).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a zero duration at zero rather than coercing one from a plausible file size', async () => {
+    setupDirectory('Book.mp4');
+    mockParseFile.mockResolvedValue(makeMetadata({
+      format: { codec: 'AAC', bitrate: 64_000, sampleRate: 44_100, numberOfChannels: 2, duration: 0, container: 'MPEG-4' },
+    }) as never);
+    // Both duration sources decline: music-metadata says 0, ffprobe reports N/A.
+    mockExecFile.mockImplementation((...args: unknown[]) => {
+      const callback = args[args.length - 1] as (...a: unknown[]) => void;
+      callback(null, JSON.stringify({ format: { duration: 'N/A' } }), '');
+      return {} as never;
+    });
+
+    const result = await scanAudioDirectory('/downloads/fortune', { ffprobePath: FFPROBE_PATH });
+
+    expect(result!.totalDuration).toBe(0);
+  });
+});
+
 describe('readAlbumTag (#1031)', () => {
   beforeEach(() => {
     vi.clearAllMocks();

@@ -102,6 +102,15 @@ describe('readOpfMetadata (AC6)', () => {
     expect(stat).not.toHaveBeenCalled();
   });
 
+  // #2495: a bare .mp4 book path is a pointer import like any other registry member — it has no
+  // folder to hold a sidecar, so the reader must not join `metadata.opf` onto a file path.
+  it('a bookFolder ending in .mp4 is skipped with ZERO reads', async () => {
+    expect(await readOpfMetadata('/audiobooks/FortuneFunhouseMissFortuneMysteriesBook19.mp4', log)).toBeNull();
+
+    expect(readFile).not.toHaveBeenCalled();
+    expect(stat).not.toHaveBeenCalled();
+  });
+
   it('a file over MAX_OPF_BYTES → null + warn, and the bytes are never read', async () => {
     const dir = await seedFolder(OPF);
     (stat as Mock).mockImplementationOnce(() => Promise.resolve({ size: 5 * 1024 * 1024 }));

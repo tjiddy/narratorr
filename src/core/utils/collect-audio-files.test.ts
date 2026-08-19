@@ -220,6 +220,39 @@ describe('collectAudioFilePaths', () => {
       expect(result).toEqual([join('/x/.merge-tmp', 'track.mp3')]);
     });
   });
+
+  describe('.mp4 registry membership (#2495)', () => {
+    it('collects a bare .mp4 audiobook', async () => {
+      mockReaddir.mockResolvedValueOnce([
+        makeDirent('FortuneFunhouseMissFortuneMysteriesBook19.mp4', true, false),
+      ] as never);
+
+      const result = await collectAudioFilePaths('/dir');
+      expect(result).toEqual([join('/dir', 'FortuneFunhouseMissFortuneMysteriesBook19.mp4')]);
+    });
+
+    it('collects an uppercase Book.MP4 (call sites lowercase the extension)', async () => {
+      mockReaddir.mockResolvedValueOnce([makeDirent('Book.MP4', true, false)] as never);
+
+      expect(await collectAudioFilePaths('/dir')).toEqual([join('/dir', 'Book.MP4')]);
+    });
+
+    it('excludes a born-hidden .Book.mp4 under skipHidden', async () => {
+      mockReaddir.mockResolvedValueOnce([
+        makeDirent('.Book.mp4', true, false),
+        makeDirent('Book.mp4', true, false),
+      ] as never);
+
+      const result = await collectAudioFilePaths('/dir', { recursive: true, skipHidden: true });
+      expect(result).toEqual([join('/dir', 'Book.mp4')]);
+    });
+
+    it.each(['.m4v', '.mkv', '.mp4v', '.txt'])('still rejects %s — only .mp4 was added', async (ext) => {
+      mockReaddir.mockResolvedValueOnce([makeDirent(`Book${ext}`, true, false)] as never);
+
+      expect(await collectAudioFilePaths('/dir')).toEqual([]);
+    });
+  });
 });
 
 describe('isHiddenName (#1852)', () => {

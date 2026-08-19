@@ -5,7 +5,9 @@ vi.mock('@core/utils/audio-processor.js', async (importOriginal) => {
   return { ...actual, resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null) };
 });
 
+import { extname } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
+import { AUDIO_EXTENSIONS } from '@core/utils/audio-constants.js';
 import { QualityGateOrchestrator, type QualityGateOrchestratorOptionalDeps } from './quality-gate-orchestrator.js';
 import type { QualityGateService, QualityDecision } from './quality-gate.service.js';
 import { QualityGateServiceError, NULL_REASON } from './quality-gate.types.js';
@@ -522,6 +524,44 @@ describe('QualityGateOrchestrator', () => {
         expect.objectContaining({ filesPresentNoCodec: true }),
         'Quality gate: audio files present but codec unreadable',
       );
+    });
+
+    // #2495: prod download 439 dead-ended here — a bare ABB `.mp4` produced no scan result, so the
+    // gate held it as "No audio files found". The scan double is registry-driven rather than
+    // unconditional so this reds if `.mp4` leaves AUDIO_EXTENSIONS; audio-scanner.test.ts owns the
+    // proof that the real scanner reads such a file.
+    it('#2495: a single-file .mp4 download reaches the quality decision instead of a probe-failure hold', async () => {
+      const { orchestrator, qualityGateService } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
+      const savePath = '/downloads/FortuneFunhouseMissFortuneMysteriesBook19.mp4';
+      (resolveSavePath as ReturnType<typeof vi.fn>).mockResolvedValue({ resolvedPath: savePath, originalPath: savePath });
+      const mp4Scan = { ...makeScan(), fileFormat: 'mp4' };
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockImplementation((path: string) =>
+        Promise.resolve(AUDIO_EXTENSIONS.has(extname(path).toLowerCase()) ? mp4Scan : null));
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(qualityGateService.processDownload).toHaveBeenCalledWith(baseDownload, baseBook, mp4Scan);
+      expect(qualityGateService.hold).not.toHaveBeenCalled();
+    });
+
+    it('#2495: an audio-less .mp4 holds with unreadable_codec, not "No audio files found"', async () => {
+      const { orchestrator, qualityGateService, eventHistory } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
+      const savePath = '/downloads/NoAudio.mp4';
+      (resolveSavePath as ReturnType<typeof vi.fn>).mockResolvedValue({ resolvedPath: savePath, originalPath: savePath });
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockImplementation((_path: string, opts: { onFilesWithoutCodec?: () => void }) => {
+        opts?.onFilesWithoutCodec?.();
+        return Promise.resolve(null);
+      });
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(qualityGateService.hold).toHaveBeenCalledWith(1);
+      expect(qualityGateService.processDownload).not.toHaveBeenCalled();
+      const reason = (eventHistory.create as ReturnType<typeof vi.fn>).mock.calls[0]![0].reason as { probeError: string; holdReasons: string[] };
+      expect(reason.holdReasons).toEqual(['unreadable_codec']);
+      expect(reason.probeError).not.toBe('No audio files found');
     });
 
     it('still holds with probe_failed when the directory is genuinely empty (onFilesWithoutCodec not fired)', async () => {

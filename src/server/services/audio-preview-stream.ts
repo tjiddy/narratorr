@@ -5,10 +5,12 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
 import { collectAudioFilePaths } from '@core/utils/collect-audio-files.js';
 
+/** Exhaustive against AUDIO_EXTENSIONS — every registry member is streamable; a gap serves octet-stream. */
 const AUDIO_MIME_MAP: Record<string, string> = {
   '.mp3': 'audio/mpeg',
   '.m4b': 'audio/mp4',
   '.m4a': 'audio/mp4',
+  '.mp4': 'audio/mp4',
   '.flac': 'audio/flac',
   '.ogg': 'audio/ogg',
   '.opus': 'audio/ogg',

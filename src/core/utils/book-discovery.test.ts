@@ -136,6 +136,28 @@ describe('discoverBooks', () => {
     });
   });
 
+  // #2495 AC9 boundary: library-scan discovery classifies by extension and readability only. The
+  // absence assertion pins that — adding stream probing here would change admission for every
+  // registry member, which is a separate contract.
+  it('discovers a folder holding only a bare .mp4, without probing its streams', async () => {
+    setupFs({
+      '/audiobooks': [{ name: 'Fortune Funhouse', isFile: false }],
+      '/audiobooks/Fortune Funhouse': [
+        { name: 'FortuneFunhouseMissFortuneMysteriesBook19.mp4', isFile: true, size: 400_000_000 },
+      ],
+    });
+
+    const result = await discoverBooks('/audiobooks');
+
+    expect(result).toEqual([{
+      path: '/audiobooks/Fortune Funhouse',
+      folderParts: ['Fortune Funhouse'],
+      audioFileCount: 1,
+      totalSize: 400_000_000,
+    }]);
+    expect(mockReadAlbumTag).not.toHaveBeenCalled();
+  });
+
   it('counts only audio extensions, ignores non-audio files in same folder', async () => {
     setupFs({
       '/audiobooks': [{ name: 'Book', isFile: false }],
