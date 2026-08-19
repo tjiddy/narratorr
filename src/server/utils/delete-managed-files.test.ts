@@ -1,4 +1,22 @@
 import { describe, it, expect, vi } from 'vitest';
+
+// The suite runs against a real tmpdir on purpose. `rm` gets a selective seam so ONE test can force
+// a per-file deletion failure: chmod cannot deny the owner on Windows, and this is the only way to
+// reach `failedManaged` portably. Every other path stays on the real implementation.
+const rmFailFor = { basename: null as string | null };
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    rm: async (p: Parameters<typeof actual.rm>[0], ...rest: never[]) => {
+      if (rmFailFor.basename !== null && String(p).endsWith(rmFailFor.basename)) {
+        throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+      }
+      return actual.rm(p, ...rest);
+    },
+  };
+});
+
 import { mkdir, rm, writeFile, stat, symlink } from 'node:fs/promises';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -100,6 +118,42 @@ describe('deleteManagedBookFiles', () => {
     expect(base(result.deletedManaged)).toEqual(['Cover.JPG', 'Track.MP3']);
     expect(result.preservedForeign).toEqual([]);
     expect(await pathExists(book)).toBe(false);
+  }));
+
+  // #2495 blast radius: .mp4 is now a MANAGED file, so a book delete removes it instead of
+  // preserving it as a foreign artifact.
+  it('deletes a .mp4 at the book root and at depth as managed, not foreign', withTmp(async (root) => {
+    const book = join(root, 'Book');
+    await mkdir(join(book, 'Disc 1'), { recursive: true });
+    await writeFile(join(book, 'FortuneFunhouseMissFortuneMysteriesBook19.mp4'), 'a');
+    await writeFile(join(book, 'Disc 1', 'nested.mp4'), 'b');
+    await writeFile(join(book, 'trailer.mp4v'), 'c');
+
+    const result = await deleteManagedBookFiles(book, root, makeLog());
+
+    expect(base(result.deletedManaged)).toEqual(['FortuneFunhouseMissFortuneMysteriesBook19.mp4', 'nested.mp4']);
+    expect(base(result.preservedForeign)).toEqual(['trailer.mp4v']);
+    expect(result.failedManaged).toEqual([]);
+    expect(await pathExists(join(book, 'trailer.mp4v'))).toBe(true);
+  }));
+
+  it('records an undeletable .mp4 in failedManaged and still sweeps the next file', withTmp(async (root) => {
+    const book = join(root, 'Book');
+    await mkdir(book, { recursive: true });
+    await writeFile(join(book, 'locked.mp4'), 'a');
+    await writeFile(join(book, 'next.mp4'), 'b');
+    rmFailFor.basename = 'locked.mp4';
+
+    try {
+      const result = await deleteManagedBookFiles(book, root, makeLog());
+
+      expect(base(result.failedManaged)).toEqual(['locked.mp4']);
+      expect(base(result.deletedManaged)).toEqual(['next.mp4']);
+      expect(await pathExists(join(book, 'locked.mp4'))).toBe(true);
+      expect(await pathExists(join(book, 'next.mp4'))).toBe(false);
+    } finally {
+      rmFailFor.basename = null;
+    }
   }));
 
   it('recurses into multi-disc subfolders, preserves a top-level pdf, retains the folder', withTmp(async (root) => {

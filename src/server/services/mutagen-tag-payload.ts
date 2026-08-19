@@ -80,11 +80,13 @@ export function coverMimeForPath(filePath: string): string | undefined {
   return COVER_MIME_BY_EXTENSION[extname(filePath).toLowerCase()];
 }
 
-// mutagen's MP4 class handles .m4a identically to .m4b; no third branch is warranted.
+// mutagen's MP4 class handles .m4a, .m4b and .mp4 identically — one container, one branch.
+// Deliberately a proper subset of AUDIO_EXTENSIONS: .flac/.ogg/.opus/.wma/.aac/.wav are untaggable.
 const FORMAT_BY_EXTENSION: Readonly<Record<string, MutagenFormat>> = {
   '.mp3': 'id3',
   '.m4a': 'mp4',
   '.m4b': 'mp4',
+  '.mp4': 'mp4',
 };
 
 /**

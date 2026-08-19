@@ -49,6 +49,14 @@ vi.mock('node:fs/promises', () => ({
   }),
 }));
 
+// #2495 AC9: the observation point for "the import path admits by extension, never by stream
+// content". Nothing here imports the scanner today — that is the property under test, and an
+// absence assertion needs a double that WOULD record the call if someone added one.
+vi.mock('@core/utils/audio-scanner.js', () => ({
+  scanAudioDirectory: vi.fn().mockResolvedValue(null),
+  getFFprobeStreamInfo: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock('../utils/post-processing-script.js', () => ({
   runPostProcessingScript: vi.fn().mockResolvedValue({ success: true }),
 }));
@@ -160,6 +168,31 @@ describe('validateSource', () => {
   it('returns fileCount=1 for single file', async () => {
     vi.mocked(stat).mockResolvedValue({ isFile: () => true, isDirectory: () => false, size: 1024 } as unknown as Stats);
     const result = await validateSource('/downloads/book.mp3', undefined, null);
+    expect(result.fileCount).toBe(1);
+  });
+
+  it('#2495: admits a single .mp4 by extension, without probing its streams', async () => {
+    const { scanAudioDirectory, getFFprobeStreamInfo } = await import('@core/utils/audio-scanner.js');
+    vi.mocked(stat).mockResolvedValue({ isFile: () => true, isDirectory: () => false, size: 400_000_000 } as unknown as Stats);
+
+    const result = await validateSource('/downloads/FortuneFunhouseMissFortuneMysteriesBook19.mp4', undefined, null);
+
+    expect(result.fileCount).toBe(1);
+    expect(result.sourcePath).toBe('/downloads/FortuneFunhouseMissFortuneMysteriesBook19.mp4');
+    // AC9's out-of-scope arm, pinned: operator-initiated import overrides stream validation.
+    expect(scanAudioDirectory).not.toHaveBeenCalled();
+    expect(getFFprobeStreamInfo).not.toHaveBeenCalled();
+  });
+
+  it('#2495: a .mp4-only directory does not throw ContentFailureError', async () => {
+    vi.mocked(stat).mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 5000 } as unknown as Stats);
+    const { readdir } = await import('node:fs/promises');
+    vi.mocked(readdir).mockResolvedValue([
+      { name: 'FortuneFunhouseMissFortuneMysteriesBook19.mp4', isFile: () => true, isDirectory: () => false },
+    ] as never);
+
+    const result = await validateSource('/downloads/fortune', undefined, null);
+
     expect(result.fileCount).toBe(1);
   });
 

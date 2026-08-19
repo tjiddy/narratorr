@@ -379,6 +379,16 @@ describe('directory sizers — consolidated walker policy matrix (#1856)', () =>
     expect(await getVisiblePathSize(ROOT)).toBe(100);
   });
 
+  it('#2495 dir with Book.mp4 (100) + hidden .Book.mp4 (999): 1099 / 100 / 100', async () => {
+    mockFs(
+      { [ROOT]: [makeDirent('Book.mp4', true, false), makeDirent('.Book.mp4', true, false)] },
+      { [join(ROOT, 'Book.mp4')]: 100, [join(ROOT, '.Book.mp4')]: 999 },
+    );
+    expect(await getPathSize(ROOT)).toBe(1099);
+    expect(await getAudioPathSize(ROOT)).toBe(100);
+    expect(await getVisiblePathSize(ROOT)).toBe(100);
+  });
+
   it('empty directory: 0 / 0 / 0 (base case, F8)', async () => {
     mockFs({ [ROOT]: [] }, {});
     expect(await getPathSize(ROOT)).toBe(0);
@@ -606,6 +616,14 @@ describe('containsAudioFiles', () => {
     vi.mocked(readdir)
       .mockResolvedValueOnce([makeDirent('subdir', false, true)] as never)
       .mockResolvedValueOnce([makeDirent('track.m4b', true, false)] as never);
+
+    expect(await containsAudioFiles('/dir')).toBe(true);
+  });
+
+  it('#2495: returns true for a directory holding only a bare .mp4', async () => {
+    vi.mocked(readdir).mockResolvedValue([
+      makeDirent('FortuneFunhouseMissFortuneMysteriesBook19.mp4', true, false),
+    ] as never);
 
     expect(await containsAudioFiles('/dir')).toBe(true);
   });

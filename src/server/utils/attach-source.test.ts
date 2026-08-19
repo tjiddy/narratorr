@@ -80,4 +80,37 @@ describe('admitAttachSource — the node-kind branch (#2435 AC16)', () => {
 
     expect(await admitAttachSource(target)).toEqual({ ok: true });
   });
+
+  // #2495 AC9 boundary. This surface admits by node kind, hiddenness, extension and readability —
+  // deliberately NOT by stream content, so an operator can attach a file the automatic gate would
+  // hold. The contract is pinned here so adding stream probing (which would change admission for
+  // all ten registry members) has to be a deliberate contract change, not a drive-by.
+  it('admits a readable .mp4 whose bytes carry no audio stream at all', async () => {
+    const target = join(dir, 'NoAudioStream.mp4');
+    writeFileSync(target, Buffer.from('not really an mp4 at all'));
+
+    expect(await admitAttachSource(target)).toEqual({ ok: true });
+  });
+
+  it('admits a directory holding only a bare .mp4', async () => {
+    const root = join(dir, 'abb-download');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'FortuneFunhouseMissFortuneMysteriesBook19.mp4'), Buffer.alloc(16));
+
+    expect(await admitAttachSource(root)).toEqual({ ok: true });
+  });
+
+  it('still refuses a hidden .mp4', async () => {
+    const target = join(dir, '.Book.mp4');
+    writeFileSync(target, Buffer.alloc(16));
+
+    expect(await admitAttachSource(target)).toEqual({ ok: false, reason: expect.stringContaining('hidden') });
+  });
+
+  it('still refuses a near-miss .mp4v', async () => {
+    const target = join(dir, 'Book.mp4v');
+    writeFileSync(target, Buffer.alloc(16));
+
+    expect(await admitAttachSource(target)).toEqual({ ok: false, reason: expect.stringContaining('not a supported audio format') });
+  });
 });

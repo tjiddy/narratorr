@@ -281,7 +281,7 @@ describe('TAGGABLE_EXTENSIONS', () => {
     for (const ext of TAGGABLE_EXTENSIONS) {
       expect(mutagenFormatForExtension(ext)).not.toBeNull();
     }
-    expect([...TAGGABLE_EXTENSIONS].sort()).toEqual(['.m4a', '.m4b', '.mp3']);
+    expect([...TAGGABLE_EXTENSIONS].sort()).toEqual(['.m4a', '.m4b', '.mp3', '.mp4']);
   });
 });
 
@@ -290,6 +290,7 @@ describe('mutagenFormatForExtension', () => {
     ['.mp3', 'id3'],
     ['.m4a', 'mp4'],
     ['.m4b', 'mp4'],
+    ['.mp4', 'mp4'],
   ])('%s → %s', (ext, format) => {
     expect(mutagenFormatForExtension(ext)).toBe(format);
   });

@@ -432,6 +432,17 @@ describe('planFileRenames', () => {
     expect(byFrom['02.mp3']).toBe('002.mp3');
   });
 
+  // #2495: the rename-to-.m4b normalization was considered and declined, so the template rename
+  // must carry the .mp4 through unchanged. Pinned here because a partial rename across the four
+  // import paths is worse than none.
+  it('includes a .mp4 in play order and preserves its extension', async () => {
+    await mockFiles(['01.mp4', '02.mp4']);
+
+    const renames = await planFileRenames('/t', '{trackNumber:000}', book, 'Author');
+
+    expect(renames.map(r => r.to)).toEqual(['001.mp4', '002.mp4']);
+  });
+
   describe('colliding format → number all', () => {
     it('numbers every file including the first, zero-padded, with no bare file', async () => {
       await mockFiles(['x.mp3', 'y.mp3', 'z.mp3']);

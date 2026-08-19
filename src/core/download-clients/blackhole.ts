@@ -67,8 +67,8 @@ export class BlackholeClient implements DownloadClientAdapter {
 
   /**
    * Write to a temp name a watching client ignores; only the caller's commit renames it into
-   * place. The temp basename is random rather than `<final>.tmp` because the final names are
-   * millisecond-stamped and independent handoffs can run concurrently.
+   * place. The temp basename carries its own random component so that every in-flight handoff
+   * stages to a distinct path, independent of how the final name is built.
    */
   private async stageArtifactFile(finalName: string, data: Parameters<typeof writeFile>[1]): Promise<StagedHandoff> {
     const finalPath = join(this.config.watchDir, finalName);
@@ -87,20 +87,25 @@ export class BlackholeClient implements DownloadClientAdapter {
 
   async stageDownload(artifact: DownloadArtifact): Promise<StagedHandoff> {
     const timestamp = Date.now();
+    // #2482: the timestamp alone collides for two handoffs in the same millisecond — coarser than it
+    // looks on Windows, where Date.now() quantizes to ~15.6ms — and the loser is silently replaced
+    // after its download row already landed. Never hoist this: one UUID per invocation is the fix.
+    const unique = randomUUID();
 
     if (artifact.type === 'torrent-bytes') {
-      return this.stageArtifactFile(`download-${timestamp}.torrent`, artifact.data);
+      return this.stageArtifactFile(`download-${timestamp}-${unique}.torrent`, artifact.data);
     }
 
+    // No `download-` prefix here, unlike every other type: watcher-facing and deliberate.
     if (artifact.type === 'magnet-uri') {
-      return this.stageArtifactFile(`${timestamp}.magnet`, artifact.uri);
+      return this.stageArtifactFile(`${timestamp}-${unique}.magnet`, artifact.uri);
     }
 
     if (artifact.type === 'nzb-bytes') {
       if (artifact.data.length === 0) {
         throw new DownloadClientError(this.name, 'Cannot add empty NZB file');
       }
-      return this.stageArtifactFile(`download-${timestamp}.nzb`, artifact.data);
+      return this.stageArtifactFile(`download-${timestamp}-${unique}.nzb`, artifact.data);
     }
 
     // Follow indexer redirects through SSRF validation. The configured-host allowlist
@@ -127,7 +132,7 @@ export class BlackholeClient implements DownloadClientAdapter {
       }
       const buffer = Buffer.from(await response.arrayBuffer());
       // Awaited inside the try so the dispatcher is closed before the handle reaches the caller.
-      return await this.stageArtifactFile(`download-${timestamp}.nzb`, buffer);
+      return await this.stageArtifactFile(`download-${timestamp}-${unique}.nzb`, buffer);
     } finally {
       await dispatcher.close().catch(() => { /* best-effort cleanup */ });
     }

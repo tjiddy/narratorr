@@ -341,7 +341,7 @@ describe('#2310 grab integrity and excluded surfaces — real download chain', (
 
       const names = await readdir(watchDir);
       expect(names).toHaveLength(1);
-      expect(names[0]).toMatch(/^\d+\.magnet$/);
+      expect(names[0]).toMatch(/^\d+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.magnet$/);
     });
   });
 
