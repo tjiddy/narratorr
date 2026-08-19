@@ -11,8 +11,14 @@ import {
 } from './search-run-exclusion.js';
 import { IndexerError } from '@core/indexers/errors.js';
 import { httpStatusError } from '@core/indexers/errors.js';
+import { markSolverFailure } from '@core/indexers/solver-failure.js';
 
 const TRANSPORT = Object.assign(new Error('Connection refused on port 443'), { code: 'ECONNREFUSED' });
+
+/** The error shape #2483's gate raises: a structural status plus the solver-answered discriminant. */
+function delivered(status: number): Error {
+  return markSolverFailure(httpStatusError(status, 'Delivered (via FlareSolverr)'), 'solver-answered');
+}
 const REFUSED_REPORT = { reason: 'Connection refused on port 443', elapsedMs: 12 };
 
 /** Every failure the operator is told about carries its wording; the kind is what decides policy. */
@@ -25,6 +31,9 @@ describe('#2375 AC17 — excludesForRun', () => {
     { name: 'resolved successfully', outcome: { kind: 'resolved' }, expected: false },
     { name: 'transport failure', outcome: failed(TRANSPORT), expected: true },
     { name: 'query-scoped failure (structural 400)', outcome: failed(httpStatusError(400, 'Bad Request')), expected: false },
+    // #2483 — the delivered status carries the solver marker, which must not shift either verdict.
+    { name: 'solver-delivered 503', outcome: failed(delivered(503)), expected: true },
+    { name: 'solver-delivered 400', outcome: failed(delivered(400)), expected: false },
     { name: 'query-scoped failure (response validation)', outcome: failed(new IndexerError('Torznab', 'bad JSON')), expected: false },
     { name: 'cancelled', outcome: { kind: 'cancelled' }, expected: false },
     { name: 'breaker-suppressed', outcome: { kind: 'breaker-suppressed', report: REFUSED_REPORT }, expected: false },

@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { classifyQueryDependence, type QueryDependence } from './query-dependence.js';
 import { IndexerAuthError, IndexerError, ProxyError, httpStatusError } from './errors.js';
+import { markSolverFailure } from './solver-failure.js';
 
 /** The undici wrapper shape `describeTransportError` unwraps: the real code lives on `.cause`. */
 function fetchFailed(code: string): TypeError {
@@ -126,5 +127,36 @@ describe('#2375 AC11 — the status is read structurally, never from the message
     const bogus = Object.assign(new Error('weird'), { httpStatus: '400' });
 
     expect(classifyQueryDependence(bogus)).toBe('transport');
+  });
+});
+
+/**
+ * #2483 — the solver-delivered status reaches this classifier through exactly the same own
+ * property the direct path uses, so the `solver-answered` marker must be inert here. The
+ * asymmetry it inherits is the point: 429/503 drop the indexer for the rest of the run, while the
+ * four statuses a different query can clear leave it eligible.
+ */
+describe('#2483 — a solver-delivered upstream status', () => {
+  function delivered(status: number): Error {
+    return markSolverFailure(httpStatusError(status, `Delivered (via FlareSolverr)`), 'solver-answered');
+  }
+
+  it.each([
+    [400, 'query-scoped'],
+    [413, 'query-scoped'],
+    [414, 'query-scoped'],
+    [422, 'query-scoped'],
+    [403, 'transport'],
+    [429, 'transport'],
+    [503, 'transport'],
+  ] as const)('classifies a delivered %i as %s', (status, expected) => {
+    expect(classifyQueryDependence(delivered(status))).toBe(expected);
+  });
+
+  it('gives the delivered status the same verdict as the direct path does', () => {
+    for (const status of [400, 403, 413, 414, 422, 429, 503]) {
+      expect(classifyQueryDependence(delivered(status)))
+        .toBe(classifyQueryDependence(httpStatusError(status, 'Direct')));
+    }
   });
 });

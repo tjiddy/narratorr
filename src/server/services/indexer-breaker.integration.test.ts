@@ -19,6 +19,10 @@ import { createMockDbIndexer } from '../__tests__/factories.js';
 import { initializeKey, _resetKey } from '../utils/secret-codec.js';
 import { indexerErrorEventSchema } from '@shared/schemas/search-stream.js';
 import { IndexerAuthError } from '@core/indexers/errors.js';
+import { AudioBookBayIndexer } from '@core/indexers/abb.js';
+import { abbThrottle, _resetAbbThrottleForTesting } from '@core/indexers/abb-throttle.js';
+import { useMswServer } from '@core/__tests__/msw/server.js';
+import { http, HttpResponse } from 'msw';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@db/index.js';
 import type { DownloadClientService } from './download-client.service.js';
@@ -896,5 +900,125 @@ describe('#2376 AC4/AC7/AC9 — production time-to-stopped under the real health
 
     expect(h.adapterTest).not.toHaveBeenCalled();
     expect(h.service.getFailureSnapshot(1)).toMatchObject({ state: 'ok', consecutiveFailures: 0 });
+  });
+});
+
+/**
+ * #2483 — the point of the issue, observed where it actually matters. Per
+ * `degrading-adapter-invisible-to-mock-suite` (#2375) a mock adapter that rejects proves the
+ * classifier and nothing about whether the REAL adapter rejects, so this drives
+ * `AudioBookBayIndexer` through `IndexerSearchService` with MSW at the solver transport.
+ *
+ * Before the gate a solver-delivered 503 parsed as zero ABB posts, `recordSearchSuccess` ran, and
+ * the breaker reset against a site that was telling us to back off.
+ */
+describe('#2483 — a solver-delivered non-2xx is a breaker failure, not an answered zero', () => {
+  const server = useMswServer();
+  const ABB_HOST = 'abb.test';
+  const SOLVER_URL = 'http://flaresolverr.test:8191';
+  const CHALLENGE = '<html><body>Checking your browser…</body></html>';
+  const EMPTY_PAGE = '<html><body></body></html>';
+
+  beforeEach(() => {
+    initializeKey(TEST_KEY);
+    _resetAbbThrottleForTesting();
+    // ABB's 6.1s floor would make an eight-leg run a minute-long test; its own timing is pinned in
+    // `abb-throttle.test.ts`. The gate is module-level, so one spy covers every adapter built here.
+    vi.spyOn(abbThrottle, 'acquire').mockResolvedValue(undefined);
+  });
+
+  afterEach(() => { _resetKey(); _resetAbbThrottleForTesting(); vi.restoreAllMocks(); });
+
+  /** Indexer 1 is the real ABB, reaching the target only through the solver. */
+  function buildWithRealAbb() {
+    const harness = build([createMockDbIndexer({ id: 1, name: 'AudioBookBay', type: 'abb', settings: { hostname: ABB_HOST } })]);
+    harness.getAdapter.mockImplementation(async () => new AudioBookBayIndexer({
+      hostname: ABB_HOST,
+      pageLimit: 1,
+      flareSolverrUrl: SOLVER_URL,
+    }) as never);
+    return harness;
+  }
+
+  /** The solver answers every round-trip with an `ok` envelope carrying `status` as delivered. */
+  function serveDelivered(body: string, status: number): { requests: () => number } {
+    let requests = 0;
+    server.use(http.post(`${SOLVER_URL}/v1`, () => {
+      requests++;
+      return HttpResponse.json({ status: 'ok', solution: { response: body, status } });
+    }));
+    return { requests: () => requests };
+  }
+
+  it('records a transient failure whose reason names the delivered status (AC12, AC13)', async () => {
+    const harness = buildWithRealAbb();
+    serveDelivered(CHALLENGE, 503);
+
+    const outcome = await harness.search.searchAllWithStatus('kings');
+
+    expect(outcome).toMatchObject({ succeeded: 0, failed: 1 });
+    const snapshot = harness.service.getFailureSnapshot(1);
+    expect(snapshot).toMatchObject({ state: 'backing-off', consecutiveFailures: 1 });
+    expect(snapshot.reason).toContain('503');
+  });
+
+  /** Without this control the assertion above passes just as well against "ABB always fails". */
+  it('control: a genuine answered zero still records a success and leaves the breaker pristine', async () => {
+    const harness = buildWithRealAbb();
+    serveDelivered(EMPTY_PAGE, 200);
+
+    const outcome = await harness.search.searchAllWithStatus('kings');
+
+    expect(outcome).toMatchObject({ succeeded: 1, failed: 0, results: [] });
+    expect(harness.service.getFailureSnapshot(1)).toMatchObject({ state: 'ok', consecutiveFailures: 0 });
+  });
+
+  /**
+   * `classifyIndexerFailure` is terminal only for `IndexerAuthError`, deliberately: broadening auth
+   * detection to bare status codes is its own change. A delivered 403 must take the backoff ladder.
+   */
+  it('takes the transient ladder even for a delivered 403, never the terminal stop (AC13)', async () => {
+    const harness = buildWithRealAbb();
+    serveDelivered(CHALLENGE, 403);
+
+    await harness.search.searchAllWithStatus('kings');
+
+    expect(harness.service.getFailureSnapshot(1)).toMatchObject({ state: 'backing-off', consecutiveFailures: 1 });
+  });
+
+  it('reaches the terminal stop on the eighth consecutive leg, after which the ninth costs zero I/O', async () => {
+    const harness = buildWithRealAbb();
+    const solver = serveDelivered(CHALLENGE, 503);
+
+    for (let leg = 0; leg < 8; leg++) {
+      harness.clock.now = leg * 2 * 60 * MINUTE;
+      await harness.search.searchAllWithStatus('kings');
+    }
+
+    expect(harness.service.getFailureSnapshot(1).state).toBe('stopped');
+    expect(solver.requests()).toBe(8);
+
+    harness.clock.now += 30 * 24 * 60 * MINUTE;
+    await harness.search.searchAllWithStatus('kings');
+    expect(solver.requests()).toBe(8);
+  });
+
+  /**
+   * The accounting-level guarantee that makes AC17's narrowing safe: `commitLegFailure` returns
+   * early on `signal.aborted`, so a cancelled leg commits nothing WHATEVER the error looks like —
+   * the verdict is the signal's, never the error's shape (`abort-verdict-not-error-shape`).
+   */
+  it('commits nothing for a leg cancelled while the solver round-trip is in flight', async () => {
+    const harness = buildWithRealAbb();
+    const controller = new AbortController();
+    server.use(http.post(`${SOLVER_URL}/v1`, () => {
+      controller.abort();
+      return HttpResponse.json({ status: 'ok', solution: { response: CHALLENGE, status: 503 } });
+    }));
+
+    await harness.search.searchAllWithStatus('kings', { signal: controller.signal }).catch(() => undefined);
+
+    expect(controller.signal.aborted).toBe(true);
+    expect(harness.service.getFailureSnapshot(1)).toMatchObject({ state: 'ok', consecutiveFailures: 0 });
   });
 });

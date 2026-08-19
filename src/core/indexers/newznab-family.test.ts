@@ -37,7 +37,7 @@ vi.mock('./proxy.js', async (importActual) => {
 
 import { TorznabIndexer } from './torznab.js';
 import { NewznabIndexer } from './newznab.js';
-import { ProxyError } from './errors.js';
+import { ProxyError, httpStatusOf } from './errors.js';
 import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
 import { useSolverBound } from '../__tests__/solver-bound.js';
 import {
@@ -692,6 +692,72 @@ describe.each(ROWS)('newznab family contract — $label', (row) => {
       expect(outcome.kind).toBe('rejected');
       expect((outcome as { error: unknown }).error).toBeInstanceOf(Error);
       expect(String((outcome as { error: Error }).error.message)).toContain('FlareSolverr');
+    });
+
+    /**
+     * #2483 — without the gate a challenge or maintenance body reached `parseSearchResults` and
+     * surfaced as `Invalid RSS response: missing <rss> or <channel> element`. That is an
+     * `IndexerError`, which classifies QUERY-SCOPED: the indexer stayed eligible and was re-asked
+     * once per relaxed rung, at a site that had just answered 503.
+     */
+    describe('a solver-delivered non-2xx status (#2483)', () => {
+      function serveDelivered(body: string, status: number): void {
+        server.use(
+          http.post(SOLVER_ENDPOINT, () => HttpResponse.json({ status: 'ok', solution: { response: body, status } })),
+        );
+      }
+
+      it('rejects with the status rather than an RSS parse failure', async () => {
+        serveDelivered('<html><body>Checking your browser…</body></html>', 503);
+
+        const outcome = await settle(adapter({ flareSolverrUrl: SOLVER_URL }).search('kings'));
+
+        expect(outcome.kind).toBe('rejected');
+        const { error } = outcome as { error: Error };
+        expect(httpStatusOf(error)).toBe(503);
+        expect(error.message).toContain('503');
+        expect(error.message).not.toContain('Invalid RSS response');
+      });
+
+      /** The gate is on the status, not on the body happening to be unparseable. */
+      it('rejects a perfectly valid RSS payload delivered with a non-2xx status', async () => {
+        serveDelivered(rss(ITEM_FULL), 503);
+
+        const outcome = await settle(adapter({ flareSolverrUrl: SOLVER_URL }).search('kings'));
+
+        expect(outcome.kind).toBe('rejected');
+        expect(httpStatusOf((outcome as { error: Error }).error)).toBe(503);
+      });
+
+      it('fails the connection test with a message naming the status (AC11)', async () => {
+        routed = routeFetch((url, method) => {
+          if (method === 'POST' && url.startsWith(SOLVER_ENDPOINT)) {
+            return solverEnvelope({ status: 'ok', solution: { response: '<html/>', status: 503 } });
+          }
+          return new Response(null, { status: 200 });
+        });
+
+        const result = await adapter({ flareSolverrUrl: SOLVER_URL }).test();
+
+        expect(result.success).toBe(false);
+        expect(result.message).toContain('503');
+      });
+
+      it('names the status even when a direct probe of the API origin would be refused', async () => {
+        const calls = routeFetch((url, method) => {
+          if (method === 'POST' && url.startsWith(SOLVER_ENDPOINT)) {
+            return solverEnvelope({ status: 'ok', solution: { response: '<html/>', status: 503 } });
+          }
+          return codedRejection('ECONNREFUSED');
+        });
+        routed = calls;
+
+        const result = await adapter({ flareSolverrUrl: SOLVER_URL }).test();
+
+        expect(result.message).toContain('503');
+        expect(result.message).not.toContain('ECONNREFUSED');
+        expect(calls.probes()).toEqual([]);
+      });
     });
   });
 
