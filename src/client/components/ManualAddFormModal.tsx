@@ -9,15 +9,21 @@ interface ManualAddFormModalProps {
   defaultTitle?: string | undefined;
 }
 
-export function ManualAddFormModal({ isOpen, onClose, defaultTitle }: ManualAddFormModalProps) {
+// Gate + inner split (DirectoryBrowserModal's pattern): parents render this unconditionally, and
+// `return null` would not unmount, so state kept beside the gate survives close/reopen — the
+// #2438 F1 hazard. The remount is the reset.
+export function ManualAddFormModal({ isOpen, ...props }: ManualAddFormModalProps) {
+  if (!isOpen) return null;
+  return <ManualAddFormModalContent {...props} />;
+}
+
+function ManualAddFormModalContent({ onClose, defaultTitle }: Omit<ManualAddFormModalProps, 'isOpen'>) {
   const [isPending, setIsPending] = useState(false);
 
   // Escape and the close button must not discard the form mid-submit.
   const guardedClose = useCallback(() => {
     if (!isPending) onClose();
   }, [isPending, onClose]);
-
-  if (!isOpen) return null;
 
   return (
     <Modal onClose={guardedClose} className="w-full max-w-lg">
