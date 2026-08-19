@@ -145,6 +145,21 @@ describe('logCrashForensicsAtBoot — core-limit leg', () => {
     expect(readinessLine(log).payload.readiness).toBe('disarmed');
   });
 
+  it.each(['64MB', '1e3bytes', 'nope', '-'])(
+    'treats the malformed soft limit %s as unknown rather than truncating it to a prefix',
+    async (soft) => {
+      const log = createLog();
+      await logCrashForensicsAtBoot(
+        probes({ readProcLimits: vi.fn().mockResolvedValue(limitsWithCore(soft)) }),
+        log as never,
+      );
+
+      const line = readinessLine(log);
+      expect(line.payload.readiness).toBe('unknown');
+      expect(line.payload.unknownLegs).toContain('core-limit');
+    },
+  );
+
   it('is unknown — not disarmed — when the core row is absent from an otherwise valid file', async () => {
     const log = createLog();
     const noCoreRow = [
