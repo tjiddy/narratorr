@@ -97,6 +97,18 @@ describe('s6-overlay service definition', () => {
         expect(run()).not.toMatch(/^\s*exit\s+1\b/m);
       });
 
+      it.skipIf(process.platform === 'win32')(
+        'parses as Bash — the branching arms are never executed by any other test',
+        () => {
+          const result = spawnSync('bash', ['-n', path.join(serviceDir, 'run')], {
+            encoding: 'utf-8',
+            timeout: 5000,
+          });
+          expect(result.stderr).toBe('');
+          expect(result.status).toBe(0);
+        },
+      );
+
       it('enables the live-snapshot signal and excludes the secret-bearing environment', () => {
         expect(run()).toContain('--report-on-signal');
         expect(run()).toContain('--report-signal=SIGUSR2');

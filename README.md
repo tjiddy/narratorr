@@ -131,6 +131,7 @@ src/
 | `LOG_LEVEL` | `info` | Log verbosity: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent` |
 | `MONITOR_INTERVAL_CRON` | `*/30 * * * * *` | Download-monitor poll cadence (cron expression) |
 | `NARRATORR_SECRET_KEY` | (auto-generated) | 32-byte hex key encrypting credentials at rest |
+| `CRASH_CORE_DUMPS` | (unset) | Docker only. Unset or any value other than `false` arms core dumps (`ulimit -S -c unlimited`); exactly `false` forces the **soft** core limit to 0, leaving the hard limit intact. See the [crash forensics runbook](docs/crash-forensics.md) |
 | `INSTANCE_BADGE` | (unset) | Label for non-production instances: recolors the favicon and prefixes the tab title (e.g. `DEV`) so two instances are distinguishable at a glance |
 
 ## Development

@@ -214,17 +214,19 @@ describe('logCrashForensicsAtBoot — core-pattern leg', () => {
     expect(line.message).toContain('coredumpctl');
   });
 
-  it('gives the four disarmed patterns mutually distinguishable messages', async () => {
+  // Three disarmed kinds, not four: a different basename inside the artifact directory became
+  // armed with the content-based classifier, so there is no fourth misconfiguration to name.
+  it('gives the three disarmed patterns mutually distinguishable messages', async () => {
     const messages = await Promise.all(
       [
         '/var/lib/systemd/coredump/core.%e.%p',
         'core',
         '|/usr/lib/systemd/systemd-coredump %P',
-        '/tmp/core.%p',
       ].map(async (pattern) => (await classify(pattern)).line.message),
     );
 
-    expect(new Set(messages).size).toBe(messages.length);
+    expect(messages).toHaveLength(3);
+    expect(new Set(messages).size).toBe(3);
   });
 
   it('tolerates a trailing newline and surrounding whitespace', async () => {
@@ -555,18 +557,14 @@ function elfBytes(eType: number, totalBytes = 64): Buffer {
   return buffer;
 }
 
-const REAL_REPORT = JSON.stringify({
-  header: {
-    reportVersion: 5,
-    event: 'Signal',
-    processId: 412,
-    componentVersions: { node: '24.0.0' },
-  },
-  javascriptStack: { message: 'No stack.' },
-  libuv: [],
-}, null, 2);
-
-const COMPACT_REPORT = JSON.stringify(JSON.parse(REAL_REPORT));
+/**
+ * A genuinely captured report from this very process, in the two forms Node writes: the default
+ * pretty form — which really does begin with a leading newline, as the on-disk artifact does — and
+ * the `--report-compact` form. Both must classify, which is also what pins that the predicate is a
+ * parse rather than a byte pattern.
+ */
+const REAL_REPORT = `\n${JSON.stringify(process.report!.getReport(), null, 2)}`;
+const COMPACT_REPORT = JSON.stringify(process.report!.getReport());
 
 /** A genuine report padded to exactly `bytes` UTF-8 bytes. */
 function reportOfSize(bytes: number): string {
