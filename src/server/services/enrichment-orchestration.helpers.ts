@@ -35,10 +35,6 @@ export interface AudnexusConfig {
   title?: string | null | undefined;
   author?: string | null | undefined;
   existingNarrator?: string | null | undefined;
-  existingDuration?: number | null | undefined;
-  existingGenres?: string[] | null | undefined;
-  existingSubtitle?: string | null | undefined;
-  existingPublisher?: string | null | undefined;
 }
 
 export interface EnrichmentDeps {
@@ -165,7 +161,7 @@ async function applyEnrichmentData(
   bookId: number,
   resolvedAsin: string | null | undefined,
   data: { duration?: number | undefined; narrators?: string[] | undefined; genres?: string[] | undefined; subtitle?: string | undefined; publisher?: string | undefined },
-  opts: { primaryAsin?: string | null | undefined; existingNarrator?: string | null | undefined; existingDuration?: number | null | undefined; existingGenres?: string[] | null | undefined; existingSubtitle?: string | null | undefined; existingPublisher?: string | null | undefined },
+  opts: { primaryAsin?: string | null | undefined; existingNarrator?: string | null | undefined },
   deps: Pick<EnrichmentDeps, 'db' | 'log' | 'bookService'>,
   capturedAsin: string | null,
 ): Promise<void> {
@@ -173,8 +169,8 @@ async function applyEnrichmentData(
 
   const committed = await deps.db.transaction(async (tx) => {
     // #2435 AC28: the projection covers every field this transaction writes, so each guard reads
-    // the LIVE row. The caller's `opts.existing*` were snapshotted before the audio scan and the
-    // provider round-trip, and an operator can populate any of them while the import is in flight.
+    // the LIVE row — the sole gate. A caller's pre-fetch snapshot cannot be one: it predates the
+    // audio scan and the provider round-trip, and an operator can populate any column meanwhile.
     const rows = await tx
       .select({
         asin: books.asin,
@@ -198,15 +194,16 @@ async function applyEnrichmentData(
       updatedAt: new Date(),
     };
     if (asinToWrite) updates.asin = asinToWrite;
-    // The stale snapshot is kept as an additional condition: it can only narrow the write, never
-    // authorise one the live row forbids.
-    if (!opts.existingDuration && !row.duration && data.duration) {
+    // #2440: `books.duration` alone decides this. The removed caller snapshot came from the staged
+    // item's provider metadata, so it could be set on a row whose own column was empty and refuse
+    // the Audnexus duration; that case now fills.
+    if (!row.duration && data.duration) {
       updates.duration = data.duration;
     }
-    if (!opts.existingSubtitle && !row.subtitle && data.subtitle && !cleared.has('subtitle')) {
+    if (!row.subtitle && data.subtitle && !cleared.has('subtitle')) {
       updates.subtitle = data.subtitle;
     }
-    if (!opts.existingPublisher && !row.publisher && data.publisher && !cleared.has('publisher')) {
+    if (!row.publisher && data.publisher && !cleared.has('publisher')) {
       updates.publisher = data.publisher;
     }
     await tx.update(books).set(updates).where(eq(books.id, bookId));
@@ -235,7 +232,7 @@ async function applyEnrichmentData(
 async function applyEnrichmentArrayFields(
   bookId: number,
   data: { narrators?: string[] | undefined; genres?: string[] | undefined },
-  opts: { existingNarrator?: string | null | undefined; existingGenres?: string[] | null | undefined },
+  opts: { existingNarrator?: string | null | undefined },
   deps: Pick<EnrichmentDeps, 'bookService'>,
   cleared: ReadonlySet<ClearableBookField>,
   tx: DbOrTx,
@@ -244,7 +241,7 @@ async function applyEnrichmentArrayFields(
   if (!opts.existingNarrator && data.narrators?.length && !(await rowHasNarrators(tx, bookId))) {
     await deps.bookService.update(bookId, { narrators: data.narrators }, { tx });
   }
-  if (data.genres?.length && !opts.existingGenres?.length && !liveGenres?.length && !cleared.has('genres')) {
+  if (data.genres?.length && !liveGenres?.length && !cleared.has('genres')) {
     await deps.bookService.update(bookId, { genres: data.genres }, { tx });
     return data.genres;
   }
@@ -329,8 +326,6 @@ export function extractImportMetadata(item: ImportConfirmItem) {
 export function buildBackgroundAudnexusConfig(
   item: { asin?: string | null | undefined; title?: string | null | undefined; authorName?: string | null | undefined },
   extracted: ReturnType<typeof extractImportMetadata>,
-  existingGenres: string[] | null,
-  existing?: { subtitle?: string | null | undefined; publisher?: string | null | undefined } | undefined,
 ): AudnexusConfig {
   return {
     primaryAsin: item.asin || extracted.meta?.asin,
@@ -338,10 +333,6 @@ export function buildBackgroundAudnexusConfig(
     title: item.title ?? null,
     author: item.authorName ?? null,
     existingNarrator: extracted.narratorName,
-    existingDuration: extracted.bookInput.duration,
-    existingGenres,
-    existingSubtitle: existing?.subtitle ?? null,
-    existingPublisher: existing?.publisher ?? null,
   };
 }
 

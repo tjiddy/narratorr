@@ -389,7 +389,7 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
       await expect(
         applyAudnexusEnrichment(
           bookId,
-          { primaryAsin: 'B0BATOMIC1', existingNarrator: null, existingGenres: null, existingSubtitle: null, existingPublisher: null },
+          { primaryAsin: 'B0BATOMIC1', existingNarrator: null },
           enrichmentDeps(bookId, true),
         ),
       ).rejects.toThrow('genre write boom');
@@ -408,7 +408,7 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
 
       await applyAudnexusEnrichment(
         bookId,
-        { primaryAsin: 'B0BATOMIC2', existingNarrator: null, existingGenres: null, existingSubtitle: null, existingPublisher: null },
+        { primaryAsin: 'B0BATOMIC2', existingNarrator: null },
         enrichmentDeps(bookId, false),
       );
 
@@ -439,6 +439,63 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
     });
   });
 
+  // #2440: the live projection is the only fill gate now, so the proof has to be the COMMITTED
+  // row — a mock call can show a payload that a later statement in the same transaction undid.
+  describe('#2440 — the committed row is what the live-value guards protect', () => {
+    const providerData = { duration: 999, subtitle: 'Provider Subtitle', publisher: 'Provider Publisher', genres: ['Provider Genre'] };
+
+    function enrichmentDeps() {
+      return {
+        db, log, bookService,
+        metadataService: {
+          enrichBook: vi.fn().mockResolvedValue(providerData),
+          resolveBook: vi.fn().mockResolvedValue(null),
+        } as unknown as MetadataService,
+      };
+    }
+
+    it('a populated row commits none of the four provider values', async () => {
+      const bookId = await seedBook({
+        asin: 'B0BLIVE01', duration: 600, subtitle: 'Own Subtitle', publisher: 'Own Publisher', genres: ['Own Genre'],
+      });
+
+      await applyAudnexusEnrichment(bookId, { primaryAsin: 'B0BLIVE01', existingNarrator: null }, enrichmentDeps());
+
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      expect(row!.duration).toBe(600);
+      expect(row!.subtitle).toBe('Own Subtitle');
+      expect(row!.publisher).toBe('Own Publisher');
+      expect(row!.genres).toEqual(['Own Genre']);
+      expect(row!.enrichmentStatus).toBe('enriched');
+    });
+
+    it('negative control: the same call against an empty row commits all four', async () => {
+      const bookId = await seedBook({ asin: 'B0BLIVE02' });
+
+      await applyAudnexusEnrichment(bookId, { primaryAsin: 'B0BLIVE02', existingNarrator: null }, enrichmentDeps());
+
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      expect(row!.duration).toBe(999);
+      expect(row!.subtitle).toBe('Provider Subtitle');
+      expect(row!.publisher).toBe('Provider Publisher');
+      expect(row!.genres).toEqual(['Provider Genre']);
+      expect(row!.enrichmentStatus).toBe('enriched');
+    });
+
+    it('a tombstone still suppresses its field on a row whose column is empty', async () => {
+      const bookId = await seedBook({ asin: 'B0BLIVE03' });
+      await writeRawColumn(bookId, '["subtitle","genres"]');
+
+      await applyAudnexusEnrichment(bookId, { primaryAsin: 'B0BLIVE03', existingNarrator: null }, enrichmentDeps());
+
+      const [row] = await db.select().from(books).where(eq(books.id, bookId));
+      expect(row!.subtitle).toBeNull();
+      expect(row!.genres).toBeNull();
+      expect(row!.publisher).toBe('Provider Publisher');
+      expect(row!.duration).toBe(999);
+    });
+  });
+
   // Caller-owned transactions defer side effects to the owner after commit. Observe the
   // real unmatched_genres table so a pre-commit telemetry leak cannot hide behind mocks.
   describe('F21 / F5 — enrichment owners resume genre telemetry after commit', () => {
@@ -466,7 +523,7 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
       } as unknown as MetadataService;
       await applyAudnexusEnrichment(
         bookId,
-        { primaryAsin: asin, existingNarrator: 'Someone', existingGenres: null },
+        { primaryAsin: asin, existingNarrator: 'Someone' },
         { db, log, bookService, metadataService },
       );
     }
@@ -545,7 +602,7 @@ describe('books.user_cleared_fields — persisted shape (DB-backed, #2069)', () 
       await expect(
         applyAudnexusEnrichment(
           bookId,
-          { primaryAsin: 'B0BGENRE06', existingNarrator: null, existingGenres: null },
+          { primaryAsin: 'B0BGENRE06', existingNarrator: null },
           { db, log, bookService, metadataService },
         ),
       ).rejects.toThrow('narrator write boom');
