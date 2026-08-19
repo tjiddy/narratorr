@@ -53,7 +53,12 @@ import type { DownloadOrchestrator } from './download-orchestrator.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 
-function deferred<T = void>() {
+interface Deferred<T = void> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+}
+
+function deferred<T = void>(): Deferred<T> {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((r) => { resolve = r; });
   return { promise, resolve };
@@ -177,8 +182,8 @@ describe('ImportQueueWorker — forced refusal serializes its terminal dispositi
    */
   function registerParkedRefusingAdapter(
     error: unknown,
-    entered: ReturnType<typeof deferred>,
-    release: ReturnType<typeof deferred>,
+    entered: Deferred,
+    release: Deferred,
   ): void {
     registerImportAdapter({
       type: 'manual',
