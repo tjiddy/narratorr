@@ -113,7 +113,11 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
 
   private buildSearchUrl(query: string, options?: SearchOptions): string {
     const params = new URLSearchParams({
-      'tor[text]': query,
+      // MAM tokenizes a stored "Lion's" as `lion`+`s`, so the de-apostrophized query token `lions`
+      // can never match it — the apostrophe-bearing twin is the only form MAM can find (observed
+      // live 2026-08-19: every apostrophe-titled book returned 0 on every rung). Same twin ABB
+      // consumes at abb.ts, opposite remedy: ABB drops the words, MAM needs them intact (#2422).
+      'tor[text]': options?.queryWithApostrophes ?? query,
       'tor[srchIn][title]': 'true',
       'tor[srchIn][author]': 'true',
       'tor[main_cat][]': '13',
