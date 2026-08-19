@@ -12,6 +12,7 @@ import { loadLibraryBooksForSeriesNames } from './series-library-pool.js';
 import type { SettingsService } from './settings.service.js';
 import { upsertSeriesLink } from './book-series-link.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
+import { spyStatements, poolStatements } from '../__tests__/statement-spy.js';
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
@@ -54,64 +55,6 @@ async function poolProbeIds(db: Db): Promise<number[]> {
  */
 async function forcePoolReorderingIndex(db: Db): Promise<void> {
   await db.run(sql`CREATE INDEX idx_books_pool_covering_2175 ON books (series_name, title, series_position, user_cleared_fields)`);
-}
-
-/** `scope` is 'client' for statements on the connection, or `tx<n>` for the nth transaction opened while spying. */
-interface CapturedStatement { scope: string; sql: string; args: unknown }
-
-interface StatementSpy {
-  executed: CapturedStatement[];
-  /** One entry per transaction opened while spying, in open order; length is the transaction count. */
-  transactions: string[];
-  restore: () => void;
-}
-
-/**
- * Captures SQL and args: AC14 requires one pool statement with zero pool-derived parameters; count alone misses a dynamic IN query returning identical rows.
- * Drizzle routes a query on a `tx` handle through the libsql transaction object rather than the
- * client (`libsql/session.js`: `this.tx ? this.tx.execute(stmt) : this.client.execute(stmt)`), so
- * patching `client.execute` alone captures statements inside a transaction ZERO times. Wrapping the
- * handle `client.transaction()` returns is the only observation point that sees them (#2194 T0).
- */
-function spyStatements(db: Db): StatementSpy {
-  type Executor = { execute: (...a: unknown[]) => unknown };
-  const client = db.$client as unknown as Executor & { transaction: (...a: unknown[]) => Promise<Executor> };
-  const originalExecute = client.execute.bind(client);
-  const originalTransaction = client.transaction.bind(client);
-  const executed: CapturedStatement[] = [];
-  const transactions: string[] = [];
-
-  function instrument(target: Executor, scope: string): void {
-    const inner = target.execute.bind(target);
-    // Instance assignment shadows Sqlite3Transaction.prototype.execute; the prototype is untouched.
-    target.execute = ((stmt: unknown, ...rest: unknown[]) => {
-      const text = typeof stmt === 'string' ? stmt : (stmt as { sql?: string })?.sql ?? '';
-      executed.push({ scope, sql: text, args: typeof stmt === 'string' ? [] : (stmt as { args?: unknown })?.args ?? [] });
-      return inner(stmt as never, ...(rest as never[]));
-    }) as typeof target.execute;
-  }
-
-  instrument(client, 'client');
-  client.transaction = (async (...args: unknown[]) => {
-    const tx = await originalTransaction(...(args as never[]));
-    const scope = `tx${transactions.length + 1}`;
-    transactions.push(scope);
-    instrument(tx, scope);
-    return tx;
-  }) as typeof client.transaction;
-
-  return {
-    executed,
-    transactions,
-    restore: () => {
-      client.execute = originalExecute as typeof client.execute;
-      client.transaction = originalTransaction as typeof client.transaction;
-    },
-  };
-}
-
-function poolStatements(executed: CapturedStatement[]): CapturedStatement[] {
-  return executed.filter((s) => /from "books"/i.test(s.sql) && /"series_position"/.test(s.sql) && /"user_cleared_fields"/.test(s.sql));
 }
 
 describe('SeriesCardService — integration', () => {
