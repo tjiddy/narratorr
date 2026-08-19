@@ -1613,9 +1613,13 @@ describe('AudioBookBayIndexer', () => {
 
     it('does not classify the delivered status as a proxy-related error', async () => {
       serveSolver(() => ({ body: CHALLENGE, status: 503 }));
+      const settled = vi.fn();
 
-      const error = await solverIndexer().search('test').catch((e: unknown) => e);
+      const error = await solverIndexer().search('test').then(settled, (e: unknown) => e);
 
+      // Without this the assertion below reads a RESOLVED search response, and passes vacuously
+      // against a build that has no gate at all.
+      expect(settled).not.toHaveBeenCalled();
       expect(isProxyRelatedError(error)).toBe(false);
     });
 
