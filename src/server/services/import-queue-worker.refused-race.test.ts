@@ -171,9 +171,35 @@ describe('ImportQueueWorker — forced refusal serializes its terminal dispositi
       existingBookId: 99, title: 'Owned', reason: 'recording-review', ...overrides,
     } as ConstructorParameters<typeof OwnedRecordingError>[0]);
 
-  /** The fake the existing refusal suite uses: it throws without ever taking admission. */
-  function registerRefusingAdapter(error: unknown): void {
-    registerImportAdapter({ type: 'manual', async process() { throw error; } } as ImportAdapter);
+  /**
+   * The fake the existing refusal suite uses: it throws without ever taking admission.
+   *
+   * Returns an adapter-entry signal rather than leaving callers to sleep. `drainOne` assigns
+   * `currentJobPromise` before it awaits `adapter.process`, so once entry resolves the worker has
+   * a known in-flight run and `stop()` — which awaits that promise — is the settlement. Elapsed
+   * wall time proves nothing here: `stop()` sets `stopping` first, and `drainOne` re-checks it
+   * after its SELECT, so a `stop()` that lands before the claim abandons the job entirely.
+   */
+  function registerRefusingAdapter(error: unknown): Deferred {
+    const entered = deferred();
+    registerImportAdapter({
+      type: 'manual',
+      async process() {
+        entered.resolve();
+        throw error;
+      },
+    } as ImportAdapter);
+    return entered;
+  }
+
+  /** Same entry signal for the succeeding-import positive control. */
+  function registerSucceedingAdapter(): Deferred {
+    const entered = deferred();
+    registerImportAdapter({
+      type: 'manual',
+      async process() { entered.resolve(); },
+    } as ImportAdapter);
+    return entered;
   }
 
   /**
@@ -390,19 +416,16 @@ describe('ImportQueueWorker — forced refusal serializes its terminal dispositi
 
       expect(failedEmissions()[0]![1]).toMatchObject({ book_id: bookId });
 
-      // Three actors, so six strictly alternating grants; the finalizer is granted last.
+      // Three actors — parked adapter, deletion, finalizer — so the pair count plus strict
+      // held→release alternation is what identifies them: the finalizer's grant at index 4
+      // follows the deletion's release at index 3. Do NOT assert on `lock.acquire` order here;
+      // the finalizer legitimately REQUESTS admission while the deletion still holds it.
       const sequence = grants(bookId);
       expect(sequence).toEqual([
         `lock.held:${bookId}`, `lock.release:${bookId}`,
         `lock.held:${bookId}`, `lock.release:${bookId}`,
         `lock.held:${bookId}`, `lock.release:${bookId}`,
       ]);
-      expect(sequence.length).toBe(6);
-      const releases = hoisted.events.filter((e) => e === `lock.release:${bookId}`);
-      expect(releases).toHaveLength(3);
-      expect(hoisted.events.indexOf(`lock.release:${bookId}`)).toBeLessThan(
-        hoisted.events.lastIndexOf(`lock.held:${bookId}`),
-      );
     });
 
     // Case 4 — the job→book relationship is re-read inside the section, not trusted from args.
@@ -442,10 +465,10 @@ describe('ImportQueueWorker — forced refusal serializes its terminal dispositi
     // Case 5 — the companion to case 1: which code path made the acquisition.
     it('case 5: a non-admission-taking adapter still produces exactly one acquisition — the finalizer’s', async () => {
       const { bookId, jobId } = await seedForcedJob();
-      registerRefusingAdapter(refusalError());
+      const entered = registerRefusingAdapter(refusalError());
 
       await worker.start();
-      await new Promise((r) => setTimeout(r, 150));
+      await entered.promise;
       await worker.stop();
 
       expect(acquisitions(bookId)).toHaveLength(1);
@@ -464,10 +487,10 @@ describe('ImportQueueWorker — forced refusal serializes its terminal dispositi
         phase: 'queued',
         metadata: JSON.stringify({ path: '/dl/Orphan Book', title: 'Orphan Book', forceImport: true }),
       }).returning();
-      registerRefusingAdapter(refusalError());
+      const entered = registerRefusingAdapter(refusalError());
 
       await worker.start();
-      await new Promise((r) => setTimeout(r, 150));
+      await entered.promise;
       await worker.stop();
 
       expect(hoisted.events.filter((e) => e.startsWith('lock.acquire:'))).toHaveLength(0);
@@ -600,6 +623,32 @@ describe('ImportQueueWorker — forced refusal serializes its terminal dispositi
       expect(events[0]!.bookId).toBeNull();
     });
 
+    /**
+     * Case 12b — the OTHER nullable seam. `eventHistory` guards two separate call sites (the
+     * in-transaction `create` and the post-commit `logRecorded`), and a deployment declaring the
+     * dependency null must still get its terminal disposition and its SSE.
+     */
+    it('case 12b: a null eventHistory writes no event and still commits the disposition and SSE', async () => {
+      const { bookId, jobId } = await seedForcedJob();
+
+      await finalizeForcedImportRefusal(deps({ eventHistory: null }), {
+        jobId, bookId, currentPhase: 'copying', bookTitle: 'Forced Book', error: refusalError(), phaseHistory: [],
+      });
+
+      const job = await jobRow(jobId);
+      expect(job.status).toBe('failed');
+      expect(job.phase).toBe('failed');
+      expect(JSON.parse(job.lastError!).refusal).toMatchObject({ kind: 'forced-import-refused', existingBookId: 99 });
+      expect(job.bookId).toBeNull();
+      expect(await bookRow(bookId)).toBeUndefined();
+      expect(await db.select().from(bookEvents)).toHaveLength(0);
+
+      const emissions = failedEmissions();
+      expect(emissions).toHaveLength(1);
+      expect(importFailedPayload.safeParse(emissions[0]![1]).success).toBe(true);
+      expect(emissions[0]![1]).toMatchObject({ job_id: jobId, book_id: bookId, book_title: 'Forced Book' });
+    });
+
     // Case 13 — a rejecting section must not poison the key for the next mutator.
     it('case 13: releases admission when the terminal transaction itself throws', async () => {
       const { bookId, jobId } = await seedForcedJob();
@@ -663,10 +712,10 @@ describe('ImportQueueWorker — forced refusal serializes its terminal dispositi
         phase: 'queued',
         metadata: JSON.stringify({ path: '/dl/Plain Book', title: 'Plain Book' }),
       }).returning();
-      registerRefusingAdapter(refusalError());
+      const entered = registerRefusingAdapter(refusalError());
 
       await worker.start();
-      await new Promise((r) => setTimeout(r, 150));
+      await entered.promise;
       await worker.stop();
 
       expect(hoisted.events.filter((e) => e.startsWith('lock.acquire:'))).toHaveLength(0);
@@ -679,10 +728,10 @@ describe('ImportQueueWorker — forced refusal serializes its terminal dispositi
 
     it('case 15b: a non-Owned failure keeps its placeholder and acquires nothing', async () => {
       const { bookId, jobId } = await seedForcedJob();
-      registerRefusingAdapter(new Error('disk full'));
+      const entered = registerRefusingAdapter(new Error('disk full'));
 
       await worker.start();
-      await new Promise((r) => setTimeout(r, 150));
+      await entered.promise;
       await worker.stop();
 
       expect(hoisted.events.filter((e) => e.startsWith('lock.acquire:'))).toHaveLength(0);
@@ -711,10 +760,10 @@ describe('ImportQueueWorker — forced refusal serializes its terminal dispositi
 
     it('case 16b: positive control — a succeeding import on this worker fires exactly one reconcile', async () => {
       const { bookId, jobId } = await seedForcedJob();
-      registerImportAdapter({ type: 'manual', async process() { /* succeeds */ } } as ImportAdapter);
+      const entered = registerSucceedingAdapter();
 
       await worker.start();
-      await new Promise((r) => setTimeout(r, 150));
+      await entered.promise;
       await worker.stop();
 
       expect((await jobRow(jobId)).status).toBe('completed');
@@ -728,7 +777,7 @@ describe('ImportQueueWorker — forced refusal serializes its terminal dispositi
     // on the caller-owned transaction. Reds the moment the write moves back outside the section.
     it('case 18: inserts the refusal event on the terminal transaction while admission is held', async () => {
       const { bookId } = await seedForcedJob();
-      registerRefusingAdapter(refusalError());
+      const entered = registerRefusingAdapter(refusalError());
 
       const original = eventHistory.create.bind(eventHistory);
       let snapshot: string[] = [];
@@ -740,7 +789,7 @@ describe('ImportQueueWorker — forced refusal serializes its terminal dispositi
       });
 
       await worker.start();
-      await new Promise((r) => setTimeout(r, 150));
+      await entered.promise;
       await worker.stop();
 
       expect(sawTransaction).toBe(true);
@@ -791,8 +840,19 @@ describe('ImportQueueWorker — forced refusal serializes its terminal dispositi
       expect(events[0]!.bookId).toBeNull();
       expect((await jobRow(jobId)).status).toBe('failed');
 
+      // The carried F9 grant order. Three actors hold this id in a fixed sequence — the parked
+      // adapter, then the finalizer (pinned by `precondition` above), then the deletion issued
+      // from inside the finalizer's transaction. Every entry is the same string, so the pair
+      // COUNT plus strict held→release alternation is what identifies them: index 4 can only be
+      // the deletion's grant, and it lands after the finalizer's release at index 3. A weaker
+      // last-held-after-first-release predicate is satisfied by the two-actor sequence alone and
+      // would stay green if `deleteBook` stopped acquiring admission altogether.
       const sequence = grants(bookId);
-      expect(sequence.lastIndexOf(`lock.held:${bookId}`)).toBeGreaterThan(sequence.indexOf(`lock.release:${bookId}`));
+      expect(sequence).toEqual([
+        `lock.held:${bookId}`, `lock.release:${bookId}`,
+        `lock.held:${bookId}`, `lock.release:${bookId}`,
+        `lock.held:${bookId}`, `lock.release:${bookId}`,
+      ]);
       expect(await bookRow(bookId)).toBeUndefined();
     });
   });
