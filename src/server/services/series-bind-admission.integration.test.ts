@@ -443,7 +443,8 @@ describe('series bind admission protocol (#2447)', () => {
       const { initiator, sibling } = await twoBookSeries();
       await db.update(books).set({ asin: 'B0000001', enrichmentStatus: 'pending', publisher: null })
         .where(eq(books.id, sibling));
-      await db.update(books).set({ enrichmentStatus: 'complete' }).where(eq(books.id, initiator));
+      // Only the sibling is a sweep candidate, so the writeback contends on exactly the book in the batch.
+      await db.update(books).set({ enrichmentStatus: 'enriched' }).where(eq(books.id, initiator));
       const metadata = inject<MetadataService>({
         resolveBook: vi.fn().mockResolvedValue({ asin: 'B0000001', publisher: 'Provider Publisher' }),
       });
@@ -776,7 +777,7 @@ describe('series bind admission protocol (#2447)', () => {
 
       const bound = await cardService().bindHardcoverSeries(initiator, 4271);
 
-      expect(bound!.syncedIds).toHaveLength(2);
+      expect([...bound!.syncedIds].sort((a, b) => a - b)).toEqual([initiator, sibling]);
       // A retag reached with the bind still holding would hang forever, not fail: the lock is not
       // re-entrant. Proving release is therefore the only safe assertion available post-hoc.
       for (const id of bound!.syncedIds) expect(hasPendingBookAdmission(id)).toBe(false);
