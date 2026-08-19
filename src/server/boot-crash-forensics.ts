@@ -55,7 +55,7 @@ export async function pruneCrashArtifacts(dir: string, log: FastifyBaseLogger): 
     // Directory entries that are not regular files are never read and never unlinked.
     if (!entry.isFile()) continue;
 
-    const candidate = await describe(dir, entry.name);
+    const candidate = await statCandidate(dir, entry.name);
     if (!candidate) continue;
 
     const kind = await classifyCrashArtifact(candidate.filePath);
@@ -82,7 +82,7 @@ export async function pruneCrashArtifacts(dir: string, log: FastifyBaseLogger): 
   return summary;
 }
 
-async function describe(dir: string, name: string): Promise<(Candidate & { size: number }) | null> {
+async function statCandidate(dir: string, name: string): Promise<(Candidate & { size: number }) | null> {
   const filePath = path.join(dir, name);
   try {
     const stats = await stat(filePath);
@@ -144,11 +144,12 @@ interface Leg {
   name: string;
   state: LegState;
   reasons: string[];
-  value?: string | null;
+  /** The effective value behind the verdict, surfaced in the payload; null when undetermined. */
+  value: string | null;
 }
 
-function armed(name: string, value?: string): Leg {
-  return { name, state: 'armed', reasons: [], ...(value === undefined ? {} : { value }) };
+function armed(name: string, value: string | null = null): Leg {
+  return { name, state: 'armed', reasons: [], value };
 }
 function disarmed(name: string, reason: string, value: string | null = null): Leg {
   return { name, state: 'disarmed', reasons: [reason], value };
@@ -243,7 +244,7 @@ function reportConfigLeg(config: CrashReportConfig, cwd: string): { leg: Leg; di
   if (config.filename !== '') reasons.push(filenameReason(config.filename));
 
   return {
-    leg: { name: 'report-config', state: reasons.length > 0 ? 'disarmed' : 'armed', reasons },
+    leg: { name: 'report-config', state: reasons.length > 0 ? 'disarmed' : 'armed', reasons, value: null },
     directory,
   };
 }
@@ -300,8 +301,8 @@ export async function logCrashForensicsAtBoot(
     const readiness = aggregate(legs);
     const payload = {
       readiness,
-      coreLimit: coreLimit.value ?? null,
-      corePattern: corePattern.value ?? null,
+      coreLimit: coreLimit.value,
+      corePattern: corePattern.value,
       reportDirectory: report.directory,
       reportFilename: config.filename,
       artifactDir: CRASH_ARTIFACT_DIR,
