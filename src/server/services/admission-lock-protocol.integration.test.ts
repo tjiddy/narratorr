@@ -486,7 +486,9 @@ describe('admission-lock protocol — every folder and identity mutator serializ
       expect(await actualFs.readFile(join(target, 'Wanderer.m4b'), 'utf8')).toBe('Wanderer');
       expect(await exists(oldPath)).toBe(false);
       expect(log.warn).toHaveBeenCalledWith(
-        { bookId, targetPath: oldPath, bookPath: target },
+        // targetPath echoes the embed's argument verbatim; bookPath is the row's POSIX-stored path,
+        // so the expectation must normalize or the tag-triggered Windows smoke reds on this line.
+        { bookId, targetPath: oldPath, bookPath: norm(target) },
         'Tag embedding skipped during import — the book no longer owns the imported folder',
       );
 
