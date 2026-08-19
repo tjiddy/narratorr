@@ -220,7 +220,7 @@ describe('stagedAudioReplace (#1287 manual import over populated target)', () =>
     expect(await pathExists(backupPath)).toBe(false);
   });
 
-  it('#2495: a post-stage failure restores the prior .mp4 target byte-unchanged', async () => {
+  it('#2495: a mid-stage failure leaves the prior .mp4 target untouched and clears the scratch', async () => {
     const originalBytes = Buffer.alloc(500, 3);
     await writeFile(join(target, 'Existing.mp4'), originalBytes);
 
@@ -240,6 +240,53 @@ describe('stagedAudioReplace (#1287 manual import over populated target)', () =>
     expect(await readFile(join(target, 'Existing.mp4'))).toEqual(originalBytes);
     expect(await pathExists(`${target}.import-tmp`)).toBe(false);
     expect(await pathExists(`${target}.import-bak`)).toBe(false);
+  });
+
+  /**
+   * The twin of the case above, on the far side of the destructive step: the existing `.mp4` has
+   * already been renamed into `.import-bak` when the commit fails, so this is the arm that actually
+   * exercises restoration rather than scratch cleanup. A non-empty directory standing where a
+   * staged file must land is this suite's established way to fail one rename mid-commit.
+   */
+  it('#2495: a commit-time failure restores the backed-up .mp4 byte-for-byte', async () => {
+    const originalBytes = Buffer.from('ORIGINAL-MP4-PAYLOAD');
+    const stagedBytes = Buffer.from('REPLACEMENT-MP4-PAYLOAD');
+    await writeFile(join(target, 'Existing.mp4'), originalBytes);
+    await mkdir(join(target, 'Replacement.mp4'), { recursive: true });
+    await writeFile(join(target, 'Replacement.mp4', 'blocker'), Buffer.from('x'));
+    const log = makeLog();
+
+    const error = await stagedAudioReplace({
+      targetPath: target,
+      libraryRoot,
+      log,
+      sourceAudioSize: stagedBytes.length,
+      stage: async (stagingPath) => {
+        await mkdir(stagingPath, { recursive: true });
+        await writeFile(join(stagingPath, 'Replacement.mp4'), stagedBytes);
+      },
+    }).then(() => null, (e: unknown) => e);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(BackupRecoveryError);
+
+    // Only commitStagedImport's own catch logs this, so it proves the run reached the destructive
+    // phase — the whole point of the case. Staged-size verification passing is the second proof:
+    // it reads getAudioPathSize over the staging dir, which counts the `.mp4` as audio.
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ targetPath: target }),
+      'Import commit failed — rolling back to pre-import state',
+    );
+
+    // The data-preserving contract: the pre-import copy is back, byte for byte.
+    expect(await readFile(join(target, 'Existing.mp4'))).toEqual(originalBytes);
+    // The staged replacement never became the target's audio — the blocker dir still stands.
+    expect((await stat(join(target, 'Replacement.mp4'))).isDirectory()).toBe(true);
+
+    // A failed commit keeps the marker and the backup so recovery can converge on the next run.
+    const { backupPath, markerPath } = deriveImportSiblings(target);
+    expect(await pathExists(markerPath)).toBe(true);
+    expect(await pathExists(backupPath)).toBe(true);
   });
 
   it('AC6: flattens nested source audio into the target top level, nothing stranded in staging', async () => {
