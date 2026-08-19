@@ -2510,6 +2510,46 @@ describe('#257 merge observability — merge service', () => {
         expect(h.framesOf('merge_complete', 43)).toHaveLength(0);
       });
 
+      // The queued chain has its own `.finally()`, so the slot-path cleanup case below cannot
+      // speak for it: a regression that clears only on the slot path leaves this book unmergeable.
+      it('clears the queued-path flag on settlement, so the same book merges again', async () => {
+        const { release } = setupBlockingMerge();
+        const h = createWaitHarness([
+          { id: 42, title: 'Dogs of War', path: '/lib/AAA' },
+          { id: 43, title: 'The Shining', path: '/lib/BBB' },
+        ]);
+        const parked = deferred();
+        const holder = withBookAdmissionLock(43, () => parked.promise);
+
+        await h.service.enqueueMerge(42);
+        expect(await h.service.enqueueMerge(43)).toMatchObject({ status: 'queued' });
+
+        release();
+        await settle();
+        expect(await h.service.cancelMerge(43)).toEqual({ status: 'cancelled' });
+
+        parked.resolve();
+        await holder;
+        await settle();
+
+        const state = internals(h.service);
+        expect(state.cancelRequested.has(43)).toBe(false);
+        expect(state.inProgress.has(43)).toBe(false);
+        expect(state.origins.has(43)).toBe(false);
+        expect(state.abortControllers.has(43)).toBe(false);
+        expect(state.currentPhase.has(43)).toBe(false);
+        expect(hasPendingBookAdmission(43)).toBe(false);
+
+        // A surviving flag would accept this enqueue and then silently run nothing.
+        expect(await h.service.enqueueMerge(43)).toEqual({ status: 'started', bookId: 43 });
+        await settle();
+
+        expect(h.framesOf('merge_started', 43)).toHaveLength(1);
+        expect(h.framesOf('merge_complete', 43)).toHaveLength(1);
+        expect(h.historyOf(43, 'merged')).toHaveLength(1);
+        expect(h.service.getMergeStateSnapshot()).toEqual({ active: [], queued: [] });
+      });
+
       it('emits one terminal only, even when dequeue revalidation then fails on the cancelled book', async () => {
         const { release } = setupBlockingMerge();
         const h = createWaitHarness([
