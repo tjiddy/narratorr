@@ -1,7 +1,7 @@
 import { describe, it, expect, expectTypeOf, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { ProductionType } from '@shared/schemas/book.js';
-import { addBook } from './index.js';
+import { addBook, unreachableExclusion } from './index.js';
 import type { AddBookDeps, AddBookItem, AddBookRequest, AddBookSeed, IntakeItem } from './index.js';
 import type { CreateBookInput } from '../book-create.js';
 import { OwnedRecordingError } from '../book-dedup.js';
@@ -195,6 +195,24 @@ describe('addBook — the duplicate decision', () => {
 
   it('returns the same-recording incumbent without creating anything', async () => {
     const incumbent = makeBook({ id: 3 });
+    const deps = makeDeps();
+    vi.mocked(deps.bookService.findDuplicate).mockResolvedValue({
+      verdict: 'same-recording', book: incumbent, hasIncumbent: true,
+    });
+
+    const result = await addBook(deps, request(), makeLog());
+
+    expect(result).toEqual({
+      outcome: 'duplicate', verdict: 'same-recording', book: incumbent, existingBookId: 3,
+    });
+    expect(deps.bookService.create).not.toHaveBeenCalled();
+    expect(deps.eventHistory.create).not.toHaveBeenCalled();
+  });
+
+  // #2435 AC3: a fileless incumbent is attachable on the IMPORT path only. For "add this book",
+  // a wanted row is still already-in-your-library, and import-list sync rides this exact call path.
+  it('still refuses a FILELESS wanted incumbent as a duplicate (#2435 AC3)', async () => {
+    const incumbent = makeBook({ id: 3, status: 'wanted', path: null } as Partial<BookDetail>);
     const deps = makeDeps();
     vi.mocked(deps.bookService.findDuplicate).mockResolvedValue({
       verdict: 'same-recording', book: incumbent, hasIncumbent: true,
@@ -497,5 +515,124 @@ describe('addBook — error isolation', () => {
 
     await expect(addBook(deps, request(), makeLog())).rejects.toThrow('disk full');
     expect(deps.eventHistory.create).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The gate is a port only `ImportListService` supplies. It sits between the ASIN enrichment and the
+ * duplicate decision so it keys on the ASIN the row would carry, and it refuses before any write.
+ */
+describe('addBook — the import-list exclusion gate (#2305)', () => {
+  const gate = (match: { id: number } | null) => ({ isExcluded: vi.fn().mockResolvedValue(match) });
+
+  it('refuses an excluded item with the matched exclusion id and creates nothing', async () => {
+    const exclusions = gate({ id: 7 });
+    const deps = makeDeps({ exclusions });
+    const log = makeLog();
+
+    const result = await addBook(deps, request(), log);
+
+    expect(result).toEqual({ outcome: 'excluded', exclusionId: 7 });
+    expect(deps.bookService.create).not.toHaveBeenCalled();
+    expect(deps.eventHistory.create).not.toHaveBeenCalled();
+    expect(vi.mocked(log.info)).toHaveBeenCalledWith(
+      { title: 'Leviathan Wakes', asin: 'B0000TEST1', exclusionId: 7 },
+      'Import list item refused: book is excluded',
+    );
+  });
+
+  it('asks the gate for the item identity — title, ASIN and primary author', async () => {
+    const exclusions = gate(null);
+
+    await addBook(makeDeps({ exclusions }), request(), makeLog());
+
+    expect(exclusions.isExcluded).toHaveBeenCalledWith({
+      title: 'Leviathan Wakes',
+      asin: 'B0000TEST1',
+      authorName: 'James S. A. Corey',
+    });
+  });
+
+  it('keys on the ENRICHED ASIN, not the one the provider item arrived with', async () => {
+    const exclusions = gate(null);
+    const deps = makeDeps({
+      exclusions,
+      metadataService: { getBook: vi.fn().mockResolvedValue({ asin: 'B0ENRICHED' }) },
+    });
+
+    await addBook(deps, request({ item: { ...item, asin: undefined, providerId: 'prov-1' } }), makeLog());
+
+    expect(exclusions.isExcluded).toHaveBeenCalledWith(
+      expect.objectContaining({ asin: 'B0ENRICHED' }),
+    );
+  });
+
+  it('refuses BEFORE the duplicate decision, so the incumbent is never consulted', async () => {
+    const deps = makeDeps({ exclusions: gate({ id: 3 }) });
+
+    await addBook(deps, request(), makeLog());
+
+    expect(deps.bookService.findDuplicate).not.toHaveBeenCalled();
+  });
+
+  it('creates the book when the gate finds no match', async () => {
+    const deps = makeDeps({ exclusions: gate(null) });
+
+    const result = await addBook(deps, request(), makeLog());
+
+    expect(result.outcome).toBe('created');
+    expect(deps.bookService.create).toHaveBeenCalled();
+  });
+
+  it('never consults a gate the caller did not supply — the manual add surfaces stay ungated', async () => {
+    const deps = makeDeps();
+
+    const result = await addBook(deps, request(), makeLog());
+
+    expect(result.outcome).toBe('created');
+    expect(deps).not.toHaveProperty('exclusions');
+  });
+
+  it('reports no book or verdict on the excluded arm', async () => {
+    const result = await addBook(makeDeps({ exclusions: gate({ id: 7 }) }), request(), makeLog());
+
+    expect(result).not.toHaveProperty('book');
+    expect(result).not.toHaveProperty('verdict');
+  });
+
+  it('reads once and does not re-check, so an exclusion racing in after the read still creates', async () => {
+    const exclusions = gate(null);
+    const deps = makeDeps({ exclusions });
+
+    const result = await addBook(deps, request(), makeLog());
+
+    expect(result.outcome).toBe('created');
+    expect(exclusions.isExcluded).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the owned-race path untouched — the gate is advisory, not a lock', async () => {
+    const deps = makeDeps({ exclusions: gate(null) });
+    vi.mocked(deps.bookService.create).mockRejectedValue(
+      new OwnedRecordingError({ existingBookId: 9, title: 'Leviathan Wakes (owned)', reason: 'same-asin' }),
+    );
+
+    const result = await addBook(deps, request(), makeLog());
+
+    expect(result).toMatchObject({ outcome: 'owned-race', existingBookId: 9 });
+  });
+
+  it('propagates a gate read failure to the caller and creates nothing', async () => {
+    const exclusions = { isExcluded: vi.fn().mockRejectedValue(new Error('exclusions table locked')) };
+    const deps = makeDeps({ exclusions });
+
+    await expect(addBook(deps, request(), makeLog())).rejects.toThrow('exclusions table locked');
+    expect(deps.bookService.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('unreachableExclusion — the arm an ungated caller cannot receive', () => {
+  it('throws naming the exclusion id rather than returning a disposition', () => {
+    expect(() => unreachableExclusion({ outcome: 'excluded', exclusionId: 12 }))
+      .toThrow(/exclusion #12/);
   });
 });

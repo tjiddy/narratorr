@@ -21,13 +21,17 @@ import type { RetrySearchDeps } from './retry-search.js';
 import { blacklistAndRetrySearch } from './rejection-helpers.js';
 import type { SettingsService } from './settings.service.js';
 import { eq } from 'drizzle-orm';
-import { downloads } from '@db/schema.js';
+import { books, downloads } from '@db/schema.js';
+import { recordDownloadFailedEvent } from '../utils/download-side-effects.js';
 import { removeOrDeferTorrent, deleteDownloadOutputPath, type TorrentRemovalResult } from './torrent-removal.helpers.js';
 import { cleanupDeferredRejections as cleanupDeferred } from './quality-gate-deferred-cleanup.helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { enqueueAutoImport } from '../utils/enqueue-auto-import.js';
 import type { BookImportService } from './book-import.service.js';
 import { WireOnce, ServiceWireError } from './wire-helpers.js';
+
+const DOWNLOAD_VANISHED_MESSAGE = 'Download row disappeared before the quality gate could evaluate it';
+const DOWNLOAD_VANISHED_LOG = `Quality gate: ${DOWNLOAD_VANISHED_MESSAGE}`;
 
 export interface QualityGateOrchestratorWireDeps {
   nudgeImportWorker: () => void;
@@ -88,10 +92,13 @@ export class QualityGateOrchestrator {
     }
   }
 
-  /** Process one completed download; approved rows enqueue import inline. */
-  async processOneDownload(downloadId: number): Promise<void> {
+  /**
+   * Process one completed download; approved rows enqueue import inline.
+   * `from` is the caller's polled snapshot, used only to attribute a vanished row to its book.
+   */
+  async processOneDownload(downloadId: number, from?: { bookId: number | null; releaseTitle: string }): Promise<void> {
     const [ffprobePath2, row] = await Promise.all([this.resolveFfprobePath(), this.qualityGateService.getCompletedDownloadById(downloadId)]);
-    if (!row) { this.log.warn({ downloadId }, 'Quality gate: processOneDownload — download not found or not completed'); return; }
+    if (!row) { await this.reportUnavailableDownload(downloadId, from); return; }
     if (!row.download.externalId || !row.download.bookId) { this.log.debug({ id: row.download.id }, 'Quality gate: skipping download without externalId or bookId'); return; }
 
     // Require wiring before claim or status/SSE mutations; failure must leave state untouched.
@@ -125,6 +132,48 @@ export class QualityGateOrchestrator {
       const probeError = getErrorMessage(error);
       this.recordDecision(row.download, row.book, { ...NULL_REASON, probeFailure: true, probeError, holdReasons: ['unhandled_error'] });
     }
+  }
+
+  /**
+   * getCompletedDownloadById returns null both for a row that vanished and for one that merely no
+   * longer derives as completed — a benign race with the batch pass or a concurrent claim. Only the
+   * first is a defect, and it is attributed to `download_failed`: the row disappeared before the
+   * gate could evaluate it, so blaming the later import stage is the misattribution #2307 removes.
+   */
+  private async reportUnavailableDownload(downloadId: number, from?: { bookId: number | null; releaseTitle: string }): Promise<void> {
+    const existing = await this.db.select({ id: downloads.id }).from(downloads).where(eq(downloads.id, downloadId)).limit(1);
+    if (existing.length > 0) {
+      this.log.warn({ downloadId }, 'Quality gate: processOneDownload — download not found or not completed');
+      return;
+    }
+
+    const bookId = from?.bookId ?? null;
+    const releaseTitle = from?.releaseTitle;
+    if (bookId === null) {
+      this.log.error({ downloadId, ...(releaseTitle !== undefined && { releaseTitle }) }, DOWNLOAD_VANISHED_LOG);
+      return;
+    }
+
+    // from.bookId is a snapshot, so the book may already be gone; book_events.book_id is an FK and
+    // an insert against a dead id is swallowed by the helper's .catch, indistinguishable from success.
+    let book: { title: string } | undefined;
+    try {
+      [book] = await this.db.select({ title: books.title }).from(books).where(eq(books.id, bookId)).limit(1);
+    } catch (error: unknown) {
+      this.log.error({ downloadId, bookId, releaseTitle, error: serializeError(error) }, DOWNLOAD_VANISHED_LOG);
+      return;
+    }
+
+    if (!book) {
+      this.log.error({ downloadId, bookId, releaseTitle, bookDeleted: true }, DOWNLOAD_VANISHED_LOG);
+      return;
+    }
+
+    this.log.error({ downloadId, bookId, bookTitle: book.title }, DOWNLOAD_VANISHED_LOG);
+    recordDownloadFailedEvent({
+      eventHistory: this.optional.eventHistory, downloadId: null, bookId,
+      bookTitle: book.title, errorMessage: DOWNLOAD_VANISHED_MESSAGE, log: this.log,
+    });
   }
 
   async cleanupDeferredRejections(): Promise<void> {

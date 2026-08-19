@@ -3,6 +3,7 @@ import {
   buildTitleShape,
   titlesMatchForDedup,
   matchesLibraryIdentity,
+  resolveAuthorSlug,
   type DedupIdentity,
   type TitleShape,
 } from './dedup.js';
@@ -266,6 +267,46 @@ describe('matchesLibraryIdentity', () => {
     expect(matchesLibraryIdentity(
       { title: 'Saga Book 2', authorName: 'C D' },
       { title: 'Saga Book 1', authorName: 'A B' },
+    )).toBe(false);
+  });
+});
+
+/**
+ * The derived slug is persisted by callers that later narrow rows with `author_slug IS NULL`
+ * (#2305), so "no usable author" must be exactly one value here, not `null` or `''` depending on
+ * which branch produced it.
+ */
+describe('resolveAuthorSlug', () => {
+  it('slugs a real author name', () => {
+    expect(resolveAuthorSlug({ title: 't', authorName: 'Jane Doe' })).toBe('jane-doe');
+  });
+
+  it('prefers an explicit authorSlug over the name', () => {
+    expect(resolveAuthorSlug({ title: 't', authorSlug: 'pinned', authorName: 'Jane Doe' })).toBe('pinned');
+  });
+
+  it('returns null for an absent author on every input shape', () => {
+    expect(resolveAuthorSlug({ title: 't' })).toBeNull();
+    expect(resolveAuthorSlug({ title: 't', authorName: null })).toBeNull();
+    expect(resolveAuthorSlug({ title: 't', authorName: '' })).toBeNull();
+    expect(resolveAuthorSlug({ title: 't', authorSlug: '' })).toBeNull();
+    expect(resolveAuthorSlug({ title: 't', authorSlug: null })).toBeNull();
+  });
+
+  it('returns null — never an empty string — when the name slugs to nothing', () => {
+    for (const authorName of ['   ', '???', '!!!', '- -', '\t\n']) {
+      expect(resolveAuthorSlug({ title: 't', authorName })).toBeNull();
+    }
+  });
+
+  it('keeps treating a nothing-slug author as authorless in matchesLibraryIdentity', () => {
+    expect(matchesLibraryIdentity(
+      { title: 'The Reckoning', authorName: '   ' },
+      { title: 'The Reckoning', authorName: '???' },
+    )).toBe(true);
+    expect(matchesLibraryIdentity(
+      { title: 'The Reckoning', authorName: '   ' },
+      { title: 'The Reckoning', authorName: 'Jane Doe' },
     )).toBe(false);
   });
 });

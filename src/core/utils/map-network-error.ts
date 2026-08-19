@@ -21,11 +21,25 @@ const CODE_MAP: Record<string, CauseMapper> = {
   UND_ERR_RESPONSE_EXCEEDED_SIZE: () => 'Response exceeded size limit',
 };
 
+/**
+ * Every transport code this module recognises, read straight off the registry above. Exported so a
+ * consumer's coverage test can enumerate the real source of truth instead of hand-copying the keys:
+ * a policy that partitions these codes (the #2374 attribution allowlist) must red when a code is
+ * added upstream rather than silently inheriting a verdict.
+ */
+export const MAPPED_TRANSPORT_CODES: readonly string[] = Object.freeze(Object.keys(CODE_MAP));
+
+// Carry the transport code onto the mapped error: it is the only structural identity a
+// caller has left once the cause is dropped, and failure classification keys on it (#2312).
+function withCode(error: Error, code: string | undefined): Error {
+  return code ? Object.assign(error, { code }) : error;
+}
+
 function mapFetchFailedCause(cause: Error & { code?: string }): Error {
   const code = cause.code ?? '';
   const mapper = CODE_MAP[code];
-  if (mapper) return new Error(mapper(cause.message ?? ''));
-  return new Error(cause.message || 'Network error');
+  if (mapper) return withCode(new Error(mapper(cause.message ?? '')), code);
+  return withCode(new Error(cause.message || 'Network error'), cause.code);
 }
 
 /**
@@ -38,7 +52,7 @@ export function redactUrlsFromMessage(message: string): string {
 
 export function mapNetworkError(error: unknown): Error {
   if (error instanceof DOMException && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
-    return new Error('Request timed out');
+    return withCode(new Error('Request timed out'), 'ETIMEDOUT');
   }
 
   // Node fetch wraps network failures in `TypeError: fetch failed` with the real cause.

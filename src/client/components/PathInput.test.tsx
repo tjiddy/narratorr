@@ -119,7 +119,7 @@ describe('PathInput', () => {
       await userEvent.click(screen.getByRole('button', { name: /browse/i }));
       await screen.findByRole('dialog');
       await waitFor(() => {
-        expect(mockBrowseDirectory).toHaveBeenCalledWith('/existing/path');
+        expect(mockBrowseDirectory).toHaveBeenCalledWith('/existing/path', 'legacy');
       });
     });
 
@@ -128,7 +128,7 @@ describe('PathInput', () => {
       await userEvent.click(screen.getByRole('button', { name: /browse/i }));
       await screen.findByRole('dialog');
       await waitFor(() => {
-        expect(mockBrowseDirectory).toHaveBeenCalledWith('/fallback');
+        expect(mockBrowseDirectory).toHaveBeenCalledWith('/fallback', 'legacy');
       });
     });
 
@@ -137,7 +137,7 @@ describe('PathInput', () => {
       await userEvent.click(screen.getByRole('button', { name: /browse/i }));
       await screen.findByRole('dialog');
       await waitFor(() => {
-        expect(mockBrowseDirectory).toHaveBeenCalledWith('/');
+        expect(mockBrowseDirectory).toHaveBeenCalledWith('/', 'legacy');
       });
     });
   });

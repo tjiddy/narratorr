@@ -48,6 +48,10 @@ interface BookHeroProps {
   isUploadingCover?: boolean | undefined;
   onRetryImportClick?: (() => void) | undefined;
   isRetryingImport?: boolean | undefined;
+  /** #2435: present only when the book can actually receive a file — the same two conditions the
+   * route enforces, so the menu never offers an action the server will refuse. */
+  onImportFilesClick?: (() => void) | undefined;
+  isImportingFiles?: boolean | undefined;
   children?: React.ReactNode;
 }
 
@@ -64,6 +68,7 @@ export function BookHero({
   importListName,
   previewUrl, onCoverFileSelect, onCoverConfirm, onCoverCancel, isUploadingCover,
   onRetryImportClick, isRetryingImport,
+  onImportFilesClick, isImportingFiles,
   children,
 }: BookHeroProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -292,6 +297,12 @@ export function BookHero({
                     <button role="menuitem" type="button" onClick={() => handleMenuAction(onWrongReleaseClick)} disabled={isWrongReleasing} className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50 disabled:pointer-events-none focus:bg-destructive/10 focus-ring">
                       <XCircleIcon className={`w-3.5 h-3.5 ${isWrongReleasing ? 'animate-spin' : ''}`} />
                       {isWrongReleasing ? 'Rejecting...' : 'Wrong Release'}
+                    </button>
+                  )}
+                  {onImportFilesClick && (
+                    <button role="menuitem" type="button" onClick={() => handleMenuAction(onImportFilesClick)} disabled={isImportingFiles} className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors disabled:opacity-50 disabled:pointer-events-none focus:bg-muted/50 focus-ring">
+                      <UploadIcon className={`w-3.5 h-3.5 ${isImportingFiles ? 'animate-pulse' : ''}`} />
+                      {isImportingFiles ? 'Importing...' : 'Import Files'}
                     </button>
                   )}
                   {onRetryImportClick && (

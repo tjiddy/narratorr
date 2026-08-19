@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { eq, asc } from 'drizzle-orm';
 import { createDb, runMigrations, type Db } from '@db/index.js';
-import { books, importJobs, importSubmissions, importSubmissionItems } from '@db/schema.js';
+import { books, importJobs, importSubmissions, importSubmissionItems, seriesMembers } from '@db/schema.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import { BookService } from './book.service.js';
@@ -212,6 +212,218 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
     const [header] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, subId));
     expect(header!.status).toBe('complete');
     expect(header!.acceptedCount).toBe(2);
+  });
+
+  /**
+   * #2435 AC5/AC6/AC8/AC26 — attaching a staged item to a fileless incumbent. DB-backed because
+   * every property here is about what SURVIVED a rollback, which no mock can observe.
+   */
+  describe('attach to a fileless incumbent (#2435)', () => {
+    async function seedIncumbent(overrides: Record<string, unknown> = {}): Promise<number> {
+      const [b] = await db.insert(books).values({
+        publicId: `att-${Math.round(performance.now())}-${Math.random()}`,
+        title: 'Incumbent', status: 'wanted', path: null, ...overrides,
+      }).returning();
+      return b!.id;
+    }
+
+    /** `findDuplicate` is the only double: the real decision module and classifier run inside. */
+    function bookServiceReturning(book: Record<string, unknown>): BookService {
+      const bs = new BookService(db, inject(log));
+      vi.spyOn(bs, 'findDuplicate').mockResolvedValue({ verdict: 'same-recording', book: book as never, hasIncumbent: true });
+      return bs;
+    }
+
+    const stagedItem = () => ({ path: '/staging/A', title: 'Offered Title', metadata: { title: 'Offered Title', authors: [{ name: 'X' }] } });
+
+    it('enqueues against the incumbent and creates NO book (AC5)', async () => {
+      const incId = await seedIncumbent();
+      const bs = bookServiceReturning({ id: incId, title: 'Incumbent', path: null, status: 'wanted' });
+      const createResolved = vi.spyOn(bs, 'createResolved');
+      const resolveCreateInput = vi.spyOn(bs, 'resolveCreateInput');
+      const subId = await seedProcessing([stagedItem()], { source: 'manual', mode: 'copy' });
+
+      await drainRunner(makeRunner(bs));
+
+      expect(createResolved).not.toHaveBeenCalled();
+      expect(resolveCreateInput).not.toHaveBeenCalled();
+      expect(await db.select().from(books)).toHaveLength(1);
+
+      const jobs = await db.select().from(importJobs);
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]!.bookId).toBe(incId);
+      expect(jobs[0]!.type).toBe('manual');
+
+      const [item] = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId));
+      expect(item!.disposition).toBe('accepted');
+      expect(item!.bookId).toBe(incId);
+      expect(item!.reason).toBeNull();
+    });
+
+    it('carries the source path, the submission mode and the attach marker — and no offered naming (AC5/AC23)', async () => {
+      const incId = await seedIncumbent();
+      const bs = bookServiceReturning({ id: incId, title: 'Incumbent', path: null, status: 'wanted' });
+      await seedProcessing([stagedItem()], { source: 'manual', mode: 'move' });
+
+      await drainRunner(makeRunner(bs));
+
+      const [job] = await db.select().from(importJobs);
+      const payload = manualImportJobPayloadSchema.parse(JSON.parse(job!.metadata!));
+      expect(payload.attach).toBe(true);
+      expect(payload.path).toBe('/staging/A');
+      expect(payload.mode).toBe('move');
+      // Naming travels through the incumbent row, never the payload.
+      expect(payload).not.toHaveProperty('authorName');
+      expect(payload).not.toHaveProperty('narrators');
+      expect(payload).not.toHaveProperty('metadata');
+      expect(payload).not.toHaveProperty('narratorSource');
+    });
+
+    it('transitions the incumbent to importing inside the accepting transaction (AC6)', async () => {
+      const incId = await seedIncumbent({ status: 'missing' });
+      const bs = bookServiceReturning({ id: incId, title: 'Incumbent', path: null, status: 'missing' });
+      await seedProcessing([stagedItem()], { source: 'manual', mode: 'copy' });
+
+      await drainRunner(makeRunner(bs));
+
+      const [row] = await db.select().from(books).where(eq(books.id, incId));
+      expect(row!.status).toBe('importing');
+    });
+
+    it('emits no book_added event — the book already existed (AC5)', async () => {
+      const incId = await seedIncumbent();
+      const bs = bookServiceReturning({ id: incId, title: 'Incumbent', path: null, status: 'wanted' });
+      await seedProcessing([stagedItem()], { source: 'manual', mode: 'copy' });
+
+      await drainRunner(makeRunner(bs));
+
+      const added = eventCreate.mock.calls.filter((c) => (c[0] as { eventType?: string }).eventType === 'book_added');
+      expect(added).toHaveLength(0);
+    });
+
+    it('nudges the import worker once the transaction has committed', async () => {
+      const incId = await seedIncumbent();
+      const bs = bookServiceReturning({ id: incId, title: 'Incumbent', path: null, status: 'wanted' });
+      await seedProcessing([stagedItem()], { source: 'manual', mode: 'copy' });
+
+      await drainRunner(makeRunner(bs));
+
+      expect(nudge).toHaveBeenCalled();
+    });
+
+    it('rolls back and skips when the status moved since classification (AC6 guard miss)', async () => {
+      // Classification observed `wanted`; the row is now `downloading`, so the guard cannot land.
+      const incId = await seedIncumbent({ status: 'downloading' });
+      const bs = bookServiceReturning({ id: incId, title: 'Incumbent', path: null, status: 'wanted' });
+      const subId = await seedProcessing([stagedItem()], { source: 'manual', mode: 'copy' });
+
+      await drainRunner(makeRunner(bs));
+
+      const [item] = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId));
+      expect(item!.disposition).toBe('skipped');
+      expect(item!.reason).toBe('already-importing');
+      expect(await db.select().from(importJobs)).toHaveLength(0);
+      // No orphaned `importing` left behind by a half-committed transition.
+      const [row] = await db.select().from(books).where(eq(books.id, incId));
+      expect(row!.status).toBe('downloading');
+      expect(nudge).not.toHaveBeenCalled();
+    });
+
+    it('skips on the enqueue precheck conflict and rolls the status back (AC8)', async () => {
+      const incId = await seedIncumbent();
+      await db.insert(importJobs).values({ bookId: incId, type: 'manual', status: 'pending', metadata: '{}' });
+      const bs = bookServiceReturning({ id: incId, title: 'Incumbent', path: null, status: 'wanted' });
+      const subId = await seedProcessing([stagedItem()], { source: 'manual', mode: 'copy' });
+
+      await drainRunner(makeRunner(bs));
+
+      const [item] = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId));
+      expect(item!.disposition).toBe('skipped');
+      expect(item!.reason).toBe('already-importing');
+      const [row] = await db.select().from(books).where(eq(books.id, incId));
+      expect(row!.status).toBe('wanted');
+      expect(await db.select().from(importJobs)).toHaveLength(1);
+    });
+
+    it('maps the RAW active-job unique violation to skipped/already-importing, not failed (AC8/AC26)', async () => {
+      const incId = await seedIncumbent();
+      const bs = bookServiceReturning({ id: incId, title: 'Incumbent', path: null, status: 'wanted' });
+      const bis = new BookImportService(db, inject(log));
+      // A competing pass claims the book between our precheck and our insert. Supplying a
+      // transaction routes past the wrapper that would map this, so the raw violation escapes.
+      vi.spyOn(bis, 'enqueue').mockImplementationOnce(async (input, tx) => {
+        await tx!.insert(importJobs).values({ bookId: input.bookId, type: 'manual', status: 'pending', metadata: '{}' });
+        await tx!.insert(importJobs).values({ bookId: input.bookId, type: 'manual', status: 'pending', metadata: input.metadata });
+        return { jobId: -1 };
+      });
+      const subId = await seedProcessing([stagedItem()], { source: 'manual', mode: 'copy' });
+
+      await drainRunner(makeRunner(bs, bis));
+
+      const [item] = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId));
+      expect(item!.disposition).toBe('skipped');
+      expect(item!.reason).toBe('already-importing');
+      const [row] = await db.select().from(books).where(eq(books.id, incId));
+      expect(row!.status).toBe('wanted');
+    });
+
+    it('does NOT swallow an unrelated unique violation — it still lands failed (AC26 negative)', async () => {
+      const incId = await seedIncumbent();
+      const bs = bookServiceReturning({ id: incId, title: 'Incumbent', path: null, status: 'wanted' });
+      const bis = new BookImportService(db, inject(log));
+      vi.spyOn(bis, 'enqueue').mockImplementationOnce(async (_input, tx) => {
+        // books.public_id, not the active-job index: an over-broad catch would mislabel this.
+        await tx!.insert(books).values({ publicId: 'clash-dup', title: 'X', status: 'wanted' });
+        await tx!.insert(books).values({ publicId: 'clash-dup', title: 'Y', status: 'wanted' });
+        return { jobId: -1 };
+      });
+      const subId = await seedProcessing([stagedItem()], { source: 'manual', mode: 'copy' });
+
+      await drainRunner(makeRunner(bs, bis));
+
+      const [item] = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId));
+      expect(item!.disposition).toBe('failed');
+      expect(item!.reason).not.toBe('already-importing');
+      const [row] = await db.select().from(books).where(eq(books.id, incId));
+      expect(row!.status).toBe('wanted');
+    });
+
+    it('still skips a file-holding incumbent as already-in-library (AC9 regression)', async () => {
+      const incId = await seedIncumbent({ status: 'imported', path: '/library/Incumbent' });
+      const bs = bookServiceReturning({ id: incId, title: 'Incumbent', path: '/library/Incumbent', status: 'imported' });
+      const subId = await seedProcessing([stagedItem()], { source: 'manual', mode: 'copy' });
+
+      await drainRunner(makeRunner(bs));
+
+      const [item] = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId));
+      expect(item!.disposition).toBe('skipped');
+      expect(item!.reason).toBe('already-in-library');
+      expect(item!.existingBookId).toBe(incId);
+      expect(await db.select().from(importJobs)).toHaveLength(0);
+    });
+
+    it('counts an attach as accepted in the completion aggregates (AC5)', async () => {
+      const attachId = await seedIncumbent({ title: 'Attachable' });
+      const ownedId = await seedIncumbent({ title: 'Owned', status: 'imported', path: '/library/Owned' });
+      const bs = new BookService(db, inject(log));
+      vi.spyOn(bs, 'findDuplicate')
+        .mockResolvedValueOnce({ verdict: 'same-recording', book: { id: attachId, title: 'Attachable', path: null, status: 'wanted' } as never, hasIncumbent: true })
+        .mockResolvedValueOnce({ verdict: 'same-recording', book: { id: ownedId, title: 'Owned', path: '/library/Owned', status: 'imported' } as never, hasIncumbent: true })
+        .mockResolvedValue({ verdict: 'different-recording', book: null, hasIncumbent: false } as never);
+      const subId = await seedProcessing([
+        { path: '/staging/A', title: 'A', metadata: { title: 'A', authors: [{ name: 'X' }] } },
+        { path: '/staging/B', title: 'B', metadata: { title: 'B', authors: [{ name: 'X' }] } },
+        { path: '/staging/C', title: 'C', metadata: { title: 'C', authors: [{ name: 'X' }] } },
+      ], { source: 'manual', mode: 'copy' });
+
+      await drainRunner(makeRunner(bs));
+
+      const [header] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, subId));
+      expect(header!.status).toBe('complete');
+      // The attach counts as accepted, so the outcome toast reports no false skip.
+      expect(header!.acceptedCount).toBe(2);
+      expect(header!.skippedCount).toBe(1);
+    });
   });
 
   describe('disposition policy (F9, F2, F3, F5)', () => {
@@ -935,13 +1147,18 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       return (detail?.authors ?? []).map((a) => a.name);
     }
 
-    it('AC10: an OPF title/series never overrides the folder parse', async () => {
+    it('AC10/#2296 row 3: an OPF title/series never overrides a series the FOLDER genuinely asserted', async () => {
       const path = bookFolder('ac10-folder', opfWith([
         '<dc:title>Opf Title</dc:title>',
         '<meta name="calibre:series" content="Opf Series"/>',
         '<meta name="calibre:series_index" content="9"/>',
       ]));
-      await seedProcessing([{ path, title: 'Folder Title', seriesName: 'Folder Series', seriesPosition: 2, forceImport: true }]);
+      // Provider metadata carrying a THIRD series is what separates row 3 from row 4; without it this
+      // case only proves row 2 (nothing to mirror) and passes even with the mirror rule inverted.
+      await seedProcessing([{
+        path, title: 'Folder Title', seriesName: 'Folder Series', seriesPosition: 2, forceImport: true,
+        metadata: { title: 'T', authors: [{ name: 'A' }], seriesPrimary: { name: 'Provider Series', position: 5 } },
+      }]);
 
       await drainAll();
 
@@ -977,7 +1194,7 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       expect(await bookAuthorNames((await onlyBook()).id)).toEqual(['Folder Author']);
     });
 
-    it('AC10: an OPF series never overrides a series the PROVIDER supplied', async () => {
+    it('#2296 row 1: an OPF series OVERRIDES a series the PROVIDER supplied', async () => {
       const path = bookFolder('ac10-provider-series', opfWith([
         '<meta name="calibre:series" content="Opf Series"/>',
         '<meta name="calibre:series_index" content="9"/>',
@@ -989,7 +1206,126 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
 
       await drainAll();
 
-      expect(await onlyBook()).toMatchObject({ seriesName: 'Provider Series', seriesPosition: 5 });
+      expect(await onlyBook()).toMatchObject({ seriesName: 'Opf Series', seriesPosition: 9 });
+    });
+
+    // The client copies the provider's series into the top-level item of every untouched row, where it
+    // outranks metadata.seriesPrimary at resolveImportSeries — so only this shape reproduces #2296.
+    describe('#2296 — the client-shaped payload', () => {
+      const OPF_SERIES = ['<meta name="calibre:series" content="Discworld"/>', '<meta name="calibre:series_index" content="4"/>'];
+
+      function mirroredItem(path: string, extra: Partial<StagedImportItem> = {}): StagedImportItem {
+        return {
+          path, title: 'Mort', forceImport: true,
+          seriesName: 'Discworld: Death', seriesPosition: 1,
+          metadata: { title: 'Mort', authors: [{ name: 'Terry Pratchett' }], seriesPrimary: { name: 'Discworld: Death', position: 1 } },
+          ...extra,
+        };
+      }
+
+      it('row 4 headline: a provider-mirrored top-level pair is replaced by the OPF pair', async () => {
+        const path = bookFolder('r4-headline', opfWith(OPF_SERIES));
+        const subId = await seedProcessing([mirroredItem(path)]);
+
+        await drainAll();
+
+        expect(await onlyBook()).toMatchObject({ seriesName: 'Discworld', seriesPosition: 4 });
+        // Series is not an input to classifyConfirmItem, so rewriting it must not change the verdict.
+        const [row] = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId));
+        expect(row!.disposition).toBe('accepted');
+        // The adapter renders the library path from the enqueued payload, not from the row.
+        expect(await jobPayload()).toMatchObject({ seriesName: 'Discworld', seriesPosition: 4 });
+      });
+
+      it('row 5: the hybrid pair (provider name + FOLDER position) is a mirror, and the stale position goes', async () => {
+        const path = bookFolder('r5-hybrid', opfWith(OPF_SERIES));
+        await seedProcessing([mirroredItem(path, {
+          seriesPosition: 2,
+          metadata: { title: 'Mort', authors: [{ name: 'Terry Pratchett' }], seriesPrimary: { name: 'Discworld: Death' } },
+        })]);
+
+        await drainAll();
+
+        expect(await onlyBook()).toMatchObject({ seriesName: 'Discworld', seriesPosition: 4 });
+      });
+
+      it('row 2b: metadata present with NO primary leaves nothing to mirror, so the item pair survives', async () => {
+        const path = bookFolder('r2b-noprimary', opfWith(OPF_SERIES));
+        await seedProcessing([{
+          path, title: 'Mort', forceImport: true, seriesName: 'Folder Series', seriesPosition: 2,
+          metadata: { title: 'Mort', authors: [{ name: 'A' }] },
+        }]);
+
+        await drainAll();
+
+        expect(await onlyBook()).toMatchObject({ seriesName: 'Folder Series', seriesPosition: 2 });
+      });
+
+      it('row 6: an OPF with no series leaves the mirrored item pair exactly as it arrived', async () => {
+        const path = bookFolder('r6-noseries', opfWith(['<dc:description>Opf Description</dc:description>']));
+        await seedProcessing([mirroredItem(path)]);
+
+        await drainAll();
+
+        expect(await onlyBook()).toMatchObject({
+          seriesName: 'Discworld: Death', seriesPosition: 1, description: 'Opf Description',
+        });
+      });
+
+      it('AC10: a whitespace-only calibre:series destroys neither the provider nor the item pair', async () => {
+        const path = bookFolder('r6-blank', opfWith([
+          '<meta name="calibre:series" content="   "/>',
+          '<meta name="calibre:series_index" content="4"/>',
+        ]));
+        await seedProcessing([mirroredItem(path)]);
+
+        await drainAll();
+
+        expect(await onlyBook()).toMatchObject({ seriesName: 'Discworld: Death', seriesPosition: 1 });
+      });
+
+      it.each([
+        ['an absent index', ['<meta name="calibre:series" content="Discworld"/>']],
+        ['a non-numeric index', ['<meta name="calibre:series" content="Discworld"/>', '<meta name="calibre:series_index" content="abc"/>']],
+      ])('%s yields a named series with NO position — the provider position is never inherited', async (_label, inner) => {
+        const path = bookFolder(`r4-${_label.replace(/\s+/g, '-')}`, opfWith(inner));
+        await seedProcessing([mirroredItem(path)]);
+
+        await drainAll();
+
+        expect(await onlyBook()).toMatchObject({ seriesName: 'Discworld', seriesPosition: null });
+        expect(await jobPayload()).not.toHaveProperty('seriesPosition');
+      });
+
+      it.each([
+        ['zero', '0', 0],
+        ['a decimal', '3.5', 3.5],
+      ])('%s is a valid OPF position and replaces the mirrored one', async (_label, raw, expected) => {
+        const path = bookFolder(`r4-pos-${raw}`, opfWith([
+          '<meta name="calibre:series" content="Discworld"/>',
+          `<meta name="calibre:series_index" content="${raw}"/>`,
+        ]));
+        await seedProcessing([mirroredItem(path)]);
+
+        await drainAll();
+
+        expect(await onlyBook()).toMatchObject({ seriesName: 'Discworld', seriesPosition: expected });
+      });
+
+      it('two books whose OPFs assert the SAME series and position both import, neither renumbered', async () => {
+        const inner = ['<meta name="calibre:series" content="The Cosmere"/>', '<meta name="calibre:series_index" content="2"/>'];
+        await seedProcessing([
+          mirroredItem(bookFolder('collide-a', opfWith(inner)), { title: 'Mistborn' }),
+          mirroredItem(bookFolder('collide-b', opfWith(inner)), { title: 'Stormlight' }),
+        ]);
+
+        await drainAll();
+
+        const rows = await db.select().from(books).orderBy(asc(books.id));
+        expect(rows.map((r) => [r.seriesName, r.seriesPosition])).toEqual([['The Cosmere', 2], ['The Cosmere', 2]]);
+        const members = await db.select().from(seriesMembers);
+        expect(members.map((m) => m.position)).toEqual([2, 2]);
+      });
     });
 
     it('AC10: provider authors present + no folder author → the provider authors survive', async () => {

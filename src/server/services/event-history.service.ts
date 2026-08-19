@@ -1,14 +1,15 @@
-import { eq, desc, like, and, lt, count as countFn, inArray } from 'drizzle-orm';
-import type { Db } from '@db/index.js';
+import { eq, desc, like, and, lt, count as countFn, getTableColumns, inArray } from 'drizzle-orm';
+import type { Db, DbOrTx } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { bookEvents, downloads } from '@db/schema.js';
+import { bookEvents, books, downloads } from '@db/schema.js';
 import { type BlacklistService } from './blacklist.service.js';
 import { type BookService } from './book.service.js';
 import { actionableEventTypes, type EventType, type EventSource } from '@shared/schemas/event-history.js';
 import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 import { WireOnce } from './wire-helpers.js';
 import { serializeError } from '../utils/serialize-error.js';
-import type { BookEventRow } from './types.js';
+import { applyPagination } from '../utils/db-helpers.js';
+import type { BookEventRow, BookEventWithPath } from './types.js';
 
 export class EventHistoryServiceError extends Error {
   constructor(
@@ -31,6 +32,15 @@ export interface CreateEventInput {
   reason?: Record<string, unknown> | null | undefined;
 }
 
+/**
+ * Every listed event carries the book's current folder. A `sidecar_diverged` card needs it to
+ * point at `metadata.opf.bak`, and a stored path on an append-only row would go stale on the
+ * first rename with nothing to update it. The join is left, so a deleted book reads `null`.
+ */
+// Built lazily: a top-level `getTableColumns(bookEvents)` dereferences the schema at import
+// time and crashes any suite whose partial `@db/schema.js` mock omits the table.
+const withCurrentBookPath = () => ({ ...getTableColumns(bookEvents), bookPath: books.path });
+
 export interface EventHistoryServiceWireDeps {
   retrySearchDeps: RetrySearchDeps;
 }
@@ -50,8 +60,12 @@ export class EventHistoryService {
     this.wired.set(deps);
   }
 
-  async create(input: CreateEventInput): Promise<BookEventRow> {
-    const result = await this.db.insert(bookEvents).values({
+  /**
+   * `tx` is a caller-owned transaction; that arm is side-effect-free because the owner may still
+   * roll back. It hands the row back so the owner can call {@link logRecorded} after its commit.
+   */
+  async create(input: CreateEventInput, tx?: DbOrTx): Promise<BookEventRow> {
+    const result = await (tx ?? this.db).insert(bookEvents).values({
       bookId: input.bookId ?? null,
       bookTitle: input.bookTitle,
       authorName: input.authorName ?? null,
@@ -62,14 +76,19 @@ export class EventHistoryService {
       reason: input.reason ?? null,
     }).returning();
 
-    this.log.info({ bookId: input.bookId, eventType: input.eventType, bookTitle: input.bookTitle }, 'Event recorded');
+    if (!tx) this.logRecorded(result[0]!);
     return result[0]!;
+  }
+
+  /** Post-commit half of `create(input, tx)` — the record this service would have written itself. */
+  logRecorded(event: BookEventRow): void {
+    this.log.info({ bookId: event.bookId, eventType: event.eventType, bookTitle: event.bookTitle }, 'Event recorded');
   }
 
   async getAll(
     filters?: { eventType?: EventType[]; search?: string },
     pagination?: { limit?: number; offset?: number },
-  ): Promise<{ data: BookEventRow[]; total: number }> {
+  ): Promise<{ data: BookEventWithPath[]; total: number }> {
     const conditions = [];
 
     if (filters?.eventType && filters.eventType.length > 0) {
@@ -93,27 +112,23 @@ export class EventHistoryService {
       .from(bookEvents)
       .where(where);
 
-    let query = this.db
-      .select()
+    const query = this.db
+      .select(withCurrentBookPath())
       .from(bookEvents)
+      .leftJoin(books, eq(bookEvents.bookId, books.id))
       .where(where)
-      .orderBy(desc(bookEvents.createdAt), desc(bookEvents.id));
+      .orderBy(desc(bookEvents.createdAt), desc(bookEvents.id))
+      .$dynamic();
 
-    if (pagination?.limit !== undefined) {
-      query = query.limit(pagination.limit) as typeof query;
-    }
-    if (pagination?.offset !== undefined) {
-      query = query.offset(pagination.offset) as typeof query;
-    }
-
-    const data = await query;
+    const data = await applyPagination(query, pagination);
     return { data, total };
   }
 
-  async getByBookId(bookId: number): Promise<BookEventRow[]> {
+  async getByBookId(bookId: number): Promise<BookEventWithPath[]> {
     return this.db
-      .select()
+      .select(withCurrentBookPath())
       .from(bookEvents)
+      .leftJoin(books, eq(bookEvents.bookId, books.id))
       .where(eq(bookEvents.bookId, bookId))
       .orderBy(desc(bookEvents.createdAt));
   }
@@ -184,11 +199,15 @@ export class EventHistoryService {
     // Resolve late-bound deps before mutation; an unwired service must not partially blacklist/revert.
     const retrySearchDeps = event.bookId ? this.wired.require().retrySearchDeps : null;
 
-    // Usenet has no infoHash; blacklist failure is nonfatal so revert and retry still run.
-    if (download.infoHash) {
+    // Usenet rows are guid-only, ABB rows guid-first — gate on either identity, like
+    // monitor.ts blacklistRelease. Blacklist failure is nonfatal so revert and retry still run.
+    if (download.infoHash || download.guid) {
       try {
         await this.blacklistService.create({
-          infoHash: download.infoHash,
+          infoHash: download.infoHash ?? undefined,
+          // An adapter whose search results carry no hash (ABB, #2420) can only ever be matched on
+          // guid, so without it the operator's "mark failed" succeeds and re-grabs the same release.
+          guid: download.guid ?? undefined,
           title: download.title,
           bookId: event.bookId ?? undefined,
           reason: 'bad_quality',
@@ -200,7 +219,7 @@ export class EventHistoryService {
         );
       }
     } else {
-      this.log.debug({ downloadId: download.id }, 'Skipping blacklist — no infoHash (Usenet download)');
+      this.log.debug({ downloadId: download.id }, 'Skipping blacklist — download carries no infoHash or guid');
     }
 
     if (event.bookId) {

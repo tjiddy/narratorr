@@ -17,13 +17,17 @@ import { createMockDbBook, createMockDbAuthor } from '../../__tests__/factories.
 import { v1BooksRoutes } from './books.js';
 import { bookV1Schema } from '@shared/schemas/v1/books.js';
 import { v1ErrorEnvelopeSchema } from '@shared/schemas/v1/common.js';
-import { triggerImmediateSearch } from '../../services/trigger-immediate-search.js';
+import { triggerImmediateSearch, runImmediateSearch } from '../../services/trigger-immediate-search.js';
 import { OwnedRecordingError } from '../../services/book-dedup.js';
 
 vi.mock('../../config.js', () => ({ config: { authBypass: false, isDev: true } }));
 
-// Isolate the fire-and-forget trigger so branch invocation is observable.
-vi.mock('../../services/trigger-immediate-search.js', () => ({ triggerImmediateSearch: vi.fn() }));
+// Isolate the fire-and-forget trigger so branch invocation is observable. `runImmediateSearch` is
+// stubbed alongside it so a swap to the awaitable form (#2304) is observable here too.
+vi.mock('../../services/trigger-immediate-search.js', () => ({
+  triggerImmediateSearch: vi.fn(),
+  runImmediateSearch: vi.fn(),
+}));
 
 // Mock the batch-loader boundary to assert id sets and failure degradation directly.
 vi.mock('../../services/companion-ebook.repository.js', () => ({
@@ -306,6 +310,22 @@ describe('v1 books routes', () => {
       expect(bookArg).toBe(created);
     });
 
+    // #2304 made the import-list batch caller await its searches; this single-add route must not
+    // follow. `toHaveBeenCalledTimes` above cannot see an added `await`, so the observable is the
+    // reply landing while the search is still pending.
+    it('201: replies while the immediate search is still outstanding (AC6, #2304)', async () => {
+      (settingsService.get as Mock).mockResolvedValue({ searchImmediately: true });
+      (bookService.create as Mock).mockResolvedValue(hydratedRow({ status: 'wanted' }));
+      const pending = new Promise<void>(() => {});
+      (triggerImmediateSearch as Mock).mockReturnValue(pending);
+      (runImmediateSearch as Mock).mockReturnValue(pending);
+
+      const res = await post({ asin: ASIN });
+
+      expect(res.statusCode).toBe(201);
+      expect(triggerImmediateSearch as Mock).toHaveBeenCalledTimes(1);
+    });
+
     it('does NOT fire the immediate search when status != wanted (gate respects status)', async () => {
       (settingsService.get as Mock).mockResolvedValue({ searchImmediately: true });
       (bookService.create as Mock).mockResolvedValue(hydratedRow({ status: 'imported' }));
@@ -421,7 +441,8 @@ describe('v1 books routes', () => {
     // The probe is the only part of the intake pipeline v1 adopts: its lookup, quality gate and
     // create stay put because the published contract depends on their order and their taxonomy.
     describe('the duplicate probe runs through decideIntake (#2251)', () => {
-      const ownedRow = () => hydratedRow({ publicId: 'bk_existing0000000000' });
+      const ownedRow = (overrides?: Record<string, unknown>) =>
+        hydratedRow({ publicId: 'bk_existing0000000000', ...overrides });
       const candidate = () => (bookService.findDuplicate as Mock).mock.calls[0]![0];
 
       it('probes with title and asin ONLY — no authors/narrators/duration/productionType keys', async () => {
@@ -476,6 +497,24 @@ describe('v1 books routes', () => {
           expect(bookService.create as Mock).toHaveBeenCalledTimes(1);
         },
       );
+
+      // #2435 gave `decideIntake` a fileless-incumbent distinction for the IMPORT path. v1's
+      // published 409 is a different question — "is this already in your library?" — and a wanted
+      // book is. This is the fence that keeps the attach work out of the API contract.
+      it('409s a FILELESS wanted incumbent — adding is still a duplicate (#2435 AC3)', async () => {
+        (bookService.findDuplicate as Mock).mockResolvedValue({
+          verdict: 'same-recording',
+          book: ownedRow({ path: null, status: 'wanted' }),
+        });
+
+        const res = await post({ asin: ASIN });
+
+        expect(res.statusCode).toBe(409);
+        const body = res.json();
+        expect(body.error.code).toBe('book_exists');
+        expect(body.existingId).toBe('bk_existing0000000000');
+        expect(bookService.create as Mock).not.toHaveBeenCalled();
+      });
 
       it('creates on a different-recording resolution that carries no hasIncumbent key at all', async () => {
         (bookService.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });

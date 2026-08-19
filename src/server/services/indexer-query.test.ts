@@ -1,6 +1,20 @@
 import { describe, it, expect } from 'vitest';
 import type { SearchOptions } from '@core/index.js';
-import { cleanIndexerQuery, cleanIndexerSearchOptions } from './indexer-query.js';
+import { cleanIndexerQuery, cleanIndexerQueryKeepingApostrophes, cleanIndexerSearchOptions } from './indexer-query.js';
+
+/** No apostrophe of any kind — the domain where the two folds must agree exactly. */
+const APOSTROPHE_FREE_CORPUS = [
+  'Blood Ties (World of Warcraft: Midnight)',
+  'M. O. Walsh',
+  'Dune: Messiah',
+  '11.22.63',
+  'Mistborn Brandon Sanderson',
+  'Is She Really Going Out with Him? Sophie Cousens',
+  '“Good” Omens',
+  'Foundation, Robot Series, Book 0',
+  '',
+  '   ',
+];
 
 describe('cleanIndexerQuery', () => {
   it('strips parens and inner colon, keeping inner words', () => {
@@ -129,6 +143,52 @@ describe('cleanIndexerQuery', () => {
     const once = cleanIndexerQuery("Is She Really Going Out with Him? O'Malley “Good”");
     expect(cleanIndexerQuery(once)).toBe(once);
   });
+
+  // The apostrophe-preserving twin exists precisely because this deletion is unwanted for ABB (#2422).
+  it('still deletes a curly apostrophe without splitting the word', () => {
+    expect(cleanIndexerQuery('A Dragon Rider’s Guide')).toBe('A Dragon Riders Guide');
+  });
+});
+
+describe('cleanIndexerQueryKeepingApostrophes', () => {
+  it('keeps a straight apostrophe while applying the same punctuation cleanup', () => {
+    expect(cleanIndexerQueryKeepingApostrophes("A Dragon Rider's Guide (Unabridged)!"))
+      .toBe("A Dragon Rider's Guide Unabridged");
+  });
+
+  it('folds a curly apostrophe (U+2019) to U+0027 rather than deleting it', () => {
+    expect(cleanIndexerQueryKeepingApostrophes('A Dragon Rider’s Guide (Unabridged)!'))
+      .toBe("A Dragon Rider's Guide Unabridged");
+    expect(cleanIndexerQueryKeepingApostrophes('A Dragon Rider’s Guide')).toContain("'");
+    expect(cleanIndexerQueryKeepingApostrophes('A Dragon Rider’s Guide')).not.toContain('’');
+  });
+
+  it('folds an opening curly apostrophe (U+2018) to U+0027 too', () => {
+    expect(cleanIndexerQueryKeepingApostrophes('A Dragon Rider‘s Guide'))
+      .toBe("A Dragon Rider's Guide");
+  });
+
+  it('keeps the apostrophe token whole rather than splitting on it', () => {
+    expect(cleanIndexerQueryKeepingApostrophes("O'Malley").split(/\s+/)).toHaveLength(1);
+  });
+
+  it('returns empty string for empty and whitespace-only input', () => {
+    expect(cleanIndexerQueryKeepingApostrophes('')).toBe('');
+    expect(cleanIndexerQueryKeepingApostrophes('   ')).toBe('');
+  });
+
+  it('is idempotent', () => {
+    const once = cleanIndexerQueryKeepingApostrophes("Is She Really Going Out with Him? O'Malley “Good”");
+    expect(cleanIndexerQueryKeepingApostrophes(once)).toBe(once);
+  });
+
+  // The drift guard: outside apostrophes the two folds are one fold.
+  it.each(APOSTROPHE_FREE_CORPUS)(
+    'returns exactly what cleanIndexerQuery returns for apostrophe-free input: %s',
+    (query) => {
+      expect(cleanIndexerQueryKeepingApostrophes(query)).toBe(cleanIndexerQuery(query));
+    },
+  );
 });
 
 describe('cleanIndexerSearchOptions', () => {
@@ -180,5 +240,19 @@ describe('cleanIndexerSearchOptions', () => {
 
   it('preserves an empty options object', () => {
     expect(cleanIndexerSearchOptions({})).toEqual({});
+  });
+
+  // Cleaning it would delete the apostrophe this field exists to carry (#2422).
+  it('passes queryWithApostrophes through untouched while still cleaning title and author', () => {
+    const result = cleanIndexerSearchOptions({
+      title: 'Dune: Messiah',
+      author: 'M. O. Walsh',
+      queryWithApostrophes: "A Dragon Rider's Guide (Unabridged)",
+    });
+    expect(result).toEqual({
+      title: 'Dune Messiah',
+      author: 'M O Walsh',
+      queryWithApostrophes: "A Dragon Rider's Guide (Unabridged)",
+    });
   });
 });

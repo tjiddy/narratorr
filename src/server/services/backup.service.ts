@@ -10,6 +10,7 @@ import type { Readable } from 'stream';
 import type { SettingsService } from './settings.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { removeTree } from '@core/utils/remove-tree.js';
 import { BYTES_PER_GB } from '@shared/constants.js';
 
 /** Bound extracted DB bytes to limit zip bombs. */
@@ -58,6 +59,33 @@ export class BackupService {
 
   private async ensureBackupsDir(): Promise<void> {
     await fs.mkdir(this.backupsDir, { recursive: true });
+  }
+
+  /**
+   * Restore cleanup stays best-effort — it must never replace the outcome its caller is reporting —
+   * but a leaked temp dir is no longer silent. The helper's `force: true` keeps an already-cleaned
+   * directory from warning, which is what made the swallow tempting in the first place.
+   */
+  private async removeRestoreTempDir(tempDir: string): Promise<void> {
+    try {
+      await removeTree(tempDir);
+    } catch (error: unknown) {
+      this.log.warn({ error: serializeError(error), tempDir }, 'Failed to remove restore temp directory');
+    }
+  }
+
+  /**
+   * File-level twin of removeRestoreTempDir, on fs.unlink rather than removeTree: these are single
+   * files whose removal has never retried, and the create() tests observe the unlink spy directly.
+   * ENOENT is success — create()'s catch arm runs whenever VACUUM rejects, before either file exists.
+   */
+  private async removeTempFile(filePath: string): Promise<void> {
+    try {
+      await fs.unlink(filePath);
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      this.log.warn({ error: serializeError(error), filePath }, 'Failed to remove temp file');
+    }
   }
 
   get pendingRestore(): PendingRestore | null {
@@ -111,7 +139,7 @@ export class BackupService {
         archive.finalize();
       });
 
-      await fs.unlink(tempDbPath).catch(() => {});
+      await this.removeTempFile(tempDbPath);
 
       const stat = await fs.stat(zipPath);
       const metadata: BackupMetadata = {
@@ -123,8 +151,8 @@ export class BackupService {
       this.log.info({ filename, size: stat.size }, 'Backup created');
       return metadata;
     } catch (error: unknown) {
-      await fs.unlink(tempDbPath).catch(() => {});
-      await fs.unlink(zipPath).catch(() => {});
+      await this.removeTempFile(tempDbPath);
+      await this.removeTempFile(zipPath);
       throw error;
     } finally {
       this.backupInProgress = false;
@@ -272,7 +300,7 @@ export class BackupService {
       return { tempDir, tempDbPath };
     } catch (error: unknown) {
       // Overflow destroys streams first, so this one cleanup covers validation and system errors.
-      await fs.rm(tempDir, { recursive: true }).catch(() => {});
+      await this.removeRestoreTempDir(tempDir);
       throw error;
     }
   }
@@ -281,7 +309,7 @@ export class BackupService {
     const validation = await this.validateRestore(tempDbPath);
 
     if (!validation.valid) {
-      await fs.rm(tempDir, { recursive: true }).catch(() => {});
+      await this.removeRestoreTempDir(tempDir);
       return validation;
     }
 
@@ -363,7 +391,9 @@ export class BackupService {
 
   async setPendingRestore(tempPath: string): Promise<void> {
     if (this._pendingRestore) {
-      await fs.unlink(this._pendingRestore.tempPath).catch(() => {});
+      // File-level, not removeRestoreTempDir(dirname(...)): this is a public method and the dirname
+      // of a caller-chosen path can be a directory shared with unrelated state.
+      await this.removeTempFile(this._pendingRestore.tempPath);
     }
 
     this._pendingRestore = {
@@ -378,7 +408,7 @@ export class BackupService {
     }
 
     if (Date.now() - this._pendingRestore.validatedAt > PENDING_TTL_MS) {
-      await fs.rm(path.dirname(this._pendingRestore.tempPath), { recursive: true }).catch(() => {});
+      await this.removeRestoreTempDir(path.dirname(this._pendingRestore.tempPath));
       this._pendingRestore = null;
       throw new Error('Pending restore has expired');
     }
@@ -387,7 +417,7 @@ export class BackupService {
 
     await fs.copyFile(tempPath, this.restorePendingPath);
 
-    await fs.rm(path.dirname(tempPath), { recursive: true }).catch(() => {});
+    await this.removeRestoreTempDir(path.dirname(tempPath));
     this._pendingRestore = null;
 
     this.log.info('Restore staged to restore-pending.db — process will exit');

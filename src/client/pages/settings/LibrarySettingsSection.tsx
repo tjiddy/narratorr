@@ -28,7 +28,7 @@ export function LibrarySettingsSection() {
   const queryClient = useQueryClient();
   const [showRescanPrompt, setShowRescanPrompt] = useState(false);
 
-  const { data: settings } = useQuery({
+  const { data: settings, isError, refetch } = useQuery({
     queryKey: queryKeys.settings(),
     queryFn: api.getSettings,
   });
@@ -72,8 +72,12 @@ export function LibrarySettingsSection() {
   const { onBlur: rhfPathOnBlur, ...pathRegistration } = register('path');
   const handlePathBlur: typeof rhfPathOnBlur = async (e) => {
     await rhfPathOnBlur(e);
+    // No read, no write. Until settings arrive the field holds the schema default, so a bare
+    // focus/blur here would persist `/audiobooks` over the operator's real library path — the
+    // old `?? ''` comparison made every unread value look like a deliberate change.
+    if (!settings) return;
     const currentPath = ((e.target as HTMLInputElement).value ?? '').trim();
-    const savedPath = settings?.library.path ?? '';
+    const savedPath = settings.library.path;
     if (!currentPath || currentPath === savedPath) return;
     pathSaveMutation.mutate(currentPath);
   };
@@ -90,23 +94,41 @@ export function LibrarySettingsSection() {
       title={CARD_LABEL}
       description="Configure where audiobooks are stored"
     >
-      <SettingsTable>
-        <SettingsRow
-          layout="stacked"
-          htmlFor="libraryPath"
-          label="Library path"
-          description="The root folder where imported audiobooks will be stored"
-        >
-          <PathInput
-            id="libraryPath"
-            value={pathValue ?? ''}
-            onChange={(path) => setValue('path', path, { shouldDirty: true, shouldValidate: true })}
-            registration={{ ...pathRegistration, onBlur: handlePathBlur }}
-            error={errors.path}
-            placeholder="/audiobooks"
-          />
-        </SettingsRow>
-      </SettingsTable>
+      {/* Inline shape, matching this surface's existing SettingsSection layout. Deliberately
+          NOT gated on loading as well: while the read is pending the row keeps rendering, and
+          handlePathBlur's `!settings` guard is the whole of the protection in that window —
+          hiding the row would make that guard unreachable from the DOM. */}
+      {isError ? (
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-red-500">Failed to load library settings.</p>
+          <button
+            type="button"
+            onClick={() => { void refetch(); }}
+            aria-label="Retry loading library settings"
+            className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-all focus-ring"
+          >
+            Retry
+          </button>
+        </div>
+      ) : (
+        <SettingsTable>
+          <SettingsRow
+            layout="stacked"
+            htmlFor="libraryPath"
+            label="Library path"
+            description="The root folder where imported audiobooks will be stored"
+          >
+            <PathInput
+              id="libraryPath"
+              value={pathValue ?? ''}
+              onChange={(path) => setValue('path', path, { shouldDirty: true, shouldValidate: true })}
+              registration={{ ...pathRegistration, onBlur: handlePathBlur }}
+              error={errors.path}
+              placeholder="/audiobooks"
+            />
+          </SettingsRow>
+        </SettingsTable>
+      )}
       <ConfirmModal
         isOpen={showRescanPrompt}
         title="Refresh Library?"

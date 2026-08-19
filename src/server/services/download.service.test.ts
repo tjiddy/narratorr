@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
-import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService, searchStatus, mockSearchAllWithStatus } from '../__tests__/helpers.js';
 import { DownloadService, DownloadError, DuplicateDownloadError } from './download.service.js';
 import { type DownloadClientService } from './download-client.service.js';
 import { DownloadUrl } from '@core/utils/download-url.js';
@@ -1324,6 +1324,9 @@ describe('DownloadService', () => {
         bookService: { getById: ReturnType<typeof vi.fn> };
         settingsService: ReturnType<typeof createMockSettingsService>;
         retryBudget: unknown;
+        // retrySearch records held/blocked events through this; omitting it makes the recorder
+        // throw and every such outcome surface as retry_error instead.
+        eventHistory: { create: ReturnType<typeof vi.fn> };
         log: ReturnType<typeof createMockLogger>;
       };
 
@@ -1332,7 +1335,7 @@ describe('DownloadService', () => {
         retryBudget = new RetryBudget();
         retryLog = createMockLogger();
         mockRetryDeps = {
-          indexerSearchService: { searchAllWithStatus: vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0 }) },
+          indexerSearchService: { searchAllWithStatus: mockSearchAllWithStatus([]) },
           indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }) },
           downloadOrchestrator: {
             grab: vi.fn().mockResolvedValue({ id: 99, title: 'New Download', bookId: 1, book: mockBook }),
@@ -1343,6 +1346,7 @@ describe('DownloadService', () => {
           bookService: { getById: vi.fn().mockResolvedValue({ id: 1, title: 'The Way of Kings', duration: 3600, path: null, author: { name: 'Sanderson' } }) },
           settingsService: createMockSettingsService(),
           retryBudget,
+          eventHistory: { create: vi.fn().mockResolvedValue({ id: 1 }) },
           log: retryLog,
         };
         retryServiceLog = createMockLogger();
@@ -1353,7 +1357,7 @@ describe('DownloadService', () => {
       it('returns retried and deletes old record on successful retry', async () => {
         const failedDownload = { ...mockDownload, id: 1, clientStatus: 'failed' as const, pipelineStage: 'idle' as const };
         const searchResult = { title: 'Better Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:00000000000000000000000000000000000000ee', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
-        mockRetryDeps.indexerSearchService.searchAllWithStatus.mockResolvedValue({ results: [searchResult], succeeded: 1, failed: 0 });
+        mockRetryDeps.indexerSearchService.searchAllWithStatus.mockResolvedValue(searchStatus([searchResult]));
 
         db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
         db.delete.mockReturnValue(mockDbChain());
@@ -1367,7 +1371,7 @@ describe('DownloadService', () => {
 
       it('returns no_candidates and updates errorMessage when no results found', async () => {
         const failedDownload = { ...mockDownload, id: 1, clientStatus: 'failed' as const, pipelineStage: 'idle' as const };
-        mockRetryDeps.indexerSearchService.searchAllWithStatus.mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
+        mockRetryDeps.indexerSearchService.searchAllWithStatus.mockResolvedValue(searchStatus([]));
 
         db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
         const chain = mockDbChain();
@@ -1377,6 +1381,26 @@ describe('DownloadService', () => {
 
         expect(result.status).toBe('no_candidates');
         expect(chain.set).toHaveBeenCalledWith({ errorMessage: 'No viable candidates' });
+      });
+
+      // #2322 introduces no new RetryOutcome variant, so no new status can leak to routes/activity.
+      it('returns no_candidates and the existing errorMessage when every candidate is at the unsatisfied limit', async () => {
+        const failedDownload = { ...mockDownload, id: 1, clientStatus: 'failed' as const, pipelineStage: 'idle' as const };
+        const atLimit = {
+          title: 'MAM Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:00000000000000000000000000000000000000ff',
+          infoHash: 'mam123', size: 500000000, seeders: 5, indexer: 'MyAnonamouse', unsatisfied: { count: 150, limit: 150 },
+        };
+        mockRetryDeps.indexerSearchService.searchAllWithStatus.mockResolvedValue(searchStatus([atLimit]));
+
+        db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
+        const chain = mockDbChain();
+        db.update.mockReturnValue(chain);
+
+        const result = await retryService.retry(1);
+
+        expect(result.status).toBe('no_candidates');
+        expect(chain.set).toHaveBeenCalledWith({ errorMessage: 'No viable candidates' });
+        expect(mockRetryDeps.downloadOrchestrator.grabForRetry).not.toHaveBeenCalled();
       });
 
       // Any grab blocker maps to already_active without deleting or rewriting the failed row (#1857, #1861).
@@ -1450,7 +1474,7 @@ describe('DownloadService', () => {
       it('logs warning but still returns retried when old record deletion fails', async () => {
         const failedDownload = { ...mockDownload, id: 1, clientStatus: 'failed' as const, pipelineStage: 'idle' as const };
         const searchResult = { title: 'Better Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:00000000000000000000000000000000000000ee', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
-        mockRetryDeps.indexerSearchService.searchAllWithStatus.mockResolvedValue({ results: [searchResult], succeeded: 1, failed: 0 });
+        mockRetryDeps.indexerSearchService.searchAllWithStatus.mockResolvedValue(searchStatus([searchResult]));
 
         db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
         db.delete.mockImplementation(() => { throw new Error('FK constraint'); });
@@ -1624,14 +1648,19 @@ describe('DownloadService', () => {
       expect(result.total).toBe(10);
     });
 
-    it('combines section with pagination', async () => {
-      db.select
-        .mockReturnValueOnce(mockDbChain([{ value: 20 }]))
-        .mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: mockBook }]));
+    it('combines section with pagination, windowing the data query but not the count', async () => {
+      const countChain = mockDbChain([{ value: 20 }]);
+      const dataChain = mockDbChain([{ download: mockDownload, book: mockBook }]);
+      db.select.mockReturnValueOnce(countChain).mockReturnValueOnce(dataChain);
 
-      const result = await service.getAll(undefined, { limit: 10, offset: 0 }, 'queue');
+      const result = await service.getAll(undefined, { limit: 10, offset: 5 }, 'queue');
+
       expect(result.total).toBe(20);
       expect(result.data).toHaveLength(1);
+      expect(dataChain.limit).toHaveBeenCalledWith(10);
+      expect(dataChain.offset).toHaveBeenCalledWith(5);
+      expect(countChain.limit).not.toHaveBeenCalled();
+      expect(countChain.offset).not.toHaveBeenCalled();
     });
   });
 
@@ -2095,6 +2124,110 @@ describe('DownloadService', () => {
         const result = await service.getActiveByBookId(1);
         expect(result[0]!.indexerName).toBeNull();
       });
+    });
+  });
+
+  // #2341: an adapter that can stage has no control channel to compensate through, so the grab
+  // path publishes after the row instead of before it. Absence of the hook is the discriminator.
+  describe('staged-handoff capability dispatch', () => {
+    const MAGNET_URL = 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d';
+
+    function stagingAdapter(over?: Record<string, unknown>) {
+      return {
+        stageDownload: vi.fn().mockResolvedValue({ commit: vi.fn().mockResolvedValue(undefined), abort: vi.fn().mockResolvedValue(undefined) }),
+        addDownload: vi.fn().mockResolvedValue('ext-should-not-be-used'),
+        removeDownload: vi.fn(),
+        ...over,
+      };
+    }
+
+    function primeGrab(adapter: unknown, client?: Record<string, unknown>) {
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'Blackhole', type: 'blackhole', settings: {}, ...client });
+      (clientService.getAdapter as Mock).mockResolvedValue(adapter);
+      const valuesSpy = vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([{ id: 1 }]) });
+      db.insert.mockReturnValue({ values: valuesSpy } as never);
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(mockDbChain([{ download: { ...mockDownload, clientStatus: 'completed', externalId: null }, book: mockBook }]));
+      return valuesSpy;
+    }
+
+    const grab = () => service.grab({ downloadUrl: MAGNET_URL, title: 'Test', skipDuplicateCheck: true });
+
+    it('stages the artifact, never adds it, and records no external id', async () => {
+      const adapter = stagingAdapter();
+      const valuesSpy = primeGrab(adapter);
+
+      await grab();
+
+      expect(adapter.stageDownload).toHaveBeenCalledTimes(1);
+      expect(adapter.stageDownload.mock.calls[0]![0]).toMatchObject({ type: 'magnet-uri' });
+      expect(adapter.addDownload).not.toHaveBeenCalled();
+      expect(valuesSpy).toHaveBeenCalledWith(expect.objectContaining({ externalId: null }));
+    });
+
+    it('publishes the staged artifact once the record has landed', async () => {
+      const handoff = { commit: vi.fn().mockResolvedValue(undefined), abort: vi.fn().mockResolvedValue(undefined) };
+      const adapter = stagingAdapter({ stageDownload: vi.fn().mockResolvedValue(handoff) });
+      primeGrab(adapter);
+
+      await grab();
+
+      expect(handoff.commit).toHaveBeenCalledTimes(1);
+      expect(handoff.abort).not.toHaveBeenCalled();
+    });
+
+    it('hands staging the same category options addDownload would have received', async () => {
+      const adapter = stagingAdapter();
+      primeGrab(adapter, { settings: { category: 'audiobooks' } });
+
+      await grab();
+
+      expect(adapter.stageDownload).toHaveBeenCalledWith(expect.anything(), { category: 'audiobooks' });
+    });
+
+    it('adds exactly as before when the adapter cannot stage', async () => {
+      const adapter = { addDownload: vi.fn().mockResolvedValue('ext-123'), removeDownload: vi.fn() };
+      const valuesSpy = primeGrab(adapter);
+
+      await grab();
+
+      expect(adapter.addDownload).toHaveBeenCalledWith(expect.objectContaining({ type: 'magnet-uri' }), undefined);
+      expect(valuesSpy).toHaveBeenCalledWith(expect.objectContaining({ externalId: 'ext-123' }));
+    });
+
+    it('rejects the grab and inserts no partial row when staging fails', async () => {
+      const adapter = stagingAdapter({ stageDownload: vi.fn().mockRejectedValue(new Error('ENOSPC')) });
+      primeGrab(adapter);
+
+      await expect(grab()).rejects.toThrow('ENOSPC');
+
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('reports staging as staged rather than sent, so a failed publish cannot leave a delivery claim', async () => {
+      const log = createMockLogger();
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+      primeGrab(stagingAdapter());
+
+      await svc.grab({ downloadUrl: MAGNET_URL, title: 'Test', skipDuplicateCheck: true });
+
+      expect(log.debug).not.toHaveBeenCalledWith(expect.anything(), 'Download sent to client');
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ clientName: 'Blackhole' }),
+        expect.stringContaining('staged'),
+      );
+    });
+
+    it('claims no delivery at all when the publish fails after the record landed', async () => {
+      const log = createMockLogger();
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+      const handoff = { commit: vi.fn().mockRejectedValue(new Error('EXDEV')), abort: vi.fn().mockResolvedValue(undefined) };
+      primeGrab(stagingAdapter({ stageDownload: vi.fn().mockResolvedValue(handoff) }));
+
+      await expect(svc.grab({ downloadUrl: MAGNET_URL, title: 'Test', skipDuplicateCheck: true })).rejects.toThrow('EXDEV');
+
+      expect(log.debug).not.toHaveBeenCalledWith(expect.anything(), 'Download sent to client');
+      expect(log.info).not.toHaveBeenCalledWith(expect.anything(), 'Download initiated');
     });
   });
 

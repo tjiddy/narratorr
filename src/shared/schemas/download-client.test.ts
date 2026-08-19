@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  clientCategory,
   createDownloadClientFormSchema,
   createDownloadClientSchema,
   createRemotePathMappingSchema,
@@ -604,5 +605,42 @@ describe('updateDownloadClientSchema — type required when settings present', (
         expect.objectContaining({ path: ['type'], message: 'Type is required when settings are provided' }),
       );
     }
+  });
+});
+
+/**
+ * #2433 — the category decision used to be hand-rolled at two call sites (the qBittorrent factory
+ * and download.service's sendToClient); a drift between them silently sends the hybrid fallback
+ * scan looking in the wrong category.
+ */
+describe('clientCategory', () => {
+  it.each([
+    ['trims surrounding whitespace', { category: '  audiobooks  ' }, 'audiobooks'],
+    ['passes a clean value through', { category: 'audiobooks' }, 'audiobooks'],
+    ['maps an empty string to undefined', { category: '' }, undefined],
+    ['maps a whitespace-only value to undefined', { category: '   ' }, undefined],
+    ['maps an absent key to undefined', { host: 'localhost' }, undefined],
+    ['maps an explicit undefined to undefined', { category: undefined }, undefined],
+  ])('%s', (_label, settings, expected) => {
+    expect(clientCategory(settings)).toBe(expected);
+  });
+
+  it.each([
+    ['undefined', undefined],
+    ['null', null],
+  ])('maps a %s settings object to undefined', (_label, settings) => {
+    expect(clientCategory(settings)).toBeUndefined();
+  });
+
+  // download.service reads settings straight off the decrypted row without a Zod parse, so a
+  // non-string must degrade to undefined rather than throw on .trim().
+  it.each([
+    ['number', { category: 42 }],
+    ['null', { category: null }],
+    ['object', { category: {} }],
+    ['array', { category: ['audiobooks'] }],
+    ['boolean', { category: true }],
+  ])('tolerates a %s category on an unvalidated settings record', (_label, settings) => {
+    expect(clientCategory(settings)).toBeUndefined();
   });
 });

@@ -302,4 +302,155 @@ describe('ReleaseCard', () => {
       expect(screen.getByRole('heading', { level: 4 }).textContent).toBe('Test Book');
     });
   });
+
+  describe('#2322 — Grab control at the unsatisfied limit', () => {
+    const AT_LIMIT_TEXT = /cannot take it right now/i;
+    const grabButton = () => screen.getByRole('button', { name: /Grab/ });
+    const { downloadUrl: _url, ...linkless } = baseResult;
+
+    /** Every reachable combination of the three inputs that drive the control. */
+    const rows: Array<{
+      name: string;
+      result: SearchResult;
+      isGrabbing: boolean;
+      disabled: boolean;
+      showsAtLimit: boolean;
+    }> = [
+      {
+        name: 'no link, at the limit — the permanent no-link state outranks the temporary one',
+        result: { ...linkless, unsatisfied: { count: 150, limit: 150 } },
+        isGrabbing: false, disabled: true, showsAtLimit: false,
+      },
+      {
+        name: 'no link, below the limit',
+        result: { ...linkless, unsatisfied: { count: 1, limit: 150 } },
+        isGrabbing: false, disabled: true, showsAtLimit: false,
+      },
+      {
+        name: 'no link, in flight',
+        result: linkless as SearchResult,
+        isGrabbing: true, disabled: true, showsAtLimit: false,
+      },
+      {
+        name: 'linked, at the limit',
+        result: { ...baseResult, unsatisfied: { count: 150, limit: 150 } },
+        isGrabbing: false, disabled: true, showsAtLimit: true,
+      },
+      {
+        name: 'linked, at the limit, in flight',
+        result: { ...baseResult, unsatisfied: { count: 151, limit: 150 } },
+        isGrabbing: true, disabled: true, showsAtLimit: true,
+      },
+      {
+        name: 'linked, below the limit',
+        result: { ...baseResult, unsatisfied: { count: 149, limit: 150 } },
+        isGrabbing: false, disabled: false, showsAtLimit: false,
+      },
+      {
+        name: 'linked, carrying nothing',
+        result: baseResult,
+        isGrabbing: false, disabled: false, showsAtLimit: false,
+      },
+      {
+        name: 'linked, carrying nothing, in flight',
+        result: baseResult,
+        isGrabbing: true, disabled: true, showsAtLimit: false,
+      },
+    ];
+
+    for (const row of rows) {
+      it(`${row.name} → ${row.disabled ? 'disabled' : 'enabled'}, at-limit reason ${row.showsAtLimit ? 'shown' : 'absent'}`, () => {
+        mockCalculateQuality.mockReturnValue(null);
+        renderWithProviders(<ReleaseCard {...defaultProps} result={row.result} isGrabbing={row.isGrabbing} />);
+
+        expect(grabButton()).toHaveProperty('disabled', row.disabled);
+        if (row.showsAtLimit) {
+          expect(screen.getByText(AT_LIMIT_TEXT)).toBeInTheDocument();
+        } else {
+          expect(screen.queryByText(AT_LIMIT_TEXT)).not.toBeInTheDocument();
+        }
+      });
+    }
+
+    it('shows the observed counts so the reason is legible, not a bare greyed button', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(
+        <ReleaseCard {...defaultProps} result={{ ...baseResult, unsatisfied: { count: 150, limit: 150 } }} />,
+      );
+
+      expect(screen.getByText(/150 of 150/)).toBeInTheDocument();
+    });
+
+    it('does not disable a sibling result that carries nothing', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      const onGrab = vi.fn();
+      renderWithProviders(<ReleaseCard {...defaultProps} onGrab={onGrab} result={baseResult} />);
+
+      grabButton().click();
+
+      expect(onGrab).toHaveBeenCalledTimes(1);
+      expect(screen.queryByText(AT_LIMIT_TEXT)).not.toBeInTheDocument();
+    });
+
+    it('does not fire onGrab for an at-limit result', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      const onGrab = vi.fn();
+      renderWithProviders(
+        <ReleaseCard {...defaultProps} onGrab={onGrab} result={{ ...baseResult, unsatisfied: { count: 150, limit: 150 } }} />,
+      );
+
+      grabButton().click();
+
+      expect(onGrab).not.toHaveBeenCalled();
+    });
+  });
+  /**
+   * #2420 — an ABB result now arrives with an `abb-details://` sentinel instead of a magnet, no
+   * seeder count and no size. The sentinel is a non-empty string, so the Grab control stays live
+   * with no change to this component; the alternative design (no `downloadUrl` at all) would have
+   * disabled the button for every ABB release.
+   */
+  describe('#2420 — an ABB sentinel-bearing result', () => {
+    const abbResult: SearchResult = {
+      title: 'Murder in the New Forest',
+      indexer: 'AudioBookBay',
+      protocol: 'torrent',
+      downloadUrl: 'abb-details://https://audiobookbay.test/audio-books/murder-in-the-new-forest/',
+      guid: 'abb:/audio-books/murder-in-the-new-forest/',
+      detailsUrl: 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/',
+      author: 'Carol Cole',
+    };
+
+    it('leaves the Grab button enabled and fires onGrab', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      const onGrab = vi.fn();
+      renderWithProviders(<ReleaseCard {...defaultProps} onGrab={onGrab} result={abbResult} />);
+
+      const button = screen.getByRole('button', { name: /Grab/ });
+      expect(button).not.toBeDisabled();
+      button.click();
+
+      expect(onGrab).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows no seeder count and no quality badge for a result carrying neither', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(<ReleaseCard {...defaultProps} result={abbResult} bookDurationSeconds={36000} />);
+
+      expect(screen.queryByText(/seeders/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/MB\/hr/)).not.toBeInTheDocument();
+      expect(screen.getByText(/Murder in the New Forest/)).toBeInTheDocument();
+    });
+
+    // AC7 — the previously-grabbed badge keys on the guid an ABB grab persists as
+    // `books.lastGrabGuid`, which since #2434 is path-derived and survives a mirror hop.
+    it('marks it as in library when lastGrabGuid is the path-derived guid', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(
+        <ReleaseCard {...defaultProps} result={abbResult} lastGrabGuid={abbResult.guid} />,
+      );
+
+      expect(screen.getByText(/In library/i)).toBeInTheDocument();
+    });
+  });
 });

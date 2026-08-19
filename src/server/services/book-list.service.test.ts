@@ -100,15 +100,22 @@ describe('BookListService', () => {
       expect(result.data).toHaveLength(3);
     });
 
-    it('composes status filter with pagination', async () => {
+    it('composes status filter with pagination, windowing the data query but not the count', async () => {
+      const countChain = mockDbChain([{ value: 25 }]);
+      const dataChain = mockDbChain([{ book: mockBook, importListName: null, primaryAuthorName: null }]);
       db.select
-        .mockReturnValueOnce(mockDbChain([{ value: 25 }]))
-        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null, primaryAuthorName: null }]))
+        .mockReturnValueOnce(countChain)
+        .mockReturnValueOnce(dataChain)
         .mockReturnValueOnce(mockDbChain([{ bookId: 1, author: mockAuthor, position: 0 }]))
         .mockReturnValueOnce(mockDbChain([]));
 
-      const result = await service.getAll('wanted', { limit: 10, offset: 0 });
+      const result = await service.getAll('wanted', { limit: 10, offset: 20 });
+
       expect(result.total).toBe(25);
+      expect(dataChain.limit).toHaveBeenCalledWith(10);
+      expect(dataChain.offset).toHaveBeenCalledWith(20);
+      expect(countChain.limit).not.toHaveBeenCalled();
+      expect(countChain.offset).not.toHaveBeenCalled();
     });
 
     it('slim mode excludes description and genres but retains other book columns', async () => {
@@ -720,14 +727,17 @@ describe('BookListService', () => {
     });
 
     it('applies limit and offset', async () => {
+      const countChain = mockDbChain([{ value: 100 }]);
       const dataChain = mockDbChain([]);
       db.select
-        .mockReturnValueOnce(mockDbChain([{ value: 100 }]))
+        .mockReturnValueOnce(countChain)
         .mockReturnValueOnce(dataChain);
 
       await service.getAllForLibrary(undefined, { limit: 10, offset: 20 });
       expect(dataChain.limit).toHaveBeenCalledWith(10);
       expect(dataChain.offset).toHaveBeenCalledWith(20);
+      expect(countChain.limit).not.toHaveBeenCalled();
+      expect(countChain.offset).not.toHaveBeenCalled();
     });
 
     it('selects only the slim column set — heavy columns are absent from the SELECT', async () => {

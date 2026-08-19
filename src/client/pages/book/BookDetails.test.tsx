@@ -56,6 +56,8 @@ vi.mock('@/lib/api', async (importOriginal) => {
       getSettings: vi.fn(),
       getFfmpegStatus: vi.fn(),
       retryBookImport: vi.fn(),
+      importBookFiles: vi.fn(),
+      browseDirectory: vi.fn().mockResolvedValue({ dirs: [], parent: null, files: ['book.m4b'] }),
       checkRetryImportAvailable: vi.fn().mockResolvedValue({ available: false }),
       // Every book with a path queries Ebook state; rejection renders no panel.
       getCompanionEbookState: vi.fn().mockRejectedValue(new Error('no companion state in this fixture')),
@@ -1902,4 +1904,137 @@ describe('#257 merge observability — BookDetails progress', () => {
     });
   });
 
+});
+
+/**
+ * #2435 AC19 — the menu gate must match the route's matrix exactly, or the UI offers an action the
+ * server refuses. Both conditions are driven here, plus the full mutation lifecycle.
+ */
+describe('BookDetails — Import Files (#2435)', () => {
+  const mockImport = () => api.importBookFiles as Mock;
+
+  // The sibling suite's `vi.clearAllMocks()` strips module-scope resolved values, so reapply the
+  // ones this suite depends on rather than relying on declaration order.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (api.getFfmpegStatus as Mock).mockResolvedValue({ detected: true });
+    (api.browseDirectory as Mock).mockResolvedValue({ dirs: [], parent: null, files: ['book.m4b'] });
+    (api.checkRetryImportAvailable as Mock).mockResolvedValue({ available: false });
+    (api.getBookSeries as Mock).mockResolvedValue({ series: null });
+  });
+
+  async function openPicker(user: ReturnType<typeof userEvent.setup>) {
+    await openOverflowMenu(user);
+    await user.click(screen.getByRole('menuitem', { name: /Import Files/ }));
+    return screen.findByText('Import Files', { selector: 'h2' });
+  }
+
+  it.each([
+    ['a null path and wanted status', { path: null, status: 'wanted' as const }, true],
+    ['a whitespace path and wanted status', { path: '   ', status: 'wanted' as const }, true],
+    ['a null path and missing status', { path: null, status: 'missing' as const }, true],
+    ['a null path and failed status', { path: null, status: 'failed' as const }, true],
+    ['a real path', { path: '/library/A/B', status: 'imported' as const }, false],
+    ['a null path and downloading status', { path: null, status: 'downloading' as const }, false],
+    ['a null path and importing status', { path: null, status: 'importing' as const }, false],
+  ])('with %s the menu item is shown=%s', async (_label, overrides, shown) => {
+    const user = userEvent.setup();
+    renderBookDetails(overrides);
+    await openOverflowMenu(user);
+
+    const item = screen.queryByRole('menuitem', { name: /Import Files/ });
+    if (shown) expect(item).toBeInTheDocument();
+    else expect(item).not.toBeInTheDocument();
+  });
+
+  it('sends the picked path with mode copy by default', async () => {
+    const user = userEvent.setup();
+    mockImport().mockResolvedValue({ jobId: 7 });
+    renderBookDetails({ id: 42, path: null, status: 'wanted' });
+
+    await openPicker(user);
+    await user.click(await screen.findByText('book.m4b'));
+    await user.click(screen.getByRole('button', { name: 'Import' }));
+
+    await waitFor(() => expect(mockImport()).toHaveBeenCalledWith(42, { path: '/book.m4b', mode: 'copy' }));
+  });
+
+  it('sends mode move when the user switches', async () => {
+    const user = userEvent.setup();
+    mockImport().mockResolvedValue({ jobId: 7 });
+    renderBookDetails({ id: 42, path: null, status: 'wanted' });
+
+    await openPicker(user);
+    await user.click(screen.getByRole('radio', { name: 'Move' }));
+    await user.click(screen.getByRole('button', { name: 'Import' }));
+
+    await waitFor(() => expect(mockImport()).toHaveBeenCalledWith(42, { path: '/', mode: 'move' }));
+  });
+
+  /**
+   * F1: the picker is rendered unconditionally by BookDetails, so `return null` while closed does
+   * NOT unmount it. A mode chosen in one session must not leak into the next — the retained value
+   * is `move`, which deletes the source, so the failure mode is silent and destructive.
+   */
+  it('restores the Copy default after a Move attempt is cancelled and the picker reopened', async () => {
+    const user = userEvent.setup();
+    mockImport().mockResolvedValue({ jobId: 7 });
+    renderBookDetails({ id: 42, path: null, status: 'wanted' });
+
+    await openPicker(user);
+    await user.click(screen.getByRole('radio', { name: 'Move' }));
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await openPicker(user);
+    // The user makes no mode choice this time, so the promised default must apply.
+    expect(screen.getByRole('radio', { name: 'Copy' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('radio', { name: 'Move' })).toHaveAttribute('aria-checked', 'false');
+
+    await user.click(screen.getByRole('button', { name: 'Import' }));
+
+    await waitFor(() => expect(mockImport()).toHaveBeenCalledWith(42, { path: '/', mode: 'copy' }));
+  });
+
+  it('restores the Copy default after a completed Move import', async () => {
+    const user = userEvent.setup();
+    mockImport().mockResolvedValue({ jobId: 7 });
+    renderBookDetails({ id: 42, path: null, status: 'wanted' });
+
+    await openPicker(user);
+    await user.click(screen.getByRole('radio', { name: 'Move' }));
+    await user.click(screen.getByRole('button', { name: 'Import' }));
+    await waitFor(() => expect(mockImport()).toHaveBeenCalledWith(42, { path: '/', mode: 'move' }));
+
+    await openPicker(user);
+    await user.click(screen.getByRole('button', { name: 'Import' }));
+
+    await waitFor(() => expect(mockImport()).toHaveBeenLastCalledWith(42, { path: '/', mode: 'copy' }));
+  });
+
+  it('toasts success and closes the picker', async () => {
+    const user = userEvent.setup();
+    mockImport().mockResolvedValue({ jobId: 7 });
+    renderBookDetails({ path: null, status: 'wanted' });
+
+    await openPicker(user);
+    await user.click(screen.getByRole('button', { name: 'Import' }));
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Import queued'));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Import' })).not.toBeInTheDocument());
+  });
+
+  it('surfaces the server message in an error toast and leaves the picker open', async () => {
+    const user = userEvent.setup();
+    mockImport().mockRejectedValue(new Error('Source path is hidden (leading dot)'));
+    renderBookDetails({ path: null, status: 'wanted' });
+
+    await openPicker(user);
+    await user.click(screen.getByRole('button', { name: 'Import' }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(
+      expect.stringContaining('Source path is hidden (leading dot)'),
+    ));
+    // Back to idle rather than stuck pending, so the user can correct and retry.
+    expect(screen.getByRole('button', { name: 'Import' })).toBeEnabled();
+  });
 });

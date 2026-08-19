@@ -6,7 +6,7 @@ import type {
   ConnectorTarget,
   ConnectorTestResult,
 } from './types.js';
-import { ConnectorRequestError } from './errors.js';
+import { ConnectorRequestError, connectorConnectionError, connectorStatusError, type ConnectorStatusPresentation } from './errors.js';
 import { getErrorMessage } from '@shared/error-message.js';
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { CONNECTOR_TIMEOUT_MS } from '../utils/constants.js';
@@ -36,30 +36,16 @@ const plexSectionsResponseSchema = z.object({
   }).passthrough(),
 }).passthrough();
 
-function classifyStatus(status: number, notFoundField: string | null): ConnectorRequestError {
-  if (status === 401 || status === 403) {
-    return new ConnectorRequestError(`Authentication failed (HTTP ${status})`, {
-      retryable: false,
-      fieldErrors: { token: 'Invalid Plex token' },
-    });
-  }
-  if (status === 404 && notFoundField) {
-    return new ConnectorRequestError(`Section or path not found (HTTP ${status})`, {
-      retryable: false,
-      fieldErrors: { [notFoundField]: 'Library section not found' },
-    });
-  }
-  if (status >= 500) {
-    return new ConnectorRequestError(`Server error (HTTP ${status})`, { retryable: true });
-  }
-  return new ConnectorRequestError(`Request failed (HTTP ${status})`, { retryable: false });
-}
+const PLEX_PRESENTATION: ConnectorStatusPresentation = {
+  authField: 'token',
+  authFieldError: 'Invalid Plex token',
+  authMessage: (status) => `Authentication failed (HTTP ${status})`,
+  notFoundMessage: (status) => `Section or path not found (HTTP ${status})`,
+  notFoundFieldError: 'Library section not found',
+};
 
-function connectionError(error: unknown): ConnectorRequestError {
-  return new ConnectorRequestError(`Connection failed: ${getErrorMessage(error)}`, {
-    retryable: true,
-    fieldErrors: { baseUrl: 'Could not connect to server' },
-  });
+function classifyStatus(status: number, notFoundField: string | null): ConnectorRequestError {
+  return connectorStatusError(status, notFoundField, PLEX_PRESENTATION);
 }
 
 /** Normalize a path prefix: forward slashes, exactly one trailing slash. */
@@ -134,7 +120,7 @@ export class PlexConnector implements ConnectorAdapter {
     try {
       res = await fetchWithTimeout(`${this.baseUrl}/library/sections`, { headers: this.authHeaders }, CONNECTOR_TIMEOUT_MS);
     } catch (error: unknown) {
-      throw connectionError(error);
+      throw connectorConnectionError(error);
     }
     if (!res.ok) throw classifyStatus(res.status, null);
 
@@ -181,7 +167,7 @@ export class PlexConnector implements ConnectorAdapter {
     try {
       res = await fetchWithTimeout(`${this.baseUrl}/identity`, { headers: this.authHeaders }, CONNECTOR_TIMEOUT_MS);
     } catch (error: unknown) {
-      throw connectionError(error);
+      throw connectorConnectionError(error);
     }
     if (!res.ok) throw classifyStatus(res.status, null);
   }
@@ -259,7 +245,7 @@ export class PlexConnector implements ConnectorAdapter {
     try {
       res = await fetchWithTimeout(url, { headers: this.authHeaders }, CONNECTOR_TIMEOUT_MS, signal);
     } catch (error: unknown) {
-      throw connectionError(error);
+      throw connectorConnectionError(error);
     }
     if (!res.ok) throw classifyStatus(res.status, 'sectionId');
   }

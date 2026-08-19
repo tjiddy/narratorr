@@ -11,7 +11,10 @@ import { RetagError } from '../services/tagging.service.js';
 import { MergeError } from '../services/merge.service.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { BookRejectionError } from '../services/book-rejection.service.js';
+import { SeriesBindChurnError } from '../services/series-bind-admission.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
+import { SEARCH_DEADLINE_MS } from '@core/utils/constants.js';
+import { _resetSearchRegistryForTesting } from '../services/search-deadline.js';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
@@ -853,6 +856,27 @@ describe('books routes', () => {
       expect(services.downloadOrchestrator.grab).toHaveBeenCalled();
     });
 
+    // #2304 made the import-list batch caller await its searches; this single-add route must not
+    // follow. A call-count assertion stays green if someone adds an `await`, so the observable is
+    // the reply landing while the search is parked on its first read.
+    it('replies 201 while the immediate search is still outstanding (AC6, #2304)', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
+      (services.book.create as Mock).mockResolvedValue(mockBook);
+      (services.settings.get as Mock).mockReturnValue(new Promise(() => {}));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], searchImmediately: true },
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(JSON.parse(res.payload)).toEqual(expect.objectContaining({ id: mockBook.id }));
+      // Still parked on the settings read, so the reply overtook the search rather than racing it.
+      expect(services.settings.get).toHaveBeenCalledWith('quality');
+      expect(services.indexerSearch.searchAllStreaming).not.toHaveBeenCalled();
+    });
+
     it('fire-and-forget search excludes results matching reject words', async () => {
       (services.book.findDuplicate as Mock).mockResolvedValue({ verdict: 'different-recording', book: null });
       (services.book.create as Mock).mockResolvedValue(mockBook);
@@ -1350,6 +1374,19 @@ describe('books routes', () => {
       });
     });
 
+    // Both codes carry no `details`, so the route's structured branch does not fire and they
+    // reach the global handler. Remove either from the RenameError entry in error-handler.ts and
+    // these go red with a 500 — the whole reason the codes are registered there.
+    it.each(['TARGET_OCCUPIED', 'STALE_PATH'] as const)('returns a flat 409 for %s', async (code) => {
+      (services.rename.planRename as Mock).mockRejectedValue(new RenameError('Target path "/library/Y" is a non-empty directory', code));
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/rename/preview' });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Target path "/library/Y" is a non-empty directory' });
+      expect(JSON.parse(res.payload)).not.toHaveProperty('code');
+    });
+
     it('returns 400 for NaN id', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/books/abc/rename/preview' });
       expect(res.statusCode).toBe(400);
@@ -1418,6 +1455,16 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(409);
       expect(JSON.parse(res.payload)).toEqual({ error: 'Target path belongs to another book' });
+    });
+
+    it.each(['TARGET_OCCUPIED', 'STALE_PATH'] as const)('returns a flat 409 for %s', async (code) => {
+      (services.rename.renameBook as Mock).mockRejectedValue(new RenameError(`refused: ${code}`, code));
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload)).toEqual({ error: `refused: ${code}` });
+      expect(JSON.parse(res.payload)).not.toHaveProperty('code');
     });
 
     it('returns 400 for NaN id', async () => {
@@ -1832,27 +1879,38 @@ describe('books routes', () => {
   });
 
   describe('DELETE /api/books/missing', () => {
-    it('deletes all missing books and returns count', async () => {
-      (services.book.deleteByStatus as Mock).mockResolvedValue(3);
+    it('delegates the sweep to the deletion service and returns both counters', async () => {
+      (services.bookDeletion.deleteMissingBooks as Mock).mockResolvedValue({ deleted: 3, failed: 0 });
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/missing' });
 
       expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual({ deleted: 3 });
-      expect(services.book.deleteByStatus).toHaveBeenCalledWith('missing');
+      expect(JSON.parse(res.payload)).toEqual({ deleted: 3, failed: 0 });
+      expect(services.bookDeletion.deleteMissingBooks).toHaveBeenCalledWith();
+      // The single-homing this issue exists for: the route owns no delete primitive of its own.
+      expect(services.book.delete).not.toHaveBeenCalled();
     });
 
-    it('returns deleted: 0 when no missing books exist', async () => {
-      (services.book.deleteByStatus as Mock).mockResolvedValue(0);
+    it('reports per-book failures alongside the deletions with a 200', async () => {
+      (services.bookDeletion.deleteMissingBooks as Mock).mockResolvedValue({ deleted: 2, failed: 1 });
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/missing' });
 
       expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual({ deleted: 0 });
+      expect(JSON.parse(res.payload)).toEqual({ deleted: 2, failed: 1 });
     });
 
-    it('returns 500 when service throws', async () => {
-      (services.book.deleteByStatus as Mock).mockRejectedValue(new Error('DB error'));
+    it('returns zeroed counters when no missing books exist', async () => {
+      (services.bookDeletion.deleteMissingBooks as Mock).mockResolvedValue({ deleted: 0, failed: 0 });
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/books/missing' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ deleted: 0, failed: 0 });
+    });
+
+    it('returns 500 when the sweep itself throws (a rejected enumeration)', async () => {
+      (services.bookDeletion.deleteMissingBooks as Mock).mockRejectedValue(new Error('DB error'));
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/missing' });
 
@@ -2340,6 +2398,38 @@ describe('books routes', () => {
       const body = JSON.parse(res.payload);
       expect(body.result).toBe('skipped');
       expect(body.reason).toBe('grab_blocked');
+    });
+
+    // #2310 AC12: the route propagates the expiry rather than answering 200 with a genuine miss.
+    it('surfaces a search deadline expiry as a 500, never as no_results', async () => {
+      _resetSearchRegistryForTesting();
+      const armed: Array<() => void> = [];
+      const original = globalThis.setTimeout;
+      vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, delay?: number, ...rest: unknown[]) => {
+        if (delay !== SEARCH_DEADLINE_MS) return original(fn as never, delay as never, ...rest as never[]);
+        armed.push(fn);
+        const parked = original(() => { /* never fires */ }, 2 ** 30);
+        parked.unref();
+        return parked;
+      }) as never);
+
+      try {
+        (services.book.getById as Mock).mockResolvedValue(mockBook);
+        (services.settings.get as Mock).mockResolvedValue(qualitySettings);
+        (services.indexerSearch.getEnabledIndexers as Mock).mockResolvedValue([{ id: 1, name: 'indexer-1' }]);
+        (services.indexerSearch.searchAllStreaming as Mock).mockImplementation(() => new Promise(() => { /* stalled leaf */ }));
+
+        const pending = app.inject({ method: 'POST', url: '/api/books/1/search' });
+        await vi.waitFor(() => expect(armed).toHaveLength(1));
+        armed[0]!();
+        const res = await pending;
+
+        expect(res.statusCode).toBe(500);
+        expect(res.payload).not.toContain('no_results');
+      } finally {
+        vi.mocked(globalThis.setTimeout).mockRestore?.();
+        _resetSearchRegistryForTesting();
+      }
     });
 
     it('returns 404 when book ID does not exist', async () => {
@@ -4111,6 +4201,23 @@ describe('#1071 series routes', () => {
       expect(writeOpfMock).toHaveBeenCalledTimes(3);
       expect(writeOpfMock.mock.calls.every(([a]) => a.enabled === false)).toBe(true);
       expect(notify()).not.toHaveBeenCalled();
+    });
+
+    /**
+     * #2447 AC7. `SeriesBindChurnError` reaches the route unwrapped, so without its ERROR_REGISTRY
+     * entry it falls through to the generic 500 arm and an operator retry looks like a server fault
+     * rather than the transient contention it is.
+     */
+    it('maps sustained bind churn to 409 rather than the generic 500', async () => {
+      primeBind([1]);
+      (services.seriesCard.bindHardcoverSeries as Mock).mockRejectedValue(new SeriesBindChurnError(4));
+
+      const res = await bind();
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error).toContain('re-acquisitions');
+      // The post-bind refresh never runs for a bind that did not commit.
+      expect(writeOpfMock).not.toHaveBeenCalled();
     });
 
     it('a legitimate OPF skip is neither a failure nor a refresh', async () => {

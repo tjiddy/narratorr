@@ -156,6 +156,18 @@ describe('fake qBittorrent client', () => {
       expect(arr[0]!.save_path).toBe(downloadsPath);
     });
 
+    // #2485 — real qBittorrent builds an id filter only from surviving parts, so these shapes are
+    // NOT a filter that matches nothing; a double that answered [] here hid a blank-hash probe
+    // adopting an arbitrary torrent.
+    it.each([['empty', '?hashes='], ['pipe-only', '?hashes=||']])('answers the full list for a %s hashes value', async (_label, query) => {
+      const cookie = await login();
+      await addTorrent(cookie, buildTorrentBytes({ fileName: 'a.m4b', fileLength: 10 }));
+
+      const res = await fetch(`${fake.url}/api/v2/torrents/info${query}`, { headers: { Cookie: cookie } });
+
+      expect(await res.json() as unknown[]).toHaveLength(1);
+    });
+
     it('filters results by the hashes query param', async () => {
       const cookie = await login();
       await addTorrent(cookie, buildTorrentBytes({ fileName: 'a.m4b', fileLength: 10 }));

@@ -84,7 +84,7 @@ describe('PathStep', () => {
       await screen.findByRole('dialog');
 
       await waitFor(() => {
-        expect(mockBrowseDirectory).toHaveBeenCalledWith('/my/library');
+        expect(mockBrowseDirectory).toHaveBeenCalledWith('/my/library', 'legacy');
       });
     });
 
@@ -96,7 +96,7 @@ describe('PathStep', () => {
       await screen.findByRole('dialog');
 
       await waitFor(() => {
-        expect(mockBrowseDirectory).toHaveBeenCalledWith('/');
+        expect(mockBrowseDirectory).toHaveBeenCalledWith('/', 'legacy');
       });
     });
   });

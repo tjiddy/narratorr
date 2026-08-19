@@ -46,6 +46,8 @@ const EVENT_CONFIG: Record<EventType, EventTypeConfig> = {
   metadata_fixed: { icon: AlertTriangleIcon, label: 'Metadata Fixed', color: 'text-amber-400', bgColor: 'bg-amber-500/10' },
   grab_failed: { icon: XCircleIcon, label: 'Grab Failed', color: 'text-destructive', bgColor: 'bg-destructive/10' },
   search_relaxed_held: { icon: AlertTriangleIcon, label: 'Relaxed Match Held', color: 'text-yellow-400', bgColor: 'bg-yellow-500/10' },
+  sidecar_diverged: { icon: AlertTriangleIcon, label: 'Sidecar Diverged', color: 'text-yellow-400', bgColor: 'bg-yellow-500/10' },
+  grab_blocked_unsatisfied: { icon: AlertTriangleIcon, label: 'Grab Blocked — At Limit', color: 'text-yellow-400', bgColor: 'bg-yellow-500/10' },
 };
 
 const DEFAULT_CONFIG: EventTypeConfig = { icon: ClockIcon, label: 'Unknown', color: 'text-muted-foreground', bgColor: 'bg-muted' };
@@ -204,7 +206,7 @@ export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, onRetry
           )}
 
           {showReason && event.reason && (
-            <EventReasonDetails eventType={event.eventType} reason={event.reason} indexerMap={indexerMap} />
+            <EventReasonDetails eventType={event.eventType} reason={event.reason} indexerMap={indexerMap} bookPath={event.bookPath ?? null} />
           )}
         </div>
 

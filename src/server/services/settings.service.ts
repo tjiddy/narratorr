@@ -17,9 +17,19 @@ import { decryptFields, getKey } from '../utils/secret-codec.js';
 import { resolveAndEncryptSettings } from '../utils/sentinel-resolver.js';
 import { SECRET_CATEGORIES } from '../utils/secret-category-map.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { withLibraryRootWrite } from './library-root-gate.js';
 
 
 export type { AppSettings };
+
+/**
+ * Callers own what get()/getAll() hand back. Returning the shared DEFAULT_SETTINGS entry would let
+ * one caller's mutation corrupt the packaged defaults process-wide, for every later miss in every
+ * service. Deep, not a spread: metadata.languages is an array and a shallow copy still shares it.
+ */
+function defaultsFor<K extends SettingsCategory>(key: K): AppSettings[K] {
+  return structuredClone(DEFAULT_SETTINGS[key]);
+}
 
 function parseCategory<K extends SettingsCategory>(
   key: K,
@@ -27,7 +37,7 @@ function parseCategory<K extends SettingsCategory>(
   log: FastifyBaseLogger,
 ): AppSettings[K] {
   if (raw === undefined || raw === null) {
-    return DEFAULT_SETTINGS[key];
+    return defaultsFor(key);
   }
   const schema = CATEGORY_SCHEMAS[key];
   const result = schema.safeParse(raw);
@@ -35,7 +45,7 @@ function parseCategory<K extends SettingsCategory>(
     return result.data as AppSettings[K];
   }
   log.warn({ category: key, errors: result.error.issues }, 'Settings parse failed, using defaults');
-  return DEFAULT_SETTINGS[key];
+  return defaultsFor(key);
 }
 
 // Covers page-load and navigation jitter without hiding settings flips for long.
@@ -67,10 +77,12 @@ export class SettingsService {
 
     const result = await this.db.select().from(settings).where(eq(settings.key, key)).limit(1);
 
+    // Never cache a missing row: a row inserted by another connection (restore-from-backup, a
+    // migration backfill, an external write) has no invalidation path, so a cached default would
+    // hide it for the full TTL. Gate on the DB result, not on whether an entry already exists —
+    // an expired entry lingers here (the hit check above compares expiresAt without deleting).
     if (result.length === 0) {
-      const defaultVal = DEFAULT_SETTINGS[key];
-      this.categoryCache.set(key, { value: defaultVal, expiresAt: Date.now() + CACHE_TTL_MS });
-      return defaultVal;
+      return defaultsFor(key);
     }
 
     let raw = result[0]!.value;
@@ -92,6 +104,9 @@ export class SettingsService {
     const results = await this.db.select().from(settings);
 
     const settingsMap = new Map(results.map((r) => [r.key, r.value]));
+    // `has`, not a nullish check on the value: a stored JSON null is a present row and stays
+    // cacheable, matching get()'s row-presence rule.
+    const complete = SETTINGS_CATEGORIES.every((key) => settingsMap.has(key));
 
     const all = Object.fromEntries(
       SETTINGS_CATEGORIES.map((key) => {
@@ -104,7 +119,10 @@ export class SettingsService {
       }),
     ) as AppSettings;
 
-    this.allCache = { value: all, expiresAt: Date.now() + CACHE_TTL_MS };
+    // A partial composition carries the same uncacheable defaults get()'s miss arm refuses to pin.
+    if (complete) {
+      this.allCache = { value: all, expiresAt: Date.now() + CACHE_TTL_MS };
+    }
     return all;
   }
 
@@ -136,7 +154,21 @@ export class SettingsService {
     return merged;
   }
 
+  /**
+   * A request touching `library` goes through the root-scope gate, which refuses while an import,
+   * merge or rename is deriving paths from the current root. The gate wraps the WHOLE loop, not the
+   * `library` iteration, because the loop is nontransactional: a refusal decided mid-loop would
+   * leave earlier categories written. Scoped to the category rather than to `path` alone because
+   * `folderFormat`/`fileFormat` are part of the same controlling snapshot a commit derives from.
+   */
   async update(partial: UpdateSettingsInput): Promise<AppSettings> {
+    if (partial.library !== undefined) {
+      return withLibraryRootWrite(() => this.applyUpdate(partial));
+    }
+    return this.applyUpdate(partial);
+  }
+
+  private async applyUpdate(partial: UpdateSettingsInput): Promise<AppSettings> {
     for (const [key, value] of Object.entries(partial)) {
       if (value !== undefined) {
         const category = key as SettingsCategory;

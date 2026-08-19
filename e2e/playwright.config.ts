@@ -1,8 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { createRunTempDirs } from './fixtures/temp-dirs.js';
+import { ROOT_RUN, resolveRunTempDirs } from './fixtures/temp-dirs.js';
 import { serverEnv } from './fixtures/server-env.js';
+import { E2E_DEFAULT_PORTS, resolvePort } from './fixtures/ports.js';
 import {
   ROOT_PORT,
   SUBPATH_PORT,
@@ -22,16 +23,37 @@ import {
  * Root/subpath bypass auth; forms exercises real sessions. Run `pnpm build` first.
  */
 
-// Allocate once at config load so webServer env and teardown share each isolated run.
-const rootRun = createRunTempDirs();
-const subpathRun = createRunTempDirs(SUBPATH_RUN);
-const formsRun = createRunTempDirs(FORMS_RUN);
+// Allocated by the first config load of the invocation and published as a manifest; every later
+// load (workers, tooling) adopts it. Playwright evaluates this config in several processes, so an
+// unconditional allocation here leaks a fresh batch of 15 directories per process.
+const [rootRun, subpathRun, formsRun] = resolveRunTempDirs([ROOT_RUN, SUBPATH_RUN, FORMS_RUN]);
 
 // Config-time env reaches workers; globalSetup env does not. Keep this on the root manual-import run.
 process.env.E2E_RUN_STATE_DIR = rootRun.configPath;
 
 // Keep output paths stable regardless of the caller's cwd.
 const CONFIG_DIR = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Every server boots through the seed wrapper, never `node ../dist/server/index.js` directly:
+ * Playwright starts `webServer` entries before `globalSetup`, so seeding anywhere else lets the
+ * health probe reach a server that came up against an empty DB (#2452). `--import tsx` registers
+ * the loader in-process, so this stays one PID and Playwright's existing kill path still works.
+ * `webServer.command` runs with cwd = this config's directory.
+ */
+const SEED_AND_SERVE_COMMAND = 'node --import tsx ./fixtures/seed-and-serve.ts';
+
+/**
+ * The fakes run as the FIRST `webServer` entry, not in globalSetup: Playwright sets webServer
+ * entries up sequentially, awaiting each one's readiness before spawning the next, and starts all
+ * of them before globalSetup — so fakes started there lose a race against the app servers' first
+ * cron ticks, and a lost race opens the indexer breaker for ~60s (#2474). The host binds MAM last,
+ * so readiness on its port implies all three fakes are up. Reordering this array is guarded by the
+ * seed wrapper's own waitForFakes gate, which refuses to boot an app server while any fake port is
+ * unbound.
+ */
+const FAKES_HOST_COMMAND = 'node --import tsx ./fakes/host.ts';
+const MAM_PORT = resolvePort('E2E_MAM_PORT', E2E_DEFAULT_PORTS.mam);
 
 // Suite selectors accept both Windows and POSIX path separators.
 const SUBPATH_SPECS = /[\\/]subpath[\\/].*\.spec\.ts$/;
@@ -92,7 +114,17 @@ export default defineConfig({
 
   webServer: [
     {
-      command: 'node ../dist/server/index.js',
+      command: FAKES_HOST_COMMAND,
+      // Port readiness on MAM, the host's last bind — see FAKES_HOST_COMMAND's comment.
+      port: MAM_PORT,
+      reuseExistingServer: false,
+      timeout: 30_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { E2E_DOWNLOADS_PATH: rootRun.downloadsPath },
+    },
+    {
+      command: SEED_AND_SERVE_COMMAND,
       url: `http://localhost:${ROOT_PORT}/api/health`,
       reuseExistingServer: false,
       timeout: 60_000,
@@ -101,7 +133,7 @@ export default defineConfig({
       env: serverEnv(rootRun, '/', ROOT_PORT),
     },
     {
-      command: 'node ../dist/server/index.js',
+      command: SEED_AND_SERVE_COMMAND,
       // Unprefixed `/api/health` intentionally 404s on the subpath server.
       url: `http://localhost:${SUBPATH_PORT}${URL_BASE_SUBPATH}/api/health`,
       reuseExistingServer: false,
@@ -111,7 +143,7 @@ export default defineConfig({
       env: serverEnv(subpathRun, URL_BASE_SUBPATH, SUBPATH_PORT),
     },
     {
-      command: 'node ../dist/server/index.js',
+      command: SEED_AND_SERVE_COMMAND,
       // Health is public while the server boots in `none`; setup later flips it to `forms`.
       url: `http://localhost:${FORMS_PORT}/api/health`,
       reuseExistingServer: false,

@@ -354,4 +354,52 @@ describe('ScheduledTasks', () => {
       expect(screen.getByRole('button', { name: /run now/i })).toBeDisabled();
     });
   });
+
+  describe('when the task read fails', () => {
+    it('names the read failure instead of leaving a blank card', async () => {
+      (api.getSystemTasks as Mock).mockRejectedValue(new Error('scheduler unavailable'));
+
+      renderWithProviders(<ScheduledTasks />);
+
+      // The pre-fix state is a blank card — not even the empty message renders — so the
+      // positive assertion carries the test.
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load scheduled tasks.')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('No scheduled tasks.')).not.toBeInTheDocument();
+    });
+
+    it('refetches and renders the rows when the operator clicks Retry', async () => {
+      (api.getSystemTasks as Mock)
+        .mockRejectedValueOnce(new Error('scheduler unavailable'))
+        .mockResolvedValue([IDLE_MONITOR]);
+      const user = userEvent.setup();
+
+      renderWithProviders(<ScheduledTasks />);
+      await waitFor(() => expect(screen.getByText('Failed to load scheduled tasks.')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Retry loading scheduled tasks' }));
+
+      await waitFor(() => expect(screen.getByText('monitor')).toBeInTheDocument());
+      expect(screen.queryByText('Failed to load scheduled tasks.')).not.toBeInTheDocument();
+      expect(api.getSystemTasks).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps polling, so the error clears on its own once the endpoint recovers', async () => {
+      (api.getSystemTasks as Mock)
+        .mockRejectedValueOnce(new Error('scheduler unavailable'))
+        .mockResolvedValue([IDLE_MONITOR]);
+      const queryClient = makeQueryClient();
+
+      renderWithProviders(<ScheduledTasks />, { queryClient });
+      await waitFor(() => expect(screen.getByText('Failed to load scheduled tasks.')).toBeInTheDocument());
+
+      // Stand in for the 30s poll firing: the refetch the interval schedules is the same
+      // refetch invalidation triggers, and faking timers deadlocks TanStack Query.
+      await queryClient.refetchQueries({ queryKey: queryKeys.systemTasks() });
+
+      await waitFor(() => expect(screen.getByText('monitor')).toBeInTheDocument());
+      expect(screen.queryByText('Failed to load scheduled tasks.')).not.toBeInTheDocument();
+    });
+  });
 });

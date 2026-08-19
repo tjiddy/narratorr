@@ -15,6 +15,8 @@ export interface QBittorrentConfig {
   username: string;
   password: string;
   useSsl: boolean;
+  // Scopes the hybrid-hash fallback list scan; absent means scan every category.
+  category?: string | undefined;
 }
 
 type QBTorrent = z.infer<typeof qbTorrentSchema>;
@@ -28,6 +30,18 @@ export class QBittorrentClient implements DownloadClientAdapter {
   private baseUrl: string;
   private cookie?: string | undefined;
   private loginPromise?: Promise<void> | undefined;
+
+  /**
+   * Requested hash -> the canonical hash a fallback scan resolved it to (#2433), both lowercased.
+   * An INSTANCE field: two clients configured against different qBittorrent hosts must never share
+   * entries. `DownloadClientService` caches one adapter per clientId and drops it on a settings
+   * change, which is what makes this survive monitor polls and self-clear on reconfiguration.
+   *
+   * Deliberately uncapped — no LRU, no TTL. The bound is the distinct hashes THIS instance resolved
+   * via fallback since the last settings change or restart, trimmed further by removeDownload's
+   * eviction; an eviction policy would add its own failure modes to guard nothing.
+   */
+  private readonly canonicalHashes = new Map<string, string>();
 
   constructor(private config: QBittorrentConfig) {
     const protocol = config.useSsl ? 'https' : 'http';
@@ -245,10 +259,8 @@ export class QBittorrentClient implements DownloadClientAdapter {
       },
     );
   }
-  async getDownload(hash: string): Promise<DownloadItemInfo | null> {
-    const raw = await this.request<unknown>(
-      `/api/v2/torrents/info?hashes=${hash.toLowerCase()}`
-    );
+  private async fetchTorrents(query: string): Promise<QBTorrent[]> {
+    const raw = await this.request<unknown>(`/api/v2/torrents/info${query}`);
 
     // Validate undefined too; empty/non-JSON responses are not an empty torrent list.
     const parsed = qbTorrentsResponseSchema.safeParse(raw);
@@ -260,31 +272,109 @@ export class QBittorrentClient implements DownloadClientAdapter {
       );
     }
 
-    if (parsed.data.length === 0) return null;
-    return this.mapItem(parsed.data[0]!);
+    return parsed.data;
   }
 
-  async getAllDownloads(category?: string): Promise<DownloadItemInfo[]> {
-    const params = category ? `?category=${encodeURIComponent(category)}` : '';
-    const raw = await this.request<unknown>(`/api/v2/torrents/info${params}`);
+  // A hybrid torrent answers to three hashes; empty/absent candidate axes match nothing.
+  private isSameTorrent(torrent: QBTorrent, hash: string): boolean {
+    const wanted = hash.toLowerCase();
+    const candidates = [torrent.hash, torrent.infohash_v1, torrent.infohash_v2?.slice(0, 40)];
+    return candidates.some((candidate) => !!candidate && candidate.toLowerCase() === wanted);
+  }
 
-    const parsed = qbTorrentsResponseSchema.safeParse(raw);
-    if (!parsed.success) {
-      throw new DownloadClientError(
-        this.name,
-        `qBittorrent returned unexpected torrent data: ${parsed.error.issues[0]?.message ?? 'unknown'}`,
-        { cause: parsed.error },
-      );
+  /**
+   * The single blank/non-blank decision for the whole adapter: a blank hash never keys the memo
+   * (#2433 A9) and, since #2485, never reaches the network either — `resolveTorrent` and the
+   * controls both refuse on `undefined`. The `.trim()` is load-bearing: a whitespace-only stored
+   * external ID is truthy and clears every upstream falsy guard.
+   */
+  private memoKey(hash: string): string | undefined {
+    return hash.trim().toLowerCase() || undefined;
+  }
+
+  /**
+   * The canonical-hash filter is the fast path and stays byte-identical for v1-only torrents. On a
+   * miss, scan the (optionally category-scoped) list for any of the three identities before
+   * concluding the torrent is gone — libtorrent 2.x re-keys a hybrid to its v2 hash (#2423).
+   * Once a scan has resolved one, the memo puts it back on the fast path (#2433).
+   */
+  private async resolveTorrent(hash: string): Promise<QBTorrent | null> {
+    const key = this.memoKey(hash);
+    // qBittorrent drops empty parts from the `hashes` filter and answers the FULL list, so probing
+    // on a blank hash would adopt an arbitrary torrent below. Refuse before any I/O (#2485).
+    if (!key) return null;
+    const memoized = this.canonicalHashes.get(key);
+
+    const probed = await this.fetchTorrents(`?hashes=${memoized ?? key}`);
+    // A memo hit is NOT re-checked against isSameTorrent: a re-keyed hybrid whose client reports
+    // `infohash_v1: ""` would fail that check and permanently lose the mapping in exactly the case
+    // the memo exists for. Infohashes are content-derived, so a canonical hash that has come to
+    // point at unrelated content is not a real failure mode.
+    if (probed.length > 0) return probed[0]!;
+    // Stale: drop it and rescan on the CALLER's hash, never the memoized one.
+    if (memoized) this.canonicalHashes.delete(key);
+
+    const scanned = await this.scanForTorrent(key);
+    if (scanned) {
+      const canonical = scanned.hash.toLowerCase();
+      // An identity mapping already costs one request; only a re-key is worth remembering.
+      if (canonical !== key) this.canonicalHashes.set(key, canonical);
+    }
+    return scanned;
+  }
+
+  /**
+   * A torrent's real category is whatever it was added under or later moved to, so a miss in the
+   * configured one must not read as absence — fall through to exactly ONE unscoped scan (#2433).
+   * With no category configured the first scan already is that unscoped scan; issuing it twice
+   * would double the cost of every genuine absence.
+   */
+  private async scanForTorrent(hash: string): Promise<QBTorrent | null> {
+    const category = this.config.category;
+    if (category) {
+      const scoped = await this.fetchTorrents(`?category=${encodeURIComponent(category)}`);
+      const hit = scoped.find((torrent) => this.isSameTorrent(torrent, hash));
+      if (hit) return hit;
     }
 
-    return parsed.data.map((t) => this.mapItem(t));
+    const scanned = await this.fetchTorrents('');
+    return scanned.find((torrent) => this.isSameTorrent(torrent, hash)) ?? null;
+  }
+
+  async getDownload(hash: string): Promise<DownloadItemInfo | null> {
+    const torrent = await this.resolveTorrent(hash);
+    return torrent ? this.mapItem(torrent) : null;
+  }
+
+  async getAllDownloads(category = this.config.category): Promise<DownloadItemInfo[]> {
+    const params = category ? `?category=${encodeURIComponent(category)}` : '';
+    const torrents = await this.fetchTorrents(params);
+    return torrents.map((t) => this.mapItem(t));
+  }
+
+  /**
+   * Controls take the same three-identity resolution; an unresolvable hash goes through as-is.
+   * A BLANK one does not: qBittorrent would read the empty `hashes` filter as "no filter" and
+   * pause/resume/delete an arbitrary torrent. Refusing here — ahead of every caller's
+   * `URLSearchParams` construction — is what structurally prevents the POST (#2485).
+   */
+  private async canonicalHashFor(hash: string): Promise<string> {
+    const key = this.memoKey(hash);
+    if (!key) {
+      throw new DownloadClientError(
+        this.name,
+        'Refusing to act on a blank torrent hash: the stored external ID is empty or whitespace-only. Repair or cancel the download record before retrying.',
+      );
+    }
+    const torrent = await this.resolveTorrent(key);
+    return (torrent?.hash ?? key).toLowerCase();
   }
 
   async pauseDownload(hash: string): Promise<void> {
     await this.request('/api/v2/torrents/pause', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ hashes: hash.toLowerCase() }),
+      body: new URLSearchParams({ hashes: await this.canonicalHashFor(hash) }),
     });
   }
 
@@ -292,7 +382,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
     await this.request('/api/v2/torrents/resume', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ hashes: hash.toLowerCase() }),
+      body: new URLSearchParams({ hashes: await this.canonicalHashFor(hash) }),
     });
   }
 
@@ -301,10 +391,15 @@ export class QBittorrentClient implements DownloadClientAdapter {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        hashes: hash.toLowerCase(),
+        hashes: await this.canonicalHashFor(hash),
         deleteFiles: deleteFiles.toString(),
       }),
     });
+
+    // A re-add of the same infohash must start from a clean mapping, and the memo must not keep
+    // entries for torrents this app deleted.
+    const key = this.memoKey(hash);
+    if (key) this.canonicalHashes.delete(key);
   }
 
   async getCategories(): Promise<string[]> {

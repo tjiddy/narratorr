@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDb, runMigrations } from '@db/index.js';
 import type { ImportConfirmItem } from './library-scan.service.js';
+import type { AppSettings } from '@shared/schemas/settings/registry.js';
 
 // Stored paths are POSIX-normalized; tmpdir paths are native, so Windows expectations need folding.
 const toPosix = (p: string): string => p.split('\\').join('/');
@@ -50,6 +51,22 @@ function createMockLogger(): FastifyBaseLogger {
   return { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn(), fatal: vi.fn(), child: vi.fn().mockReturnThis(), level: 'info', silent: vi.fn() } as unknown as FastifyBaseLogger;
 }
 
+/**
+ * #2369 AC15: `copyToLibrary` no longer reads `library` for itself — the caller's root-commit
+ * registration hands the snapshot in. These cases predate that and are not about the gate, so they
+ * source the same value from the same fixture; the parameter's authority over target derivation is
+ * pinned separately below and the manual adapter's gate wiring in `import-adapters/manual.test.ts`.
+ */
+async function copyWithRoot(
+  item: ImportConfirmItem,
+  meta: Parameters<typeof copyToLibrary>[1],
+  mode: Parameters<typeof copyToLibrary>[2],
+  deps: ImportPipelineDeps,
+  onProgress?: Parameters<typeof copyToLibrary>[5],
+): Promise<{ targetPath: string; editionLabel?: string }> {
+  return copyToLibrary(item, meta, mode, deps, await deps.settingsService.get('library'), onProgress);
+}
+
 
 describe('copyToLibrary — token precedence (#1028)', () => {
   // Same-path short-circuit exposes rendered targetPath without filesystem work.
@@ -71,7 +88,7 @@ describe('copyToLibrary — token precedence (#1028)', () => {
   it('item series fields win over meta.series[0] in the folder path (#1927 AC2 item-first)', async () => {
     const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
     const targetPath = '/library/Author/The Dresden Files #10/Title';
-    const path = await copyToLibrary(
+    const path = await copyWithRoot(
       { path: targetPath, title: 'Title', authorName: 'Author', seriesName: 'The Dresden Files', seriesPosition: 10 },
       { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Wax and Wayne', position: 1 }] },
       'copy',
@@ -83,7 +100,7 @@ describe('copyToLibrary — token precedence (#1028)', () => {
   it('item.narrators wins over meta.narrators in {narrator} token', async () => {
     const deps = buildDeps('{narrator}/{title}');
     const targetPath = '/library/Jim Dale/Title';
-    const path = await copyToLibrary(
+    const path = await copyWithRoot(
       { path: targetPath, title: 'Title', authorName: 'Author', narrators: ['Jim Dale'] },
       { title: 'Title', authors: [{ name: 'Author' }], narrators: ['Stephen Fry'] },
       'copy',
@@ -96,7 +113,7 @@ describe('copyToLibrary — token precedence (#1028)', () => {
     const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
     // Empty item position must not borrow metadata position 15; the renderer leaves a bare #.
     const targetPath = '/library/Author/Custom Saga #/Title';
-    const path = await copyToLibrary(
+    const path = await copyWithRoot(
       { path: targetPath, title: 'Title', authorName: 'Author', seriesName: 'Custom Saga' },
       { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Provider Saga', position: 15 }] },
       'copy',
@@ -110,7 +127,7 @@ describe('copyToLibrary — token precedence (#1028)', () => {
   it('item OMITS series → folder path defers to meta.series[0], position 0 preserved (#1927 AC3 defer path)', async () => {
     const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
     const targetPath = '/library/Author/Prequels #0/Title';
-    const path = await copyToLibrary(
+    const path = await copyWithRoot(
       { path: targetPath, title: 'Title', authorName: 'Author' },
       { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Prequels', position: 0 }] },
       'copy',
@@ -122,7 +139,7 @@ describe('copyToLibrary — token precedence (#1028)', () => {
   it('item seriesName "   " (whitespace) → folder path defers to metadata (#1927 AC5 non-React-caller guard)', async () => {
     const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
     const targetPath = '/library/Author/Wax and Wayne #1/Title';
-    const path = await copyToLibrary(
+    const path = await copyWithRoot(
       { path: targetPath, title: 'Title', authorName: 'Author', seriesName: '   ', seriesPosition: 99 },
       { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Wax and Wayne', position: 1 }] },
       'copy',
@@ -135,7 +152,7 @@ describe('copyToLibrary — token precedence (#1028)', () => {
     const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
     // Distinct metadata makes sanitized `Saga #3` prove item-first selection.
     const targetPath = '/library/Author/Saga #3/Title';
-    const path = await copyToLibrary(
+    const path = await copyWithRoot(
       { path: targetPath, title: 'Title', authorName: 'Author', seriesName: ' Saga ', seriesPosition: 3 },
       { title: 'Title', authors: [{ name: 'Author' }], series: [{ name: 'Other', position: 2 }] },
       'copy',
@@ -147,7 +164,7 @@ describe('copyToLibrary — token precedence (#1028)', () => {
   it('falls back to meta.narrators when item.narrators is empty', async () => {
     const deps = buildDeps('{narrator}/{title}');
     const targetPath = '/library/Stephen Fry/Title';
-    const path = await copyToLibrary(
+    const path = await copyWithRoot(
       { path: targetPath, title: 'Title', authorName: 'Author' },
       { title: 'Title', authors: [{ name: 'Author' }], narrators: ['Stephen Fry'] },
       'copy',
@@ -159,7 +176,7 @@ describe('copyToLibrary — token precedence (#1028)', () => {
   it('uses meta.seriesPrimary for {series}/{seriesPosition} tokens when seriesPrimary differs from series[0] (#1097)', async () => {
     const deps = buildDeps('{author}/{series} #{seriesPosition}/{title}');
     const targetPath = '/library/Author/The Stormlight Archive #2/Title';
-    const path = await copyToLibrary(
+    const path = await copyWithRoot(
       { path: targetPath, title: 'Title', authorName: 'Author' },
       {
         title: 'Title',
@@ -174,6 +191,29 @@ describe('copyToLibrary — token precedence (#1028)', () => {
       deps,
     );
     expect(path.targetPath).toBe(targetPath);
+  });
+
+  /**
+   * #2369 AC3/AC15. The passed snapshot is the authority: it comes from the caller's root-commit
+   * registration, and the settings service — which the gate does not cover once the copy is under
+   * way — must not steer the target. `/relocated` is reachable ONLY through the argument; the
+   * fixture's own service still answers `/library`.
+   */
+  it('derives the target from the passed root snapshot and never reads library for itself', async () => {
+    const deps = buildDeps('{author}/{title}');
+    const registered = { path: '/relocated', folderFormat: '{author}/{title}', fileFormat: '' } as AppSettings['library'];
+
+    const result = await copyToLibrary(
+      { path: '/relocated/Author/Title', title: 'Title', authorName: 'Author' },
+      null,
+      'copy',
+      deps,
+      registered,
+    );
+
+    // The same-path short-circuit only fires because the target rendered under `/relocated`.
+    expect(result.targetPath).toBe('/relocated/Author/Title');
+    expect(deps.settingsService.get).not.toHaveBeenCalledWith('library');
   });
 });
 
@@ -222,7 +262,7 @@ describe('copyToLibrary — populated-target staged swap (#1287)', () => {
     await writeFile(join(source, 'a.mp3'), Buffer.alloc(300, 2));
     await writeFile(join(source, 'b.mp3'), Buffer.alloc(300, 2));
 
-    const result = await copyToLibrary(item(), null, 'copy', buildDeps());
+    const result = await copyWithRoot(item(), null, 'copy', buildDeps());
 
     expect(result.targetPath).toBe(toPosix(target));
     const files = (await readdir(target)).sort();
@@ -234,7 +274,7 @@ describe('copyToLibrary — populated-target staged swap (#1287)', () => {
   it('keeps the direct-copy fast path for an empty target — no staging siblings (AC3)', async () => {
     await writeFile(join(source, 'a.mp3'), Buffer.alloc(300, 2));
 
-    await copyToLibrary(item(), null, 'copy', buildDeps());
+    await copyWithRoot(item(), null, 'copy', buildDeps());
 
     expect(await readdir(target)).toContain('a.mp3');
     expect(await pathExists(`${target}.import-tmp`)).toBe(false);
@@ -246,7 +286,7 @@ describe('copyToLibrary — populated-target staged swap (#1287)', () => {
     await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
     await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
 
-    await copyToLibrary(item(), null, 'move', buildDeps());
+    await copyWithRoot(item(), null, 'move', buildDeps());
 
     expect((await readdir(target)).sort()).toEqual(['new.mp3']);
     expect(await pathExists(source)).toBe(false);
@@ -267,7 +307,7 @@ describe('copyToLibrary — populated-target staged swap (#1287)', () => {
 
     // Lowest-disc path must expand to the complete group.
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author', asin: 'B0SAME' };
-    const result = await copyToLibrary(discItem, null, 'copy', buildDeps());
+    const result = await copyWithRoot(discItem, null, 'copy', buildDeps());
 
     expect(result.targetPath).toBe(toPosix(target));
     const files = (await readdir(target)).sort();
@@ -328,7 +368,7 @@ describe('copyToLibrary — production-type veto on occupied target (#1728)', ()
     const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: ['Jim Dale'] };
     const meta = { title: 'Title', authors: [{ name: 'Author' }], narrators: ['Jim Dale'], formatType: 'Unabridged' };
 
-    await expect(copyToLibrary(item, meta, 'copy', buildDeps())).rejects.toMatchObject({
+    await expect(copyWithRoot(item, meta, 'copy', buildDeps())).rejects.toMatchObject({
       code: 'OWNED_RECORDING',
       reason: 'recording-review',
     });
@@ -399,7 +439,7 @@ describe('copyToLibrary — interrupted-commit recovery before direct-copy (#133
     await writeFile(join(source, 'a.mp3'), Buffer.alloc(300, 2));
     await writeFile(join(source, 'b.mp3'), Buffer.alloc(300, 2));
 
-    const result = await copyToLibrary(item(), null, 'copy', buildDeps());
+    const result = await copyWithRoot(item(), null, 'copy', buildDeps());
 
     expect(result.targetPath).toBe(toPosix(target));
     expect((await readdir(target)).sort()).toEqual(['a.mp3', 'b.mp3']);
@@ -419,7 +459,7 @@ describe('copyToLibrary — interrupted-commit recovery before direct-copy (#133
     await armInterruptedCommit({ 'old.m4b': Buffer.alloc(500, 1) });
 
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author', asin: 'B0SAME' };
-    const result = await copyToLibrary(discItem, null, 'copy', buildDeps());
+    const result = await copyWithRoot(discItem, null, 'copy', buildDeps());
 
     expect(result.targetPath).toBe(toPosix(target));
     const files = (await readdir(target)).sort();
@@ -433,13 +473,13 @@ describe('copyToLibrary — interrupted-commit recovery before direct-copy (#133
   it('a later import performs no bogus recovery — the marker was consumed (AC3)', async () => {
     await armInterruptedCommit({ 'old.m4b': Buffer.alloc(500, 1) });
     await writeFile(join(source, 'a.mp3'), Buffer.alloc(300, 2));
-    await copyToLibrary(item(), null, 'copy', buildDeps());
+    await copyWithRoot(item(), null, 'copy', buildDeps());
     expect(await pathExists(markerPath())).toBe(false);
 
     const source2 = join(baseDir, 'downloads', 'release2');
     await mkdir(source2, { recursive: true });
     await writeFile(join(source2, 'c.mp3'), Buffer.alloc(400, 3));
-    await copyToLibrary({ path: source2, title: 'Title', authorName: 'Author', asin: 'B0SAME' }, null, 'copy', buildDeps());
+    await copyWithRoot({ path: source2, title: 'Title', authorName: 'Author', asin: 'B0SAME' }, null, 'copy', buildDeps());
 
     const files = (await readdir(target)).sort();
     expect(files).toEqual(['c.mp3']);
@@ -451,7 +491,7 @@ describe('copyToLibrary — interrupted-commit recovery before direct-copy (#133
   it('marker-absent empty target keeps the direct-copy fast path — no recovery, no staging siblings (AC4)', async () => {
     await writeFile(join(source, 'a.mp3'), Buffer.alloc(300, 2));
 
-    await copyToLibrary(item(), null, 'copy', buildDeps());
+    await copyWithRoot(item(), null, 'copy', buildDeps());
 
     expect(await readdir(target)).toContain('a.mp3');
     expect(await pathExists(markerPath())).toBe(false);
@@ -464,7 +504,7 @@ describe('copyToLibrary — interrupted-commit recovery before direct-copy (#133
     await writeFile(join(bakPath(), 'stale.m4b'), Buffer.alloc(500, 9));
     await writeFile(join(source, 'a.mp3'), Buffer.alloc(300, 2));
 
-    await copyToLibrary(item(), null, 'copy', buildDeps());
+    await copyWithRoot(item(), null, 'copy', buildDeps());
 
     const files = await readdir(target);
     expect(files).toContain('a.mp3');
@@ -477,7 +517,7 @@ describe('copyToLibrary — interrupted-commit recovery before direct-copy (#133
     await armInterruptedCommit({ 'old.m4b': Buffer.alloc(500, 1) });
     await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
 
-    await copyToLibrary(item(), null, 'move', buildDeps());
+    await copyWithRoot(item(), null, 'move', buildDeps());
 
     expect((await readdir(target)).sort()).toEqual(['new.mp3']);
     expect(await pathExists(source)).toBe(false);
@@ -487,7 +527,7 @@ describe('copyToLibrary — interrupted-commit recovery before direct-copy (#133
     const source2 = join(baseDir, 'downloads', 'release2');
     await mkdir(source2, { recursive: true });
     await writeFile(join(source2, 'final.mp3'), Buffer.alloc(600, 3));
-    await copyToLibrary({ path: source2, title: 'Title', authorName: 'Author', asin: 'B0SAME' }, null, 'copy', buildDeps());
+    await copyWithRoot({ path: source2, title: 'Title', authorName: 'Author', asin: 'B0SAME' }, null, 'copy', buildDeps());
 
     const files = (await readdir(target)).sort();
     expect(files).toEqual(['final.mp3']);
@@ -505,7 +545,7 @@ describe('copyToLibrary — interrupted-commit recovery before direct-copy (#133
     await writeFile(join(bakPath(), 'realbook.mp3'), bakBytes);
     await writeFile(join(source, 'new.mp3'), Buffer.alloc(300, 2));
 
-    await expect(copyToLibrary(item(), null, 'copy', buildDeps())).rejects.toBeInstanceOf(MarkerPathConflictError);
+    await expect(copyWithRoot(item(), null, 'copy', buildDeps())).rejects.toBeInstanceOf(MarkerPathConflictError);
 
     expect(await readFile(join(bakPath(), 'realbook.mp3'))).toEqual(bakBytes);
     expect(await readFile(join(target, 'existing.mp3'))).toEqual(targetBytes);
@@ -568,7 +608,7 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
     await writeFile(join(source, 'bundled.epub'), Buffer.from('EBOOK'));
 
-    await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
+    await expect(copyWithRoot(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
     expect((await readdir(target)).sort()).toEqual(['new.mp3']);
     expect(await pathExists(join(source, 'new.mp3'))).toBe(false);
     expect(await pathExists(join(source, 'bundled.epub'))).toBe(true);
@@ -579,7 +619,7 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
     await writeFile(join(source, 'companion.epub'), Buffer.from('EBOOK'));
 
-    await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
+    await expect(copyWithRoot(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
 
     expect((await readdir(target)).sort()).toEqual(['new.mp3']);
     expect(await pathExists(join(source, 'new.mp3'))).toBe(false);
@@ -597,7 +637,7 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
       return fsMocks.real.rm(p, opts);
     });
 
-    await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
+    await expect(copyWithRoot(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
     expect((await readdir(target)).sort()).toEqual(['new.mp3']);
   });
 
@@ -614,7 +654,7 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
 
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author', asin: 'B0SAME' };
-    await expect(copyToLibrary(discItem, null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
+    await expect(copyWithRoot(discItem, null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
     const files = (await readdir(target)).sort();
     expect(files.filter((f) => f.endsWith('.m4b'))).toEqual([]);
     expect(files.filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
@@ -633,7 +673,7 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
       return fsMocks.real.rm(p, opts);
     });
 
-    await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
+    await expect(copyWithRoot(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
     expect((await readdir(target)).sort()).toEqual(['new.mp3']);
     expect(await pathExists(join(source, 'new.mp3'))).toBe(true);
   });
@@ -649,7 +689,7 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
       return fsMocks.real.readdir(p, opts);
     });
 
-    await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
+    await expect(copyWithRoot(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
     expect((await readdir(target)).sort()).toEqual(['new.mp3']);
   });
 
@@ -671,7 +711,7 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     });
 
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author', asin: 'B0SAME' };
-    await expect(copyToLibrary(discItem, null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
+    await expect(copyWithRoot(discItem, null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
     expect((await readdir(target)).filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
     // Disc 2 removal distinguishes per-member continuation from one catch around the loop.
     expect(await pathExists(join(disc1, 'd1.mp3'))).toBe(true);
@@ -684,8 +724,8 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     await writeFile(join(source, 'a.mp3'), Buffer.alloc(1000, 2));
     fsMocks.cp.mockImplementation(async () => {});
 
-    await expect(copyToLibrary(item(), null, 'move', buildDeps())).rejects.toThrow(/Copy verification failed/);
-    await expect(copyToLibrary(item(), null, 'move', buildDeps())).rejects.toBeInstanceOf(ContentFailureError);
+    await expect(copyWithRoot(item(), null, 'move', buildDeps())).rejects.toThrow(/Copy verification failed/);
+    await expect(copyWithRoot(item(), null, 'move', buildDeps())).rejects.toBeInstanceOf(ContentFailureError);
     // Verification failure precedes source cleanup.
     expect(await pathExists(source)).toBe(true);
     expect(fsMocks.rm).not.toHaveBeenCalledWith(source, expect.anything());
@@ -702,7 +742,7 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     fsMocks.cp.mockImplementation(async () => {});
 
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author', asin: 'B0SAME' };
-    await expect(copyToLibrary(discItem, null, 'copy', buildDeps())).rejects.toBeInstanceOf(ContentFailureError);
+    await expect(copyWithRoot(discItem, null, 'copy', buildDeps())).rejects.toBeInstanceOf(ContentFailureError);
   });
 
   it('throws a typed ContentFailureError when the staged-swap copy falls below threshold (#1304)', async () => {
@@ -711,7 +751,7 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
     fsMocks.cp.mockImplementation(async () => {});
 
-    await expect(copyToLibrary(item(), null, 'copy', buildDeps())).rejects.toBeInstanceOf(ContentFailureError);
+    await expect(copyWithRoot(item(), null, 'copy', buildDeps())).rejects.toBeInstanceOf(ContentFailureError);
   });
 
   it('throws a typed ContentFailureError on the multi-disc populated-target replace branch (#1346, helpers.ts:168-180)', async () => {
@@ -727,7 +767,7 @@ describe('copyToLibrary — post-swap source cleanup resilience (#1291)', () => 
     fsMocks.cp.mockImplementation(async () => {});
 
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author', asin: 'B0SAME' };
-    await expect(copyToLibrary(discItem, null, 'copy', buildDeps())).rejects.toBeInstanceOf(ContentFailureError);
+    await expect(copyWithRoot(discItem, null, 'copy', buildDeps())).rejects.toBeInstanceOf(ContentFailureError);
   });
 });
 
@@ -780,7 +820,7 @@ describe('copyToLibrary — empty-target move cleanup (#1598)', () => {
     await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
     await writeFile(join(source, 'bundled.epub'), Buffer.from('EBOOK'));
 
-    await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
+    await expect(copyWithRoot(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
 
     expect(await pathExists(join(target, 'new.mp3'))).toBe(true);
     expect(await pathExists(join(target, 'bundled.epub'))).toBe(false);
@@ -792,7 +832,7 @@ describe('copyToLibrary — empty-target move cleanup (#1598)', () => {
   it('removes the source folder on an empty-target single-source move when only managed files exist', async () => {
     await writeFile(join(source, 'a.mp3'), Buffer.alloc(500, 2));
 
-    await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
+    await expect(copyWithRoot(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
 
     expect((await readdir(target)).sort()).toEqual(['a.mp3']);
     expect(await pathExists(source)).toBe(false);
@@ -809,7 +849,7 @@ describe('copyToLibrary — empty-target move cleanup (#1598)', () => {
     await writeFile(join(disc2, 'd2.mp3'), Buffer.alloc(300, 2));
 
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author', asin: 'B0SAME' };
-    await expect(copyToLibrary(discItem, null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
+    await expect(copyWithRoot(discItem, null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
 
     expect((await readdir(target)).filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
     expect(await pathExists(join(disc1, 'd1.mp3'))).toBe(false);
@@ -829,7 +869,7 @@ describe('copyToLibrary — empty-target move cleanup (#1598)', () => {
       await writeFile(join(target, 'old.m4b'), Buffer.alloc(500, 1));
 
       const linkedItem: ImportConfirmItem = { path: linkedSource, title: 'Title', authorName: 'Author', asin: 'B0SAME' };
-      await expect(copyToLibrary(linkedItem, null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
+      await expect(copyWithRoot(linkedItem, null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
 
       expect((await readdir(target)).sort()).toEqual(['new.mp3']);
       expect(await pathExists(join(external, 'new.mp3'))).toBe(true);
@@ -890,7 +930,7 @@ describe('copyToLibrary — empty-target audio-only copy (#1602)', () => {
     await writeFile(join(source, 'book.mp3'), Buffer.alloc(500, 2));
     await writeFile(join(source, 'book.epub'), Buffer.from('EBOOK'));
 
-    await expect(copyToLibrary(item(), null, 'copy', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
+    await expect(copyWithRoot(item(), null, 'copy', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
 
     expect(await pathExists(join(target, 'book.mp3'))).toBe(true);
     expect(await pathExists(join(target, 'book.epub'))).toBe(false);
@@ -906,7 +946,7 @@ describe('copyToLibrary — empty-target audio-only copy (#1602)', () => {
       progress.push(byteCounter);
     };
 
-    await expect(copyToLibrary(item(), null, 'copy', buildDeps(), onProgress)).resolves.toMatchObject({ targetPath: toPosix(target) });
+    await expect(copyWithRoot(item(), null, 'copy', buildDeps(), onProgress)).resolves.toMatchObject({ targetPath: toPosix(target) });
 
     expect(await pathExists(join(target, 'book.mp3'))).toBe(true);
     expect(await pathExists(join(target, 'info.nfo'))).toBe(false);
@@ -926,7 +966,7 @@ describe('copyToLibrary — empty-target audio-only copy (#1602)', () => {
     await writeFile(join(disc2, 'd2.mp3'), Buffer.alloc(300, 2));
 
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author', asin: 'B0SAME' };
-    await expect(copyToLibrary(discItem, null, 'copy', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
+    await expect(copyWithRoot(discItem, null, 'copy', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
 
     const targetEntries = await readdir(target);
     expect(targetEntries.filter((f) => f.endsWith('.mp3'))).toHaveLength(2);
@@ -939,7 +979,7 @@ describe('copyToLibrary — empty-target audio-only copy (#1602)', () => {
     await writeFile(join(source, 'readme.txt'), Buffer.from('TXT'));
 
     // Manual import skips source validation, so zero audio reaches the copier and verifies as 0/0.
-    await expect(copyToLibrary(item(), null, 'copy', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
+    await expect(copyWithRoot(item(), null, 'copy', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
 
     expect(await pathExists(target)).toBe(true);
     expect(await readdir(target)).toEqual([]);
@@ -950,7 +990,7 @@ describe('copyToLibrary — empty-target audio-only copy (#1602)', () => {
     await writeFile(file, Buffer.alloc(500, 2));
     const fileItem: ImportConfirmItem = { path: file, title: 'Title', authorName: 'Author' };
 
-    await expect(copyToLibrary(fileItem, null, 'copy', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
+    await expect(copyWithRoot(fileItem, null, 'copy', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
 
     expect(await pathExists(join(target, 'Doctor Sleep.m4b'))).toBe(true);
   });
@@ -965,7 +1005,7 @@ describe('copyToLibrary — empty-target audio-only copy (#1602)', () => {
       progress.push(byteCounter);
     };
 
-    await expect(copyToLibrary(fileItem, null, 'copy', buildDeps(), onProgress)).resolves.toMatchObject({ targetPath: toPosix(target) });
+    await expect(copyWithRoot(fileItem, null, 'copy', buildDeps(), onProgress)).resolves.toMatchObject({ targetPath: toPosix(target) });
 
     expect(await pathExists(join(target, 'Doctor Sleep.m4b'))).toBe(true);
     expect(progress.length).toBeGreaterThan(0);
@@ -977,7 +1017,7 @@ describe('copyToLibrary — empty-target audio-only copy (#1602)', () => {
     await writeFile(file, Buffer.alloc(500, 2));
     const fileItem: ImportConfirmItem = { path: file, title: 'Title', authorName: 'Author' };
 
-    await expect(copyToLibrary(fileItem, null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
+    await expect(copyWithRoot(fileItem, null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
 
     expect(await pathExists(join(target, 'Doctor Sleep.m4b'))).toBe(true);
     expect(await pathExists(file)).toBe(false);
@@ -988,7 +1028,7 @@ describe('copyToLibrary — empty-target audio-only copy (#1602)', () => {
     await writeFile(file, Buffer.from('PDF'));
     const fileItem: ImportConfirmItem = { path: file, title: 'Title', authorName: 'Author' };
 
-    await expect(copyToLibrary(fileItem, null, 'copy', buildDeps())).rejects.toBeInstanceOf(ContentFailureError);
+    await expect(copyWithRoot(fileItem, null, 'copy', buildDeps())).rejects.toBeInstanceOf(ContentFailureError);
 
     // Target may exist because stageSourceAudio creates it before extension validation.
     expect(await pathExists(join(target, 'notes.pdf'))).toBe(false);
@@ -1048,7 +1088,7 @@ describe('copyToLibrary — consolidated nonfatal source-cleanup log contract (#
   it('single-source success logs at `info` with the single-source message', async () => {
     await writeFile(join(source, 'new.mp3'), Buffer.alloc(500, 2));
 
-    await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
+    await expect(copyWithRoot(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
 
     expect(log.info).toHaveBeenCalledWith(
       expect.objectContaining({ source, deleted: expect.any(Number), preservedForeign: expect.any(Number) }),
@@ -1067,7 +1107,7 @@ describe('copyToLibrary — consolidated nonfatal source-cleanup log contract (#
       return fsMocks.real.readdir(p, opts);
     });
 
-    await expect(copyToLibrary(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
+    await expect(copyWithRoot(item(), null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
 
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({ source, error: expect.anything() }),
@@ -1085,7 +1125,7 @@ describe('copyToLibrary — consolidated nonfatal source-cleanup log contract (#
     await writeFile(join(disc2, 'd2.mp3'), Buffer.alloc(300, 2));
 
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author', asin: 'B0SAME' };
-    await expect(copyToLibrary(discItem, null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
+    await expect(copyWithRoot(discItem, null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
 
     expect(log.debug).toHaveBeenCalledWith(
       expect.objectContaining({ source: disc1, deleted: expect.any(Number), preservedForeign: expect.any(Number) }),
@@ -1115,7 +1155,7 @@ describe('copyToLibrary — consolidated nonfatal source-cleanup log contract (#
     });
 
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author', asin: 'B0SAME' };
-    await expect(copyToLibrary(discItem, null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
+    await expect(copyWithRoot(discItem, null, 'move', buildDeps())).resolves.toMatchObject({ targetPath: toPosix(target) });
 
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({ source: disc1, error: expect.anything() }),
@@ -1168,7 +1208,7 @@ describe('copyToLibrary — cross-row collision fence (#1711)', () => {
 
   it('different recording (1 owner) → copies into a disambiguated (edition) folder, incumbent untouched (keep-both)', async () => {
     const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: ['Stephen Fry'] };
-    const result = await copyToLibrary(item, null, 'copy', buildDeps([owner({ narrators: [{ name: 'Jim Dale' }] })]));
+    const result = await copyWithRoot(item, null, 'copy', buildDeps([owner({ narrators: [{ name: 'Jim Dale' }] })]));
 
     expect(result.editionLabel).toBe('Stephen Fry');
     expect(result.targetPath).toBe(toPosix(join(libraryRoot, 'Author', 'Title (Stephen Fry)')));
@@ -1178,13 +1218,13 @@ describe('copyToLibrary — cross-row collision fence (#1711)', () => {
 
   it('review verdict (1 owner, no narrator signal) → throws OwnedRecordingError, never overwrites', async () => {
     const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author' };
-    await expect(copyToLibrary(item, null, 'copy', buildDeps([owner()]))).rejects.toMatchObject({ name: 'OwnedRecordingError' });
+    await expect(copyWithRoot(item, null, 'copy', buildDeps([owner()]))).rejects.toMatchObject({ name: 'OwnedRecordingError' });
     expect((await readdir(target)).sort()).toEqual(['incumbent.m4b']);
   });
 
   it('full-cast candidate over a solo-narrator owner → disambiguates into an edition folder (#2206)', async () => {
     const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: ['Stephen Fry', 'Full Cast'] };
-    const result = await copyToLibrary(item, null, 'copy', buildDeps([owner({ narrators: [{ name: 'Jim Dale' }] })]));
+    const result = await copyWithRoot(item, null, 'copy', buildDeps([owner({ narrators: [{ name: 'Jim Dale' }] })]));
 
     const disambig = join(libraryRoot, 'Author', 'Title (Stephen Fry)');
     expect(result.editionLabel).toBe('Stephen Fry');
@@ -1199,7 +1239,7 @@ describe('copyToLibrary — cross-row collision fence (#1711)', () => {
     // Empty survivor set on the candidate side: undecidable under both the old and the narrowed guard.
     const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: ['Full Cast'] };
     await expect(
-      copyToLibrary(item, null, 'copy', buildDeps([owner({ narrators: [{ name: 'Jim Dale' }] })])),
+      copyWithRoot(item, null, 'copy', buildDeps([owner({ narrators: [{ name: 'Jim Dale' }] })])),
     ).rejects.toMatchObject({ name: 'OwnedRecordingError', reason: 'recording-review' });
     expect((await readdir(target)).sort()).toEqual(['incumbent.m4b']);
     expect(await readdir(join(libraryRoot, 'Author'))).toEqual(['Title']);
@@ -1207,7 +1247,7 @@ describe('copyToLibrary — cross-row collision fence (#1711)', () => {
 
   it('zero owners (orphan folder with audio) → disambiguates into a new folder, orphan untouched', async () => {
     const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: ['Stephen Fry'] };
-    const result = await copyToLibrary(item, null, 'copy', buildDeps([]));
+    const result = await copyWithRoot(item, null, 'copy', buildDeps([]));
 
     expect(result.editionLabel).toBe('Stephen Fry');
     expect(result.targetPath).toBe(toPosix(join(libraryRoot, 'Author', 'Title (Stephen Fry)')));
@@ -1217,7 +1257,7 @@ describe('copyToLibrary — cross-row collision fence (#1711)', () => {
   it('two owners (data anomaly) → throws OwnedRecordingError, never overwrites', async () => {
     const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: ['Stephen Fry'] };
     await expect(
-      copyToLibrary(item, null, 'copy', buildDeps([owner({ id: 1 }), owner({ id: 2, title: 'Other' })])),
+      copyWithRoot(item, null, 'copy', buildDeps([owner({ id: 1 }), owner({ id: 2, title: 'Other' })])),
     ).rejects.toMatchObject({ name: 'OwnedRecordingError' });
     expect((await readdir(target)).sort()).toEqual(['incumbent.m4b']);
   });
@@ -1226,7 +1266,7 @@ describe('copyToLibrary — cross-row collision fence (#1711)', () => {
     // Raw ":::" is truthy but sanitizes to null; the guard must evaluate the sanitized discriminator.
     const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: [':::'] };
     await expect(
-      copyToLibrary(item, null, 'copy', buildDeps([owner({ narrators: [{ name: 'Jim Dale' }] })])),
+      copyWithRoot(item, null, 'copy', buildDeps([owner({ narrators: [{ name: 'Jim Dale' }] })])),
     ).rejects.toMatchObject({ name: 'OwnedRecordingError', reason: 'recording-review-no-disambiguator' });
     expect((await readdir(target)).sort()).toEqual(['incumbent.m4b']);
     expect((await readdir(join(libraryRoot, 'Author'))).some((n) => n.includes(':'))).toBe(false);
@@ -1258,7 +1298,7 @@ describe('copyToLibrary — cross-row collision fence (#1711)', () => {
       .mockResolvedValueOnce([owner({ narrators: [{ name: 'Jim Dale' }], asin: 'B0JIM' })])
       .mockResolvedValueOnce([owner({ id: 2, narrators: [{ name: 'Stephen Fry' }], asin: 'B0FRY' })]);
 
-    const result = await copyToLibrary(item, null, 'copy', buildDepsSeq(fpo));
+    const result = await copyWithRoot(item, null, 'copy', buildDepsSeq(fpo));
 
     expect(result.targetPath).toBe(toPosix(disambig));
     expect((await readdir(disambig)).sort()).toEqual(['new.mp3']);
@@ -1277,7 +1317,7 @@ describe('copyToLibrary — cross-row collision fence (#1711)', () => {
       .mockResolvedValueOnce([owner({ narrators: [{ name: 'Jim Dale' }], asin: 'B0JIM' })])
       .mockResolvedValueOnce([owner({ id: 3, narrators: [{ name: 'Andrew Smith' }], asin: 'B0OTHER' })]);
 
-    await expect(copyToLibrary(item, null, 'copy', buildDepsSeq(fpo)))
+    await expect(copyWithRoot(item, null, 'copy', buildDepsSeq(fpo)))
       .rejects.toMatchObject({ name: 'OwnedRecordingError', reason: 'recording-review-disambiguated-collision' });
     expect((await readdir(target)).sort()).toEqual(['incumbent.m4b']);
     expect((await readdir(disambig)).sort()).toEqual(['other.m4b']);
@@ -1294,7 +1334,7 @@ describe('copyToLibrary — cross-row collision fence (#1711)', () => {
     await writeFile(join(disc2, 'd2.mp3'), Buffer.alloc(300, 2));
 
     const discItem: ImportConfirmItem = { path: disc1, title: 'Title', authorName: 'Author', narrators: ['Stephen Fry'] };
-    const result = await copyToLibrary(discItem, null, 'copy', buildDeps([owner({ narrators: [{ name: 'Jim Dale' }] })]));
+    const result = await copyWithRoot(discItem, null, 'copy', buildDeps([owner({ narrators: [{ name: 'Jim Dale' }] })]));
 
     const disambig = join(libraryRoot, 'Author', 'Title (Stephen Fry)');
     expect(result.editionLabel).toBe('Stephen Fry');
@@ -1363,7 +1403,7 @@ describe('copyToLibrary — non-mocked findPathOwners through the fence (real DB
 
     // Base-path result distinguishes a matched owner from the zero-owner disambiguation path.
     const item: ImportConfirmItem = { path: source, title: 'Title', authorName: 'Author', narrators: ['Stephen Fry'], asin: 'B0SAME' };
-    const result = await copyToLibrary(item, null, 'copy', buildDeps());
+    const result = await copyWithRoot(item, null, 'copy', buildDeps());
 
     expect(result.targetPath).toBe(toPosix(target));
     expect(result.editionLabel).toBeUndefined();

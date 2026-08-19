@@ -7,6 +7,7 @@ import { join, extname, dirname } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/index.js';
 import { MARKER_SUFFIX } from '@core/utils/import-sibling-suffixes.js';
+import { removeTree } from '@core/utils/remove-tree.js';
 import { deriveImportSiblings, type ImportSiblings } from './import-sibling-paths.js';
 import { assertMarkerPathWritable } from './marker-path-conflict.js';
 import { serializeError } from './serialize-error.js';
@@ -130,10 +131,10 @@ export async function removeImportSibling(
     }
   }
   if (opts?.strict) {
-    await rm(path, { recursive: true, force: true });
+    await removeTree(path);
     return;
   }
-  await rm(path, { recursive: true, force: true })
+  await removeTree(path)
     .catch((rmError: unknown) => log.warn({ error: serializeError(rmError), path, label }, 'Failed to remove import sibling — continuing'));
 }
 
@@ -350,7 +351,16 @@ async function syncDirectoryEntry(dirPath: string, log: FastifyBaseLogger): Prom
   } catch (syncError: unknown) {
     log.debug({ error: serializeError(syncError), dirPath }, 'Best-effort directory fsync failed — file flush already covers durability');
   } finally {
-    await handle?.close().catch(() => {});
+    // warn, not debug: a close can only fail after open() succeeded, so unlike the fsync above it is
+    // never routine — it leaks a descriptor. Containing it here keeps a rejection from escaping the
+    // finally and replacing the commit's own outcome.
+    if (handle) {
+      try {
+        await handle.close();
+      } catch (closeError: unknown) {
+        log.warn({ error: serializeError(closeError), dirPath }, 'Failed to close directory handle after fsync');
+      }
+    }
   }
 }
 

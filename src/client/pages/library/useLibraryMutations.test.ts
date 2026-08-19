@@ -124,7 +124,7 @@ describe('useLibraryMutations', () => {
 
   describe('deleteMissingMutation', () => {
     it('calls deleteMissingBooks and shows success toast with count', async () => {
-      vi.mocked(api.deleteMissingBooks).mockResolvedValue({ deleted: 5 });
+      vi.mocked(api.deleteMissingBooks).mockResolvedValue({ deleted: 5, failed: 0 });
 
       const { result } = renderHook(() => useLibraryMutations(), { wrapper: createWrapper() });
 
@@ -137,7 +137,7 @@ describe('useLibraryMutations', () => {
     });
 
     it('uses singular form when only 1 book deleted', async () => {
-      vi.mocked(api.deleteMissingBooks).mockResolvedValue({ deleted: 1 });
+      vi.mocked(api.deleteMissingBooks).mockResolvedValue({ deleted: 1, failed: 0 });
 
       const { result } = renderHook(() => useLibraryMutations(), { wrapper: createWrapper() });
 
@@ -145,6 +145,30 @@ describe('useLibraryMutations', () => {
 
       await waitFor(() => {
         expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Removed 1 missing book');
+      });
+    });
+
+    it('appends the failure count so a partial sweep is not silently reported as success', async () => {
+      vi.mocked(api.deleteMissingBooks).mockResolvedValue({ deleted: 2, failed: 3 });
+
+      const { result } = renderHook(() => useLibraryMutations(), { wrapper: createWrapper() });
+
+      act(() => { result.current.deleteMissingMutation.mutate(); });
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Removed 2 missing books, 3 failed');
+      });
+    });
+
+    it('reports a sweep that deleted nothing and failed on everything', async () => {
+      vi.mocked(api.deleteMissingBooks).mockResolvedValue({ deleted: 0, failed: 1 });
+
+      const { result } = renderHook(() => useLibraryMutations(), { wrapper: createWrapper() });
+
+      act(() => { result.current.deleteMissingMutation.mutate(); });
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Removed 0 missing books, 1 failed');
       });
     });
 

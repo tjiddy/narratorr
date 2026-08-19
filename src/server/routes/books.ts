@@ -32,7 +32,7 @@ export interface BookRouteDeps {
 import { searchAndGrabForBook, buildNarratorPriority, buildSearchFilterOptions } from '../services/search-pipeline.js';
 import { z } from 'zod';
 import { triggerImmediateSearch } from '../services/trigger-immediate-search.js';
-import { addBook, type AddBookItem, type AddBookResult } from '../services/book-intake/index.js';
+import { addBook, unreachableExclusion, type AddBookItem, type AddBookResult } from '../services/book-intake/index.js';
 import {
   idParamSchema,
   bookListQuerySchema,
@@ -68,6 +68,7 @@ type LibraryBooksListQuery = z.infer<typeof libraryBooksListQuerySchema>;
 type IdParam = z.infer<typeof idParamSchema>;
 
 import { refreshScanBook } from '../services/refresh-scan.service.js';
+import { withBookAdmissionLock } from '../services/book-admission.js';
 
 
 async function registerDeleteBookRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookDeletionService'>) {
@@ -102,7 +103,7 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
  * reading `id`/`title`, and `conflict` is the only field they must opt into. `review` means the
  * resolver abstained, which is not the ownership claim a bare row reads as.
  */
-function buildAddConflictBody(result: Exclude<AddBookResult, { outcome: 'created' }>) {
+function buildAddConflictBody(result: Exclude<AddBookResult, { outcome: 'created' | 'excluded' }>) {
   if (result.outcome === 'owned-race') {
     // Hydration is best-effort, so the error's identity is the floor and the body is never null.
     return { id: result.existingBookId, title: result.bookTitle, ...result.book, conflict: 'owned-race' as const };
@@ -158,6 +159,9 @@ async function registerAddBookRoute(app: FastifyInstance, deps: BookRouteDeps) {
         resolve: 'skip',
         provenance: { source: 'manual', eventShape: 'snapshot' },
       }, request.log);
+      // This surface supplies no exclusion port, so the operator can still add an excluded book
+      // by hand; the arm is asserted unreachable rather than answered with a 409.
+      if (result.outcome === 'excluded') return unreachableExclusion(result);
       if (result.outcome !== 'created') {
         return reply.status(409).send(buildAddConflictBody(result));
       }
@@ -175,11 +179,11 @@ async function registerAddBookRoute(app: FastifyInstance, deps: BookRouteDeps) {
   );
 }
 
-async function registerDeleteMissingRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService'>) {
+async function registerDeleteMissingRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookDeletionService'>) {
   app.delete('/api/books/missing', async (request) => {
-    const deleted = await deps.bookService.deleteByStatus('missing');
-    request.log.info({ deleted }, 'Batch deleted missing books');
-    return { deleted };
+    const summary = await deps.bookDeletionService.deleteMissingBooks();
+    request.log.info(summary, 'Batch deleted missing books');
+    return summary;
   });
 }
 
@@ -326,7 +330,9 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       const body = request.body;
 
       // Only operator edits create clear-field tombstones; internal nulls retain fill-empty semantics.
-      const book = await bookService.update(id, body, { userAsserted: true });
+      // The acquisition lives here, not in `BookService.update`: that method is a shared write
+      // primitive with nine non-test callers, most of them already inside a held section.
+      const book = await withBookAdmissionLock(id, () => bookService.update(id, body, { userAsserted: true }));
 
       if (!book) {
         return reply.status(404).send({ error: 'Book not found' });

@@ -1,4 +1,5 @@
 import type { DownloadProtocol } from '@shared/schemas/download-protocol.js';
+import type { UnsatisfiedStatus } from '../utils/mam-unsatisfied.js';
 
 export type { DownloadProtocol };
 
@@ -11,6 +12,8 @@ export interface SearchResult {
   downloadUrl?: string;
   infoHash?: string;
   size?: number;
+  /** Indexer's human-readable size string; diagnostic only, so a mangled parse is legible in the log. */
+  rawSize?: string;
   seeders?: number;
   leechers?: number;
   grabs?: number;
@@ -28,6 +31,12 @@ export interface SearchResult {
   isVipOnly?: boolean;
   /** Lowercase MAM container. Absence is unknown, not mp3; display only. */
   format?: string;
+  /**
+   * The unsatisfied allowance the source indexer reported for THIS search, attached where
+   * indexerId is stamped. Request-scoped telemetry, never stored: absence is the fail-open
+   * state, so an unannotated result is never blocked. Only MAM reports it.
+   */
+  unsatisfied?: UnsatisfiedStatus;
 }
 
 export interface SearchOptions {
@@ -39,6 +48,13 @@ export interface SearchOptions {
   languages?: readonly string[] | undefined;
   /** Ranking-only author context. Adapters must ignore it; scoring falls back to author. */
   rankingAuthor?: string | undefined;
+  /**
+   * The same punctuation-cleaned query as the positional `query`, but with apostrophes kept.
+   * Only an adapter whose index cannot match a de-apostrophized token may read it (today: ABB,
+   * whose tokenizer treats the apostrophe as a word character, #2422). Every other adapter uses
+   * the positional `query` argument, so its request is unaffected by this field's presence.
+   */
+  queryWithApostrophes?: string | undefined;
 }
 
 export interface IndexerTestResult {
@@ -49,13 +65,24 @@ export interface IndexerTestResult {
   metadata?: Record<string, unknown> | undefined;
 }
 
-/** Per-item parse outcome; rawTitleBytes preserves UTF-8 shape for encoding diagnostics. */
+/**
+ * Per-item parse outcome; rawTitleBytes preserves UTF-8 shape for encoding diagnostics.
+ *
+ * The four failure fields currently have no producer: #2420 moved ABB detail fetching to the
+ * grab seam, where a failure throws IndexerError (warned by resolveAdapterDownloadUrl) instead
+ * of emitting a trace. They stay for the next adapter that records per-row transport failures.
+ */
 export interface IndexerParseTrace {
   source: 'item' | 'enclosure' | 'row';
   reason: 'kept' | 'dropped:empty-title' | 'dropped:no-url' | `dropped:${string}`;
   rawTitle?: string;
   rawTitleBytes?: string;
   guid?: string;
+  errorMessage?: string;
+  errorCode?: string;
+  httpStatus?: number;
+  /** The request that failed, not the search request the response as a whole reports. */
+  requestUrl?: string;
 }
 
 export interface IndexerParseStats {
@@ -93,7 +120,12 @@ export interface IndexerAdapter {
 
   search(query: string, options?: SearchOptions): Promise<IndexerSearchResponse>;
   test(): Promise<IndexerTestResult>;
-  refreshStatus?(): Promise<{ isVip: boolean; classname: string } | null>;
+  /**
+   * Independently observed status groups. `isVip`/`classname` derive from one MAM field and are
+   * both present or both absent; `unsatisfied` is present only as a validated pair. `null` means
+   * neither group was observed.
+   */
+  refreshStatus?(signal?: AbortSignal): Promise<{ isVip?: boolean; classname?: string; unsatisfied?: UnsatisfiedStatus } | null>;
   /** Resolve an adapter sentinel to its real grab URL; MAM may also request a freeleech wedge. */
   resolveDownloadUrl?(ctx: ResolveDownloadContext): Promise<ResolveDownloadResult>;
 }

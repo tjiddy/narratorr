@@ -35,10 +35,18 @@ export function isMamFreeleech(
   return !!(item.free || item.personal_freeleech || (item.fl_vip && isVip));
 }
 
-/** MAM's `filetype` → `SearchResult.format`. Blank/absent stays undefined (unknown, not mp3). */
-export function normalizeMamFormat(raw: string | null | undefined): string | undefined {
-  const trimmed = raw?.trim().toLowerCase();
-  return trimmed ? trimmed : undefined;
+// MAM renders English-locale numbers: ',' groups thousands, '.' is the decimal point.
+// Provider-scoped by design — not a locale-aware parser.
+const ENGLISH_GROUPED = /^\d{1,3}(?:,\d{3})*(?:\.\d+)?$/;
+
+/**
+ * Only honour a comma in a well-formed grouping position: stripping a decimal comma ("1,5")
+ * would rescale by 1000, and the size gates fail open, so no size beats a wrong size.
+ * Comma-free tokens skip this entirely and keep their exact pre-#2316 parse.
+ */
+function normalizeGrouping(token: string): string | undefined {
+  if (!token.includes(',')) return token;
+  return ENGLISH_GROUPED.test(token) ? token.replace(/,/g, '') : undefined;
 }
 
 /** Parse MAM binary-unit sizes; numbers pass through and invalid or zero values are absent. */
@@ -49,7 +57,10 @@ export function parseMamSize(raw: string | number | undefined): number | undefin
   const parts = raw.trim().split(' ');
   if (parts.length !== 2) return undefined;
 
-  const num = parseFloat(parts[0]!);
+  const normalized = normalizeGrouping(parts[0]!);
+  if (normalized === undefined) return undefined;
+
+  const num = parseFloat(normalized);
   if (!num || !isFinite(num)) return undefined;
 
   const multipliers: Record<string, number> = {

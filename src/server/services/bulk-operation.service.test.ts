@@ -10,8 +10,8 @@ import { createMockDbBook } from '../__tests__/factories.js';
 import { BulkOperationService, BulkOpError } from './bulk-operation.service.js';
 import { RenameError } from './rename.service.js';
 import { RetagError } from './tagging.service.js';
-import { writeOpfSidecar } from '../utils/opf-writer.js';
-import { downloadRemoteCover } from './cover-download.js';
+import { writeOpfSidecarWithinAdmissionLock } from '../utils/opf-writer.js';
+import { downloadRemoteCoverWithinAdmissionLock } from './cover-download.js';
 import { readdir } from 'node:fs/promises';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@db/index.js';
@@ -30,11 +30,11 @@ function toSQL(expr: unknown): { sql: string; params: unknown[] } {
 
 // Mock outcome-producing I/O while keeping isRemoteCoverUrl's gating logic real.
 vi.mock('../utils/opf-writer.js', () => ({
-  writeOpfSidecar: vi.fn().mockResolvedValue('written'),
+  writeOpfSidecarWithinAdmissionLock: vi.fn().mockResolvedValue('written'),
 }));
 vi.mock('./cover-download.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./cover-download.js')>()),
-  downloadRemoteCover: vi.fn().mockResolvedValue('written'),
+  downloadRemoteCoverWithinAdmissionLock: vi.fn().mockResolvedValue('written'),
 }));
 
 
@@ -1026,9 +1026,23 @@ describe('TTL cleanup', () => {
   });
 });
 
+/**
+ * The sidecar job's batch query, followed by the per-book row re-read each section performs
+ * (#2369 F2): the batch snapshot is pre-lock, so the folder and cover URL are taken again inside.
+ */
+function stubSidecarRows(
+  db: ReturnType<typeof createService>['db'],
+  rows: Array<{ id: number; path: string | null; coverUrl: string | null; title?: string }>,
+): void {
+  db.select.mockReturnValueOnce(mockDbChain(rows));
+  for (const row of rows) {
+    db.select.mockReturnValueOnce(mockDbChain([{ path: row.path, coverUrl: row.coverUrl }]));
+  }
+}
+
 describe('BulkOperationService — startWriteMetadataSidecarsJob (#1670)', () => {
-  const writeOpfMock = vi.mocked(writeOpfSidecar);
-  const downloadMock = vi.mocked(downloadRemoteCover);
+  const writeOpfMock = vi.mocked(writeOpfSidecarWithinAdmissionLock);
+  const downloadMock = vi.mocked(downloadRemoteCoverWithinAdmissionLock);
 
   beforeEach(() => {
     vi.resetAllMocks();
@@ -1057,7 +1071,7 @@ describe('BulkOperationService — startWriteMetadataSidecarsJob (#1670)', () =>
 
   it('a normal imported book → OPF written + cover materialized, counted success', async () => {
     const { service, db } = createService();
-    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: '/lib/A/1', coverUrl: 'https://x/c.png' }]));
+    stubSidecarRows(db, [{ id: 1, path: '/lib/A/1', coverUrl: 'https://x/c.png' }]);
     const id = service.startWriteMetadataSidecarsJob();
     await waitForJob(service, id);
 
@@ -1071,7 +1085,7 @@ describe('BulkOperationService — startWriteMetadataSidecarsJob (#1670)', () =>
 
   it("OPF write 'failed' → failure counted, job still completes", async () => {
     const { service, db } = createService();
-    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: '/lib/A/1', coverUrl: null }]));
+    stubSidecarRows(db, [{ id: 1, path: '/lib/A/1', coverUrl: null }]);
     writeOpfMock.mockResolvedValue('failed');
     const id = service.startWriteMetadataSidecarsJob();
     await waitForJob(service, id);
@@ -1083,7 +1097,7 @@ describe('BulkOperationService — startWriteMetadataSidecarsJob (#1670)', () =>
 
   it("attempted cover download returning 'failed' → failure counted", async () => {
     const { service, db } = createService();
-    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: '/lib/A/1', coverUrl: 'https://x/c.png' }]));
+    stubSidecarRows(db, [{ id: 1, path: '/lib/A/1', coverUrl: 'https://x/c.png' }]);
     downloadMock.mockResolvedValue('failed');
     const id = service.startWriteMetadataSidecarsJob();
     await waitForJob(service, id);
@@ -1092,7 +1106,7 @@ describe('BulkOperationService — startWriteMetadataSidecarsJob (#1670)', () =>
 
   it('coverUrl=null → no download attempt, counted success', async () => {
     const { service, db } = createService();
-    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: '/lib/A/1', coverUrl: null }]));
+    stubSidecarRows(db, [{ id: 1, path: '/lib/A/1', coverUrl: null }]);
     const id = service.startWriteMetadataSidecarsJob();
     await waitForJob(service, id);
     expect(downloadMock).not.toHaveBeenCalled();
@@ -1101,7 +1115,7 @@ describe('BulkOperationService — startWriteMetadataSidecarsJob (#1670)', () =>
 
   it('single-file pointer (.m4b) → BOTH OPF and cover skipped, NOT a failure (F4)', async () => {
     const { service, db } = createService();
-    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: '/audiobooks/Doctor Sleep.m4b', coverUrl: 'https://x/c.png' }]));
+    stubSidecarRows(db, [{ id: 1, path: '/audiobooks/Doctor Sleep.m4b', coverUrl: 'https://x/c.png' }]);
     const id = service.startWriteMetadataSidecarsJob();
     await waitForJob(service, id);
 
@@ -1114,10 +1128,10 @@ describe('BulkOperationService — startWriteMetadataSidecarsJob (#1670)', () =>
 
   it('one book failing never aborts the run (other books still processed)', async () => {
     const { service, db } = createService();
-    db.select.mockReturnValueOnce(mockDbChain([
+    stubSidecarRows(db, [
       { id: 1, path: '/lib/A/1', coverUrl: null },
       { id: 2, path: '/lib/A/2', coverUrl: null },
-    ]));
+    ]);
     writeOpfMock.mockResolvedValueOnce('failed').mockResolvedValue('written');
     const id = service.startWriteMetadataSidecarsJob();
     await waitForJob(service, id);
@@ -1129,13 +1143,13 @@ describe('BulkOperationService — startWriteMetadataSidecarsJob (#1670)', () =>
 
   it('F5: a remote coverUrl is downloaded on the first run but a now-local one is not on the second', async () => {
     const { service, db } = createService();
-    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: '/lib/A/1', coverUrl: 'https://x/c.png' }]));
+    stubSidecarRows(db, [{ id: 1, path: '/lib/A/1', coverUrl: 'https://x/c.png' }]);
     const id1 = service.startWriteMetadataSidecarsJob();
     await waitForJob(service, id1);
     expect(downloadMock).toHaveBeenCalledTimes(1);
 
     downloadMock.mockClear();
-    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: '/lib/A/1', coverUrl: '/api/books/1/cover' }]));
+    stubSidecarRows(db, [{ id: 1, path: '/lib/A/1', coverUrl: '/api/books/1/cover' }]);
     const id2 = service.startWriteMetadataSidecarsJob();
     await waitForJob(service, id2);
     expect(downloadMock).not.toHaveBeenCalled();
@@ -1164,8 +1178,8 @@ function renameRow(id: number, title: string) {
 }
 
 describe('BulkOperationService — named failure details (#2159)', () => {
-  const writeOpfMock = vi.mocked(writeOpfSidecar);
-  const downloadMock = vi.mocked(downloadRemoteCover);
+  const writeOpfMock = vi.mocked(writeOpfSidecarWithinAdmissionLock);
+  const downloadMock = vi.mocked(downloadRemoteCoverWithinAdmissionLock);
 
   beforeEach(() => {
     vi.resetAllMocks();
@@ -1186,6 +1200,23 @@ describe('BulkOperationService — named failure details (#2159)', () => {
       expect(service.getJob(id)?.failureDetails).toEqual([
         { bookId: 2, title: 'Storm Front', error: 'CONFLICT: Target folder already exists' },
       ]);
+    });
+
+    it.each(['TARGET_OCCUPIED', 'STALE_PATH'] as const)('degrades per book for a %s, leaving the job running', async (code) => {
+      const renameService = makeRenameService();
+      const { service, db } = createService({ renameService });
+      db.select.mockReturnValueOnce(mockDbChain([renameRow(2, 'Storm Front'), renameRow(3, 'Fool Moon')]));
+      (renameService.renameBook as Mock)
+        .mockRejectedValueOnce(new RenameError('refused', code))
+        .mockResolvedValueOnce({ oldPath: '/a', newPath: '/b', message: 'Moved', filesRenamed: 0 });
+
+      const id = await service.startRenameJob();
+      await waitForJob(service, id);
+
+      const status = service.getJob(id);
+      expect(status?.failures).toBe(1);
+      expect(status?.completed).toBe(2);
+      expect(status?.failureDetails).toEqual([{ bookId: 2, title: 'Storm Front', error: `${code}: refused` }]);
     });
 
     it('records NOTHING for a NO_PATH skip while still ticking completed', async () => {
@@ -1299,7 +1330,7 @@ describe('BulkOperationService — named failure details (#2159)', () => {
     it("records a detail naming the book when the OPF write returns 'failed'", async () => {
       const { service, db } = createService();
       writeOpfMock.mockResolvedValue('failed');
-      db.select.mockReturnValueOnce(mockDbChain([{ id: 226, path: '/lib/A/1', coverUrl: null, title: "Captain's Fury" }]));
+      stubSidecarRows(db, [{ id: 226, path: '/lib/A/1', coverUrl: null, title: "Captain's Fury" }]);
 
       const id = service.startWriteMetadataSidecarsJob();
       await waitForJob(service, id);
@@ -1312,7 +1343,7 @@ describe('BulkOperationService — named failure details (#2159)', () => {
     it('records the formatter output for a thrown per-book error', async () => {
       const { service, db } = createService();
       writeOpfMock.mockRejectedValue(Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }));
-      db.select.mockReturnValueOnce(mockDbChain([{ id: 11, path: '/lib/A/1', coverUrl: null, title: 'Dead Beat' }]));
+      stubSidecarRows(db, [{ id: 11, path: '/lib/A/1', coverUrl: null, title: 'Dead Beat' }]);
 
       const id = service.startWriteMetadataSidecarsJob();
       await waitForJob(service, id);
@@ -1325,7 +1356,7 @@ describe('BulkOperationService — named failure details (#2159)', () => {
     it('routes a thrown per-book error through the formatter — a URL secret is redacted', async () => {
       const { service, db } = createService();
       writeOpfMock.mockRejectedValue(new Error('Sidecar hook failed at https://hooks.example.com/run?apikey=SECRET'));
-      db.select.mockReturnValueOnce(mockDbChain([{ id: 12, path: '/lib/A/1', coverUrl: null, title: 'Proven Guilty' }]));
+      stubSidecarRows(db, [{ id: 12, path: '/lib/A/1', coverUrl: null, title: 'Proven Guilty' }]);
 
       const id = service.startWriteMetadataSidecarsJob();
       await waitForJob(service, id);
@@ -1341,7 +1372,7 @@ describe('BulkOperationService — named failure details (#2159)', () => {
         args.onFailure?.(Object.assign(new Error("ENOENT: no such file or directory, open '/audiobooks/x/metadata.opf'"), { code: 'ENOENT' }));
         return 'failed';
       });
-      db.select.mockReturnValueOnce(mockDbChain([{ id: 226, path: '/lib/A/1', coverUrl: null, title: "Captain's Fury" }]));
+      stubSidecarRows(db, [{ id: 226, path: '/lib/A/1', coverUrl: null, title: "Captain's Fury" }]);
 
       const id = service.startWriteMetadataSidecarsJob();
       await waitForJob(service, id);
@@ -1354,7 +1385,7 @@ describe('BulkOperationService — named failure details (#2159)', () => {
 
   it('keeps failureDetails at [] and the payload otherwise unchanged for a clean job', async () => {
     const { service, db } = createService();
-    db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: '/lib/A/1', coverUrl: null, title: 'Clean' }]));
+    stubSidecarRows(db, [{ id: 1, path: '/lib/A/1', coverUrl: null, title: 'Clean' }]);
 
     const id = service.startWriteMetadataSidecarsJob();
     await waitForJob(service, id);
@@ -1373,8 +1404,8 @@ describe('BulkOperationService — named failure details (#2159)', () => {
 
 // Logs retain full serialized errors; failureDetails intentionally store only the short form.
 describe('BulkOperationService — per-book failure logs are unchanged (#2159 AC14)', () => {
-  const writeOpfMock = vi.mocked(writeOpfSidecar);
-  const downloadMock = vi.mocked(downloadRemoteCover);
+  const writeOpfMock = vi.mocked(writeOpfSidecarWithinAdmissionLock);
+  const downloadMock = vi.mocked(downloadRemoteCoverWithinAdmissionLock);
 
   beforeEach(() => {
     vi.resetAllMocks();
@@ -1425,7 +1456,7 @@ describe('BulkOperationService — per-book failure logs are unchanged (#2159 AC
   it('sidecars: warn with the serialized error, bookId and jobId', async () => {
     const { service, db, log } = createService();
     writeOpfMock.mockRejectedValue(Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }));
-    db.select.mockReturnValueOnce(mockDbChain([{ id: 11, path: '/lib/A/1', coverUrl: null, title: 'Dead Beat' }]));
+    stubSidecarRows(db, [{ id: 11, path: '/lib/A/1', coverUrl: null, title: 'Dead Beat' }]);
 
     const id = service.startWriteMetadataSidecarsJob();
     await waitForJob(service, id);

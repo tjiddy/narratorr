@@ -444,6 +444,79 @@ describe('#455 event reason rendering', () => {
     });
   });
 
+  describe('grab_blocked_unsatisfied registration (#2322 AC8)', () => {
+    const blockedEvent = () => createMockEvent({
+      eventType: 'grab_blocked_unsatisfied',
+      downloadId: null,
+      reason: {
+        indexer: 'MyAnonamouse',
+        count: 150,
+        limit: 150,
+        release_title: 'The Churn: An Expanse Novella',
+      },
+    });
+
+    it('renders the registered label, never the raw event-type literal', () => {
+      renderWithProviders(<EventHistoryCard event={blockedEvent()} />);
+
+      expect(screen.getByText('Grab Blocked — At Limit')).toBeInTheDocument();
+      expect(screen.queryByText('grab_blocked_unsatisfied')).not.toBeInTheDocument();
+    });
+
+    it('renders the registered icon and colour pair, not DEFAULT_CONFIG', () => {
+      const { container } = renderWithProviders(<EventHistoryCard event={blockedEvent()} />);
+
+      const iconWrap = container.querySelector('.rounded-xl.shrink-0') ?? container.querySelector('[class*="bg-yellow-500/10"]');
+      expect(iconWrap?.className).toContain('bg-yellow-500/10');
+
+      const svg = container.querySelector('svg');
+      expect(svg?.getAttribute('class')).toContain('text-yellow-400');
+      // The outline path distinguishes registered AlertTriangleIcon from fallback ClockIcon.
+      expect(svg?.querySelector('path[d^="m21.73 18-8-14"]')).not.toBeNull();
+      expect(svg?.querySelector('circle[r="10"]')).toBeNull();
+    });
+  });
+
+  describe('sidecar_diverged registration (#2297 AC14)', () => {
+    const divergedEvent = () => createMockEvent({
+      eventType: 'sidecar_diverged',
+      downloadId: null,
+      bookPath: '/audiobooks/Terry Pratchett/Mort',
+      reason: {
+        changed_fields: ['seriesName', 'seriesPosition'],
+        previous: { seriesName: 'Discworld', seriesPosition: 4 },
+      },
+    });
+
+    it('renders the registered label, never the raw event-type literal', () => {
+      renderWithProviders(<EventHistoryCard event={divergedEvent()} />);
+
+      expect(screen.getByText('Sidecar Diverged')).toBeInTheDocument();
+      expect(screen.queryByText('sidecar_diverged')).not.toBeInTheDocument();
+    });
+
+    it('renders the registered icon and colour pair, not DEFAULT_CONFIG', () => {
+      const { container } = renderWithProviders(<EventHistoryCard event={divergedEvent()} />);
+
+      const iconWrap = container.querySelector('.rounded-xl.shrink-0') ?? container.querySelector('[class*="bg-yellow-500/10"]');
+      expect(iconWrap?.className).toContain('bg-yellow-500/10');
+
+      const svg = container.querySelector('svg');
+      expect(svg?.getAttribute('class')).toContain('text-yellow-400');
+      // The outline path distinguishes registered AlertTriangleIcon from fallback ClockIcon.
+      expect(svg?.querySelector('path[d^="m21.73 18-8-14"]')).not.toBeNull();
+      expect(svg?.querySelector('circle[r="10"]')).toBeNull();
+    });
+
+    it('passes the projected current book folder through to the detail renderer', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<EventHistoryCard event={divergedEvent()} />);
+
+      await user.click(screen.getByText('View details'));
+      expect(screen.getByText('/audiobooks/Terry Pratchett/Mort/metadata.opf.bak')).toBeInTheDocument();
+    });
+  });
+
   describe('held_for_review event details', () => {
     it('shows human-readable hold reasons', async () => {
       const user = userEvent.setup();

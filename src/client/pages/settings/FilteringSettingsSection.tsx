@@ -36,7 +36,7 @@ function toPayload(data: FilteringFormData) {
 const CARD_LABEL = 'Filtering';
 
 export function FilteringSettingsSection() {
-  const { form, mutation, onSubmit } = useSettingsForm<FilteringFormData>({
+  const { form, mutation, onSubmit, settingsError, refetchSettings } = useSettingsForm<FilteringFormData>({
     schema: filteringFormSchema,
     defaultValues: toFormData({ ...DEFAULT_SETTINGS } as AppSettings),
     select: toFormData,
@@ -62,81 +62,97 @@ export function FilteringSettingsSection() {
       title={CARD_LABEL}
       description="What search results to keep"
     >
-      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
-        <SettingsTable>
-          <SettingsRow
-            layout="stacked"
-            label="Languages"
-            description="Search results in unselected languages are excluded. Results with no language metadata always pass through. Deselect all for unrestricted search."
-          >
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {CANONICAL_LANGUAGES.map((lang) => (
-                <label key={lang} className="flex items-center gap-2 text-sm cursor-pointer capitalize">
-                  <input
-                    type="checkbox"
-                    checked={selectedLanguages.includes(lang)}
-                    onChange={() => toggleLanguage(lang)}
-                    className="rounded border-border text-primary focus-ring"
-                  />
-                  {lang}
-                </label>
-              ))}
-            </div>
-          </SettingsRow>
-
-          <SettingsRow htmlFor="minDurationMinutes" label="Minimum duration" description="Filter out promotional excerpts, TTS knockoffs, and supplementary clips. Default: 30 minutes. Set to 0 to disable.">
-            <NumberField
-              id="minDurationMinutes"
-              {...register('minDurationMinutes', { valueAsNumber: true })}
-              min={0}
-              step={1}
-              placeholder="0"
-              suffix="minutes"
-              error={errors.minDurationMinutes?.message}
-            />
-          </SettingsRow>
-
-          <SettingsRow
-            layout="stacked"
-            htmlFor="rejectWords"
-            label="Reject words"
-            description="Comma-separated words. Releases or metadata results matching any word in title, subtitle, author, narrator, or format type are excluded."
-          >
-            <input
-              id="rejectWords"
-              type="text"
-              {...register('rejectWords')}
-              className={inputClass}
-              placeholder="Virtual Voice, Free Excerpt, Sample, Behind the Scenes, Abridged"
-            />
-          </SettingsRow>
-
-          <SettingsRow
-            layout="stacked"
-            htmlFor="requiredWords"
-            label="Required words"
-            description="Comma-separated words. When set, only releases with titles matching at least one word are shown."
-          >
-            <input
-              id="requiredWords"
-              type="text"
-              {...register('requiredWords')}
-              className={inputClass}
-              placeholder="M4B, Unabridged"
-            />
-          </SettingsRow>
-        </SettingsTable>
-
-        {isDirty && (
+      {/* The default reject words and 30-minute floor read as the operator's filters;
+          a failed read never observed the saved ones. */}
+      {settingsError ? (
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-red-500">Failed to load filtering settings.</p>
           <button
-            type="submit"
-            disabled={mutation.isPending}
-            className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
+            type="button"
+            onClick={refetchSettings}
+            aria-label="Retry loading filtering settings"
+            className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-all focus-ring"
           >
-            {mutation.isPending ? 'Saving...' : 'Save'}
+            Retry
           </button>
-        )}
-      </form>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
+          <SettingsTable>
+            <SettingsRow
+              layout="stacked"
+              label="Languages"
+              description="Search results in unselected languages are excluded. Results with no language metadata always pass through. Deselect all for unrestricted search."
+            >
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {CANONICAL_LANGUAGES.map((lang) => (
+                  <label key={lang} className="flex items-center gap-2 text-sm cursor-pointer capitalize">
+                    <input
+                      type="checkbox"
+                      checked={selectedLanguages.includes(lang)}
+                      onChange={() => toggleLanguage(lang)}
+                      className="rounded border-border text-primary focus-ring"
+                    />
+                    {lang}
+                  </label>
+                ))}
+              </div>
+            </SettingsRow>
+
+            <SettingsRow htmlFor="minDurationMinutes" label="Minimum duration" description="Filter out promotional excerpts, TTS knockoffs, and supplementary clips. Default: 30 minutes. Set to 0 to disable.">
+              <NumberField
+                id="minDurationMinutes"
+                {...register('minDurationMinutes', { valueAsNumber: true })}
+                min={0}
+                step={1}
+                placeholder="0"
+                suffix="minutes"
+                error={errors.minDurationMinutes?.message}
+              />
+            </SettingsRow>
+
+            <SettingsRow
+              layout="stacked"
+              htmlFor="rejectWords"
+              label="Reject words"
+              description="Comma-separated words. Releases or metadata results matching any word in title, subtitle, author, narrator, or format type are excluded."
+            >
+              <input
+                id="rejectWords"
+                type="text"
+                {...register('rejectWords')}
+                className={inputClass}
+                placeholder="Virtual Voice, Free Excerpt, Sample, Behind the Scenes, Abridged"
+              />
+            </SettingsRow>
+
+            <SettingsRow
+              layout="stacked"
+              htmlFor="requiredWords"
+              label="Required words"
+              description="Comma-separated words. When set, only releases with titles matching at least one word are shown."
+            >
+              <input
+                id="requiredWords"
+                type="text"
+                {...register('requiredWords')}
+                className={inputClass}
+                placeholder="M4B, Unabridged"
+              />
+            </SettingsRow>
+          </SettingsTable>
+
+          {isDirty && (
+            <button
+              type="submit"
+              disabled={mutation.isPending}
+              className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
+            >
+              {mutation.isPending ? 'Saving...' : 'Save'}
+            </button>
+          )}
+        </form>
+      )}
     </SettingsSection>
   );
 }

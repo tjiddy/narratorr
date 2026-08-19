@@ -8,6 +8,7 @@ import type { Db } from '@db/index.js';
 import type { SearchResult } from '@core/index.js';
 import type { SettingsService } from './settings.service.js';
 import { initializeKey, _resetKey } from '../utils/secret-codec.js';
+import { SearchSessionManager } from './search-session.js';
 
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 const mockIndexer = createMockDbIndexer();
@@ -52,6 +53,18 @@ describe('IndexerSearchService', () => {
       expect(result.map((i: { name: string }) => i.name)).toEqual(['Newznab', 'Torznab']);
     });
 
+    // #2322 AC5: the unsatisfied guard is unreachable from runRssJob because no MAM row can be an
+    // RSS source. Pin the exclusion rather than write an RSS test that could only pass vacuously.
+    it('excludes a myanonamouse row, so no RSS candidate can come from MAM', async () => {
+      const mam = createMockDbIndexer({ id: 4, name: 'MAM', type: 'myanonamouse', enabled: true });
+      const torznab = createMockDbIndexer({ id: 5, name: 'Torznab', type: 'torznab', enabled: true });
+      db.select.mockReturnValue(mockDbChain([mam, torznab]));
+
+      const result = await searchService.getRssCapableIndexers();
+
+      expect(result.map((i: { name: string }) => i.name)).toEqual(['Torznab']);
+    });
+
     it('returns empty array when no RSS-capable indexers are enabled', async () => {
       const abb = createMockDbIndexer({ id: 1, name: 'ABB', type: 'abb', enabled: true });
       db.select.mockReturnValue(mockDbChain([abb]));
@@ -74,7 +87,7 @@ describe('IndexerSearchService', () => {
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
-      const results = await searchService.pollRss(torznabIndexer);
+      const { results } = await searchService.pollRss(torznabIndexer);
 
       expect(mockAdapter.search).toHaveBeenCalledWith('');
       expect(results).toHaveLength(1);
@@ -90,7 +103,7 @@ describe('IndexerSearchService', () => {
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
-      const results = await searchService.pollRss(newznabIndexer);
+      const { results } = await searchService.pollRss(newznabIndexer);
       expect(results).toEqual([]);
     });
 
@@ -106,7 +119,7 @@ describe('IndexerSearchService', () => {
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
-      const results = await searchService.pollRss(torznabIndexer);
+      const { results } = await searchService.pollRss(torznabIndexer);
 
       expect(results).toHaveLength(1);
       expect(results[0]!.indexerId).toBe(7);
@@ -126,7 +139,7 @@ describe('IndexerSearchService', () => {
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
-      const results = await searchService.pollRss(torznabIndexer);
+      const { results } = await searchService.pollRss(torznabIndexer);
 
       expect(results).toHaveLength(3);
       for (const result of results) {
@@ -884,6 +897,303 @@ describe('IndexerSearchService', () => {
     });
   });
 
+  // #2310 AC8/AC9/AC14: the outer search deadline is COMPOSED into each leg, never substituted for
+  // the per-indexer controller, and its abort must not degrade into an empty result set.
+  describe('outer deadline signal (#2310)', () => {
+    const mockIndexer2 = createMockDbIndexer({ id: 2, name: 'MAM', type: 'myanonamouse' });
+
+    function adapterCapturingSignal(results: Partial<SearchResult>[] = [{ title: 'Book1', indexer: 'ABB' }]) {
+      const seen: Array<AbortSignal | undefined> = [];
+      return {
+        seen,
+        adapter: {
+          search: vi.fn().mockImplementation((_q: string, options?: { signal?: AbortSignal }) => {
+            seen.push(options?.signal);
+            return Promise.resolve(searchResponse(results));
+          }),
+          test: vi.fn(),
+        },
+      };
+    }
+
+    describe('searchAllStreaming', () => {
+      it('composes the outer signal with the per-indexer controller in both directions', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const { seen, adapter } = adapterCapturingSignal();
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(adapter as never);
+
+        const perIndexer = new AbortController();
+        const outer = new AbortController();
+        const controllers = new Map([[mockIndexer.id, perIndexer]]);
+
+        await searchService.searchAllStreaming('test', undefined, controllers, { onComplete: vi.fn(), onError: vi.fn() }, outer.signal);
+
+        const composed = seen[0]!;
+        expect(composed).toBeInstanceOf(AbortSignal);
+        expect(composed).not.toBe(outer.signal);
+        expect(composed).not.toBe(perIndexer.signal);
+
+        outer.abort();
+        expect(composed.aborted).toBe(true);
+        // The outer deadline must not read as a per-indexer cancellation.
+        expect(perIndexer.signal.aborted).toBe(false);
+      });
+
+      it('does not abort the outer signal when one indexer is cancelled', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const { adapter } = adapterCapturingSignal();
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(adapter as never);
+
+        const perIndexer = new AbortController();
+        const outer = new AbortController();
+        await searchService.searchAllStreaming('test', undefined, new Map([[mockIndexer.id, perIndexer]]), { onComplete: vi.fn(), onError: vi.fn() }, outer.signal);
+
+        perIndexer.abort();
+        expect(outer.signal.aborted).toBe(false);
+      });
+
+      it('passes a valid, never-aborted signal through when there is no per-indexer controller', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const { seen, adapter } = adapterCapturingSignal();
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(adapter as never);
+
+        const outer = new AbortController();
+        await searchService.searchAllStreaming('test', undefined, new Map(), { onComplete: vi.fn(), onError: vi.fn() }, outer.signal);
+
+        expect(seen[0]).toBe(outer.signal);
+        expect(seen[0]!.aborted).toBe(false);
+      });
+
+      it('propagates an outer-deadline abort instead of degrading to an empty result set', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer, mockIndexer2]));
+        const outer = new AbortController();
+        const boom = new DOMException('aborted', 'AbortError');
+        const adapter = {
+          search: vi.fn().mockImplementation(() => { outer.abort(); return Promise.reject(boom); }),
+          test: vi.fn(),
+        };
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(adapter as never);
+
+        const onCancelled = vi.fn();
+        await expect(searchService.searchAllStreaming(
+          'test', undefined,
+          new Map([[mockIndexer.id, new AbortController()], [2, new AbortController()]]),
+          { onComplete: vi.fn(), onError: vi.fn(), onCancelled },
+          outer.signal,
+        )).rejects.toBe(boom);
+        expect(onCancelled).not.toHaveBeenCalled();
+      });
+
+      it('still routes a per-indexer cancellation to onCancelled while the others complete', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer, mockIndexer2]));
+        const cancelled = new AbortController();
+        const outer = new AbortController();
+        let call = 0;
+        vi.spyOn(service, 'getAdapter').mockImplementation(async () => {
+          call++;
+          if (call === 1) {
+            return { search: vi.fn().mockImplementation(() => { cancelled.abort(); return Promise.reject(new DOMException('aborted', 'AbortError')); }), test: vi.fn() } as never;
+          }
+          return { search: vi.fn().mockResolvedValue(searchResponse([{ title: 'Book2', indexer: 'MAM' }])), test: vi.fn() } as never;
+        });
+
+        const onComplete = vi.fn();
+        const onCancelled = vi.fn();
+        const results = await searchService.searchAllStreaming(
+          'test', undefined,
+          new Map([[mockIndexer.id, cancelled], [2, new AbortController()]]),
+          { onComplete, onError: vi.fn(), onCancelled },
+          outer.signal,
+        );
+
+        expect(onCancelled).toHaveBeenCalledWith(mockIndexer.id, mockIndexer.name);
+        expect(onComplete).toHaveBeenCalledWith(2, 'MAM', 1, expect.any(Number));
+        expect(results).toHaveLength(1);
+      });
+
+      // F2: the verdict must be the signal's, not the settlements' shape. An adapter that ignores
+      // the signal (or wins the race with it) fulfils, leaving every settlement fulfilled.
+      it('propagates the abort even when every adapter FULFILS after the signal flips', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer, mockIndexer2]));
+        const outer = new AbortController();
+        vi.spyOn(service, 'getAdapter').mockResolvedValue({
+          search: vi.fn().mockImplementation(() => {
+            outer.abort();
+            return Promise.resolve(searchResponse([{ title: 'Late Book', indexer: 'ABB' }]));
+          }),
+          test: vi.fn(),
+        } as never);
+
+        const onComplete = vi.fn();
+        await expect(searchService.searchAllStreaming(
+          'test', undefined,
+          new Map([[mockIndexer.id, new AbortController()], [2, new AbortController()]]),
+          { onComplete, onError: vi.fn(), onCancelled: vi.fn() },
+          outer.signal,
+        )).rejects.toMatchObject({ name: 'AbortError' });
+      });
+
+      it('still reports a genuine failure through onError under a live outer signal', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        vi.spyOn(service, 'getAdapter').mockResolvedValue({ search: vi.fn().mockRejectedValue(new Error('Timeout')), test: vi.fn() } as never);
+
+        const onError = vi.fn();
+        const results = await searchService.searchAllStreaming(
+          'test', undefined, new Map([[mockIndexer.id, new AbortController()]]),
+          { onComplete: vi.fn(), onError }, new AbortController().signal,
+        );
+
+        expect(onError).toHaveBeenCalledWith(mockIndexer.id, mockIndexer.name, 'Timeout', expect.any(Number));
+        expect(results).toEqual([]);
+      });
+    });
+
+    // #2310 AC14 — driven through the REAL SearchSessionManager, because the wiring under test is
+    // between ITS controllers and the composed outer signal; a hand-built Map cannot see a
+    // regression in how the manager creates, cancels, or cleans them up.
+    describe('SearchSessionManager interaction', () => {
+      it('cancels one indexer without touching the outer deadline, and the others still complete', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer, mockIndexer2]));
+        const manager = new SearchSessionManager();
+        const session = manager.create([
+          { id: mockIndexer.id, name: mockIndexer.name },
+          { id: 2, name: 'MAM' },
+        ]);
+        const outer = new AbortController();
+
+        let call = 0;
+        vi.spyOn(service, 'getAdapter').mockImplementation(async () => {
+          call++;
+          if (call === 1) {
+            return {
+              search: vi.fn().mockImplementation(() => {
+                // The operator cancels this one indexer mid-search, through the manager.
+                manager.cancel(session.sessionId, mockIndexer.id);
+                return Promise.reject(new DOMException('aborted', 'AbortError'));
+              }),
+              test: vi.fn(),
+            } as never;
+          }
+          return { search: vi.fn().mockResolvedValue(searchResponse([{ title: 'Book2', indexer: 'MAM' }])), test: vi.fn() } as never;
+        });
+
+        const onComplete = vi.fn();
+        const onCancelled = vi.fn();
+        const results = await searchService.searchAllStreaming(
+          'test', undefined, session.controllers,
+          { onComplete, onError: vi.fn(), onCancelled },
+          outer.signal,
+        );
+
+        expect(onCancelled).toHaveBeenCalledWith(mockIndexer.id, mockIndexer.name);
+        expect(onComplete).toHaveBeenCalledWith(2, 'MAM', 1, expect.any(Number));
+        expect(results.map((r) => r.title)).toEqual(['Book2']);
+        // The deadline is untouched: a per-indexer cancel must never look like an expiry.
+        expect(outer.signal.aborted).toBe(false);
+      });
+
+      it('treats a cleanup that aborts every controller as cancellation, not as a deadline expiry', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer, mockIndexer2]));
+        const manager = new SearchSessionManager();
+        const session = manager.create([
+          { id: mockIndexer.id, name: mockIndexer.name },
+          { id: 2, name: 'MAM' },
+        ]);
+        const outer = new AbortController();
+
+        vi.spyOn(service, 'getAdapter').mockResolvedValue({
+          search: vi.fn().mockImplementation(() => {
+            manager.cleanup(session.sessionId);
+            return Promise.reject(new DOMException('aborted', 'AbortError'));
+          }),
+          test: vi.fn(),
+        } as never);
+
+        const onCancelled = vi.fn();
+        const onError = vi.fn();
+        // The whole-search verdict is a normal empty return — NOT the rejection an expiry produces.
+        const results = await searchService.searchAllStreaming(
+          'test', undefined, session.controllers,
+          { onComplete: vi.fn(), onError, onCancelled },
+          outer.signal,
+        );
+
+        expect(results).toEqual([]);
+        expect(onCancelled).toHaveBeenCalled();
+        expect(onError).not.toHaveBeenCalled();
+        expect(outer.signal.aborted).toBe(false);
+        expect([...session.controllers.values()].every((c) => c.signal.aborted)).toBe(true);
+      });
+    });
+
+    describe('searchAllWithStatus', () => {
+      it('forwards the signal into the options the adapter sees', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const { seen, adapter } = adapterCapturingSignal();
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(adapter as never);
+
+        const outer = new AbortController();
+        await searchService.searchAllWithStatus('test', { title: 'test', signal: outer.signal });
+
+        expect(seen[0]).toBe(outer.signal);
+      });
+
+      it('rejects instead of reporting an outage when the signal is aborted', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const outer = new AbortController();
+        const boom = new DOMException('aborted', 'AbortError');
+        vi.spyOn(service, 'getAdapter').mockResolvedValue({
+          search: vi.fn().mockImplementation(() => { outer.abort(); return Promise.reject(boom); }),
+          test: vi.fn(),
+        } as never);
+
+        await expect(searchService.searchAllWithStatus('test', { title: 'test', signal: outer.signal }))
+          .rejects.toBe(boom);
+      });
+
+      // F1: the aggregate twin of the streaming case above — no rejected settlement exists to find.
+      it('rejects even when every adapter FULFILS after the signal flips', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const outer = new AbortController();
+        vi.spyOn(service, 'getAdapter').mockResolvedValue({
+          search: vi.fn().mockImplementation(() => {
+            outer.abort();
+            return Promise.resolve(searchResponse([{ title: 'Late Book', indexer: 'ABB' }]));
+          }),
+          test: vi.fn(),
+        } as never);
+
+        // Observation point: NOT "it settled" — a fulfilled-shaped answer here is exactly the bug.
+        await expect(searchService.searchAllWithStatus('test', { title: 'test', signal: outer.signal }))
+          .rejects.toMatchObject({ name: 'AbortError' });
+      });
+
+      it('still counts a genuine failure under a live signal', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        vi.spyOn(service, 'getAdapter').mockResolvedValue({
+          search: vi.fn().mockRejectedValue(new Error('Timeout')), test: vi.fn(),
+        } as never);
+
+        const outcome = await searchService.searchAllWithStatus('test', { title: 'test', signal: new AbortController().signal });
+
+        expect(outcome).toEqual({ results: [], succeeded: 0, failed: 1, skipped: [] });
+      });
+
+      it('forwards the signal to the pre-search refresh hook', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const refreshStatus = vi.fn().mockResolvedValue(null);
+        vi.spyOn(service, 'getAdapter').mockResolvedValue({
+          search: vi.fn().mockResolvedValue(searchResponse([])), test: vi.fn(), refreshStatus,
+        } as never);
+
+        const outer = new AbortController();
+        await searchService.searchAllWithStatus('test', { title: 'test', signal: outer.signal });
+
+        expect(refreshStatus).toHaveBeenCalledWith(outer.signal);
+      });
+    });
+  });
+
   // Settlement counts distinguish answered zero from outage; [] alone would burn the ladder budget and cooldown.
   describe('searchAllWithStatus (#2104 D16)', () => {
     const secondIndexer = createMockDbIndexer({ id: 2, name: 'MAM', type: 'myanonamouse' });
@@ -907,19 +1217,19 @@ describe('IndexerSearchService', () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
       vi.spyOn(service, 'getAdapter').mockResolvedValue({ search: vi.fn().mockResolvedValue(searchResponse([])), test: vi.fn() } as never);
 
-      expect(await searchService.searchAllWithStatus('test')).toEqual({ results: [], succeeded: 1, failed: 0 });
+      expect(await searchService.searchAllWithStatus('test')).toEqual({ results: [], succeeded: 1, failed: 0, skipped: [] });
     });
 
     it('reports succeeded 0 when every indexer rejects — indistinguishable from a zero without it', async () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer, secondIndexer]));
       vi.spyOn(service, 'getAdapter').mockResolvedValue({ search: vi.fn().mockRejectedValue(new Error('boom')), test: vi.fn() } as never);
 
-      expect(await searchService.searchAllWithStatus('test')).toEqual({ results: [], succeeded: 0, failed: 2 });
+      expect(await searchService.searchAllWithStatus('test')).toEqual({ results: [], succeeded: 0, failed: 2, skipped: [] });
     });
 
     it('reports succeeded 0 when the query normalizes away, preserving the short-circuit', async () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
-      expect(await searchService.searchAllWithStatus('...')).toEqual({ results: [], succeeded: 0, failed: 0 });
+      expect(await searchService.searchAllWithStatus('...')).toEqual({ results: [], succeeded: 0, failed: 0, skipped: [] });
     });
 
     it('leaves searchAll returning the bare array so pre-#2104 callers are untouched', async () => {
@@ -1051,11 +1361,13 @@ describe('IndexerSearchService', () => {
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
-      const updateSpy = vi.spyOn(service, 'update').mockResolvedValue(mamIndexer as never);
+      const persistSpy = vi.spyOn(service, 'persistObservedSettings').mockResolvedValue(mamIndexer as never);
+      const clearingSpy = vi.spyOn(service, 'update');
       const results = await searchService.searchAll('test');
-      expect(updateSpy).toHaveBeenCalledWith(10, {
-        settings: expect.objectContaining({ isVip: false, classname: 'Power User' }),
-      });
+      expect(persistSpy).toHaveBeenCalledWith(10, expect.objectContaining({ isVip: false, classname: 'Power User' }));
+      // #2376 AC17: this write lands mid-leg, after the gate was reserved — routing it through
+      // the clearing mutator would bump the generation and discard this leg's own outcome.
+      expect(clearingSpy).not.toHaveBeenCalled();
       expect(mockAdapter.search).toHaveBeenCalled();
       expect(results).toHaveLength(1);
     });
@@ -1069,7 +1381,7 @@ describe('IndexerSearchService', () => {
         test: vi.fn(),
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
-      const updateSpy = vi.spyOn(service, 'update').mockResolvedValue(mamIndexer as never);
+      const updateSpy = vi.spyOn(service, 'persistObservedSettings').mockResolvedValue(mamIndexer as never);
       const results = await searchService.searchAll('test');
       expect(updateSpy).not.toHaveBeenCalled();
       expect(mockAdapter.search).toHaveBeenCalled();
@@ -1329,7 +1641,7 @@ describe('IndexerSearchService', () => {
       };
       vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
-      const results = await searchService.pollRss(rssIndexer);
+      const { results } = await searchService.pollRss(rssIndexer);
       expect(results[0]!.indexerPriority).toBe(75);
     });
 
@@ -1365,7 +1677,7 @@ describe('IndexerSearchService', () => {
 
         expect(mockAdapter.search).toHaveBeenCalledWith(
           'Blood Ties World of Warcraft Midnight',
-          undefined,
+          { queryWithApostrophes: 'Blood Ties World of Warcraft Midnight' },
         );
       });
 
@@ -1382,8 +1694,44 @@ describe('IndexerSearchService', () => {
 
         expect(mockAdapter.search).toHaveBeenCalledWith(
           'Is She Really Going Out with Him Sophie Cousens',
-          undefined,
+          { queryWithApostrophes: 'Is She Really Going Out with Him Sophie Cousens' },
         );
+      });
+
+      // #2422 — the transport query still has its apostrophes deleted; the option carries the
+      // form ABB needs, derived from this call's own raw query when no caller supplied one.
+      it('derives queryWithApostrophes from the raw query, keeping the apostrophe the transport query lost', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const mockAdapter = {
+          type: 'abb', name: 'AudioBookBay',
+          search: vi.fn().mockResolvedValue(searchResponse([])),
+          test: vi.fn(),
+        };
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+        await searchService.searchAll("A Dragon Rider’s Guide (Unabridged) Julia Huni");
+
+        const [transportQuery, passedOptions] = mockAdapter.search.mock.calls[0]!;
+        expect(transportQuery).toBe('A Dragon Riders Guide Unabridged Julia Huni');
+        expect(passedOptions.queryWithApostrophes).toBe("A Dragon Rider's Guide Unabridged Julia Huni");
+      });
+
+      it('prefers a caller-supplied queryWithApostrophes over the derived one', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const mockAdapter = {
+          type: 'abb', name: 'AudioBookBay',
+          search: vi.fn().mockResolvedValue(searchResponse([])),
+          test: vi.fn(),
+        };
+        vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+        await searchService.searchAll('a dragon riders guide', {
+          title: 'A Dragon Rider’s Guide',
+          queryWithApostrophes: "a dragon rider's guide",
+        });
+
+        const passedOptions = mockAdapter.search.mock.calls[0]![1];
+        expect(passedOptions.queryWithApostrophes).toBe("a dragon rider's guide");
       });
 
       it('#1904 drops apostrophes in options.author without splitting the token', async () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService, mockSearchAllWithStatus } from '../__tests__/helpers.js';
 import { createMockDbBookEvent } from '../__tests__/factories.js';
 
 import type * as RetrySearchModule from './retry-search.js';
@@ -136,6 +136,23 @@ describe('EventHistoryService', () => {
       expect(result.total).toBe(25);
     });
 
+    it('paginates the data query only, leaving the filtered count query unwindowed', async () => {
+      const countChain = mockDbChain([{ value: 25 }]);
+      const dataChain = mockDbChain([createMockDbBookEvent()]);
+      db.select.mockReturnValueOnce(countChain).mockReturnValueOnce(dataChain);
+
+      const result = await service.getAll(
+        { eventType: ['grabbed'], search: 'Kings' },
+        { limit: 10, offset: 20 },
+      );
+
+      expect(dataChain.limit).toHaveBeenCalledWith(10);
+      expect(dataChain.offset).toHaveBeenCalledWith(20);
+      expect(countChain.limit).not.toHaveBeenCalled();
+      expect(countChain.offset).not.toHaveBeenCalled();
+      expect(result.total).toBe(25);
+    });
+
     it('applies stable orderBy with createdAt DESC, id DESC', async () => {
       const dataChain = mockDbChain([]);
       db.select
@@ -215,6 +232,47 @@ describe('EventHistoryService', () => {
       );
     });
 
+    /**
+     * #2420 — "mark failed" is the user-facing blacklist action, and it wrote infoHash with no
+     * guid. ABB search results no longer carry a hash, so without the guid the operator sees the
+     * action succeed and the same release grabbed again on the next cycle.
+     */
+    it('carries the download row\'s guid onto the bad_quality entry', async () => {
+      const guid = 'abb:/audio-books/murder-in-the-new-forest/';
+      const event = createMockDbBookEvent({ downloadId: 5 });
+      const download = { id: 5, infoHash: 'abc123', guid, title: 'The Way of Kings [MP3]' };
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([event]))
+        .mockReturnValueOnce(mockDbChain([download]));
+
+      await service.markFailed(1);
+
+      expect(blacklistService.create).toHaveBeenCalledWith({
+        infoHash: 'abc123',
+        guid,
+        title: 'The Way of Kings [MP3]',
+        bookId: 1,
+        reason: 'bad_quality',
+      });
+    });
+
+    // The fix must not make guid required.
+    it('still blacklists on infoHash alone when the download row has a null guid', async () => {
+      const event = createMockDbBookEvent({ downloadId: 5 });
+      const download = { id: 5, infoHash: 'abc123', guid: null, title: 'The Way of Kings [MP3]' };
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([event]))
+        .mockReturnValueOnce(mockDbChain([download]));
+
+      await service.markFailed(1);
+
+      const created = blacklistService.create.mock.calls[0]![0] as Record<string, unknown>;
+      expect(created.infoHash).toBe('abc123');
+      expect(created.guid).toBeUndefined();
+    });
+
     it('throws EventHistoryServiceError NOT_FOUND when event not found', async () => {
       db.select.mockReturnValue(mockDbChain([]));
       await expect(service.markFailed(999)).rejects.toThrow(EventHistoryServiceError);
@@ -237,9 +295,33 @@ describe('EventHistoryService', () => {
       await expect(service.markFailed(1)).rejects.toMatchObject({ code: 'NO_DOWNLOAD' });
     });
 
-    it('skips blacklist and reverts book when download has no infoHash (Usenet)', async () => {
+    // Usenet rows are guid-only: mark-failed must blacklist them by guid, or the retry
+    // re-grabs the exact NZB the operator just rejected.
+    it('blacklists a guid-only row (no infoHash) by guid and reverts the book', async () => {
+      const guid = 'https://indexer.test/nzb/details/abc';
       const event = createMockDbBookEvent({ downloadId: 5 });
-      const download = { id: 5, infoHash: null, title: 'Usenet Download' };
+      const download = { id: 5, infoHash: null, guid, title: 'Usenet Download' };
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([event]))
+        .mockReturnValueOnce(mockDbChain([download]));
+
+      const result = await service.markFailed(1);
+
+      expect(result).toEqual({ success: true });
+      expect(blacklistService.create).toHaveBeenCalledWith({
+        infoHash: undefined,
+        guid,
+        title: 'Usenet Download',
+        bookId: 1,
+        reason: 'bad_quality',
+      });
+      expect(bookService.updateStatus).toHaveBeenCalledWith(1, 'wanted');
+    });
+
+    it('skips blacklist and still reverts the book when the download carries neither identifier', async () => {
+      const event = createMockDbBookEvent({ downloadId: 5 });
+      const download = { id: 5, infoHash: null, guid: null, title: 'Identity-less Download' };
 
       db.select
         .mockReturnValueOnce(mockDbChain([event]))
@@ -251,7 +333,7 @@ describe('EventHistoryService', () => {
       expect(blacklistService.create).not.toHaveBeenCalled();
       expect(log.debug).toHaveBeenCalledWith(
         { downloadId: 5 },
-        'Skipping blacklist — no infoHash (Usenet download)',
+        'Skipping blacklist — download carries no infoHash or guid',
       );
       expect(bookService.updateStatus).toHaveBeenCalledWith(1, 'wanted');
     });
@@ -319,7 +401,7 @@ describe('EventHistoryService', () => {
         .mockReturnValueOnce(mockDbChain([download]));
 
       const { RetryBudget } = await import('./retry-budget.js');
-      const mockSearchAll = vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
+      const mockSearchAll = mockSearchAllWithStatus([]);
       const fresh = freshService();
       fresh.wire({ retrySearchDeps: {
         indexerSearchService: { searchAllWithStatus: mockSearchAll },
@@ -411,7 +493,7 @@ describe('EventHistoryService', () => {
       );
 
       const { RetryBudget } = await import('./retry-budget.js');
-      const mockSearchAll = vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
+      const mockSearchAll = mockSearchAllWithStatus([]);
       const fresh = freshService();
       fresh.wire({ retrySearchDeps: {
         indexerSearchService: { searchAllWithStatus: mockSearchAll },
@@ -484,7 +566,7 @@ describe('EventHistoryService', () => {
 
       const { RetryBudget } = await import('./retry-budget.js');
       const retryBudget = new RetryBudget();
-      const mockSearchAll = vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
+      const mockSearchAll = mockSearchAllWithStatus([]);
       const mockGrab = vi.fn();
 
       const fresh = freshService();

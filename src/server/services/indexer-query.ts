@@ -1,15 +1,31 @@
 import type { SearchOptions } from '@core/index.js';
+import { APOSTROPHE_CHARS, CURLY_APOSTROPHE_CHARS } from '@shared/apostrophes.js';
+
+const ALL_APOSTROPHES = new RegExp(`[${APOSTROPHE_CHARS}]`, 'g');
+const CURLY_APOSTROPHES = new RegExp(`[${CURLY_APOSTROPHE_CHARS}]`, 'g');
+
+/** Everything after the apostrophe decision, shared so the two folds below cannot drift apart. */
+function collapseQueryPunctuation(s: string): string {
+  return s
+    .replace(/[()[\]{}.:;,?!"“”]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 /**
  * Drop apostrophes without splitting words; replace other query punctuation with spaces.
  * This is transport cleanup, distinct from folder-name parsing that removes content.
  */
 export function cleanIndexerQuery(s: string): string {
-  return s
-    .replace(/['‘’]/g, '')
-    .replace(/[()[\]{}.:;,?!"“”]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return collapseQueryPunctuation(s.replace(ALL_APOSTROPHES, ''));
+}
+
+/**
+ * The apostrophe-preserving twin, for the one indexer whose tokenizer cannot match a
+ * de-apostrophized word (#2422). Curly forms fold to U+0027 so consumers key on one character.
+ */
+export function cleanIndexerQueryKeepingApostrophes(s: string): string {
+  return collapseQueryPunctuation(s.replace(CURLY_APOSTROPHES, "'"));
 }
 
 export function buildSearchQuery(book: { title: string; authors?: Array<{ name: string }> | null }): string {

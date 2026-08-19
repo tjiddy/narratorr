@@ -14,6 +14,7 @@ export { ImportOrchestrator } from './import-orchestrator.js';
 export { NotifierService } from './notifier.service.js';
 export { ConnectorService } from './connector.service.js';
 export { BlacklistService } from './blacklist.service.js';
+export { ImportListExclusionService, type ExclusionProvenance } from './import-list-exclusion.service.js';
 export { RemotePathMappingService } from './remote-path-mapping.service.js';
 export { RenameService, RenameError, type RenameResult } from './rename.service.js';
 export { EventHistoryService, type CreateEventInput } from './event-history.service.js';

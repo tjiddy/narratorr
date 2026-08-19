@@ -19,20 +19,39 @@ import { serializeError } from '../utils/serialize-error.js';
 import type { IndexerRow } from './types.js';
 import { type LanAllowlist } from '@core/utils/download-url.js';
 import { normalizedHostPortFromUrl, normalizedHostnameFromUrl } from '@core/utils/network-service.js';
+import {
+  IndexerFailureTracker,
+  classifyIndexerFailure,
+  type IndexerFailureSnapshot,
+} from './indexer-failure-state.js';
 
 export type { LanAllowlist } from '@core/utils/download-url.js';
 
 
 type NewIndexer = typeof indexers.$inferInsert;
 
+/** The synchronous gate verdict, plus everything the caller needs to report and later commit. */
+export interface IndexerAttemptDecision {
+  allowed: boolean;
+  /** Read at reserve time and handed back at commit time to detect an intervening clear. */
+  generation: number;
+  snapshot: IndexerFailureSnapshot;
+}
+
 export class IndexerService {
   private adapters = new AdapterCache<IndexerAdapter>();
+  // The search breaker (#2376). It lives here, not on the search service, because the clears
+  // (AC17) and the health-probe recovery hook (AC7) are all writes this class already owns.
+  private failures: IndexerFailureTracker;
 
   constructor(
     private db: Db,
     private log: FastifyBaseLogger,
     private settingsService?: SettingsService,
-  ) {}
+    clock: () => number = Date.now,
+  ) {
+    this.failures = new IndexerFailureTracker(clock);
+  }
 
   private decryptRow(row: IndexerRow): IndexerRow {
     if (!row.settings) return row;
@@ -83,7 +102,25 @@ export class IndexerService {
     return this.decryptRow(result[0]!);
   }
 
+  /**
+   * The operator-configuration mutator: a config or credential change is a repair signal, so it
+   * clears the breaker. An internal observation write must use `persistObservedSettings` instead
+   * — clearing there would bump the generation mid-search and discard that leg's own outcome.
+   * Preserve is the safe default: a missed clear costs at most one health cycle, a spurious one
+   * silently discards real failure history.
+   */
   async update(id: number, data: Partial<NewIndexer>): Promise<IndexerRow | null> {
+    const row = await this.writeIndexer(id, data);
+    this.failures.clear(id);
+    return row;
+  }
+
+  /** The same write and adapter eviction, with no repair signal. See `update`. */
+  async persistObservedSettings(id: number, settings: Record<string, unknown>): Promise<IndexerRow | null> {
+    return this.writeIndexer(id, { settings });
+  }
+
+  private async writeIndexer(id: number, data: Partial<NewIndexer>): Promise<IndexerRow | null> {
     const toUpdate = { ...data };
     if (toUpdate.settings) {
       const existing = await this.db.select().from(indexers).where(eq(indexers.id, id)).limit(1);
@@ -108,8 +145,37 @@ export class IndexerService {
 
     await this.db.delete(indexers).where(eq(indexers.id, id));
     this.adapters.delete(id);
+    // AUTOINCREMENT never reissues an id, so a recreated indexer cannot inherit this state.
+    this.failures.clear(id);
     this.log.info({ id }, 'Indexer deleted');
     return true;
+  }
+
+  getFailureSnapshot(id: number): IndexerFailureSnapshot {
+    return this.failures.get(id);
+  }
+
+  getFailureGeneration(id: number): number {
+    return this.failures.generation(id);
+  }
+
+  /**
+   * AC21's gate. Synchronous by contract: callers must invoke it as the first statement of a
+   * per-indexer leg, before any `await`, or two legs both find a reopened window open.
+   */
+  reserveSearchAttempt(id: number): IndexerAttemptDecision {
+    const allowed = this.failures.reserveAttempt(id);
+    return { allowed, generation: this.failures.generation(id), snapshot: this.failures.get(id) };
+  }
+
+  recordSearchSuccess(id: number, generation: number): void {
+    this.failures.recordSuccess(id, generation);
+  }
+
+  recordSearchFailure(id: number, error: unknown, generation: number): void {
+    const verdict = classifyIndexerFailure(error);
+    if (verdict.terminal) this.failures.recordTerminalFailure(id, verdict.reason, generation);
+    else this.failures.recordTransientFailure(id, verdict.reason, generation);
   }
 
   async findByProwlarrSource(sourceIndexerId: number): Promise<IndexerRow | null> {
@@ -252,33 +318,49 @@ export class IndexerService {
     }
   }
 
+  /**
+   * Both the operator's Test button and the scheduled health probe. Never gated by the breaker
+   * (AC8): suppressing it is what would make `stopped` permanent, since this is the only call
+   * that can discover a recovery. Its success is the designated recovery signal and clears the
+   * breaker from any state, including `stopped` — unlike a search success, which by then can
+   * only be a stale in-flight leg from before the stop (AC22).
+   */
   async test(id: number): Promise<IndexerTestResult> {
     const indexer = await this.getById(id);
     if (!indexer) {
       return { success: false, message: 'Indexer not found' };
     }
 
+    const generation = this.failures.generation(id);
     try {
       const adapter = await this.getAdapter(indexer);
       const result = await adapter.test();
       this.log.debug({ id, success: result.success }, 'Indexer test result');
 
-      if (result.success && result.metadata && 'isVip' in result.metadata) {
+      if (!result.success) {
+        this.recordSearchFailure(id, new Error(result.message), generation);
+        return result;
+      }
+
+      if (result.metadata && 'isVip' in result.metadata) {
         try {
           const existingSettings = (indexer.settings ?? {}) as Record<string, unknown>;
           const updates: Record<string, unknown> = { isVip: result.metadata.isVip };
           if ('classname' in result.metadata) {
             updates.classname = result.metadata.classname;
           }
-          await this.update(id, { settings: { ...existingSettings, ...updates } });
+          // The non-clearing writer, so a successful probe produces exactly one clear below.
+          await this.persistObservedSettings(id, { ...existingSettings, ...updates });
           this.log.info({ id, isVip: result.metadata.isVip, classname: result.metadata.classname }, 'Persisted VIP/class status from test');
         } catch (error: unknown) {
           this.log.warn({ id, error: serializeError(error) }, 'Failed to persist VIP metadata after test');
         }
       }
 
+      this.failures.clear(id);
       return result;
     } catch (error: unknown) {
+      this.recordSearchFailure(id, error, generation);
       return {
         success: false,
         message: getErrorMessage(error),

@@ -1,8 +1,25 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
-import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach, type Mock } from 'vitest';
+import type { FastifyBaseLogger } from 'fastify';
+import { createTestApp, createMockServices, resetMockServices, createMockDb, createMockLogger, mockDbChain, inject } from '../__tests__/helpers.js';
+import { createMockDbBook, createMockDbImportList } from '../__tests__/factories.js';
 import type { Services } from './index.js';
 import type { Db } from '@db/index.js';
-import { TaskRegistryError } from '../services/task-registry.js';
+import { TaskRegistry, TaskRegistryError } from '../services/task-registry.js';
+import { ImportListService } from '../services/import-list.service.js';
+import type { BookService } from '../services/book.service.js';
+import type { ImmediateSearchDeps } from '../services/trigger-immediate-search.js';
+import { initializeKey, _resetKey } from '../utils/secret-codec.js';
+import { randomBytes } from 'node:crypto';
+
+// Only import-list.service.ts reaches these two, so stubbing them here isolates the AC10 chain
+// without touching any other route in the graph.
+vi.mock('@core/import-lists/index.js', () => ({
+  IMPORT_LIST_ADAPTER_FACTORIES: { nyt: vi.fn(), hardcover: vi.fn() },
+}));
+vi.mock('../services/trigger-immediate-search.js', () => ({
+  triggerImmediateSearch: vi.fn(),
+  runImmediateSearch: vi.fn(),
+}));
 
 vi.mock('fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs/promises')>();
@@ -16,6 +33,10 @@ vi.mock('../utils/version.js', () => ({
 }));
 
 import fsp from 'fs/promises';
+import { IMPORT_LIST_ADAPTER_FACTORIES } from '@core/import-lists/index.js';
+import { runImmediateSearch } from '../services/trigger-immediate-search.js';
+
+const mockRunImmediateSearch = runImmediateSearch as unknown as Mock;
 
 describe('Health routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
@@ -190,6 +211,124 @@ describe('Task routes', () => {
       expect(res.statusCode).toBe(500);
       expect(JSON.parse(res.payload)).toEqual({ error: 'Internal server error' });
     });
+  });
+});
+
+// #2304 (AC10, spec-review F5): a manual import-list sync now awaits its serial search chain, so
+// the shared task route blocks for the whole cycle. That is the accepted trade for keeping the
+// TaskRegistry guard honest, and it needs pinning at the route — not just stated in a PR body.
+describe('POST /api/system/tasks/import-list-sync/run — the response spans the search chain', () => {
+  let app: Awaited<ReturnType<typeof createTestApp>>;
+  let services: Services;
+  let registry: TaskRegistry;
+  let searchGate: { promise: Promise<void>; resolve: () => void };
+  let fetchItems: Mock;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockRunImmediateSearch.mockReset();
+    // `decryptRow` reads the secret key before the provider is ever built.
+    _resetKey();
+    initializeKey(randomBytes(32));
+
+    let release!: () => void;
+    const promise = new Promise<void>((resolve) => { release = resolve; });
+    searchGate = { promise, resolve: release };
+    mockRunImmediateSearch.mockImplementation(async () => { await searchGate.promise; });
+
+    fetchItems = vi.fn().mockResolvedValue([{ title: 'Gated Book', author: 'Gated Author' }]);
+    (IMPORT_LIST_ADAPTER_FACTORIES as Record<string, Mock>).nyt!.mockReturnValue({ fetchItems, test: vi.fn() });
+
+    const db = createMockDb();
+    db.select.mockReturnValue(mockDbChain([createMockDbImportList({
+      type: 'nyt', enabled: true, nextRunAt: new Date(Date.now() - 60_000),
+      settings: { apiKey: 'key', list: 'audio-fiction' },
+    })]));
+    db.insert.mockReturnValue(mockDbChain([]));
+    db.update.mockReturnValue(mockDbChain([]));
+
+    const bookService = inject<BookService>({
+      findDuplicate: vi.fn().mockResolvedValue({ verdict: 'different-recording', book: null }),
+      create: vi.fn().mockResolvedValue({ ...createMockDbBook({ status: 'wanted' }), authors: [], narrators: [] }),
+      getById: vi.fn().mockResolvedValue(null),
+    });
+    const importList = new ImportListService(
+      inject<Db>(db), createMockLogger() as unknown as FastifyBaseLogger, bookService, undefined,
+      inject<ImmediateSearchDeps>({ settingsService: { get: vi.fn().mockResolvedValue({ searchImmediately: true }) } }),
+    );
+
+    registry = new TaskRegistry();
+    registry.register('import-list-sync', 'cron', () => importList.syncDueLists(), '* * * * *');
+
+    services = createMockServices();
+    (services as unknown as Record<string, unknown>).taskRegistry = registry;
+    app = await createTestApp(services);
+  });
+
+  afterEach(async () => {
+    searchGate.resolve();
+    await app.close();
+  });
+
+  it('withholds the response until the chain settles, then answers { ok: true }', async () => {
+    let settled = false;
+    const response = app.inject({ method: 'POST', url: '/api/system/tasks/import-list-sync/run' })
+      .then((res) => { settled = true; return res; });
+
+    await vi.waitFor(() => expect(mockRunImmediateSearch).toHaveBeenCalledTimes(1));
+    expect(fetchItems).toHaveBeenCalledTimes(1);
+    expect(settled).toBe(false);
+
+    searchGate.resolve();
+    const res = await response;
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.payload)).toEqual({ ok: true });
+  });
+
+  it('rejects a concurrent run with ALREADY_RUNNING rather than starting a second cycle', async () => {
+    const first = app.inject({ method: 'POST', url: '/api/system/tasks/import-list-sync/run' });
+    await vi.waitFor(() => expect(mockRunImmediateSearch).toHaveBeenCalledTimes(1));
+
+    await expect(registry.runTask('import-list-sync')).rejects.toMatchObject({ code: 'ALREADY_RUNNING' });
+    expect(fetchItems).toHaveBeenCalledTimes(1);
+
+    searchGate.resolve();
+    expect((await first).statusCode).toBe(200);
+  });
+});
+
+// #2344: the suite's default `getAll` stub is a literal array, so it cannot observe a
+// serialization throw. Only a real TaskRegistry can.
+describe('GET /api/system/tasks — a task whose next run could not be determined', () => {
+  let app: Awaited<ReturnType<typeof createTestApp>>;
+  let registry: TaskRegistry;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    registry = new TaskRegistry();
+    registry.register('search', 'timeout', vi.fn().mockResolvedValue(undefined));
+    registry.register('rss', 'timeout', vi.fn().mockResolvedValue(undefined));
+
+    const services = createMockServices();
+    (services as unknown as Record<string, unknown>).taskRegistry = registry;
+    app = await createTestApp(services);
+  });
+
+  afterEach(async () => {
+    await app.close();
+  });
+
+  it('answers 200 with a null nextRun instead of 500ing the whole endpoint', async () => {
+    const rssNext = new Date('2026-03-10T21:00:00Z');
+    registry.setNextRun('rss', rssNext);
+    registry.setNextRun('search', new Date(NaN));
+
+    const res = await app.inject({ method: 'GET', url: '/api/system/tasks' });
+    expect(res.statusCode).toBe(200);
+
+    const payload = JSON.parse(res.payload) as Array<{ name: string; nextRun: string | null }>;
+    expect(payload.find((t) => t.name === 'search')!.nextRun).toBeNull();
+    expect(payload.find((t) => t.name === 'rss')!.nextRun).toBe(rssNext.toISOString());
   });
 });
 

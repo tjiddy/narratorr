@@ -10,7 +10,7 @@ import {
   type Variant,
 } from '@core/utils/title-variants.js';
 import type { SearchResult } from '@core/index.js';
-import { buildSearchQuery, cleanIndexerQuery } from './indexer-query.js';
+import { buildSearchQuery, cleanIndexerQuery, cleanIndexerQueryKeepingApostrophes } from './indexer-query.js';
 
 // Hard per-book query budget: there is no client-side indexer rate limiter.
 // Author-on variants fill first, so reaching the cap intentionally truncates the author-off tail.
@@ -23,6 +23,12 @@ export const MAX_SEARCH_RUNGS = 8;
  */
 export interface Rung {
   query: string;
+  /**
+   * The same query with apostrophes kept, for the one adapter that cannot match a de-apostrophized
+   * token (#2422). Required, so a hand-built envelope cannot silently carry `undefined` into a
+   * request URL. Casing is inherited from each rung's own source, never imposed.
+   */
+  queryWithApostrophes: string;
   author: string | undefined;
   variant: Variant | null;
   segments: string[];
@@ -35,10 +41,14 @@ export interface LadderInput {
   author?: string | undefined;
   // Rung 1 uses this verbatim; later rungs still relax the canonical title.
   query?: string | undefined;
+  // Rung 1's apostrophe-bearing source. Absent, rung 1 derives it from title and author (#2422).
+  queryWithApostrophes?: string | undefined;
 }
 
 // First occurrence wins. Normalization collapses rung 1 onto an equivalent full
 // variant while the author bit preserves transport-distinct queries.
+// Deliberately blind to `queryWithApostrophes`: keying on it would split rung 1 from
+// the equivalent full variant and lengthen the ladder (#2422).
 export function rungDedupKey(rung: Rung): string {
   return `${normalizeTitleForVariantMatch(rung.query)}|${rung.author !== undefined ? '1' : '0'}`;
 }
@@ -136,6 +146,12 @@ export function buildQueryLadder(input: LadderInput): Rung[] {
   const { title, author } = input;
   const rung1: Rung = {
     query: input.query ?? buildSearchQuery({ title, ...(author !== undefined && { authors: [{ name: author }] }) }),
+    // Prefer the caller's own query text over re-deriving from title+author, so a custom-query
+    // caller sends ABB the same rung-1 text as every other indexer instead of relying on the two
+    // constructions happening to agree. Identical output for every current caller.
+    queryWithApostrophes: cleanIndexerQueryKeepingApostrophes(
+      input.queryWithApostrophes ?? input.query ?? [title, author].filter(Boolean).join(' '),
+    ),
     author,
     variant: null,
     segments: [],
@@ -153,6 +169,8 @@ export function buildQueryLadder(input: LadderInput): Rung[] {
       if (ladder.length >= MAX_SEARCH_RUNGS) return ladder;
       const rung: Rung = {
         query: cleanIndexerQuery([variant.raw, rungAuthor].filter(Boolean).join(' ')),
+        // `variant.raw` is lowercase and `rungAuthor` is not; both fields inherit that mixed shape.
+        queryWithApostrophes: cleanIndexerQueryKeepingApostrophes([variant.raw, rungAuthor].filter(Boolean).join(' ')),
         author: rungAuthor,
         variant,
         segments,

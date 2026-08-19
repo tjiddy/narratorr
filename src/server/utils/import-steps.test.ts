@@ -1,19 +1,31 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, onTestFinished } from 'vitest';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { deriveImportSiblings } from '../utils/import-sibling-paths.js';
+import { inject, mockDbChain } from '../__tests__/helpers.js';
+import { claimLockKey } from '../utils/claim-lock.js';
+import { hasPendingPathWrite } from '../utils/path-write-lock.js';
+import { hasPendingBookAdmission, withBookAdmissionLock } from '../utils/book-admission-lock.js';
+import type { BookService } from '../services/book.service.js';
+import type { Db } from '@db/index.js';
 
 // Mutable arrow mock survives clearAllMocks; flip false for the unavailable test.
-const { ffmpegState, mutagenState } = vi.hoisted(() => ({
+// `callOrder` is the observation point for "which inputs are read before the section is entered" —
+// the resolver is a plain arrow rather than a spy, so ordering cannot be read off mock.calls.
+const { ffmpegState, mutagenState, callOrder } = vi.hoisted(() => ({
   ffmpegState: { resolves: true },
   mutagenState: { resolves: true },
+  callOrder: [] as string[],
 }));
 vi.mock('@core/utils/audio-processor.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@core/utils/audio-processor.js')>();
   return { ...actual, resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null) };
 });
 vi.mock('@core/utils/mutagen-resolver.js', () => ({
-  resolveMutagenPython: () => Promise.resolve(mutagenState.resolves ? '/usr/bin/python3' : null),
+  resolveMutagenPython: () => {
+    callOrder.push('resolveMutagenPython');
+    return Promise.resolve(mutagenState.resolves ? '/usr/bin/python3' : null);
+  },
 }));
 
 vi.mock('node:fs/promises', () => ({
@@ -102,7 +114,23 @@ function createMockLog(): FastifyBaseLogger {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks preserves implementations, and the retry cases below arm PERSISTENT rejections
+  // (a Once queue drains on removeTree's second attempt). Restore the factory default every test.
+  vi.mocked(rm).mockReset();
+  vi.mocked(rm).mockResolvedValue(undefined);
 });
+
+/**
+ * Removals now go through `removeTree`, which retries EBUSY/EMFILE/ENFILE/ENOTEMPTY/EPERM four
+ * times over 600 ms of its OWN backoff. Tests that arm one of those codes would pay that in real
+ * time; redirect the helper's `setTimeout` so the full ladder still runs, instantly.
+ */
+function collapseRemoveTreeBackoff(): void {
+  const realSetTimeout = globalThis.setTimeout;
+  const spy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void) =>
+    realSetTimeout(fn, 0)) as typeof globalThis.setTimeout);
+  onTestFinished(() => { spy.mockRestore(); });
+}
 
 describe('validateSource', () => {
   it('returns sourcePath and fileCount for directory with audio files', async () => {
@@ -266,6 +294,17 @@ describe('embedTagsForImport', () => {
   // Extra bibliographic fields exercise end-to-end propagation into tagBook.
   const bookMeta = { title: 'Book', authorName: 'Author', narrator: 'Narrator', seriesName: 'Series', seriesPosition: 1, publisher: 'Tor Books', coverUrl: 'http://cover.jpg' };
 
+  /** The in-section re-read. `path` is the only value the guard compares against `targetPath`. */
+  const rowNaming = (path: string | null) =>
+    inject<BookService>({ getById: vi.fn().mockResolvedValue({ id: 1, title: 'Book', path }) });
+  const noRow = () => inject<BookService>({ getById: vi.fn().mockResolvedValue(null) });
+
+  function deferred() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => { resolve = r; });
+    return { promise, resolve };
+  }
+
   it('calls tagBook with the resolved interpreter when tagging is enabled', async () => {
     const log = createMockLog();
     const tagBook = vi.fn().mockResolvedValue({ tagged: 1, skipped: 0, failed: 0 });
@@ -273,17 +312,23 @@ describe('embedTagsForImport', () => {
 
     await embedTagsForImport({
       taggingService, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
-      bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
+      bookId: 1, targetPath: '/lib/book', book: bookMeta, bookService: rowNaming('/lib/book'), log,
     });
 
     expect(tagBook).toHaveBeenCalledWith(1, '/lib/book', bookMeta, '/usr/bin/python3', 'overwrite', true);
+    // The success record is part of the contract; without this the message or its counters could
+    // drift while every tagBook-tuple assertion stayed green.
+    expect(log.info).toHaveBeenCalledWith(
+      { bookId: 1, tagged: 1, skipped: 0, failed: 0 },
+      'Tag embedding during import',
+    );
   });
 
   it('skips when taggingService is null', async () => {
     const log = createMockLog();
     await embedTagsForImport({
       taggingService: undefined, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
-      bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
+      bookId: 1, targetPath: '/lib/book', book: bookMeta, bookService: rowNaming('/lib/book'), log,
     });
     expect(log.warn).not.toHaveBeenCalled();
   });
@@ -293,7 +338,7 @@ describe('embedTagsForImport', () => {
     const tagBook = vi.fn();
     await embedTagsForImport({
       taggingService: { tagBook } as never, taggingEnabled: false, taggingMode: 'overwrite', embedCover: true,
-      bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
+      bookId: 1, targetPath: '/lib/book', book: bookMeta, bookService: rowNaming('/lib/book'), log,
     });
     expect(tagBook).not.toHaveBeenCalled();
   });
@@ -306,7 +351,7 @@ describe('embedTagsForImport', () => {
       const tagBook = vi.fn();
       await expect(embedTagsForImport({
         taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
-        bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
+        bookId: 1, targetPath: '/lib/book', book: bookMeta, bookService: rowNaming('/lib/book'), log,
       })).resolves.toBeUndefined();
       expect(tagBook).not.toHaveBeenCalled();
       expect(log.warn).toHaveBeenCalledWith({ bookId: 1 }, expect.stringContaining('mutagen'));
@@ -322,7 +367,7 @@ describe('embedTagsForImport', () => {
       const tagBook = vi.fn().mockResolvedValue({ tagged: 1, skipped: 0, failed: 0 });
       await embedTagsForImport({
         taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
-        bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
+        bookId: 1, targetPath: '/lib/book', book: bookMeta, bookService: rowNaming('/lib/book'), log,
       });
       expect(tagBook).toHaveBeenCalledWith(1, '/lib/book', bookMeta, '/usr/bin/python3', 'overwrite', true);
     } finally {
@@ -335,7 +380,7 @@ describe('embedTagsForImport', () => {
     const tagBook = vi.fn().mockRejectedValue(new Error('tag failed'));
     await embedTagsForImport({
       taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
-      bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
+      bookId: 1, targetPath: '/lib/book', book: bookMeta, bookService: rowNaming('/lib/book'), log,
     });
     expect(log.warn).toHaveBeenCalled();
   });
@@ -345,13 +390,154 @@ describe('embedTagsForImport', () => {
     const tagBook = vi.fn().mockResolvedValue({ tagged: 1, skipped: 0, failed: 0 });
     await embedTagsForImport({
       taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'populate_missing', embedCover: false,
-      bookId: 42, targetPath: '/lib/book', book: bookMeta, log,
+      bookId: 42, targetPath: '/lib/book', book: bookMeta, bookService: rowNaming('/lib/book'), log,
     });
     expect(tagBook).toHaveBeenCalledWith(
       42, '/lib/book',
       { title: 'Book', authorName: 'Author', narrator: 'Narrator', seriesName: 'Series', seriesPosition: 1, publisher: 'Tor Books', coverUrl: 'http://cover.jpg' },
       '/usr/bin/python3', 'populate_missing', false,
     );
+  });
+
+  // ── The in-section ownership guard (#2461) ──────────────────────────────────────────────────
+
+  it('skips without tagging when the row vanished while the embed was queued', async () => {
+    const log = createMockLog();
+    const tagBook = vi.fn();
+    await expect(embedTagsForImport({
+      taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
+      bookId: 1, targetPath: '/lib/book', book: bookMeta, bookService: noRow(), log,
+    })).resolves.toBeUndefined();
+
+    expect(tagBook).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    // `bookPath` is present on every skip warn; a vanished row is the null case, not an absent key.
+    expect(log.warn).toHaveBeenCalledWith(
+      { bookId: 1, targetPath: '/lib/book', bookPath: null },
+      'Tag embedding skipped during import — the book no longer owns the imported folder',
+    );
+  });
+
+  it('skips without tagging when the row no longer carries a path', async () => {
+    const log = createMockLog();
+    const tagBook = vi.fn();
+    await embedTagsForImport({
+      taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
+      bookId: 1, targetPath: '/lib/book', book: bookMeta, bookService: rowNaming(null), log,
+    });
+
+    expect(tagBook).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      { bookId: 1, targetPath: '/lib/book', bookPath: null },
+      'Tag embedding skipped during import — the book no longer owns the imported folder',
+    );
+  });
+
+  it('skips rather than retargeting when the row names a different folder', async () => {
+    const log = createMockLog();
+    const tagBook = vi.fn();
+    await embedTagsForImport({
+      taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
+      bookId: 1, targetPath: '/lib/book', book: bookMeta, bookService: rowNaming('/lib/moved'), log,
+    });
+
+    // Neither operand: skip means skip. Following the row would silently convert a best-effort
+    // import step into a retag of a folder nobody asked to tag.
+    expect(tagBook).not.toHaveBeenCalled();
+    const folders = tagBook.mock.calls.map((c) => c[1] as string);
+    expect(folders).not.toContain('/lib/book');
+    expect(folders).not.toContain('/lib/moved');
+    expect(log.warn).toHaveBeenCalledWith(
+      { bookId: 1, targetPath: '/lib/book', bookPath: '/lib/moved' },
+      'Tag embedding skipped during import — the book no longer owns the imported folder',
+    );
+  });
+
+  // Only the backslash-parent fixture reds against a bare `resolve`; the other two are vacuous for
+  // that property (see the posix-resolve-ignores-backslash learning).
+  it.each([
+    ['a trailing separator', '/lib/book/'],
+    ['mixed separators', '\\lib\\book'],
+    ['a backslash-spelled parent segment', '/lib\\other\\..\\book'],
+  ])('still tags when the row spells the same folder with %s', async (_label, storedPath) => {
+    const log = createMockLog();
+    const tagBook = vi.fn().mockResolvedValue({ tagged: 1, skipped: 0, failed: 0 });
+    await embedTagsForImport({
+      taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
+      bookId: 1, targetPath: '/lib/book', book: bookMeta, bookService: rowNaming(storedPath), log,
+    });
+
+    expect(tagBook).toHaveBeenCalledWith(1, '/lib/book', bookMeta, '/usr/bin/python3', 'overwrite', true);
+  });
+
+  it.each([
+    ['taggingService is absent', { taggingService: undefined, taggingEnabled: true, mutagen: true }],
+    ['tagging is disabled', { taggingService: { tagBook: vi.fn() } as never, taggingEnabled: false, mutagen: true }],
+    ['no mutagen interpreter resolves', { taggingService: { tagBook: vi.fn() } as never, taggingEnabled: true, mutagen: false }],
+  ])('returns without acquiring the book section when %s', async (_label, arm) => {
+    mutagenState.resolves = arm.mutagen;
+    const parked = deferred();
+    // A helper that acquired first would queue behind this hold and never resolve.
+    const holder = withBookAdmissionLock(7, () => parked.promise);
+    try {
+      const log = createMockLog();
+      const bookService = rowNaming('/lib/book');
+
+      await expect(embedTagsForImport({
+        taggingService: arm.taggingService, taggingEnabled: arm.taggingEnabled,
+        taggingMode: 'overwrite', embedCover: true,
+        bookId: 7, targetPath: '/lib/book', book: bookMeta, bookService, log,
+      })).resolves.toBeUndefined();
+
+      expect(bookService.getById).not.toHaveBeenCalled();
+    } finally {
+      mutagenState.resolves = true;
+      parked.resolve();
+      await holder;
+    }
+  });
+
+  it('warns and skips without wedging the key when the in-section row read rejects', async () => {
+    const log = createMockLog();
+    const tagBook = vi.fn();
+    const bookService = inject<BookService>({ getById: vi.fn().mockRejectedValue(new Error('db gone')) });
+
+    await expect(embedTagsForImport({
+      taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
+      bookId: 3, targetPath: '/lib/book', book: bookMeta, bookService, log,
+    })).resolves.toBeUndefined();
+
+    expect(tagBook).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 3, targetPath: '/lib/book' }),
+      'Tag embedding skipped during import — could not re-read the book row',
+    );
+    expect(hasPendingBookAdmission(3)).toBe(false);
+  });
+
+  it('re-reads only the persisted path inside the section, after the transient inputs are resolved', async () => {
+    callOrder.length = 0;
+    const log = createMockLog();
+    const tagBook = vi.fn().mockImplementation(() => {
+      callOrder.push('tagBook');
+      return Promise.resolve({ tagged: 1, skipped: 0, failed: 0 });
+    });
+    const bookService = inject<BookService>({
+      getById: vi.fn().mockImplementation(() => {
+        callOrder.push('getById');
+        // A divergent projection: nothing here may reach tagBook.
+        return Promise.resolve({ id: 1, title: 'Superseded Title', path: '/lib/book' });
+      }),
+    });
+
+    await embedTagsForImport({
+      taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'populate_missing', embedCover: false,
+      bookId: 1, targetPath: '/lib/book', book: bookMeta, bookService, log,
+    });
+
+    expect(callOrder).toEqual(['resolveMutagenPython', 'getById', 'tagBook']);
+    // The settings-sourced mode/embedCover and the ImportContext projection are all pre-lock values.
+    expect(tagBook).toHaveBeenCalledWith(1, '/lib/book', bookMeta, '/usr/bin/python3', 'populate_missing', false);
   });
 });
 
@@ -548,6 +734,9 @@ describe('recordImportEvent', () => {
 });
 
 describe('cleanupOldBookPath', () => {
+  const ownerDb = (rows: unknown[]) => inject<Db>({ select: () => mockDbChain(rows) });
+  const noOwnerDb = () => ownerDb([]);
+
   // Reset implementations because clearAllMocks leaves persistent fs mocks intact.
   beforeEach(() => {
     vi.mocked(stat).mockReset();
@@ -575,6 +764,7 @@ describe('cleanupOldBookPath', () => {
       targetPath: '/library/Author/NewTitle',
       libraryRoot: '/library',
       log,
+      db: noOwnerDb(),
     });
     expect(rm).toHaveBeenCalledWith(expect.stringContaining('a.mp3'), { force: true });
     expect(log.info).toHaveBeenCalledWith(
@@ -590,6 +780,7 @@ describe('cleanupOldBookPath', () => {
       targetPath: '/library/Author/NewTitle',
       libraryRoot: '/library',
       log,
+      db: noOwnerDb(),
     });
     expect(rm).not.toHaveBeenCalled();
     expect(log.error).toHaveBeenCalledWith(
@@ -605,6 +796,7 @@ describe('cleanupOldBookPath', () => {
       targetPath: '/library/Author/NewTitle',
       libraryRoot: '/library',
       log,
+      db: noOwnerDb(),
     })).resolves.toBeUndefined();
   });
 
@@ -617,6 +809,7 @@ describe('cleanupOldBookPath', () => {
       targetPath: '/library/Author/NewTitle',
       libraryRoot: '/library',
       log,
+      db: noOwnerDb(),
     });
     expect(rm).not.toHaveBeenCalled();
     expect(log.error).toHaveBeenCalledWith(
@@ -632,6 +825,7 @@ describe('cleanupOldBookPath', () => {
       targetPath: '/library/Author/NewTitle',
       libraryRoot: '/library',
       log,
+      db: noOwnerDb(),
     });
     expect(rm).not.toHaveBeenCalled();
   });
@@ -643,6 +837,7 @@ describe('cleanupOldBookPath', () => {
       targetPath: '/library/Author/Title',
       libraryRoot: '/library',
       log,
+      db: noOwnerDb(),
     });
     expect(rm).not.toHaveBeenCalled();
   });
@@ -655,9 +850,78 @@ describe('cleanupOldBookPath', () => {
       targetPath: '/library/Author/NewTitle',
       libraryRoot: '/library',
       log,
+      db: noOwnerDb(),
     })).resolves.toBeUndefined();
     expect(log.warn).toHaveBeenCalled();
     expect(log.error).not.toHaveBeenCalled();
+  });
+
+  it('refuses the sweep and logs when a different row owns the old folder', async () => {
+    const log = createMockLog();
+    await cleanupOldBookPath({
+      bookPath: '/library/Author/OldTitle',
+      targetPath: '/library/Author/NewTitle',
+      libraryRoot: '/library',
+      log,
+      db: ownerDb([{ id: 42, title: 'Someone Else', path: '/library/Author/OldTitle' }]),
+    });
+    expect(rm).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ ownerBookId: 42 }),
+      expect.stringMatching(/another book owns this folder/i),
+    );
+  });
+
+  it('recognises an owner stored under a different spelling of the same folder', async () => {
+    const log = createMockLog();
+    await cleanupOldBookPath({
+      bookPath: '/library/Author/OldTitle',
+      targetPath: '/library/Author/NewTitle',
+      libraryRoot: '/library',
+      log,
+      // A row a plain string comparison — or `eq(books.path, …)` — would miss entirely.
+      db: ownerDb([{ id: 7, title: 'Legacy Spelling', path: '/library/Author/Other/../OldTitle/' }]),
+    });
+    expect(rm).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ ownerBookId: 7 }),
+      expect.stringMatching(/another book owns this folder/i),
+    );
+  });
+
+  it('never throws into the import when the ownership lookup itself fails, and sweeps nothing', async () => {
+    const log = createMockLog();
+    await expect(cleanupOldBookPath({
+      bookPath: '/library/Author/OldTitle',
+      targetPath: '/library/Author/NewTitle',
+      libraryRoot: '/library',
+      log,
+      db: inject<Db>({ select: () => mockDbChain([], { error: new Error('db down') }) }),
+    })).resolves.toBeUndefined();
+    expect(rm).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ bookPath: '/library/Author/OldTitle' }),
+      expect.stringMatching(/could not establish folder ownership/i),
+    );
+  });
+
+  it('holds the old path under its claim key for the duration of the sweep', async () => {
+    const log = createMockLog();
+    const key = claimLockKey('/library/Author/OldTitle');
+    let heldDuringSweep = false;
+    vi.mocked(rm).mockImplementationOnce(async () => { heldDuringSweep = hasPendingPathWrite(key); });
+
+    await cleanupOldBookPath({
+      bookPath: '/library/Author/OldTitle',
+      targetPath: '/library/Author/NewTitle',
+      libraryRoot: '/library',
+      log,
+      db: noOwnerDb(),
+    });
+
+    expect(heldDuringSweep).toBe(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(hasPendingPathWrite(key)).toBe(false);
   });
 });
 
@@ -703,9 +967,11 @@ describe('prepareImportSiblings', () => {
 
   it('propagates a stale-backup cleanup failure (strict)', async () => {
     const log = createMockLog();
+    collapseRemoveTreeBackoff();
+    // Persistent, not Once: EBUSY is retryable, and a drained Once queue would let attempt 2 succeed.
     vi.mocked(rm)
       .mockResolvedValueOnce(undefined)
-      .mockRejectedValueOnce(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+      .mockRejectedValue(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
     await expect(
       prepareImportSiblings({ targetPath: target, libraryRoot: '/library', log }),
     ).rejects.toThrow('EBUSY');
@@ -767,8 +1033,10 @@ describe('prepareImportSiblings', () => {
     const log = createMockLog();
     vi.mocked(stat).mockResolvedValue({ isFile: () => true } as never);
     vi.mocked(readdir).mockResolvedValue([] as never);
-    // Total-clean failures before marker removal must preserve the marker.
-    vi.mocked(rm).mockRejectedValueOnce(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+    // Total-clean failures before marker removal must preserve the marker. Persistent, not Once:
+    // EBUSY is retryable, and a drained Once queue would let removeTree's second attempt succeed.
+    collapseRemoveTreeBackoff();
+    vi.mocked(rm).mockRejectedValue(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
     await expect(
       prepareImportSiblings({ targetPath: target, libraryRoot: '/library', log }),
     ).rejects.toBeInstanceOf(BackupRecoveryError);
@@ -786,6 +1054,21 @@ describe('commitStagedImport', () => {
   function readdirByPath(map: Record<string, ReturnType<typeof dirent>[]>) {
     vi.mocked(readdir).mockImplementation(async (p: unknown) => (map[p as string] ?? []) as never);
   }
+
+  const errno = (code: string, detail: string) => Object.assign(new Error(`${code}: ${detail}`), { code });
+
+  /** path.join yields backslashes on Windows; never compare a joined path verbatim. */
+  const normPath = (p: unknown): string => String(p).split('\\').join('/');
+
+  function calls(log: FastifyBaseLogger, level: 'warn' | 'debug'): unknown[][] {
+    return (log as unknown as Record<string, { mock: { calls: unknown[][] } }>)[level]!.mock.calls;
+  }
+
+  const closeWarns = (log: FastifyBaseLogger) =>
+    calls(log, 'warn').filter(([, message]) => message === 'Failed to close directory handle after fsync');
+
+  const fsyncDebugs = (log: FastifyBaseLogger) =>
+    calls(log, 'debug').filter(([, message]) => String(message).startsWith('Best-effort directory fsync failed'));
 
   it('same-path re-import: backs up old audio, moves staged files in, preserves cover, cleans siblings', async () => {
     const log = createMockLog();
@@ -881,6 +1164,63 @@ describe('commitStagedImport', () => {
     expect(rename).toHaveBeenCalledWith(join(target, 'old.mp3'), join(backup, 'old.mp3'));
     expect(rename).toHaveBeenCalledWith(join(staging, 'new.m4b'), join(target, 'new.m4b'));
     expect(close).toHaveBeenCalled();
+    expect(closeWarns(log)).toHaveLength(0);
+  });
+
+  it('a directory-handle close failure does NOT abort the commit — it warns and the marker is still removed (#2372)', async () => {
+    const log = createMockLog();
+    const marker = `${target}.import-commit-pending`;
+    readdirByPath({ [target]: [dirent('old.mp3')], [staging]: [dirent('new.m4b')] });
+    vi.mocked(open).mockResolvedValueOnce({
+      sync: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockRejectedValue(errno('EBADF', 'bad file descriptor')),
+    } as unknown as FileHandle);
+
+    await expect(
+      commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+    ).resolves.toBeUndefined();
+
+    const warns = closeWarns(log);
+    expect(warns).toHaveLength(1);
+    const [payload] = warns[0] as [Record<string, unknown>, string];
+    const logged = payload.error as Record<string, unknown>;
+    // `objectContaining({ message })` cannot tell a serialized error from a raw one — message and
+    // stack are non-enumerable own properties both matchers read straight through.
+    expect(logged).not.toBeInstanceOf(Error);
+    expect(logged.type).toBe('Error');
+    expect(logged.code).toBe('EBADF');
+    expect(normPath(payload.dirPath)).toBe('/library/Author');
+    expect(rm).toHaveBeenCalledWith(marker, { force: true });
+  });
+
+  it('a failing fsync and a failing close compose — both are logged, neither suppresses the other (#2372)', async () => {
+    const log = createMockLog();
+    readdirByPath({ [target]: [dirent('old.mp3')], [staging]: [dirent('new.m4b')] });
+    vi.mocked(open).mockResolvedValueOnce({
+      sync: vi.fn().mockRejectedValue(errno('EINVAL', 'fsync on dir')),
+      close: vi.fn().mockRejectedValue(errno('EBADF', 'bad file descriptor')),
+    } as unknown as FileHandle);
+
+    await expect(
+      commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+    ).resolves.toBeUndefined();
+
+    expect(fsyncDebugs(log)).toHaveLength(1);
+    expect(closeWarns(log)).toHaveLength(1);
+    expect(rename).toHaveBeenCalledWith(join(staging, 'new.m4b'), join(target, 'new.m4b'));
+  });
+
+  it('an open failure leaves nothing to close — fsync is logged, the close path never runs (#2372)', async () => {
+    const log = createMockLog();
+    readdirByPath({ [target]: [dirent('old.mp3')], [staging]: [dirent('new.m4b')] });
+    vi.mocked(open).mockRejectedValueOnce(errno('ENOENT', 'no such file or directory'));
+
+    await expect(
+      commitStagedImport({ stagingPath: staging, targetPath: target, backupPath: backup, libraryRoot: '/library', log }),
+    ).resolves.toBeUndefined();
+
+    expect(fsyncDebugs(log)).toHaveLength(1);
+    expect(closeWarns(log)).toHaveLength(0);
   });
 
   it('first import (empty target): never writes the commit-pending marker (#1290)', async () => {
@@ -897,6 +1237,7 @@ describe('commitStagedImport', () => {
     const marker = `${target}.import-commit-pending`;
     readdirByPath({ [target]: [dirent('old.mp3')], [staging]: [dirent('new.m4b')] });
     // Isolate a post-success, best-effort backup cleanup failure.
+    collapseRemoveTreeBackoff();
     vi.mocked(rm).mockImplementation(async (p: unknown) => {
       if (p === backup) throw Object.assign(new Error('EBUSY backup leftover'), { code: 'EBUSY' });
       return undefined as never;
@@ -1195,6 +1536,7 @@ describe('#1911 recovery preservation: strict marker-removal + late total-clean 
     vi.mocked(readdir).mockImplementation(async (p: unknown) =>
       (p === backup ? [dirent('old.m4b')] : []) as never);
     // A late non-selected backup clear must abort before marker removal.
+    collapseRemoveTreeBackoff();
     vi.mocked(rm).mockImplementation(async (p: unknown) => {
       if (String(p) === legacyBackup) throw Object.assign(new Error('EBUSY legacy backup'), { code: 'EBUSY' });
       return undefined as never;

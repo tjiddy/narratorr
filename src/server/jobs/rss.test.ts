@@ -10,6 +10,7 @@ import type { BlacklistService } from '../services/blacklist.service.js';
 import type { SearchResult } from '@core/index.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { BYTES_PER_GB } from '@shared/constants.js';
+import { IndexerError } from '@core/indexers/errors.js';
 
 vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
   ...(await importActual<typeof import('../utils/enrich-usenet-languages.js')>()),
@@ -38,7 +39,7 @@ function createMockIndexerService(rssResults: SearchResult[] = []): IndexerSearc
     getRssCapableIndexers: vi.fn().mockResolvedValue([
       { id: 1, name: 'TestNewznab', type: 'newznab', enabled: true, priority: 1, settings: {} },
     ]),
-    pollRss: vi.fn().mockResolvedValue(rssResults),
+    pollRss: vi.fn().mockResolvedValue({ results: rssResults }),
     searchAll: vi.fn().mockResolvedValue([]),
     searchAllStreaming: vi.fn().mockResolvedValue([]),
     getEnabledIndexers: vi.fn().mockResolvedValue([]),
@@ -110,7 +111,7 @@ describe('runRssJob', () => {
 
     const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
-    expect(result).toEqual({ polled: 0, matched: 0, grabbed: 0 });
+    expect(result).toEqual({ polled: 0, skipped: 0, matched: 0, grabbed: 0 });
     expect(bookList.getAll).not.toHaveBeenCalled();
   });
 
@@ -138,7 +139,7 @@ describe('runRssJob', () => {
       { id: 1, name: 'Newznab', type: 'newznab', enabled: true },
       { id: 2, name: 'Torznab', type: 'torznab', enabled: true },
     ]);
-    (indexer.pollRss as Mock).mockResolvedValue([]);
+    (indexer.pollRss as Mock).mockResolvedValue({ results: [] });
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
@@ -332,7 +333,7 @@ describe('runRssJob', () => {
     ]);
     (indexer.pollRss as Mock)
       .mockRejectedValueOnce(new Error('Connection refused'))
-      .mockResolvedValueOnce([makeResult('Test Book', 'Author')]);
+      .mockResolvedValueOnce({ results: [makeResult('Test Book', 'Author')] });
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
@@ -376,6 +377,49 @@ describe('runRssJob', () => {
     const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 1 }),
+      'RSS grab failed (possible concurrent race)',
+    );
+  });
+
+  /**
+   * #2420 test 47 — the RSS surface's answer to a failed grab is to advance to the NEXT BOOK, not
+   * to try another release for the same book. The pre-existing race test cannot see that: it has
+   * one book and one release, so "advance to the next book", "try the runner-up" and "abandon the
+   * cycle" are all indistinguishable. Two books × two releases separates all three.
+   */
+  it('advances to the next book when a grab fails, without trying the same book\'s runner-up', async () => {
+    const detailsUrl = 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/';
+    const abbGuid = 'abb:/audio-books/murder-in-the-new-forest/';
+    const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author'), makeWantedBook(2, 'Other Book', 'Author')];
+    const rssResults = [
+      makeResult('Test Book', 'Author', { downloadUrl: `abb-details://${detailsUrl}`, guid: abbGuid, indexer: 'AudioBookBay' }),
+      makeResult('Test Book', 'Author', { downloadUrl: `abb-details://${detailsUrl}runner-up/`, guid: `${abbGuid}runner-up/`, indexer: 'AudioBookBay' }),
+      makeResult('Other Book', 'Author'),
+      makeResult('Other Book', 'Author', { downloadUrl: 'magnet:?xt=urn:btih:otherrunnerup' }),
+    ];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    // Only book 1's grab fails, and it fails the way a grab-time ABB resolve failure does.
+    (download.grab as Mock).mockImplementation(async (params: { bookId: number }) => {
+      if (params.bookId === 1) {
+        throw new IndexerError('AudioBookBay', `ABB detail fetch failed for ${detailsUrl}: HTTP 500`);
+      }
+      return { id: 2 };
+    });
+    const blacklist = createMockBlacklistService();
+
+    const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
+
+    expect(result.matched).toBe(2);
+    expect(result.grabbed).toBe(1);
+    // Exactly one attempt per book: book 1's failure did NOT fall back to its runner-up, and did
+    // not abandon the cycle before book 2.
+    const grabbedBookIds = (download.grab as Mock).mock.calls.map((call) => (call[0] as { bookId: number }).bookId);
+    expect(grabbedBookIds).toEqual([1, 2]);
     expect(log.info).toHaveBeenCalledWith(
       expect.objectContaining({ bookId: 1 }),
       'RSS grab failed (possible concurrent race)',
@@ -562,7 +606,7 @@ describe('runRssJob', () => {
 
     const result = await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
 
-    expect(result).toEqual({ polled: 0, matched: 0, grabbed: 0 });
+    expect(result).toEqual({ polled: 0, skipped: 0, matched: 0, grabbed: 0 });
     expect(indexer.pollRss).not.toHaveBeenCalled();
   });
 
@@ -778,10 +822,10 @@ describe('rss tests — GUID blacklist filtering', () => {
       search: { searchPriority: 'accuracy' },
     });
     const indexer = createMockIndexerService();
-    vi.mocked(indexer.pollRss).mockResolvedValue([
+    vi.mocked(indexer.pollRss).mockResolvedValue({ results: [
       makeResult('Book One', 'Author', { size: GOOD_SIZE, downloadUrl: 'magnet:?xt=urn:btih:quality', narrator: 'Someone Else', matchScore: 0.9 }),
       makeResult('Book One', 'Author', { size: FAIR_SIZE, downloadUrl: 'magnet:?xt=urn:btih:narrator', narrator: 'Kevin R. Free', matchScore: 0.9 }),
-    ]);
+    ] });
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
@@ -802,10 +846,10 @@ describe('rss tests — GUID blacklist filtering', () => {
       search: { searchPriority: 'accuracy' },
     });
     const indexer = createMockIndexerService();
-    vi.mocked(indexer.pollRss).mockResolvedValue([
+    vi.mocked(indexer.pollRss).mockResolvedValue({ results: [
       makeResult('Way of Kings', 'Sanderson', { narrator: 'Kevin R. Free', size: BYTES_PER_GB, downloadUrl: 'magnet:?xt=urn:btih:narratorpick' }),
       makeResult('The Way of Kings', 'Brandon Sanderson', { narrator: 'Someone Else', size: 500 * 1024 * 1024, downloadUrl: 'magnet:?xt=urn:btih:matchscorepick' }),
-    ]);
+    ] });
     const download = createMockDownloadOrchestrator();
     const blacklist = createMockBlacklistService();
 
@@ -1190,5 +1234,126 @@ describe('#502 runRssJob — enrichment before filtering', () => {
         'Quality filter dropped result',
       );
     });
+  });
+});
+
+describe('runRssJob — entirely-blacklisted feed batch (#2336 AC6)', () => {
+  const BLACKLIST_LINE = 'All search results removed by the blacklist';
+  let log: ReturnType<typeof createMockLogger>;
+
+  beforeEach(() => {
+    log = createMockLogger();
+    mockEnrichUsenet.mockReset();
+  });
+
+  function blacklistLineFields(): Record<string, unknown> | undefined {
+    const call = (log.info as Mock).mock.calls.find(([, message]) => message === BLACKLIST_LINE);
+    return call?.[0] as Record<string, unknown> | undefined;
+  }
+
+  function run(wanted: unknown[], rssResults: SearchResult[], blacklisted: Set<string>) {
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList } = createMockBookServices(wanted);
+    const download = createMockDownloadOrchestrator();
+    return {
+      download,
+      result: runRssJob(
+        settings,
+        bookList,
+        createMockIndexerService(rssResults),
+        download,
+        createMockBlacklistService(blacklisted),
+        mockIndexer,
+        inject<FastifyBaseLogger>(log),
+      ),
+    };
+  }
+
+  it('logs the blacklist line with the feed-batch counts', async () => {
+    const { result } = run(
+      [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')],
+      [
+        makeResult('The Way of Kings', 'Brandon Sanderson', { infoHash: 'bad1' }),
+        makeResult('The Way of Kings Unabridged', 'Brandon Sanderson', { infoHash: 'bad2' }),
+      ],
+      new Set(['bad1', 'bad2']),
+    );
+    await result;
+
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        polled: 1,
+        skipped: 0,
+        inputCount: 2,
+        droppedCount: 2,
+        reason: 'blacklist-match',
+        dropCounts: { 'blacklist-match': 2 },
+      }),
+      BLACKLIST_LINE,
+    );
+  });
+
+  // The gate runs once over the whole batch, before per-book matching — there is no book to name.
+  it('carries no bookId, because the batch predates matching', async () => {
+    const { result } = run(
+      [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')],
+      [makeResult('The Way of Kings', 'Brandon Sanderson', { infoHash: 'bad1' })],
+      new Set(['bad1']),
+    );
+    await result;
+
+    expect(blacklistLineFields()).not.toHaveProperty('bookId');
+    expect(blacklistLineFields()).not.toHaveProperty('title');
+  });
+
+  it('emits one batch-wide line, not one per candidate book', async () => {
+    const { result } = run(
+      [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson'), makeWantedBook(2, 'Words of Radiance', 'Brandon Sanderson')],
+      [
+        makeResult('The Way of Kings', 'Brandon Sanderson', { infoHash: 'bad1' }),
+        makeResult('Words of Radiance', 'Brandon Sanderson', { infoHash: 'bad2' }),
+      ],
+      new Set(['bad1', 'bad2']),
+    );
+    await result;
+
+    expect((log.info as Mock).mock.calls.filter(([, message]) => message === BLACKLIST_LINE)).toHaveLength(1);
+    expect(blacklistLineFields()).toMatchObject({ inputCount: 2 });
+  });
+
+  // AC6 forbids an early return: the loop no-ops, and the terminal record is byte-identical.
+  it('leaves the job result and the completion log untouched', async () => {
+    const { download, result } = run(
+      [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')],
+      [makeResult('The Way of Kings', 'Brandon Sanderson', { infoHash: 'bad1' })],
+      new Set(['bad1']),
+    );
+
+    expect(await result).toEqual({ polled: 1, skipped: 0, matched: 0, grabbed: 0 });
+    expect(log.info).toHaveBeenCalledWith({ polled: 1, skipped: 0, matched: 0, grabbed: 0 }, 'RSS sync completed');
+    expect(download.grab).not.toHaveBeenCalled();
+  });
+
+  it('leaves an empty feed batch on its existing no-items line', async () => {
+    const { result } = run([makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')], [], new Set(['bad1']));
+    await result;
+
+    expect(log.info).toHaveBeenCalledWith({ polled: 1, skipped: 0 }, 'RSS sync completed — no feed items');
+    expect(blacklistLineFields()).toBeUndefined();
+  });
+
+  it('stays silent when a survivor remains, and grabs it (AC7)', async () => {
+    const { download, result } = run(
+      [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')],
+      [
+        makeResult('The Way of Kings', 'Brandon Sanderson', { infoHash: 'bad1' }),
+        makeResult('The Way of Kings Unabridged', 'Brandon Sanderson', { infoHash: 'good1' }),
+      ],
+      new Set(['bad1']),
+    );
+
+    expect((await result).grabbed).toBe(1);
+    expect(blacklistLineFields()).toBeUndefined();
+    expect(download.grab).toHaveBeenCalledWith(expect.objectContaining({ bookId: 1, source: 'rss' }));
   });
 });

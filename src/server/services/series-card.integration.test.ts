@@ -8,9 +8,11 @@ import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from '@db/index.js';
 import { books, bookAuthors, authors, series, seriesMembers } from '@db/schema.js';
 import { SeriesCardService } from './series-card.service.js';
+import { loadLibraryBooksForSeriesNames } from './series-library-pool.js';
 import type { SettingsService } from './settings.service.js';
 import { upsertSeriesLink } from './book-series-link.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
+import { spyStatements, poolStatements } from '../__tests__/statement-spy.js';
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
@@ -53,64 +55,6 @@ async function poolProbeIds(db: Db): Promise<number[]> {
  */
 async function forcePoolReorderingIndex(db: Db): Promise<void> {
   await db.run(sql`CREATE INDEX idx_books_pool_covering_2175 ON books (series_name, title, series_position, user_cleared_fields)`);
-}
-
-/** `scope` is 'client' for statements on the connection, or `tx<n>` for the nth transaction opened while spying. */
-interface CapturedStatement { scope: string; sql: string; args: unknown }
-
-interface StatementSpy {
-  executed: CapturedStatement[];
-  /** One entry per transaction opened while spying, in open order; length is the transaction count. */
-  transactions: string[];
-  restore: () => void;
-}
-
-/**
- * Captures SQL and args: AC14 requires one pool statement with zero pool-derived parameters; count alone misses a dynamic IN query returning identical rows.
- * Drizzle routes a query on a `tx` handle through the libsql transaction object rather than the
- * client (`libsql/session.js`: `this.tx ? this.tx.execute(stmt) : this.client.execute(stmt)`), so
- * patching `client.execute` alone captures statements inside a transaction ZERO times. Wrapping the
- * handle `client.transaction()` returns is the only observation point that sees them (#2194 T0).
- */
-function spyStatements(db: Db): StatementSpy {
-  type Executor = { execute: (...a: unknown[]) => unknown };
-  const client = db.$client as unknown as Executor & { transaction: (...a: unknown[]) => Promise<Executor> };
-  const originalExecute = client.execute.bind(client);
-  const originalTransaction = client.transaction.bind(client);
-  const executed: CapturedStatement[] = [];
-  const transactions: string[] = [];
-
-  function instrument(target: Executor, scope: string): void {
-    const inner = target.execute.bind(target);
-    // Instance assignment shadows Sqlite3Transaction.prototype.execute; the prototype is untouched.
-    target.execute = ((stmt: unknown, ...rest: unknown[]) => {
-      const text = typeof stmt === 'string' ? stmt : (stmt as { sql?: string })?.sql ?? '';
-      executed.push({ scope, sql: text, args: typeof stmt === 'string' ? [] : (stmt as { args?: unknown })?.args ?? [] });
-      return inner(stmt as never, ...(rest as never[]));
-    }) as typeof target.execute;
-  }
-
-  instrument(client, 'client');
-  client.transaction = (async (...args: unknown[]) => {
-    const tx = await originalTransaction(...(args as never[]));
-    const scope = `tx${transactions.length + 1}`;
-    transactions.push(scope);
-    instrument(tx, scope);
-    return tx;
-  }) as typeof client.transaction;
-
-  return {
-    executed,
-    transactions,
-    restore: () => {
-      client.execute = originalExecute as typeof client.execute;
-      client.transaction = originalTransaction as typeof client.transaction;
-    },
-  };
-}
-
-function poolStatements(executed: CapturedStatement[]): CapturedStatement[] {
-  return executed.filter((s) => /from "books"/i.test(s.sql) && /"series_position"/.test(s.sql) && /"user_cleared_fields"/.test(s.sql));
 }
 
 describe('SeriesCardService — integration', () => {
@@ -1603,16 +1547,18 @@ describe('SeriesCardService — integration', () => {
         expect(pool[0]!.sql).toMatch(/"series_name" is not null/i);
         expect(pool[0]!.sql).not.toMatch(/ in \(/i);
         expect(card!.members.map((m) => m.libraryBookId)).toEqual([anchor, ...siblings]);
-      });
+        // 301 sequential libSQL inserts before a single assertion: 7,339ms isolated on a fast dev
+        // machine, i.e. a 2x margin under the 15s default that full-suite pressure or a slower
+        // runner erases — it timed out on the windows-tests runner. The ceiling is raised rather
+        // than the row count lowered because 300 is what makes "zero bind parameters" evidence of
+        // JS filtering rather than of a small IN list.
+      }, 60_000);
 
       it('an empty name list returns an empty pool without issuing a query', async () => {
         await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
-        const svc = libraryOnly() as unknown as {
-          loadLibraryBooksForSeriesNames: (names: string[]) => Promise<{ books: unknown[]; positionClearedIds: Set<number> }>;
-        };
 
         const spy = spyStatements(db);
-        const pool = await svc.loadLibraryBooksForSeriesNames([]);
+        const pool = await loadLibraryBooksForSeriesNames(db, [], log);
         spy.restore();
 
         expect(pool).toEqual({ books: [], positionClearedIds: new Set() });
@@ -1902,7 +1848,13 @@ describe('SeriesCardService — integration', () => {
     }
 
     describe('AC1 — the statement count', () => {
-      it('a bind with a prior series name issues one pool statement inside the transaction and one post-commit', async () => {
+      /**
+       * #2447 moved the bind's pool read out of its transaction: the enumeration and the in-lock
+       * snapshot S are both `client`-scoped, the transaction consumes S and loads nothing, and the
+       * post-commit render reads once more. The count is unchanged in kind — still one statement
+       * per read, none of them parameterized — but the scopes are the property this pins now.
+       */
+      it('a bind with a prior series name issues both pool statements before its transaction and one post-commit', async () => {
         const initiating = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
         const sibling = await seedBookWithSeries(db, { title: 'An Unrelated Sibling', seriesName: 'The Earthsea Cycle', seriesPosition: 9, authorName: 'Ursula K. Le Guin' });
         mockHardcover(seriesPayload(4242, 'The Earthsea Quartet', 'Ursula K. Le Guin', [[1, 5001, 'A Wizard of Earthsea']]));
@@ -1912,8 +1864,8 @@ describe('SeriesCardService — integration', () => {
         spy.restore();
 
         const pool = poolStatements(spy.executed);
-        expect(pool.map((s) => s.scope)).toEqual(['tx1', 'client']);
-        expect(pool.map((s) => s.args)).toEqual([[], []]);
+        expect(pool.map((s) => s.scope)).toEqual(['client', 'client', 'client']);
+        expect(pool.map((s) => s.args)).toEqual([[], [], []]);
         expect(pool.every((s) => /"series_name" is not null/i.test(s.sql))).toBe(true);
         // The unmatched sibling keeps its pre-bind name, so the post-commit canonical pool has
         // nothing unclaimed and reconcileUnclaimedMembers never opens a second transaction.
@@ -1949,7 +1901,7 @@ describe('SeriesCardService — integration', () => {
         await boundService().bindHardcoverSeries(initiating, 4244);
         spy.restore();
 
-        expect(poolStatements(spy.executed).map((s) => s.scope)).toEqual(['tx1', 'client']);
+        expect(poolStatements(spy.executed).map((s) => s.scope)).toEqual(['client', 'client', 'client']);
         expect(spy.transactions).toHaveLength(1);
         expect(localRows(await allMembers()).map((r) => r.bookId)).toEqual([sibling]);
       });
@@ -2090,7 +2042,9 @@ describe('SeriesCardService — integration', () => {
         const bound = await boundService().bindHardcoverSeries(initiating, 4247);
         spy.restore();
 
-        expect(poolStatements(spy.executed).filter((s) => s.scope === 'tx1')).toHaveLength(1);
+        // The bind's transaction consumes the in-lock snapshot and issues no pool read of its own.
+        expect(poolStatements(spy.executed).filter((s) => s.scope === 'tx1')).toHaveLength(0);
+        expect(poolStatements(spy.executed).filter((s) => s.scope === 'client')).toHaveLength(3);
         expect(bound!.syncedIds).toEqual([initiating]);
         expect(localRows(await allMembers())).toHaveLength(0);
       });

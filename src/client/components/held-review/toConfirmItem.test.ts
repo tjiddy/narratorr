@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { toConfirmItem } from './toConfirmItem.js';
-import type { ImportRow } from '@/components/manual-import';
-import type { DiscoveredBook } from '@/lib/api';
+import { mergeMatchIntoRow, type ImportRow } from '@/components/manual-import';
+import type { DiscoveredBook, MatchResult } from '@/lib/api';
 
 function book(overrides: Partial<DiscoveredBook> = {}): DiscoveredBook {
   return {
@@ -72,5 +72,55 @@ describe('toConfirmItem series mapping', () => {
     const item = toConfirmItem(row({ edited: { title: 'Book', author: 'Author', series: ' Provider Saga ', seriesPosition: 2 } }), false);
     expect(item.seriesName).toBe(' Provider Saga ');
     expect(item.seriesPosition).toBe(2);
+  });
+});
+
+// The server's #2296 mirror classifier is only correct if the client really does emit the provider's
+// series at the top level of an untouched row. Pin that seam so the server fixtures cannot be fiction.
+describe('toConfirmItem — the provider-series mirror the server classifies (#2296)', () => {
+  // Shaped exactly as useLibraryImport seeds a fresh scan row: folder parse, untouched, no metadata.
+  function scannedRow(parsedSeries: string, parsedSeriesPosition?: number): ImportRow {
+    return row({
+      book: book({ parsedSeries }),
+      userEdited: false,
+      edited: {
+        title: 'Book', author: 'Author', series: parsedSeries,
+        ...(parsedSeriesPosition !== undefined && { seriesPosition: parsedSeriesPosition }),
+      },
+    });
+  }
+
+  function matchWith(seriesPrimary: { name: string; position?: number }): MatchResult {
+    return {
+      path: '/audiobooks/Author/Book',
+      confidence: 'high',
+      alternatives: [],
+      bestMatch: { title: 'Book', authors: [{ name: 'Author' }], seriesPrimary },
+    };
+  }
+
+  it('an untouched row DISCARDS the folder series: the payload carries the provider primary at the top level', () => {
+    const merged = mergeMatchIntoRow(scannedRow('Discworld', 4), matchWith({ name: 'Discworld: Death', position: 1 }));
+
+    const item = toConfirmItem(merged, false);
+    expect(item.seriesName).toBe('Discworld: Death');
+    expect(item.seriesPosition).toBe(1);
+    // Equal to metadata.seriesPrimary.name — exactly what mirrorsProviderSeries keys on.
+    expect(item.metadata?.seriesPrimary).toStrictEqual({ name: 'Discworld: Death', position: 1 });
+  });
+
+  it('a provider primary with NO index yields the hybrid: provider name + the FOLDER position', () => {
+    const merged = mergeMatchIntoRow(scannedRow('Discworld', 4), matchWith({ name: 'Discworld: Death' }));
+
+    const item = toConfirmItem(merged, false);
+    expect(item.seriesName).toBe('Discworld: Death');
+    expect(item.seriesPosition).toBe(4);
+  });
+
+  it('a user-edited row keeps its own series, so the server sees no mirror', () => {
+    const edited = { ...scannedRow('Discworld', 4), userEdited: true };
+    const merged = mergeMatchIntoRow(edited, matchWith({ name: 'Discworld: Death', position: 1 }));
+
+    expect(toConfirmItem(merged, false).seriesName).toBe('Discworld');
   });
 });

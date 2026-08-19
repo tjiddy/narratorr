@@ -39,7 +39,8 @@ export function useLibraryMutations() {
   const deleteMissingMutation = useMutation({
     mutationFn: () => api.deleteMissingBooks(),
     onSuccess: (data) => {
-      toast.success(`Removed ${data.deleted} missing book${data.deleted !== 1 ? 's' : ''}`);
+      const removed = `Removed ${data.deleted} missing book${data.deleted !== 1 ? 's' : ''}`;
+      toast.success(data.failed > 0 ? `${removed}, ${data.failed} failed` : removed);
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
     onError: (error: Error) => {

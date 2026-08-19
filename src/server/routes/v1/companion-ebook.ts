@@ -9,7 +9,7 @@ import { findCompanionEbook } from '../../services/companion-ebook.repository.js
 import { evaluateCompanionEbookGate } from '../../services/companion-ebook-gate.js';
 import { openCompanionEbook } from '../../services/companion-ebook-open.js';
 import { resolveByPublicId } from '../../utils/public-id.js';
-import { Semaphore } from '../../utils/semaphore.js';
+import { BoundedSemaphore } from '@core/utils/bounded-semaphore.js';
 import { streamCompanionEbook } from '../../utils/companion-ebook-stream.js';
 import { triggerCompanionReconcile, type CompanionBookReconcileTrigger } from '../../services/companion-ebook-trigger.js';
 import { v1ErrorHandler } from './_helpers.js';
@@ -45,7 +45,7 @@ function unavailable(reply: FastifyReply): FastifyReply {
   return reply.status(404).send(UNAVAILABLE_BODY);
 }
 
-// Clamp the test seam: fractions over-admit and NaN makes Semaphore reject every acquisition.
+// Clamp the test seam: fractions over-admit and NaN makes BoundedSemaphore reject every acquisition.
 function resolveStreamLimit(supplied: number | undefined): number {
   if (supplied === undefined || !Number.isFinite(supplied)) return MAX_CONCURRENT_COMPANION_STREAMS;
   return Math.max(1, Math.trunc(supplied));
@@ -61,7 +61,7 @@ export async function v1CompanionEbookRoutes(
   db: Db,
 ): Promise<void> {
   // Per registration: module-global state would leak saturation across app instances.
-  const semaphore = new Semaphore(resolveStreamLimit(deps.maxConcurrentStreams));
+  const semaphore = new BoundedSemaphore(resolveStreamLimit(deps.maxConcurrentStreams));
 
   await app.register(
     async (v1) => {

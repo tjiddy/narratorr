@@ -1,6 +1,8 @@
 import { writeFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
+import { books } from '@db/schema.js';
 import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { MAX_COVER_SIZE } from '@shared/constants.js';
@@ -12,6 +14,7 @@ import {
   fetchWithSsrfRedirect,
 } from '@core/utils/network-service.js';
 import { finalizeCoverWrite, type CoverWriteOutcome } from './cover-write.js';
+import { withBookAdmissionLock } from './book-admission.js';
 
 export function isRemoteCoverUrl(url: string | null | undefined): boolean {
   if (!url) return false;
@@ -80,11 +83,38 @@ async function readBodyWithCap(response: Response): Promise<Buffer> {
 }
 
 /**
+ * Serialized entry point for callers that hold no lock. It takes no folder argument on purpose:
+ * anything an unlocked caller could hand in was read before the section, so a call queued behind a
+ * rename would target the vacated folder. The folder comes from the row read INSIDE the section,
+ * which is also where `finalizeCoverWrite` localizes it (AC3 / AC12) — the shape `uploadCover`
+ * already uses. A book with no row or no path left by the time the section opens writes nothing.
+ */
+export async function downloadRemoteCover(
+  bookId: number,
+  remoteUrl: string,
+  db: Db,
+  log: FastifyBaseLogger,
+  onFailure?: ((cause: unknown) => void) | undefined,
+): Promise<CoverWriteOutcome> {
+  return withBookAdmissionLock(bookId, async () => {
+    const rows = await db.select({ path: books.path }).from(books).where(eq(books.id, bookId)).limit(1);
+    const bookPath = rows[0]?.path;
+    if (!bookPath) {
+      log.debug({ bookId }, 'Remote cover download skipped — the book owns no folder now');
+      return 'skipped';
+    }
+    return downloadRemoteCoverWithinAdmissionLock(bookId, bookPath, remoteUrl, db, log, onFailure);
+  });
+}
+
+/**
+ * Caller must hold the admission lock for `bookId`.
+ *
  * Fetch through SSRF-safe redirect validation with a hard size cap, then atomically rename into
  * `cover.{ext}`. Rename commits `written`; later cleanup/DB failures cannot downgrade it. Returns
  * `failed` before that point and `skipped` for nonremote input; never throws.
  */
-export async function downloadRemoteCover(
+export async function downloadRemoteCoverWithinAdmissionLock(
   bookId: number,
   bookPath: string,
   remoteUrl: string,

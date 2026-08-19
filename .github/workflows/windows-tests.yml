@@ -1,0 +1,93 @@
+name: Windows Tests
+run-name: Windows tests for ${{ github.ref_name }}
+
+# Pre-release smoke, not a per-PR gate (decided 2026-08-18). The per-PR/per-merge triggers this
+# shipped with ran ~22min on the free 4-vCPU runner, false-blocked the merge gate on every
+# approved PR, and priced every story at two or three Windows runs. Release tags are where a
+# Windows-only regression must be caught; day-to-day compatibility is upheld by the fleet testing
+# standards (workflume refs/testing.md, Windows section) that the pipeline agents write under.
+# Advisory by design: docker.yml builds the image on the same tag push with no dependency edge,
+# so a red run here is a do-not-pull signal for the manual deploy, not a build blocker.
+on:
+  push:
+    tags: ['v*']
+  # Operator affordance: GitHub runs workflow_dispatch for a workflow present on the DEFAULT
+  # branch, so this works once the file reaches main via the release PR. Use it to smoke a ref
+  # on Windows without cutting a tag.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Concurrency groups are repository-scoped, not workflow-scoped. This must not be ci.yml's
+# `ci-${{ github.ref }}` or the two workflows would cancel each other on every run.
+concurrency:
+  group: windows-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-tests:
+    runs-on: windows-latest
+    # Tests only, but Windows filesystem and process-spawn costs run materially above Linux for
+    # this suite; the Linux gate's 30 covers lint+typecheck+test+build on a faster runner.
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
+
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        # The Windows runner defaults to pwsh, where this line does not mean the same thing.
+        shell: bash
+        run: echo "store=$(pnpm store path)" >> $GITHUB_OUTPUT
+
+      - name: Cache pnpm dependencies
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-cache.outputs.store }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Lint, typecheck and build are platform-neutral and already gated on Linux.
+      # maxWorkers=2: the 4-vCPU public runner is disk-bound, not core-bound — at its default
+      # worker count the DB-heavy integration tests time out (run 32109789777: two seed-loop
+      # timeouts incl. AC14 blowing its 60s ceiling) and fork-pool contention has produced
+      # post-suite worker crashes. Half the workers, each with double the disk budget.
+      #
+      # This step never fails: it hands vitest's exit code and its combined output to the guard,
+      # which is the only thing that can red the job (#2445). GitHub's bash default is `-eo
+      # pipefail`, so without `set +e` a non-zero vitest aborts the step before the guard runs,
+      # and `$?` after a pipe reports tee's status rather than vitest's — hence PIPESTATUS[0].
+      - name: Test
+        id: test
+        shell: bash
+        run: |
+          set +e
+          pnpm test --reporter=default --reporter=json --outputFile.json=vitest-windows.json --maxWorkers=2 2>&1 | tee vitest-windows.log
+          echo "exit-code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      # Two things the test step's own exit code cannot tell apart from a healthy run.
+      # `passWithNoTests: true` makes a zero-file glob exit green, so a green exit does not prove
+      # the suite was selected; and the fork pool crashes at teardown after a fully green suite
+      # roughly one run in four, so a red exit does not prove a test failed. The guard adjudicates
+      # both from the JSON report and the captured log, and its exit code is the job's verdict.
+      - name: Assert non-empty per-project selection
+        shell: bash
+        env:
+          VITEST_EXIT_CODE: ${{ steps.test.outputs.exit-code }}
+        run: >
+          pnpm exec tsx scripts/check-vitest-selection.ts vitest-windows.json
+          --exit-code="$VITEST_EXIT_CODE"
+          --log=vitest-windows.log

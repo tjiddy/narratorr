@@ -191,4 +191,67 @@ describe('GeneralSettingsForm', () => {
     });
   });
 
+
+  describe('when the shared settings read fails', () => {
+    beforeEach(() => {
+      // resetAllMocks, not clearAllMocks: the Retry test queues a `*Once()` rejection and
+      // clearAllMocks does not drain those queues.
+      vi.resetAllMocks();
+    });
+
+    it('reports the failure on both cards, in copy that tells them apart', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
+
+      renderWithProviders(<GeneralSettingsForm />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load housekeeping settings.')).toBeInTheDocument();
+      });
+      // Both cards read the same query, so one failure lands on both — and the operator has
+      // to be able to tell which card is which.
+      expect(screen.getByText('Failed to load logging settings.')).toBeInTheDocument();
+      // 90 days reads as a chosen retention and "info" as a chosen verbosity; both are defaults.
+      expect(screen.queryByLabelText('Event history retention')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Log level')).not.toBeInTheDocument();
+    });
+
+    it("recovers both cards from one card's Retry — they share the settings query", async () => {
+      mockApi.getSettings
+        .mockRejectedValueOnce(new Error('settings unreadable'))
+        .mockResolvedValue(createMockSettings({ general: { housekeepingRetentionDays: 30, logLevel: 'debug' } }));
+      const user = userEvent.setup();
+
+      renderWithProviders(<GeneralSettingsForm />);
+      await waitFor(() => expect(screen.getByText('Failed to load logging settings.')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Retry loading logging settings' }));
+
+      // 30 / debug, not the schema defaults 90 / info: only a real refetch produces these.
+      await waitFor(() => expect(screen.getByLabelText('Log level')).toHaveValue('debug'));
+      expect(screen.getByLabelText('Event history retention')).toHaveValue(30);
+      expect(screen.queryByText('Failed to load housekeeping settings.')).not.toBeInTheDocument();
+      expect(screen.queryByText('Failed to load logging settings.')).not.toBeInTheDocument();
+      expect(mockApi.getSettings).toHaveBeenCalledTimes(2);
+    });
+
+    // The shared query means the sibling test above recovers this card too, so it cannot see
+    // this card's own handler go missing. Only clicking Housekeeping's button can.
+    it("recovers from the Housekeeping card's own Retry control", async () => {
+      mockApi.getSettings
+        .mockRejectedValueOnce(new Error('settings unreadable'))
+        .mockResolvedValue(createMockSettings({ general: { housekeepingRetentionDays: 30, logLevel: 'debug' } }));
+      const user = userEvent.setup();
+
+      renderWithProviders(<GeneralSettingsForm />);
+      await waitFor(() => expect(screen.getByText('Failed to load housekeeping settings.')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Retry loading housekeeping settings' }));
+
+      // 30, not the schema default 90: only a refetch this click caused produces it.
+      await waitFor(() => expect(screen.getByLabelText('Event history retention')).toHaveValue(30));
+      expect(screen.queryByText('Failed to load housekeeping settings.')).not.toBeInTheDocument();
+      expect(mockApi.getSettings).toHaveBeenCalledTimes(2);
+    });
+  });
+
 });

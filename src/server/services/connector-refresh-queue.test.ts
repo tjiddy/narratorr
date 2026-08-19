@@ -318,9 +318,11 @@ describe('ConnectorRefreshQueue', () => {
   });
 
   it('aborts the signal passed into run when the outer flush timeout fires (F10)', async () => {
-    let captured: AbortSignal | undefined;
+    // Collect every attempt's signal, not the latest: a timeout is retryable, so the retry hands in
+    // a fresh un-aborted signal and a single `captured` binding would read that one instead.
+    const signals: AbortSignal[] = [];
     const refresh = vi.fn((_batch: ConnectorImportBatch, signal: AbortSignal) => new Promise<ConnectorRefreshResult>((_resolve, reject) => {
-      captured = signal;
+      signals.push(signal);
       signal.addEventListener('abort', () => reject(new ConnectorRequestError('aborted', { retryable: false })));
     }));
     const queue = makeQueue(resolver(refresh as unknown as Refresh), { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 500 });
@@ -329,8 +331,25 @@ describe('ConnectorRefreshQueue', () => {
     await vi.advanceTimersByTimeAsync(DEBOUNCE);
     await vi.advanceTimersByTimeAsync(500);
 
-    expect(captured?.aborted).toBe(true);
-    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(signals[0]?.aborted).toBe(true);
+  });
+
+  it('delivers its own timeout rather than a leaf error raised from the abort listener, so the flush still retries', async () => {
+    // Abort listeners run synchronously, so a leaf rejecting from one settles the race first unless
+    // withTimeout rejects before it aborts. The leaf here is the house `abort-verdict-not-error-shape`
+    // shape and is deliberately NON-retryable: if it wins, shouldRetry sees retryable false and a
+    // timeout silently becomes terminal. Swapping the two statements back reds exactly this case.
+    const refresh = vi.fn((_batch: ConnectorImportBatch, signal: AbortSignal) => new Promise<ConnectorRefreshResult>((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new ConnectorRequestError('leaf abort', { retryable: false })));
+    }));
+    const queue = makeQueue(resolver(refresh as unknown as Refresh), { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: 500 });
+
+    queue.enqueue(1, 'import', ITEM(1));
+    await vi.advanceTimersByTimeAsync(DEBOUNCE);
+    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(refresh).toHaveBeenCalledTimes(2);
   });
 
   it('scales the outer flush timeout by the reported request count so a healthy multi-path batch is NOT aborted (AC1)', async () => {
@@ -353,10 +372,11 @@ describe('ConnectorRefreshQueue', () => {
 
   it('control: the SAME long work aborts at the base budget when a single request is reported (AC1)', async () => {
     const BASE = CONNECTOR_TIMEOUT_MS + 5_000;
-    let captured: AbortSignal | undefined;
+    // First attempt's signal, not the latest: the timeout is retryable, so a retry follows with a
+    // fresh signal. The leaf's own error shape does not decide that — withTimeout's does.
+    const signals: AbortSignal[] = [];
     const refresh = vi.fn((_b: ConnectorImportBatch, signal: AbortSignal) => new Promise<ConnectorRefreshResult>((_resolve, reject) => {
-      captured = signal;
-      // Non-retryable keeps the abort out of the retry path.
+      signals.push(signal);
       signal.addEventListener('abort', () => reject(new ConnectorRequestError('aborted', { retryable: false })));
     }));
     const queue = makeQueue(resolver(refresh as unknown as Refresh, { requestCount: 1 }), { debounceMs: DEBOUNCE, backoffMs: 0, flushTimeoutMs: BASE });
@@ -365,7 +385,7 @@ describe('ConnectorRefreshQueue', () => {
     await vi.advanceTimersByTimeAsync(DEBOUNCE);
     await vi.advanceTimersByTimeAsync(BASE);
 
-    expect(captured?.aborted).toBe(true);
+    expect(signals[0]?.aborted).toBe(true);
   });
 
   it('flushTimeoutMs === 0 disables the watchdog but still threads a live composed signal', async () => {

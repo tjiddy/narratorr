@@ -26,6 +26,7 @@ import { recordDownloadFailedEvent } from '../utils/download-side-effects.js';
 import { applyPathMapping } from '@core/utils/path-mapping.js';
 import { join } from 'node:path';
 import { serializeError } from '../utils/serialize-error.js';
+import { isWithinMissingItemGrace } from '../utils/download-grace.js';
 
 export interface MonitorRetryDeps {
   blacklistService: BlacklistService;
@@ -70,6 +71,11 @@ export async function monitorDownloads(
 
       const item = await adapter.getDownload(download.externalId);
       if (!item) {
+        // The row keeps its polled status, so the next cycle re-polls and eventually fails it.
+        if (isWithinMissingItemGrace(download.addedAt, Date.now())) {
+          log.debug({ id: download.id, addedAt: download.addedAt }, 'Download not yet in client — within add grace window');
+          continue;
+        }
         await handleMissingItem(db, download, notifierService, log, retryDeps, eventHistory, broadcaster);
         continue;
       }
@@ -179,7 +185,9 @@ async function processDownloadUpdate(
 
   if (isCompletionTransition && qualityGateOrchestrator) {
     fireAndForget(
-      qualityGateOrchestrator.processOneDownload(download.id),
+      // Hand over the polled snapshot: if the row vanishes before the gate re-reads it, this is the
+      // only provenance left to attribute the failure to a book.
+      qualityGateOrchestrator.processOneDownload(download.id, { bookId: download.bookId, releaseTitle: download.title }),
       log,
       'Inline import after completion failed',
     );
@@ -283,17 +291,20 @@ async function blacklistOnInfraError(
   retryDeps: MonitorRetryDeps | undefined,
   log: FastifyBaseLogger,
 ): Promise<void> {
-  if (!download.infoHash || !retryDeps) return;
+  if ((!download.infoHash && !download.guid) || !retryDeps) return;
 
   try {
     await retryDeps.blacklistService.create({
-      infoHash: download.infoHash,
+      infoHash: download.infoHash ?? undefined,
+      // An adapter whose search results carry no hash (ABB, #2420) can only ever be matched on
+      // guid, so an entry written without it silently blacklists nothing.
+      guid: download.guid ?? undefined,
       title: download.title,
       bookId: download.bookId ?? undefined,
       reason: 'infrastructure_error',
       blacklistType: 'temporary',
     });
-    log.info({ downloadId: download.id, infoHash: download.infoHash }, 'Blacklisted release as infrastructure_error (temporary)');
+    log.info({ downloadId: download.id, infoHash: download.infoHash, guid: download.guid }, 'Blacklisted release as infrastructure_error (temporary)');
   } catch (error: unknown) {
     log.warn({ downloadId: download.id, error: serializeError(error) }, 'Failed to blacklist release on infrastructure error');
   }

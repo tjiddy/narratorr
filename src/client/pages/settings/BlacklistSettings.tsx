@@ -34,7 +34,7 @@ export function BlacklistSettings() {
   const { clampToTotal: clampBlacklistPage } = pagination;
 
   const paginationParams = { limit: pagination.limit, offset: pagination.offset };
-  const { data: response, isLoading } = useQuery({
+  const { data: response, isLoading, isError, refetch } = useQuery({
     queryKey: queryKeys.blacklist(paginationParams),
     queryFn: () => api.getBlacklist(paginationParams),
     placeholderData: (previousData) => previousData,
@@ -84,6 +84,21 @@ export function BlacklistSettings() {
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
           <LoadingSpinner className="w-8 h-8 text-primary" />
+        </div>
+      ) : isError ? (
+        // Ahead of the empty state on purpose: a failed read leaves `entries === []`, and
+        // "nothing is blacklisted" is a claim this page could not actually make. Ahead of the
+        // rows too, so `placeholderData` cannot present the previous page as the failed one.
+        <div className="glass-card rounded-2xl p-8 sm:p-12 text-center">
+          <p className="text-sm text-red-500">Failed to load blacklist.</p>
+          <button
+            type="button"
+            onClick={() => { void refetch(); }}
+            aria-label="Retry loading blacklist"
+            className="mt-4 px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-all focus-ring"
+          >
+            Retry
+          </button>
         </div>
       ) : entries.length === 0 ? (
         <div className="glass-card rounded-2xl p-8 sm:p-12 text-center">

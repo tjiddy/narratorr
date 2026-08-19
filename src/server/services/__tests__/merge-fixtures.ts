@@ -2,7 +2,7 @@ import type { Mock } from 'vitest';
 import { readdir, mkdir, cp, unlink, stat, rm, rename } from 'node:fs/promises';
 import { processAudioFiles } from '@core/utils/audio-processor.js';
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
-import { enrichBookFromAudio } from '../enrichment-utils.js';
+import { enrichBookFromAudioWithinAdmissionLock } from '../enrichment-utils.js';
 import { dotPrefixBasename } from '@core/utils/hidden-staging.js';
 import { createMockDbBook, createMockDbAuthor } from '../../__tests__/factories.js';
 
@@ -51,6 +51,14 @@ export const SCAN_RESULT = {
 
 export const settle = () => new Promise((r) => setTimeout(r, 50));
 
+/** Externally settled promise: the parking primitive for holding the real admission lock. */
+export function deferred() {
+  let resolve!: () => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
 export function setupHappyPath() {
   (readdir as Mock).mockImplementation(async (dir: string) => {
     if (dir.endsWith('.merge-tmp')) return ['The Way of Kings.m4b'];
@@ -64,7 +72,7 @@ export function setupHappyPath() {
   (unlink as Mock).mockResolvedValue(undefined);
   (rm as Mock).mockResolvedValue(undefined);
   (stat as Mock).mockResolvedValue({ size: 500_000_000 });
-  (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+  (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
 }
 
 export function setupBlockingMerge() {
@@ -76,7 +84,7 @@ export function setupBlockingMerge() {
   (rename as Mock).mockResolvedValue(undefined);
   (unlink as Mock).mockResolvedValue(undefined);
   (stat as Mock).mockResolvedValue({ size: 100 });
-  (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+  (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
   let release!: () => void;
   const blocked = new Promise<void>((resolve) => { release = resolve; });
   (processAudioFiles as Mock).mockImplementation(async () => {

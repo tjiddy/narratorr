@@ -1,5 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { calculateQuality, filterByLanguage, filterMultiPartUsenet, resolveBookQualityInputs } from '@core/utils/index.js';
+import { SEARCH_DEADLINE_MS } from '@core/utils/constants.js';
 import { canonicalCompare, type NarratorPriority } from './search-ranking.js';
 export type { NarratorPriority } from './search-ranking.js';
 import { AUTO_GRAB_PHASE2_CAP, enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
@@ -12,15 +13,19 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { EventHistoryService } from './event-history.service.js';
-import { recordGrabFailedEvent, recordSearchRelaxedHeldEvent } from '../utils/download-side-effects.js';
-import { selectRelaxedCandidate, type LadderRun } from './search-query-ladder.js';
+import { recordGrabBlockedUnsatisfiedEvent, recordGrabFailedEvent, recordSearchRelaxedHeldEvent } from '../utils/download-side-effects.js';
+import { type LadderRun } from './search-query-ladder.js';
+import { applyUnsatisfiedLimitGate } from './unsatisfied-limit-gate.js';
 import { runBookQueryLadder } from './search-ladder-execution.js';
+import { withSearchDeadline, SearchDeadlineError } from './search-deadline.js';
 import type { SearchLadderCooldown } from './search-ladder-cooldown.js';
 import { type SearchBook, type SearchEventSink, NOOP_SINK, createBroadcasterSink } from './search-event-sink.js';
 import { ensureError } from '../utils/ensure-error.js';
 import { buildGrabPayload } from './grab-payload.js';
 import { parseWordList, matchesWord } from '@shared/parse-word-list.js';
 import { BYTES_PER_GB, BYTES_PER_MB } from '@shared/constants.js';
+import type { SearchDropReason, SearchDropSummary } from '@shared/schemas/search-stream.js';
+import { summarizeDrops, withBlacklistDrops, describeEmptiedSet, describeBlacklistEmptiedSet, BLACKLIST_EMPTIED_MESSAGE, type SearchDropCounts } from './search-drop-summary.js';
 /** Compatibility re-export; the ladder imports indexer-query directly to avoid a cycle. */
 export { buildSearchQuery } from './indexer-query.js';
 
@@ -49,7 +54,7 @@ export interface SearchFilterOptions {
 type GateVerdict = { keep: true } | { keep: false; logFields?: Record<string, unknown> };
 
 type Gate = {
-  reason: string;
+  reason: SearchDropReason;
   enabled: boolean;
   evaluate: (r: SearchResult) => GateVerdict;
 };
@@ -129,7 +134,7 @@ function buildQualityGates(
       evaluate: (r) => {
         if (!r.size || r.size <= 0) return { keep: true };
         if (r.size >= minBytes) return { keep: true };
-        return { keep: false, logFields: { sizeBytes: r.size, minBytes } };
+        return { keep: false, logFields: { sizeBytes: r.size, minBytes, ...(r.rawSize !== undefined && { rawSize: r.rawSize }) } };
       },
     },
     {
@@ -138,7 +143,7 @@ function buildQualityGates(
       evaluate: (r) => {
         if (!r.size || r.size <= 0) return { keep: true };
         if (r.size <= maxBytes) return { keep: true };
-        return { keep: false, logFields: { sizeBytes: r.size, maxBytes } };
+        return { keep: false, logFields: { sizeBytes: r.size, maxBytes, ...(r.rawSize !== undefined && { rawSize: r.rawSize }) } };
       },
     },
   ];
@@ -150,10 +155,12 @@ export function filterAndRankResults(
   bookDurationSeconds: number | undefined,
   options: SearchFilterOptions,
   log?: FastifyBaseLogger,
-): { results: SearchResult[]; durationUnknown: boolean } {
+): { results: SearchResult[]; durationUnknown: boolean; dropSummary: SearchDropSummary } {
   const { protocolPreference, languages, narratorPriority } = options;
   const durationUnknown = !bookDurationSeconds || bookDurationSeconds <= 0;
 
+  // Gates run sequentially over the survivors, so each drop is attributed to the first gate that saw it.
+  const dropCounts: SearchDropCounts = {};
   const gates = buildQualityGates(bookDurationSeconds, durationUnknown, options);
   let filtered = results;
   for (const gate of gates) {
@@ -161,6 +168,7 @@ export function filterAndRankResults(
     filtered = filtered.filter((r) => {
       const verdict = gate.evaluate(r);
       if (verdict.keep) return true;
+      dropCounts[gate.reason] = (dropCounts[gate.reason] ?? 0) + 1;
       log?.debug({ title: r.title, ...verdict.logFields, dropped: true, reason: gate.reason }, 'Quality filter dropped result');
       return false;
     });
@@ -168,6 +176,7 @@ export function filterAndRankResults(
 
   const langs = languages ?? [];
   const langPartition = filterByLanguage(filtered, langs);
+  if (langPartition.dropped.length > 0) dropCounts['language-mismatch'] = langPartition.dropped.length;
   if (log) {
     for (const r of langPartition.dropped) {
       log.debug({ title: r.title, detectedLanguage: r.language, allowedLanguages: langs, dropped: true, reason: 'language-mismatch' }, 'Language filter dropped result');
@@ -180,7 +189,7 @@ export function filterAndRankResults(
 
   filtered.sort((a, b) => canonicalCompare(a, b, bookDurationSeconds, durationUnknown, protocolPreference, langs, narratorPriority));
 
-  return { results: filtered, durationUnknown };
+  return { results: filtered, durationUnknown, dropSummary: summarizeDrops(dropCounts, options) };
 }
 
 /** Shared settings mapper; omit narratorPriority rather than assigning undefined. */
@@ -223,6 +232,7 @@ export function applyMultiPartFilterAndRank(
   results: SearchResult[];
   durationUnknown: boolean;
   multipartRejections: Array<{ title: string; matchedPattern: string }>;
+  dropSummary: SearchDropSummary;
 } {
   const { filtered, rejectedTitles } = filterMultiPartUsenet(results);
   for (const r of rejectedTitles) {
@@ -235,8 +245,12 @@ export function applyMultiPartFilterAndRank(
   if (ranked.results.length < inputCount) {
     log?.debug({ inputCount, outputCount: ranked.results.length }, 'Quality gate filtering applied');
   }
+  // The one signal every search surface shares: results existed, and the operator sees none of them.
+  if (inputCount > 0 && ranked.results.length === 0) {
+    log?.info(describeEmptiedSet(ranked.dropSummary, inputCount), 'All search results removed by quality filters');
+  }
 
-  return { results: ranked.results, durationUnknown: ranked.durationUnknown, multipartRejections: rejectedTitles };
+  return { results: ranked.results, durationUnknown: ranked.durationUnknown, multipartRejections: rejectedTitles, dropSummary: ranked.dropSummary };
 }
 
 export async function filterBlacklistedResults(
@@ -277,8 +291,11 @@ export async function postProcessSearchResults(
   results: SearchResult[];
   durationUnknown: boolean;
   unsupportedResults: { count: number; titles: string[] };
+  filteredOut?: SearchDropSummary | undefined;
 }> {
   const filteredResults = await filterBlacklistedResults(allResults, blacklistService, logger);
+  // The blacklist gate keeps its signature; a length delta is exact and costs nothing.
+  const blacklistedCount = allResults.length - filteredResults.length;
 
   // Forward the configured private-indexer allowlist; this interactive path intentionally has no phase-2 cap.
   const lanAllowlist = await indexerService.getLanAllowlist();
@@ -286,12 +303,14 @@ export async function postProcessSearchResults(
 
   const qualitySettings = await settingsService.get('quality');
   const metadataSettings = await settingsService.get('metadata');
-  const { results, durationUnknown, multipartRejections } = applyMultiPartFilterAndRank(
+  const filterOptions = buildSearchFilterOptions(qualitySettings, metadataSettings);
+  const { results, durationUnknown, multipartRejections, dropSummary } = applyMultiPartFilterAndRank(
     filteredResults,
     bookDuration,
-    buildSearchFilterOptions(qualitySettings, metadataSettings),
+    filterOptions,
     logger,
   );
+  const filteredOut = withBlacklistDrops(dropSummary, blacklistedCount, filterOptions);
 
   // Preserve the legacy titles-only API; matchedPattern remains internal.
   const unsupportedTitles = multipartRejections.map((r) => r.title);
@@ -299,6 +318,8 @@ export async function postProcessSearchResults(
     results,
     durationUnknown,
     unsupportedResults: { count: unsupportedTitles.length, titles: unsupportedTitles },
+    // Omitted when nothing was dropped, so every caller sees the same absence — including v1, which ignores it.
+    ...(filteredOut.total > 0 && { filteredOut }),
   };
 }
 
@@ -316,7 +337,7 @@ async function tryGrab(
 ): Promise<Exclude<SingleBookSearchResult, { result: 'no_results' }>> {
   try {
     await downloadOrchestrator.grab(
-      buildGrabPayload(best, book.id, { guid: best.guid }),
+      buildGrabPayload(best, book.id),
     );
     log.info({ bookId: book.id, title: best.title, seeders: best.seeders }, 'Auto-grabbed best result');
     return { result: 'grabbed', title: best.title };
@@ -364,7 +385,7 @@ async function runSearchAndGrab(
 
   const afterBlacklist = await filterBlacklistedResults(rawResults, blacklistService, log);
   if (afterBlacklist.length === 0) {
-    log.debug({ bookId: book.id, title: book.title }, 'All results blacklisted');
+    log.info({ bookId: book.id, title: book.title, ...describeBlacklistEmptiedSet(rawResults.length, rawResults.length) }, BLACKLIST_EMPTIED_MESSAGE);
     sink.searchComplete('no_results');
     return { result: 'no_results' };
   }
@@ -376,7 +397,13 @@ async function runSearchAndGrab(
   const { results } = applyMultiPartFilterAndRank(afterBlacklist, durationSeconds ?? undefined, qualitySettings, log);
 
   // Share relaxed-rung selection with retrySearch so floor policy cannot drift.
-  const selection = selectRelaxedCandidate(results, ran.rung);
+  const gate = applyUnsatisfiedLimitGate(results, ran.rung);
+  if (gate.kind === 'blocked') {
+    recordGrabBlockedUnsatisfiedEvent({ book, eventHistory, log, release: gate.result });
+    sink.searchComplete('no_results');
+    return { result: 'no_results' };
+  }
+  const selection = gate.selection;
   if (selection.kind === 'hold') {
     recordSearchRelaxedHeldEvent({
       book, eventHistory, log,
@@ -416,15 +443,19 @@ export async function searchAndGrabForBook(
   deps: SearchAndGrabDeps,
 ): Promise<SingleBookSearchResult> {
   const { indexerSearchService, broadcaster, log } = deps;
-
+  // Constructed before the raced body — a plain object with no I/O — so expiry can still reach it.
   const sink = broadcaster ? createBroadcasterSink(book, broadcaster, log) : NOOP_SINK;
-  const ran = await runBookQueryLadder(book, {
-    indexerSearchService,
-    streaming: broadcaster !== undefined,
-    sink,
-    searchLadderCooldown: deps.searchLadderCooldown,
-    ladderMode: deps.ladderMode ?? 'always',
+  const outcome = await withSearchDeadline({ budgetMs: SEARCH_DEADLINE_MS, bookId: book.id, log }, async (signal) => {
+    const ran = await runBookQueryLadder(book, {
+      indexerSearchService, sink, signal, log, streaming: broadcaster !== undefined,
+      searchLadderCooldown: deps.searchLadderCooldown, ladderMode: deps.ladderMode ?? 'always',
+    });
+    return runSearchAndGrab(book, deps, sink, ran);
+  }).catch((error: unknown) => {
+    // The client only removes a card on grabbed/complete, so an expiry must still say so.
+    if (error instanceof SearchDeadlineError) sink.searchComplete('timed_out');
+    throw error;
   });
-
-  return runSearchAndGrab(book, deps, sink, ran);
+  if (!outcome) log.info({ bookId: book.id, title: book.title }, 'Search skipped — this book already has one in flight');
+  return outcome ?? { result: 'skipped', reason: 'search_already_in_flight' };
 }

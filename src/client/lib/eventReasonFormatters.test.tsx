@@ -186,6 +186,32 @@ describe('EventReasonDetails', () => {
     expect(screen.getByText('My.Book.MP3')).toBeInTheDocument();
     expect(screen.getByText('Connection refused')).toBeInTheDocument();
   });
+
+  it('grab_blocked_unsatisfied — names the indexer, the counts and the withheld release', () => {
+    render(<EventReasonDetails
+      eventType="grab_blocked_unsatisfied"
+      reason={{ indexer: 'MyAnonamouse', count: 150, limit: 150, release_title: 'The Churn: An Expanse Novella' }}
+      indexerMap={emptyMap}
+    />);
+
+    expect(screen.getByText('Indexer:')).toBeInTheDocument();
+    expect(screen.getByText('MyAnonamouse')).toBeInTheDocument();
+    expect(screen.getByText('Unsatisfied:')).toBeInTheDocument();
+    expect(screen.getByText('150 of 150')).toBeInTheDocument();
+    expect(screen.getByText('Withheld release:')).toBeInTheDocument();
+    expect(screen.getByText('The Churn: An Expanse Novella')).toBeInTheDocument();
+  });
+
+  // GenericDetails would print the raw snake_case keys instead of these labels.
+  it('grab_blocked_unsatisfied — does not fall through to the generic renderer', () => {
+    render(<EventReasonDetails
+      eventType="grab_blocked_unsatisfied"
+      reason={{ indexer: 'MyAnonamouse', count: 150, limit: 150, release_title: 'Withheld' }}
+      indexerMap={emptyMap}
+    />);
+
+    expect(screen.queryByText(/release_title/)).not.toBeInTheDocument();
+  });
 });
 
 describe('EventReasonDetails — held_for_review schema gate (#1305)', () => {
@@ -344,5 +370,71 @@ describe('qualityGateReasonSchema (#1305)', () => {
     const result = qualityGateReasonSchema.safeParse({ ...nullReason, futureField: 'x' });
     expect(result.success).toBe(true);
     if (result.success) expect('futureField' in result.data).toBe(false);
+  });
+});
+
+describe('EventReasonDetails — sidecar_diverged (#2297 AC14/AC15)', () => {
+  const emptyMap = new Map<number, string>();
+
+  const renderDiverged = (reason: Record<string, unknown>, bookPath: string | null = '/audiobooks/Terry Pratchett/Mort') =>
+    render(<EventReasonDetails eventType="sidecar_diverged" reason={reason} indexerMap={emptyMap} bookPath={bookPath} />);
+
+  it('lists the replaced values under named labels rather than falling back to GenericDetails', () => {
+    renderDiverged({
+      changed_fields: ['seriesName', 'seriesPosition'],
+      previous: { seriesName: 'Discworld', seriesPosition: 4 },
+    });
+
+    expect(screen.getByText('Series:')).toBeInTheDocument();
+    expect(screen.getByText('Discworld')).toBeInTheDocument();
+    expect(screen.getByText('Series #:')).toBeInTheDocument();
+    expect(screen.getByText('4')).toBeInTheDocument();
+    // GenericDetails would render the raw payload keys instead.
+    expect(screen.queryByText('Changed fields:')).not.toBeInTheDocument();
+  });
+
+  it('composes the backup location from the CURRENT book folder, not from the payload', () => {
+    renderDiverged({ changed_fields: ['publisher'], previous: { publisher: 'Gollancz' } });
+
+    expect(screen.getByText('Backup:')).toBeInTheDocument();
+    expect(screen.getByText('/audiobooks/Terry Pratchett/Mort/metadata.opf.bak')).toBeInTheDocument();
+  });
+
+  it('says the backup is gone when the book has been deleted and there is no folder to compose', () => {
+    renderDiverged({ changed_fields: ['publisher'], previous: { publisher: 'Gollancz' } }, null);
+
+    expect(screen.queryByText('Backup:')).not.toBeInTheDocument();
+    expect(screen.getByText(/no longer in the library/i)).toBeInTheDocument();
+  });
+
+  it('renders its own copy for previous_unavailable rather than an empty field list', () => {
+    renderDiverged({ changed_fields: ['title'], previous: {}, previous_unavailable: true });
+
+    expect(screen.getByText(/yielded no readable metadata/i)).toBeInTheDocument();
+    expect(screen.queryByText('Title:')).not.toBeInTheDocument();
+  });
+
+  it('renders its own copy when NEITHER side parsed, so an empty changed_fields is never shown bare', () => {
+    renderDiverged({
+      changed_fields: [], previous: {}, previous_unavailable: true, generated_unparseable: true,
+    });
+
+    expect(screen.getByText(/Neither the replaced sidecar nor the regenerated one/i)).toBeInTheDocument();
+  });
+
+  it('explains an unproven-equivalence divergence instead of implying the values differed', () => {
+    renderDiverged({
+      changed_fields: ['description'], previous: { description: 'a long description' }, equivalence_unproven: true,
+    });
+
+    expect(screen.getByText(/could not be compared beyond/i)).toBeInTheDocument();
+    expect(screen.getByText('Description:')).toBeInTheDocument();
+  });
+
+  it('labels the values as a summary, never as the recoverable bytes', () => {
+    renderDiverged({ changed_fields: ['asin'], previous: { asin: null } });
+
+    expect(screen.getByText(/summary/i)).toBeInTheDocument();
+    expect(screen.getByText('(none)')).toBeInTheDocument();
   });
 });

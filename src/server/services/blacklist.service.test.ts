@@ -1031,3 +1031,58 @@ describe('BlacklistService — upsert integration (real libsql)', () => {
     ).rejects.toThrow('Blacklist entry requires at least one identifier');
   });
 });
+
+describe('BlacklistService — getAll pagination (real libsql)', () => {
+  let dir: string;
+  let db: Db;
+  let service: BlacklistService;
+  const log = createMockLogger();
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'blacklist-pagination-'));
+    const dbFile = join(dir, 'narratorr.db');
+    await runMigrations(dbFile);
+    db = createDb(dbFile);
+    service = new BlacklistService(db, inject(log));
+
+    // Distinct blacklistedAt values so the window is pinned by the primary sort key, not the id tiebreak.
+    for (let i = 1; i <= 5; i++) {
+      await db.insert(blacklist).values({
+        infoHash: `hash${i}`,
+        title: `Entry ${i}`,
+        reason: 'spam',
+        blacklistedAt: new Date(1_700_000_000_000 + i * 60_000),
+      });
+    }
+  });
+
+  afterEach(() => {
+    db.$client.close();
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // libSQL may retain the file handle briefly on Windows.
+    }
+  });
+
+  it('returns every row with the full total when no pagination is given', async () => {
+    const { data, total } = await service.getAll();
+
+    expect(data.map((r) => r.title)).toEqual(['Entry 5', 'Entry 4', 'Entry 3', 'Entry 2', 'Entry 1']);
+    expect(total).toBe(5);
+  });
+
+  it('returns exactly the second and third rows of its own ordering for limit 2 offset 1', async () => {
+    const { data, total } = await service.getAll({ limit: 2, offset: 1 });
+
+    expect(data.map((r) => r.title)).toEqual(['Entry 4', 'Entry 3']);
+    expect(total).toBe(5);
+  });
+
+  it('returns an empty page with the unpaginated total when the offset is past the end', async () => {
+    const { data, total } = await service.getAll({ limit: 2, offset: 99 });
+
+    expect(data).toEqual([]);
+    expect(total).toBe(5);
+  });
+});

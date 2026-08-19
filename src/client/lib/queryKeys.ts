@@ -1,7 +1,9 @@
 import type { BookListParams, LibraryBookListParams, RetagOverrides } from './api/books.js';
+import type { BrowseCapability } from './api/filesystem.js';
 import type { ActivityListParams } from './api/activity.js';
 import type { EventHistoryParams } from './api/event-history.js';
 import type { BlacklistListParams } from './api/blacklist.js';
+import type { ImportListExclusionListParams } from './api/import-list-exclusions.js';
 
 export const queryKeys = {
   books: (params?: BookListParams) => params ? ['books', params] as const : ['books'] as const,
@@ -46,6 +48,8 @@ export const queryKeys = {
   connectors: () => ['connectors'] as const,
   importLists: () => ['importLists'] as const,
   blacklist: (params?: BlacklistListParams) => params ? ['blacklist', params] as const : ['blacklist'] as const,
+  importListExclusions: (params?: ImportListExclusionListParams) =>
+    params ? ['importListExclusions', params] as const : ['importListExclusions'] as const,
   remotePathMappings: (clientId?: number) =>
     clientId !== undefined
       ? (['remotePathMappings', clientId] as const)
@@ -62,7 +66,12 @@ export const queryKeys = {
     byBookId: (bookId: number) => ['eventHistory', 'book', bookId] as const,
   },
   filesystem: {
-    browse: (path: string) => ['filesystem', 'browse', path] as const,
+    // The capability is part of the identity: legacy and `include=audio` return different shapes
+    // for the SAME path, and results stay fresh for a minute. Keyed on path alone, whichever picker
+    // opened first would serve its cached shape to the other — so the audio picker could render a
+    // `{ dirs, parent }` entry and show no files without ever calling its own query function.
+    browse: (path: string, capability: BrowseCapability = 'legacy') =>
+      ['filesystem', 'browse', capability, path] as const,
   },
   backups: () => ['backups'] as const,
   health: {

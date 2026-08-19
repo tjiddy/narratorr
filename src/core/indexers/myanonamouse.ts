@@ -9,20 +9,23 @@ import {
   type SearchOptions,
   type SearchResult,
 } from './types.js';
-import { IndexerAuthError, IndexerError, ProxyError } from './errors.js';
+import { IndexerAuthError, IndexerError, ProxyError, httpStatusError } from './errors.js';
 import { createProxyAgent, resolveProxyIp } from './proxy.js';
 import { fetchWithOptionalDispatcher, type DispatcherFetchInit } from '../utils/network-service.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
+import { readUnsatisfiedStatus, type UnsatisfiedStatus } from '../utils/mam-unsatisfied.js';
 import { MAM_LANGUAGES } from '@shared/indexer-registry.js';
 import { getUserAgent } from '@shared/user-agent.js';
 import type { WedgeMode } from '@shared/schemas/indexer.js';
 import { getErrorMessage, getErrorMessageWithCause } from '@shared/error-message.js';
 import { normalizeBaseUrl } from '@shared/normalize-base-url.js';
-import { parseDoubleEncodedNames, parseMamSize, normalizeMamFormat, isMamFreeleech } from './mam-helpers.js';
+import { parseDoubleEncodedNames, parseMamSize, isMamFreeleech } from './mam-helpers.js';
+import { normalizeFormat } from './normalize-format.js';
 import {
   MAM_TORRENT_SENTINEL_PREFIX,
   parseTorrentIdFromContext,
 } from './mam-wedge.js';
+import { mamThrottle } from './mam-throttle.js';
 import {
   mamSearchResponseSchema,
   mamUserStatusSchema,
@@ -191,10 +194,11 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     const narrator = parseDoubleEncodedNames(orUndef(item.narrator_info));
     const guid = item.id != null ? String(item.id) : undefined;
     const size = parseMamSize(orUndef(item.size));
+    const rawSize = typeof item.size === 'string' ? item.size : undefined;
     const seeders = orUndef(item.seeders);
     const leechers = orUndef(item.leechers);
     const language = normalizeLanguage(orUndef(item.lang_code));
-    const format = normalizeMamFormat(item.filetype);
+    const format = normalizeFormat(item.filetype);
     return {
       title: item.title!,
       ...(author !== undefined && { author }),
@@ -203,6 +207,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       ...(guid !== undefined && { guid }),
       ...(downloadUrl !== undefined && { downloadUrl }),
       ...(size !== undefined && { size }),
+      ...(rawSize !== undefined && { rawSize }),
       ...(seeders !== undefined && { seeders }),
       ...(leechers !== undefined && { leechers }),
       ...(language !== undefined && { language }),
@@ -215,7 +220,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
 
   async test(): Promise<{ success: boolean; message?: string; ip?: string; warning?: string; metadata?: Record<string, unknown> }> {
     try {
-      const body = await this.fetchWithCookie(`${this.baseUrl}/jsonLoad.php`);
+      const body = await this.fetchWithCookie(`${this.baseUrl}/jsonLoad.php?snatch_summary`);
       if (body.includes('Error, you are not signed in')) {
         return { success: false, message: 'Authentication failed — check your MAM ID' };
       }
@@ -267,15 +272,19 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     return result;
   }
 
-  async refreshStatus(): Promise<{ isVip: boolean; classname: string } | null> {
+  /** Class and unsatisfied are observed independently; a classname-less response still delivers the pair. */
+  async refreshStatus(signal?: AbortSignal): Promise<{ isVip?: boolean; classname?: string; unsatisfied?: UnsatisfiedStatus } | null> {
     try {
-      const body = await this.fetchWithCookie(`${this.baseUrl}/jsonLoad.php`);
+      const body = await this.fetchWithCookie(`${this.baseUrl}/jsonLoad.php?snatch_summary`, signal);
       const data = this.parseUserStatusBody(body);
-      if (!data.classname) return null;
+      const unsatisfied = readUnsatisfiedStatus(data.unsat);
+      if (!data.classname) return unsatisfied ? { unsatisfied } : null;
       const isVip = data.classname === 'VIP' || data.classname === 'Elite VIP';
       this.isVip = isVip;
-      return { isVip, classname: data.classname };
+      return { isVip, classname: data.classname, ...(unsatisfied !== null && { unsatisfied }) };
     } catch (error: unknown) {
+      // Degrading here would swallow cancellation, whose reason may be any shape the gate forwards.
+      if (signal?.aborted) throw error;
       if (error instanceof IndexerError) {
         return null;
       }
@@ -290,6 +299,9 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   }
 
   private async fetchWithCookieMeta(url: string, callerSignal?: AbortSignal): Promise<{ body: string; httpStatus: number }> {
+    // Before the timeout is armed: a queued request must not spend its own budget waiting in line,
+    // and a wait that rejects leaves no timer to leak.
+    await mamThrottle.acquire(this.baseUrl, callerSignal);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), INDEXER_TIMEOUT_MS);
     const signal = callerSignal
@@ -332,7 +344,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       }
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        throw httpStatusError(response.status, response.statusText);
       }
 
       const body = await response.text();
@@ -388,6 +400,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   /** Fetch torrent bytes as a data URI; applyWedge adds MAM's bare server-side &fl flag. */
   private async fetchTorrentAsDataUri(torrentId: number, applyWedge = false, callerSignal?: AbortSignal): Promise<string | undefined> {
     const url = `${this.baseUrl}/tor/download.php?tid=${torrentId}${applyWedge ? '&fl' : ''}`;
+    await mamThrottle.acquire(this.baseUrl, callerSignal);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), INDEXER_TIMEOUT_MS);
     const signal = callerSignal

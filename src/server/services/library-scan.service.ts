@@ -5,6 +5,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { books, authors, bookAuthors } from '@db/schema.js';
 import { eq, inArray, and } from 'drizzle-orm';
 import { slugify } from '@core/utils/parse.js';
+import { bookHoldsFile } from '@shared/book-holds-file.js';
 import { discoverBooks, type DiscoveredFolder } from '@core/utils/book-discovery.js';
 import { transitionBookStatus } from '../utils/book-status.js';
 import { errnoCode, isDefinitiveAbsence } from '../utils/fs-errno.js';
@@ -48,9 +49,15 @@ interface WithinScanEntry {
   shape: TitleShape;
 }
 
+/** An ASIN-matched incumbent plus whether it actually owns a folder (#2435 AC12). */
+interface AsinMatch {
+  id: number;
+  holdsFile: boolean;
+}
+
 interface ScanClassificationMaps {
   existingPathMap: Map<string, number>;
-  existingAsinMap: Map<string, number>;
+  existingAsinMap: Map<string, AsinMatch>;
   existingTitleAuthorBucket: Map<string, ExistingTitleEntry[]>;
   withinScanBucket: Map<string, WithinScanEntry[]>;
 }
@@ -241,7 +248,8 @@ export class LibraryScanService {
 
     // Ascending id makes the first pairwise incumbent deterministic.
     const titleAuthorRows = await this.db
-      .select({ id: books.id, title: books.title, slug: authors.slug, asin: books.asin })
+      // `path` is selected for the ASIN map's file-holding fact (#2435 AC12), not for matching.
+      .select({ id: books.id, title: books.title, slug: authors.slug, asin: books.asin, path: books.path })
       .from(books)
       .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
       .leftJoin(authors, eq(bookAuthors.authorId, authors.id))
@@ -257,10 +265,11 @@ export class LibraryScanService {
       existingTitleAuthorBucket.set(key, arr);
     }
     // ASIN equality is decisive here; normalize case because stored ASINs are not globally canonical.
-    const existingAsinMap = new Map<string, number>(
+    // The file-holding fact rides along so the classifier never re-derives it (#2435 AC1).
+    const existingAsinMap = new Map<string, AsinMatch>(
       titleAuthorRows
         .filter((r) => r.asin != null)
-        .map((r) => [r.asin!.toLowerCase(), r.id] as [string, number]),
+        .map((r) => [r.asin!.toLowerCase(), { id: r.id, holdsFile: bookHoldsFile(r.path) }] as [string, AsinMatch]),
     );
 
     const discoveries: DiscoveredBook[] = [];
@@ -315,9 +324,16 @@ export class LibraryScanService {
       return buildDiscoveredBook(...base, { isDuplicate: true, existingBookId: maps.existingPathMap.get(folder.path), duplicateReason: 'path', reviewReason });
     }
 
-    if (parsed.asin && maps.existingAsinMap.has(parsed.asin.toLowerCase())) {
+    const asinMatch = parsed.asin ? maps.existingAsinMap.get(parsed.asin.toLowerCase()) : undefined;
+    if (asinMatch) {
+      // #2435: the ASIN still decides WHICH book this is, but a book holding no file is the record
+      // this folder fulfils. Keep it selectable, and keep naming the incumbent so confirm can attach.
+      if (!asinMatch.holdsFile) {
+        this.log.info({ path: folder.path, asin: parsed.asin, existingBookId: asinMatch.id }, 'Decisive ASIN match on a FILELESS book — importable as an attach');
+        return buildDiscoveredBook(...base, { isDuplicate: false, existingBookId: asinMatch.id, reviewReason });
+      }
       this.log.debug({ path: folder.path, asin: parsed.asin }, 'Duplicate detected (decisive ASIN match)');
-      return buildDiscoveredBook(...base, { isDuplicate: true, existingBookId: maps.existingAsinMap.get(parsed.asin.toLowerCase()), duplicateReason: 'slug', reviewReason });
+      return buildDiscoveredBook(...base, { isDuplicate: true, existingBookId: asinMatch.id, duplicateReason: 'slug', reviewReason });
     }
 
     if (shape && bucketKey) {

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import type * as NetworkServiceModule from '../utils/network-service.js';
@@ -15,6 +15,8 @@ vi.mock('../utils/network-service.js', async (importActual) => {
 import { MyAnonamouseIndexer } from './myanonamouse.js';
 import { IndexerAuthError, IndexerError, ProxyError } from './errors.js';
 import { filterByLanguage } from '../utils/filters.js';
+import { mamThrottle, _resetMamThrottleForTesting } from './mam-throttle.js';
+import { INDEXER_TIMEOUT_MS, MAM_MIN_REQUEST_INTERVAL_MS } from '../utils/constants.js';
 
 const MAM_BASE = 'https://mam.test';
 
@@ -46,7 +48,15 @@ describe('MyAnonamouseIndexer', () => {
   let indexer: MyAnonamouseIndexer;
 
   beforeEach(() => {
+    // The gate is module-level state; without this, one case's floor delays and misattributes the next.
+    _resetMamThrottleForTesting();
     indexer = new MyAnonamouseIndexer({ mamId: 'test-mam-id', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 'active' });
+  });
+
+  // This suite has no other clearing hook, so an acquire spy would otherwise survive into the case
+  // that must measure the real gate.
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   describe('properties', () => {
@@ -193,6 +203,24 @@ describe('MyAnonamouseIndexer', () => {
       expect(url.searchParams.get('tor[srchIn][author]')).toBe('true');
       expect(url.searchParams.get('tor[main_cat][]')).toBe('13');
       expect(capturedCookie).toBe('mam_id=test-mam-id');
+    });
+
+    // #2422 — the apostrophe-bearing channel is ABB's alone. MAM tokenizes, so `riders` matches
+    // there, and reading the option would change a request this issue is not allowed to touch.
+    it('ignores queryWithApostrophes and keeps the stripped positional query in tor[text]', async () => {
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+
+      await indexer.search('A Dragon Riders Guide', { queryWithApostrophes: "A Dragon Rider's Guide" });
+
+      const url = new URL(capturedUrl);
+      expect(url.searchParams.get('tor[text]')).toBe('A Dragon Riders Guide');
+      expect(capturedUrl).not.toContain('Rider%27s');
     });
   });
 
@@ -717,6 +745,68 @@ describe('MyAnonamouseIndexer', () => {
       const mbPerHour = sizeBytes !== undefined ? (sizeBytes / 1024 / 1024) / (bookDurationSeconds / 3600) : NaN;
       expect(Number.isNaN(mbPerHour)).toBe(false);
       expect(mbPerHour).toBeGreaterThan(0);
+    });
+
+    it('parses a grouped "1,008.8 MiB" string size into 1057803469 bytes (#2316)', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ size: '1,008.8 MiB' })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const { results } = await indexer.search('test');
+      expect(results[0]!.size).toBe(1057803469);
+    });
+
+    it('sets size undefined when the provider returns null (orUndef normalization)', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ size: null })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const { results } = await indexer.search('test');
+      expect(results[0]!).not.toHaveProperty('size');
+    });
+  });
+
+  describe('search — rawSize diagnostic field (#2316)', () => {
+    it('carries the indexer\'s raw size string when the API returned a string', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ size: '1,008.8 MiB' })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const { results } = await indexer.search('test');
+      expect(results[0]!.rawSize).toBe('1,008.8 MiB');
+    });
+
+    it('omits rawSize when the API returned a number', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ size: 1073741824 })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const { results } = await indexer.search('test');
+      expect(results[0]!).not.toHaveProperty('rawSize');
+    });
+
+    it('omits rawSize when the API omitted the size', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ size: null })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const { results } = await indexer.search('test');
+      expect(results[0]!).not.toHaveProperty('rawSize');
     });
   });
 
@@ -1603,6 +1693,118 @@ describe('MyAnonamouseIndexer', () => {
     });
   });
 
+  describe('#2322 — snatch_summary unsatisfied allowance', () => {
+    /** MSW matches jsonLoad.php regardless of query string, so the param must be asserted explicitly. */
+    function captureUserStatusUrl(body: Record<string, unknown>): { url: () => string } {
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json(body);
+        }),
+      );
+      return { url: () => capturedUrl };
+    }
+
+    it('test() requests jsonLoad.php with the snatch_summary parameter', async () => {
+      const captured = captureUserStatusUrl({ username: 'testuser', classname: 'VIP' });
+      await indexer.test();
+      expect(new URL(captured.url()).searchParams.has('snatch_summary')).toBe(true);
+    });
+
+    it('refreshStatus() requests jsonLoad.php with the snatch_summary parameter', async () => {
+      const captured = captureUserStatusUrl({ username: 'testuser', classname: 'VIP' });
+      await indexer.refreshStatus();
+      expect(new URL(captured.url()).searchParams.has('snatch_summary')).toBe(true);
+    });
+
+    it('test() reports the same success message and metadata keys on the wider response', async () => {
+      captureUserStatusUrl({
+        username: 'testuser', classname: 'VIP', wedges: 7,
+        unsat: { count: 139, limit: 150, size: 73954762929, red: false },
+        sSat: { count: 578, red: false, size: 459359749269 },
+      });
+
+      const result = await indexer.test();
+
+      expect(result.success).toBe(true);
+      expect(result.message).toBe('Connected as testuser');
+      expect(result.metadata).toEqual({ username: 'testuser', classname: 'VIP', isVip: true, wedges: 7 });
+    });
+
+    it('reports the observed pair alongside the class fields', async () => {
+      captureUserStatusUrl({ username: 'testuser', classname: 'VIP', unsat: { count: 139, limit: 150, red: false } });
+
+      expect(await indexer.refreshStatus()).toEqual({
+        isVip: true, classname: 'VIP', unsatisfied: { count: 139, limit: 150 },
+      });
+    });
+
+    it('reports the observed pair alone when classname is absent', async () => {
+      captureUserStatusUrl({ username: 'testuser', unsat: { count: 150, limit: 150 } });
+
+      const result = await indexer.refreshStatus();
+
+      expect(result).toEqual({ unsatisfied: { count: 150, limit: 150 } });
+      expect(result).not.toHaveProperty('classname');
+      expect(result).not.toHaveProperty('isVip');
+    });
+
+    it('returns null when neither group was observed', async () => {
+      captureUserStatusUrl({ username: 'testuser', unsat: { count: 5 } });
+
+      expect(await indexer.refreshStatus()).toBeNull();
+    });
+
+    describe('a non-valid unsat leaves the class fields untouched and reports no pair', () => {
+      const cases: Array<{ name: string; unsat: unknown }> = [
+        { name: 'absent', unsat: undefined },
+        { name: 'null', unsat: null },
+        { name: 'a string', unsat: '139/150' },
+        { name: 'missing limit', unsat: { count: 5 } },
+        { name: 'a zero limit', unsat: { count: 0, limit: 0 } },
+        { name: 'a negative limit', unsat: { count: 5, limit: -1 } },
+        { name: 'a null count', unsat: { count: null, limit: 150 } },
+        { name: 'a fractional count', unsat: { count: 1.5, limit: 150 } },
+      ];
+
+      for (const { name, unsat } of cases) {
+        it(`reports class fields only when unsat is ${name}`, async () => {
+          captureUserStatusUrl({ username: 'testuser', classname: 'Power User', ...(unsat !== undefined && { unsat }) });
+
+          const result = await indexer.refreshStatus();
+
+          expect(result).toEqual({ isVip: false, classname: 'Power User' });
+          expect(result).not.toHaveProperty('unsatisfied');
+        });
+      }
+    });
+
+    it('never synthesizes one class field without the other', async () => {
+      const bodies: Array<Record<string, unknown>> = [
+        { username: 'u', classname: 'VIP', unsat: { count: 1, limit: 150 } },
+        { username: 'u', unsat: { count: 1, limit: 150 } },
+        { username: 'u', classname: 'Mouse' },
+        { username: 'u' },
+      ];
+
+      for (const body of bodies) {
+        const idx = new MyAnonamouseIndexer({ mamId: 'test-mam-id', baseUrl: MAM_BASE, searchLanguages: [1], searchType: 'active' });
+        captureUserStatusUrl(body);
+        const result = await idx.refreshStatus();
+        expect(('classname' in (result ?? {}))).toBe('isVip' in (result ?? {}));
+      }
+    });
+
+    it('still reports the Mouse class together with a valid pair', async () => {
+      captureUserStatusUrl({ username: 'u', classname: 'Mouse', unsat: { count: 150, limit: 150 } });
+
+      expect(await indexer.refreshStatus()).toEqual({
+        isVip: false, classname: 'Mouse', unsatisfied: { count: 150, limit: 150 },
+      });
+    });
+  });
+
   describe('#372 — test() Mouse warning', () => {
     it('returns success with warning when classname is Mouse', async () => {
       server.use(
@@ -1990,6 +2192,209 @@ describe('MyAnonamouseIndexer', () => {
       const result = await indexer.test();
       expect(result.success).toBe(true);
       expect(result.metadata).not.toHaveProperty('wedges');
+    });
+  });
+
+  // Wiring only: the gate's own timing lives in mam-throttle.test.ts, which can use fake timers
+  // without stalling MSW.
+  describe('#2309 — request-throttle wiring', () => {
+    function stubSearch(onHit?: () => void) {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          onHit?.();
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+    }
+
+    function stubStatus(onHit?: () => void) {
+      server.use(
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          onHit?.();
+          return HttpResponse.json({ username: 'u', classname: 'VIP' });
+        }),
+      );
+    }
+
+    /** Holds the gate open so the caller can observe what has and has not happened meanwhile. */
+    function gateAcquire() {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      const spy = vi.spyOn(mamThrottle, 'acquire').mockReturnValue(held);
+      return { spy, release };
+    }
+
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 25));
+
+    describe('every transport boundary acquires', () => {
+      it('search() acquires once, with the adapter base URL and no signal of its own', async () => {
+        const acquire = vi.spyOn(mamThrottle, 'acquire');
+        stubSearch();
+
+        await indexer.search('test');
+
+        expect(acquire).toHaveBeenCalledTimes(1);
+        expect(acquire).toHaveBeenCalledWith(MAM_BASE, undefined);
+      });
+
+      it('search() forwards the caller signal, not the composed timeout signal', async () => {
+        const acquire = vi.spyOn(mamThrottle, 'acquire');
+        const controller = new AbortController();
+        stubSearch();
+
+        await indexer.search('test', { signal: controller.signal });
+
+        expect(acquire).toHaveBeenCalledWith(MAM_BASE, controller.signal);
+      });
+
+      it('test() acquires once', async () => {
+        const acquire = vi.spyOn(mamThrottle, 'acquire');
+        stubStatus();
+
+        await indexer.test();
+
+        expect(acquire).toHaveBeenCalledTimes(1);
+        expect(acquire).toHaveBeenCalledWith(MAM_BASE, undefined);
+      });
+
+      it('refreshStatus() acquires once and forwards the signal it was given', async () => {
+        const acquire = vi.spyOn(mamThrottle, 'acquire');
+        const controller = new AbortController();
+        stubStatus();
+
+        await indexer.refreshStatus(controller.signal);
+
+        expect(acquire).toHaveBeenCalledTimes(1);
+        expect(acquire).toHaveBeenCalledWith(MAM_BASE, controller.signal);
+      });
+
+      // AC11: ResolveDownloadContext carries no signal, so this wait is uninterruptible by design.
+      // Pinned so a later change that starts threading one is a visible contract change.
+      it('resolveDownloadUrl() acquires once on the same key, carrying no signal', async () => {
+        const acquire = vi.spyOn(mamThrottle, 'acquire');
+        stubTorrentDownload(server);
+
+        await indexer.resolveDownloadUrl({ guid: '12345', downloadUrl: 'mam-torrent://12345', protocol: 'torrent', isFreeleech: true });
+
+        expect(acquire).toHaveBeenCalledTimes(1);
+        expect(acquire).toHaveBeenCalledWith(MAM_BASE, undefined);
+      });
+
+      it('acquires before MAM\'s "Nothing returned" empty is read', async () => {
+        const acquire = vi.spyOn(mamThrottle, 'acquire');
+        server.use(
+          http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () =>
+            HttpResponse.json({ error: 'Nothing returned, hit refresh or check your filters' })),
+        );
+
+        const { results } = await indexer.search('test');
+
+        expect(results).toEqual([]);
+        expect(acquire).toHaveBeenCalledTimes(1);
+      });
+
+      it('acquires before a malformed search body throws', async () => {
+        const acquire = vi.spyOn(mamThrottle, 'acquire');
+        server.use(http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => HttpResponse.text('<html>nope</html>')));
+
+        await expect(indexer.search('test')).rejects.toThrow(IndexerError);
+        expect(acquire).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    describe('ordering relative to the timeout arm', () => {
+      it('dispatches nothing while the acquire is outstanding, and dispatches once it releases', async () => {
+        let hits = 0;
+        stubSearch(() => { hits++; });
+        const { release } = gateAcquire();
+
+        const pending = indexer.search('test');
+        await settle();
+        expect(hits).toBe(0);
+
+        release();
+        await pending;
+        expect(hits).toBe(1);
+      });
+
+      it('arms the request timeout only after the acquire resolves', async () => {
+        const armed: number[] = [];
+        const realSetTimeout = globalThis.setTimeout;
+        // Delay-discriminating: everything else passes through untouched, because a blanket
+        // redirect-to-0 would abort every MAM request in this suite.
+        const passThrough = realSetTimeout as unknown as (...args: unknown[]) => ReturnType<typeof setTimeout>;
+        vi.spyOn(globalThis, 'setTimeout').mockImplementation(((...args: unknown[]) => {
+          if (args[1] === INDEXER_TIMEOUT_MS) armed.push(args[1] as number);
+          return passThrough(...args);
+        }) as unknown as typeof globalThis.setTimeout);
+        stubSearch();
+        const { release } = gateAcquire();
+
+        const pending = indexer.search('test');
+        await new Promise((resolve) => realSetTimeout(resolve, 25));
+        expect(armed).toEqual([]);
+
+        release();
+        await pending;
+        expect(armed).toEqual([INDEXER_TIMEOUT_MS]);
+      });
+    });
+
+    describe('abort propagation through the adapter', () => {
+      it('rejects search() with the abort reason instead of reporting an answered zero', async () => {
+        let hits = 0;
+        stubSearch(() => { hits++; });
+        const reason = new IndexerError('MyAnonamouse', 'search deadline reached');
+        const controller = new AbortController();
+        controller.abort(reason);
+        vi.spyOn(mamThrottle, 'acquire').mockRejectedValue(reason);
+
+        await expect(indexer.search('test', { signal: controller.signal })).rejects.toBe(reason);
+        expect(hits).toBe(0);
+      });
+
+      it('rejects refreshStatus() with an IndexerError abort reason rather than degrading to null', async () => {
+        let hits = 0;
+        stubStatus(() => { hits++; });
+        const reason = new IndexerError('MyAnonamouse', 'search deadline reached');
+        const controller = new AbortController();
+        controller.abort(reason);
+        vi.spyOn(mamThrottle, 'acquire').mockRejectedValue(reason);
+
+        await expect(indexer.refreshStatus(controller.signal)).rejects.toBe(reason);
+        expect(hits).toBe(0);
+      });
+
+      // Control: without it, a "rethrow everything" regression in refreshStatus is invisible.
+      it('still degrades a genuine IndexerError to null under a live signal', async () => {
+        const controller = new AbortController();
+        server.use(http.get(`${MAM_BASE}/jsonLoad.php`, () => HttpResponse.text('not json at all')));
+
+        expect(await indexer.refreshStatus(controller.signal)).toBeNull();
+        expect(controller.signal.aborted).toBe(false);
+      });
+    });
+
+    // The one case that lets the real singleton run end to end.
+    it('spaces two real MAM requests by the documented interval', async () => {
+      const seen: Array<{ label: string; at: number }> = [];
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          seen.push({ label: 'search', at: Date.now() });
+          return HttpResponse.json({ data: [] });
+        }),
+        http.get(`${MAM_BASE}/jsonLoad.php`, () => {
+          seen.push({ label: 'status', at: Date.now() });
+          return HttpResponse.json({ username: 'u', classname: 'VIP' });
+        }),
+      );
+
+      await indexer.search('test');
+      await indexer.refreshStatus();
+
+      expect(seen.map((s) => s.label)).toEqual(['search', 'status']);
+      // Date.now() granularity is ~15.6ms on Windows, so a strict >= interval flakes there.
+      expect(seen[1]!.at - seen[0]!.at).toBeGreaterThanOrEqual(MAM_MIN_REQUEST_INTERVAL_MS - 20);
     });
   });
 });

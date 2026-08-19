@@ -3,6 +3,7 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { createMockSettings } from '@/__tests__/factories';
 import { DiscoverySettingsSection } from './DiscoverySettingsSection';
 
 vi.mock('@/lib/api', () => ({
@@ -28,27 +29,11 @@ const mockApi = api as unknown as {
   updateSettings: ReturnType<typeof vi.fn>;
 };
 
-function makeSettings(overrides = {}) {
-  return {
-    discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90 },
-    library: { rootFolder: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{title}' },
-    search: { enabled: true, intervalMinutes: 30, blacklistTtlDays: 30 },
-    import: { deleteAfterImport: false, importMode: 'copy' as const },
-    general: { logLevel: 'info' as const },
-    metadata: { provider: 'audible' as const, region: 'us' },
-    processing: { ffmpegPath: '/usr/bin/ffmpeg', filePermissions: '644', folderPermissions: '755', enableRetagging: false },
-    tagging: { writeTags: false, tags: [], clearExistingTags: false },
-    quality: {},
-    network: {},
-    rss: { enabled: false, intervalMinutes: 30 },
-    system: {},
-    ...overrides,
-  };
-}
-
+// The schema default is `enabled: true`; a fetched `false` is what makes "the card renders saved
+// config, not defaults" observable at all.
 beforeEach(() => {
   vi.resetAllMocks();
-  mockApi.getSettings.mockResolvedValue(makeSettings());
+  mockApi.getSettings.mockResolvedValue(createMockSettings({ discovery: { enabled: false } }));
 });
 
 describe('DiscoverySettingsSection', () => {
@@ -64,8 +49,27 @@ describe('DiscoverySettingsSection', () => {
     expect(screen.getByLabelText(/max suggestions per author/i)).toBeInTheDocument();
   });
 
+  it('renders the fetched discovery config rather than the schema defaults', async () => {
+    // None of these four match DEFAULT_SETTINGS.discovery (true / 24 / 5 / 90), so a card wired to
+    // the defaults instead of the fetch cannot produce them. createMockSettings supplies every other
+    // category — including companionEpub and general.housekeepingRetentionDays, which the deleted
+    // hand-rolled fixture omitted; its coverage is pinned by create-mock-settings.fixtures.test.ts.
+    mockApi.getSettings.mockResolvedValue(createMockSettings({
+      discovery: { enabled: false, intervalHours: 72, maxSuggestionsPerAuthor: 12, expiryDays: 45 },
+    }));
+
+    renderWithProviders(<DiscoverySettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/refresh interval/i)).toHaveValue(72);
+    });
+    expect(screen.getByLabelText(/max suggestions per author/i)).toHaveValue(12);
+    expect(screen.getByLabelText(/suggestion expiry/i)).toHaveValue(45);
+    expect(screen.getByLabelText(/enable discovery/i)).not.toBeChecked();
+  });
+
   it('toggling enable/disable persists via settings mutation', async () => {
-    mockApi.updateSettings.mockResolvedValue(makeSettings({ discovery: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: 5 } }));
+    mockApi.updateSettings.mockResolvedValue(createMockSettings({ discovery: { enabled: true } }));
 
     renderWithProviders(<DiscoverySettingsSection />);
 
@@ -84,7 +88,7 @@ describe('DiscoverySettingsSection', () => {
   });
 
   it('changing interval value persists via settings mutation', async () => {
-    mockApi.updateSettings.mockResolvedValue(makeSettings({ discovery: { enabled: false, intervalHours: 12, maxSuggestionsPerAuthor: 5 } }));
+    mockApi.updateSettings.mockResolvedValue(createMockSettings({ discovery: { enabled: false, intervalHours: 12 } }));
 
     renderWithProviders(<DiscoverySettingsSection />);
 
@@ -167,9 +171,7 @@ describe('DiscoverySettingsSection', () => {
   it('save success invalidates settings cache, resets dirty state, and shows success toast', async () => {
     const invalidateSpy = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
 
-    mockApi.updateSettings.mockResolvedValue(makeSettings({
-      discovery: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: 5 },
-    }));
+    mockApi.updateSettings.mockResolvedValue(createMockSettings({ discovery: { enabled: true } }));
 
     renderWithProviders(<DiscoverySettingsSection />);
 
@@ -207,8 +209,8 @@ describe('DiscoverySettingsSection', () => {
     });
 
     it('changing expiry days persists via settings mutation', async () => {
-      mockApi.updateSettings.mockResolvedValue(makeSettings({
-        discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 60 },
+      mockApi.updateSettings.mockResolvedValue(createMockSettings({
+        discovery: { enabled: false, expiryDays: 60 },
       }));
 
       renderWithProviders(<DiscoverySettingsSection />);
@@ -325,4 +327,37 @@ describe('DiscoverySettingsSection', () => {
       unmount();
     }
   });
+
+  describe('when the shared settings read fails', () => {
+    it('reports the read failure instead of showing the defaults as saved discovery config', async () => {
+      mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
+
+      renderWithProviders(<DiscoverySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to load discovery settings.')).toBeInTheDocument();
+      });
+      // A 24-hour refresh reads as the operator's cadence; it is the schema default.
+      expect(screen.queryByLabelText(/enable discovery/i)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/refresh interval/i)).not.toBeInTheDocument();
+    });
+
+    it('refetches and restores the saved discovery config when the operator clicks Retry', async () => {
+      mockApi.getSettings
+        .mockRejectedValueOnce(new Error('settings unreadable'))
+        .mockResolvedValue(createMockSettings({ discovery: { enabled: true, intervalHours: 72 } }));
+      const user = userEvent.setup();
+
+      renderWithProviders(<DiscoverySettingsSection />);
+      await waitFor(() => expect(screen.getByText('Failed to load discovery settings.')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: 'Retry loading discovery settings' }));
+
+      // 72, not the schema default 24: only a real refetch produces this value.
+      await waitFor(() => expect(screen.getByLabelText(/refresh interval/i)).toHaveValue(72));
+      expect(screen.queryByText('Failed to load discovery settings.')).not.toBeInTheDocument();
+      expect(mockApi.getSettings).toHaveBeenCalledTimes(2);
+    });
+  });
+
 });

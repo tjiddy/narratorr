@@ -185,9 +185,26 @@ describe('ImportOrchestrator', () => {
     it('dispatches tagging after successful import (best-effort)', async () => {
       await orchestrator.importDownload(1);
 
+      // bookService is the embed's own in-section re-read (#2461); without it the helper would
+      // have no way to notice the folder was vacated while it was queued.
       expect(embedTagsForImport).toHaveBeenCalledWith(expect.objectContaining({
-        bookId: 1, targetPath: '/audiobooks/Brandon Sanderson/The Way of Kings',
+        bookId: 1, targetPath: '/audiobooks/Brandon Sanderson/The Way of Kings', bookService,
       }));
+    });
+
+    it('skips the tag embed with a warn when no book service is wired, and still runs every later side effect', async () => {
+      const degraded = new ImportOrchestrator(importService, settingsService, log, notifier, tagging, eventHistory, broadcaster, inject<never>(connector));
+
+      await expect(degraded.importDownload(1)).resolves.toEqual(mockResult);
+
+      expect(embedTagsForImport).not.toHaveBeenCalled();
+      expect(log.warn).toHaveBeenCalledWith(
+        { bookId: 1 },
+        'Tag embedding skipped during import — no book service wired',
+      );
+      expect(runImportPostProcessing).toHaveBeenCalled();
+      expect(emitImportStatusSuccess).toHaveBeenCalled();
+      expect(connector.notifyRefresh).toHaveBeenCalled();
     });
 
     it('dispatches post-processing after tagging (best-effort)', async () => {
@@ -214,6 +231,16 @@ describe('ImportOrchestrator', () => {
       // The helper reloads by bookId instead of accepting the stale pre-enrichment snapshot.
       const opfArg = vi.mocked(writeOpfForImport).mock.calls[0]![0] as unknown as Record<string, unknown>;
       expect(opfArg).not.toHaveProperty('book');
+    });
+
+    it('opts the download-import call site into divergence preservation as source `auto` (#2297 AC9/AC15)', async () => {
+      settingsService = createMockSettingsService({ tagging: { writeOpf: true } });
+      orchestrator = new ImportOrchestrator(importService, settingsService, log, notifier, tagging, eventHistory, broadcaster, inject<never>(connector), bookService);
+
+      await orchestrator.importDownload(1);
+
+      // A missing flag must red here, not only in the writer's own suite.
+      expect(vi.mocked(writeOpfForImport).mock.calls[0]![0].preserve).toEqual({ source: 'auto', eventHistory });
     });
 
     it('passes enabled:false to the OPF helper when writeOpf is disabled (default)', async () => {

@@ -15,6 +15,7 @@ import {
   NotifierService,
   ConnectorService,
   BlacklistService,
+  ImportListExclusionService,
   RemotePathMappingService,
   RenameService,
   EventHistoryService,
@@ -58,6 +59,7 @@ import { libraryScanRoutes } from './library-scan.js';
 import { notifiersRoutes } from './notifiers.js';
 import { connectorsRoutes } from './connectors.js';
 import { blacklistRoutes } from './blacklist.js';
+import { importListExclusionsRoutes } from './import-list-exclusions.js';
 import { authRoutes } from './auth.js';
 import { filesystemRoutes } from './filesystem.js';
 import { remotePathMappingRoutes } from './remote-path-mappings.js';
@@ -82,6 +84,7 @@ import { registerImportAdapter } from '../services/import-adapters/registry.js';
 import { ManualImportAdapter } from '../services/import-adapters/manual.js';
 import { AutoImportAdapter } from '../services/import-adapters/auto.js';
 import { retryImportRoute } from './retry-import.js';
+import { bookImportFilesRoute } from './book-import-files.js';
 import { importPreviewRoute } from './import-preview.js';
 import { v1BooksRoutes } from './v1/books.js';
 import { v1AuthorsRoutes } from './v1/authors.js';
@@ -113,6 +116,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const notifier = new NotifierService(db, log);
   const connector = new ConnectorService(db, log);
   const blacklistService = new BlacklistService(db, log, settings);
+  const importListExclusion = new ImportListExclusionService(db, log);
 
   const eventBroadcaster = new EventBroadcasterService(log);
   const book = new BookService(db, log, metadata);
@@ -149,7 +153,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
     blacklistService,
     eventHistory,
     eventBroadcaster,
-  });
+  }, importListExclusion);
   const taskRegistry = new TaskRegistry();
   const discovery = new DiscoveryService(db, log, metadata, settings);
   const bulkOperation = new BulkOperationService(db, renameService, taggingService, settings, book, log, connector, companionEbook);
@@ -190,7 +194,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
     settingsService: settings,
   });
   const bookRejection = new BookRejectionService(db, log, book, blacklistService, settings, eventHistory, retrySearchDeps, companionEbook);
-  const bookDeletion = new BookDeletionService(book, download, downloadOrchestrator, settings, log, eventHistory);
+  const bookDeletion = new BookDeletionService(db, book, download, downloadOrchestrator, settings, log, eventHistory, importListExclusion);
 
   // Wire after every instance exists; WireOnce rejects use-before-wire and duplicate wiring.
   download.wire({ retrySearchDeps, indexerService: indexer });
@@ -202,7 +206,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   registerImportAdapter(new ManualImportAdapter(libraryScan.importDeps));
   registerImportAdapter(new AutoImportAdapter(importOrchestrator));
 
-  return { settings, auth, indexer, indexerSearch, downloadClient, book, bookImport, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, connector, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, searchLadderCooldown, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection, bookDeletion, importQueueWorker, importStaging, importSubmissionReport, importSubmissionRunner, retrySearchDeps, seriesCard, referenceRead, companionEbook };
+  return { settings, auth, indexer, indexerSearch, downloadClient, book, bookImport, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, connector, blacklist: blacklistService, importListExclusion, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, searchLadderCooldown, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation, bookRejection, bookDeletion, importQueueWorker, importStaging, importSubmissionReport, importSubmissionRunner, retrySearchDeps, seriesCard, referenceRead, companionEbook };
 }
 
 type RouteFactory = (app: FastifyInstance, services: Services, db: Db) => Promise<void>;
@@ -250,6 +254,7 @@ const routeRegistry: RouteFactory[] = [
   (app, s) => notifiersRoutes(app, s.notifier),
   (app, s) => connectorsRoutes(app, s.connector),
   (app, s) => blacklistRoutes(app, s.blacklist),
+  (app, s) => importListExclusionsRoutes(app, s.importListExclusion),
   (app, s) => authRoutes(app, s.auth),
   (app, s) => remotePathMappingRoutes(app, s.remotePathMapping),
   (app) => filesystemRoutes(app),
@@ -257,7 +262,7 @@ const routeRegistry: RouteFactory[] = [
   (app, s) => eventsRoutes(app, s.eventBroadcaster, s.merge),
   (app, s) => searchStreamRoutes(app, s.indexerSearch, s.blacklist, s.settings, s.indexer, new SearchSessionManager()),
   (app, s) => prowlarrCompatRoutes(app, s.indexer),
-  (app, s) => importListsRoutes(app, s.importList),
+  (app, s) => importListsRoutes(app, s.importList, s.taskRegistry),
   (app, s) => discoverRoutes(app, {
     discoveryService: s.discovery,
     settingsService: s.settings,
@@ -265,6 +270,13 @@ const routeRegistry: RouteFactory[] = [
   }),
   (app, s) => bulkOperationsRoutes(app, s.bulkOperation),
   (app, s) => retryImportRoute(app, s.bookImport, () => s.importQueueWorker.nudge()),
+  (app, s, db) => bookImportFilesRoute(app, {
+    db,
+    bookService: s.book,
+    bookImportService: s.bookImport,
+    settingsService: s.settings,
+    nudgeImportWorker: () => s.importQueueWorker.nudge(),
+  }),
   (app) => importPreviewRoute(app),
   (app, s, db) => v1BooksRoutes(app, {
     bookService: s.book,

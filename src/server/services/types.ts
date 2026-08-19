@@ -7,6 +7,7 @@ import type {
   downloads,
   connectors,
   importJobs,
+  importListExclusions,
   importLists,
   indexers,
   notifiers,
@@ -69,6 +70,9 @@ export type ImportListRow = Omit<typeof importLists.$inferSelect, 'type'> & {
   type: ImportListType;
 };
 
+// No enum columns, so $inferSelect needs no re-narrowing.
+export type ImportListExclusionRow = typeof importListExclusions.$inferSelect;
+
 export type ConnectorRow = Omit<typeof connectors.$inferSelect, 'type'> & {
   type: ConnectorType;
 };
@@ -77,6 +81,14 @@ export type BookEventRow = Omit<typeof bookEvents.$inferSelect, 'eventType' | 's
   eventType: EventType;
   source: EventSource;
 };
+
+/**
+ * The book's CURRENT folder, projected onto every listed event. Renderers compose derived file
+ * locations from it (`sidecar_diverged` points at `metadata.opf.bak`) instead of reading a path
+ * stored on an append-only row, which would go stale the first time the book is renamed. `null`
+ * once the book is deleted and `bookId` is nulled — there is then no folder, which is the truth.
+ */
+export type BookEventWithPath = BookEventRow & { bookPath: string | null };
 
 export type BlacklistRow = Omit<typeof blacklist.$inferSelect, 'reason' | 'blacklistType'> & {
   reason: BlacklistReason;

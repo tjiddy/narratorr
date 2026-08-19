@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from '@db/index.js';
+import type { AcquireSlotOptions, SlotRelease } from '@core/utils/bounded-semaphore.js';
 import { books, companionEbooks } from '@db/schema.js';
 import { generatePublicId } from '../utils/public-id.js';
 import type { SettingsService } from './settings.service.js';
@@ -80,13 +81,13 @@ vi.mock('./book-admission.js', async (importOriginal) => {
   };
 });
 
-vi.mock('../utils/semaphore.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../utils/semaphore.js')>();
-  class RecordingSemaphore extends actual.Semaphore {
+vi.mock('@core/utils/bounded-semaphore.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@core/utils/bounded-semaphore.js')>();
+  class RecordingSemaphore extends actual.BoundedSemaphore {
     // acquire() returns a single-use release token, so wrap it to record release (#1984).
-    override async acquire(): Promise<() => void> {
+    override async acquire(options: AcquireSlotOptions = {}): Promise<SlotRelease> {
       hoisted.events.push('semaphore.wait');
-      const release = await super.acquire();
+      const release = await super.acquire(options);
       hoisted.events.push('semaphore.acquired');
       return () => {
         hoisted.events.push('semaphore.release');
@@ -94,7 +95,7 @@ vi.mock('../utils/semaphore.js', async (importOriginal) => {
       };
     }
   }
-  return { ...actual, Semaphore: RecordingSemaphore };
+  return { ...actual, BoundedSemaphore: RecordingSemaphore };
 });
 
 const observeMock = vi.mocked(observeCompanionEbook);
@@ -105,6 +106,8 @@ const resolveCompanionEbookPathMock = vi.mocked(resolveCompanionEbookPath);
 const findCompanionEbookMock = vi.mocked(findCompanionEbook);
 const upsertCompanionEbookMock = vi.mocked(upsertCompanionEbook);
 const withBookAdmissionLockMock = vi.mocked(withBookAdmissionLock);
+// The real primitive, so a case can hold a book the way a merge or an import would.
+const actualWithBookAdmissionLock = (await vi.importActual<typeof import('./book-admission.js')>('./book-admission.js')).withBookAdmissionLock;
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -477,6 +480,73 @@ describe('CompanionEbookReconciler (#1959)', () => {
         observed: RECONCILE_CONCURRENCY,
         skipped: 1,
       });
+    });
+  });
+
+  /**
+   * #2369 AC17. Bringing every mutator inside the admission lock means a merge or a mass copy can
+   * now hold one book's lock for minutes. The sweep acquires its semaphore slot BEFORE the
+   * admission lock, so each reconciliation blocked on a held book consumes one of four global
+   * slots: one long hold leaves three, and four concurrently-held books stall the rest of the sweep
+   * for as long as those holds last. That is the accepted operational bound — the sweep is
+   * idempotent background work and resumes when a hold releases — so it is pinned, not left prose.
+   */
+  describe('the operational bound of a long hold (#2369 AC17)', () => {
+    it('stalls the rest of the sweep while four books are held, and drains once the holds release', async () => {
+      const gate = deferred();
+      const held: number[] = [];
+      const holds: Array<Promise<void>> = [];
+      for (let i = 0; i < RECONCILE_CONCURRENCY; i++) {
+        const bookId = await insertBook();
+        held.push(bookId);
+        // A mutator outside the reconciler holding the book — a merge, an import, a rename.
+        holds.push(actualWithBookAdmissionLock(bookId, () => gate.promise));
+      }
+      const target = await insertBook();
+
+      const sweep = reconciler.reconcileAll();
+      // Every slot is consumed by a reconciliation that is waiting on admission, not working.
+      await waitUntil(
+        () => held.every((id) => hoisted.events.includes(`lock.acquire:${id}`)),
+        'all four held books to queue on their admission locks',
+      );
+
+      const sweepState = track(sweep);
+      // Deterministic rather than timing-based: the bound IS the slot count, so count the
+      // reconciliations that got far enough to reach a lock. Exactly four did; the fifth is still
+      // waiting for a slot and has touched nothing.
+      const reachedLock = () => hoisted.events.filter((e) => e.startsWith('lock.acquire:')).length;
+      expect(reachedLock()).toBe(RECONCILE_CONCURRENCY);
+      expect(hoisted.events).not.toContain(`lock.acquire:${target}`);
+      expect(observeMock.mock.calls.map((call) => call[0].bookId)).not.toContain(target);
+      expect(sweepState.settled).toBe(false);
+
+      gate.resolve();
+      await Promise.all(holds);
+      await sweep;
+
+      // Nothing was dropped — the stall is a delay, not a loss.
+      const observed = observeMock.mock.calls.map((call) => call[0].bookId);
+      for (const id of [...held, target]) expect(observed).toContain(id);
+    });
+
+    it('acquires the semaphore slot before the admission lock, never the other way round', async () => {
+      const gate = deferred();
+      const bookId = await insertBook();
+      outcomes.set(bookId, async () => { await gate.promise; return OBSERVED; });
+
+      const sweep = reconciler.reconcileAll();
+      await waitUntil(() => hoisted.events.includes(`lock.acquire:${bookId}`), 'the sweep to reach the lock');
+
+      // Inverting this order would let a queued background reconciliation hold a book's admission
+      // lock while waiting for a slot, blocking direct user actions on that book.
+      const slot = hoisted.events.indexOf('semaphore.acquired');
+      const lock = hoisted.events.indexOf(`lock.acquire:${bookId}`);
+      expect(slot).toBeGreaterThanOrEqual(0);
+      expect(slot).toBeLessThan(lock);
+
+      gate.resolve();
+      await sweep;
     });
   });
 

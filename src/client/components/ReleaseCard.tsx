@@ -1,5 +1,8 @@
 import { formatBytes, type SearchResult } from '@/lib/api';
 import { calculateQuality, compareQuality, qualityTierBg } from '@core/utils/index.js';
+// Direct import, not the barrel: the barrel is a mock boundary in tests, and this predicate must
+// be the same production code the auto-grab filter runs so the two surfaces cannot disagree.
+import { isResultAtUnsatisfiedLimit } from '@core/utils/mam-unsatisfied.js';
 import {
   DownloadIcon,
   LoadingSpinner,
@@ -95,6 +98,12 @@ export function ReleaseCard({
   const isInLibrary =
     (!!result.guid && result.guid === lastGrabGuid) ||
     (!!result.infoHash && result.infoHash === lastGrabInfoHash);
+  const atLimit = isResultAtUnsatisfiedLimit(result);
+  // A missing link is a permanent property of the release, so it outranks the temporary account
+  // condition: showing the limit for a linkless release would promise a retry that cannot succeed.
+  const atLimitReason = atLimit && result.downloadUrl
+    ? `${result.indexer} has it; your account cannot take it right now — ${result.unsatisfied.count} of ${result.unsatisfied.limit} unsatisfied`
+    : null;
   return (
     <div className={`glass-card rounded-xl p-4 hover:border-primary/30 transition-all duration-200 overflow-hidden ${
       isInLibrary ? 'border-l-[3px] border-l-green-500 border-green-500/25 bg-gradient-to-r from-green-500/10 via-green-500/[0.03] to-transparent' : ''
@@ -133,7 +142,8 @@ export function ReleaseCard({
           <button
             type="button"
             onClick={onGrab}
-            disabled={!result.downloadUrl || isGrabbing}
+            disabled={!result.downloadUrl || atLimit || isGrabbing}
+            {...(atLimitReason !== null && { title: atLimitReason })}
             className="flex items-center gap-1.5 px-3 py-2 text-sm bg-primary text-primary-foreground font-medium rounded-lg hover:opacity-90 hover:shadow-glow disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 focus-ring"
           >
             {isGrabbing ? (
@@ -143,6 +153,9 @@ export function ReleaseCard({
             )}
             Grab
           </button>
+          {atLimitReason !== null && (
+            <p className="text-xs text-amber-400 text-right max-w-[13rem]">{atLimitReason}</p>
+          )}
           <button
             type="button"
             onClick={onBlacklist}

@@ -72,6 +72,14 @@ export class MergeStateBroadcaster {
     if (this.remove(bookId)) this.broadcast();
   }
 
+  /**
+   * "Broadcast as active", the only state a cancellation can key on while the merge owns no
+   * AbortController — between promotion and the admission acquisition (#2462).
+   */
+  isActive(bookId: number): boolean {
+    return this.activeEntries.has(bookId);
+  }
+
   /** Avoid a title re-read inside the synchronous terminal sequence. */
   titleFor(bookId: number): string {
     return this.activeEntries.get(bookId)?.title ?? this.queuedTitles.get(bookId) ?? `Book ${bookId}`;

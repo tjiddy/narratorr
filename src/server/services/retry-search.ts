@@ -9,10 +9,13 @@ import type { SettingsService } from './settings.service.js';
 import type { RetryBudget } from './retry-budget.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { buildNarratorPriority, applyMultiPartFilterAndRank, buildSearchFilterOptions, filterBlacklistedResults } from './search-pipeline.js';
-import { buildQueryLadder, runQueryLadder, selectRelaxedCandidate, type LadderRun } from './search-query-ladder.js';
+import { describeBlacklistEmptiedSet, BLACKLIST_EMPTIED_MESSAGE } from './search-drop-summary.js';
+import { buildQueryLadder, runQueryLadder, type LadderRun } from './search-query-ladder.js';
+import { applyUnsatisfiedLimitGate } from './unsatisfied-limit-gate.js';
 import { createAggregateExecutor } from './search-ladder-execution.js';
+import { NOOP_SINK } from './search-event-sink.js';
 import type { SearchResult } from '@core/index.js';
-import { recordSearchRelaxedHeldEvent } from '../utils/download-side-effects.js';
+import { recordGrabBlockedUnsatisfiedEvent, recordSearchRelaxedHeldEvent } from '../utils/download-side-effects.js';
 import { resolveBookQualityInputs } from '@core/utils/index.js';
 import { buildGrabPayload } from './grab-payload.js';
 import { AUTO_GRAB_PHASE2_CAP, enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
@@ -73,8 +76,16 @@ function resolveRetryCandidate(
   attempt: number,
 ): { best: SearchResult } | { outcome: RetryOutcome } {
   const { eventHistory, log } = deps;
-  const selection = selectRelaxedCandidate(results, ran.rung);
+  const gate = applyUnsatisfiedLimitGate(results, ran.rung);
 
+  // No new RetryOutcome variant: the blocked disposition is the same no_candidates the segment-cut
+  // hold already returns, with the attempt consumed. The AC8 event carries the real reason.
+  if (gate.kind === 'blocked') {
+    recordGrabBlockedUnsatisfiedEvent({ book, eventHistory, log, attempt, release: gate.result });
+    return { outcome: { outcome: 'no_candidates' } };
+  }
+
+  const selection = gate.selection;
   if (selection.kind === 'hold') {
     recordSearchRelaxedHeldEvent({
       book, eventHistory, log, attempt,
@@ -123,7 +134,7 @@ export async function retrySearch(
   try {
     // Retry runs the full ladder without scheduled cooldown; the whole ladder costs one budget attempt.
     const ladder = buildQueryLadder({ title: book.title, author: book.authors?.[0]?.name });
-    const ran = await runQueryLadder(ladder, createAggregateExecutor(book, indexerSearchService));
+    const ran = await runQueryLadder(ladder, createAggregateExecutor(book, indexerSearchService, NOOP_SINK, log));
     const rawResults = ran.results;
 
     if (rawResults.length === 0) {
@@ -132,6 +143,10 @@ export async function retrySearch(
     }
 
     const filteredResults = await filterBlacklistedResults(rawResults, blacklistService, log);
+    // Report, don't return: the path still falls through to ranking so its own no-candidate line fires.
+    if (filteredResults.length === 0) {
+      log.info({ bookId, title: book.title, attempt, ...describeBlacklistEmptiedSet(rawResults.length, rawResults.length) }, BLACKLIST_EMPTIED_MESSAGE);
+    }
 
     // Permit configured private indexers and cap auto-grab phase-2 NZB fetches.
     await enrichUsenetLanguages(filteredResults, log, await indexerService.getLanAllowlist(), { maxPhase2Fetches: AUTO_GRAB_PHASE2_CAP });
@@ -157,7 +172,7 @@ export async function retrySearch(
     // grabForRetry acquires the book mutex and rechecks blockers. Because this payload bypasses
     // the normal duplicate guard, that in-lock check is what prevents sequential duplicates.
     const grabResult = await downloadOrchestrator.grabForRetry(
-      buildGrabPayload(best, book.id, { ...(best.guid !== undefined && { guid: best.guid }), skipDuplicateCheck: true }),
+      buildGrabPayload(best, book.id, { skipDuplicateCheck: true }),
     );
     if (grabResult === 'already_active') {
       log.info({ bookId, attempt }, 'Retry search: book gained a grab blocker during search — skipping (attempt consumed, not refunded)');

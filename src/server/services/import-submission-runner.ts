@@ -13,7 +13,8 @@ import type { BookImportService } from './book-import.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { NotifierService } from './notifier.service.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
-import { classifyConfirmItem } from './import-confirm-item.helpers.js';
+import { classifyConfirmItem, type AttachClassification } from './import-confirm-item.helpers.js';
+import { attachTransitionAndEnqueue, AttachGuardMissed, isAttachActiveJobConflict } from './attach-enqueue.js';
 import { buildBookCreatePayload } from './enrichment-orchestration.helpers.js';
 import { readOpfMetadata } from '../utils/opf-reader.js';
 import { applyOpfOverlay } from './import-opf-overlay.js';
@@ -206,6 +207,12 @@ export class ImportSubmissionRunner {
         });
         return true;
       }
+      if (classification !== 'proceed' && 'attach' in classification) {
+        // narratorSource is deliberately dropped: it describes the OFFERED item's narrators, and
+        // AC28's attach rule keys on the incumbent's own list, so it decides nothing here.
+        await this.acceptAttachItem(sub, row, item, classification);
+        return true;
+      }
       if (classification !== 'proceed') {
         await this.writeTerminal(sub, row, {
           disposition: 'held',
@@ -221,6 +228,59 @@ export class ImportSubmissionRunner {
       await this.writeTerminal(sub, row, { disposition: 'failed', reason: 'Import failed — see server logs for details.' });
     }
     return true;
+  }
+
+  /**
+   * #2435 AC5 — the incumbent already exists, so nothing is created: no `resolveCreateInput`, no
+   * `createResolved`, no `book_added`. The guarded transition, the enqueue and the claim share one
+   * transaction (AC26), and the nudge fires only after it commits.
+   *
+   * The payload carries the source path, the submission's mode and the attach marker, and nothing
+   * else: under AC23/AC27 the adapter renders naming and enrichment from the incumbent row, so an
+   * item passed through unchanged would file a user-edited book under the provider's title.
+   */
+  private async acceptAttachItem(
+    sub: SubmissionRow, row: ItemRow, item: ImportConfirmItem, classification: AttachClassification,
+  ): Promise<void> {
+    const payload: ManualImportJobPayload = {
+      path: item.path,
+      title: classification.title,
+      attach: true,
+      ...(sub.mode ? { mode: sub.mode } : {}),
+    };
+    let notice: CompletionNotice | null;
+    try {
+      notice = await this.db.transaction(async (tx) => {
+        await attachTransitionAndEnqueue(tx, this.bookImportService, {
+          bookId: classification.bookId,
+          expectedStatus: classification.status,
+          metadata: JSON.stringify(payload),
+        });
+
+        const claim = await tx
+          .update(importSubmissionItems)
+          .set({ disposition: 'accepted', bookId: classification.bookId, reason: null, updatedAt: new Date() })
+          .where(and(eq(importSubmissionItems.id, row.id), eq(importSubmissionItems.disposition, 'pending')));
+        if (getRowsAffected(claim) !== 1) throw new AlreadyDispositioned();
+
+        return this.maybeComplete(tx, sub);
+      });
+    } catch (error: unknown) {
+      if (error instanceof AlreadyDispositioned) return; // another pass already handled it
+      // A missed guard means a competing writer took the book; both it and the active-job race
+      // report the same thing to the operator — someone else is already importing this book.
+      if (error instanceof AttachGuardMissed || isAttachActiveJobConflict(error)) {
+        await this.writeTerminal(sub, row, { disposition: 'skipped', reason: 'already-importing' });
+        return;
+      }
+      this.log.error({ error: serializeError(error), submissionId: sub.id, ordinal: row.ordinal, bookId: classification.bookId }, 'Staged import item attach failed');
+      await this.writeTerminal(sub, row, { disposition: 'failed', reason: 'Import failed — see server logs for details.' });
+      return;
+    }
+
+    this.log.info({ submissionId: sub.id, ordinal: row.ordinal, bookId: classification.bookId, title: classification.title }, 'Staged import item attached to existing book');
+    this.nudgeImportWorker();
+    if (notice) this.dispatchCompletion(notice);
   }
 
   // Resolve enrichment outside the transaction; create, enqueue, claim, and maybe-complete inside it or roll back to pending.

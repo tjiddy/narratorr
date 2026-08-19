@@ -956,7 +956,7 @@ describe('ManualImportPage', () => {
       await screen.findByRole('dialog');
 
       await waitFor(() => {
-        expect(mockBrowseDirectory).toHaveBeenCalledWith('/audiobooks');
+        expect(mockBrowseDirectory).toHaveBeenCalledWith('/audiobooks', 'legacy');
       });
     });
 

@@ -5,8 +5,9 @@ import {
   type AddAllSeriesResponse,
 } from '@shared/series-add-all.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { addBook, type AddBookDeps } from './book-intake/index.js';
-import { runImmediateSearch, type ImmediateSearchDeps } from './trigger-immediate-search.js';
+import { addBook, unreachableExclusion, type AddBookDeps } from './book-intake/index.js';
+import type { ImmediateSearchDeps } from './trigger-immediate-search.js';
+import { runImmediateSearchChain } from './immediate-search-chain.js';
 import type { BookDetail, BookService } from './book.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { MetadataService } from './metadata.service.js';
@@ -74,7 +75,9 @@ export class SeriesAddAllService {
     }
 
     if (options.searchImmediately && created.length > 0) {
-      void this.runSearchChain(created, log);
+      // Detached, unlike the import-list caller: this serves an HTTP request, which must not block
+      // on a multi-indexer search per created book.
+      void runImmediateSearchChain(created, this.deps.search, log);
     }
     return { outcome: 'ok', response };
   }
@@ -147,6 +150,9 @@ export class SeriesAddAllService {
         created.push(result.book);
         return { title, position, disposition: 'created', bookId: result.book.id };
       }
+      // Add All supplies no exclusion port, so an excluded book stays addable from a series card;
+      // the arm is asserted unreachable rather than folded into `owned` or `failed`.
+      if (result.outcome === 'excluded') return unreachableExclusion(result);
       if (result.outcome === 'owned-race' || result.verdict === 'same-recording') {
         return { title, position, disposition: 'owned', bookId: result.existingBookId };
       }
@@ -167,10 +173,4 @@ export class SeriesAddAllService {
     };
   }
 
-  /** Detached but serial: N concurrent search-and-grab pipelines would hammer the operator's indexers. */
-  private async runSearchChain(created: readonly BookDetail[], log: FastifyBaseLogger): Promise<void> {
-    for (const book of created) {
-      await runImmediateSearch(book, this.deps.search, log);
-    }
-  }
 }

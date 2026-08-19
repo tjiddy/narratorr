@@ -98,7 +98,7 @@ describe('companion .epub survives every file-cleanup path (#1960 AC32/AC33)', (
     const newPath = join(root, 'Author', 'A Book (2026)');
     await mkdir(newPath, { recursive: true });
 
-    await cleanupOldBookPath({ bookPath: bookDir, targetPath: newPath, libraryRoot: root, log });
+    await cleanupOldBookPath({ bookPath: bookDir, targetPath: newPath, libraryRoot: root, log, db: inject<Db>({ select: () => mockDbChain([]) }) });
 
     expect(await exists(join(bookDir, 'companion.epub'))).toBe(true);
     expect(await exists(join(bookDir, 'chapter1.mp3'))).toBe(false);

@@ -1,4 +1,5 @@
 import { http, HttpResponse } from 'msw';
+import { servesFullList } from '@core/__tests__/qb-hash-filter.js';
 
 export const QB_BASE = 'http://localhost:8080';
 export const INDEXER_BASE = 'http://indexer.test';
@@ -54,9 +55,11 @@ export function qbLoginErrorHandler(status = 500, base = QB_BASE) {
 
 export function qbGetTorrentHandler(hash: string, savePath = '/downloads/book', base = QB_BASE) {
   return http.get(`${base}/api/v2/torrents/info`, ({ request }) => {
-    const url = new URL(request.url);
-    const hashes = url.searchParams.get('hashes');
-    if (hashes && hashes.toLowerCase() === hash.toLowerCase()) {
+    const params = new URL(request.url).searchParams;
+    const hashes = params.get('hashes');
+    // No effective filter means the FULL list, not an empty one (#2485 AC7c) — a truthiness gate
+    // on the value here modelled a blank hash as a filter that matches nothing.
+    if (servesFullList(params) || hashes!.toLowerCase() === hash.toLowerCase()) {
       return HttpResponse.json([{
         hash: hash.toLowerCase(),
         name: 'Test Audiobook',

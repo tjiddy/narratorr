@@ -22,6 +22,7 @@ vi.mock('./client.js', () => ({
 import { activityApi } from './activity.js';
 import { authApi } from './auth.js';
 import { blacklistApi } from './blacklist.js';
+import { importListExclusionsApi } from './import-list-exclusions.js';
 import { booksApi } from './books.js';
 import { downloadClientsApi } from './download-clients.js';
 import { filesystemApi } from './filesystem.js';
@@ -36,6 +37,15 @@ import { eventHistoryApi } from './event-history.js';
 import { systemApi } from './system.js';
 import { submissionsApi } from './submissions.js';
 import { companionEbookApi } from './companion-ebook.js';
+import { importListsApi } from './import-lists.js';
+
+const LIST_INPUT = {
+  name: 'My NYT List',
+  type: 'nyt' as const,
+  enabled: true,
+  syncIntervalMinutes: 1440,
+  settings: { apiKey: 'key', list: 'audio-fiction' },
+};
 
 beforeEach(() => {
   mockFetchApi.mockClear();
@@ -200,6 +210,30 @@ describe('blacklistApi', () => {
   });
 });
 
+describe('importListExclusionsApi', () => {
+  it('getImportListExclusions → GET /import-list-exclusions', async () => {
+    await importListExclusionsApi.getImportListExclusions();
+    expect(mockFetchApi).toHaveBeenCalledWith('/import-list-exclusions');
+  });
+
+  it('getImportListExclusions with pagination → GET /import-list-exclusions?limit=100&offset=200', async () => {
+    await importListExclusionsApi.getImportListExclusions({ limit: 100, offset: 200 });
+    expect(mockFetchApi).toHaveBeenCalledWith('/import-list-exclusions?limit=100&offset=200');
+  });
+
+  it('removeImportListExclusion → DELETE /import-list-exclusions/:id', async () => {
+    await importListExclusionsApi.removeImportListExclusion(7);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import-list-exclusions/7', expect.objectContaining({ method: 'DELETE' }));
+  });
+
+  // AC7: exclusions are written only by deleting an import-list book, so the client module
+  // deliberately exposes no create method.
+  it('exposes exactly the list and remove methods — no create', () => {
+    expect(Object.keys(importListExclusionsApi).sort())
+      .toEqual(['getImportListExclusions', 'removeImportListExclusion']);
+  });
+});
+
 describe('booksApi', () => {
   it('listLibraryBooks with author → GET /library/books?author=...', async () => {
     await booksApi.listLibraryBooks({ author: 'Brandon Sanderson' });
@@ -240,6 +274,14 @@ describe('booksApi', () => {
   it('listLibraryBooks with all params serializes every field', async () => {
     await booksApi.listLibraryBooks({ status: 'wanted', search: 'tolkien', sortField: 'title', sortDirection: 'asc', limit: 10, offset: 20 });
     expect(mockFetchApi).toHaveBeenCalledWith('/library/books?status=wanted&search=tolkien&sortField=title&sortDirection=asc&limit=10&offset=20');
+  });
+
+  it('importBookFiles → POST /books/:id/import-files with the path and mode', async () => {
+    await booksApi.importBookFiles(42, { path: '/media/book.m4b', mode: 'move' });
+    expect(mockFetchApi).toHaveBeenCalledWith('/books/42/import-files', {
+      method: 'POST',
+      body: JSON.stringify({ path: '/media/book.m4b', mode: 'move' }),
+    });
   });
 
   it('getBookStats → GET /books/stats', async () => {
@@ -433,6 +475,17 @@ describe('downloadClientsApi', () => {
 describe('filesystemApi', () => {
   it('browseDirectory → GET /filesystem/browse?path=...', async () => {
     await filesystemApi.browseDirectory('/home/user');
+    expect(mockFetchApi).toHaveBeenCalledWith('/filesystem/browse?path=%2Fhome%2Fuser');
+  });
+
+  // #2435 AC20: the legacy call must stay byte-identical, so the opt-in is asserted both ways.
+  it('browseDirectory with the audio capability → adds include=audio', async () => {
+    await filesystemApi.browseDirectory('/home/user', 'audio');
+    expect(mockFetchApi).toHaveBeenCalledWith('/filesystem/browse?path=%2Fhome%2Fuser&include=audio');
+  });
+
+  it('browseDirectory with the legacy capability → sends no include parameter', async () => {
+    await filesystemApi.browseDirectory('/home/user', 'legacy');
     expect(mockFetchApi).toHaveBeenCalledWith('/filesystem/browse?path=%2Fhome%2Fuser');
   });
 });
@@ -880,5 +933,61 @@ describe('companionEbookApi', () => {
       method: 'PUT',
       body: JSON.stringify({ index: 2 }),
     });
+  });
+});
+
+describe('importListsApi', () => {
+  it('getImportLists → GET /import-lists', async () => {
+    await importListsApi.getImportLists();
+    expect(mockFetchApi).toHaveBeenCalledWith('/import-lists');
+  });
+
+  it('createImportList → POST /import-lists with the list body', async () => {
+    await importListsApi.createImportList(LIST_INPUT);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import-lists', {
+      method: 'POST',
+      body: JSON.stringify(LIST_INPUT),
+    });
+  });
+
+  it('updateImportList → PUT /import-lists/4 with the partial body', async () => {
+    await importListsApi.updateImportList(4, { enabled: false });
+    expect(mockFetchApi).toHaveBeenCalledWith('/import-lists/4', {
+      method: 'PUT',
+      body: JSON.stringify({ enabled: false }),
+    });
+  });
+
+  it('deleteImportList → DELETE /import-lists/4', async () => {
+    await importListsApi.deleteImportList(4);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import-lists/4', { method: 'DELETE' });
+  });
+
+  it('testImportList → POST /import-lists/4/test', async () => {
+    await importListsApi.testImportList(4);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import-lists/4/test', { method: 'POST' });
+  });
+
+  it('testImportListConfig → POST /import-lists/test with the config body', async () => {
+    await importListsApi.testImportListConfig(LIST_INPUT);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import-lists/test', {
+      method: 'POST',
+      body: JSON.stringify(LIST_INPUT),
+    });
+  });
+
+  it('previewImportList → POST /import-lists/preview with the config body', async () => {
+    await importListsApi.previewImportList({ ...LIST_INPUT, id: 4 });
+    expect(mockFetchApi).toHaveBeenCalledWith('/import-lists/preview', {
+      method: 'POST',
+      body: JSON.stringify({ ...LIST_INPUT, id: 4 }),
+    });
+  });
+
+  // The manual-run seam (#2306): the component suite replaces this method wholesale and the
+  // server suite starts at Fastify, so this is the only place the URL and verb are observed.
+  it('runImportList → POST /import-lists/4/run', async () => {
+    await importListsApi.runImportList(4);
+    expect(mockFetchApi).toHaveBeenCalledWith('/import-lists/4/run', { method: 'POST' });
   });
 });

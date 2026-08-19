@@ -11,7 +11,7 @@ import { DEFAULT_LIMITS } from '@shared/schemas/common.js';
 const EVENT_TYPE_FILTERS = [
   { value: '', label: 'All' },
   { value: 'download_failed,import_failed,merge_failed,grab_failed', label: 'Errors' },
-  { value: 'held_for_review,recording_review_skipped,search_relaxed_held', label: 'Needs Review' },
+  { value: 'held_for_review,recording_review_skipped,search_relaxed_held,sidecar_diverged,grab_blocked_unsatisfied', label: 'Needs Review' },
   { value: 'grabbed,download_completed,merge_started', label: 'Downloads' },
   { value: 'imported,merged', label: 'Imported' },
   { value: 'renamed,file_tagged', label: 'File Changes' },

@@ -14,7 +14,7 @@ import type { ImportPipelineDeps } from '../import-orchestration.helpers.js';
 import type { ImportAdapterContext, ImportJob, ManualImportJobPayload } from './types.js';
 import { ManualImportAdapter } from './manual.js';
 import * as importOrchestration from '../import-orchestration.helpers.js';
-import { writeOpfForImport } from '../../utils/opf-writer.js';
+import { writeOpfForImportWithinAdmissionLock } from '../../utils/opf-writer.js';
 
 // Keep pipeline copy/rename real while mocking fs, audio staging, and sizing so adapter↔helper seam regressions surface.
 // Lower-level filtering/streaming has dedicated suites. Only #1740 spies on pipeline copyToLibrary because occupied-target
@@ -63,7 +63,7 @@ vi.mock('../../utils/delete-managed-files.js', () => ({
 
 // Assert OPF wiring here; opf-writer.test.ts covers reload, XML, and nonfatal writes (#1669).
 vi.mock('../../utils/opf-writer.js', () => ({
-  writeOpfForImport: vi.fn().mockResolvedValue(undefined),
+  writeOpfForImportWithinAdmissionLock: vi.fn().mockResolvedValue(undefined),
 }));
 
 function createMockLogger(): FastifyBaseLogger {
@@ -252,19 +252,27 @@ describe('ManualImportAdapter', () => {
       it('writes the OPF sidecar into the copy/move finalPath when writeOpf is enabled', async () => {
         await makeOpfAdapter(true).process(makeJob(), ctx);
 
-        expect(writeOpfForImport).toHaveBeenCalledTimes(1);
-        const arg = vi.mocked(writeOpfForImport).mock.calls[0]![0];
+        expect(writeOpfForImportWithinAdmissionLock).toHaveBeenCalledTimes(1);
+        const arg = vi.mocked(writeOpfForImportWithinAdmissionLock).mock.calls[0]![0];
         expect(arg.enabled).toBe(true);
         expect(arg.bookId).toBe(42);
         expect(arg.bookService).toBe(deps.bookService);
         expect(normPath(arg.bookFolder)).toBe(TARGET_PATH);
       });
 
+      it('opts the manual-import call site into divergence preservation as source `manual` (#2297 AC9/AC15)', async () => {
+        await makeOpfAdapter(true).process(makeJob(), ctx);
+
+        // A hard-coded 'auto' in the writer would attribute an operator's import to the wrong path.
+        expect(vi.mocked(writeOpfForImportWithinAdmissionLock).mock.calls[0]![0].preserve)
+          .toEqual({ source: 'manual', eventHistory: deps.eventHistory });
+      });
+
       it('writes the OPF sidecar into the pointer/adopt finalPath (the source path) when enabled', async () => {
         const job = makeJob({ metadata: JSON.stringify({ path: '/audiobooks/Author/Title', title: 'Test Book', authorName: 'Author' }) });
         await makeOpfAdapter(true).process(job, ctx);
 
-        const arg = vi.mocked(writeOpfForImport).mock.calls[0]![0];
+        const arg = vi.mocked(writeOpfForImportWithinAdmissionLock).mock.calls[0]![0];
         expect(arg.enabled).toBe(true);
         expect(normPath(arg.bookFolder)).toBe('/audiobooks/Author/Title');
       });
@@ -272,11 +280,11 @@ describe('ManualImportAdapter', () => {
       it('passes enabled:false to the OPF helper when writeOpf is disabled (default)', async () => {
         await adapter.process(makeJob(), ctx);
 
-        expect(writeOpfForImport).toHaveBeenCalledWith(expect.objectContaining({ enabled: false, bookId: 42 }));
+        expect(writeOpfForImportWithinAdmissionLock).toHaveBeenCalledWith(expect.objectContaining({ enabled: false, bookId: 42 }));
       });
 
       it('OPF write failure is nonfatal — import still completes and a warning is logged', async () => {
-        vi.mocked(writeOpfForImport).mockRejectedValueOnce(new Error('disk full'));
+        vi.mocked(writeOpfForImportWithinAdmissionLock).mockRejectedValueOnce(new Error('disk full'));
 
         await expect(makeOpfAdapter(true).process(makeJob(), ctx)).resolves.toBeUndefined();
         expect(mockConnectorService.notifyRefresh).toHaveBeenCalled();
@@ -712,20 +720,31 @@ describe('ManualImportAdapter', () => {
         expect(phases).toEqual(['analyzing', 'copying', 'renaming', 'fetching_metadata']);
       });
 
-      it('mode=copy + fileFormat set: adapter snapshots settingsService.get(library) once for rename (copyToLibrary fetches its own)', async () => {
+      /**
+       * #2369 AC15/F4. The root-commit registration is the single sequencing point for the
+       * canonical root: it reads `library` once and both the copy's target derivation and the
+       * template rename consume THAT value. A second read — by the adapter or inside
+       * `copyToLibrary` — would derive the target from a snapshot the registration does not cover.
+       */
+      it('mode=copy + fileFormat set: reads library exactly once, through the root-commit registration', async () => {
         await mockReaddirAudioFiles(['a.mp3']);
         const settingsSvc = makeRenameSettingsService('{title}');
         deps.settingsService = inject<SettingsService>(settingsSvc);
         deps.bookService = makeBookServiceWithNarrators([]);
         adapter = new ManualImportAdapter(deps);
+        const copySpy = vi.spyOn(importOrchestration, 'copyToLibrary');
 
         const job = makeJob();
         await adapter.process(job, ctx);
 
-        // Real copy takes one snapshot; adapter rename must add exactly one more, not two.
-        const libraryCalls = (settingsSvc.get as ReturnType<typeof vi.fn>).mock.calls
-          .filter((c: unknown[]) => c[0] === 'library');
-        expect(libraryCalls).toHaveLength(2);
+        const getMock = settingsSvc.get as ReturnType<typeof vi.fn>;
+        const libraryReads = getMock.mock.calls
+          .map((c: unknown[], i: number) => ({ category: c[0], result: getMock.mock.results[i]! }))
+          .filter((r) => r.category === 'library');
+        expect(libraryReads).toHaveLength(1);
+
+        // And that one read is the registration's: the copy consumed that exact object.
+        expect(copySpy.mock.calls[0]![4]).toBe(await libraryReads[0]!.result.value);
       });
 
       it('mode=copy + fileFormat=\'{title}\' + 3 audio files: fs.rename called 3 times with (target/oldName, target/newName)', async () => {

@@ -181,6 +181,17 @@ describe('DownloadOrchestrator', () => {
       expect(recordGrabbedEvent).toHaveBeenCalledWith(expect.objectContaining({ source: 'rss' }));
     });
 
+    // #2341 AC9: a grab that dies inside the service never reaches the status write, so a wanted
+    // book stays wanted. This pins the ORDERING only — nothing here claims anything re-grabs it.
+    it('leaves the book status untouched when the service grab rejects', async () => {
+      (downloadService.grab as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('SQLITE_FULL'));
+
+      await expect(orchestrator.grab({ downloadUrl: 'magnet:?xt=abc', title: 'Test', bookId: 2 })).rejects.toThrow('SQLITE_FULL');
+
+      expect(transitionBookStatus).not.toHaveBeenCalled();
+      expect(emitBookStatusChangeOnGrab).not.toHaveBeenCalled();
+    });
+
     it('propagates DuplicateDownloadError unchanged to caller', async () => {
       (downloadService.grab as ReturnType<typeof vi.fn>).mockRejectedValue(new DuplicateDownloadError('Book 2 already has an active download (id: 1)', 'ACTIVE_DOWNLOAD_EXISTS', { active: { title: 'A Book', count: 1 } }));
       await expect(orchestrator.grab({ downloadUrl: 'magnet:?xt=abc', title: 'Test', bookId: 2 }))

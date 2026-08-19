@@ -75,7 +75,7 @@ function FfmpegStatusRow() {
 const CARD_LABEL = 'Merge & Convert';
 
 export function AudioToolsSettings() {
-  const { form, mutation, onSubmit } = useSettingsForm<AudioToolsFormData>({
+  const { form, mutation, onSubmit , settingsError, refetchSettings } = useSettingsForm<AudioToolsFormData>({
     schema: audioToolsSchema,
     defaultValues: toFormData({ ...DEFAULT_SETTINGS } as AppSettings),
     select: toFormData,
@@ -92,64 +92,82 @@ export function AudioToolsSettings() {
       title={CARD_LABEL}
       description="Applies wherever audio is merged or converted — the Merge button and auto-merge downloads."
     >
-      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
-        <FfmpegStatusRow />
+      {/* Above the gate: this reads its own query, and a failed settings read is not a
+          reason to hide an ffmpeg status that was read successfully. */}
+      <FfmpegStatusRow />
 
-        <SettingsTable>
-          <SettingsRow htmlFor="outputFormat" label="Output format" description="M4B keeps chapter markers; MP3 is universally compatible but has no chapter support.">
-            <div className="w-56">
-              <SelectWithChevron id="outputFormat" {...register('outputFormat')}>
-                {outputFormatSchema.options.map((f) => (
-                  <option key={f} value={f}>{FORMAT_LABELS[f] ?? f}</option>
-                ))}
-              </SelectWithChevron>
-            </div>
-          </SettingsRow>
-
-          <SettingsRow htmlFor="keepOriginalBitrate" label="Keep original bitrate" description="Copies the audio when the parts are compatible. Otherwise re-encodes using the source bitrate where it is known, or a conservative default where it is not, adjusted to a value the output format accepts.">
-            <ToggleSwitch id="keepOriginalBitrate" {...register('keepOriginalBitrate')} />
-          </SettingsRow>
-
-          <SettingsRow htmlFor="bitrate" label="Target bitrate" description="The bitrate to encode to — active only when Keep original is off. MP3 output rounds down to the next supported rate — or up to the minimum, if lower — and its maximum depends on the source sample rate." muted={keepOriginalBitrate}>
-            <NumberField
-              id="bitrate"
-              {...register('bitrate', { valueAsNumber: true })}
-              disabled={keepOriginalBitrate}
-              min={32}
-              max={512}
-              step={1}
-              suffix="kbps"
-              error={keepOriginalBitrate ? undefined : errors.bitrate?.message}
-            />
-          </SettingsRow>
-
-          <SettingsRow htmlFor="maxConcurrentProcessing" label="Max concurrent jobs" description="Manual and auto-merge share this cap. Higher uses more CPU and disk I/O.">
-            <NumberField
-              id="maxConcurrentProcessing"
-              {...register('maxConcurrentProcessing', { valueAsNumber: true })}
-              min={1}
-              max={8}
-              step={1}
-              error={errors.maxConcurrentProcessing?.message}
-            />
-          </SettingsRow>
-        </SettingsTable>
-
-        <p className="text-sm text-muted-foreground">
-          Used by the <span className="font-medium text-foreground">Merge</span> button and{' '}
-          <span className="font-medium text-foreground">auto-merge downloads</span>.
-        </p>
-
-        {isDirty && (
+      {/* M4B in Output format reads as a chosen container and Keep original as a chosen
+          policy — both are schema defaults a failed read never observed. */}
+      {settingsError ? (
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-red-500">Failed to load merge and convert settings.</p>
           <button
-            type="submit"
-            disabled={mutation.isPending}
-            className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
+            type="button"
+            onClick={refetchSettings}
+            aria-label="Retry loading merge and convert settings"
+            className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-all focus-ring"
           >
-            {mutation.isPending ? 'Saving...' : 'Save'}
+            Retry
           </button>
-        )}
-      </form>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-5">
+          <SettingsTable>
+            <SettingsRow htmlFor="outputFormat" label="Output format" description="M4B keeps chapter markers; MP3 is universally compatible but has no chapter support.">
+              <div className="w-56">
+                <SelectWithChevron id="outputFormat" {...register('outputFormat')}>
+                  {outputFormatSchema.options.map((f) => (
+                    <option key={f} value={f}>{FORMAT_LABELS[f] ?? f}</option>
+                  ))}
+                </SelectWithChevron>
+              </div>
+            </SettingsRow>
+
+            <SettingsRow htmlFor="keepOriginalBitrate" label="Keep original bitrate" description="Copies the audio when the parts are compatible. Otherwise re-encodes using the source bitrate where it is known, or a conservative default where it is not, adjusted to a value the output format accepts.">
+              <ToggleSwitch id="keepOriginalBitrate" {...register('keepOriginalBitrate')} />
+            </SettingsRow>
+
+            <SettingsRow htmlFor="bitrate" label="Target bitrate" description="The bitrate to encode to — active only when Keep original is off. MP3 output rounds down to the next supported rate — or up to the minimum, if lower — and its maximum depends on the source sample rate." muted={keepOriginalBitrate}>
+              <NumberField
+                id="bitrate"
+                {...register('bitrate', { valueAsNumber: true })}
+                disabled={keepOriginalBitrate}
+                min={32}
+                max={512}
+                step={1}
+                suffix="kbps"
+                error={keepOriginalBitrate ? undefined : errors.bitrate?.message}
+              />
+            </SettingsRow>
+
+            <SettingsRow htmlFor="maxConcurrentProcessing" label="Max concurrent jobs" description="Manual and auto-merge share this cap. Higher uses more CPU and disk I/O.">
+              <NumberField
+                id="maxConcurrentProcessing"
+                {...register('maxConcurrentProcessing', { valueAsNumber: true })}
+                min={1}
+                max={8}
+                step={1}
+                error={errors.maxConcurrentProcessing?.message}
+              />
+            </SettingsRow>
+          </SettingsTable>
+
+          <p className="text-sm text-muted-foreground">
+            Used by the <span className="font-medium text-foreground">Merge</span> button and{' '}
+            <span className="font-medium text-foreground">auto-merge downloads</span>.
+          </p>
+
+          {isDirty && (
+            <button
+              type="submit"
+              disabled={mutation.isPending}
+              className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
+            >
+              {mutation.isPending ? 'Saving...' : 'Save'}
+            </button>
+          )}
+        </form>
+      )}
     </SettingsSection>
   );
 }

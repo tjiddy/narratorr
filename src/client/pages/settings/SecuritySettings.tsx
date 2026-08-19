@@ -32,17 +32,44 @@ const MODE_DESCRIPTIONS: Record<AuthMode, string> = {
 };
 
 export function SecuritySettings() {
-  const { data: authConfig, isLoading } = useQuery({
+  const configQuery = useQuery({
     queryKey: queryKeys.auth.config(),
     queryFn: api.getAuthConfig,
   });
 
-  const { data: authStatus } = useQuery({
+  const statusQuery = useQuery({
     queryKey: queryKeys.auth.adminStatus(),
     queryFn: api.getAuthAdminStatus,
   });
 
-  if (isLoading || !authConfig) {
+  // Error ahead of pending, over BOTH queries. The two settle independently and neither alone
+  // can decide what this page may claim, so the gate is a policy over the full 3x3 product of
+  // their statuses: any error wins, then any pending, then the settled sections.
+  if (configQuery.isError || statusQuery.isError) {
+    return (
+      <div className="glass-card rounded-2xl p-8 sm:p-12 text-center">
+        <p className="text-sm text-red-500">Failed to load security settings.</p>
+        <button
+          type="button"
+          // Both, not just the failed one: a fresh admin status composed against a config read
+          // at an unknown earlier time is the same mixed-vintage posture claim as the defect.
+          onClick={() => { void configQuery.refetch(); void statusQuery.refetch(); }}
+          aria-label="Retry loading security settings"
+          className="mt-4 px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-all focus-ring"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  const authConfig = configQuery.data;
+  const authStatus = statusQuery.data;
+
+  // Narrowing both here is what deletes the old `?? false` fallbacks: substituting a literal
+  // `false` for an unobserved `hasUser` is the defect itself, and the page now cannot typecheck
+  // without a settled status. A fast config and a slow admin-status must not open this gate.
+  if (!authConfig || !authStatus) {
     return (
       <div className="flex items-center justify-center py-24">
         <LoadingSpinner className="w-8 h-8 text-primary" />
@@ -53,13 +80,13 @@ export function SecuritySettings() {
   return (
     <div className="space-y-8">
       <CredentialsSection
-        hasUser={authStatus?.hasUser ?? false}
-        currentUsername={authStatus?.username}
-        envBypass={authStatus?.envBypass ?? false}
+        hasUser={authStatus.hasUser}
+        currentUsername={authStatus.username}
+        envBypass={authStatus.envBypass}
       />
       <AuthModeSection
         mode={authConfig.mode}
-        hasUser={authStatus?.hasUser ?? false}
+        hasUser={authStatus.hasUser}
       />
       <LocalBypassSection localBypass={authConfig.localBypass} />
       <ApiKeySection apiKey={authConfig.apiKey} />

@@ -333,7 +333,7 @@ export class ImportQueueWorker {
       // Completion is already durable; companion reconciliation is fire-and-forget.
       this.triggerCompanionReconcile(bookId);
     } catch (error: unknown) {
-      this.log.error({ error: serializeError(error), jobId }, 'Import job failed');
+      this.log.error({ error: serializeError(error), jobId, bookId }, 'Import job failed');
       if (phaseHistory.length > 0) {
         const last = phaseHistory[phaseHistory.length - 1]!;
         if (last.completedAt === undefined) {
@@ -367,7 +367,8 @@ export class ImportQueueWorker {
       }).where(eq(importJobs.id, jobId));
 
       if (bookId != null) {
-        // The expected status preserves any earlier failure-path revert.
+        // The expected status preserves any earlier failure-path revert: a book already moved off
+        // `importing` is left exactly as that path left it, so this write never overwrites it.
         await transitionBookStatus(tx, bookId, { status: 'failed', expected: { status: 'importing' } });
       }
     });

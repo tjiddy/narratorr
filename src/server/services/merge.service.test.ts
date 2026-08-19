@@ -4,7 +4,7 @@ import { createMockDbBook } from '../__tests__/factories.js';
 import { MergeService, clampConcurrency } from './merge.service.js';
 import { processAudioFiles } from '@core/utils/audio-processor.js';
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
-import { enrichBookFromAudio } from './enrichment-utils.js';
+import { enrichBookFromAudioWithinAdmissionLock } from './enrichment-utils.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
@@ -49,7 +49,7 @@ vi.mock('@core/utils/audio-scanner.js', () => ({
 }));
 
 vi.mock('./enrichment-utils.js', () => ({
-  enrichBookFromAudio: vi.fn(),
+  enrichBookFromAudioWithinAdmissionLock: vi.fn(),
 }));
 
 // Mocked fs short-circuits marker recovery; merge.service.marker.test.ts covers real disk behavior (#1418).
@@ -57,9 +57,10 @@ vi.mock('../utils/recover-interrupted-commit.js', () => ({
   recoverInterruptedCommit: vi.fn().mockResolvedValue(undefined),
 }));
 
+import { withBookAdmissionLock, hasPendingBookAdmission } from './book-admission.js';
 import {
   BOOK_PATH, STAGING_DIR, mockAuthor, mockBook, processingOverrides, SCAN_RESULT,
-  settle, setupHappyPath,
+  settle, setupHappyPath, setupBlockingMerge, deferred,
 } from './__tests__/merge-fixtures.js';
 
 function createService(opts?: {
@@ -69,7 +70,7 @@ function createService(opts?: {
   processing?: Partial<{ outputFormat: 'm4b' | 'mp3'; bitrate: number; keepOriginalBitrate: boolean; maxConcurrentProcessing: number }>;
   tagging?: Partial<{ enabled: boolean; mode: 'populate_missing' | 'overwrite'; embedCover: boolean }>;
   /** Pass `null` to exercise "tag embedding enabled but no tagger wired" (AC10's absent arm). */
-  taggingService?: { retagBook: ReturnType<typeof vi.fn> } | null;
+  taggingService?: { retagBookWithinAdmissionLock: ReturnType<typeof vi.fn> } | null;
 }) {
   const db = createMockDb();
   const bookService = {
@@ -204,7 +205,7 @@ describe('MergeService', () => {
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 500_000_000 });
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
       const { service } = createService();
 
       await service.enqueueMerge(42);
@@ -293,7 +294,7 @@ describe('MergeService', () => {
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 500_000_000 });
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
 
       const { service } = createService({ processing: { outputFormat: 'mp3' } });
 
@@ -390,7 +391,7 @@ describe('MergeService', () => {
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 500_000_000 });
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
       const { service } = createService();
 
       await service.enqueueMerge(42);
@@ -401,14 +402,14 @@ describe('MergeService', () => {
       expect(unlink).not.toHaveBeenCalledWith(join(BOOK_PATH, 'The Way of Kings.m4b'));
     });
 
-    it('calls enrichBookFromAudio with bookService after successful move', async () => {
+    it('calls enrichBookFromAudioWithinAdmissionLock with bookService after successful move', async () => {
       setupHappyPath();
       const { service } = createService();
 
       await service.enqueueMerge(42);
       await settle();
 
-      expect(enrichBookFromAudio).toHaveBeenCalledWith(
+      expect(enrichBookFromAudioWithinAdmissionLock).toHaveBeenCalledWith(
         42,
         BOOK_PATH,
         expect.objectContaining({ id: 42 }),
@@ -553,6 +554,26 @@ describe('MergeService', () => {
 
         expect(unlink).toHaveBeenCalled();
         expect(notifyRefresh).toHaveBeenCalledWith('merge', [expect.objectContaining({ bookId: 42 })]);
+      });
+
+      it("commitMerge's staging cleanup runs strictly AFTER the refresh enqueue, so a cleanup failure cannot suppress the now-required rescan", async () => {
+        setupHappyPath();
+        const notifyRefresh = vi.fn().mockResolvedValue(undefined);
+        const { service } = createService({ connector: { notifyRefresh } });
+
+        await service.enqueueMerge(42);
+        await settle();
+
+        // Two staging removals: runStaging's pre-mkdir reset, then commitMerge's cleanup.
+        const stagingRemovals = (rm as Mock).mock.calls
+          .map((call, i) => ({ path: call[0], order: (rm as Mock).mock.invocationCallOrder[i]! }))
+          .filter(({ path }) => path === STAGING_DIR)
+          .map(({ order }) => order);
+        expect(stagingRemovals).toHaveLength(2);
+
+        const refreshOrder = notifyRefresh.mock.invocationCallOrder[0]!;
+        expect(refreshOrder).toBeGreaterThan(stagingRemovals[0]!);
+        expect(refreshOrder).toBeLessThan(stagingRemovals[1]!);
       });
 
       it('enqueues NO refresh when the DB size update fails before the unlink (pre-swap failure)', async () => {
@@ -839,21 +860,21 @@ describe('MergeService', () => {
       expect(unlink).not.toHaveBeenCalled();
     });
 
-    it('does not call enrichBookFromAudio when scan fails', async () => {
+    it('does not call enrichBookFromAudioWithinAdmissionLock when scan fails', async () => {
       setupScanFailure();
       const { service } = createService();
 
       await service.enqueueMerge(42);
       await settle();
 
-      expect(enrichBookFromAudio).not.toHaveBeenCalled();
+      expect(enrichBookFromAudioWithinAdmissionLock).not.toHaveBeenCalled();
     });
   });
 
   describe('enqueueMerge — post-commit enrichment failure', () => {
-    it('surfaces enrichmentWarning via merge_complete event when enrichBookFromAudio returns { enriched: false }', async () => {
+    it('surfaces enrichmentWarning via merge_complete event when enrichBookFromAudioWithinAdmissionLock returns { enriched: false }', async () => {
       setupHappyPath();
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: false });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: false });
       const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
       const { service, log } = createService({ eventBroadcaster });
 
@@ -873,7 +894,7 @@ describe('MergeService', () => {
 
     it('M4B remains in book.path after enrichment failure (no rollback)', async () => {
       setupHappyPath();
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: false });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: false });
       const { service } = createService();
 
       await service.enqueueMerge(42);
@@ -1253,7 +1274,7 @@ describe('#257 merge observability — merge service', () => {
       (stat as Mock).mockResolvedValue({ size: 100 });
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
     }
 
     it('3 identical lines logged once with × 3 suffix', async () => {
@@ -1356,7 +1377,7 @@ describe('#257 merge observability — merge service', () => {
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 100 });
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
     }
 
     function createServiceWithBroadcaster() {
@@ -1554,7 +1575,7 @@ describe('#257 merge observability — merge service', () => {
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 100 });
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
 
       let resolveFirst!: () => void;
       const firstPromise = new Promise<void>((resolve) => { resolveFirst = resolve; });
@@ -1597,7 +1618,7 @@ describe('#257 merge observability — merge service', () => {
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 100 });
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
 
       let resolveFirst!: () => void;
       const firstPromise = new Promise<void>((resolve) => { resolveFirst = resolve; });
@@ -1688,7 +1709,7 @@ describe('#257 merge observability — merge service', () => {
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 100 });
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
 
       let resolveFirst!: () => void;
       const firstPromise = new Promise<void>((resolve) => { resolveFirst = resolve; });
@@ -1720,7 +1741,7 @@ describe('#257 merge observability — merge service', () => {
 
     it('merge_complete includes enrichmentWarning when enrichment fails', async () => {
       setupHappyPath();
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: false });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: false });
       const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
       const { service } = createService({ eventBroadcaster });
 
@@ -1769,7 +1790,7 @@ describe('#257 merge observability — merge service', () => {
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 100 });
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
 
       (processAudioFiles as Mock)
         .mockRejectedValueOnce(new Error('FFmpeg crashed'))
@@ -1895,7 +1916,7 @@ describe('#257 merge observability — merge service', () => {
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 100 });
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
 
       let resolveFirst!: () => void;
       const firstPromise = new Promise<void>((resolve) => { resolveFirst = resolve; });
@@ -1963,7 +1984,7 @@ describe('#257 merge observability — merge service', () => {
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 100 });
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
 
       return { bookService };
     }
@@ -2223,7 +2244,7 @@ describe('#257 merge observability — merge service', () => {
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 100 });
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
     }
 
     describe('cancel from queue', () => {
@@ -2341,6 +2362,420 @@ describe('#257 merge observability — merge service', () => {
 
         const result = await service.cancelMerge(42);
         expect(result.status).toBe('not-found');
+      });
+    });
+
+    /**
+     * #2462. A merge broadcast active but still waiting on the admission lock owns no controller,
+     * so cancellation is recorded as a flag the waking merge consumes. The lock is real here — the
+     * only way to reproduce the wait is to hold the book's admission chain from the test.
+     */
+    describe('cancel while waiting for the admission lock (#2462)', () => {
+      // This describe's parent has no reset hook, so the module-level fs/encoder mocks otherwise
+      // carry call history in from every earlier case — and "ran nothing" is a count assertion.
+      beforeEach(() => {
+        vi.resetAllMocks();
+      });
+
+      type Frame = { event: string; payload: Record<string, unknown> };
+      type HistoryRow = { bookId: number; eventType: string; source: string; reason?: { error: string } };
+
+      function createWaitHarness(rows: Array<{ id: number; title: string; path: string }>) {
+        const frames: Frame[] = [];
+        const eventBroadcaster = inject<EventBroadcasterService>({
+          emit: vi.fn((event: string, payload: Record<string, unknown>) => { frames.push({ event, payload }); }),
+        });
+        const historyRows: HistoryRow[] = [];
+        const create = vi.fn(async (row: HistoryRow) => { historyRows.push(row); });
+        const eventHistory = inject<EventHistoryService>({ create });
+
+        const byId = new Map(rows.map((r) => [r.id, {
+          ...createMockDbBook({ id: r.id, title: r.title, path: r.path, status: 'imported' }),
+          authors: [mockAuthor], narrators: [],
+        }]));
+        const bookService = {
+          getById: vi.fn(async (id: number) => byId.get(id) ?? null),
+          update: vi.fn().mockResolvedValue(undefined),
+        };
+        const db = createMockDb();
+        const service = new MergeService(
+          inject<Db>(db),
+          inject<BookService>(bookService),
+          createMockSettingsService({ processing: { ...processingOverrides.processing, maxConcurrentProcessing: 1 } }),
+          inject<FastifyBaseLogger>(createMockLogger()),
+          eventHistory,
+          eventBroadcaster,
+        );
+
+        return {
+          service, db, bookService, create, frames, rowFor: (id: number) => byId.get(id)!,
+          framesOf: (event: string, bookId: number) => frames.filter((f) => f.event === event && f.payload.book_id === bookId),
+          historyOf: (bookId: number, eventType: string) => historyRows.filter((r) => r.bookId === bookId && r.eventType === eventType),
+        };
+      }
+
+      function internals(service: MergeService) {
+        return service as unknown as {
+          inProgress: Set<number>;
+          origins: Map<number, string>;
+          abortControllers: Map<number, AbortController>;
+          currentPhase: Map<number, string>;
+          cancelRequested: Set<number>;
+        };
+      }
+
+      /** Attribute a filesystem/processing call to one book; separators differ per platform. */
+      function callsTouching(mock: Mock, needle: string) {
+        return mock.mock.calls.filter((call) => String(call[0]).split('\\').join('/').includes(needle));
+      }
+
+      it('settles the cancel at cancel time and runs nothing when the lock frees', async () => {
+        setupHappyPath();
+        const h = createWaitHarness([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+        const parked = deferred();
+        const holder = withBookAdmissionLock(42, () => parked.promise);
+
+        await h.service.enqueueMerge(42);
+        await settle();
+        expect(h.service.getMergeStateSnapshot().active).toEqual([
+          { book_id: 42, book_title: 'The Way of Kings', phase: 'starting' },
+        ]);
+
+        expect(await h.service.cancelMerge(42)).toEqual({ status: 'cancelled' });
+
+        // Observable BEFORE the lock frees: the operator sees cancelled at cancel time.
+        expect(h.framesOf('merge_failed', 42)).toHaveLength(1);
+        expect(h.framesOf('merge_failed', 42)[0]!.payload).toMatchObject({
+          book_title: 'The Way of Kings', error: 'Cancelled by user', reason: 'cancelled',
+        });
+        expect(h.historyOf(42, 'merge_failed')).toHaveLength(1);
+        expect(h.service.getMergeStateSnapshot()).toEqual({ active: [], queued: [] });
+
+        parked.resolve();
+        await holder;
+        await settle();
+
+        expect(h.framesOf('merge_started', 42)).toHaveLength(0);
+        expect(h.historyOf(42, 'merge_started')).toHaveLength(0);
+        expect(recoverInterruptedCommit).not.toHaveBeenCalled();
+        expect(mkdir).not.toHaveBeenCalled();
+        expect(cp).not.toHaveBeenCalled();
+        expect(processAudioFiles).not.toHaveBeenCalled();
+        expect(scanAudioDirectory).not.toHaveBeenCalled();
+        expect(rename).not.toHaveBeenCalled();
+        expect(unlink).not.toHaveBeenCalled();
+        expect(h.db.update).not.toHaveBeenCalled();
+
+        // Still exactly one terminal across cancel + wake, and never a completion.
+        expect(h.framesOf('merge_failed', 42)).toHaveLength(1);
+        expect(h.historyOf(42, 'merge_failed')).toHaveLength(1);
+        expect(h.frames.filter((f) => f.event === 'merge_complete')).toHaveLength(0);
+      });
+
+      it('answers the same on the queued promotion path', async () => {
+        const { release } = setupBlockingMerge();
+        const h = createWaitHarness([
+          { id: 42, title: 'Dogs of War', path: '/lib/AAA' },
+          { id: 43, title: 'The Shining', path: '/lib/BBB' },
+        ]);
+        const parked = deferred();
+        const holder = withBookAdmissionLock(43, () => parked.promise);
+
+        await h.service.enqueueMerge(42);
+        expect(await h.service.enqueueMerge(43)).toMatchObject({ status: 'queued' });
+
+        // 43 reaches the wait through startQueuedMerge → executeWithRevalidation → executeMerge.
+        release();
+        await settle();
+        expect(h.service.getMergeStateSnapshot().active).toEqual([
+          { book_id: 43, book_title: 'The Shining', phase: 'starting' },
+        ]);
+
+        expect(await h.service.cancelMerge(43)).toEqual({ status: 'cancelled' });
+        expect(h.framesOf('merge_failed', 43)).toHaveLength(1);
+        expect(h.framesOf('merge_failed', 43)[0]!.payload).toMatchObject({ error: 'Cancelled by user', reason: 'cancelled' });
+        expect(h.service.getMergeStateSnapshot()).toEqual({ active: [], queued: [] });
+
+        parked.resolve();
+        await holder;
+        await settle();
+
+        expect(h.framesOf('merge_started', 43)).toHaveLength(0);
+        expect(callsTouching(recoverInterruptedCommit as Mock, 'BBB')).toHaveLength(0);
+        expect(callsTouching(mkdir as Mock, 'BBB')).toHaveLength(0);
+        expect(callsTouching(cp as Mock, 'BBB')).toHaveLength(0);
+        expect(callsTouching(processAudioFiles as Mock, 'BBB')).toHaveLength(0);
+        expect(h.framesOf('merge_failed', 43)).toHaveLength(1);
+        expect(h.historyOf(43, 'merge_failed')).toHaveLength(1);
+        expect(h.framesOf('merge_complete', 43)).toHaveLength(0);
+      });
+
+      // The queued chain has its own `.finally()`, so the slot-path cleanup case below cannot
+      // speak for it: a regression that clears only on the slot path leaves this book unmergeable.
+      it('clears the queued-path flag on settlement, so the same book merges again', async () => {
+        const { release } = setupBlockingMerge();
+        const h = createWaitHarness([
+          { id: 42, title: 'Dogs of War', path: '/lib/AAA' },
+          { id: 43, title: 'The Shining', path: '/lib/BBB' },
+        ]);
+        const parked = deferred();
+        const holder = withBookAdmissionLock(43, () => parked.promise);
+
+        await h.service.enqueueMerge(42);
+        expect(await h.service.enqueueMerge(43)).toMatchObject({ status: 'queued' });
+
+        release();
+        await settle();
+        expect(await h.service.cancelMerge(43)).toEqual({ status: 'cancelled' });
+
+        parked.resolve();
+        await holder;
+        await settle();
+
+        const state = internals(h.service);
+        expect(state.cancelRequested.has(43)).toBe(false);
+        expect(state.inProgress.has(43)).toBe(false);
+        expect(state.origins.has(43)).toBe(false);
+        expect(state.abortControllers.has(43)).toBe(false);
+        expect(state.currentPhase.has(43)).toBe(false);
+        expect(hasPendingBookAdmission(43)).toBe(false);
+
+        // A surviving flag would accept this enqueue and then silently run nothing.
+        expect(await h.service.enqueueMerge(43)).toEqual({ status: 'started', bookId: 43 });
+        await settle();
+
+        expect(h.framesOf('merge_started', 43)).toHaveLength(1);
+        expect(h.framesOf('merge_complete', 43)).toHaveLength(1);
+        expect(h.historyOf(43, 'merged')).toHaveLength(1);
+        expect(h.service.getMergeStateSnapshot()).toEqual({ active: [], queued: [] });
+      });
+
+      it('emits one terminal only, even when dequeue revalidation then fails on the cancelled book', async () => {
+        const { release } = setupBlockingMerge();
+        const h = createWaitHarness([
+          { id: 42, title: 'Dogs of War', path: '/lib/AAA' },
+          { id: 43, title: 'The Shining', path: '/lib/BBB' },
+        ]);
+
+        // Park 43's dequeue-time read so the cancel lands inside revalidation, then vanish the row
+        // so that revalidation raises its own MergeError after the cancel has already settled.
+        const parkedRead = deferred();
+        let reads43 = 0;
+        h.bookService.getById.mockImplementation(async (id: number) => {
+          if (id !== 43) return h.rowFor(id);
+          reads43 += 1;
+          if (reads43 === 1) return h.rowFor(43);
+          await parkedRead.promise;
+          return null;
+        });
+
+        await h.service.enqueueMerge(42);
+        await h.service.enqueueMerge(43);
+
+        release();
+        await settle();
+        expect(reads43).toBe(2);
+
+        expect(await h.service.cancelMerge(43)).toEqual({ status: 'cancelled' });
+        parkedRead.resolve();
+        await settle();
+
+        expect(h.framesOf('merge_failed', 43)).toHaveLength(1);
+        expect(h.framesOf('merge_failed', 43)[0]!.payload).toMatchObject({ error: 'Cancelled by user', reason: 'cancelled' });
+        expect(h.historyOf(43, 'merge_failed')).toHaveLength(1);
+      });
+
+      it('is idempotent — a second cancel during the same wait adds no event', async () => {
+        setupHappyPath();
+        const h = createWaitHarness([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+        const parked = deferred();
+        const holder = withBookAdmissionLock(42, () => parked.promise);
+
+        await h.service.enqueueMerge(42);
+        await settle();
+
+        expect(await h.service.cancelMerge(42)).toEqual({ status: 'cancelled' });
+        expect(await h.service.cancelMerge(42)).toEqual({ status: 'cancelled' });
+
+        expect(h.framesOf('merge_failed', 42)).toHaveLength(1);
+        expect(h.historyOf(42, 'merge_failed')).toHaveLength(1);
+
+        parked.resolve();
+        await holder;
+        await settle();
+        expect(h.framesOf('merge_failed', 42)).toHaveLength(1);
+        expect(h.historyOf(42, 'merge_failed')).toHaveLength(1);
+      });
+
+      it('preserves the merge origin on the cancel-time history row', async () => {
+        setupHappyPath();
+        const h = createWaitHarness([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+        const parked = deferred();
+        const holder = withBookAdmissionLock(42, () => parked.promise);
+
+        await h.service.enqueueMerge(42, 'auto');
+        await settle();
+
+        expect(await h.service.cancelMerge(42)).toEqual({ status: 'cancelled' });
+        expect(h.historyOf(42, 'merge_failed')[0]).toMatchObject({
+          source: 'auto', reason: { error: 'Cancelled by user' },
+        });
+
+        parked.resolve();
+        await holder;
+        await settle();
+      });
+
+      it('answers not-found while enqueue is still in pre-flight, and leaves no flag when pre-flight rejects', async () => {
+        setupHappyPath();
+        const h = createWaitHarness([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+
+        // Park pre-flight's own book read: inProgress is already set, but nothing is broadcast yet.
+        const parkedPreflight = deferred();
+        h.bookService.getById.mockImplementationOnce(async () => { await parkedPreflight.promise; return null; });
+
+        const enqueued = h.service.enqueueMerge(42).catch((error: unknown) => error);
+        await settle();
+
+        // Deliberate: the operator has been shown no merge, so there is nothing to cancel.
+        expect(await h.service.cancelMerge(42)).toEqual({ status: 'not-found' });
+        expect(h.framesOf('merge_failed', 42)).toHaveLength(0);
+        expect(internals(h.service).cancelRequested.has(42)).toBe(false);
+
+        parkedPreflight.resolve();
+        expect(await enqueued).toMatchObject({ message: 'Book not found' });
+        expect(internals(h.service).cancelRequested.has(42)).toBe(false);
+
+        // A residual flag would silence this merge instead of running it.
+        await h.service.enqueueMerge(42);
+        await settle();
+        expect(h.framesOf('merge_complete', 42)).toHaveLength(1);
+      });
+
+      it('takes the cancelled exit even when the blocking holder rejects', async () => {
+        setupHappyPath();
+        const h = createWaitHarness([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+        const parked = deferred();
+        // withBookAdmissionLock runs the successor on both settle paths.
+        const holder = withBookAdmissionLock(42, () => parked.promise).catch(() => undefined);
+
+        await h.service.enqueueMerge(42);
+        await settle();
+        expect(await h.service.cancelMerge(42)).toEqual({ status: 'cancelled' });
+
+        parked.reject(new Error('the holder blew up'));
+        await holder;
+        await settle();
+
+        expect(processAudioFiles).not.toHaveBeenCalled();
+        expect(mkdir).not.toHaveBeenCalled();
+        expect(h.framesOf('merge_started', 42)).toHaveLength(0);
+        expect(h.framesOf('merge_failed', 42)).toHaveLength(1);
+      });
+
+      it('hands a cancel racing the wake to the abort arm, still reporting exactly one cancellation', async () => {
+        // The two arms meet without a hole: executeMergeLocked's flag check and its
+        // abortControllers.set are one synchronous block, and withBookAdmissionLock invokes the
+        // successor synchronously inside the predecessor's reaction, so a cancel racing the wake
+        // lands on one side or the other and never on "no controller, not active". The earlier side
+        // is the case above; observation shows the holder's own continuation already lands on the
+        // later side, so this pins THAT one: registered, therefore aborted — never a 404, never a
+        // second terminal, never a completion.
+        setupHappyPath();
+        const h = createWaitHarness([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+        const parked = deferred();
+        const holder = withBookAdmissionLock(42, () => parked.promise);
+
+        await h.service.enqueueMerge(42);
+        await settle();
+
+        const cancelAtWake = holder.then(() => h.service.cancelMerge(42));
+        parked.resolve();
+        expect(await cancelAtWake).toEqual({ status: 'cancelled' });
+        await settle();
+
+        expect(h.framesOf('merge_failed', 42)).toHaveLength(1);
+        expect(h.framesOf('merge_failed', 42)[0]!.payload).toMatchObject({ error: 'Cancelled by user', reason: 'cancelled' });
+        expect(h.historyOf(42, 'merge_failed')).toHaveLength(1);
+        expect(h.framesOf('merge_complete', 42)).toHaveLength(0);
+        expect(h.service.getMergeStateSnapshot()).toEqual({ active: [], queued: [] });
+        expect(internals(h.service).cancelRequested.has(42)).toBe(false);
+      });
+
+      it('keeps the semaphore slot until the holder finishes, then drains the queue', async () => {
+        setupHappyPath();
+        const h = createWaitHarness([
+          { id: 42, title: 'Dogs of War', path: '/lib/AAA' },
+          { id: 43, title: 'The Shining', path: '/lib/BBB' },
+        ]);
+        const parked = deferred();
+        const holder = withBookAdmissionLock(42, () => parked.promise);
+
+        await h.service.enqueueMerge(42);
+        expect(await h.service.enqueueMerge(43)).toMatchObject({ status: 'queued' });
+        await settle();
+
+        expect(await h.service.cancelMerge(42)).toEqual({ status: 'cancelled' });
+        await settle();
+
+        // Accepted consequence: the cancelled merge keeps its slot until the holder finishes.
+        expect(h.service.getMergeStateSnapshot()).toEqual({
+          active: [], queued: [{ book_id: 43, book_title: 'The Shining' }],
+        });
+        expect(h.framesOf('merge_started', 43)).toHaveLength(0);
+        // Accepted consequence: the same book cannot be re-enqueued inside the residual window.
+        await expect(h.service.enqueueMerge(42)).rejects.toMatchObject({ code: 'ALREADY_IN_PROGRESS' });
+
+        parked.resolve();
+        await holder;
+        await settle();
+
+        expect(h.framesOf('merge_started', 43)).toHaveLength(1);
+        expect(h.framesOf('merge_complete', 43)).toHaveLength(1);
+      });
+
+      it('cancels even when the cancel-time history write rejects', async () => {
+        setupHappyPath();
+        const h = createWaitHarness([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+        const parked = deferred();
+        const holder = withBookAdmissionLock(42, () => parked.promise);
+
+        await h.service.enqueueMerge(42);
+        await settle();
+        h.create.mockRejectedValueOnce(new Error('history table is gone'));
+
+        expect(await h.service.cancelMerge(42)).toEqual({ status: 'cancelled' });
+        expect(h.framesOf('merge_failed', 42)).toHaveLength(1);
+        expect(h.service.getMergeStateSnapshot()).toEqual({ active: [], queued: [] });
+
+        parked.resolve();
+        await holder;
+        await settle();
+      });
+
+      it('leaves no per-book state behind once the cancelled merge settles', async () => {
+        setupHappyPath();
+        const h = createWaitHarness([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+        const parked = deferred();
+        const holder = withBookAdmissionLock(42, () => parked.promise);
+
+        await h.service.enqueueMerge(42);
+        await settle();
+        expect(await h.service.cancelMerge(42)).toEqual({ status: 'cancelled' });
+
+        parked.resolve();
+        await holder;
+        await settle();
+
+        const state = internals(h.service);
+        expect(state.inProgress.has(42)).toBe(false);
+        expect(state.origins.has(42)).toBe(false);
+        expect(state.abortControllers.has(42)).toBe(false);
+        expect(state.currentPhase.has(42)).toBe(false);
+        expect(state.cancelRequested.has(42)).toBe(false);
+        expect(h.service.getMergeStateSnapshot()).toEqual({ active: [], queued: [] });
+        expect(hasPendingBookAdmission(42)).toBe(false);
+        expect(await h.service.cancelMerge(42)).toEqual({ status: 'not-found' });
       });
     });
   });
@@ -2535,7 +2970,7 @@ describe('#1838 merge origin — event provenance', () => {
   });
 });
 
-// Source-tag forwarding cannot apply canonical DB tags; post-merge tagging must reuse retagBook (#2078).
+// Source-tag forwarding cannot apply canonical DB tags; post-merge tagging must reuse retagBookWithinAdmissionLock (#2078).
 
 const MERGED_OUTPUT = join(BOOK_PATH, 'The Way of Kings.m4b');
 
@@ -2552,7 +2987,7 @@ function retagResult(over: Partial<RetagResult> = {}): RetagResult {
 }
 
 function tagger(result: RetagResult = retagResult()) {
-  return { retagBook: vi.fn().mockResolvedValue(result) };
+  return { retagBookWithinAdmissionLock: vi.fn().mockResolvedValue(result) };
 }
 
 const TAGGING_ON = { enabled: true, mode: 'overwrite' as const, embedCover: true };
@@ -2562,7 +2997,7 @@ describe('#2078 post-merge re-tag', () => {
     vi.resetAllMocks();
   });
 
-  it('calls retagBook(bookId) exactly once, with no overrides, when tag embedding is on (AC10)', async () => {
+  it('calls retagBookWithinAdmissionLock(bookId) exactly once, with no overrides, when tag embedding is on (AC10)', async () => {
     setupHappyPath();
     const tagging = tagger();
     const { service } = createService({ tagging: TAGGING_ON, taggingService: tagging });
@@ -2570,15 +3005,15 @@ describe('#2078 post-merge re-tag', () => {
     await service.enqueueMerge(42);
     await settle();
 
-    // Omitting overrides keeps merge-time tagging on retagBook's canonical projection.
-    expect(tagging.retagBook).toHaveBeenCalledTimes(1);
-    expect(tagging.retagBook).toHaveBeenCalledWith(42);
-    expect(tagging.retagBook.mock.calls[0]).toHaveLength(1);
+    // Omitting overrides keeps merge-time tagging on retagBookWithinAdmissionLock's canonical projection.
+    expect(tagging.retagBookWithinAdmissionLock).toHaveBeenCalledTimes(1);
+    expect(tagging.retagBookWithinAdmissionLock).toHaveBeenCalledWith(42);
+    expect(tagging.retagBookWithinAdmissionLock.mock.calls[0]).toHaveLength(1);
   });
 
   it('does not start the tag write until the merge commit has landed the output (AC10)', async () => {
     setupHappyPath();
-    // Gate the staging rename: retagBook resolves book.path and must see its output and cover.
+    // Gate the staging rename: retagBookWithinAdmissionLock resolves book.path and must see its output and cover.
     let releaseCommit!: () => void;
     const committed = new Promise<void>((res) => { releaseCommit = res; });
     (rename as Mock).mockImplementation(() => committed);
@@ -2590,12 +3025,12 @@ describe('#2078 post-merge re-tag', () => {
     await settle();
 
     expect(rename).toHaveBeenCalledWith(join(STAGING_DIR, 'The Way of Kings.m4b'), MERGED_OUTPUT);
-    expect(tagging.retagBook).not.toHaveBeenCalled();
+    expect(tagging.retagBookWithinAdmissionLock).not.toHaveBeenCalled();
 
     releaseCommit();
     await settle();
 
-    expect(tagging.retagBook).toHaveBeenCalledWith(42);
+    expect(tagging.retagBookWithinAdmissionLock).toHaveBeenCalledWith(42);
   });
 
   it('survives a rejecting tagging-settings read — the merge is already committed (AC10)', async () => {
@@ -2620,11 +3055,11 @@ describe('#2078 post-merge re-tag', () => {
       'merge_complete', expect.objectContaining({ success: true }),
     );
     expect(vi.mocked(eventBroadcaster.emit).mock.calls.some((c) => c[0] === 'merge_failed')).toBe(false);
-    expect(tagging.retagBook).not.toHaveBeenCalled();
-    expect(enrichBookFromAudio).toHaveBeenCalled();
+    expect(tagging.retagBookWithinAdmissionLock).not.toHaveBeenCalled();
+    expect(enrichBookFromAudioWithinAdmissionLock).toHaveBeenCalled();
   });
 
-  it('never calls retagBook when tag embedding is off — Layer 1 alone governs (AC14)', async () => {
+  it('never calls retagBookWithinAdmissionLock when tag embedding is off — Layer 1 alone governs (AC14)', async () => {
     setupHappyPath();
     const tagging = tagger();
     const { service } = createService({
@@ -2635,18 +3070,18 @@ describe('#2078 post-merge re-tag', () => {
     const ack = await service.enqueueMerge(42);
     await settle();
 
-    // retagBook is also the ungated manual entry point, so merge must enforce enabled here.
-    expect(tagging.retagBook).not.toHaveBeenCalled();
+    // retagBookWithinAdmissionLock is also the ungated manual entry point, so merge must enforce enabled here.
+    expect(tagging.retagBookWithinAdmissionLock).not.toHaveBeenCalled();
     expect(ack).toEqual({ status: 'started', bookId: 42 });
-    expect(enrichBookFromAudio).toHaveBeenCalled();
+    expect(enrichBookFromAudioWithinAdmissionLock).toHaveBeenCalled();
   });
 
   it.each([
     ['a plain Error', new Error('ffmpeg blew up')],
     ['a RetagError', new RetagError('PATH_MISSING', 'Book path does not exist on disk')],
-  ])('survives a rejected retagBook (%s) — merge still reports success (AC10)', async (_label, error) => {
+  ])('survives a rejected retagBookWithinAdmissionLock (%s) — merge still reports success (AC10)', async (_label, error) => {
     setupHappyPath();
-    const tagging = { retagBook: vi.fn().mockRejectedValue(error) };
+    const tagging = { retagBookWithinAdmissionLock: vi.fn().mockRejectedValue(error) };
     const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
     const { service, log } = createService({ tagging: TAGGING_ON, taggingService: tagging, eventBroadcaster });
 
@@ -2658,7 +3093,7 @@ describe('#2078 post-merge re-tag', () => {
       'merge_complete', expect.objectContaining({ success: true }),
     );
     expect(log.error).not.toHaveBeenCalled();
-    expect(enrichBookFromAudio).toHaveBeenCalled();
+    expect(enrichBookFromAudioWithinAdmissionLock).toHaveBeenCalled();
   });
 
   it('survives a returned failed > 0 and surfaces its warnings to the operator (AC10, AC13)', async () => {
@@ -2677,7 +3112,7 @@ describe('#2078 post-merge re-tag', () => {
       success: true,
       message: expect.stringContaining('Output file suspiciously small'),
     }));
-    expect(enrichBookFromAudio).toHaveBeenCalled();
+    expect(enrichBookFromAudioWithinAdmissionLock).toHaveBeenCalled();
   });
 
   it('warns and continues when tag embedding is on but no tagger is wired (AC10)', async () => {
@@ -2693,7 +3128,7 @@ describe('#2078 post-merge re-tag', () => {
       success: true,
       message: 'Merged 2 files into The Way of Kings.m4b',
     }));
-    expect(enrichBookFromAudio).toHaveBeenCalled();
+    expect(enrichBookFromAudioWithinAdmissionLock).toHaveBeenCalled();
   });
 
   function statsOnOutput(): number {
@@ -2706,16 +3141,16 @@ describe('#2078 post-merge re-tag', () => {
     const sizes = [500_000_000, 500_004_096];
     (stat as Mock).mockImplementation(async () => ({ size: sizes.shift() ?? 500_004_096 }));
 
-    // Gating retagBook proves ordering; sequential stat values alone do not.
+    // Gating retagBookWithinAdmissionLock proves ordering; sequential stat values alone do not.
     let release!: (r: RetagResult) => void;
     const gate = new Promise<RetagResult>((res) => { release = res; });
-    const tagging = { retagBook: vi.fn().mockReturnValue(gate) };
+    const tagging = { retagBookWithinAdmissionLock: vi.fn().mockReturnValue(gate) };
     const { service, db } = createService({ tagging: TAGGING_ON, taggingService: tagging });
 
     await service.enqueueMerge(42);
     await settle();
 
-    expect(tagging.retagBook).toHaveBeenCalled();
+    expect(tagging.retagBookWithinAdmissionLock).toHaveBeenCalled();
     expect(statsOnOutput()).toBe(1);
 
     release(retagResult());
@@ -2744,7 +3179,7 @@ describe('#2078 post-merge re-tag', () => {
     // Identify the post-tag update by tag state, not brittle call order.
     let tagWriteDone = false;
     const tagging = {
-      retagBook: vi.fn().mockImplementation(async () => { tagWriteDone = true; return retagResult(); }),
+      retagBookWithinAdmissionLock: vi.fn().mockImplementation(async () => { tagWriteDone = true; return retagResult(); }),
     };
     const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
     const { service, db } = createService({ tagging: TAGGING_ON, taggingService: tagging, eventBroadcaster });
@@ -2755,13 +3190,13 @@ describe('#2078 post-merge re-tag', () => {
     await settle();
 
     expect(gatedWhere).toHaveBeenCalledTimes(1);
-    expect(enrichBookFromAudio).not.toHaveBeenCalled();
+    expect(enrichBookFromAudioWithinAdmissionLock).not.toHaveBeenCalled();
     expect(vi.mocked(eventBroadcaster.emit).mock.calls.some((c) => c[0] === 'merge_complete')).toBe(false);
 
     releasePersist();
     await settle();
 
-    expect(enrichBookFromAudio).toHaveBeenCalled();
+    expect(enrichBookFromAudioWithinAdmissionLock).toHaveBeenCalled();
     expect(vi.mocked(eventBroadcaster.emit)).toHaveBeenCalledWith('merge_complete', expect.objectContaining({ success: true }));
   });
 
@@ -2772,7 +3207,7 @@ describe('#2078 post-merge re-tag', () => {
     const capturedWhere: unknown[] = [];
     let tagWriteDone = false;
     const tagging = {
-      retagBook: vi.fn().mockImplementation(async () => { tagWriteDone = true; return retagResult(); }),
+      retagBookWithinAdmissionLock: vi.fn().mockImplementation(async () => { tagWriteDone = true; return retagResult(); }),
     };
     const { service, db } = createService({ tagging: TAGGING_ON, taggingService: tagging });
     (db.update as Mock).mockImplementation(() => {
@@ -2850,22 +3285,22 @@ describe('#2078 post-merge re-tag', () => {
 
   it('finishes the tag write BEFORE enrichment reads the file back', async () => {
     setupHappyPath();
-    // Gating resolution catches an un-awaited retagBook; call order does not.
+    // Gating resolution catches an un-awaited retagBookWithinAdmissionLock; call order does not.
     let release!: (r: RetagResult) => void;
     const gate = new Promise<RetagResult>((res) => { release = res; });
-    const tagging = { retagBook: vi.fn().mockReturnValue(gate) };
+    const tagging = { retagBookWithinAdmissionLock: vi.fn().mockReturnValue(gate) };
     const { service } = createService({ tagging: TAGGING_ON, taggingService: tagging });
 
     await service.enqueueMerge(42);
     await settle();
 
-    expect(tagging.retagBook).toHaveBeenCalled();
-    expect(enrichBookFromAudio).not.toHaveBeenCalled();
+    expect(tagging.retagBookWithinAdmissionLock).toHaveBeenCalled();
+    expect(enrichBookFromAudioWithinAdmissionLock).not.toHaveBeenCalled();
 
     release(retagResult());
     await settle();
 
-    expect(enrichBookFromAudio).toHaveBeenCalled();
+    expect(enrichBookFromAudioWithinAdmissionLock).toHaveBeenCalled();
   });
 });
 

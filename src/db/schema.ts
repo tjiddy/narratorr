@@ -399,6 +399,8 @@ export const bookEvents = sqliteTable('book_events', {
       'grab_failed',
       'recording_review_skipped',
       'search_relaxed_held',
+      'sidecar_diverged',
+      'grab_blocked_unsatisfied',
     ],
   }).notNull(),
   source: text('source', {
@@ -433,6 +435,31 @@ export const blacklist = sqliteTable('blacklist', {
   uniqueIndex('idx_blacklist_info_hash_unique').on(table.infoHash).where(sql`info_hash IS NOT NULL`),
   uniqueIndex('idx_blacklist_guid_unique').on(table.guid).where(sql`guid IS NOT NULL`),
   index('idx_blacklist_book_id').on(table.bookId),
+]);
+
+/**
+ * Books an operator deleted after an import list added them, so no list re-adds them (#2305).
+ *
+ * The identity columns feed `matchesLibraryIdentity`: `asin` is canonicalized before insert and the
+ * two author columns hold the raw primary-author name and its slug. No unique index — the
+ * author+title arm is non-transitive and cannot be a key, so convergence is the exclusion service's
+ * single transaction instead. `importListName` is a display snapshot that outlives the FK's set-null.
+ */
+export const importListExclusions = sqliteTable('import_list_exclusions', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  asin: text('asin'),
+  title: text('title').notNull(),
+  authorName: text('author_name'),
+  authorSlug: text('author_slug'),
+  importListId: integer('import_list_id').references(() => importLists.id, { onDelete: 'set null' }),
+  importListName: text('import_list_name'),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+}, (table) => [
+  index('idx_import_list_exclusions_asin').on(table.asin),
+  index('idx_import_list_exclusions_author_slug').on(table.authorSlug),
+  index('idx_import_list_exclusions_import_list_id').on(table.importListId),
 ]);
 
 export const unmatchedGenres = sqliteTable('unmatched_genres', {

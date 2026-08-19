@@ -10,6 +10,7 @@ import type { DownloadOrchestrator } from '../services/download-orchestrator.js'
 import type { BlacklistService } from '../services/blacklist.service.js';
 import { DuplicateDownloadError } from '../services/download-errors.js';
 import { buildNarratorPriority, applyMultiPartFilterAndRank, buildSearchFilterOptions, filterBlacklistedResults } from '../services/search-pipeline.js';
+import { describeBlacklistEmptiedSet, BLACKLIST_EMPTIED_MESSAGE } from '../services/search-drop-summary.js';
 import { buildGrabPayload } from '../services/grab-payload.js';
 import { AUTO_GRAB_PHASE2_CAP, enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
 import { getErrorMessage } from '../utils/error-message.js';
@@ -20,6 +21,9 @@ const MATCH_THRESHOLD = 0.7;
 
 export interface RssJobResult {
   polled: number;
+  /** Feeds the #2376 breaker suppressed. Never folded into `polled`, which means feeds actually
+   *  fetched — counting a zero-I/O skip there would misreport RSS coverage. */
+  skipped: number;
   matched: number;
   grabbed: number;
 }
@@ -37,7 +41,7 @@ export async function runRssJob(
   const rssSettings = await settingsService.get('rss');
   if (!rssSettings.enabled) {
     log.debug('RSS sync is disabled, skipping');
-    return { polled: 0, matched: 0, grabbed: 0 };
+    return { polled: 0, skipped: 0, matched: 0, grabbed: 0 };
   }
 
   const qualitySettings = await settingsService.get('quality');
@@ -49,23 +53,29 @@ export async function runRssJob(
 
   if (candidates.length === 0) {
     log.debug('No wanted books for RSS sync');
-    return { polled: 0, matched: 0, grabbed: 0 };
+    return { polled: 0, skipped: 0, matched: 0, grabbed: 0 };
   }
 
   const rssIndexers = await indexerSearchService.getRssCapableIndexers();
   if (rssIndexers.length === 0) {
     log.debug('No RSS-capable indexers enabled');
-    return { polled: 0, matched: 0, grabbed: 0 };
+    return { polled: 0, skipped: 0, matched: 0, grabbed: 0 };
   }
 
   log.info({ indexerCount: rssIndexers.length, candidateCount: candidates.length }, 'Starting RSS sync');
 
   let polled = 0;
+  let skipped = 0;
   const allResults: SearchResult[] = [];
 
   for (const indexer of rssIndexers) {
     try {
-      const results = await indexerSearchService.pollRss(indexer);
+      const { results, skipped: suppressed } = await indexerSearchService.pollRss(indexer);
+      // A skip is not an error and must not short-circuit the loop: the rest still poll.
+      if (suppressed) {
+        skipped++;
+        continue;
+      }
       polled++;
       if (results.length === 0) {
         log.debug({ indexer: indexer.name }, 'RSS feed returned zero items');
@@ -79,11 +89,15 @@ export async function runRssJob(
   }
 
   if (allResults.length === 0) {
-    log.info({ polled }, 'RSS sync completed — no feed items');
-    return { polled, matched: 0, grabbed: 0 };
+    log.info({ polled, skipped }, 'RSS sync completed — no feed items');
+    return { polled, skipped, matched: 0, grabbed: 0 };
   }
 
   const filtered = await filterBlacklistedResults(allResults, blacklistService, log);
+  // Batch-wide and pre-matching, so no book can be named; the loop below no-ops on its own.
+  if (filtered.length === 0) {
+    log.info({ polled, skipped, ...describeBlacklistEmptiedSet(allResults.length, allResults.length) }, BLACKLIST_EMPTIED_MESSAGE);
+  }
 
   const itemsPerBook = new Map<number, { results: SearchResult[]; candidate: BookWithAuthor }>();
 
@@ -170,7 +184,7 @@ export async function runRssJob(
     }
   }
 
-  log.info({ polled, matched, grabbed }, 'RSS sync completed');
-  return { polled, matched, grabbed };
+  log.info({ polled, skipped, matched, grabbed }, 'RSS sync completed');
+  return { polled, skipped, matched, grabbed };
 }
 

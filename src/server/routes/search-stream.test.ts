@@ -212,6 +212,35 @@ describe('searchStreamRoutes', () => {
       expect(data).toEqual({ indexerId: 2, name: 'MAM' });
     });
 
+    // #2376 AC6: this route builds its own callbacks rather than using SearchEventSink, so a
+    // sink-only test would not prove the breaker skip reaches the client at all.
+    it('writes the breaker skip through the existing indexer-error frame, with no new event type', async () => {
+      indexerService.searchAllStreaming = vi.fn().mockImplementation(
+        async (_q: string, _o: unknown, _c: Map<number, AbortController>, callbacks: {
+          onError: (indexerId: number, name: string, error: string, elapsedMs: number) => void;
+        }) => {
+          callbacks.onError(2, 'MAM', 'Skipped — stopped: Connection refused on port 443', 0);
+          return [];
+        },
+      );
+
+      const { reply, request, write } = createMockReplyAndRequest();
+      await streamHandler!(request, reply);
+
+      const frames = write.mock.calls.filter(
+        (call: unknown[]) => typeof call[0] === 'string' && (call[0] as string).includes('event: indexer-error'),
+      );
+      expect(frames).toHaveLength(1);
+      const dataLine = (frames[0]![0] as string).split('\n').find((l: string) => l.startsWith('data: '));
+      expect(JSON.parse(dataLine!.replace('data: ', ''))).toEqual({
+        indexerId: 2,
+        name: 'MAM',
+        error: 'Skipped — stopped: Connection refused on port 443',
+        elapsedMs: 0,
+      });
+      expect(write.mock.calls.some((c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).includes('event: indexer-skipped'))).toBe(false);
+    });
+
     it('registers close handler for client disconnect cleanup', async () => {
       const { reply, request, onClose } = createMockReplyAndRequest();
       await streamHandler!(request, reply);
@@ -866,6 +895,34 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
 
       expect(queriesOf(service)).toEqual([CANONICAL_Q]);
       expect(complete.data as Record<string, unknown>).not.toHaveProperty('relaxedQuery');
+    } finally {
+      await app.close();
+    }
+  });
+
+  /**
+   * #2422 — the raw `q` is the only apostrophe-bearing text this route ever sees; it is validated
+   * but never cleaned, so rung 1 must carry it down while `rung.query` stays exactly as it was.
+   */
+  it('forwards each rung’s apostrophe form into the search options without moving rung.query', async () => {
+    const RAW_Q = "A Dragon Rider's Guide: The Retirement Chronicles";
+    const { service } = serviceAnswering(null);
+    const app = await buildApp(service);
+    try {
+      await fetchSseEvents(app, url({ q: RAW_Q, title: "A Dragon Rider's Guide: The Retirement Chronicles", author: AUTHOR }));
+
+      const calls = vi.mocked(service.searchAllStreaming).mock.calls;
+      const [rung1Query, rung1Options] = calls[0]!;
+      expect(rung1Query).toBe(RAW_Q);
+      expect(rung1Options?.queryWithApostrophes).toBe("A Dragon Rider's Guide The Retirement Chronicles");
+
+      // Every rung, not only the first: a relaxed rung is where the fold matters most.
+      for (const [, options] of calls) expect(options?.queryWithApostrophes).toBeDefined();
+
+      // Rung 1's query is the caller's `q` verbatim; only relaxed rungs are cleaned (#2104).
+      const [relaxedQuery, relaxedOptions] = calls[1]!;
+      expect(relaxedQuery).not.toContain("'");
+      expect(relaxedOptions?.queryWithApostrophes).toContain("rider's");
     } finally {
       await app.close();
     }

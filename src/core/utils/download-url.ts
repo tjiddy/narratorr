@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { DownloadProtocol } from '../indexers/types.js';
+import { ABB_DETAILS_SENTINEL_PREFIX } from '../indexers/abb-sentinel.js';
+import { MAM_TORRENT_SENTINEL_PREFIX } from '../indexers/mam-wedge.js';
 import { parseInfoHash } from './magnet.js';
 import { normalizeInfoHash } from './normalize-info-hash.js';
 import { getUserAgent } from '@shared/user-agent.js';
@@ -63,6 +65,12 @@ export class DownloadUrl {
 
     if (this.isHttp) {
       return this.resolveHttp(this.raw, lanAllowlist);
+    }
+
+    // An indexer sentinel reaching artifact resolution means no adapter resolve hook translated
+    // it — the indexer that minted it is gone or unwired. Name that, not a URL-scheme bug.
+    if (this.raw.startsWith(ABB_DETAILS_SENTINEL_PREFIX) || this.raw.startsWith(MAM_TORRENT_SENTINEL_PREFIX)) {
+      throw new Error('This release requires its indexer to resolve the download — the indexer that produced it is no longer configured');
     }
 
     throw new Error('Unsupported URL scheme — only magnet:, http:, https:, and data: URIs are supported');

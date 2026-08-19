@@ -85,8 +85,9 @@ export class TaskRegistry {
     }
   }
 
-  setNextRun(name: string, date: Date): void {
+  /** `null` — or an Invalid Date, which getAll()'s toISOString() would throw on — clears the entry. */
+  setNextRun(name: string, date: Date | null): void {
     const task = this.tasks.get(name);
-    if (task) task.nextRun = date;
+    if (task) task.nextRun = date !== null && !Number.isNaN(date.getTime()) ? date : null;
   }
 }

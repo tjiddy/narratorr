@@ -26,6 +26,7 @@ import { trackUnmatchedGenres } from './unmatched-genres.js';
 import { buildNewBookValues, type CreateBookInput, type ResolvedBookCreateInput } from './book-create.js';
 import { buildFixMatchScalarUpdates, buildReplaceSeriesLinkArgs, type FixMatchReplacement } from './book-fix-match.js';
 import { usefulString } from './metadata-recording-collapse.js';
+import { withBookAdmissionLock } from './book-admission.js';
 import { canonicalizeAsin } from '@shared/asin.js';
 import { isUniqueViolation } from '@shared/error-message.js';
 import {
@@ -369,8 +370,16 @@ export class BookService {
   }
 
   /** Atomically replace bibliographic identity while preserving local/audio state. The caller must
-   * preflight ASIN collisions; enrichment resets to pending for the new identity. */
+   * preflight ASIN collisions; enrichment resets to pending for the new identity.
+   *
+   * The acquisition sits here, at the operation entry point, and NOT inside the transaction:
+   * `syncNarrators` and `replaceSeriesLink` are shared primitives reached from locked callers. */
   async fixMatch(id: number, replacement: FixMatchReplacement): Promise<BookDetail | null> {
+    return withBookAdmissionLock(id, () => this.fixMatchWithinAdmissionLock(id, replacement));
+  }
+
+  /** Caller must hold the admission lock for `id`. */
+  private async fixMatchWithinAdmissionLock(id: number, replacement: FixMatchReplacement): Promise<BookDetail | null> {
     const scalarUpdates = buildFixMatchScalarUpdates(replacement);
     const seriesArgs = buildReplaceSeriesLinkArgs(replacement);
 
@@ -399,18 +408,30 @@ export class BookService {
     return this.update(id, { status });
   }
 
-  async deleteByStatus(status: BookRow['status']): Promise<number> {
-    const result = await this.db.delete(books).where(eq(books.status, status)).returning();
-    this.log.info({ status, count: result.length }, 'Deleted books by status');
-    return result.length;
+  /** Ids only: a bulk sweep enumerates first and hydrates per book, so the list shape would be waste. */
+  async findIdsByStatus(status: BookRow['status']): Promise<number[]> {
+    const rows = await this.db.select({ id: books.id }).from(books).where(eq(books.status, status));
+    return rows.map((row) => row.id);
   }
 
-  async delete(id: number): Promise<boolean> {
-    const existing = await this.getById(id);
+  /** Narrow read for a delete-time membership re-check; null when the row is gone entirely. */
+  async getStatusById(id: number): Promise<BookRow['status'] | null> {
+    const rows = await this.db.select({ status: books.status }).from(books).where(eq(books.id, id)).limit(1);
+    return rows[0]?.status ?? null;
+  }
+
+  /**
+   * `tx` is a caller-owned transaction; that arm is deliberately side-effect-free because the owner
+   * may still roll back, so it emits no `Book removed` record — `BookDeletionService` logs the
+   * committed deletion instead, and its `Book deleted` record carries the same id and title.
+   */
+  async delete(id: number, tx?: DbOrTx): Promise<boolean> {
+    const executor = tx ?? this.db;
+    const existing = await this.getById(id, executor);
     if (!existing) return false;
 
-    await this.db.delete(books).where(eq(books.id, id));
-    this.log.info({ id, title: existing.title }, 'Book removed');
+    await executor.delete(books).where(eq(books.id, id));
+    if (!tx) this.log.info({ id, title: existing.title }, 'Book removed');
     return true;
   }
 
@@ -428,7 +449,11 @@ export class BookService {
   }
 
   /** Return the writer outcome even if its post-rename DB update failed, so the route can refresh
-   * connectors whenever the cover file actually materialized. */
+   * connectors whenever the cover file actually materialized.
+   *
+   * The MIME check is pure input validation and stays outside the lock; the path read and the write
+   * it feeds are inside, so an upload queued behind a rename cannot drop `cover.<ext>` in the
+   * vacated folder. */
   async uploadCover(
     bookId: number,
     buffer: Buffer,
@@ -437,7 +462,15 @@ export class BookService {
     if (!SUPPORTED_COVER_MIMES.has(mimeType)) {
       throw new CoverUploadError('Only JPG, PNG, and WebP images are supported', 'INVALID_MIME');
     }
+    return withBookAdmissionLock(bookId, () => this.uploadCoverWithinAdmissionLock(bookId, buffer, mimeType));
+  }
 
+  /** Caller must hold the admission lock for `bookId`. */
+  private async uploadCoverWithinAdmissionLock(
+    bookId: number,
+    buffer: Buffer,
+    mimeType: string,
+  ): Promise<{ book: BookDetail; coverOutcome: CoverWriteOutcome }> {
     const book = await this.getById(bookId);
     if (!book) {
       throw new CoverUploadError('Book not found', 'NOT_FOUND');

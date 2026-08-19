@@ -1,4 +1,5 @@
-import type { NotifierAdapter, NotificationEvent, EventPayload } from './types.js';
+import type { NotifierAdapter, NotifierResult, NotificationEvent, EventPayload } from './types.js';
+import { describeTransportError } from '../utils/failure-classification.js';
 import { formatEventMessage } from './types.js';
 import { EVENT_TITLES } from '@shared/notification-events.js';
 import { fetchWithTimeout } from '../utils/network-service.js';
@@ -14,7 +15,7 @@ export class SlackNotifier implements NotifierAdapter {
 
   constructor(private config: SlackConfig) {}
 
-  async send(event: NotificationEvent, payload: EventPayload): Promise<{ success: boolean; message?: string }> {
+  async send(event: NotificationEvent, payload: EventPayload): Promise<NotifierResult> {
     const body = {
       text: `*${EVENT_TITLES[event]}*\n${formatEventMessage(event, payload)}`,
     };
@@ -28,19 +29,16 @@ export class SlackNotifier implements NotifierAdapter {
 
       if (!response.ok) {
         const text = await response.text().catch(() => '');
-        return { success: false, message: `HTTP ${response.status}: ${text.slice(0, 200)}` };
+        return { success: false, message: `HTTP ${response.status}: ${text.slice(0, 200)}`, failure: { httpStatus: response.status } };
       }
 
       return { success: true };
     } catch (error: unknown) {
-      if (error instanceof DOMException && error.name === 'TimeoutError') {
-        return { success: false, message: 'Request timed out' };
-      }
-      return { success: false, message: getErrorMessage(error) };
+      return { success: false, message: getErrorMessage(error), failure: describeTransportError(error) };
     }
   }
 
-  async test(): Promise<{ success: boolean; message?: string }> {
+  async test(): Promise<NotifierResult> {
     const testPayload: EventPayload = {
       event: 'on_grab',
       book: { title: 'Test Book', author: 'Test Author' },

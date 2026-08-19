@@ -18,7 +18,7 @@ export function AbbFields({ register, errors }: Pick<IndexerFieldsProps, 'regist
         {errors.settings?.hostname ? (
           <p className="text-sm text-destructive mt-1">{errors.settings.hostname.message}</p>
         ) : (
-          <p className="text-sm text-muted-foreground mt-1">Domain only, without http:// or https://</p>
+          <p className="text-sm text-muted-foreground mt-1">Domain only — a pasted URL is reduced to its host</p>
         )}
       </div>
       <div>

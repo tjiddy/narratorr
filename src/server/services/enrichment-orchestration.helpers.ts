@@ -1,12 +1,12 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { eq } from 'drizzle-orm';
 import type { Db, DbOrTx } from '@db/index.js';
-import { books, bookNarrators } from '@db/schema.js';
+import { books } from '@db/schema.js';
 import type { BookService } from './book.service.js';
 import type { NarratorSource } from './import-adapters/types.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
-import { enrichBookFromAudio } from './enrichment-utils.js';
+import { enrichBookFromAudioWithinAdmissionLock, rowHasNarrators, type AudioEnrichmentOptions } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
 import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
 import type { BookMetadata } from '@core/metadata/index.js';
@@ -35,10 +35,6 @@ export interface AudnexusConfig {
   title?: string | null | undefined;
   author?: string | null | undefined;
   existingNarrator?: string | null | undefined;
-  existingDuration?: number | null | undefined;
-  existingGenres?: string[] | null | undefined;
-  existingSubtitle?: string | null | undefined;
-  existingPublisher?: string | null | undefined;
 }
 
 export interface EnrichmentDeps {
@@ -49,16 +45,23 @@ export interface EnrichmentDeps {
   metadataService: MetadataService;
 }
 
-/** Runs audio before provider enrichment; callers own statuses, events, and errors. */
+/**
+ * Caller must hold the admission lock for `bookId`.
+ *
+ * Runs audio before provider enrichment; callers own statuses, events, and errors. Both halves
+ * write the same row and the same folder, so they belong to one section — a split would let a Fix
+ * Match land between the audio writeback and the provider writeback.
+ */
 export async function orchestrateBookEnrichment(
   bookId: number,
   finalPath: string,
   book: EnrichmentBookInput,
   deps: EnrichmentDeps,
   audnexusConfig: AudnexusConfig,
+  opts?: AudioEnrichmentOptions,
 ): Promise<{ audioEnriched: boolean }> {
   const ffprobePath = resolveFfprobePathFromSettings(await resolveFfmpegPath());
-  const audioResult = await enrichBookFromAudio(
+  const audioResult = await enrichBookFromAudioWithinAdmissionLock(
     bookId,
     finalPath,
     {
@@ -72,6 +75,7 @@ export async function orchestrateBookEnrichment(
     deps.log,
     deps.bookService,
     ffprobePath,
+    opts,
   );
 
   await applyAudnexusEnrichment(bookId, audnexusConfig, deps);
@@ -79,6 +83,7 @@ export async function orchestrateBookEnrichment(
   return { audioEnriched: audioResult.enriched };
 }
 
+/** Caller must hold the admission lock for `bookId`. */
 export async function applyAudnexusEnrichment(
   bookId: number,
   opts: AudnexusConfig,
@@ -156,15 +161,25 @@ async function applyEnrichmentData(
   bookId: number,
   resolvedAsin: string | null | undefined,
   data: { duration?: number | undefined; narrators?: string[] | undefined; genres?: string[] | undefined; subtitle?: string | undefined; publisher?: string | undefined },
-  opts: { primaryAsin?: string | null | undefined; existingNarrator?: string | null | undefined; existingDuration?: number | null | undefined; existingGenres?: string[] | null | undefined; existingSubtitle?: string | null | undefined; existingPublisher?: string | null | undefined },
+  opts: { primaryAsin?: string | null | undefined; existingNarrator?: string | null | undefined },
   deps: Pick<EnrichmentDeps, 'db' | 'log' | 'bookService'>,
   capturedAsin: string | null,
 ): Promise<void> {
   const asinToWrite = await resolveAsinWriteback(bookId, resolvedAsin, opts.primaryAsin, deps);
 
   const committed = await deps.db.transaction(async (tx) => {
+    // #2435 AC28: the projection covers every field this transaction writes, so each guard reads
+    // the LIVE row — the sole gate. A caller's pre-fetch snapshot cannot be one: it predates the
+    // audio scan and the provider round-trip, and an operator can populate any column meanwhile.
     const rows = await tx
-      .select({ asin: books.asin, userClearedFields: books.userClearedFields })
+      .select({
+        asin: books.asin,
+        userClearedFields: books.userClearedFields,
+        duration: books.duration,
+        subtitle: books.subtitle,
+        publisher: books.publisher,
+        genres: books.genres,
+      })
       .from(books)
       .where(eq(books.id, bookId))
       .limit(1);
@@ -179,17 +194,20 @@ async function applyEnrichmentData(
       updatedAt: new Date(),
     };
     if (asinToWrite) updates.asin = asinToWrite;
-    if (!opts.existingDuration && data.duration) {
+    // #2440: `books.duration` alone decides this. The removed caller snapshot came from the staged
+    // item's provider metadata, so it could be set on a row whose own column was empty and refuse
+    // the Audnexus duration; that case now fills.
+    if (!row.duration && data.duration) {
       updates.duration = data.duration;
     }
-    if (!opts.existingSubtitle && data.subtitle && !cleared.has('subtitle')) {
+    if (!row.subtitle && data.subtitle && !cleared.has('subtitle')) {
       updates.subtitle = data.subtitle;
     }
-    if (!opts.existingPublisher && data.publisher && !cleared.has('publisher')) {
+    if (!row.publisher && data.publisher && !cleared.has('publisher')) {
       updates.publisher = data.publisher;
     }
     await tx.update(books).set(updates).where(eq(books.id, bookId));
-    const genresWritten = await applyEnrichmentArrayFields(bookId, data, opts, deps, cleared, tx);
+    const genresWritten = await applyEnrichmentArrayFields(bookId, data, opts, deps, cleared, tx, row.genres);
     return { applied: true, genresWritten };
   });
 
@@ -211,28 +229,19 @@ async function applyEnrichmentData(
   );
 }
 
-/** Use the caller's transaction; the pre-fetch narrator snapshot may miss audio-tag writes. */
-async function rowHasNarrators(tx: DbOrTx, bookId: number): Promise<boolean> {
-  const rows = await tx
-    .select({ narratorId: bookNarrators.narratorId })
-    .from(bookNarrators)
-    .where(eq(bookNarrators.bookId, bookId))
-    .limit(1);
-  return rows.length > 0;
-}
-
 async function applyEnrichmentArrayFields(
   bookId: number,
   data: { narrators?: string[] | undefined; genres?: string[] | undefined },
-  opts: { existingNarrator?: string | null | undefined; existingGenres?: string[] | null | undefined },
+  opts: { existingNarrator?: string | null | undefined },
   deps: Pick<EnrichmentDeps, 'bookService'>,
   cleared: ReadonlySet<ClearableBookField>,
   tx: DbOrTx,
+  liveGenres: string[] | null,
 ): Promise<string[] | null> {
   if (!opts.existingNarrator && data.narrators?.length && !(await rowHasNarrators(tx, bookId))) {
     await deps.bookService.update(bookId, { narrators: data.narrators }, { tx });
   }
-  if (data.genres?.length && !opts.existingGenres?.length && !cleared.has('genres')) {
+  if (data.genres?.length && !liveGenres?.length && !cleared.has('genres')) {
     await deps.bookService.update(bookId, { genres: data.genres }, { tx });
     return data.genres;
   }
@@ -317,8 +326,6 @@ export function extractImportMetadata(item: ImportConfirmItem) {
 export function buildBackgroundAudnexusConfig(
   item: { asin?: string | null | undefined; title?: string | null | undefined; authorName?: string | null | undefined },
   extracted: ReturnType<typeof extractImportMetadata>,
-  existingGenres: string[] | null,
-  existing?: { subtitle?: string | null | undefined; publisher?: string | null | undefined } | undefined,
 ): AudnexusConfig {
   return {
     primaryAsin: item.asin || extracted.meta?.asin,
@@ -326,10 +333,6 @@ export function buildBackgroundAudnexusConfig(
     title: item.title ?? null,
     author: item.authorName ?? null,
     existingNarrator: extracted.narratorName,
-    existingDuration: extracted.bookInput.duration,
-    existingGenres,
-    existingSubtitle: existing?.subtitle ?? null,
-    existingPublisher: existing?.publisher ?? null,
   };
 }
 

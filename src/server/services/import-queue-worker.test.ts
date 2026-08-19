@@ -1457,6 +1457,24 @@ describe('ImportQueueWorker', () => {
       expect(state.bookStatus).toBe('imported');
     });
 
+    // AC2 (#2307): the incident's error named only an internal download id. The worker already holds
+    // job.bookId, so the failure log carries it at no query cost.
+    it('the Import job failed log names the book id alongside the job id', async () => {
+      setupGuardedFailingJob(
+        { id: 8, bookId: 80, type: 'manual', status: 'processing', phase: 'copying', metadata: '{"title":"Reimported Book"}', phaseHistory: null },
+        { bookStatus: 'importing' as BookStatus | null },
+      );
+
+      await worker.start();
+      await new Promise(r => setTimeout(r, 100));
+
+      const failure = vi.mocked(log.error).mock.calls.find(([, msg]) => msg === 'Import job failed');
+      expect(failure).toBeDefined();
+      expect(failure![0]).toMatchObject({ jobId: 8, bookId: 80 });
+      // A raw Error would satisfy objectContaining({ message }); `type` is what serializeError adds.
+      expect((failure![0] as { error: Record<string, unknown> }).error.type).toBe('Error');
+    });
+
     it('fresh-grab failure: a book already reverted to wanted is NOT clobbered to failed (guard miss)', async () => {
       const state = { bookStatus: 'wanted' as BookStatus | null };
       const guarded = setupGuardedFailingJob(
@@ -1564,7 +1582,7 @@ describe('ImportQueueWorker', () => {
       expect(orchestratorStub.importDownload).toHaveBeenCalledWith(99, expect.objectContaining({
         setPhase: expect.any(Function),
         emitProgress: expect.any(Function),
-      }));
+      }), { bookId: 202 });
       expect(receivedCallbacks?.setPhase).toBeDefined();
       expect(receivedCallbacks?.emitProgress).toBeDefined();
 

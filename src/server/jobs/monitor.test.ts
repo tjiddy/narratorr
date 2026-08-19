@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { Mock } from 'vitest';
 import { and, eq } from 'drizzle-orm';
-import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService, searchStatus, mockSearchAllWithStatus } from '../__tests__/helpers.js';
 import { downloads } from '@db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@db/index.js';
@@ -711,7 +711,7 @@ describe('monitor job', () => {
       retryDeps = {
         blacklistService: { create: vi.fn().mockResolvedValue(undefined) },
         retrySearchDeps: {
-          indexerSearchService: { searchAllWithStatus: vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0 }) },
+          indexerSearchService: { searchAllWithStatus: mockSearchAllWithStatus([]) },
           indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }) },
           downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }), grabForRetry: vi.fn().mockResolvedValue({ id: 99 }), hasGrabBlocker: vi.fn().mockResolvedValue(false) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
@@ -826,7 +826,7 @@ describe('monitor job', () => {
 
     it('sets errorMessage to "Retrying" when retry search succeeds', async () => {
       const searchResult = { title: 'New Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:new123', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
-      retryDeps.retrySearchDeps.indexerSearchService.searchAllWithStatus.mockResolvedValue({ results: [searchResult], succeeded: 1, failed: 0 });
+      retryDeps.retrySearchDeps.indexerSearchService.searchAllWithStatus.mockResolvedValue(searchStatus([searchResult]));
 
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
@@ -860,7 +860,7 @@ describe('monitor job', () => {
 
     it('deletes old failed record when retry search succeeds', async () => {
       const searchResult = { title: 'New Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:new123', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
-      retryDeps.retrySearchDeps.indexerSearchService.searchAllWithStatus.mockResolvedValue({ results: [searchResult], succeeded: 1, failed: 0 });
+      retryDeps.retrySearchDeps.indexerSearchService.searchAllWithStatus.mockResolvedValue(searchStatus([searchResult]));
 
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
@@ -894,7 +894,7 @@ describe('monitor job', () => {
 
     it('writes adapter errorMessage before retry-state overwrite when retry succeeds via processDownloadUpdate', async () => {
       const searchResult = { title: 'New Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:new123', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
-      retryDeps.retrySearchDeps.indexerSearchService.searchAllWithStatus.mockResolvedValue({ results: [searchResult], succeeded: 1, failed: 0 });
+      retryDeps.retrySearchDeps.indexerSearchService.searchAllWithStatus.mockResolvedValue(searchStatus([searchResult]));
 
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42, title: 'Test Book', infoHash: null },
@@ -1094,7 +1094,7 @@ describe('monitor job', () => {
       retryDeps = {
         blacklistService: { create: vi.fn().mockResolvedValue(undefined) },
         retrySearchDeps: {
-          indexerSearchService: { searchAllWithStatus: vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0 }) },
+          indexerSearchService: { searchAllWithStatus: mockSearchAllWithStatus([]) },
           indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }) },
           downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }), grabForRetry: vi.fn().mockResolvedValue({ id: 99 }), hasGrabBlocker: vi.fn().mockResolvedValue(false) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
@@ -1256,7 +1256,7 @@ describe('monitor job', () => {
       retryDeps = {
         blacklistService: { create: vi.fn().mockResolvedValue(undefined) },
         retrySearchDeps: {
-          indexerSearchService: { searchAllWithStatus: vi.fn().mockResolvedValue({ results: [], succeeded: 1, failed: 0 }) },
+          indexerSearchService: { searchAllWithStatus: mockSearchAllWithStatus([]) },
           indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }) },
           downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }), grabForRetry: vi.fn().mockResolvedValue({ id: 99 }), hasGrabBlocker: vi.fn().mockResolvedValue(false) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
@@ -1280,6 +1280,60 @@ describe('monitor job', () => {
       expect(retryDeps.blacklistService.create).toHaveBeenCalledWith(
         expect.objectContaining({ infoHash: 'abc123', reason: 'infrastructure_error', blacklistType: 'temporary' }),
       );
+    });
+
+    /**
+     * #2420 — this creator wrote infoHash and no guid, which is invisible while every adapter
+     * carries a hash at search time. ABB's results no longer do, so the whole blacklist load moves
+     * to the guid arm: without the guid the entry can never match an ABB result again.
+     */
+    it('carries the download row\'s guid onto the infrastructure_error entry', async () => {
+      const guid = 'abb:/audio-books/murder-in-the-new-forest/';
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123', guid },
+      ]));
+      adapter.getDownload.mockRejectedValueOnce(new Error('Connection refused'));
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      expect(retryDeps.blacklistService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ infoHash: 'abc123', guid, reason: 'infrastructure_error' }),
+      );
+    });
+
+    // The fix must not make guid required: a Usenet or pre-#2420 row carries only a hash.
+    it('still blacklists on infoHash alone when the download row has a null guid', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: 'abc123', guid: null },
+      ]));
+      adapter.getDownload.mockRejectedValueOnce(new Error('Connection refused'));
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      const created = retryDeps.blacklistService.create.mock.calls[0]![0] as Record<string, unknown>;
+      expect(created.infoHash).toBe('abc123');
+      expect(created.guid).toBeUndefined();
+    });
+
+    // Guid-only rows (Usenet, post-#2420 ABB) must not skip the infra-error blacklist: the gate
+    // matches blacklistRelease's either-identity rule, not infoHash-only.
+    it('blacklists a guid-only row (no infoHash) on infrastructure_error', async () => {
+      const guid = 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/';
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', bookId: 42, title: 'Test Book', infoHash: null, guid },
+      ]));
+      adapter.getDownload.mockRejectedValueOnce(new Error('Connection refused'));
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      expect(retryDeps.blacklistService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ guid, reason: 'infrastructure_error', blacklistType: 'temporary' }),
+      );
+      const created = retryDeps.blacklistService.create.mock.calls[0]![0] as Record<string, unknown>;
+      expect(created.infoHash).toBeUndefined();
     });
 
     it('adapter.getDownload() returns null → blacklists with reason download_failed, type temporary', async () => {
@@ -1595,14 +1649,39 @@ describe('monitor job', () => {
 
     it('calls processOneDownload via fireAndForget when download completes', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
-        { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42 },
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42, title: 'The Stranger [2026]' },
       ]));
       adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
       db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
       await runMonitorWithQG();
 
-      expect(qualityGateOrchestrator.processOneDownload).toHaveBeenCalledWith(1);
+      expect(qualityGateOrchestrator.processOneDownload).toHaveBeenCalledWith(1, expect.anything());
+    });
+
+    // The polled snapshot is the only provenance left if the row vanishes before the gate re-reads it (#2307).
+    it('hands the polled book id and release title to the quality gate', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: 42, title: 'The Stranger [2026]' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+      await runMonitorWithQG();
+
+      expect(qualityGateOrchestrator.processOneDownload).toHaveBeenCalledWith(1, { bookId: 42, releaseTitle: 'The Stranger [2026]' });
+    });
+
+    it('forwards a null book id rather than dropping the provenance argument', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, clientStatus: 'downloading', pipelineStage: 'idle', completedAt: null, bookId: null, title: 'Orphan Release' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+      await runMonitorWithQG();
+
+      expect(qualityGateOrchestrator.processOneDownload).toHaveBeenCalledWith(1, { bookId: null, releaseTitle: 'Orphan Release' });
     });
 
     it('does not call processOneDownload when progress < 1', async () => {
@@ -1784,7 +1863,7 @@ describe('monitor job', () => {
 
       await runMonitorWithQG();
 
-      expect(qualityGateOrchestrator.processOneDownload).toHaveBeenCalledWith(1);
+      expect(qualityGateOrchestrator.processOneDownload).toHaveBeenCalledWith(1, expect.anything());
     });
   });
 
@@ -1972,5 +2051,257 @@ describe('#537 monitor download_failed event recording', () => {
     );
 
     expect(eventHistory.create).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #2423 Part B — a download the client has not registered yet is not a dead download. The observed
+ * incident failed and blacklisted a hybrid torrent on the very first poll, 28s after the add.
+ */
+describe('#2423 missing-item grace window', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let downloadClientService: { getAdapter: ReturnType<typeof vi.fn> };
+  let notifierService: { notify: ReturnType<typeof vi.fn> };
+  let log: ReturnType<typeof createMockLogger>;
+  let adapter: { getDownload: ReturnType<typeof vi.fn> };
+  let eventHistory: { create: ReturnType<typeof vi.fn> };
+  let broadcaster: { emit: ReturnType<typeof vi.fn> };
+  let retryDeps: {
+    blacklistService: { create: ReturnType<typeof vi.fn> };
+    retrySearchDeps: Record<string, unknown>;
+  };
+
+  const GRACE_MS = 120_000;
+  const FROZEN_NOW = new Date('2026-08-17T23:09:30.000Z');
+  const fresh = () => new Date(Date.now() - 5_000);
+  const stale = () => new Date(Date.now() - 10 * 60_000);
+
+  function row(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 1, externalId: 'ext-1', downloadClientId: 10,
+      clientStatus: 'downloading', pipelineStage: 'idle',
+      bookId: 42, title: 'Hybrid Book', infoHash: 'abc123', guid: null,
+      completedAt: null, progress: 0.1, addedAt: fresh(),
+      ...overrides,
+    };
+  }
+
+  // Fixtures and monitorDownloads both read Date.now(), so the host clock would otherwise pick the
+  // branch. Fake ONLY Date — full fake timers stall promise-driven job code and MSW-backed suites.
+  beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(FROZEN_NOW);
+    const { RetryBudget } = await import('../services/retry-budget.js');
+    db = createMockDb();
+    log = createMockLogger();
+    adapter = { getDownload: vi.fn() };
+    downloadClientService = { getAdapter: vi.fn().mockResolvedValue(adapter) };
+    notifierService = { notify: vi.fn().mockResolvedValue(undefined) };
+    eventHistory = { create: vi.fn().mockResolvedValue(undefined) };
+    broadcaster = { emit: vi.fn() };
+    retryDeps = {
+      blacklistService: { create: vi.fn().mockResolvedValue(undefined) },
+      retrySearchDeps: {
+        indexerSearchService: { searchAllWithStatus: mockSearchAllWithStatus([]) },
+        indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }) },
+        downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }), grabForRetry: vi.fn().mockResolvedValue({ id: 99 }), hasGrabBlocker: vi.fn().mockResolvedValue(false) },
+        blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
+        bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Hybrid Book', duration: 3600, path: null, author: { name: 'Author' } }) },
+        settingsService: createMockSettingsService(),
+        retryBudget: new RetryBudget(),
+        log: createMockLogger(),
+      },
+    };
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function runMonitor() {
+    await monitorDownloads(
+      inject<Db>(db), inject<DownloadClientService>(downloadClientService),
+      inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log),
+      retryDeps as never, inject<EventBroadcasterService>(broadcaster),
+      undefined, undefined, inject<EventHistoryService>(eventHistory),
+    );
+  }
+
+  function expectNoFailureSideEffects() {
+    expect(db.update).not.toHaveBeenCalled();
+    expect(notifierService.notify).not.toHaveBeenCalled();
+    expect(retryDeps.blacklistService.create).not.toHaveBeenCalled();
+    expect((retryDeps.retrySearchDeps.indexerSearchService as { searchAllWithStatus: Mock }).searchAllWithStatus).not.toHaveBeenCalled();
+    expect(eventHistory.create).not.toHaveBeenCalled();
+    expect(broadcaster.emit).not.toHaveBeenCalled();
+  }
+
+  it('suppresses every failure side effect for a freshly-added missing download', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([row()]));
+    adapter.getDownload.mockResolvedValueOnce(null);
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+    await runMonitor();
+
+    expectNoFailureSideEffects();
+    expect(log.warn).not.toHaveBeenCalledWith({ id: 1 }, 'Download not found in client');
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 1 }),
+      'Download not yet in client — within add grace window',
+    );
+  });
+
+  // The "a genuinely-vanished download still dies" arm.
+  it('fails a missing download whose row is older than the window, exactly as before', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([row({ addedAt: stale() })]));
+    adapter.getDownload.mockResolvedValueOnce(null);
+    const chain = mockDbChain([{ id: 1 }]);
+    db.update.mockReturnValue(chain);
+
+    await runMonitor();
+
+    expect((chain.set as Mock)).toHaveBeenCalledWith(
+      expect.objectContaining({ clientStatus: 'failed', errorMessage: 'Download not found in download client' }),
+    );
+    expect((chain.where as Mock)).toHaveBeenCalledWith(
+      and(eq(downloads.id, 1), eq(downloads.clientStatus, 'downloading'), eq(downloads.pipelineStage, 'idle')),
+    );
+    expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+      downloadId: 1, eventType: 'download_failed', reason: { error: 'Download not found in download client' },
+    }));
+    expect(retryDeps.blacklistService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ infoHash: 'abc123', reason: 'download_failed', blacklistType: 'temporary' }),
+    );
+    expect(notifierService.notify).toHaveBeenCalledWith('on_failure', expect.objectContaining({
+      event: 'on_failure', book: { title: 'Hybrid Book' },
+    }));
+  });
+
+  // The ~40 legacy fixtures elsewhere in this suite carry no addedAt and must keep failing.
+  it('fails a legacy row that carries no addedAt', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([row({ addedAt: undefined })]));
+    adapter.getDownload.mockResolvedValueOnce(null);
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+    await runMonitor();
+
+    expect(log.warn).toHaveBeenCalledWith({ id: 1 }, 'Download not found in client');
+    expect(retryDeps.blacklistService.create).toHaveBeenCalled();
+  });
+
+  it('fails exactly at the window boundary', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([row({ addedAt: new Date(Date.now() - GRACE_MS) })]));
+    adapter.getDownload.mockResolvedValueOnce(null);
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+    await runMonitor();
+
+    expect(log.warn).toHaveBeenCalledWith({ id: 1 }, 'Download not found in client');
+  });
+
+  // A reachable client reporting a real error is not an identity flap.
+  it('does not suppress a returned item whose status is error', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([row()]));
+    adapter.getDownload.mockResolvedValueOnce({
+      progress: 10, status: 'error', savePath: '/dl', name: 'book', size: 100, errorMessage: 'Disk full',
+    });
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+    await runMonitor();
+
+    expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+      eventType: 'download_failed', reason: { error: 'Disk full' },
+    }));
+    expect(retryDeps.blacklistService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ infoHash: 'abc123', reason: 'download_failed' }),
+    );
+    expect(log.debug).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'Download not yet in client — within add grace window',
+    );
+  });
+
+  it('does not suppress an adapter throw', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([row()]));
+    adapter.getDownload.mockRejectedValueOnce(new Error('qBittorrent unreachable'));
+
+    await runMonitor();
+
+    expect(retryDeps.blacklistService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ infoHash: 'abc123', reason: 'infrastructure_error', blacklistType: 'temporary' }),
+    );
+  });
+
+  // A suppressed row must `continue`, not `return` out of the cycle.
+  it('suppresses only the fresh row and still fails the stale one in the same cycle', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([
+      row({ id: 1, addedAt: fresh() }),
+      row({ id: 2, addedAt: stale(), title: 'Vanished Book', infoHash: 'def456', bookId: 43 }),
+    ]));
+    adapter.getDownload.mockResolvedValue(null);
+    const chain = mockDbChain([{ id: 2 }]);
+    db.update.mockReturnValue(chain);
+
+    await runMonitor();
+
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 1 }),
+      'Download not yet in client — within add grace window',
+    );
+    expect(log.warn).toHaveBeenCalledWith({ id: 2 }, 'Download not found in client');
+    expect(log.warn).not.toHaveBeenCalledWith({ id: 1 }, 'Download not found in client');
+    expect((chain.where as Mock)).toHaveBeenCalledWith(
+      and(eq(downloads.id, 2), eq(downloads.clientStatus, 'downloading'), eq(downloads.pipelineStage, 'idle')),
+    );
+    expect(retryDeps.blacklistService.create).toHaveBeenCalledTimes(1);
+    expect(retryDeps.blacklistService.create).toHaveBeenCalledWith(expect.objectContaining({ infoHash: 'def456' }));
+  });
+
+  // The SAME row polled twice, with only wall time moving — the frozen clock is what makes the
+  // window's expiry (rather than a swapped fixture) the thing that flips the branch.
+  it('suppresses the first poll then fails the row once the window has elapsed', async () => {
+    const flapping = row();
+    db.select.mockReturnValueOnce(mockDbChain([flapping]));
+    adapter.getDownload.mockResolvedValueOnce(null);
+    db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+    await runMonitor();
+    expectNoFailureSideEffects();
+
+    vi.setSystemTime(new Date(FROZEN_NOW.getTime() + GRACE_MS));
+    db.select.mockReturnValueOnce(mockDbChain([flapping]));
+    adapter.getDownload.mockResolvedValueOnce(null);
+
+    await runMonitor();
+
+    expect(log.warn).toHaveBeenCalledWith({ id: 1 }, 'Download not found in client');
+    expect(retryDeps.blacklistService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ infoHash: 'abc123', reason: 'download_failed' }),
+    );
+  });
+
+  // The incident's happy ending: the hybrid resolves on a later poll and progresses normally.
+  it('suppresses the flap then records progress once the client reports the download', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([row()]));
+    adapter.getDownload.mockResolvedValueOnce(null);
+    const chain = mockDbChain([{ id: 1 }]);
+    db.update.mockReturnValue(chain);
+
+    await runMonitor();
+    expectNoFailureSideEffects();
+
+    db.select.mockReturnValueOnce(mockDbChain([row()]));
+    adapter.getDownload.mockResolvedValueOnce({
+      progress: 25, status: 'downloading', savePath: '/dl', name: 'book', size: 100,
+    });
+
+    await runMonitor();
+
+    expect((chain.set as Mock)).toHaveBeenCalledWith(
+      expect.objectContaining({ clientStatus: 'downloading', progress: 0.25 }),
+    );
+    const written = (chain.set as Mock).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+    expect(written.some((s) => s.clientStatus === 'failed')).toBe(false);
+    expect(retryDeps.blacklistService.create).not.toHaveBeenCalled();
   });
 });

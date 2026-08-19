@@ -909,7 +909,7 @@ describe('LibraryPage', () => {
 
     it('calls deleteMissingBooks and shows success toast on confirm', async () => {
       mockLibraryData(booksWithMissing);
-      vi.mocked(api.deleteMissingBooks).mockResolvedValue({ deleted: 2 });
+      vi.mocked(api.deleteMissingBooks).mockResolvedValue({ deleted: 2, failed: 0 });
       const user = userEvent.setup();
 
       renderWithProviders(<LibraryPage />);

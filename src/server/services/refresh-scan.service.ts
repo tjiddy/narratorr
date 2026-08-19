@@ -13,6 +13,7 @@ import { readOpfMetadata } from '../utils/opf-reader.js';
 import type { OpfMetadata } from '../utils/opf-reader.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
+import { withBookAdmissionLock } from './book-admission.js';
 
 export interface RefreshScanResult {
   bookId: number;
@@ -67,7 +68,26 @@ function isVisibleAudioName(name: string): boolean {
   return !isHiddenName(name) && AUDIO_EXTENSIONS.has(extname(name).toLowerCase());
 }
 
+/**
+ * Serialized entry point. Refresh scan writes narrator identity as well as audio and size fields,
+ * so it is an identity mutator, not only a folder reader: without the lock a scan queued behind a
+ * Fix Match would persist the superseded release's narrators over the new identity.
+ *
+ * It never reads the library root — it operates on the `books.path` it reads for itself — so it
+ * registers no root commit. Its existing `RefreshScanError` codes are the revalidation arms.
+ */
 export async function refreshScanBook(
+  bookId: number,
+  bookService: BookService,
+  settingsService: SettingsService,
+  log: FastifyBaseLogger,
+): Promise<RefreshScanResult> {
+  return withBookAdmissionLock(bookId, () =>
+    refreshScanBookWithinAdmissionLock(bookId, bookService, settingsService, log));
+}
+
+/** Caller must hold the admission lock for `bookId`. */
+export async function refreshScanBookWithinAdmissionLock(
   bookId: number,
   bookService: BookService,
   _settingsService: SettingsService,

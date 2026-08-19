@@ -16,6 +16,13 @@ vi.mock('../utils/network-service.js', async (importActual) => {
 
 import { NewznabIndexer } from './newznab.js';
 import { ProxyError } from './errors.js';
+import { useSolverBound } from '../__tests__/solver-bound.js';
+import {
+  abortRejection,
+  codedRejection,
+  routeFetch,
+  type RoutedFetch,
+} from '../__tests__/solver-routes.js';
 
 const fixturesDir = resolve(import.meta.dirname, '../__tests__/fixtures');
 const searchXml = readFileSync(resolve(fixturesDir, 'newznab-search.xml'), 'utf-8');
@@ -858,5 +865,213 @@ describe('NewznabIndexer', () => {
       const { results } = await indexer.search('test');
       expect(results[0]!.grabs).toBe(0);
     });
+  });
+
+  /** #2373: the Newznab adapter's solver-bound `fetchXml` takes a slot; its unproxied path does not. */
+  describe('solver concurrency bound (#2373)', () => {
+    const PROXY_URL = 'http://flaresolverr.test:8191';
+    const bound = useSolverBound(server);
+    let proxiedIndexer: NewznabIndexer;
+
+    beforeEach(() => {
+      proxiedIndexer = new NewznabIndexer({
+        apiUrl: API_BASE,
+        apiKey: 'testapikey',
+        flareSolverrUrl: PROXY_URL,
+      });
+    });
+
+    it('takes a slot for a solver-bound search and surfaces the slot wait as a ProxyError', async () => {
+      const stub = bound.stub(`${PROXY_URL}/v1`);
+      await bound.saturate(stub, PROXY_URL);
+
+      const timer = bound.captureTimers();
+      const searching = bound.track(proxiedIndexer.search('test'));
+      // Wait until the search has declared itself queued or admitted; over-admission then fails the
+      // pending() assertion rather than hanging on a deadline that was never armed.
+      await bound.accountedFor(stub, timer, { arrived: bound.max, queued: 1 });
+      expect(timer.pending()).toBe(1);
+      timer.fire();
+
+      await expect(searching).rejects.toThrow(/waiting for a request slot/);
+      await expect(searching).rejects.toBeInstanceOf(ProxyError);
+      expect(stub.observed).toBe(bound.max);
+    });
+
+    it('takes no slot when the same indexer has no flareSolverrUrl', async () => {
+      const solver = bound.stub(`${PROXY_URL}/v1`);
+      await bound.saturate(solver, PROXY_URL);
+
+      server.use(http.get(`${API_BASE}/api`, () =>
+        new HttpResponse(searchXml, { headers: { 'Content-Type': 'application/rss+xml' } }),
+      ));
+
+      const { results } = await indexer.search('test');
+      expect(results.length).toBeGreaterThan(0);
+    });
+  });
+});
+
+/** #2374 — the same four-way vocabulary, on the newznab probe target derived from `apiUrl`. */
+describe('NewznabIndexer — solver failure diagnosis (#2374)', () => {
+  useMswServer();
+
+  const SOLVER_URL = 'http://flaresolverr.test:8191';
+  const SOLVER_ENDPOINT = `${SOLVER_URL}/v1`;
+  const API_HOST = 'indexer.test';
+  let indexer: NewznabIndexer;
+  let routed: RoutedFetch | undefined;
+
+  beforeEach(() => {
+    indexer = new NewznabIndexer(
+      { apiUrl: API_BASE, apiKey: 'testapikey', flareSolverrUrl: SOLVER_URL },
+      'My Usenet Indexer',
+    );
+  });
+
+  afterEach(() => {
+    routed?.restore();
+    routed = undefined;
+  });
+
+  it('names the target host from apiUrl when the site does not resolve', async () => {
+    routed = routeFetch((url, method) => {
+      if (method === 'POST' && url.startsWith(SOLVER_ENDPOINT)) return abortRejection();
+      if (method === 'HEAD' && url.includes(API_HOST)) return codedRejection('ENOTFOUND', `getaddrinfo ENOTFOUND ${API_HOST}`);
+      if (method === 'HEAD') return new Response(null, { status: 405 });
+      return undefined;
+    });
+
+    const result = await indexer.test();
+
+    expect(result.success).toBe(false);
+    expect(result.message).toBe(
+      `Target unreachable: ${API_HOST} did not resolve (ENOTFOUND). Probed directly, not through the solver.`,
+    );
+    expect(result.message).not.toContain('My Usenet Indexer');
+  });
+
+  it('names the solver address when the solver itself refuses, and issues no probe', async () => {
+    const calls = routeFetch((url, method) => (method === 'POST' && url.startsWith(SOLVER_ENDPOINT)
+      ? codedRejection('ECONNREFUSED')
+      : undefined));
+    routed = calls;
+
+    const result = await indexer.test();
+
+    expect(result.message).toBe(`Solver unreachable: ${SOLVER_ENDPOINT} refused the connection (ECONNREFUSED).`);
+    expect(calls.probes()).toEqual([]);
+  });
+
+  it('reports No page when both answer but the solver returns none', async () => {
+    routed = routeFetch((url, method) => {
+      if (method === 'POST' && url.startsWith(SOLVER_ENDPOINT)) return abortRejection();
+      if (method === 'HEAD') return new Response(null, { status: 200 });
+      return undefined;
+    });
+
+    const result = await indexer.test();
+
+    expect(result.message).toMatch(/^No page came back\./);
+    expect(result.message).toContain(API_HOST);
+    expect(result.message).toContain(SOLVER_ENDPOINT);
+  });
+
+  it('keeps a non-solver failure verbatim when no solver is configured (AC7)', async () => {
+    const plainIndexer = new NewznabIndexer({ apiUrl: API_BASE, apiKey: 'testapikey' });
+    routed = routeFetch((url) => (url.includes(API_HOST) ? codedRejection('ECONNREFUSED') : undefined));
+
+    const result = await plainIndexer.test();
+
+    expect(result.message).toMatch(/^Connection refused on port /);
+  });
+});
+
+/**
+ * #2391 section B — the usenet side of the six shared axes. Everything else newznab does now lives
+ * in `newznab-family.test.ts` and runs against both adapters; these are the cases that have no
+ * torznab counterpart by construction.
+ */
+describe('NewznabIndexer — usenet-only divergences (#2391)', () => {
+  const server = useMswServer();
+  let newznab: NewznabIndexer;
+
+  beforeEach(() => {
+    newznab = new NewznabIndexer({ apiUrl: API_BASE, apiKey: 'testapikey' });
+  });
+
+  function serve(items: string) {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+  <channel>${items}</channel>
+</rss>`;
+    server.use(http.get(`${API_BASE}/api`, () =>
+      new HttpResponse(xml, { headers: { 'Content-Type': 'application/rss+xml' } })));
+  }
+
+  it('ignores a torznab:attr while honouring the newznab:attr of the same name', async () => {
+    serve(`
+      <item>
+        <title>Namespace Asymmetry</title>
+        <enclosure url="https://indexer.test/dl/1.nzb"/>
+        <torznab:attr name="language" value="fre"/>
+      </item>
+      <item>
+        <title>Namespace Honoured</title>
+        <enclosure url="https://indexer.test/dl/2.nzb"/>
+        <newznab:attr name="language" value="fre"/>
+      </item>`);
+
+    const { results } = await newznab.search('test');
+
+    expect(results[0]).not.toHaveProperty('language');
+    expect(results[1]!.language).toBe('french');
+  });
+
+  it('omits newsgroup when the group attr is empty', async () => {
+    serve(`
+      <item>
+        <title>Blank Group</title>
+        <enclosure url="https://indexer.test/dl/1.nzb"/>
+        <newznab:attr name="group" value=""/>
+      </item>`);
+
+    const { results } = await newznab.search('test');
+
+    expect(results[0]).not.toHaveProperty('newsgroup');
+  });
+
+  it('stamps every result usenet and carries no torrent swarm fields, even when the payload supplies them', async () => {
+    serve(`
+      <item>
+        <title>Torrent Attrs On A Usenet Feed</title>
+        <enclosure url="https://indexer.test/dl/1.nzb"/>
+        <newznab:attr name="group" value="alt.binaries.audiobooks"/>
+        <newznab:attr name="infohash" value="da4b9237bacccdf19c0760cab7aec4a8359010b0"/>
+        <newznab:attr name="seeders" value="15"/>
+        <newznab:attr name="leechers" value="3"/>
+      </item>`);
+
+    const { results } = await newznab.search('test');
+
+    expect(results[0]!.protocol).toBe('usenet');
+    expect(results[0]!.newsgroup).toBe('alt.binaries.audiobooks');
+    for (const key of ['infoHash', 'seeders', 'leechers']) {
+      expect(results[0]).not.toHaveProperty(key);
+    }
+  });
+
+  it('drops a hash-only item as no-url rather than synthesizing a magnet', async () => {
+    serve(`
+      <item>
+        <title>Hash Only Book</title>
+        <newznab:attr name="infohash" value="da4b9237bacccdf19c0760cab7aec4a8359010b0"/>
+      </item>`);
+
+    const { results, parseStats, debugTrace } = await newznab.search('test');
+
+    expect(results).toEqual([]);
+    expect(parseStats.dropped.noUrl).toBe(1);
+    expect(debugTrace[0]!.reason).toBe('dropped:no-url');
   });
 });

@@ -15,7 +15,16 @@ vi.mock('../utils/network-service.js', async (importActual) => {
 });
 
 import { TorznabIndexer } from './torznab.js';
+import { NewznabIndexer } from './newznab.js';
 import { ProxyError } from './errors.js';
+import { useSolverBound } from '../__tests__/solver-bound.js';
+import {
+  abortRejection,
+  codedRejection,
+  routeFetch,
+  solverEnvelope,
+  type RoutedFetch,
+} from '../__tests__/solver-routes.js';
 
 const fixturesDir = resolve(import.meta.dirname, '../__tests__/fixtures');
 const searchXml = readFileSync(resolve(fixturesDir, 'torznab-search.xml'), 'utf-8');
@@ -835,5 +844,285 @@ describe('TorznabIndexer', () => {
       const { results } = await indexer.search('test');
       expect(results[0]!.language).toBeUndefined();
     });
+  });
+
+  /**
+   * #2373: every solver-bound `fetchXml` takes a slot from the bound keyed on its solver, so two
+   * adapters of different types pointed at one solver contend for the same three browsers.
+   */
+  describe('solver concurrency bound (#2373)', () => {
+    const PROXY_URL = 'http://flaresolverr.test:8191';
+    const bound = useSolverBound(server);
+    let proxiedIndexer: TorznabIndexer;
+
+    beforeEach(() => {
+      proxiedIndexer = new TorznabIndexer({
+        apiUrl: API_BASE,
+        apiKey: 'testapikey',
+        flareSolverrUrl: PROXY_URL,
+      });
+    });
+
+    it('takes a slot for a solver-bound search and surfaces the slot wait as a ProxyError', async () => {
+      const stub = bound.stub(`${PROXY_URL}/v1`);
+      await bound.saturate(stub, PROXY_URL);
+
+      const timer = bound.captureTimers();
+      const searching = bound.track(proxiedIndexer.search('test'));
+      // Wait until the search has declared itself queued or admitted; over-admission then fails the
+      // pending() assertion rather than hanging on a deadline that was never armed.
+      await bound.accountedFor(stub, timer, { arrived: bound.max, queued: 1 });
+      expect(timer.pending()).toBe(1);
+      timer.fire();
+
+      await expect(searching).rejects.toThrow(/waiting for a request slot/);
+      await expect(searching).rejects.toBeInstanceOf(ProxyError);
+      expect(stub.observed).toBe(bound.max);
+    });
+
+    it('takes no slot when the same indexer has no flareSolverrUrl', async () => {
+      const solver = bound.stub(`${PROXY_URL}/v1`);
+      await bound.saturate(solver, PROXY_URL);
+
+      server.use(http.get(`${API_BASE}/api`, () =>
+        new HttpResponse(searchXml, { headers: { 'Content-Type': 'application/rss+xml' } }),
+      ));
+
+      const { results } = await indexer.search('test');
+      expect(results).toHaveLength(3);
+    });
+
+    it('shares one solver bound across a Torznab and a Newznab indexer', async () => {
+      const stub = bound.stub(`${PROXY_URL}/v1`);
+      const newznab = new NewznabIndexer({ apiUrl: API_BASE, apiKey: 'testapikey', flareSolverrUrl: PROXY_URL });
+
+      bound.track(newznab.search('test'));
+      for (let i = 1; i < bound.max; i++) bound.track(proxiedIndexer.search(`test-${i}`));
+      await stub.reaches(bound.max);
+
+      // Installed only now: an adapter hard-codes PROXY_TIMEOUT_MS for its request timer, which
+      // equals the slot-wait delay, so capturing earlier would count admitted requests as queued.
+      const timers = bound.captureTimers();
+
+      bound.track(proxiedIndexer.search('one-too-many'));
+      // The extra search declares itself queued by arming a slot-wait deadline against the shared
+      // pool — the same bound the Newznab search is occupying.
+      await bound.accountedFor(stub, timers, { arrived: bound.max, queued: 1 });
+
+      expect(timers.pending()).toBe(1);
+      expect(stub.observed).toBe(bound.max);
+      expect(stub.targets.some((target) => target.includes('one-too-many'))).toBe(false);
+    });
+  });
+});
+
+/**
+ * #2374 — the same four-way vocabulary the ABB adapter renders, on the torznab probe target. The
+ * host comes from `apiUrl`, not from the indexer's display name, so this adapter is constructed
+ * with a name that differs from its host.
+ */
+describe('TorznabIndexer — solver failure diagnosis (#2374)', () => {
+  useMswServer();
+
+  const SOLVER_URL = 'http://flaresolverr.test:8191';
+  const SOLVER_ENDPOINT = `${SOLVER_URL}/v1`;
+  const API_HOST = 'tracker.test';
+  let indexer: TorznabIndexer;
+  let routed: RoutedFetch | undefined;
+
+  beforeEach(() => {
+    indexer = new TorznabIndexer(
+      { apiUrl: API_BASE, apiKey: 'testapikey', flareSolverrUrl: SOLVER_URL },
+      'My Tracker',
+    );
+  });
+
+  afterEach(() => {
+    routed?.restore();
+    routed = undefined;
+  });
+
+  it('names the target host from apiUrl when the site refuses connections', async () => {
+    routed = routeFetch((url, method) => {
+      if (method === 'POST' && url.startsWith(SOLVER_ENDPOINT)) return abortRejection();
+      if (method === 'HEAD' && url.includes(API_HOST)) return codedRejection('ECONNREFUSED');
+      if (method === 'HEAD') return new Response(null, { status: 405 });
+      return undefined;
+    });
+
+    const result = await indexer.test();
+
+    expect(result.success).toBe(false);
+    expect(result.message).toBe(
+      `Target unreachable: ${API_HOST} refused the connection (ECONNREFUSED). Probed directly, not through the solver.`,
+    );
+    expect(result.message).not.toContain('My Tracker');
+  });
+
+  it('names the solver address when the solver itself refuses, and issues no probe', async () => {
+    const calls = routeFetch((url, method) => (method === 'POST' && url.startsWith(SOLVER_ENDPOINT)
+      ? codedRejection('ECONNREFUSED')
+      : undefined));
+    routed = calls;
+
+    const result = await indexer.test();
+
+    expect(result.message).toBe(`Solver unreachable: ${SOLVER_ENDPOINT} refused the connection (ECONNREFUSED).`);
+    expect(calls.probes()).toEqual([]);
+  });
+
+  it('probes the API origin rather than the caps URL, so no api key goes onto the probe wire', async () => {
+    const calls = routeFetch((url, method) => {
+      if (method === 'POST' && url.startsWith(SOLVER_ENDPOINT)) return solverEnvelope({ status: 'error', message: 'Challenge failed' });
+      if (method === 'HEAD') return new Response(null, { status: 200 });
+      return undefined;
+    });
+    routed = calls;
+
+    const result = await indexer.test();
+
+    expect(result.message).toMatch(/^No page came back\./);
+    expect(calls.probes().map((call) => call.url)).toEqual([API_BASE]);
+  });
+
+  it('keeps a non-solver failure verbatim when no solver is configured (AC7)', async () => {
+    const plainIndexer = new TorznabIndexer({ apiUrl: API_BASE, apiKey: 'testapikey' });
+    routed = routeFetch((url) => (url.includes(API_HOST) ? codedRejection('ECONNREFUSED') : undefined));
+
+    const result = await plainIndexer.test();
+
+    expect(result.message).toMatch(/^Connection refused on port /);
+  });
+});
+
+/**
+ * #2391 section B — the torrent side of the six shared axes. Everything else torznab does now lives
+ * in `newznab-family.test.ts` and runs against both adapters; these are the cases that have no
+ * newznab counterpart by construction.
+ */
+describe('TorznabIndexer — torrent-only divergences (#2391)', () => {
+  const server = useMswServer();
+  let torznab: TorznabIndexer;
+
+  beforeEach(() => {
+    torznab = new TorznabIndexer({ apiUrl: API_BASE, apiKey: 'testapikey' });
+  });
+
+  function serve(items: string) {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+  <channel>${items}</channel>
+</rss>`;
+    server.use(http.get(`${API_BASE}/api`, () =>
+      new HttpResponse(xml, { headers: { 'Content-Type': 'application/rss+xml' } })));
+  }
+
+  it('reads all three arms of its attr selector', async () => {
+    serve(`
+      <item>
+        <title>Three Namespaces</title>
+        <enclosure url="https://tracker.test/dl/1.torrent"/>
+        <torznab:attr name="seeders" value="11"/>
+        <newznab:attr name="grabs" value="22"/>
+        <attr name="language" value="ENG"/>
+      </item>`);
+
+    const { results } = await torznab.search('test');
+
+    expect(results[0]!.seeders).toBe(11);
+    expect(results[0]!.grabs).toBe(22);
+    expect(results[0]!.language).toBe('english');
+  });
+
+  it('omits seeders and leechers when the attrs are missing or non-numeric', async () => {
+    serve(`
+      <item>
+        <title>No Swarm Attrs</title>
+        <enclosure url="https://tracker.test/dl/1.torrent"/>
+      </item>
+      <item>
+        <title>Garbage Swarm Attrs</title>
+        <enclosure url="https://tracker.test/dl/2.torrent"/>
+        <torznab:attr name="seeders" value="lots"/>
+        <torznab:attr name="leechers" value=""/>
+      </item>`);
+
+    const { results } = await torznab.search('test');
+
+    for (const result of results) {
+      expect(result).not.toHaveProperty('seeders');
+      expect(result).not.toHaveProperty('leechers');
+    }
+  });
+
+  it('builds a magnet with the infohash and the title when no enclosure or link exists', async () => {
+    serve(`
+      <item>
+        <title>Hash Only Book</title>
+        <torznab:attr name="infohash" value="da4b9237bacccdf19c0760cab7aec4a8359010b0"/>
+      </item>`);
+
+    const { results, parseStats } = await torznab.search('test');
+
+    expect(parseStats.dropped.noUrl).toBe(0);
+    const magnet = new URL(results[0]!.downloadUrl!).searchParams;
+    expect(magnet.get('xt')).toBe('urn:btih:da4b9237bacccdf19c0760cab7aec4a8359010b0');
+    expect(magnet.get('dn')).toBe('Hash Only Book');
+    expect(results[0]!.infoHash).toBe('da4b9237bacccdf19c0760cab7aec4a8359010b0');
+  });
+
+  it('treats an empty infohash as no hash at all — no magnet, so a URL-less item drops', async () => {
+    serve(`
+      <item>
+        <title>Empty Hash Book</title>
+        <torznab:attr name="infohash" value=""/>
+      </item>`);
+
+    const { results, parseStats, debugTrace } = await torznab.search('test');
+
+    expect(results).toEqual([]);
+    expect(parseStats.dropped.noUrl).toBe(1);
+    expect(debugTrace[0]!.reason).toBe('dropped:no-url');
+  });
+
+  /**
+   * The dropped arm above cannot see the key-omission contract, because it produces no result at
+   * all — and `toBeUndefined()` would not see it either, since that passes for a present
+   * `infoHash: undefined` too.
+   *
+   * TWO independently sufficient guards produce the omission, so neither single-site mutation reds
+   * this: `parseNewznabAttrs` never stores a falsy value (`newznab-family.ts:292`), and the hook
+   * additionally folds `attrs.infohash || undefined`. Measured — mutating either alone leaves the
+   * whole `src/core/indexers/` suite green; mutating both reds exactly this case and the
+   * pre-existing 'handles empty string infohash → undefined'. What is pinned here is therefore the
+   * composed contract, which is the one callers depend on.
+   */
+  it('omits the infoHash key entirely on a kept result whose infohash is empty', async () => {
+    serve(`
+      <item>
+        <title>Empty Hash With Enclosure</title>
+        <enclosure url="https://tracker.test/dl/1.torrent"/>
+        <torznab:attr name="infohash" value=""/>
+      </item>`);
+
+    const { results } = await torznab.search('test');
+
+    expect(results).toHaveLength(1);
+    expect(results[0]!.downloadUrl).toBe('https://tracker.test/dl/1.torrent');
+    expect(results[0]).not.toHaveProperty('infoHash');
+  });
+
+  it('stamps every result torrent and never carries a newsgroup', async () => {
+    serve(`
+      <item>
+        <title>Usenet Attrs On A Torrent Feed</title>
+        <enclosure url="https://tracker.test/dl/1.torrent"/>
+        <torznab:attr name="group" value="alt.binaries.audiobooks"/>
+      </item>`);
+
+    const { results } = await torznab.search('test');
+
+    expect(results[0]!.protocol).toBe('torrent');
+    expect(results[0]).not.toHaveProperty('newsgroup');
   });
 });

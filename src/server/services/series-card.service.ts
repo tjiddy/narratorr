@@ -6,7 +6,8 @@ import type { SeriesRow } from './types.js';
 import type { SettingsService } from './settings.service.js';
 import { HardcoverClient, type HardcoverSearchCandidate, type HardcoverSeriesData } from '@core/metadata/hardcover.js';
 import { resolveSeriesViaHardcover } from './hardcover-series-resolver.js';
-import { findInLibraryMatch, normalizeMemberTitleForMatch, type LibraryBookSummary } from './series-title-match.js';
+import { findInLibraryMatch, normalizeMemberTitleForMatch } from './series-title-match.js';
+import { loadLibraryBooksForSeriesNames, narrowPoolToSeriesName, type LibraryPool, type PoolBook } from './series-library-pool.js';
 import {
   buildMembersFromState,
   compareLibraryMembers,
@@ -16,26 +17,10 @@ import {
 } from './series-card-members.js';
 import { readPositionClearedBookIds, relinkBookToBoundSeries, removeSeriesNameTombstone, seedLocalMembersForUnclaimedBooks } from './book-series-link.js';
 import { upsertHardcoverSeries } from './hardcover-series-upsert.js';
+import { withValidatedBindSet } from './series-bind-admission.js';
 import { usefulString } from './metadata-recording-collapse.js';
 import { normalizeSeriesName } from '../utils/series-normalize.js';
-import { buildSeriesNameTargets, seriesNameMatchesTargets } from '../utils/series-name-targets.js';
-import { parseClearedFields } from '../utils/cleared-fields.js';
 import { serializeError } from '../utils/serialize-error.js';
-
-/**
- * Carrying the raw `series_name` lets a caller re-derive a narrower name view from rows it already
- * holds instead of issuing a second scan. Structurally still a LibraryBookSummary, so matcher,
- * card-projection, and seeding consumers need no signature change.
- */
-interface PoolBook extends LibraryBookSummary {
-  seriesName: string;
-}
-
-// Keep tombstones separate so the matcher's LibraryBookSummary contract stays narrow.
-interface LibraryPool {
-  books: PoolBook[];
-  positionClearedIds: Set<number>;
-}
 
 export type { BookSeriesMemberCard };
 
@@ -66,12 +51,16 @@ export interface BookForSeriesCard {
 interface MatchedLibraryBook { bookId: number; position: number | null }
 
 /**
- * The loader's own membership rule re-applied with targets built from one name, so a folded-equal
- * spelling stays in. Byte equality here would resurrect the #2175 defect on the seeding path.
+ * The bind's authoritative snapshot S, taken under the admission locks. Everything the bind writes
+ * is derived from this object; nothing re-reads the pool inside the transaction (#2447 AC3).
  */
-function narrowPoolToSeriesName(pool: readonly PoolBook[], seriesName: string): PoolBook[] {
-  const targets = buildSeriesNameTargets([seriesName]);
-  return pool.filter((book) => seriesNameMatchesTargets(targets, book.seriesName));
+interface BindSnapshot {
+  /** Null when the initiator row vanished under the Hardcover fetch. */
+  initiator: BookForSeriesCard | null;
+  extraSeriesNames: string[];
+  pool: readonly PoolBook[];
+  /** ids(S): every book this snapshot could cause a write to. */
+  lockIds: number[];
 }
 
 export class SeriesCardService {
@@ -263,7 +252,7 @@ export class SeriesCardService {
 
   private async buildLibraryOnlyCard(seriesName: string): Promise<BookSeriesCardData> {
     // Library-only cards read series_position directly; an in-app clear has already stored NULL.
-    const { books: libraryBooks } = await this.loadLibraryBooksForSeries(seriesName);
+    const { books: libraryBooks } = await this.loadPool([seriesName]);
     const members = libraryBooks.map(libraryMemberCard).sort(compareLibraryMembers);
     return {
       id: null,
@@ -282,7 +271,7 @@ export class SeriesCardService {
       .select()
       .from(seriesMembers)
       .where(eq(seriesMembers.seriesId, seriesId));
-    const { books: pool, positionClearedIds } = await this.loadLibraryBooksForSeries(seriesName, executor);
+    const { books: pool, positionClearedIds } = await this.loadPool([seriesName], executor);
     return { rows, pool, positionClearedIds };
   }
 
@@ -341,10 +330,21 @@ export class SeriesCardService {
    * Upserts the canonical series before rebuilding its members in the caller's transaction.
    * `extraSeriesNames` broadens Hardcover matching for pre-bind siblings, but local
    * seeds come only from the canonical-name pool so unmatched old-name books stay out.
+   *
+   * **Supplying `lockedPool` asserts the caller holds the admission lock for every id in it**, and
+   * makes that pool the sole matcher input — the bind path relies on this to keep its writes inside
+   * the set it locked (#2447 AC3a). Every other caller omits it and loads on `tx` exactly as before.
    */
-  private async persistMembers(tx: DbOrTx, resolved: HardcoverSeriesData, seriesName: string, extraSeriesNames: string[] = []): Promise<{ row: SeriesRow; matches: MatchedLibraryBook[] }> {
+  private async persistMembers(
+    tx: DbOrTx,
+    resolved: HardcoverSeriesData,
+    seriesName: string,
+    extraSeriesNames: string[] = [],
+    options: { lockedPool?: readonly PoolBook[] } = {},
+  ): Promise<{ row: SeriesRow; matches: MatchedLibraryBook[] }> {
     const normalized = normalizeSeriesName(seriesName);
-    const { books: libraryBooks } = await this.loadLibraryBooksForSeriesNames([seriesName, ...extraSeriesNames], tx);
+    const libraryBooks = options.lockedPool
+      ?? (await this.loadPool([seriesName, ...extraSeriesNames], tx)).books;
     const upserted = await upsertHardcoverSeries(tx, resolved, normalized);
     await tx.delete(seriesMembers).where(eq(seriesMembers.seriesId, upserted.id));
     const matchedLibraryIds = new Set<number>();
@@ -371,9 +371,9 @@ export class SeriesCardService {
     // Derived, not re-queried: buildSeriesNameTargets unions its inputs, so the combined pool
     // already contains every canonical-only match, and re-applying the loader's own rule with
     // canonical-only targets reproduces that narrower pool in the loader's id order.
-    // Equivalent only because nothing between the load above and here writes books — the member
-    // delete/insert loop touches series/series_members alone. A books write added in between
-    // would move the seeding snapshot and must revisit this.
+    // Equivalent because the pool is fixed for the whole call: on the bind path it is the caller's
+    // in-lock snapshot, and on the refresh path nothing between the load above and here writes books
+    // — the member delete/insert loop touches series/series_members alone.
     const primaryPool = extraSeriesNames.length === 0
       ? libraryBooks
       : narrowPoolToSeriesName(libraryBooks, seriesName);
@@ -386,39 +386,43 @@ export class SeriesCardService {
   }
 
   /**
-   * Atomically binds the canonical series, matches across canonical and pre-bind
-   * names, syncs every match, and relinks old rows. Position tombstones suppress
-   * position writes; an unmatched initiator still adopts the canonical name.
-   * Returning syncedIds from the transaction prevents rolled-back writes from
-   * leaking into post-commit refresh work.
+   * Reads the initiator row and the candidate pool in one pass. Used twice per bind attempt: once
+   * pre-lock to decide which locks to take, then again under them as the authoritative S.
    */
-  async bindHardcoverSeries(bookId: number, hardcoverSeriesId: number): Promise<BindHardcoverSeriesResult | null> {
-    const book = await this.loadBook(bookId);
-    if (!book) return null;
+  private async snapshotBindSet(bookId: number, canonicalName: string): Promise<BindSnapshot> {
+    const initiator = await this.loadBook(bookId);
+    const extraSeriesNames = initiator?.seriesName ? [initiator.seriesName] : [];
+    const { books: pool } = await this.loadPool([canonicalName, ...extraSeriesNames]);
+    return { initiator, extraSeriesNames, pool, lockIds: [...new Set([bookId, ...pool.map((book) => book.id)])] };
+  }
 
-    const apiKey = await this.getApiKey();
-    if (!apiKey) return null;
+  /**
+   * The bind's transaction. Runs with the admission lock held for every id in `snapshot.lockIds`,
+   * and matches against `snapshot.pool` rather than loading one — re-deriving a pool here would
+   * reopen the unlocked gap the protocol exists to close (see `series-bind-admission.ts`).
+   */
+  private async commitBind(
+    bookId: number,
+    resolved: HardcoverSeriesData,
+    snapshot: BindSnapshot,
+  ): Promise<{ row: SeriesRow; syncedIds: number[] } | null> {
+    const initiator = snapshot.initiator;
+    // The row vanished under the Hardcover fetch: take the existing null arm (route 502) rather
+    // than writing a resurrected identity.
+    if (!initiator) return null;
 
-    const resolved = await this.fetchById(apiKey, hardcoverSeriesId);
-    if (!resolved) return null;
-    // Before the transaction: inside it, persistMembers would still seed a normalized_name = '' row
-    // and removeSeriesNameTombstone would still fire. Reuses the unresolvable-bind null → 502 (#2224).
-    if (!usefulString(resolved.name)) return null;
-
-    const priorSeriesName = book.seriesName;
-
-    const committed = await this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
       // Binding reasserts only this book's seriesName; re-read tombstones inside the
       // transaction because fetchById leaves a window for concurrent unrelated clears.
       // Tombstoned siblings have series_name = NULL and never enter the candidate pool.
       const boundClearedFields = await removeSeriesNameTombstone(tx, this.log, bookId);
 
-      const extraNames = priorSeriesName ? [priorSeriesName] : [];
-      const { row, matches } = await this.persistMembers(tx, resolved, resolved.name, extraNames);
+      const { row, matches } = await this.persistMembers(
+        tx, resolved, resolved.name, snapshot.extraSeriesNames, { lockedPool: snapshot.pool },
+      );
 
       // A name bind must not undo an independent position clear: omit the column
       // entirely for tombstoned books, preserving even out-of-band stale values.
-      // Read the whole batch inside this transaction because fetchById creates a race window.
       const positionCleared = await readPositionClearedBookIds(
         tx,
         this.log,
@@ -446,7 +450,7 @@ export class SeriesCardService {
           .update(books)
           .set({
             seriesName: resolved.name,
-            ...(positionCleared.has(bookId) ? {} : { seriesPosition: book.seriesPosition }),
+            ...(positionCleared.has(bookId) ? {} : { seriesPosition: initiator.seriesPosition }),
             userClearedFields: boundClearedFields,
             updatedAt: new Date(),
           })
@@ -458,6 +462,44 @@ export class SeriesCardService {
       }
       return { row, syncedIds: [...syncedIds] };
     });
+  }
+
+  /**
+   * Atomically binds the canonical series, matches across canonical and pre-bind
+   * names, syncs every match, and relinks old rows. Position tombstones suppress
+   * position writes; an unmatched initiator still adopts the canonical name.
+   * Returning syncedIds from the transaction prevents rolled-back writes from
+   * leaking into post-commit refresh work.
+   *
+   * **This is the only method in this file that writes the `books` table, and therefore the only
+   * one enrolled in the admission protocol** (#2447 AC11) — the read and refresh paths touch
+   * `series` / `series_members` alone. A `books` write added to a sibling method is a protocol
+   * change, not a local edit.
+   *
+   * Ordering is load-bearing: the provider fetch completes BEFORE the first acquisition, so no
+   * network call happens inside a held span, and the card render happens AFTER release, because the
+   * admission lock is not re-entrant and the post-bind retag/OPF work acquires it per book.
+   */
+  async bindHardcoverSeries(bookId: number, hardcoverSeriesId: number): Promise<BindHardcoverSeriesResult | null> {
+    const book = await this.loadBook(bookId);
+    if (!book) return null;
+
+    const apiKey = await this.getApiKey();
+    if (!apiKey) return null;
+
+    const resolved = await this.fetchById(apiKey, hardcoverSeriesId);
+    if (!resolved) return null;
+    // Before the transaction: inside it, persistMembers would still seed a normalized_name = '' row
+    // and removeSeriesNameTombstone would still fire. Reuses the unresolvable-bind null → 502 (#2224).
+    if (!usefulString(resolved.name)) return null;
+
+    const committed = await withValidatedBindSet({
+      enumerate: async () => (await this.snapshotBindSet(bookId, resolved.name)).lockIds,
+      snapshot: () => this.snapshotBindSet(bookId, resolved.name),
+      idsOf: (snapshot: BindSnapshot) => snapshot.lockIds,
+      act: (snapshot: BindSnapshot) => this.commitBind(bookId, resolved, snapshot),
+    });
+    if (!committed) return null;
 
     this.log.info({ bookId, hardcoverSeriesId, seriesName: resolved.name }, 'Bound Hardcover series to book');
     return { card: await this.buildCardFromCache(committed.row, resolved.name), syncedIds: committed.syncedIds };
@@ -471,36 +513,7 @@ export class SeriesCardService {
     return (await client.searchSeries(query)).slice(0, 10);
   }
 
-  private async loadLibraryBooksForSeries(seriesName: string, executor: DbOrTx = this.db): Promise<LibraryPool> {
-    return this.loadLibraryBooksForSeriesNames([seriesName], executor);
-  }
-
-  /**
-   * Loads candidates and position tombstones in one snapshot while keeping the
-   * tombstones outside matcher input. Membership uses the cache lookup's folded
-   * equivalence class so case-drifted books remain on their siblings' cards.
-   */
-  private async loadLibraryBooksForSeriesNames(seriesNames: string[], executor: DbOrTx = this.db): Promise<LibraryPool> {
-    if (seriesNames.length === 0) return { books: [], positionClearedIds: new Set() };
-    const targets = buildSeriesNameTargets(seriesNames);
-    // Filter folded spellings in JS: a dynamic IN list is unbounded toward libSQL's
-    // 32,766-parameter cap, while unindexed series_name already requires a full scan.
-    // ORDER BY id is a matcher contract: greedy first-claim matching makes order
-    // observable, and a covering index can otherwise change which book bind rewrites.
-    const rows = await executor
-      .select({ id: books.id, title: books.title, seriesPosition: books.seriesPosition, userClearedFields: books.userClearedFields, seriesName: books.seriesName })
-      .from(books)
-      .where(isNotNull(books.seriesName))
-      .orderBy(asc(books.id));
-    const positionClearedIds = new Set<number>();
-    const pool: PoolBook[] = [];
-    for (const row of rows) {
-      if (!seriesNameMatchesTargets(targets, row.seriesName!)) continue;
-      pool.push({ id: row.id, title: row.title, seriesPosition: row.seriesPosition, seriesName: row.seriesName! });
-      if (parseClearedFields(row.userClearedFields, this.log, row.id).includes('seriesPosition')) {
-        positionClearedIds.add(row.id);
-      }
-    }
-    return { books: pool, positionClearedIds };
+  private loadPool(seriesNames: readonly string[], executor: DbOrTx = this.db): Promise<LibraryPool> {
+    return loadLibraryBooksForSeriesNames(executor, seriesNames, this.log);
   }
 }

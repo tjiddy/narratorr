@@ -2671,3 +2671,827 @@ Verify a claim like this with a fixture rather than reasoning about it; see
 `eslint-rules/config-import-bans.test.js` for the harness, and
 [[eslint-linttext-project-service-cost]] for the ESLint instance that makes such fixtures cheap and
 non-vacuous.
+
+
+## staged-item-mirrors-provider-proposal
+
+**source:** #2296  
+**added:** 2026-08-13  
+**files:** src/server/services/import-opf-overlay.ts  
+**tags:** import-staging, opf-overlay, field-precedence
+
+---
+
+**A staged import item carries a copy of the provider's proposal at the TOP LEVEL, and the top level wins.** For an untouched scan row the client replaces `edited` wholesale from the best match (`mergeMatchIntoRow` → `buildEditedFromBestMatch`, gated on `!row.userEdited && row.edited.metadata === undefined`) and `toConfirmItem` emits the result as top-level `item.seriesName`/`item.seriesPosition`/`item.narrators` ALONGSIDE `item.metadata`. Server-side, `resolveImportSeries` (`src/server/services/resolve-import-series.ts:21-29`) returns on a nonblank `item.seriesName` before it consults `metadata.seriesPrimary`, and the narrator path behaves the same way.
+
+Consequence: **any rule about who wins a staged field has two write sites, not one.** A fix applied only to the metadata overlay is inert for every bulk re-import — the user-visible outcome is unchanged while every metadata-level assertion turns green. This has now bitten twice: #2158 (narrators) and #2296 (series).
+
+The established shape, both in `src/server/services/import-opf-overlay.ts`:
+- A named predicate classifies the top-level value as an untouched provider mirror by exact-after-**trim**, case-**sensitive** equality (`sameNarrators`, `mirrorsProviderSeries`). Case-insensitive or normalized comparison is NOT the convention here.
+- **Identity is the name alone for series.** `buildEditedFromBestMatch` sets `seriesPosition: primary?.position ?? fallback.seriesPosition`, so a mirrored row can legitimately carry the provider's NAME with the FOLDER's position. Requiring the whole pair to match misreads that hybrid as curation and leaves the bug live for every provider series with no index.
+- **Classify BEFORE the metadata overlay runs.** `overlayOntoMatch` reassigns `metadata.seriesPrimary`; comparing against the post-overlay value makes every item look non-mirrored. This is the single most likely way to ship a green-but-inert fix, and it is invisible to metadata-level tests.
+- **Delete, don't blank.** `ImportConfirmItem.seriesPosition` is `number | undefined` (`library-scan.service.ts:58-70`); when the replacement has no index, remove the key rather than leaving the old number. Assert with `not.toHaveProperty`, not `toEqual` — see [[key-absence-needs-tohaveproperty]].
+
+**Accepted ambiguity, deliberately:** when a folder or user genuinely asserts the same value the provider returned, it is indistinguishable from the mirror on the wire and the sidecar wins. Resolving it exactly would need a provenance discriminator on `stagedImportItemSchema`, which is `.strict()` and whose payloads are persisted in `import_submission_items.item_payload` — rejected as disproportionate in #2296.
+
+**Fixture rule:** write the regression in the shape the client actually submits (top-level pair present AND equal to the provider's), and corroborate that shape with a client-seam test through the real `mergeMatchIntoRow`/`buildEditedFromBestMatch`/`toConfirmItem` — otherwise the server fixture asserts a payload nobody has proven the client produces. An instance of [[vacuous-assertion-observation-points]]; see also [[staged-metadata-authors-min-one]] for the companion fixture trap on the metadata side.
+
+
+## utf8-readfile-not-byte-preserving
+
+**source:** #2297  
+**added:** 2026-08-13  
+**files:** src/server/utils/opf-entry-policy.ts  
+**tags:** node-fs, encoding, file-copy
+
+---
+
+`fs.readFile(path, 'utf-8')` is NOT byte-preserving: each maximal invalid UTF-8 subsequence decodes to U+FFFD, which re-encodes to 3 bytes. Measured on Node 24, the 10-byte buffer `41 42 C3 28 A0 A1 43 44 45 46` comes back as 16 bytes after a `Buffer.from(buf.toString('utf-8'), 'utf-8')` round trip. Any backup, copy, or archive path that decodes to a string and writes the string back silently produces a file that never existed — and it does so specifically for truncated/malformed inputs, which are usually the ones worth preserving.
+
+Pattern: read once with **no encoding**, derive the string from the Buffer for whatever inspection the code needs, and write the **Buffer**. This costs no extra syscall. Prior art: `readOpfEntry` in `src/server/utils/opf-entry-policy.ts` returns `{ bytes, text: bytes.toString('utf-8') }`; the text feeds the marker check and both parses, the Buffer feeds `metadata.opf.bak` and nothing else.
+
+The write-side sibling: `copyFile` opens the destination `O_TRUNC` and writes through to the existing inode, so a hard-linked peer of the destination is rewritten. Use a born-hidden sibling temp + `rename` (`replaceFileAtomically`, `src/server/utils/atomic-file-replace.ts`) whenever the destination may already exist — rename swaps the directory entry, so other names for the old inode keep their bytes.
+
+Both properties need byte-level counterfactuals; a string comparison or a call-count assertion passes against the broken implementation. See `src/server/utils/opf-writer.fs.test.ts` ('backs up BYTES, not a decoded string' and 'replaces a hard-linked metadata.opf.bak rather than writing through it', the latter gated on a `link()` capability probe per `windows-hostile-test-primitives`).
+
+
+## import-list-sync-swallows-setup-errors
+
+**source:** #2304  
+**added:** 2026-08-13  
+**files:** src/server/services/import-list.service.ts  
+**tags:** import-list, secret-codec, test-observability
+
+---
+
+`ImportListService.syncDueLists` catches per list and only logs (src/server/services/import-list.service.ts:156-175), so a test-harness setup error is indistinguishable from an empty sync: no provider fetch, no rows, no throw.
+
+The specific trap: `syncList` starts with `decryptRow`, which calls `getKey()` (src/server/utils/secret-codec.ts). `getKey()` throws unless `initializeKey` has run, so any suite constructing a real `ImportListService` needs `_resetKey(); initializeKey(randomBytes(32));` in `beforeEach`. `import-list.service.test.ts:90-96` does this; `routes/health.test.ts` added it for the #2304 manual-run tests.
+
+General rule for any service with a per-item containment catch: when a run produces nothing, assert on the mocked logger's `error`/`warn` calls before re-reading production code — the contained message names the cause that the return value cannot.
+
+
+## map-network-error-drops-transport-code
+
+**source:** #2312  
+**added:** 2026-08-13  
+**files:** src/core/utils/map-network-error.ts  
+**tags:** undici, network-service, error-classification
+
+---
+
+**Current state (since #2312): the error `mapNetworkError` returns carries `code`** — via a `withCode()` `Object.assign` — and its timeout/abort arm is tagged `ETIMEDOUT`. Do not re-derive this as a bug; it is fixed.
+
+The history is the reason the rules below exist. `mapNetworkError` (`src/core/utils/map-network-error.ts`) sits on the throw path of every `fetchWithTimeout` caller, and it previously returned a code-less `new Error(friendlyMessage)`: it read `cause.code` only to pick the message from `CODE_MAP`, then discarded it, and its DOMException arm returned a bare `Error('Request timed out')`. No consumer downstream could then classify a network failure by structure — the only identity left was the message text, which is exactly what a structural classifier must not key on (see `abort-verdict-not-error-shape`).
+
+Two rules follow:
+
+- **Read the code, not the message,** when deciding anything about a network failure. `describeTransportError` in `src/core/utils/failure-classification.ts` is the canonical extractor: own `.code` first, then `.cause.code` (undici wraps real failures in `TypeError: fetch failed`), then the DOMException name.
+- **Any future rewrite of an error inside a shared helper must preserve `code`.** The loss is silent — the resulting error reads perfectly well in a log line, so a classifier degrading to its default is indistinguishable from a failure that genuinely had no identity. Pinned by the `structural code preservation` block in `map-network-error.test.ts`; mutation-check it by deleting the `withCode` call and confirming `failure-descriptor.test.ts`'s transport-code case reds.
+
+
+## derived-empty-key-must-be-null
+
+**source:** #2305  
+**added:** 2026-08-13  
+**files:** src/shared/dedup.ts  
+**tags:** dedup, slugify, drizzle, sqlite, identity
+
+---
+
+**When a derivation's output is BOTH persisted to a nullable column and used to build the query that reads it back, its 'no value' result must be `null`, not `''`.** In-memory predicate code almost always tests the key with truthiness, so `''` and `null` are indistinguishable there and the logic reads correct. A database does distinguish them: a row stored with `''` is invisible to `WHERE col IS NULL`, so the write path and the read path silently disagree and the record is written once and never found again.
+
+Concrete instance (#2305): `resolveAuthorSlug` (`src/shared/dedup.ts`) returned `slugify(authorName)` for any non-empty name, and `slugify` (`src/shared/utils.ts`) reduces whitespace-only or punctuation-only names to `''`. `ImportListExclusionService.recordExclusion` stored that `''` in `import_list_exclusions.author_slug`; `candidateFilter` in the same service saw the same falsy value and narrowed on `author_slug IS NULL AND title = ?`. `matchesLibraryIdentity` would have matched the pair, but the row was never fetched, so a deleted import-list book with such an author came back on every subsequent sync. Fixed with `slugify(name) || null`.
+
+Two checks worth running whenever a shared derivation gains a persisting caller:
+1. Does the function have more than one 'absent' representation? Grep its branches — here the explicit-`authorSlug` branch already normalized `'' → null` and only the derived branch did not, which is the asymmetry that hid the bug.
+2. Is there a `WHERE <col> IS NULL` (Drizzle `isNull(...)`) anywhere keyed on the same derivation? If so, the write must produce `NULL` for exactly the inputs the read treats as null.
+
+A mocked-DB test cannot catch this — the predicate alone always answers correctly. It needs a real migrated database that round-trips the value. Related: [[sqlite-libsql-engine-facts]] (a different NULL mechanism — uniqueness), [[migrated-db-assertions-through-drizzle]] (why the real-DB round trip is the only observation point that works).
+
+
+## parsefloat-grouped-number-truncation
+
+**source:** #2316  
+**added:** 2026-08-14  
+**files:** src/core/indexers/mam-helpers.ts  
+**tags:** indexers, number-parsing, mam
+
+---
+
+`parseFloat` parses the longest valid numeric prefix and stops silently at the first invalid character: `parseFloat('1,008.8') === 1`. Any provider value rendered for humans may carry thousands separators, so parsing it with bare `parseFloat` yields a number ~1000x too small with no error — and a downstream threshold then discards it while behaving perfectly correctly on the wrong input. #2316: every MAM size in the 1,000.0–1,023.9 MiB band parsed to ~1/1000th and was dropped by the `below-min-size` gate (src/server/services/search-pipeline.ts:127-133) under the default 50 MB minimum, surfacing to the operator as an ordinary 'No releases found'.
+
+The fix has three parts, and the middle one is the non-obvious one:
+
+1. **Validate the grouping before stripping it.** Unconditional `.replace(/,/g, '')` turns a decimal comma `'1,5 GiB'` into 15 GiB — tenfold wrong, in the opposite direction. Require a well-formed English grouping: `/^\d{1,3}(?:,\d{3})*(?:\.\d+)?$/`.
+
+2. **Gate that validation on the separator's presence, not on every token.**
+
+   ```ts
+   if (!token.includes(',')) return token;   // byte-identical to the pre-fix path
+   return ENGLISH_GROUPED.test(token) ? token.replace(/,/g, '') : undefined;
+   ```
+
+   Testing the regex against every token also rejects inputs the old parser accepted loosely — `'-5 MiB'` (`-5`) and `'1.5abc MiB'` (`1.5`) — which are unrelated to the bug and fail open at the size gates either way. Tightening them is a separate change with its own blast radius. The `includes` guard makes 'no comma-free input changes behaviour' a structural property of the code rather than something only the test suite asserts; `mam-helpers.test.ts` pins both loose values specifically so a future unconditional-validation rewrite reds.
+
+3. **Return `undefined`, never `0`, for anything unparseable.** Both size gates short-circuit on `!r.size || r.size <= 0` and keep the result, so an absent size fails open. A wrong positive number does not.
+
+Keep this provider-scoped — MAM renders English-locale numbers (`,` groups, `.` is the decimal point). Do not generalize it into a locale-aware parser.
+
+Audited at the time: `parseSize` (src/core/indexers/abb.ts:355) is the only other human-readable size parser, and its upstream regex `([\d.]+)` at abb.ts:326 cannot match a comma, so ABB already yields no size and fails open. Newznab/Torznab transport bytes numerically. Related: when a parse can silently mangle a value, carry the provider's raw string into the diagnostic log next to the parsed number (`SearchResult.rawSize`, added in the same issue) — without it, diagnosing this required a screenshot of the provider's web UI to establish what the API had returned.
+
+
+## mock-db-tx-handle-is-the-db
+
+**source:** #2329  
+**added:** 2026-08-14  
+**files:** src/server/__tests__/helpers.ts  
+**tags:** drizzle, test-doubles, test-observability, transactions
+
+---
+
+`createMockDb()` (`src/server/__tests__/helpers.ts`) implements `transaction` as `async (cb) => cb(db)`, so the `tx` a collaborator receives IS the db object. Any assertion of the form `expect(dep.method).toHaveBeenCalledWith(id, db)` therefore cannot distinguish "ran inside the caller's transaction" from "ran directly on this.db", and stays green after the transaction is deleted.
+
+Measured on #2329: removing `this.db.transaction(...)` from `BookDeletionService.commitDeletion` reds four tests — two `expect(db.transaction).toHaveBeenCalledTimes(N)` assertions, a post-commit ordering test, and a sequencing test — while the executor-identity assertions on the very same lines stay green.
+
+What to use instead, in increasing strength:
+1. **Transaction call counts.** N items must open N transactions, and a loop that wraps them opens N+1 — this is also how AC13-style "the loop opens no transaction of its own" claims are pinned (a nested one would throw `NestedTransactionError` against a real connection, but not against the mock).
+2. **Resolution-ordering.** `db.transaction.mockImplementation(async (cb) => { const r = await cb(db); order.push('tx-committed'); return r })`, then assert `['tx-committed', 'effect']` — the shape [[caller-owned-tx-drops-post-commit-effects]] prescribes for deferred effects.
+3. **A DB-backed suite for rollback.** No mock can observe a rollback; it records that a statement was issued, not whether it survived. `src/server/services/book-deletion.service.integration.test.ts` is the reference — real migrated libSQL, assertions on committed rows.
+
+Keep the identity assertion if you like — it documents intent — but never let it be the only thing standing between the suite and a deleted transaction. Related: [[drizzle-tx-statements-bypass-client-spy]] (same blind spot, real connection), [[observation-points-server-writes-and-routes]] (issuance ≠ persistence), [[shared-test-double-defaults]].
+
+
+## posix-resolve-ignores-backslash
+
+**source:** #2301  
+**added:** 2026-08-14  
+**files:** src/server/utils/path-identity.ts, src/server/utils/path-write-lock.ts, src/server/utils/claim-lock.ts  
+**tags:** node-path, path-normalization, windows, cross-platform, locking
+
+---
+
+`path.resolve` treats `\` as an ordinary character on POSIX, so it cannot collapse `..` segments spelled with backslashes: on Linux `resolve('/library\A\..\Y')` returns the input unchanged, while `resolve('/library/A/../Y')` returns `/library/Y`.
+
+**Rule: fold separators BEFORE resolving.** The canonical transform for path identity in this repo is
+
+```ts
+normalize(resolve(p.split('\\').join('/'))).split('\\').join('/')
+```
+
+fold → resolve → fold. The trailing fold only makes the output platform-stable for messages and logs (`resolve` emits backslashes on Windows); equality holds either way once both sides go through the same function. `computeFolderTarget` (`src/server/utils/rename-target.ts:30`) already used this order; `canonicalPath` (`src/server/utils/path-identity.ts`) is the shared implementation and `claimLockKey` (`src/server/utils/claim-lock.ts`) is exactly it — ownership identity and lock identity must be the same function, or two operations the ownership check says contend can enter separate critical sections.
+
+**`withPathWriteLock` canonicalizes its own key**, so that property now holds by construction rather than by every caller remembering. It did not originally: it keyed on the exact string handed to it while three spellings of one file reached it (`claimLockKey`, `sidecarLockKey`'s bare `resolve(join())`, and tagging's raw `books.path`), which gave one file two chains and silently disabled mutual exclusion — visible only on Windows, where the spellings stop coinciding. `withPathWriteLocks` canonicalizes *before* its dedup and sort, or two callers spelling one pair differently sort into opposite acquisition orders and deadlock. Do not add a fourth key transform; call the primitive with whatever you have.
+
+**Testing it is not obvious.** A `/library/A/../Y` fixture is vacuous for this property: plain `resolve` already collapses it on POSIX. Only the backslash-plus-parent form (`/library\A\..\Y`) reds against fold-after-resolve — pinned in `src/server/utils/path-identity.test.ts` and the legacy-spelling table in `rename.service.test.ts`. And a backslash is a legal POSIX filename character but one of the nine illegal Windows ones, so a fixture that needs a real on-disk directory carrying one must gate on a capability probe rather than a platform check (see `claim-lock-protocol.integration.test.ts`); cf. [[windows-hostile-test-primitives]].
+
+Stated limit: the transform is lexical plus `resolve` and does NOT fold case, so on a case-insensitive filesystem `/library/Y` and `/library/y` still read as two claims.
+
+
+## loading-assertion-vacuous-at-mount
+
+**source:** #2320  
+**added:** 2026-08-14  
+**files:** src/client/pages/settings/SecuritySettings.test.tsx  
+**tags:** react-query, test-observability, loading-state
+
+---
+
+The pending-side companion to [[observation-points-react-query-error-state]]; read [[vacuous-assertion-observation-points]] first for the general rule.
+
+**A loading-state assertion is satisfied at t=0 by every implementation.** `await waitFor(() => expect(screen.getByTestId('loading-spinner')).toBeInTheDocument())` resolves on the first tick, before any query has settled, so it passes against the broken code as readily as the fixed code. Unlike the error side, nothing is being withheld — the observable is simply already true, which is why this reads like the obvious positive assertion and slips through review.
+
+**When the gate under test composes N queries, the observation point is the OTHER query's terminal state.** Settle it, then assert synchronously:
+
+```ts
+await waitFor(() => expect(client.getQueryState(queryKeys.auth.config())?.status).toBe('success'));
+expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
+expect(screen.queryByLabelText('Forms (Login Page)')).not.toBeInTheDocument(); // no posture claim
+```
+
+Always pair the positive with the negative: assert the misleading state is ABSENT, not just that the spinner is present. Drive the pending side with a held promise — `mock.mockReturnValue(new Promise(() => {}))` to never settle, or capture `resolve` when the test settles it later. Never `vi.useFakeTimers()`; see [[vitest-faketimers-react-query]].
+
+Why it matters: `SecuritySettings.tsx` gated on `isLoading || !authConfig` from one of two independent auth reads and folded the other into `authStatus?.hasUser ?? false`. For the whole ordinary success/pending window — and permanently on failure — it told the operator no credentials existed and disabled the forms/basic radios: the exact page state of an unprotected install. #2320 replaced it with an error-first policy over the full 3x3 status product; the nine-row table at `src/client/pages/settings/SecuritySettings.test.tsx:961` and its `awaitSettled` helper are the reference shape.
+
+Counterfactual that proves the observation point, not just the branch: restore the single-query gate with the error branch left intact. Exactly the pending rows must red while every error row stays green — a gate reading one query satisfies all five failure combinations and still renders the false posture.
+
+
+## race-timeout-reject-before-abort
+
+**source:** #2310  
+**added:** 2026-08-14  
+**files:** src/server/services/search-deadline.ts  
+**tags:** abortcontroller, promise-race, timeout
+
+---
+
+`AbortSignal` fires its `abort` listeners SYNCHRONOUSLY during `controller.abort()`. So in a `Promise.race([work, timeout])` deadline, the timer callback must **reject the timeout branch BEFORE calling `controller.abort()`**. With the opposite order — `controller.abort()` then `reject(...)`, which is what `ConnectorRefreshQueue.withTimeout` does at `src/server/services/connector-refresh-queue.ts:312-313` — a leaf that rejects from its own abort listener queues its rejection reaction on the race before the timeout promise settles, wins the race, and delivers a LEAF error where the caller must see the canonical timeout error. Every downstream branch that discriminates an expiry from an ordinary failure (log message, HTTP status, counter arm) then takes the wrong path.
+
+`src/server/services/search-deadline.ts` is the correct shape:
+
+```ts
+timer = setTimeout(() => {
+  expired = true;
+  reject(new SearchDeadlineError(budgetMs, bookId));  // settle the race FIRST
+  controller.abort();                                  // then stop the work
+}, budgetMs);
+timer.unref();
+```
+
+Once the timeout promise is settled the race's outcome is fixed and any later leaf settlement is ignored.
+
+**This is live, not theoretical, wherever leaves follow [[abort-verdict-not-error-shape]]** — that pattern's whole point is `if (signal?.aborted) throw error`, i.e. rejecting in response to the abort. The connector queue is currently only latent because its leaves are undici fetches that reject asynchronously from the fetch promise rather than from a synchronous listener.
+
+**Testing it:** the counterfactual is the whole justification for the ordering, so write it — a leaf that registers `signal.addEventListener('abort', () => reject(distinctLeafError))` and never otherwise settles, then assert the caller still receives the canonical error. Swapping the production order back must red exactly that one case. Because this is a hand-rolled `AbortController` + `setTimeout` rather than `AbortSignal.timeout`, `vi.spyOn(globalThis, 'setTimeout')` DOES capture the timer — the stated exception in [[abortsignal-timeout-native-timer-retry-tests]] — so the budget can be asserted exactly and the callback fired on demand with no fake-timer interleaving.
+
+
+## interval-gate-fifo-chain-not-timestamp-compare
+
+**source:** #2309, #2345  
+**added:** 2026-08-14  
+**files:** src/core/utils/interval-gate.ts, src/core/indexers/mam-throttle.ts, src/server/services/metadata.service.ts  
+**tags:** rate-limiting, concurrency, abortsignal, fake-timers
+
+---
+
+**A read-sleep-restamp throttle does not enforce an interval under concurrency.** The shape `const elapsed = Date.now() - lastRequest; if (elapsed < min) await sleep(min - elapsed); lastRequest = Date.now();` spaces only strictly sequential callers: N simultaneous `acquire()` calls read one stamp, sleep the same amount, and dispatch together — the exact burst the floor exists to prevent. A two-sequential-acquires test passes against it, which is why it stays invisible; the observation point that sees it is three CONCURRENT acquires recorded into a shared resolve-order array (see [[vacuous-assertion-observation-points]]).
+
+**Use `IntervalGate` (`src/core/utils/interval-gate.ts`); do not hand-roll a third one.** It was the MAM adapter's floor in #2309 and absorbed MetadataService's provider floor in #2345, which is the only reason no read-sleep-restamp throttle remains in the tree. `MamRequestThrottle` (`src/core/indexers/mam-throttle.ts`) is the model for a caller: it owns only its destination-key rule and its reset reason, and delegates every scheduling decision. Note the layer boundary — `src/core/**` cannot import `src/server/**`, so a shared gate has to live in core.
+
+The shape, if you ever need to reason about it: per-key `{ waiters, nextAllowedAt, timer }` plus a `pump()` loop that dispatches the head only when the remaining wait is `<= 0`, stamps `nextAllowedAt = Date.now() + intervalMs` on each dispatch, and otherwise arms exactly one `setTimeout` that re-enters `pump`.
+
+**Release on the interval, never on the caller's completion.** A slot freed by the timer means a request that hangs for its full timeout, throws, or is aborted delays nothing but itself — and no `try/finally` release bookkeeping is required. If an implementation grows one, the design has drifted. (`Semaphore` in `src/server/utils/semaphore.ts` is the opposite contract: it bounds concurrency and hands off on explicit release, so it is not a substitute.)
+
+**A wall-clock wait needs an explicit answer for BOTH directions of a clock step, and the backwards one must repair the stamp.** Clamping only the returned wait is insufficient: the stale `nextAllowedAt` survives, the timer fires, the remainder is still huge, and the queue re-arms forever. Rewrite the stamp itself — `if (remaining > intervalMs) { queue.nextAllowedAt = Date.now() + intervalMs; return intervalMs; }` — and return 0 for any non-finite or non-positive remainder (the `Number.isFinite` guard is the same fail-open trap as [[rate-limit-gate-fails-open-on-nan-window]]). A forward step yields a zero wait and lets one early request through; that is a decision — assert the bound, not the absence of the step.
+
+**The fake-timer trap that follows from it:** the armed timer must dispatch directly, not re-read the clock and recompute. Under this repo's `vi.useFakeTimers({ toFake: ['Date','setTimeout','clearTimeout'] })` harness the clock is frozen while timers still run, so a callback that recomputes the remainder finds it unchanged and re-arms forever. See the comment in `IntervalGate.pump`.
+
+**Cancellation:** `acquire` takes an optional `AbortSignal`, rejects with `signal.reason` verbatim (never on an error shape — see [[abort-verdict-not-error-shape]]), removes the waiter from the queue, and leaves `nextAllowedAt` untouched. Immediate queue hand-off is not immediate dispatch: the successor becomes head at once but still owes whatever remains of the floor. Every downstream catch-and-degrade on that path needs `if (signal?.aborted) throw error;` first, or the rejection reads as a legitimate empty answer.
+
+**Module-level state, module-level reset.** Adapter instances are cached and evicted (`indexer.service.ts`), so the floor belongs to the destination, not the object — key it by canonical `host:port` via `normalizedHostPortFromUrl`. `reset` must clear stamps, cancel timers, detach abort listeners AND reject queued waiters; a bare `Map.clear()` leaves timer closures armed and promises permanently pending, which surfaces later as flake (see [[shared-suite-state-inflates-counterfactual]]).
+
+## msw-gated-stream-body-separates-headers-from-parse
+
+**source:** #2373
+**added:** 2026-08-16
+**files:** src/core/__tests__/solver-bound.ts
+**tags:** msw, readablestream, resource-lifetime
+
+---
+
+**To pin that a resource is held until a response body is read and parsed — not merely until `fetch()` resolves — stub a gated streaming body.** With an already-materialized body (`HttpResponse.json(...)`) the two release points are indistinguishable, so a `finally` that wraps only the fetch passes exactly the same tests as one that wraps the parse. This is a whole class of blind spot: any `try { …fetch…; …parse… } finally { release() }` has it.
+
+**The technique is right; the obvious witness is wrong.** Measured on Node 24 / msw 2.15.0, a `new ReadableStream(source, { highWaterMark: 0 })` returned via `new HttpResponse(stream, { headers: { 'Content-Type': 'application/json' } })` produces:
+
+```
+handler → pull#1 → fetch() RESOLVES → pull#2 → (gate opened) → parsed
+```
+
+`pull#1` fires while the Fetch implementation is still assembling the Response — the caller does not hold it yet. A witness resolved on pull#1 therefore samples *before* a release-after-headers bug has fired, and the test passes under the very mutation it exists to catch.
+
+**`highWaterMark: 0` is load-bearing but insufficient.** Construct as `new ReadableStream(source, { highWaterMark: 0 })` — under the default queuing strategy the stream pre-pulls one chunk at construction, so a `pull`-resolved barrier settles before the response reaches any client at all. But `highWaterMark: 0` only removes that construction-time pre-pull; it does NOT move pull#1 after `fetch()` resolves.
+
+**Remedy: emit the body in two chunks and resolve the witness on the SECOND pull.** Enqueue a head byte on pull#1; on pull#2 announce the witness, `await` the gate, then enqueue the tail and close. pull#2 provably follows `fetch()` resolving, which is exactly the window where release-after-headers has freed the resource and release-after-parse has not.
+
+Exemplar: `gatedSolverBody()` in `src/core/__tests__/solver-bound.ts` (`stream` / `draining` / `complete`), consumed by 'keeps the slot until the body is read and parsed, not merely until headers arrive' in `src/core/indexers/fetch.test.ts` (#2373). Counterfactual: moving `releaseSlot()` out of the `finally` in `fetchViaProxy` to just after the `fetch()` call reds it 5/5 and greens 5/5 unmutated — where the single-pull version passed under that same mutation.
+
+**Process note worth as much as the mechanism.** The single-pull test only ever redded because an unrelated helper in the same test was incidentally adding delay. When that helper was removed as unreliable, the flaw underneath surfaced. A test that stops catching its mutation after you delete an unrelated wait was timing-dependent all along — re-run every counterfactual after removing a synchronization helper, not just the tests the helper was named in. See [[vacuous-assertion-observation-points]].
+
+Distinct from [[msw-url-matching-ipv6-and-path-case]] (handler URL matching) and from the Audnexus body-boundary note on splitting `response.text()` from `JSON.parse` (error classification, not resource lifetime).
+
+## msw-network-error-has-no-transport-code
+
+**source:** #2374  
+**added:** 2026-08-16  
+**files:** src/core/__tests__/solver-routes.ts  
+**tags:** msw, vitest, error-classification, undici
+
+---
+
+msw's `HttpResponse.error()` produces a network error with **no** `code` and no `cause`. It therefore cannot exercise any branch that classifies on the transport code — it only ever hits the unknown/default arm — and it cannot produce the `AbortError` DOMException an expiring `AbortController` raises. A test that uses it to mean "the host refused the connection" is vacuous against a code-reading classifier and stays green when the classifier is wrong.
+
+Real undici failures arrive as `TypeError('fetch failed')` whose `cause` carries `.code`; that is the shape `mapNetworkError` unwraps (`src/core/utils/map-network-error.ts:51-52`), and the shape a test must reproduce. Stub at the fetch boundary, not at an inner export — see [[esm-same-module-vi-mock-bypass]] for why that boundary is the right one anyway.
+
+`src/core/__tests__/solver-routes.ts` is the shared harness: `routeFetch(route)` spies `globalThis.fetch`, routes by URL **and method** (the #2374 solver probe and the solver round-trip share an address — `HEAD /v1` is the probe, `POST /v1` is the round-trip), records every call for "was a probe issued?" assertions, and falls through to the pre-spy fetch so MSW keeps serving everything else. It must be installed after `server.listen()` for that fall-through to reach MSW. Companion builders: `codedRejection(code)`, `uncodedRejection()`, `abortRejection()`, `hangUntilAborted(signal)`, `solverEnvelope(body, status)`.
+
+Related: [[map-network-error-drops-transport-code]] — the production half of the same rule (classify on `code`, never on message text).
+
+## degrading-adapter-invisible-to-mock-suite
+
+**source:** #2375  
+**added:** 2026-08-16  
+**files:** src/core/indexers/abb.ts  
+**tags:** indexer-adapters, error-classification, test-observability
+
+---
+
+**A service-level classifier keyed on a thrown error is only as good as its adapters' willingness to throw, and a mock-adapter suite is structurally blind to that.** Injecting a fake adapter that rejects proves the classifier; it proves nothing about whether the real adapter ever rejects.
+
+#2375 shipped to review with a green suite covering both executors, every outcome kind, a route-level SSE test and five counterfactuals — while `AudioBookBayIndexer.search()`, the adapter the motivating incident was named after, still caught its own direct HTTP/network failures and returned an empty *successful* response. The service read that as `{ kind: 'resolved' }`, `succeeded` incremented, the ladder read a genuine zero and advanced, and the dead indexer was re-asked once per rung — the exact amplification the work removed everywhere else.
+
+Why no extra mock-layer case could have caught it: a fake adapter that rejects can only exercise the branch where the adapter rejects. The defect lives in the branch where it doesn't.
+
+**Rule.** When behavior depends on an adapter raising rather than degrading, drive at least one REAL adapter through the real service seam (MSW for the transport). Pair it with a control that keeps the adapter eligible on a genuine answered zero, or the assertion passes just as well against 'always excluded'. Precedent: the `#2375 AC1/AC9 — the real AudioBookBay adapter` describe in `src/server/services/ladder-exclusion.integration.test.ts`.
+
+**Auditing an adapter for this shape:** look for a `catch` whose non-rethrow arm falls through to the ordinary success return. As of #2375, ABB's *search-page* catch is fixed (first page rethrows; later pages still degrade to the pages already fetched, since the indexer demonstrably answered); its *detail-page* catch still swallows by design and is tracked as #2367. `torznab.ts` and `newznab.ts` have no catch in the search path; `myanonamouse.ts`'s `results: []` returns are genuine answered zeros. Related: [[compat-wrapper-hides-stale-test-doubles]] for the other direction — doubles that drift from a widened real surface.
+
+## ladder-rung-count-needs-colon-segments
+
+**source:** #2375  
+**added:** 2026-08-16  
+**files:** src/server/services/search-query-ladder.ts  
+**tags:** search-ladder, title-variants, test-fixtures
+
+---
+
+`buildQueryLadder` (`src/server/services/search-query-ladder.ts`) builds its relaxation rungs from COLON segments, not from words. `titleVariants` (`src/core/utils/title-variants.ts`) emits two unconditional `full` variants and then derives `prefix(n)` / `suffix(n)` / `first+last` from `colonSegments(base)`; with no colon there is one segment, every cut dedupes against the full form, and the ladder is 2 rungs long however many words the title has.
+
+Measured at `29968a8b`: 'The Way of Kings' → 2; 'The Hitchhikers Guide to the Galaxy' → 2; 'The Name of the Wind Kingkiller Chronicle Day One' → 2; 'Dune Messiah (Dune Chronicles Book Two)' → 4 (the parenthetical adds a second full form); 'Kings: Stormlight Archive: Special Edition' + author 'Sanderson' → exactly 8 = `MAX_SEARCH_RUNGS`. The author is load-bearing too: the ladder iterates `[author, undefined]` author-major, so dropping it roughly doubles the count.
+
+**Why it matters for tests.** Any test that means to exercise multi-rung behaviour — exclusion across rungs, per-rung reporting, cooldown, relaxation disclosure — and picks a natural-looking title runs against 2 rungs and passes whether or not the behaviour works past rung 1. A 'called fewer than 8 times' or even 'called twice' assertion is then vacuous, and nothing in the output reveals it.
+
+**Rule:** use a colon-segmented fixture title when rung count is load-bearing, and pin it with `expect(LADDER).toHaveLength(MAX_SEARCH_RUNGS)` in its own case so a change to the variant generator reds the fixture rather than silently shortening every count that depends on it. `ladder-exclusion.integration.test.ts` and `ladder-outcome-kinds.integration.test.ts` (#2375) do exactly this. Reproduce with `pnpm exec tsx` and a small script file — the inline `-e` form cannot resolve the `@core` alias on Windows. Related: [[variant-tag-not-slice-under-first-wins-dedup]] for why the generator's tags, not its text, are the contract.
+
+## reservation-proof-needs-same-entry-point-race
+
+**source:** #2376  
+**added:** 2026-08-16  
+**files:** src/server/services/indexer-breaker.integration.test.ts  
+**tags:** concurrency, circuit-breaker, mutation-testing
+
+---
+
+**A cross-entry-point race does not prove a synchronous gate's reservation.** When two callers reach a shared gate through unequal amounts of pre-gate `await`, the one that arrives first commits its outcome and closes the gate on the other by the ordinary timestamp comparison — so the test passes identically against code with no reservation at all. Only two concurrent calls through the SAME entry point exercise the atomicity.
+
+The live instance: `pollRss` (`src/server/services/indexer-search.service.ts`) calls `reserveIndexerLeg` as its first statement, while `searchAllWithStatus` / `searchAllStreaming` `await prepareSearch(...)` first. Racing RSS against streaming always lets RSS win, fail, and advance `nextAttemptAt` before streaming's gate check runs.
+
+Mutation-verified: deleting the reservation line in `FailureTracker.reserveAttempt` (`failure-backoff-tracker.ts`) reds only the two-concurrent-`searchAllWithStatus` case; the cross-surface case stays green. Keep both — the cross-surface one still proves every surface consults the gate — but write the same-surface one, and mutation-check it, or the reservation is untested.
+
+Related: [[interval-gate-fifo-chain-not-timestamp-compare]] establishes that a read-then-act gate does not bound concurrent callers and that concurrent acquires into a shared resolve-order array are the observation point; this entry narrows WHICH concurrent acquires can see it. [[vacuous-assertion-observation-points]] is the general rule this is an instance of.
+
+## msw-url-matching-ipv6-and-path-case
+
+**source:** #2373  
+**added:** 2026-08-16  
+**files:** src/core/indexers/fetch.test.ts  
+**tags:** msw, path-to-regexp, url-matching
+
+---
+
+MSW 2.15 routes handler URLs through path-to-regexp 6.3, which constrains handler URLs in two non-obvious ways.
+
+**An IPv6-literal handler URL crashes the handler lookup.** `http.post('http://[::1]:8080/v1', ...)` throws `TypeError: Missing parameter name at 9` in `matchRequestUrl` → `HttpHandler.parse`; MSW logs 'Encountered an unhandled exception during the handler lookup' and answers 500, so the resolver never runs and the stub's counters stay at zero. The symptom is indistinguishable from 'production never issued the request', which is what makes it expensive. There is no bracketed-literal spelling that works — stub at the `vi.spyOn(globalThis, 'fetch')` boundary for that case and read the URL off the spy's argument. Exemplar: the IPv6 isolation case in `src/core/indexers/fetch.test.ts` (#2373).
+
+**Path matching is case-insensitive.** `http.post('http://h/Solver-A/v1')` and `http.post('http://h/solver-a/v1')` both match either request, and since `server.use()` prepends, the last-registered one wins for both. Any test proving that production treats path case as significant therefore cannot use two handlers. Register ONE handler with a wildcard path — `http://h/*` matches and does work — and discriminate inside the resolver on `request.url` or on the request body. Exemplar: 'separates paths differing only in case, while host case still folds' in `src/core/indexers/fetch.test.ts`.
+
+Host case and an explicit default port are NOT affected: `fetch` normalizes those before MSW sees the request, so `http://SOLVER.lan:8191/v1` and `http://solver.lan:80/v1` correctly reach handlers registered as `http://solver.lan:8191/v1` and `http://solver.lan/v1`. Verified on Node 24 / msw 2.15.0 / path-to-regexp 6.3.0.
+
+## cheerio-br-zero-width-text
+
+**source:** #2365  
+**added:** 2026-08-15  
+**files:** src/core/indexers/abb-fields.ts  
+**tags:** cheerio, html-scraping, text-extraction
+
+---
+
+**cheerio's `.text()` treats `<br>` as zero-width — it contributes no character, not even a space.** Measured on cheerio@1.2.0: `cheerio.load('<p>Format: <span>M4B</span><br>Bitrate: <span>128 Kbps</span><br>Unabridged</p>')('body').text()` is `"Format: M4BBitrate: 128 KbpsUnabridged"`. All whitespace in flattened output comes from source text nodes, so a source newline before the `<br>` changes the result to `"Format: M4B\nBitrate: 128 Kbps"`.
+
+Two consequences for any `$(sel).text()` + regex extraction:
+
+1. **A `([^\n]+)`-style capture does not stop at a visual line break.** `/Format:\s*([^\n]+)/i` captures `"M4BBitrate: 128 KbpsUnabridged"` on the first shape and `"M4B"` on the second — the same markup, parsed differently because of how the upstream page was indented. Self-terminating captures (`([\d.]+)`, `(\d+)`) are immune, which is why a broken flattening parser can look fine for numeric fields while every string field is wrong.
+2. **Do not repair a text-flattening parser with a narrower pattern.** If the page carries the values in its own elements, read the elements. `src/core/indexers/abb.ts` mined `$('body').text()` for author/narrator and returned the uploader's username; `src/core/indexers/abb-fields.ts` (#2365) replaced it with class-selected reads anchored to the page's schema.org block. The flattening-hostile shape is pinned by the one-source-line block in `src/core/__tests__/fixtures/abb-detail.html`, so a regression back to any text-run regex reds on exact values.
+
+Same family as [[htmlparser2-no-attribute-normalisation]]: measure the parser's actual behaviour before building code or tests on what the markup looks like.
+
+## workflow-dispatch-needs-default-branch
+
+**source:** #2358  
+**added:** 2026-08-15  
+**files:** .github/workflows/windows-tests.yml  
+**tags:** github-actions, workflow-triggers, ci-verification
+
+---
+
+GitHub runs `workflow_dispatch` **only for a workflow file present on the repository's default branch** ([docs](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch)). Declaring the trigger in a NEW workflow on a feature branch does not make it dispatchable — not from the feature branch, not from `develop`, not until it merges to `main`.
+
+**Consequence: `workflow_dispatch` is never a pre-merge verification route for the workflow that introduces it.** A plan that plans to "dispatch it on a scratch branch to prove it catches X" has no route, and the failure mode is silent — nothing fires, which on the PR page is indistinguishable from a clean run.
+
+**Use an event the workflow's own `on:` block covers on a reachable ref.** For `.github/workflows/windows-tests.yml` that is `pull_request: branches: [main, develop]`, i.e. a draft PR into `develop`.
+
+The trap is sharper in this repository because of the surrounding trigger asymmetry: a bare push to a scratch branch fires **nothing** (`ci.yml` is main-only; `docker.yml` is develop-push plus semver tags), so "I pushed and nothing broke" is never evidence here.
+
+Better still, where the property allows it: make the thing you wanted to observe once into a standing test instead. #2358 replaced a planned one-time Windows-red experiment with a filesystem-free, platform-neutral assertion in `src/server/utils/path-write-lock.test.ts` plus a required-file entry in the selection guard — which holds on every run on both platforms instead of once on a branch that gets deleted.
+
+## msw-first-fetch-skews-interval-assertions
+
+**source:** #2358  
+**added:** 2026-08-15  
+**files:** src/server/services/mam-throttle.integration.test.ts  
+**tags:** msw, vitest, timing-assertions
+
+---
+
+A test that stamps `Date.now()` inside two MSW handlers and asserts on their **difference** is measuring the delay under test *plus* the difference of two fetch-to-handler latencies:
+
+```
+observed = (resolve2 - resolve1) + (d2 - d1)
+```
+
+The run's **first** real fetch pays a one-time interception cost that later ones do not, so `d1 > d2` and the observed gap comes in systematically **short**. Measured in `src/server/services/mam-throttle.integration.test.ts` against `IntervalGate`'s exact 250ms floor: six unloaded runs read 239-245ms, i.e. a ~5-11ms standing bias. The assertion's `- 20` tolerance, written to cover clock granularity, was instead spending most of itself on that bias — so the first run under full-suite parallel load read 225 and went red.
+
+**Rule: warm the fetch path before the measured window.**
+
+```ts
+await fetch(`${BASE}/some-stubbed-path`);
+dispatched.length = 0;          // drop the warm-up's own stamp
+const startedAt = Date.now();
+```
+
+Six runs then read 249-250 against a true 250, and the in-test latency probe fell from 11-18ms to 3-5ms — the cost is interception setup, not per-request work. Only after this does a tolerance mean what it says: `Date.now()` granularity, ~15.6ms on Windows and ~1ms on Linux.
+
+**Measure before widening.** The failure looked like generic load flake and the one-line fix was to drop the floor. Instrumenting it showed a fixable bias instead; widening would have deferred the identical failure to the next busy run. Note the gate itself is exact — `IntervalGate.dispatchHead` (`src/core/utils/interval-gate.ts`) stamps `nextAllowedAt = Date.now() + intervalMs` at resolve time — so any shortfall is observation error, never the code under test.
+
+## vitest-passwithnotests-hides-empty-selection
+
+**source:** #2358  
+**added:** 2026-08-15  
+**files:** vitest.config.ts  
+**tags:** vitest, ci, test-selection
+
+---
+
+`vitest.config.ts:19` sets `passWithNoTests: true`, so a run whose include globs match nothing exits **0**. Any gate that reads only the exit code cannot tell "everything passed" from "nothing ran" — and on a platform CI has never covered before, those two look identical.
+
+**Rule: a test gate on a new surface needs a selection assertion, not just an exit code.** Run the JSON reporter alongside the default one and assert on the report:
+
+```
+pnpm test --reporter=default --reporter=json --outputFile.json=vitest-windows.json
+```
+
+Verified against vitest@4.1.10, the report is `{ numTotalTests, numPassedTests, numFailedTests, numPendingTests, numTodoTests, snapshot, startTime, success, testResults: [{ assertionResults, startTime, endTime, status, message, name }] }`. Three conditions catch every realistic collapse given the two-project layout at `vitest.config.ts:25-58`:
+
+- `numTotalTests - numPendingTests - numTodoTests > 0` — something actually executed;
+- at least one `testResults[].name` under `src/client/` — the jsdom `client` project selected files;
+- at least one `testResults[].name` outside it — the `server` project selected files.
+
+`testResults[].name` is an **absolute** path, so on Windows it arrives backslash-separated: fold with `.split('\\').join('/')` before the prefix test, per [[posix-resolve-ignores-backslash]].
+
+The implementation is `scripts/vitest-selection-guard.ts` (pure, unit-tested at `scripts/vitest-selection-guard.test.ts`) with the CI entry `scripts/check-vitest-selection.ts`; `.github/workflows/windows-tests.yml` runs it as the step after the test step. Since #2445 it is no longer merely informational: it is the job's verdict, adjudicating a non-zero vitest exit against the per-test records (teardown-crash tolerance), so it must never be made skippable on failure.
+
+**Do not add a global numeric floor and do not assert the skip count.** A magic total (`>= 4000`) catches nothing the per-project check misses and reds on legitimate shrinkage. The skip count moves with hosted-runner capabilities — `describe.skipIf(!FFMPEG_PRESENT)`, the `CAN_RUN` mutagen gate, `CAN_SYMLINK` flipping with Developer Mode — not with selection correctness; print it as a diagnostic and let the per-project check be the only thing that can fail. See [[windows-hostile-test-primitives]].
+
+Both `--outputFile=` and `--outputFile.json=` write the report with two reporters configured on vitest@4.1.10; the keyed form is preferred for explicit per-reporter routing, not because the bare form fails.
+
+## interval-gate-frozen-clock-livelock
+
+**source:** #2345  
+**added:** 2026-08-14  
+**files:** src/core/utils/interval-gate.ts  
+**tags:** fake-timers, rate-limiting, concurrency, vitest
+
+---
+
+**A wall-clock FIFO interval gate must dispatch on its armed timer, not re-read the clock when that timer fires.** `pump()` arms one `setTimeout(..., waitFor(queue))`; if the callback re-enters `pump()` and recomputes `remaining = queue.nextAllowedAt - Date.now()`, it livelocks under `vi.useFakeTimers({ toFake: ['Date'] })` — `Date.now()` is pinned while real timers still fire, so the remainder never shrinks and the queue re-arms forever. The worker hangs at the test timeout rather than failing fast. Fix: the callback calls `dispatchHead(queue)` unconditionally, then `pump(queue)`.
+
+This is a **new** failure mode the read-sleep-restamp form did not have (its `setTimeout` sleep is unconditional and real-time), so it appears exactly when a gate built per [[interval-gate-fifo-chain-not-timestamp-compare]] is adopted by a consumer whose suites freeze `Date` only. That harness is not optional — full fake timers stall MSW and the native `AbortSignal.timeout` inside `fetchWithTimeout` (see [[rate-limit-gate-fails-open-on-nan-window]], [[abortsignal-timeout-native-timer-retry-tests]]) — so any shared gate must assume some caller freezes the clock. Pin it with a liveness case on REAL timers and a small interval: `src/core/utils/interval-gate.test.ts`, describe 'IntervalGate under a frozen clock with live timers'. It reds by timeout against the re-consulting form.
+
+**Second-order effect on mutation testing.** Because every dispatch restamps `nextAllowedAt = Date.now() + intervalMs`, a clamp-only variant of `waitFor` (returning `intervalMs` without rewriting the stamp) is repaired at the next dispatch. A third sequential acquire after a backwards clock step therefore CANNOT discriminate a repaired stamp from a merely clamped return — contrary to the obvious test design. The repair is only observable across a wait that ends in no dispatch: queue a waiter after the backwards step, abort it before the timer fires, then acquire again and assert zero wait. See 'repairs the stored deadline, not just the returned wait' in the same suite, and [[vacuous-assertion-observation-points]] for the general rule.
+
+## settimeout-overflow-clamps-to-1ms
+
+**source:** #2344  
+**added:** 2026-08-14  
+**files:** src/server/jobs/index.ts  
+**tags:** node-timers, schedulers, settings-schema
+
+---
+
+Node's `setTimeout` clamps a delay it cannot represent to **1 ms** — in BOTH directions. NaN gives `TimeoutNaNWarning`; anything above `2**31-1` ms (2_147_483_647, ~24.855 days) gives `TimeoutOverflowWarning`. Both turn a bounded schedule into an unbounded one, and neither throws.
+
+So a delay guard must bound the value from both ends, and must be written on the arithmetic **product** rather than the operand (a finite `1e306` overflows to `Infinity` only after `× 60000`; a `null` read multiplies to `0`, not `NaN`, so a `Number.isNaN`-only predicate misses it). The shipped shape is `normalizeIntervalMs` in `src/server/jobs/index.ts`, returning a discriminated `{ kind: 'ok' | 'clamped' | 'invalid' }` — invalid takes a warned retry, clamped fires early at the ceiling (early is the safe direction for a periodic job; late is not).
+
+The non-obvious half: a Zod `.max()` is not a timer bound. `systemSettingsSchema.backupIntervalMinutes` is `.max(43200)` = 30 days = 2,592,000,000 ms, so the schema's own documented maximum — a value the settings form accepts — made the backup job run continuously. Any settings-derived duration that reaches a timer needs the range check at the arming boundary; narrowing the schema instead would silently reset already-stored out-of-range values to defaults through `parseCategory`.
+
+Mirror trap on the display side: `new Date(NaN).toISOString()` throws `RangeError: Invalid time value`, so one poisoned `nextRun` 500s the whole `GET /api/system/tasks` response, not just its own field. `TaskRegistry.setNextRun` (`src/server/services/task-registry.ts`) accepts `Date | null` and treats an Invalid Date as a clear for exactly that reason. Companion entry: [[rate-limit-gate-fails-open-on-nan-window]] (finiteness on the product, and pino serialising NaN to null so the warn must carry `String(value)`).
+
+## pr-branch-rebase-duplicates-unpin-merge-base
+
+**source:** #2309, #2348  
+**added:** 2026-08-14  
+**tags:** git, rebase, pr-scope, merge-base
+
+---
+
+**A branch update can put the BASE's commits on your branch as duplicates, and the PR then shows their content as yours.**
+
+GitHub renders a PR's delta as `git diff <base>...HEAD` — three-dot, relative to the *merge base*, not to the base tip. If the base's commits exist on your branch as rewritten copies (same patch, new SHA), git can no longer see them as shared history: the merge base falls back to the last true common ancestor, and every change the base made since surfaces as part of your PR. This is a realistic outcome whenever a local rebase leaves the branch diverged from its remote and something else reconciles the divergence — the reconciliation can replay the base onto the branch rather than the branch onto the base.
+
+Nothing about this is visible from inside the branch. The working tree is correct, the tests pass, and `git log --oneline` reads as a sensible history. Only the comparison point is wrong.
+
+**Detect** — after ANY history operation on a PR branch:
+
+```sh
+git merge-base origin/<base> HEAD   # must equal…
+git rev-parse origin/<base>          # …this
+git diff origin/<base>...HEAD --name-only   # must list only your files
+```
+
+To name the duplicates, compare subjects of `git rev-list <merge-base>..HEAD` against `git log --format=%s <merge-base>..origin/<base>`.
+
+**Fix** — `git merge origin/<base>`. It makes the base tip a genuine ancestor, so the merge base moves to the base tip and the delta becomes correct **without rewriting a single commit**. The push that follows is a strict fast-forward: nothing is rejected, so no reconcile path is ever entered. Verify with `git merge-base --is-ancestor <remote-head> HEAD`.
+
+**Do NOT fix by rebasing — under this harness the rebase is correct locally and then thrown away.** The push gate's rebase-on-reject checks out `origin/<feature-branch>` (workflume `src/gates/push.ts`, `git rebase origin/${branch}` where `branch` is your own branch), NOT `origin/<base>`. Your freshly-rewritten commits are patch-identical to the ones already on the stale remote head, so every one is skipped and the branch lands back on exactly that head. `git ls-remote` shows the remote never moved. This looks like a no-op push, not a failure, and it cost PR #2343 two review rounds across two attempts before the reflog gave it up:
+
+```
+19:20:12  rebase (start): checkout origin/develop                 -> ed3800be1   (correct delta)
+19:28:51  rebase (start): checkout origin/feature/issue-2309-...  -> e608ccf77   (rewrite discarded)
+```
+
+**Reverting the duplicated commits is the trap.** It produces the same correct delta by fast-forward, so it *looks* like the cheap fix — but the safety depends entirely on the merge strategy. Merge-commit and squash-merge are safe. **Rebase-merge is not**: the reverts replay onto the base tip and silently delete the base commits they reverted.
+
+**Verify three ways**, not one: (1) merge base equals base tip; (2) the delta's file list, filtered against the set your issue permits, is empty; (3) `git diff origin/<base> HEAD -- <foreign path>` is empty for each previously-leaking file, which distinguishes "present and unmodified" from "reverted". Then re-run the base's own suites — your commits now sit on code they were never tested against.
+
+## zod-object-superrefine-skipped-on-shape-failure
+
+**source:** #2392
+**added:** 2026-08-16
+**files:** src/shared/schemas/indexer.ts
+**tags:** zod, react-hook-form, form-validation
+
+---
+
+zod (4.4.3) does not run an object's `.superRefine()` at all when the object's own shape parse produced any issue. One bad field therefore suppresses EVERY cross-field message the refine would have added, not just its own. Verified: `createIndexerFormSchema.safeParse({type:'abb', settings:{hostname:'ftp://x', pageLimit: NaN}})` returns exactly one issue, at `['settings','pageLimit']`, and none at `['settings','hostname']`.
+
+The live trap in this repo is numeric inputs registered with `valueAsNumber: true` (e.g. `settings.pageLimit` in `src/client/components/settings/indexer-fields/abb-fields.tsx`): an emptied input yields NaN, `z.number()` rejects it, and the whole `createIndexerFormSchema` superRefine block in `src/shared/schemas/indexer.ts` — the `INDEXER_REGISTRY.requiredFields` loop, the `flareSolverrUrl` 'Must be a valid URL' check, and the #2392 ABB hostname check — goes silent. `INDEXER_REGISTRY.abb.defaultSettings` supplies `pageLimit: 2`, so it only surfaces when the operator clears the field.
+
+Consequences when working here: (1) don't put a validation rule in an object-level `.superRefine()` if it must fire independently of sibling field validity — put it on the field; (2) any `useForm` test fixture driving `zodResolver(createIndexerFormSchema)` must populate every numeric field, or the assertion is vacuous (this cost real debugging time on #2392 — see the `ValidatedAbbForm` wrapper in `src/client/components/settings/IndexerFields.test.tsx`, which sets `pageLimit: 2` for exactly this reason).
+
+This is one step earlier than `zod-type-scoped-settings-transform`, which covers `.transform()` running only when the preceding `.superRefine()` was clean. Related: `zod-resolver-effects-divergence`.
+
+## external-fifo-queue-excludes-primitive-acquire
+
+**source:** #2379
+**added:** 2026-08-16
+**files:** src/server/services/merge.service.ts
+**tags:** concurrency, semaphore, fifo, merge-service
+
+---
+
+**A service that layers its own FIFO queue on top of a bounded semaphore must use only the non-blocking admission path.** `MergeService` (`src/server/services/merge.service.ts`) owns `private queue: number[]` and admits exclusively through `semaphore.tryAcquire()` (`:152,187`), never `acquire()`. `drainQueue()` (`:184-192`) is the sole promoter. Adding one `acquire()` call would create a second, independent waiting list inside the primitive that promotes on its own schedule, and FIFO across the two queues is undefined — a book could start ahead of an older queued book with no code path expressing that decision.
+
+This stopped being structural and became a maintained invariant in #2379. `BoundedSemaphore.setMax` now calls `pump()`, so a capacity raise admits queued waiters immediately; the deleted `src/server/utils/semaphore.ts` had a mutation-only `setMax` that woke nobody, which made the two-queue hazard impossible by construction rather than by discipline. The pump is required for liveness in the general case — raising a bound that has already drained to `active === 0` has no holder left to release, so without pumping on resize the queue is stranded forever (pinned by `bounded-semaphore.test.ts` 'keeps a zero bound live: the queue survives the drain to empty and a later raise admits it', which reds if the `setMax` pump is removed).
+
+`MergeService` is safe because its primitive queue is provably always empty. When reviewing or extending it, treat `tryAcquire`-only as a contract, not a style choice; the reason is recorded at `merge.service.ts:141-142`. The end-to-end proof that `setMax` + `tryAcquire` + `drainQueue` still compose is the `#1302 maxConcurrentProcessing — semaphore sizing + FIFO under resize` block in `merge.service.test.ts`. Consumers that want the primitive's own FIFO should call `acquire()` and keep no external queue — the two designs do not mix. Related: [[vacuous-assertion-observation-points]] for why the resize cases are counterfactual-verified.
+
+## optional-interface-method-blocks-protected-hook
+
+**source:** #2391
+**added:** 2026-08-16
+**files:** src/core/indexers/newznab-family.ts
+**tags:** typescript, indexer-adapters, class-hierarchy
+
+---
+
+An OPTIONAL member on an interface is still a reserved name for any class that `implements` it. Optionality permits omitting the member; it does not permit redefining it with a different signature or a narrower visibility. A class that declares the name gets its signature checked against the interface and fails `TS2416` on any mismatch.
+
+This bites when extracting a shared base for adapters. `IndexerAdapter` (`src/core/indexers/types.ts:110-124`) declares `resolveDownloadUrl?(ctx: ResolveDownloadContext): Promise<ResolveDownloadResult>` for MAM's grab-time sentinel resolution, and `refreshStatus?(signal?)` alongside it. `NewznabFamilyIndexer implements IndexerAdapter`, so it cannot use `resolveDownloadUrl` as the name of its own per-item URL-derivation hook however protected that hook is — the shipped name is `resolveItemDownloadUrl`, with the reason in a doc comment at the declaration so nobody 'corrects' it later. #2391's approved spec named the hook `resolveDownloadUrl` in AC2 and its class sketch; the collision was found at implementation time and the rename was forced, since changing `types.ts` was explicitly out of scope.
+
+**When specifying a base class over `IndexerAdapter`, check its optional members before naming protected hooks.** When implementing one, expect a rename rather than a signature adjustment: the two members genuinely mean different things, so no parameter shape makes both work.
+
+Verification note: `pnpm exec tsc --noEmit <file>` refuses to load `tsconfig.json` when files are named on the command line (`TS5112`), and this repo's `@shared`/`@core` aliases live there — so a probe of this kind has to be dropped into the tree and checked with `pnpm typecheck`, then deleted.
+
+## exported-vifn-helper-needs-mock-annotation
+
+**source:** #2383
+**added:** 2026-08-16
+**files:** src/server/__tests__/helpers.ts
+**tags:** typescript, vitest, declaration-emit
+
+---
+
+`tsconfig.json` sets `declaration: true`, so `tsc --noEmit` still resolves declaration-emit names for every exported signature. An exported helper returning `vi.fn()` therefore fails with `TS2883: The inferred type of '<fn>' cannot be named without a reference to 'Procedure' from '.pnpm/@vitest+spy@<ver>/node_modules/@vitest/spy'` — `Procedure` is not reachable by name from the importing file under pnpm's nested layout.
+
+Fix: annotate the return type as `Mock` (imported from 'vitest'). Do not reach for `ReturnType<typeof vi.fn>` — it re-introduces the same unnameable type.
+
+This only bites when a per-suite mock factory is PROMOTED to a shared harness file: a module-local `function withStatus() { return vi.fn()... }` is never emitted to a `.d.ts`, so it typechecks fine in place and fails the moment you `export` it. That makes it a standing trap for fixture-consolidation chores (#2383 hit it moving three suites' `withStatus`/`answering` builders into `src/server/__tests__/helpers.ts`). Helpers returning plain values are unaffected. Reference: `mockSearchAllWithStatus` / `answeringSearchStatus` in `src/server/__tests__/helpers.ts`, both annotated `: Mock`.
+
+## drizzle-dynamic-mode-conditional-builders
+
+**source:** #2319
+**added:** 2026-08-17
+**files:** src/server/utils/db-helpers.ts
+**tags:** drizzle, typescript, query-builder
+
+---
+
+Conditionally applying `.limit()`, `.offset()` or `.where()` to a Drizzle select narrows the builder type at each step, which is why the codebase had accumulated `query = query.limit(n) as typeof query` at six sites. The cast is avoidable, not inherent: `.$dynamic()` switches the builder into dynamic mode, where `SQLiteSelectWithout<T, TDynamic, K>` resolves to plain `T` (drizzle-orm 0.45.2, `sqlite-core/query-builders/select.types.d.ts`), so those methods return the type they were called on and can be applied conditionally and repeatedly. `.$dynamic()` is runtime identity — the emitted SQL and bound parameters are byte-identical.
+
+A helper over such a builder needs no cast at all: constrain it as `<T extends SQLiteSelect>(query: T, ...): T` with `import type { SQLiteSelect } from 'drizzle-orm/sqlite-core'`. The type-only import matters — it keeps the module free of `@db/schema` runtime coupling, which is what `drizzle-schema-toplevel-deref-breaks-partial-mocks` warns about. `SQLiteSelect`'s default type arguments already fix `TDynamic = true`, so the constraint alone selects dynamic mode.
+
+Canonical example: `applyPagination` in `src/server/utils/db-helpers.ts`, used by the six paginated list services. Guard with `!== undefined`, never truthiness — `limit: 0` is a real window and a truthiness guard silently returns every row (pinned by `db-helpers.test.ts` 'binds limit 0 rather than dropping it'). Note that `offset: 0` is unobservable in emitted SQL because Drizzle's dialect drops a falsy offset, so assert it at the builder level; see [[vacuous-assertion-observation-points]].
+
+A site that forgets `.$dynamic()` fails `pnpm typecheck` (TS2345 at the helper call, plus a downstream TS2322 where the widened row type meets the method's declared return) — verify by exit code, not by grepping the output, since ANSI colour codes split the literal `error TS`. `mockDbChain` needs no change: its Proxy returns the chain for any unknown property, so `.$dynamic()` is transparent to every mock-based suite.
+
+## qbittorrent-hybrid-v2-hash-rekey
+
+**source:** #2423
+**added:** 2026-08-18
+**files:** src/core/download-clients/qbittorrent.ts
+**tags:** qbittorrent, bittorrent-v2, libtorrent, download-clients, hash-identity
+
+---
+
+**A BitTorrent v1+v2 hybrid torrent does not keep answering to the v1 hash you grabbed it by.** qBittorrent on libtorrent 2.x re-keys its canonical API `hash` to the TRUNCATED v2 hash (first 40 hex chars of the SHA-256 v2 infohash) once metadata is fetched, moving the SHA-1 v1 to `infohash_v1` and the full 64-char v2 to `infohash_v2`. The switch lands seconds after the add, while the torrent is still in `metaDL` — so a poller that stored the v1 at grab time gets `[]` from `torrents/info?hashes=<v1>` on its FIRST cycle, reads that as death, and fails/blacklists a download that is running fine (#2423, observed live).
+
+**Match on all three identities, never the canonical hash alone:** `hash`, `infohash_v1`, `infohash_v2.slice(0, 40)`, case-folded on both sides (magnet infohashes normalize lowercase via `normalizeInfoHash`, but `.torrent`-derived and operator-supplied values do not). Keep `?hashes=` as the fast path so v1-only torrents cost exactly one request and behave byte-identically; fall back to ONE (category-scoped) list scan only on a miss. Shipped as `isSameTorrent` / `resolveTorrent` in `src/core/download-clients/qbittorrent.ts`.
+
+**Both fields must be `.nullish()`, and empty must never match.** qBittorrent < 4.4 (libtorrent 1.2) omits them entirely; current builds emit `""` for the axis a torrent lacks. An `infohash_v1: ""` must match nothing — including an empty queried hash — or the first element of the fallback list becomes a false positive. `.passthrough()` alone is not enough: it lets the fields survive parsing but leaves them untyped and therefore unreachable from `mapItem`/matching code, so declare them explicitly on `qbTorrentSchema`.
+
+**The read path is not the whole defect.** qBittorrent resolves `hashes=` identically for `torrents/info`, `torrents/pause`, `torrents/resume` and `torrents/delete`. Fixing only `getDownload` makes the monitor track a hybrid all the way to a successful import and then silently fail to remove it — an orphan seeder plus a compensating-delete leak. Route the controls through the same resolution and POST the resolved canonical hash; when nothing resolves, send the caller's hash through unchanged so a delete for an already-gone torrent stays a no-op rather than an error.
+
+Scope this to qBittorrent — v2-hybrid re-keying is a libtorrent-2.x behavior; Transmission (`hashString`) and Deluge are unaffected. Sonarr and Radarr both hit this and both resolved it by multi-identity matching. Testing it needs a real adapter over MSW, not a fake ([[degrading-adapter-invisible-to-mock-suite]]): a double that returns the item only exercises the branch where resolution already succeeded. Exemplars: the `hybrid v1/v2 hash identity (#2423)` describe in `src/core/download-clients/qbittorrent.test.ts` and `src/server/jobs/monitor-hybrid.integration.test.ts`.
+
+## abb-tokenizer-keeps-apostrophe-in-word
+
+**source:** #2422
+**added:** 2026-08-18
+**files:** src/core/indexers/abb-query.ts
+**tags:** audiobookbay, indexer-query, search-ladder, tokenization
+
+---
+
+AudioBookBay's search is AND-over-stemmed-tokens, but its tokenizer treats the apostrophe as a WORD character: the indexed token for "Rider's" is matched by neither `rider` nor `riders`, and by no de-apostrophized spelling at all. Under AND semantics the only winning move is to omit the apostrophe-bearing word entirely — guessing its indexed form (straight vs curly, s vs no-s) is a losing bet.
+
+**The structural trap.** The fold cannot live inside `abb.ts` on the query it receives. `cleanIndexerQuery` (`src/server/services/indexer-query.ts`) DELETES apostrophes rather than substituting a space, and `IndexerSearchService.prepareSearch` derives `transportQuery` from it before every `adapter.search()` call — so `Riders` from `Rider's` is indistinguishable from a genuine `Riders` by the time any adapter runs. `buildQueryLadder` strips even earlier, at `rung.query`. The apostrophe-bearing text exists exactly one layer above every strip site: `normalizeTitleForVariantMatch` keeps `'` and folds `‘`/`’` to it (keep class `/[^a-z0-9' ]+/g`), so `variant.raw` retains it — lowercased, which is why relaxed rungs are mixed-case (lowercase title, source-cased author).
+
+**The shape that shipped (#2422):** an apostrophe-preserving twin cleaner (`cleanIndexerQueryKeepingApostrophes`, sharing the original's punctuation/whitespace tail so the two cannot drift), an optional `SearchOptions.queryWithApostrophes` populated in `prepareSearch` (caller-supplied wins), a REQUIRED `Rung.queryWithApostrophes` forwarded by all three rung-dispatch sites, and the pure fold `buildAbbQuery` in `src/core/indexers/abb-query.ts`. `rungDedupKey` stays keyed on `rung.query` alone — keying on the apostrophe form would split rung 1 from the equivalent full variant and lengthen the ladder.
+
+**Do not widen `cleanIndexerQuery` instead.** Newznab, Torznab and MAM all tokenize normally, so `riders` matches there; changing the shared cleaner changes every one of their requests for a bug scoped to one indexer. This is per-adapter query MAPPING, not shared-query-builder policy — expect future indexer quirks to want the same treatment.
+
+Related: [[degrading-adapter-invisible-to-mock-suite]] — the proof for this class has to drive the REAL adapter through the real service seam with MSW (`src/server/services/abb-apostrophe-query.integration.test.ts`), because a mock adapter builds whatever URL the test wants. [[ladder-rung-count-needs-colon-segments]] — the multi-rung half needs a colon-segmented fixture or it asserts nothing.
+
+## buffer-base64-never-throws
+
+**source:** #2421  
+**added:** 2026-08-18  
+**files:** src/core/indexers/abb-re-ab.ts  
+**tags:** node, base64, buffer, input-validation
+
+---
+
+**`Buffer.from(x, 'base64')` never throws.** Measured on Node 24: `Buffer.from('not base64!!!***', 'base64')` returns mojibake bytes, `Buffer.from('', 'base64')` returns an empty buffer, and embedded whitespace is ignored entirely. A `try/catch` around a base64 decode is therefore not a guard — it can never fire — and any port of a decoder from a platform whose base64 function DOES throw (.NET's `Convert.FromBase64String`, which Jackett relies on) silently accepts every malformed payload.
+
+Validity has to be an explicit test, on both sides of the decode:
+
+1. **Before** — reject empty/whitespace-only, and require the alphabet: `/^[A-Za-z0-9+/]+={0,2}$/` over the whitespace-stripped payload. Strip whitespace first rather than rejecting on it: `Buffer` tolerates a blob split across newlines and indentation, and real payloads are formatted that way.
+2. **After** — a decode that produced characters is not the same as a decode that produced what you asked for. For HTML, `cheerio.load(decoded, null, false)('*').length > 0` is the observation point: it answers `0` for `Hello`, `''` and mojibake, and `> 0` for any real markup fragment (cheerio@1.2.0).
+
+Shipped at `src/core/indexers/abb-re-ab.ts:41-48` (#2421). The failure mode a guard invites in the other direction is over-rejection, so pin positive controls alongside the reject table — a padded blob, an **unpadded** blob, and a whitespace-split blob are all shapes `Buffer` accepts and a hand-tightened guard tends to refuse. Both tables live in `src/core/indexers/abb-re-ab.test.ts`. Same family as [[cheerio-br-zero-width-text]]: measure the library's actual behaviour before building code or tests on what it looks like it should do.
+
+## url-setters-noop-on-opaque-path
+
+**source:** #2434  
+**added:** 2026-08-18  
+**files:** src/core/indexers/abb-url.ts  
+**tags:** whatwg-url, node-24, url-normalization, scheme-validation
+
+---
+
+**The WHATWG `URL` `protocol` and `host` setters are specified as no-ops when the URL has an opaque path** — every non-special scheme, including `javascript:`, `mailto:` and `data:`. `const u = new URL('javascript:alert(1)'); u.protocol = 'https:'; u.host = 'abb.test';` leaves `u.href === 'javascript:alert(1)'`. The same assignments on `https://other.test/x` work normally, which is what makes the trap survive a casual test.
+
+**So never re-host a URL by assignment when the input is untrusted.** The natural rewrite — `const u = new URL(href, base); u.protocol = base.protocol; u.host = base.host; return u.href;` — returns the attacker/markup-supplied `javascript:` URL completely unchanged, and any downstream `startsWith('https://')` check becomes the only guard between it and a `fetch`. Instead: check `resolved.protocol` against `http:`/`https:` first, then COMPOSE the output as a string from the parts you want — `` `${base.origin}${resolved.pathname}${resolved.search}${resolved.hash}` ``. `rewriteAbbUrl` in `src/core/indexers/abb-url.ts` (#2434) is the model.
+
+**This is a different branch from a constructor failure, and both need their own cases.** `new URL('http://[::1', base)`, `new URL('http://a b', base)`, `new URL('http://', base)` and `new URL('//', base)` all throw `Invalid URL` on Node 24 and never reach the scheme guard, so an implementation with no `try`/`catch` passes every wrong-scheme test and then throws out of the caller's loop. See the separate 'Arm A' and 'Arm B' describes in `src/core/indexers/abb-url.test.ts` — folding them into one table is exactly how the missing `catch` stays green.
+
+Related, same file: `new URL('#', base)` and `new URL('?', base)` both resolve to `pathname === '/'` with an EMPTY `hash`/`search`, while `new URL('/?p=1', base)` keeps a non-empty `search`. That asymmetry is why a 'does this address a real page' predicate has to be `pathname === '/' && search === ''` and not `pathname === '/'`.
+
+## render-template-drops-empty-segments
+
+**source:** #2435  
+**added:** 2026-08-18  
+**files:** src/core/utils/naming.ts  
+**tags:** naming, folder-format, path-rendering
+
+---
+
+`renderTemplate` (src/core/utils/naming.ts:304-317) filters empty path segments BEFORE calling `sanitizePath`, so a folder token with no value causes its entire segment to be dropped — `sanitizePath`'s `|| 'Unknown'` fallback (:143) is not reachable that way.
+
+Measured against the real module:
+- `renderTemplate('{author}/{year}/{title}', {author:'A', year:undefined, title:'T'})` → `'A/T'` (no `Unknown` segment)
+- `renderTemplate('{author}/{title}', {author:undefined, title:'T'})` → `'T'`
+- `renderTemplate('{author}/{title}', {author:':::', title:'T'})` → `'Unknown/T'` — the fallback fires only for a segment that is non-empty but sanitizes to empty.
+- `renderFilename('{author} - {title}', {author:undefined, title:undefined})` → `'-'` — it does not split, so its single segment does reach the fallback.
+
+Two consequences. First, do not write "an absent token renders Unknown" into a spec or a test for FOLDER templates; assert the segment's absence instead. #2435's AC25 asserted the fallback and was wrong, caught only because the test reded. Second, `{author}` looks like a counterexample but is not: `buildTargetPath` (src/server/utils/import-helpers.ts:108) defaults it to `'Unknown Author'` before templating, so it never reaches the template empty.
+
+Worked reference: 'renders no year at all for a dateless incumbent (AC25)' in src/server/services/import-adapters/manual-attach.integration.test.ts, which drives a conflicting source-supplied year through to prove the outcome is absence rather than substitution.
+
+## modal-null-return-keeps-usestate
+
+**source:** #2435  
+**added:** 2026-08-18  
+**files:** src/client/pages/book/ImportFilesPicker.tsx  
+**tags:** react, modal-state, component-lifecycle
+
+---
+
+`if (!isOpen) return null` does NOT unmount a React component — the fiber and its hook state survive, so a `useState` initializer runs once per mount rather than once per open. A modal holding a user choice therefore leaks that choice into its next session whenever the parent renders it unconditionally.
+
+**The repo's convention is the outer-gate/inner-content split, not a reset effect.** `DirectoryBrowserModal` (src/client/components/DirectoryBrowserModal.tsx) is the reference:
+
+```tsx
+export function DirectoryBrowserModal({ isOpen, ...props }) {
+  if (!isOpen) return null;
+  return <DirectoryBrowserContent isOpen={isOpen} {...props} />;   // all state lives here
+}
+```
+
+with the comment *'Mounting this inner component resets initialPath state without a syncing effect'*. Prefer it over `useEffect(() => setMode('copy'), [isOpen])`, which must be updated every time new state is added.
+
+**When it actually bites.** Only when the parent mounts the modal unconditionally. In this codebase:
+- unconditional (hazardous): `ImportFilesPicker` (BookDetails.tsx:128), `ManualAddFormModal` (SearchTabContent).
+- conditionally rendered by the parent, so they genuinely unmount: `BookMetadataModal`, `BookFixMatchModal`, `RetagPreviewModal`, `BookEditModal` — their internal `return null` guard is belt-and-braces.
+
+**Measured instance (#2435 / PR #2438, caught in review).** `ImportFilesPicker` defaulted its copy/move control to the safe `copy`. Selecting `move`, cancelling, and reopening retained `move`, so accepting the apparent default would have deleted the source. Fixed by the split above.
+
+**Testing it.** `rerender` from `renderWithProviders` replaces the root and drops the provider wrapper, so it cannot express open→close→open here. Use a harness component that owns the flag and mounts the modal unconditionally, then assert the SUBMITTED payload (`onSubmit` args), not the control's `aria-checked` — the latter can pass while the value sent on submit is stale. Reference: src/client/pages/book/ImportFilesPicker.test.tsx.
+
+## url-strips-trailing-query-whitespace
+
+**source:** #2433  
+**added:** 2026-08-18  
+**files:** src/core/download-clients/qbittorrent.test.ts  
+**tags:** whatwg-url, msw, query-params, test-observability
+
+---
+
+The WHATWG URL parser strips leading/trailing C0-control-or-space from its input string, so a whitespace-only query value in the LAST position of a URL is unobservable: `new URL('http://h/p?hashes=   ').searchParams.get('hashes')` returns `''` and href normalizes to `?hashes=`. Mid-URL it survives — `new URL('http://h/p?hashes=   &x=1')` gives `'   '`, percent-encoded as `%20%20%20`. Verified on Node 24.
+
+Why it costs time: in an MSW test that inspects the outgoing request, the stripped value reads as an empty param, which is indistinguishable from production having dropped or mis-encoded it. A test asserting `params.get('x')).toBe('   ')` fails against correct production code.
+
+**Rule.** When pinning empty/whitespace/blank input behavior at an HTTP seam, choose an observation point that survives URL normalization — assert the request COUNT delta (or a `.not.toBe(<the value the broken impl would send>)`), not the param value. Exemplars: the #2433 A9 cases in `src/core/download-clients/qbittorrent.test.ts`, where the count delta is exactly what separates a `!key` guard from a `!key.trim()` guard in `memoKey`. Distinct from [[msw-url-matching-ipv6-and-path-case]], which covers handler-side URL matching rather than request-side readback.
+
+## layered-lock-boundary-park-point
+
+**source:** #2369  
+**added:** 2026-08-18  
+**files:** src/server/services/claim-lock-protocol.integration.test.ts  
+**tags:** locking, mutation-testing, test-observability, concurrency
+
+---
+
+**The trap.** When a system has more than one lock tier and you add or verify one of them, an ordered-boundary test observes only the tier that is actually held at the point you parked the first mutator. If an inner tier is also sufficient to produce the asserted ordering, deleting the outer one leaves the test green — the redundant-sites failure mode of [[symmetric-mutation-cannot-observe-shared-derivation]] arm B, in the locking medium.
+
+**Measured instance (#2369).** Narratorr's three tiers are `withBookAdmissionLock` (book id, `src/server/utils/book-admission-lock.ts`) → the claim-key protocol (`src/server/utils/claim-lock.ts`) → the file key (`src/server/utils/path-write-lock.ts`). `renameBook` holds admission for the whole operation but its claim keys only from `withPathWriteLocks` onward. Parking the rename inside `fs.rename` — the gate `claim-lock-protocol.integration.test.ts` already provides — sits inside both tiers, so a delete issued against it blocks on the CLAIM key: removing deletion's admission acquisition left the suite 12/12 green. Parking inside `planApply` instead (gate the first `bookService.getById`) leaves the rename holding admission alone, and the same mutation reds.
+
+**The rule.** Before writing an ordered-boundary case for a lock, enumerate every tier the parked mutator holds at the park point, and move the park to a moment where only the tier under test is held. If no such moment exists, the tier may be genuinely redundant for that pair — which is itself the finding.
+
+**Observation points that discriminate.** Assert the contender has not reached its own first read — `expect(getById).toHaveBeenCalledTimes(1)` plus the durable row still naming the pre-mutation path — rather than asserting completion order, which both tiers produce. For a sweep bounded by a semaphore, count the participants that reached the lock (`events.filter(e => e.startsWith('lock.acquire:')).length`) rather than racing a timer; the deterministic count reds when the bound is removed and a wall-clock probe does not.
+
+**Related.** Adding an outer lock to nearly every mutator also makes the lock registry shared suite state: a case that leaves a section running queues the next case's mutator behind it forever, surfacing as unrelated assertion failures in other files ([[shared-suite-state-inflates-counterfactual]]). Reset it in a `setupFiles` hook. See also [[vacuous-assertion-observation-points]].
+
+## vitest-fork-teardown-crash-reds-green-suite
+
+**source:** #2445  
+**added:** 2026-08-18  
+**files:** scripts/vitest-selection-guard.ts  
+**tags:** vitest, ci, forks-pool, windows, json-reporter
+
+---
+
+Vitest's forks pool can crash at TEARDOWN — after every test file has already reported — and vitest counts the unhandled error and exits non-zero on a fully green suite. Observed ~1 run in 4 on `windows-latest` at vitest 4.1.10 (#2445). Signature: `Errors  1 error` / `Error: [vitest-pool]: Worker forks emitted error.` / `Caused by: Error: Worker exited unexpectedly`. Upstream vitest-dev/vitest#9762 is byte-identical on 4.0.18 and was closed as not planned, so a version bump is not a fix; #8861 (truncated module transfer) and #8766 (worker termination timeout) are different failures.
+
+**Rule: to tell a post-suite teardown crash from a mid-run worker death, read the JSON report's per-test records — never its aggregate counters.** Both directions were measured on 4.1.10:
+
+- A real mid-run kill (`process.kill(process.pid, 'SIGKILL')` inside a test, `--pool=forks --maxWorkers=1 --fileParallelism=false`): every selected file is still present (vitest enumerates modules up front, so a worker death omits nothing), the killed file's `status` is `'passed'`, `success` is `true`, and `numFailedTests`/`numFailedTestSuites` are 0. The only evidence is the killed test's `assertionResults[].status === 'pending'`.
+- A clean run containing `describe.todo` (exit 0): `numPendingTestSuites` is 2 and the todo-only file's `assertionResults` is `[]`. So `numPendingTestSuites === 0` and 'reject an empty `assertionResults`' each false-red a healthy run.
+
+Adjudicate with a CLOSED allowlist over `assertionResults[].status` — exactly `passed`, `skipped`, `todo`. Vitest's `StatusMap` maps `pass`→`passed`, `fail`→`failed`, `run`/`queued`/`only`→`pending`, `skip`→`skipped`, `todo`→`todo`, so deliberate work and unfinished work stay distinct where the counters collapse them. Anything unrecognized reds, which is what makes the rule fail closed against a future vitest. Also require `Array.isArray(testResults[].assertionResults)` (vitest always builds it with `tests.map(...)`) while ACCEPTING `[]`, and require at least one `passed` assertion so a record-stripped report cannot pass vacuously. Never gate on `numTotalTestSuites === testResults.length` — that counter counts `describe` blocks, not files (a 7-file run reports 40).
+
+Implementation: `evaluateTeardownCrash` in `scripts/vitest-selection-guard.ts` (pure; all I/O injected via `GuardIo`), composed by `runVitestGuard`, CI entry `scripts/check-vitest-selection.ts`. Two deliberate positive fixtures in `scripts/vitest-selection-guard.test.ts` swallow reports whose counters are omitted and whose counters are mutually incoherent — they exist to red any future change that reintroduces counter arithmetic.
+
+**Capturing the exit code in GitHub Actions:** the bash default is `-eo pipefail`, so `set +e` must precede the pipeline and the code must be read from `${PIPESTATUS[0]}`, not `$?`. Without `set +e` a non-zero run aborts the step before the guard sees it; with `$?` you get tee's status. Either mistake yields a silently-always-zero code, which turns the guard into a no-op that swallows real failures.
+
+Stated limit: a file the run never SELECTED does not appear in the report at all, and a file enumerated but never COLLECTED is indistinguishable from a legitimate `describe.todo`-only file (both `assertionResults: []`). Neither is covered by this rule; the first stays covered by the per-project selection checks plus the `REQUIRED_FILES` control. See [[vitest-passwithnotests-hides-empty-selection]] — whose 'deliberately ungated — if the tests failed the job is already red for the right reason' sentence is now false: the guard step is the job's only verdict and adjudicates the exit code.
+
+## playwright-webserver-precedes-globalsetup
+
+**source:** #2452  
+**added:** 2026-08-19  
+**files:** e2e/playwright.config.ts  
+**tags:** playwright, e2e-harness, process-lifecycle, config-evaluation
+
+---
+
+Two non-configurable facts about `@playwright/test` (verified on 1.62.1) that between them invalidate the natural reading of a harness config:
+
+**1. `webServer` entries start BEFORE `globalSetup`.** Anything `globalSetup` prepares for the server is observed as absent by every boot-time reader. In this repo that is `runMigrations`, the `settings.general` log-level read, `AuthService.initialize()`, and all of `startRuntime` (`src/server/index.ts:112-176`, `src/server/startup.ts:18`). Seeding in `globalSetup` is therefore a nondeterminism generator, not merely a style choice — it produced the #2452 critical-path flake.
+
+The fix shape is to move the setup into the server's own launch path so ordering is structural: make `webServer.command` a wrapper that seeds, verifies, then starts the server IN THE SAME PROCESS — `node --import tsx ./fixtures/seed-and-serve.ts`, which ends in `await import('../../dist/server/index.js')`. `--import tsx` registers the loader in-process so Playwright manages exactly one PID and its existing kill path keeps working; a bare `tsx <file>` CLI invocation forks a child and risks an orphaned server after teardown. Node has no `execve`, so a literal exec is unavailable. Verify the seed through a **fresh** connection before booting — a same-connection read cannot observe the defect this guards.
+
+**2. `playwright.config.ts` is evaluated in MULTIPLE processes** — the runner, every worker, and tooling (`--list`, IDE extensions). Module-scope side effects run once per process, not once per run. Three `createRunTempDirs()` calls at module scope (5 `mkdtempSync` each) leaked ~15 directories per config load; **14,962** `narratorr-e2e-*` directories were measured in %TEMP% on 2026-08-18. Guard such work behind a manifest published on `process.env` at config time — config-time env DOES reach worker processes, unlike `globalSetup` env mutations which are same-process only. The first loader allocates and publishes; later loaders adopt and allocate nothing. Tooling processes inheriting no env still allocate one batch, so pair the guard with an age-floored sweep as a second line.
+
+Two supporting details worth not re-deriving: `webServer.command` runs with `cwd` defaulting to the config file's directory (`runner/index.js:827`), and `webServer.env` is MERGED over `process.env` (`{...DEFAULT_ENVIRONMENT_VARIABLES, ...process.env, ...options.env}`, `runner/index.js:857-862`), so a shell override of a port variable does reach the wrapper.
+
+See `e2e/README.md` "How the harness is wired" and "Ownership model", and the config sentinels in `e2e/global-setup.test.ts` that red if a `command` is reverted to a bare bundle launch.

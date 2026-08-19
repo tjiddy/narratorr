@@ -10,9 +10,10 @@ import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { MergeStateSnapshot } from '@shared/schemas/sse-events.js';
 import { readdir, rename } from 'node:fs/promises';
+import { withBookAdmissionLock } from './book-admission.js';
 import {
   BOOK_PATH, STAGING_DIR, mockAuthor, mockBook, processingOverrides,
-  settle, setupHappyPath, setupBlockingMerge,
+  settle, setupHappyPath, setupBlockingMerge, deferred,
 } from './__tests__/merge-fixtures.js';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -41,7 +42,7 @@ vi.mock('@core/utils/audio-scanner.js', () => ({
 }));
 
 vi.mock('./enrichment-utils.js', () => ({
-  enrichBookFromAudio: vi.fn(),
+  enrichBookFromAudioWithinAdmissionLock: vi.fn(),
 }));
 
 // Marker recovery touches real fs and short-circuits incorrectly under this suite's fs mocks.
@@ -456,6 +457,34 @@ describe('#2129 merge_state snapshot', () => {
 
       expectTerminalOrder(harness, 43, 'merge_failed');
       expect(harness.service.getMergeStateSnapshot()).toEqual({ active: [], queued: [] });
+    });
+
+    it('a cancel during the admission wait: state dropped, merge_failed(cancelled), then one cleared snapshot', async () => {
+      setupBlockingMerge();
+      const harness = createSnapshotHarness({ books: [{ id: 42, title: 'Dogs of War' }] });
+
+      // Park the merge on the real admission lock: broadcast active, but with nothing yet to abort.
+      const parked = deferred();
+      const holder = withBookAdmissionLock(42, () => parked.promise);
+
+      await harness.service.enqueueMerge(42);
+      await settle();
+      expect(harness.service.getMergeStateSnapshot().active).toEqual([
+        { book_id: 42, book_title: 'Dogs of War', phase: 'starting' },
+      ]);
+
+      expect(await harness.service.cancelMerge(42)).toEqual({ status: 'cancelled' });
+
+      expectTerminalOrder(harness, 42, 'merge_failed');
+      expect(harness.service.getMergeStateSnapshot()).toEqual({ active: [], queued: [] });
+      expect(harness.framesAfter('merge_failed', 42).filter((f) => f.event === 'merge_state')).toHaveLength(1);
+
+      // Waking adds no further frame: clearResidue is a no-op once the entry is gone.
+      parked.resolve();
+      await holder;
+      await settle();
+      expect(harness.framesAfter('merge_failed', 42).filter((f) => f.event === 'merge_state')).toHaveLength(1);
+      expect(harness.events()).not.toContain('merge_started');
     });
 
     it('does not add a second, backstop-driven frame on the normal terminal path', async () => {

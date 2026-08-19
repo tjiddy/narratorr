@@ -7,6 +7,8 @@ import type * as HardcoverModule from '@core/metadata/hardcover.js';
 import type { Services } from './index.js';
 import { SECRET_CATEGORIES } from '../utils/secret-category-map.js';
 import { getSecretFieldNames, SentinelOnNonSecretFieldError } from '../utils/secret-codec.js';
+import { LibraryRootBusyError } from '../services/library-root-gate.js';
+import { apiErrorResponseSchema } from '@shared/schemas.js';
 
 const { mockHardcoverSearchSeries, mockHardcoverClientCtor, mockFetchWithTimeout } = vi.hoisted(() => {
   const searchSeriesFn = vi.fn();
@@ -218,6 +220,42 @@ describe('settings routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
+    });
+
+    /**
+     * #2369 AC15 case 24. `LibraryRootBusyError` reaches the client only if it is in
+     * `ERROR_REGISTRY`; an unregistered error falls through to the generic 500 arm with its message
+     * stripped, so the operator would be told "Internal server error" for a retryable conflict.
+     */
+    describe('root-scope refusal (#2369 AC15)', () => {
+      it('maps LibraryRootBusyError to 409 with the error message intact', async () => {
+        (services.settings.update as Mock).mockRejectedValue(new LibraryRootBusyError(2));
+
+        const res = await app.inject({
+          method: 'PUT',
+          url: '/api/settings',
+          payload: { library: { path: '/new', folderFormat: '{title}' } },
+        });
+
+        expect(res.statusCode).toBe(409);
+        const body = JSON.parse(res.payload);
+        // Round-trips the registered `{ error }` response schema, not a generic 500 body.
+        expect(apiErrorResponseSchema.safeParse(body).success).toBe(true);
+        expect(body.error).toContain('2 import, merge or rename');
+        expect(body.error).not.toBe('Internal server error');
+      });
+
+      it('leaves a non-library category update unaffected by the root gate', async () => {
+        (services.settings.update as Mock).mockResolvedValue(mockSettings);
+
+        const res = await app.inject({
+          method: 'PUT',
+          url: '/api/settings',
+          payload: { search: { enabled: false } },
+        });
+
+        expect(res.statusCode).toBe(200);
+      });
     });
   });
 

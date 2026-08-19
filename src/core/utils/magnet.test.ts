@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildMagnetUri, parseInfoHash } from './magnet.js';
+import { TRACKERS, buildMagnetUri, parseInfoHash } from './magnet.js';
 
 describe('buildMagnetUri', () => {
   it('builds a valid magnet URI from info hash', () => {
@@ -25,13 +25,32 @@ describe('buildMagnetUri', () => {
     expect(uri).not.toContain('dn=');
   });
 
-  it('includes all trackers', () => {
+  it('appends exactly one tr param per tracker, in list order', () => {
     const hash = 'aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d';
-    const uri = buildMagnetUri(hash);
 
-    expect(uri).toContain('tracker.opentrackr.org');
-    expect(uri).toContain('open.stealth.si');
-    expect(uri).toContain('tracker.torrent.eu.org');
+    const params = new URL(buildMagnetUri(hash)).searchParams;
+
+    expect(params.getAll('tr')).toEqual([...TRACKERS]);
+  });
+});
+
+/**
+ * #2420 — the list is refreshed by hand from ngosang/trackerslist, so what a test can hold it to is
+ * structure, not membership: entry-restating assertions break by design on every legitimate
+ * refresh while the structural ones beside them carry the regression power.
+ */
+describe('the tracker list', () => {
+  it('is non-empty and free of duplicates', () => {
+    expect(TRACKERS.length).toBeGreaterThan(0);
+    expect(new Set(TRACKERS).size).toBe(TRACKERS.length);
+  });
+
+  it.each([...TRACKERS])('parses %s as a udp/http/https announce URL with a host', (tracker) => {
+    const parsed = new URL(tracker);
+
+    expect(['udp:', 'http:', 'https:']).toContain(parsed.protocol);
+    expect(parsed.hostname).not.toBe('');
+    expect(parsed.pathname).toBe('/announce');
   });
 });
 
@@ -62,6 +81,18 @@ describe('parseInfoHash', () => {
     const uri = buildMagnetUri(hash, 'Test Book');
 
     expect(parseInfoHash(uri)).toBe(hash);
+  });
+
+  // The refreshed tracker list widens the query string, so the round-trip is re-pinned for both
+  // hash widths and for the optional display name in each direction.
+  it.each([
+    ['hex-40', 'AAF4C61DDCC5E8A2DABEDE0F3B482CD9AEA9434D'],
+    ['base32-32', 'VLFHEXOM4XUKFWW55YHT3SBNT2XKSNIN'],
+  ])('round-trips a %s hash lowercased, named and unnamed', (_label, hash) => {
+    expect(parseInfoHash(buildMagnetUri(hash, 'Test Book'))).toBe(hash.toLowerCase());
+    expect(parseInfoHash(buildMagnetUri(hash))).toBe(hash.toLowerCase());
+    expect(buildMagnetUri(hash, 'Test Book')).toContain('dn=Test+Book');
+    expect(buildMagnetUri(hash)).not.toContain('dn=');
   });
 
   it('returns null for invalid magnet URI', () => {

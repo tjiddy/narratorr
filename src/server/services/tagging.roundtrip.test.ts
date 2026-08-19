@@ -741,6 +741,8 @@ describe.skipIf(!CAN_RUN)('#2078 re-tag self-heals a metadata-naked merged m4b, 
           seriesName: 'The Stormlight Archive', seriesPosition: 1, asin: 'B00ABCDEFG',
           subtitle: 'Book One', publisher: 'Tor Books', coverUrl: null,
         },
+        // The #2461 in-section guard: the row must still name the folder being tagged.
+        bookService: { getById: () => Promise.resolve({ id: 1, path: importDir }) } as never,
         log: { info: () => {}, warn: () => {}, debug: () => {} } as never,
       });
 

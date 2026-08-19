@@ -18,6 +18,7 @@ import type {
   NotifierService,
   ConnectorService,
   BlacklistService,
+  ImportListExclusionService,
   RemotePathMappingService,
   RenameService,
   EventHistoryService,
@@ -65,6 +66,7 @@ export interface Services {
   notifier: NotifierService;
   connector: ConnectorService;
   blacklist: BlacklistService;
+  importListExclusion: ImportListExclusionService;
   remotePathMapping: RemotePathMappingService;
   rename: RenameService;
   merge: MergeService;
@@ -113,6 +115,7 @@ export const SERVICE_KEYS = Object.keys({
   notifier: true,
   connector: true,
   blacklist: true,
+  importListExclusion: true,
   remotePathMapping: true,
   rename: true,
   merge: true,

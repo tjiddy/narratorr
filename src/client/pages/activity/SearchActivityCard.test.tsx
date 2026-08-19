@@ -98,6 +98,26 @@ describe('SearchActivityCard', () => {
     });
   });
 
+  describe('timed_out outcome (#2310)', () => {
+    it('shows the abandoned-search copy and its own "timed out" label', () => {
+      const state = makeState({ outcome: 'timed_out' });
+      render(<SearchActivityCard state={state} />);
+      expect(screen.getByText(/Search took too long and was abandoned/)).toBeInTheDocument();
+      expect(screen.getByText('timed out')).toBeInTheDocument();
+      // Never presented as a genuine miss.
+      expect(screen.queryByText(/No results found/)).not.toBeInTheDocument();
+    });
+
+    it('stops the header spinner and shows the terminal icon, like grab_error and skipped', () => {
+      const done = new Map([[10, { name: 'MAM', status: 'complete' as const, resultsFound: 0, elapsedMs: 10 }]]);
+      const { container } = render(<SearchActivityCard state={makeState({ outcome: 'timed_out', indexers: done })} />);
+
+      expect(screen.getByTestId('loading-spinner').getAttribute('class')).toContain('hidden');
+      // isTerminalError drives the header's status icon; without timed_out in it none renders.
+      expect(container.querySelector('.p-1\\.5 > svg:not([data-testid="loading-spinner"])')).not.toBeNull();
+    });
+  });
+
   describe('mixed states', () => {
     it('renders card with 2 complete, 1 error, 1 pending indexers correctly', () => {
       const state = makeState({

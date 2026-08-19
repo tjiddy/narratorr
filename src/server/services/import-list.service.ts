@@ -8,27 +8,40 @@ import type { MetadataService } from './metadata.service.js';
 import { encryptFields, decryptFields, getKey } from '../utils/secret-codec.js';
 import { resolveAndEncryptSettings, resolveSettings } from '../utils/sentinel-resolver.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { serializeError } from '../utils/serialize-error.js';
 import type { BookService } from './book.service.js';
+import type { ImportListExclusionService } from './import-list-exclusion.service.js';
 import { addBook, type AddBookDeps, type AddBookEvent } from './book-intake/index.js';
 import type { ImportListType } from '@shared/import-list-registry.js';
 import { importListSettingsSchemas, type ImportListSettings } from '@shared/schemas/import-list.js';
 import type { ImportListRow } from './types.js';
-import { triggerImmediateSearch, type ImmediateSearchDeps } from './trigger-immediate-search.js';
-import type { AppSettings } from '@shared/schemas.js';
-
-type QualitySettings = AppSettings['quality'];
+import type { ImmediateSearchBook, ImmediateSearchDeps } from './trigger-immediate-search.js';
+import { runImmediateSearchChain } from './immediate-search-chain.js';
 
 const MS_PER_MINUTE = 60_000;
 
 type NewImportList = typeof importLists.$inferInsert;
 
-/** Per-item result used to report created versus review-held counts (#1735). */
-type ItemOutcome = 'created' | 'held_review' | 'skipped';
+/** Per-item result used to report created versus review-held versus excluded counts (#1735, #2305). */
+type ItemOutcome = 'created' | 'held_review' | 'skipped' | 'excluded';
+
+/** A created book carries the payload its search will key on; every other outcome carries none. */
+interface ItemResult {
+  outcome: ItemOutcome;
+  search?: ImmediateSearchBook;
+}
 
 interface SyncCounts {
   createdCount: number;
   heldReviewCount: number;
+  /** Items the operator already deleted once; disjoint from the other two counters. */
+  excludedCount: number;
 }
+
+/** What one list's sync did. A `failed` sync has already recorded `lastSyncError` (#2306). */
+export type SyncOutcome =
+  | { status: 'ok'; counts: SyncCounts }
+  | { status: 'failed'; message: string };
 
 /** Normalize legacy Hardcover `shelfId: ''` before strict per-provider schema parsing. */
 function parseSettingsForType(type: string, settings: Record<string, unknown>): ImportListSettings {
@@ -46,6 +59,7 @@ export class ImportListService {
     private bookService: BookService,
     private metadata?: MetadataService,
     private searchDeps?: ImmediateSearchDeps,
+    private exclusions?: ImportListExclusionService,
   ) {}
 
   private decryptRow(row: ImportListRow): ImportListRow {
@@ -152,27 +166,65 @@ export class ImportListService {
     this.log.info({ count: dueLists.length }, 'Processing due import lists');
 
     for (const list of dueLists) {
-      try {
-        const counts = await this.syncList(list);
-        const nextRunAt = new Date(Date.now() + list.syncIntervalMinutes * MS_PER_MINUTE);
-        await this.db
-          .update(importLists)
-          .set({ lastRunAt: now, nextRunAt, lastSyncError: null })
-          .where(eq(importLists.id, list.id));
-        this.log.info(
-          { id: list.id, name: list.name, createdCount: counts.createdCount, heldReviewCount: counts.heldReviewCount },
-          'Import list sync completed',
-        );
-      } catch (error: unknown) {
-        const message = getErrorMessage(error);
-        const nextRunAt = new Date(Date.now() + list.syncIntervalMinutes * MS_PER_MINUTE);
-        await this.db
-          .update(importLists)
-          .set({ lastSyncError: message, nextRunAt })
-          .where(eq(importLists.id, list.id));
-        this.log.error({ id: list.id, name: list.name, error: message }, 'Import list sync failed');
-      }
+      // The outcome is the manual path's return value; here the failure is already logged inside.
+      await this.syncAndRecord(list, now);
     }
+  }
+
+  /**
+   * Run one list to completion and be the sole writer of its `lastRunAt` / `nextRunAt` /
+   * `lastSyncError` bookkeeping — a second copy in either caller is how the scheduled and manual
+   * paths would drift (#2306 AC2). `now` is passed in because `syncDueLists` captures one for the
+   * whole cycle while `nextRunAt` is computed at completion; that mixed pair is preserved as-is.
+   */
+  private async syncAndRecord(list: ImportListRow, now: Date): Promise<SyncOutcome> {
+    try {
+      const counts = await this.syncList(list);
+      // A run — scheduled or manual — always puts the next automatic run one full interval out.
+      // Preserving a manual run's prior `nextRunAt` would leave it in the past, so the cron would
+      // re-sync the same list against the same provider minutes later (#2304's load pattern).
+      const nextRunAt = new Date(Date.now() + list.syncIntervalMinutes * MS_PER_MINUTE);
+      await this.db
+        .update(importLists)
+        .set({ lastRunAt: now, nextRunAt, lastSyncError: null })
+        .where(eq(importLists.id, list.id));
+      this.log.info(
+        {
+          id: list.id,
+          name: list.name,
+          createdCount: counts.createdCount,
+          heldReviewCount: counts.heldReviewCount,
+          excludedCount: counts.excludedCount,
+        },
+        'Import list sync completed',
+      );
+      return { status: 'ok', counts };
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
+      const nextRunAt = new Date(Date.now() + list.syncIntervalMinutes * MS_PER_MINUTE);
+      await this.db
+        .update(importLists)
+        .set({ lastSyncError: message, nextRunAt })
+        .where(eq(importLists.id, list.id));
+      // `message` is what the row and the manual response carry; the log keeps the caught value's
+      // stack, type and cause, which a manual failure is the only interactive way to see.
+      this.log.error({ id: list.id, name: list.name, error: serializeError(error) }, 'Import list sync failed');
+      return { status: 'failed', message };
+    }
+  }
+
+  /**
+   * Operator-triggered sync of one list, admitted by the caller's `import-list-sync` task guard.
+   * Deliberately reads neither `enabled` nor `nextRunAt`: those govern *automatic* scheduling
+   * (`syncDueLists`' where clause), so a disabled list can be run once to check it and stays
+   * disabled — the advanced `nextRunAt` has no effect until the operator re-enables it.
+   */
+  async runNow(id: number): Promise<SyncOutcome | null> {
+    // Raw row, not `getById`: `syncAndRecord` takes one input shape and `syncList` decrypts itself.
+    const results = await this.db.select().from(importLists).where(eq(importLists.id, id)).limit(1);
+    const list = results[0];
+    if (!list) return null;
+    return this.syncAndRecord(list, new Date());
   }
 
   private async syncList(list: ImportListRow): Promise<SyncCounts> {
@@ -188,7 +240,8 @@ export class ImportListService {
 
     const qualitySettings = this.searchDeps ? await this.searchDeps.settingsService.get('quality') : undefined;
 
-    const counts: SyncCounts = { createdCount: 0, heldReviewCount: 0 };
+    const counts: SyncCounts = { createdCount: 0, heldReviewCount: 0, excludedCount: 0 };
+    const pendingSearches: ImmediateSearchBook[] = [];
     for (const item of items) {
       if (!item.title?.trim()) {
         this.log.warn({ listId: list.id, item }, 'Skipping item with empty/null title');
@@ -196,12 +249,22 @@ export class ImportListService {
       }
 
       try {
-        const outcome = await this.processItem(item, list, qualitySettings);
-        if (outcome === 'created') counts.createdCount++;
-        else if (outcome === 'held_review') counts.heldReviewCount++;
+        const result = await this.processItem(item, list);
+        if (result.outcome === 'created') {
+          counts.createdCount++;
+          if (result.search) pendingSearches.push(result.search);
+        } else if (result.outcome === 'held_review') counts.heldReviewCount++;
+        else if (result.outcome === 'excluded') counts.excludedCount++;
       } catch (error: unknown) {
-        this.log.warn({ listId: list.id, title: item.title, error: getErrorMessage(error) }, 'Failed to process import list item');
+        this.log.warn({ listId: list.id, title: item.title, error: serializeError(error) }, 'Failed to process import list item');
       }
+    }
+
+    if (this.searchDeps && qualitySettings?.searchImmediately) {
+      // Awaited, unlike the other batch caller: `TaskRegistry.executeTracked` holds `running`
+      // across this callback, so awaiting is what keeps the `import-list-sync` cron guard honest
+      // for the cycle the searches belong to — no admission state of its own is needed.
+      await runImmediateSearchChain(pendingSearches, this.searchDeps, this.log);
     }
     return counts;
   }
@@ -216,10 +279,13 @@ export class ImportListService {
       bookService: this.bookService,
       eventHistory: { create: (event: AddBookEvent) => Promise.resolve(this.db.insert(bookEvents).values(event)) },
       resolver: this.metadata,
+      // The only surface that gates on exclusions: a list re-adding a deleted book is the loop the
+      // exclusion exists to break, and no manual add has one.
+      exclusions: this.exclusions,
     };
   }
 
-  private async processItem(item: ImportListItem, list: ImportListRow, qualitySettings?: QualitySettings): Promise<ItemOutcome> {
+  private async processItem(item: ImportListItem, list: ImportListRow): Promise<ItemResult> {
     // A shelf item's title and author are user data, so the resolved match owns the row's identity.
     const result = await addBook(this.addDeps(), {
       resolve: 'required',
@@ -231,20 +297,17 @@ export class ImportListService {
       },
     }, this.log);
 
-    if (result.outcome === 'owned-race') return 'skipped';
-    if (result.outcome === 'duplicate') return result.verdict === 'review' ? 'held_review' : 'skipped';
+    if (result.outcome === 'excluded') return { outcome: 'excluded' };
+    if (result.outcome === 'owned-race') return { outcome: 'skipped' };
+    if (result.outcome === 'duplicate') return { outcome: result.verdict === 'review' ? 'held_review' : 'skipped' };
 
     const created = result.book;
     this.log.info({ bookId: created.id, title: created.title, listName: list.name }, 'Book added from import list');
 
-    if (this.searchDeps && qualitySettings?.searchImmediately) {
+    return {
+      outcome: 'created',
       // The row's resolved primary author, not the hydrated list, is what the search query keys on.
-      const bookForSearch = {
-        ...created,
-        authors: result.authorName ? [{ name: result.authorName }] : [],
-      };
-      triggerImmediateSearch(bookForSearch, this.searchDeps, this.log);
-    }
-    return 'created';
+      search: { ...created, authors: result.authorName ? [{ name: result.authorName }] : [] },
+    };
   }
 }

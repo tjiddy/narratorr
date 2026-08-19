@@ -446,4 +446,150 @@ describe('indexers routes', () => {
       expect(body.settings.flareSolverrUrl).toBe('********');
     });
   });
+  /**
+   * #2392 — the schema is the normalizer, so every writer inherits it. The observable is the
+   * argument handed to the mocked service: these routes are wired to `createMockServices`, so a
+   * read-back would return an unrelated mock rather than what was written.
+   */
+  describe('#2392 abb hostname normalization at the HTTP boundary', () => {
+    const abbPayload = (settings: Record<string, unknown>) => ({
+      name: 'AudioBookBay', type: 'abb', enabled: true, priority: 50, settings,
+    });
+
+    it('POST /api/indexers hands service.create the bare host from a pasted URL', async () => {
+      (services.indexer.create as Mock).mockResolvedValue(mockIndexer);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/indexers',
+        payload: abbPayload({ hostname: 'https://audiobookbay.lu/', pageLimit: 2 }),
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(services.indexer.create).toHaveBeenCalledWith(
+        expect.objectContaining({ settings: { hostname: 'audiobookbay.lu', pageLimit: 2 } }),
+      );
+    });
+
+    it('PUT /api/indexers/:id hands service.update the bare host from a pasted URL', async () => {
+      (services.indexer.update as Mock).mockResolvedValue(mockIndexer);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/indexers/1',
+        payload: abbPayload({ hostname: 'https://audiobookbay.lu:8080/index.php?x=1', pageLimit: 2 }),
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.indexer.update).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ settings: { hostname: 'audiobookbay.lu:8080', pageLimit: 2 } }),
+      );
+    });
+
+    it('POST /api/indexers/test hands service.testConfig the bare host — makeTestSchema rebuilds the outer shape, so this path is its own', async () => {
+      (services.indexer.testConfig as Mock).mockResolvedValue({ success: true, message: 'Connected' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/indexers/test',
+        payload: abbPayload({ hostname: 'HTTPS://AudioBookBay.LU/', pageLimit: 2 }),
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.indexer.testConfig).toHaveBeenCalledWith({
+        type: 'abb',
+        settings: { hostname: 'audiobookbay.lu', pageLimit: 2 },
+      });
+    });
+
+    it('AC11 — a masked flareSolverrUrl still resolves on the test path, proving the transform sits on the field and not the object', async () => {
+      (services.indexer.testConfig as Mock).mockResolvedValue({ success: true, message: 'Connected' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/indexers/test',
+        payload: abbPayload({ hostname: 'https://audiobookbay.lu', pageLimit: 2, flareSolverrUrl: '********' }),
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.indexer.testConfig).toHaveBeenCalledWith({
+        type: 'abb',
+        settings: { hostname: 'audiobookbay.lu', pageLimit: 2, flareSolverrUrl: '********' },
+      });
+    });
+
+    it('AC15a — GET returns a legacy pasted hostname verbatim; masking never parses', async () => {
+      (services.indexer.getAll as Mock).mockResolvedValue([
+        { ...mockIndexer, settings: { ...mockIndexer.settings, hostname: 'https://audiobookbay.lu' } },
+      ]);
+
+      const res = await app.inject({ method: 'GET', url: '/api/indexers' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)[0].settings.hostname).toBe('https://audiobookbay.lu');
+    });
+
+    describe('AC9 — the masked-secret sentinel is rejected as an implausible host on every writer', () => {
+      it('POST /api/indexers returns 400 and never calls service.create', async () => {
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/indexers',
+          payload: abbPayload({ hostname: '********', pageLimit: 2 }),
+        });
+
+        expect(res.statusCode).toBe(400);
+        expect(res.json().message).toContain('settings/hostname');
+        expect(services.indexer.create).not.toHaveBeenCalled();
+      });
+
+      it('PUT /api/indexers/:id returns 400 and never calls service.update', async () => {
+        const res = await app.inject({
+          method: 'PUT',
+          url: '/api/indexers/1',
+          payload: abbPayload({ hostname: '********', pageLimit: 2 }),
+        });
+
+        expect(res.statusCode).toBe(400);
+        expect(res.json().message).toContain('settings/hostname');
+        expect(services.indexer.update).not.toHaveBeenCalled();
+      });
+
+      it('POST /api/indexers/test with no id returns 400 and never calls service.testConfig', async () => {
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/indexers/test',
+          payload: abbPayload({ hostname: '********', pageLimit: 2 }),
+        });
+
+        expect(res.statusCode).toBe(400);
+        expect(res.json().message).toContain('settings/hostname');
+        expect(services.indexer.testConfig).not.toHaveBeenCalled();
+      });
+
+      it('POST /api/indexers/test with an id returns 400 before testConfig resolves saved settings', async () => {
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/indexers/test',
+          payload: { ...abbPayload({ hostname: '********', pageLimit: 2 }), id: 1 },
+        });
+
+        expect(res.statusCode).toBe(400);
+        expect(res.json().message).toContain('settings/hostname');
+        expect(services.indexer.testConfig).not.toHaveBeenCalled();
+      });
+    });
+
+    it('rejects a non-HTTP scheme at settings/hostname rather than stripping it', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/indexers',
+        payload: abbPayload({ hostname: 'ftp://audiobookbay.lu', pageLimit: 2 }),
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().message).toContain('settings/hostname');
+      expect(services.indexer.create).not.toHaveBeenCalled();
+    });
+  });
 });

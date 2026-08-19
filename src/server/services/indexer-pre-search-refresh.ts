@@ -1,28 +1,37 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { IndexerAdapter } from '@core/index.js';
+import type { UnsatisfiedStatus } from '@core/utils/mam-unsatisfied.js';
 import { serializeError } from '../utils/serialize-error.js';
 import type { IndexerRow } from './types.js';
 
 export interface PreSearchRefreshDeps {
   log: FastifyBaseLogger;
   update: (id: number, data: { settings: Record<string, unknown> }) => Promise<unknown>;
+  /** Forwarded to the adapter and consulted before degrading; see the catch below. */
+  signal?: AbortSignal | undefined;
 }
 
+/**
+ * The unsatisfied observation is returned, never persisted: it is telemetry about this one search,
+ * so it travels with that search's results rather than outliving them in `settings` or a cache.
+ */
 export async function preSearchRefresh(
   adapter: IndexerAdapter,
   indexer: IndexerRow,
   deps: PreSearchRefreshDeps,
-): Promise<{ skip: boolean; error?: string }> {
-  const { log, update } = deps;
+): Promise<{ skip: boolean; error?: string; unsatisfied?: UnsatisfiedStatus }> {
+  const { log, update, signal } = deps;
 
   if (!adapter.refreshStatus) {
     return { skip: false };
   }
 
-  let status: { isVip: boolean; classname: string } | null;
+  let status: Awaited<ReturnType<NonNullable<IndexerAdapter['refreshStatus']>>>;
   try {
-    status = await adapter.refreshStatus();
+    status = await adapter.refreshStatus(signal);
   } catch (error: unknown) {
+    // Degrading here would swallow cancellation; key the verdict on the signal, never on the error.
+    if (signal?.aborted) throw error;
     log.debug({ indexer: indexer.name, error: serializeError(error) }, 'Pre-search status refresh failed, proceeding with stored status');
     return { skip: false };
   }
@@ -31,7 +40,13 @@ export async function preSearchRefresh(
     return { skip: false };
   }
 
+  const observed = status.unsatisfied !== undefined ? { unsatisfied: status.unsatisfied } : {};
   const existingSettings = (indexer.settings ?? {}) as Record<string, unknown>;
+
+  // isVip and classname derive from one MAM field, so the class arms run only when both arrived.
+  if (status.classname === undefined || status.isVip === undefined) {
+    return { skip: false, ...observed };
+  }
 
   if (status.classname === 'Mouse') {
     try {
@@ -52,5 +67,5 @@ export async function preSearchRefresh(
     }
   }
 
-  return { skip: false };
+  return { skip: false, ...observed };
 }

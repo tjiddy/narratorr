@@ -61,7 +61,18 @@ describe('AutoImportAdapter', () => {
       expect(mockOrchestrator.importDownload).toHaveBeenCalledWith(
         99,
         expect.objectContaining({ setPhase: ctx.setPhase, emitProgress: ctx.emitProgress }),
+        { bookId: 42 },
       );
+    });
+
+    // Without this handoff a vanished download row leaves the orchestrator with no book to attribute
+    // the failure to, and the operator sees only an internal download id (#2307).
+    it('hands the job book context to the orchestrator as the third argument', async () => {
+      const job = makeJob({ bookId: 7 });
+      await adapter.process(job, ctx);
+
+      const [, , jobContext] = mockOrchestrator.importDownload.mock.calls[0]!;
+      expect(jobContext).toEqual({ bookId: 7 });
     });
 
     it('forwards ctx.setPhase and ctx.emitProgress as callback bag to orchestrator', async () => {

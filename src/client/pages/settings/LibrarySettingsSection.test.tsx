@@ -521,3 +521,85 @@ describe('LibrarySettingsSection', () => {
     });
   });
 });
+
+describe('LibrarySettingsSection when the settings read fails', () => {
+  beforeEach(() => {
+    // resetAllMocks, not clearAllMocks: the Retry test queues a `*Once()` rejection and
+    // clearAllMocks does not drain those queues.
+    vi.resetAllMocks();
+    mockApi.browseDirectory.mockResolvedValue({ dirs: [], parent: '/' });
+  });
+
+  it('never persists the schema default over the operator path while the read is unsettled', async () => {
+    let rejectSettings!: (reason: Error) => void;
+    mockApi.getSettings.mockReturnValue(new Promise((_resolve, reject) => { rejectSettings = reject; }));
+
+    renderWithProviders(<LibrarySettingsSection />);
+
+    // Observed while the read is still pending: this is the window the write guard exists for,
+    // and the only one in which the row is reachable — the error branch replaces it afterwards.
+    const pathInput = await screen.findByPlaceholderText('/audiobooks');
+    expect(pathInput).toHaveValue('/audiobooks');
+
+    fireEvent.focus(pathInput);
+    fireEvent.blur(pathInput);
+
+    await waitFor(() => expect(mockApi.getSettings).toHaveBeenCalled());
+    // `/audiobooks` here is RHF's default, not anything this page read from the server.
+    expect(mockApi.updateSettings).not.toHaveBeenCalled();
+
+    await act(async () => {
+      rejectSettings(new Error('settings unreadable'));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(screen.getByText('Failed to load library settings.')).toBeInTheDocument());
+    expect(screen.queryByPlaceholderText('/audiobooks')).not.toBeInTheDocument();
+  });
+
+  it('replaces the path row with the read failure instead of a default-valued field', async () => {
+    mockApi.getSettings.mockRejectedValue(new Error('settings unreadable'));
+
+    renderWithProviders(<LibrarySettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to load library settings.')).toBeInTheDocument();
+    });
+    // A field pre-filled with `/audiobooks` reads as the saved configuration; it is not.
+    expect(screen.queryByPlaceholderText('/audiobooks')).not.toBeInTheDocument();
+  });
+
+  it('refetches and restores the path row when the operator clicks Retry', async () => {
+    mockApi.getSettings
+      .mockRejectedValueOnce(new Error('settings unreadable'))
+      .mockResolvedValue(mockSettings);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibrarySettingsSection />);
+    await waitFor(() => expect(screen.getByText('Failed to load library settings.')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Retry loading library settings' }));
+
+    await waitFor(() => expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks'));
+    expect(screen.queryByText('Failed to load library settings.')).not.toBeInTheDocument();
+    expect(mockApi.getSettings).toHaveBeenCalledTimes(2);
+  });
+
+  it('still saves an edited path on blur once the read has succeeded', async () => {
+    mockApi.getSettings.mockResolvedValue(mockSettings);
+    mockApi.updateSettings.mockResolvedValue(mockSettings);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibrarySettingsSection />);
+    await waitFor(() => expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks'));
+
+    const pathInput = screen.getByPlaceholderText('/audiobooks');
+    await user.clear(pathInput);
+    await user.type(pathInput, '/media/books');
+    fireEvent.blur(pathInput);
+
+    await waitFor(() => {
+      expect(mockApi.updateSettings).toHaveBeenCalledWith({ library: { path: '/media/books' } });
+    });
+  });
+});

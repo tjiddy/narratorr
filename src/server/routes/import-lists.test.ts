@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
 import { createTestApp, createMockServices, installMockAppLog, resetMockServices } from '../__tests__/helpers.js';
+import { TaskRegistryError } from '../services/task-registry.js';
 import type { Services } from './index.js';
 
 const validImportList = {
@@ -235,6 +236,92 @@ describe('import-lists routes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({ success: true });
+    });
+  });
+
+  describe('POST /api/import-lists/:id/run (#2306)', () => {
+    /** The guard is the route's, not the test's: admit by default and let each case override. */
+    const admit = () => (services.taskRegistry.runExclusive as Mock).mockImplementation(
+      async (_name: string, fn: () => Promise<unknown>) => fn(),
+    );
+
+    it('returns the counts of a completed sync', async () => {
+      admit();
+      (services.importList.runNow as Mock).mockResolvedValue({
+        status: 'ok',
+        counts: { createdCount: 3, heldReviewCount: 1, excludedCount: 2 },
+      });
+
+      const res = await app.inject({ method: 'POST', url: '/api/import-lists/1/run' });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ success: true, createdCount: 3, heldReviewCount: 1, excludedCount: 2 });
+      expect(services.importList.runNow).toHaveBeenCalledWith(1);
+    });
+
+    it('reports a sync that threw as a non-success body', async () => {
+      admit();
+      (services.importList.runNow as Mock).mockResolvedValue({ status: 'failed', message: 'Connection timeout' });
+
+      const res = await app.inject({ method: 'POST', url: '/api/import-lists/2/run' });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ success: false, message: 'Connection timeout' });
+    });
+
+    it('returns 404 for an unknown list id', async () => {
+      admit();
+      (services.importList.runNow as Mock).mockResolvedValue(null);
+
+      const res = await app.inject({ method: 'POST', url: '/api/import-lists/999/run' });
+
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toEqual({ error: 'Import list not found' });
+    });
+
+    it('returns 409 when the import-list-sync task is already running (plugin-routed)', async () => {
+      (services.taskRegistry.runExclusive as Mock).mockRejectedValue(
+        new TaskRegistryError('Task "import-list-sync" is already running', 'ALREADY_RUNNING'),
+      );
+
+      const res = await app.inject({ method: 'POST', url: '/api/import-lists/1/run' });
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toEqual({ error: 'Task "import-list-sync" is already running' });
+      expect(services.importList.runNow).not.toHaveBeenCalled();
+    });
+
+    it('surfaces a non-TaskRegistryError rejection as a 500 — the route adds no swallowing catch', async () => {
+      (services.taskRegistry.runExclusive as Mock).mockRejectedValue(new Error('Registry exploded'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/import-lists/1/run' });
+
+      expect(res.statusCode).toBe(500);
+      expect(res.json()).toEqual({ error: 'Internal server error' });
+    });
+
+    it('names the import-list-sync task and drives the service from inside the guard', async () => {
+      admit();
+      (services.importList.runNow as Mock).mockResolvedValue({
+        status: 'ok',
+        counts: { createdCount: 0, heldReviewCount: 0, excludedCount: 0 },
+      });
+
+      const res = await app.inject({ method: 'POST', url: '/api/import-lists/7/run' });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.taskRegistry.runExclusive).toHaveBeenCalledWith('import-list-sync', expect.any(Function));
+      expect(services.importList.runNow).toHaveBeenCalledWith(7);
+    });
+
+    it('rejects a non-numeric id with 400 and never reaches the service', async () => {
+      admit();
+
+      const res = await app.inject({ method: 'POST', url: '/api/import-lists/abc/run' });
+
+      expect(res.statusCode).toBe(400);
+      expect(services.importList.runNow).not.toHaveBeenCalled();
+      expect(services.taskRegistry.runExclusive).not.toHaveBeenCalled();
     });
   });
 

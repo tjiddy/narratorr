@@ -1,9 +1,8 @@
-import { writeFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
 import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { mimeToExt } from '../utils/mime.js';
+import { replaceFileAtomically } from '../utils/atomic-file-replace.js';
 import { finalizeCoverWrite, type CoverWriteOutcome } from './cover-write.js';
 
 export type CoverUploadErrorCode = 'INVALID_MIME' | 'NOT_FOUND' | 'NO_PATH';
@@ -32,15 +31,8 @@ export async function uploadBookCover(
 
   const keepFilename = `cover.${ext}`;
   const finalPath = join(bookPath, keepFilename);
-  const tempPath = join(bookPath, `.cover-upload-${randomUUID()}.tmp`);
 
-  await writeFile(tempPath, buffer);
-  try {
-    await rename(tempPath, finalPath);
-  } catch (error: unknown) {
-    await unlink(tempPath).catch(() => { /* best-effort */ });
-    throw error;
-  }
+  await replaceFileAtomically(finalPath, buffer, '.cover-upload-');
 
   await finalizeCoverWrite(bookId, bookPath, keepFilename, db, log);
 

@@ -19,7 +19,7 @@ import type { IndexerService } from '../../services/indexer.service.js';
 import * as searchPipeline from '../../services/search-pipeline.js';
 import { DuplicateDownloadError } from '../../services/download.service.js';
 import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '@core/download-clients/errors.js';
-import { createMockDb, mockDbChain, inject } from '../../__tests__/helpers.js';
+import { createMockDb, mockDbChain, inject, searchStatus, answeringSearchStatus } from '../../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../../__tests__/factories.js';
 import { v1ActionsRoutes } from './actions.js';
 import { releaseV1Schema, encodeReleaseId } from '@shared/schemas/v1/actions.js';
@@ -141,7 +141,7 @@ describe('v1 action routes (search + grab)', () => {
     (authService.validateApiKey as Mock).mockResolvedValue(true);
     (authService.getStatus as Mock).mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false });
     (bookService.getById as Mock).mockResolvedValue(hydratedBook());
-    (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
+    (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue(searchStatus([]));
     (downloadService.getById as Mock).mockResolvedValue(null);
     // Pass-all defaults isolate route behavior from the shared display filters.
     (blacklistService.getBlacklistedIdentifiers as Mock).mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() });
@@ -188,7 +188,7 @@ describe('v1 action routes (search + grab)', () => {
     );
 
     it('returns 200 with a { data, total } envelope of opaque releases (no raw downloadUrl/infoHash/guid)', async () => {
-      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({ results: [searchResult(), searchResult({ guid: 'guid-2', title: 'Words of Radiance' })], succeeded: 1, failed: 0 });
+      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue(searchStatus([searchResult(), searchResult({ guid: 'guid-2', title: 'Words of Radiance' })]));
 
       const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
 
@@ -208,7 +208,7 @@ describe('v1 action routes (search + grab)', () => {
     it('serializes a release whose seeders is absent (post-fix adapter shape) as seeders: null, no 500', async () => {
       const { seeders: _drop, ...noSeeders } = searchResult();
       void _drop;
-      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({ results: [noSeeders], succeeded: 1, failed: 0 });
+      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue(searchStatus([noSeeders]));
 
       const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
 
@@ -220,7 +220,7 @@ describe('v1 action routes (search + grab)', () => {
     });
 
     it('feeds the resolved book into the query and forwards the ranking context to searchAllWithStatus', async () => {
-      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
+      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue(searchStatus([]));
 
       await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
 
@@ -229,7 +229,13 @@ describe('v1 action routes (search + grab)', () => {
       const [query, options] = calls[0]!;
       expect(query).toContain('Way of Kings');
       expect(query).toContain('Brandon Sanderson');
-      expect(options).toEqual({ title: 'The Way of Kings', author: 'Brandon Sanderson', rankingAuthor: 'Brandon Sanderson' });
+      expect(options).toEqual({
+        title: 'The Way of Kings',
+        author: 'Brandon Sanderson',
+        rankingAuthor: 'Brandon Sanderson',
+        // #2422 — the executor forwards the rung's apostrophe form; here nothing has one to keep.
+        queryWithApostrophes: 'The Way of Kings Brandon Sanderson',
+      });
 
       // The author-dropped transport rung still keeps the canonical author for ranking.
       expect(calls.map(([q, o]) => [q, (o as { author?: string }).author])).toEqual([
@@ -244,11 +250,9 @@ describe('v1 action routes (search + grab)', () => {
         ...hydratedBook(),
         title: 'The Churn: An Expanse Novella',
       });
-      (indexerSearchService.searchAllWithStatus as Mock).mockImplementation(async (query: string) => ({
-        results: query === 'the churn Brandon Sanderson' ? [searchResult({ title: 'The Churn (Unabridged)' })] : [],
-        succeeded: 1,
-        failed: 0,
-      }));
+      (indexerSearchService.searchAllWithStatus as Mock).mockImplementation(
+        answeringSearchStatus({ 'the churn Brandon Sanderson': [searchResult({ title: 'The Churn (Unabridged)' })] }),
+      );
 
       const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
 
@@ -270,13 +274,11 @@ describe('v1 action routes (search + grab)', () => {
         ...hydratedBook(),
         title: 'Star Wars: The High Republic: Haunted Starlight',
       });
-      (indexerSearchService.searchAllWithStatus as Mock).mockImplementation(async (query: string) => ({
-        results: query === 'haunted starlight Brandon Sanderson'
-          ? [searchResult({ title: 'Haunted Starlight - Brandon Sanderson' })]
-          : [],
-        succeeded: 1,
-        failed: 0,
-      }));
+      (indexerSearchService.searchAllWithStatus as Mock).mockImplementation(
+        answeringSearchStatus({
+          'haunted starlight Brandon Sanderson': [searchResult({ title: 'Haunted Starlight - Brandon Sanderson' })],
+        }),
+      );
 
       const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
 
@@ -299,7 +301,7 @@ describe('v1 action routes (search + grab)', () => {
     });
 
     it('returns 200 { data: [], total: 0 } on an empty result set (not 404, not an error)', async () => {
-      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({ results: [], succeeded: 1, failed: 0 });
+      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue(searchStatus([]));
 
       const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
 
@@ -320,7 +322,7 @@ describe('v1 action routes (search + grab)', () => {
     it('excludes a blacklisted release (by guid) from the v1 data list; total is the filtered count', async () => {
       const clean = searchResult({ guid: 'clean-guid', title: 'Words of Radiance (Unabridged)' });
       const blacklisted = searchResult({ guid: 'blk-guid', title: 'Oathbringer (Unabridged)' });
-      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({ results: [clean, blacklisted], succeeded: 1, failed: 0 });
+      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue(searchStatus([clean, blacklisted]));
       (blacklistService.getBlacklistedIdentifiers as Mock).mockResolvedValue({
         blacklistedHashes: new Set<string>(),
         blacklistedGuids: new Set(['blk-guid']),
@@ -346,7 +348,7 @@ describe('v1 action routes (search + grab)', () => {
         guid: 'usenet-guid',
       });
       const full = searchResult({ guid: 'full-guid', title: 'Words of Radiance (Unabridged)' });
-      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({ results: [partial, full], succeeded: 1, failed: 0 });
+      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue(searchStatus([partial, full]));
 
       const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
 
@@ -357,7 +359,7 @@ describe('v1 action routes (search + grab)', () => {
     });
 
     it('keeps the v1 envelope unchanged: only { data, total }, no unsupportedResults/durationUnknown, total === data.length', async () => {
-      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({ results: [searchResult(), searchResult({ guid: 'guid-2', title: 'Oathbringer' })], succeeded: 1, failed: 0 });
+      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue(searchStatus([searchResult(), searchResult({ guid: 'guid-2', title: 'Oathbringer' })]));
 
       const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
 
@@ -367,6 +369,25 @@ describe('v1 action routes (search + grab)', () => {
       expect(body).not.toHaveProperty('unsupportedResults');
       expect(body).not.toHaveProperty('durationUnknown');
       expect(body.total).toBe(body.data.length);
+    });
+
+    it('keeps the envelope at { data, total } when the quality gates removed every result (#2325 AC13)', async () => {
+      (settingsService.get as Mock).mockImplementation((cat: string) => {
+        if (cat === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none', maxDownloadSize: 5, minDownloadSize: 50, rejectWords: '', requiredWords: '' });
+        if (cat === 'metadata') return Promise.resolve({ audibleRegion: 'us', languages: [] });
+        return Promise.resolve({});
+      });
+      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue(
+        searchStatus([searchResult({ title: 'Tracker test', size: 5 * 1024 * 1024 })]),
+      );
+
+      const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body).toEqual({ data: [], total: 0 });
+      expect(Object.keys(body).sort()).toEqual(['data', 'total']);
+      expect(body).not.toHaveProperty('filteredOut');
     });
 
     describe('duration precedence via resolveBookQualityInputs', () => {
@@ -432,7 +453,7 @@ describe('v1 action routes (search + grab)', () => {
   describe('POST /search → POST /grab (signed releaseId round-trip)', () => {
     it('accepts a releaseId minted by /search at /grab and forwards that release to the download client', async () => {
       // Mint through /search so an unsigned-encoder regression cannot hide behind reject-only tests.
-      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue({ results: [searchResult()], succeeded: 1, failed: 0 });
+      (indexerSearchService.searchAllWithStatus as Mock).mockResolvedValue(searchStatus([searchResult()]));
 
       const searchRes = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
       expect(searchRes.statusCode).toBe(200);
@@ -526,6 +547,40 @@ describe('v1 action routes (search + grab)', () => {
       expect(grabCalls).toBe(1);
       expect([a.statusCode, b.statusCode].sort()).toEqual([200, 201]);
       expect(a.json().id).toBe(b.json().id);
+    });
+
+    // #2341 AC9: a crash between the insert and the publish leaves a completed, external-id-less
+    // row that is indistinguishable from a published handoff in every persisted field. V1's
+    // release lookup filters on neither status nor external id, so it short-circuits a same-release
+    // retry. That is accepted and pinned here, not asserted away.
+    describe('crash-residue short-circuit (#2341 AC9)', () => {
+      const residueRow = {
+        id: 42, guid: 'guid-1', infoHash: null, downloadUrl: 'http://x/1', indexerId: 3,
+      };
+      const residueDownload = () => hydratedDownload({ clientStatus: 'completed', pipelineStage: 'idle', progress: 1, externalId: null });
+
+      it('returns the unpublished residue row (200) for the same release instead of re-grabbing it', async () => {
+        downloadRows = [residueRow];
+        (downloadService.getById as Mock).mockResolvedValue(residueDownload());
+        const releaseId = signReleaseId({ downloadUrl: 'http://x/1', title: 'T', protocol: 'torrent', guid: 'guid-1', indexerId: 3 });
+
+        const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/grab', headers: keyHeaders, payload: { releaseId } });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.json().id).toBe('dl_test000000000000000');
+        expect(downloadOrchestrator.grab as Mock).not.toHaveBeenCalled();
+      });
+
+      it('is release-scoped, not book-scoped: a different release for the same book still grabs', async () => {
+        downloadRows = [residueRow];
+        (downloadService.getById as Mock).mockResolvedValue(residueDownload());
+        const releaseId = signReleaseId({ downloadUrl: 'http://x/2', title: 'T', protocol: 'torrent', guid: 'guid-2', indexerId: 3 });
+
+        const res = await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/grab', headers: keyHeaders, payload: { releaseId } });
+
+        expect(res.statusCode).toBe(201);
+        expect(downloadOrchestrator.grab as Mock).toHaveBeenCalledTimes(1);
+      });
     });
 
     describe('matching-predicate coverage (F2)', () => {

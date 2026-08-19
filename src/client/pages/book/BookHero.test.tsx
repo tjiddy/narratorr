@@ -663,3 +663,44 @@ describe('BookHero', () => {
     });
   });
 });
+
+/** #2435 AC19 — the menu item is presence-gated by the parent; here we pin the item itself. */
+describe('BookHero — Import Files (#2435)', () => {
+  it('is absent when the parent supplies no handler', async () => {
+    const user = userEvent.setup();
+    renderHero();
+    await openMenu(user);
+
+    expect(screen.queryByRole('menuitem', { name: /Import Files/ })).not.toBeInTheDocument();
+  });
+
+  it('invokes the handler and closes the menu', async () => {
+    const user = userEvent.setup();
+    const onImportFilesClick = vi.fn();
+    renderHero({ onImportFilesClick });
+    await openMenu(user);
+
+    await user.click(screen.getByRole('menuitem', { name: /Import Files/ }));
+
+    expect(onImportFilesClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables the item and shows progress while the mutation is pending', async () => {
+    const user = userEvent.setup();
+    renderHero({ onImportFilesClick: vi.fn(), isImportingFiles: true });
+    await openMenu(user);
+
+    expect(screen.getByRole('menuitem', { name: /Importing/ })).toBeDisabled();
+  });
+
+  // A menuitem the arrow-key query misses is a real regression: the roving-focus list is built
+  // from `[role="menuitem"]:not([disabled])`.
+  it('participates in the roving-focus menuitem list', async () => {
+    const user = userEvent.setup();
+    renderHero({ onImportFilesClick: vi.fn() });
+    await openMenu(user);
+
+    const names = screen.getAllByRole('menuitem').map((el) => el.textContent);
+    expect(names.some((n) => n?.includes('Import Files'))).toBe(true);
+  });
+});

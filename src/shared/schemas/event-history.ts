@@ -14,6 +14,13 @@ export const eventTypeSchema = z.enum([
   // A relaxed search found candidates but no corroborating title segments; persist
   // the hold because scheduled searches cannot rely on a transient SSE toast.
   'search_relaxed_held',
+  // An import replaced a narratorr-marked metadata.opf whose content differed from what it
+  // regenerated; the replaced bytes are beside the book as metadata.opf.bak.
+  'sidecar_diverged',
+  // The indexer reported its unsatisfied allowance exhausted, so the release the search would
+  // have auto-grabbed was withheld. Silence here would reproduce the invisible snatch cooldown
+  // the guard exists to prevent.
+  'grab_blocked_unsatisfied',
 ]);
 
 export type EventType = z.infer<typeof eventTypeSchema>;

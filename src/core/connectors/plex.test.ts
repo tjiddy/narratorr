@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse, delay } from 'msw';
 import { PlexConnector, resolveServerPath, classifyServerPath, type PlexConnectorConfig } from './plex.js';
@@ -22,7 +22,12 @@ const SECTIONS_BODY = {
 const server = setupServer();
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
-afterEach(() => server.resetHandlers());
+afterEach(() => {
+  server.resetHandlers();
+  // The #2317 cases spy on globalThis.fetch directly. The spy is installed after
+  // server.listen(), so restoring it hands MSW's patched fetch back to the next test.
+  vi.restoreAllMocks();
+});
 afterAll(() => server.close());
 
 function makeConnector(overrides: Partial<PlexConnectorConfig> = {}) {
@@ -344,6 +349,59 @@ describe('PlexConnector', () => {
       await expect(makeConnector().refreshImport(batchFor('/lib/A'), SIGNAL)).rejects.toMatchObject({ retryable: false });
     });
 
+    // Pinned BEFORE the #2312 extraction. Every row is pre-existing behaviour except the
+    // 408/429 block, which is the one declared change.
+    describe('status verdicts and presentation (#2312 AC1)', () => {
+      async function reject(run: () => Promise<unknown>): Promise<ConnectorRequestError> {
+        try {
+          await run();
+        } catch (error: unknown) {
+          return error as ConnectorRequestError;
+        }
+        throw new Error('expected the call to reject');
+      }
+
+      it('sections 404 with no notFound field falls through to the generic arm', async () => {
+        server.use(http.get(SECTIONS_URL, () => HttpResponse.json({}, { status: 404 })));
+        const error = await reject(() => makeConnector().listTargets());
+        expect(error.message).toBe('Request failed (HTTP 404)');
+        expect(error.fieldErrors).toBeUndefined();
+      });
+
+      it('keeps the plex-specific auth presentation (token, not apiKey)', async () => {
+        server.use(http.get(SECTIONS_URL, () => HttpResponse.json({}, { status: 403 })));
+        const error = await reject(() => makeConnector().listTargets());
+        expect(error.message).toBe('Authentication failed (HTTP 403)');
+        expect(error.fieldErrors).toEqual({ token: 'Invalid Plex token' });
+      });
+
+      it('keeps the plex-specific not-found presentation on the sectionId path', async () => {
+        server.use(http.get(REFRESH_URL, () => HttpResponse.json({}, { status: 404 })));
+        const error = await reject(() => makeConnector().refreshImport(batchFor('/lib/A'), SIGNAL));
+        expect(error.message).toBe('Section or path not found (HTTP 404)');
+        expect(error.fieldErrors).toEqual({ sectionId: 'Library section not found' });
+      });
+
+      it('keeps the server-error message for 5xx', async () => {
+        server.use(http.get(REFRESH_URL, () => HttpResponse.json({}, { status: 500 })));
+        const error = await reject(() => makeConnector().refreshImport(batchFor('/lib/A'), SIGNAL));
+        expect(error.message).toBe('Server error (HTTP 500)');
+        expect(error.retryable).toBe(true);
+      });
+
+      it('keeps the generic message for 400', async () => {
+        server.use(http.get(REFRESH_URL, () => HttpResponse.json({}, { status: 400 })));
+        const error = await reject(() => makeConnector().refreshImport(batchFor('/lib/A'), SIGNAL));
+        expect(error.message).toBe('Request failed (HTTP 400)');
+      });
+
+      it.each([408, 429])('HTTP %i is now retryable (declared change)', async (status) => {
+        server.use(http.get(REFRESH_URL, () => HttpResponse.json({}, { status })));
+        const error = await reject(() => makeConnector().refreshImport(batchFor('/lib/A'), SIGNAL));
+        expect(error.retryable).toBe(true);
+      });
+    });
+
     it('transport/DNS failure → throws retryable scoped to baseUrl', async () => {
       server.use(http.get(REFRESH_URL, () => HttpResponse.error()));
       await expect(makeConnector().refreshImport(batchFor('/lib/A'), SIGNAL)).rejects.toMatchObject({
@@ -370,6 +428,48 @@ describe('PlexConnector', () => {
       }));
       await expect(makeConnector().refreshImport(batchFor('/lib/A', '/lib/B'), SIGNAL)).rejects.toMatchObject({ retryable: true });
       expect(bCount).toBe(0);
+    });
+  });
+
+  // Pinned when connectionError moved into the shared connectorConnectionError (#2317). The
+  // pre-existing coverage asserts fieldErrors.baseUrl via expect.any(String), which cannot see
+  // a reworded field error or a dropped `Connection failed: ` prefix. Both rows stub
+  // globalThis.fetch rather than adding an MSW handler: HttpResponse.error() carries no
+  // transport code, so it could only ever reach mapNetworkError's pass-through arm.
+  describe('connection failure — exact copy and unconditional verdict (#2317 AC10)', () => {
+    async function rejectionFrom(run: () => Promise<unknown>): Promise<ConnectorRequestError> {
+      try {
+        await run();
+      } catch (error: unknown) {
+        return error as ConnectorRequestError;
+      }
+      throw new Error('expected the call to reject');
+    }
+
+    function rejectFetchWith(message: string, code: string): void {
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(Object.assign(new Error(message), { code }));
+    }
+
+    it('reports the mapped transport message behind the Connection failed prefix', async () => {
+      rejectFetchWith('connect ECONNREFUSED 127.0.0.1:8080', 'ECONNREFUSED');
+
+      const error = await rejectionFrom(() => makeConnector().listTargets());
+
+      expect(error.message).toBe('Connection failed: Connection refused on port 8080');
+      expect(error.fieldErrors).toEqual({ baseUrl: 'Could not connect to server' });
+      expect(error.retryable).toBe(true);
+    });
+
+    // A connector that never reached the server has learned nothing about whether a retry
+    // helps, so a terminal transport code must NOT flip the verdict. Routing this path
+    // through classifyFailure is the behaviour change #2312 AC1 excluded.
+    it('stays retryable for a transport code classifyFailure treats as terminal', async () => {
+      rejectFetchWith('authentication rejected', 'EAUTH');
+
+      const error = await rejectionFrom(() => makeConnector().refreshImport(batchFor('/lib/A'), SIGNAL));
+
+      expect(error.retryable).toBe(true);
+      expect(error.fieldErrors).toEqual({ baseUrl: 'Could not connect to server' });
     });
   });
 });

@@ -1,10 +1,11 @@
 import { eq, desc, and, or, count, sql } from 'drizzle-orm';
-import { type Db } from '@db/index.js';
+import { type Db, type DbOrTx } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, indexers } from '@db/schema.js';
 import type { DownloadProtocol } from '@core/index.js';
-import type { DownloadArtifact } from '@core/download-clients/types.js';
+import type { DownloadArtifact, StagedHandoff } from '@core/download-clients/types.js';
 import { isTerminalState, deriveDisplayStatus } from '@shared/download-status-registry.js';
+import { clientCategory } from '@shared/schemas/download-client.js';
 import {
   inProgressDownloadCondition,
   terminalDownloadCondition,
@@ -27,6 +28,7 @@ import type { BookRowPublic, DownloadRow } from './types.js';
 import { stripClearedFields } from './book-row-public.js';
 import type { BookStatus } from '@shared/schemas/book.js';
 import { serializeError } from '../utils/serialize-error.js';
+import { applyPagination } from '../utils/db-helpers.js';
 import { DownloadError, DuplicateDownloadError } from './download-errors.js';
 
 export interface DownloadWithBook extends DownloadRow {
@@ -85,7 +87,7 @@ export class DownloadService {
       .from(downloads)
       .where(where);
 
-    let query = this.db
+    const query = this.db
       .select({
         download: downloads,
         book: books,
@@ -95,16 +97,10 @@ export class DownloadService {
       .leftJoin(books, eq(downloads.bookId, books.id))
       .leftJoin(indexers, eq(downloads.indexerId, indexers.id))
       .where(where)
-      .orderBy(desc(downloads.addedAt), desc(downloads.id));
+      .orderBy(desc(downloads.addedAt), desc(downloads.id))
+      .$dynamic();
 
-    if (pagination?.limit !== undefined) {
-      query = query.limit(pagination.limit) as typeof query;
-    }
-    if (pagination?.offset !== undefined) {
-      query = query.offset(pagination.offset) as typeof query;
-    }
-
-    const results = await query;
+    const results = await applyPagination(query, pagination);
 
     const data = results.map((r) => ({
       ...r.download,
@@ -183,8 +179,10 @@ export class DownloadService {
     return { active, completed };
   }
 
-  async getActiveByBookId(bookId: number): Promise<DownloadWithBook[]> {
-    const results = await this.db
+  /** `executor` lets a caller read the rows inside its own transaction — `downloads.book_id` is
+   * ON DELETE SET NULL, so once the book row is gone this lookup can no longer find them. */
+  async getActiveByBookId(bookId: number, executor: DbOrTx = this.db): Promise<DownloadWithBook[]> {
+    const results = await executor
       .select({
         download: downloads,
         book: books,
@@ -212,16 +210,22 @@ export class DownloadService {
     return this.wired.require().indexerService.getLanAllowlist();
   }
 
-  private async sendToClient(artifact: DownloadArtifact, protocol: DownloadProtocol): Promise<{ externalId: string | null; clientId: number; clientType: string; clientName: string }> {
+  /** Staging and adding are mutually exclusive: a stageable adapter has no control channel, so its
+   * artifact is published after the row lands rather than compensated once the row fails. */
+  private async sendToClient(artifact: DownloadArtifact, protocol: DownloadProtocol): Promise<{ externalId: string | null; staged: StagedHandoff | null; clientId: number; clientType: string; clientName: string }> {
     const client = await this.downloadClientService.getFirstEnabledForProtocol(protocol);
     if (!client) throw new Error('No download client configured');
     const adapter = await this.downloadClientService.getAdapter(client.id);
     if (!adapter) throw new Error('Could not initialize download client');
     const settings = (client.settings ?? {}) as Record<string, unknown>;
-    const category = (settings.category as string | undefined)?.trim() || undefined;
+    const category = clientCategory(settings);
     const addOptions = { ...(category ? { category } : {}) };
-    const externalId = await adapter.addDownload(artifact, Object.keys(addOptions).length > 0 ? addOptions : undefined);
-    return { externalId, clientId: client.id, clientType: client.type, clientName: client.name };
+    const options = Object.keys(addOptions).length > 0 ? addOptions : undefined;
+    const identity = { clientId: client.id, clientType: client.type, clientName: client.name };
+    if (adapter.stageDownload) {
+      return { externalId: null, staged: await adapter.stageDownload(artifact, options), ...identity };
+    }
+    return { externalId: await adapter.addDownload(artifact, options), staged: null, ...identity };
   }
 
   /**
@@ -283,13 +287,16 @@ export class DownloadService {
     const { artifact, infoHash } = await resolveArtifact(effectiveDownloadUrl, protocol, () => this.buildLanAllowlist());
 
     this.log.debug({ protocol, downloadUrl: sanitizeLogUrl(effectiveDownloadUrl), infoHash }, 'Sending download to client');
-    const { externalId, clientId, clientType, clientName } = await this.sendToClient(artifact, protocol);
-    this.log.debug({ externalId, clientName, bookId: params.bookId }, 'Download sent to client');
+    const { externalId, staged, clientId, clientType, clientName } = await this.sendToClient(artifact, protocol);
+    // A staged artifact has not reached the client yet, and may never; say so rather than claim delivery.
+    if (staged) this.log.debug({ clientName, bookId: params.bookId }, 'Download staged for client — published once the record lands');
+    else this.log.debug({ externalId, clientName, bookId: params.bookId }, 'Download sent to client');
 
-    // If DB insert fails after client-add, remove the orphan best-effort or log it for recovery.
+    // A failed insert publishes nothing and discards the staged artifact; with an external id
+    // instead it removes the orphan best-effort, or logs it for recovery.
     const result = await insertDownloadRecordOrCompensate(
       this.db, this.log, params,
-      { effectiveDownloadUrl, protocol, infoHash, clientId, clientType, externalId },
+      { effectiveDownloadUrl, protocol, infoHash, clientId, clientType, externalId, staged },
       (id) => this.downloadClientService.getAdapter(id),
     );
     this.log.info({ title: params.title, indexerId: params.indexerId }, 'Download initiated');

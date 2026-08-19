@@ -68,6 +68,31 @@ describe('searchResultSchema', () => {
     expect(result.success && result.data.format).toBe('m4b');
   });
 
+  it('carries an ABB-shaped result through with its author, narrator and format intact (#2365)', () => {
+    const result = searchResultSchema.safeParse({
+      title: 'Murder in the New Forest',
+      indexer: 'AudioBookBay',
+      protocol: 'torrent',
+      author: 'Carol Cole',
+      narrator: 'James MacNaughton',
+      format: 'm4b',
+      infoHash: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0',
+      downloadUrl: 'magnet:?xt=urn:btih:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0',
+    });
+    expect(result.success && result.data).toMatchObject({
+      author: 'Carol Cole',
+      narrator: 'James MacNaughton',
+      format: 'm4b',
+    });
+  });
+
+  it('rejects a non-string format', () => {
+    const result = searchResultSchema.safeParse({
+      title: 'Book', indexer: 'AudioBookBay', protocol: 'torrent', format: 4,
+    });
+    expect(result.success).toBe(false);
+  });
+
   it('rejects unknown protocol value', () => {
     const result = searchResultSchema.safeParse({ title: 'Book', indexer: 'ABB', protocol: 'http' });
     expect(result.success).toBe(false);
@@ -119,6 +144,97 @@ describe('searchResponseSchema', () => {
       durationUnknown: false,
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('searchResponseSchema — filteredOut (#2325)', () => {
+  const base = { results: [], durationUnknown: false, unsupportedResults: { count: 0, titles: [] } };
+
+  it('accepts and round-trips a well-formed filteredOut summary', () => {
+    const filteredOut = {
+      total: 4,
+      reasons: [
+        { reason: 'below-min-size', count: 3, threshold: '50 MB' },
+        { reason: 'reject-word-match', count: 1 },
+      ],
+    };
+
+    const result = searchResponseSchema.safeParse({ ...base, filteredOut });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.filteredOut).toEqual(filteredOut);
+  });
+
+  it('accepts a payload without the key and leaves it off the parsed output', () => {
+    const result = searchResponseSchema.safeParse(base);
+
+    expect(result.success).toBe(true);
+    expect(result.data).not.toHaveProperty('filteredOut');
+  });
+
+  it('rejects a reason outside the closed vocabulary', () => {
+    const result = searchResponseSchema.safeParse({
+      ...base,
+      filteredOut: { total: 1, reasons: [{ reason: 'multi-part-detected', count: 1 }] },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a non-numeric count and a missing total', () => {
+    expect(searchResponseSchema.safeParse({
+      ...base,
+      filteredOut: { total: 1, reasons: [{ reason: 'below-min-size', count: '1' }] },
+    }).success).toBe(false);
+    expect(searchResponseSchema.safeParse({
+      ...base,
+      filteredOut: { reasons: [{ reason: 'below-min-size', count: 1 }] },
+    }).success).toBe(false);
+  });
+
+  it('rejects a null filteredOut — the contract is .optional(), not .nullish()', () => {
+    expect(searchResponseSchema.safeParse({ ...base, filteredOut: null }).success).toBe(false);
+  });
+});
+
+describe('searchResultSchema — rawSize (#2316)', () => {
+  const base = { title: 'Play of Shadows', protocol: 'torrent', indexer: 'MAM' };
+
+  it('accepts and round-trips a rawSize string', () => {
+    const result = searchResultSchema.safeParse({ ...base, size: 1057803469, rawSize: '1,008.8 MiB' });
+    expect(result.success).toBe(true);
+    expect(result.data?.rawSize).toBe('1,008.8 MiB');
+  });
+
+  it('accepts a result without rawSize', () => {
+    const result = searchResultSchema.safeParse(base);
+    expect(result.success).toBe(true);
+    expect(result.data).not.toHaveProperty('rawSize');
+  });
+
+  it('rejects a non-string rawSize', () => {
+    const result = searchResultSchema.safeParse({ ...base, rawSize: 1057803469 });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('searchResultSchema — unsatisfied (#2322)', () => {
+  const base = { title: 'Play of Shadows', protocol: 'torrent', indexer: 'MAM' };
+
+  it('accepts and round-trips the observed pair', () => {
+    const result = searchResultSchema.safeParse({ ...base, unsatisfied: { count: 150, limit: 150 } });
+    expect(result.success).toBe(true);
+    expect(result.data?.unsatisfied).toEqual({ count: 150, limit: 150 });
+  });
+
+  it('accepts a result carrying nothing — absence is the fail-open default', () => {
+    const result = searchResultSchema.safeParse(base);
+    expect(result.success).toBe(true);
+    expect(result.data).not.toHaveProperty('unsatisfied');
+  });
+
+  it('rejects a partial pair, so no consumer sees a half-observed object', () => {
+    expect(searchResultSchema.safeParse({ ...base, unsatisfied: { count: 150 } }).success).toBe(false);
+    expect(searchResultSchema.safeParse({ ...base, unsatisfied: { limit: 150 } }).success).toBe(false);
   });
 });
 

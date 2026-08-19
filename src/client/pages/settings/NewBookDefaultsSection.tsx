@@ -11,7 +11,7 @@ type NewBookDefaultsFormData = z.infer<typeof newBookDefaultsFormSchema>;
 const CARD_LABEL = 'When a New Book Is Added';
 
 export function NewBookDefaultsSection() {
-  const { form, mutation, onSubmit } = useSettingsForm<NewBookDefaultsFormData>({
+  const { form, mutation, onSubmit, settingsError, refetchSettings } = useSettingsForm<NewBookDefaultsFormData>({
     schema: newBookDefaultsFormSchema,
     defaultValues: { searchImmediately: DEFAULT_SETTINGS.quality.searchImmediately },
     select: (s: AppSettings) => ({
@@ -30,23 +30,39 @@ export function NewBookDefaultsSection() {
       title={CARD_LABEL}
       description="Applied when books are added manually or via import lists or discovery"
     >
-      <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-4">
-        <SettingsTable>
-          <SettingsRow htmlFor="newBookSearchImmediately" label="Search immediately" description="Trigger a search as soon as a book is added">
-            <ToggleSwitch id="newBookSearchImmediately" {...register('searchImmediately')} />
-          </SettingsRow>
-        </SettingsTable>
-
-        {isDirty && (
+      {/* An off Search immediately toggle reads as a deliberate "don't search on add";
+          it is the schema default, which a failed read never observed. */}
+      {settingsError ? (
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-red-500">Failed to load new book defaults.</p>
           <button
-            type="submit"
-            disabled={mutation.isPending}
-            className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
+            type="button"
+            onClick={refetchSettings}
+            aria-label="Retry loading new book defaults"
+            className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-all focus-ring"
           >
-            {mutation.isPending ? 'Saving...' : 'Save'}
+            Retry
           </button>
-        )}
-      </form>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit((data) => onSubmit(data))} className="space-y-4">
+          <SettingsTable>
+            <SettingsRow htmlFor="newBookSearchImmediately" label="Search immediately" description="Trigger a search as soon as a book is added">
+              <ToggleSwitch id="newBookSearchImmediately" {...register('searchImmediately')} />
+            </SettingsRow>
+          </SettingsTable>
+
+          {isDirty && (
+            <button
+              type="submit"
+              disabled={mutation.isPending}
+              className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
+            >
+              {mutation.isPending ? 'Saving...' : 'Save'}
+            </button>
+          )}
+        </form>
+      )}
     </SettingsSection>
   );
 }

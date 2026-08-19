@@ -502,3 +502,73 @@ describe('pagination placeholderData', () => {
     expect(clampToTotalCallCount).toBe(countBeforeRerender);
   });
 });
+
+describe('when the blacklist read fails', () => {
+  beforeEach(() => {
+    // resetAllMocks, not clearAllMocks: the Retry tests queue `*Once()` responses and
+    // clearAllMocks does not drain those queues.
+    vi.resetAllMocks();
+  });
+
+  it('reports the read failure instead of claiming nothing is blacklisted', async () => {
+    vi.mocked(api.getBlacklist).mockRejectedValue(new Error('database is locked'));
+
+    renderWithProviders(<BlacklistSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to load blacklist.')).toBeInTheDocument();
+    });
+    // The distinction the operator needs: a failed read is not an empty blacklist.
+    expect(screen.queryByText('No blacklisted releases')).not.toBeInTheDocument();
+  });
+
+  it('refetches and renders the entries when the operator clicks Retry', async () => {
+    vi.mocked(api.getBlacklist)
+      .mockRejectedValueOnce(new Error('database is locked'))
+      .mockResolvedValue({ data: mockEntries, total: mockEntries.length });
+    const user = userEvent.setup();
+
+    renderWithProviders(<BlacklistSettings />);
+    await waitFor(() => expect(screen.getByText('Failed to load blacklist.')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Retry loading blacklist' }));
+
+    await waitFor(() => expect(screen.getByText('Bad Release [Unabridged]')).toBeInTheDocument());
+    expect(screen.queryByText('Failed to load blacklist.')).not.toBeInTheDocument();
+    expect(api.getBlacklist).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a failed second page instead of presenting the page-one rows as page two', async () => {
+    vi.mocked(api.getBlacklist)
+      .mockResolvedValueOnce({ data: mockEntries, total: 110 })
+      .mockRejectedValue(new Error('database is locked'));
+    const user = userEvent.setup();
+
+    renderWithProviders(<BlacklistSettings />);
+    await waitFor(() => expect(screen.getByText('Bad Release [Unabridged]')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: /next page/i }));
+
+    // placeholderData keeps page one in `data` across the key change; the error still wins,
+    // so page one's rows are never presented as page two.
+    await waitFor(() => expect(screen.getByText('Failed to load blacklist.')).toBeInTheDocument());
+    expect(screen.queryByText('Bad Release [Unabridged]')).not.toBeInTheDocument();
+  });
+
+  it('reports a failed background refetch rather than leaving the stale rows on screen', async () => {
+    vi.mocked(api.getBlacklist)
+      .mockResolvedValueOnce({ data: mockEntries, total: mockEntries.length })
+      .mockRejectedValue(new Error('database is locked'));
+    vi.mocked(api.removeFromBlacklist).mockResolvedValue(undefined as never);
+    const user = userEvent.setup();
+
+    renderWithProviders(<BlacklistSettings />);
+    await waitFor(() => expect(screen.getByText('Bad Release [Unabridged]')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: 'Remove Bad Release [Unabridged] from blacklist' }));
+    await user.click(screen.getByRole('button', { name: /^delete$/i }));
+
+    await waitFor(() => expect(screen.getByText('Failed to load blacklist.')).toBeInTheDocument());
+    expect(screen.queryByText('Bad Release [Unabridged]')).not.toBeInTheDocument();
+  });
+});

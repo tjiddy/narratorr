@@ -1,7 +1,8 @@
-import { readdir, copyFile, mkdir, rm, readFile, unlink } from 'node:fs/promises';
+import { readdir, copyFile, mkdir, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { COVER_FILE_REGEX } from '@core/utils/cover-regex.js';
+import { removeTree } from '@core/utils/remove-tree.js';
 import { MIME_TO_EXT } from '@shared/mime.js';
 import { serializeError } from './serialize-error.js';
 
@@ -44,7 +45,7 @@ export async function cleanCoverCache(
   log: FastifyBaseLogger,
 ): Promise<void> {
   try {
-    await rm(join(configPath, 'covers', String(bookId)), { recursive: true, force: true });
+    await removeTree(join(configPath, 'covers', String(bookId)));
   } catch (error: unknown) {
     log.warn({ bookId, error: serializeError(error) }, 'Failed to clean cover cache');
   }

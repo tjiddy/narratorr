@@ -47,7 +47,9 @@ export type EnqueueImportResult =
   | { error: 'active-job-exists'; status: 409 };
 
 // SQLite may name either the partial index or its underlying column constraint.
-const ACTIVE_JOB_UNIQUE_VIOLATION =
+// Exported so the caller-owned-transaction attach paths can recognize the same race: supplying a
+// transaction routes past the wrapper below, so they must map the raw violation themselves.
+export const ACTIVE_JOB_UNIQUE_VIOLATION =
   /UNIQUE constraint failed.*(?:idx_import_jobs_book_active|import_jobs\.book_id)/;
 
 export class BookImportService {
