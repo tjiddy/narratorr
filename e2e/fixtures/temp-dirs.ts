@@ -31,11 +31,20 @@ const RUN_FIELDS = ['dbPath', 'libraryPath', 'configPath', 'downloadsPath', 'sou
 const runs = new Map<string, RunTempDirs>();
 
 /**
- * The five *directories* a run owns. `dbPath` is a file one level deeper, so its enclosing
- * directory stands in for it — that is what carries libSQL's `-wal`/`-shm` sidecars away.
+ * The five *directories* a run owns, as canonical path identities. `dbPath` is a file one level
+ * deeper, so its enclosing directory stands in for it — that is what carries libSQL's
+ * `-wal`/`-shm` sidecars away.
+ *
+ * Canonical, not verbatim, because this one derivation feeds both the manifest's confinement and
+ * distinctness checks AND teardown's removal targets: validating one spelling and then deleting
+ * another is how a hand-edited manifest leaks an owned directory. `<dir>\.` canonicalizes to
+ * `<dir>` and so passes confinement, but on POSIX the raw string names a different, nonexistent
+ * pathname that `rmSync(..., { force: true })` removes silently and successfully — leaving the
+ * real directory behind. Deleting exactly what was validated closes that gap by construction.
  */
 export function runTempRoots(run: RunTempDirs): string[] {
-  return [dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath];
+  return [dirname(run.dbPath), run.libraryPath, run.configPath, run.downloadsPath, run.sourcePath]
+    .map(canonicalPath);
 }
 
 /**
@@ -211,10 +220,12 @@ function loadManifest(manifestPath: string): Map<string, RunTempDirs> {
   }
 
   const loaded = new Map<string, RunTempDirs>();
-  // Keyed by canonical identity, not by spelling: `<dir>`, `<dir>/.` and `<dir>\.` are three
-  // strings naming one directory, and each passes confinement on its own. Raw-string keys would
-  // let an alias-bearing manifest fill two of the 15 slots with one physical root, so two
-  // nominally isolated servers would share a temp directory while validation reported 15 distinct.
+  // Keyed by identity, not by spelling: `<dir>`, `<dir>/.` and `<dir>\.` are three strings naming
+  // one directory, and each passes confinement on its own. A spelling-keyed set would let an
+  // alias-bearing manifest fill two of the 15 slots with one physical root, so two nominally
+  // isolated servers would share a temp directory while validation reported 15 distinct.
+  // (`runTempRoots` already canonicalizes; `canonicalPath` is idempotent, so this stays correct
+  // whichever end the normalization is read from.)
   const seen = new Set<string>();
   for (const [name, run] of entries) {
     for (const dir of runTempRoots(run)) {

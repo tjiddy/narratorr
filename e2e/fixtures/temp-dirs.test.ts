@@ -192,6 +192,23 @@ describe('isHarnessTempRoot', () => {
     expect(isHarnessTempRoot(join(tmpdir(), 'something-else-abc123'))).toBe(false);
   });
 
+  it('resolves a run to the directory identities that were validated, not the raw spellings', () => {
+    // What `runTempRoots` returns is what teardown deletes, so it must yield the same identity the
+    // confinement predicate approved — otherwise a validated alias names a different pathname.
+    const real = join(tmpdir(), `${HARNESS_TEMP_PREFIX}identity`);
+    const roots = runTempRoots({
+      dbPath: join(`${real}-db\\.`, 'narratorr.db'),
+      libraryPath: `${real}-lib/.`,
+      configPath: `${real}-cfg/../${HARNESS_TEMP_PREFIX}identity-cfg`,
+      downloadsPath: `${real}-dl`,
+      sourcePath: `${real}-src`,
+    });
+
+    expect(roots).toEqual([
+      `${real}-db`, `${real}-lib`, `${real}-cfg`, `${real}-dl`, `${real}-src`,
+    ]);
+  });
+
   it('rejects a prefix-matching path nested one level deeper than the temp dir', () => {
     // Only the allocator's own roots are removable; descendants must be reached through them.
     expect(isHarnessTempRoot(join(tmpdir(), `${HARNESS_TEMP_PREFIX}abc123`, 'inner'))).toBe(false);

@@ -88,10 +88,10 @@ export function sweepStaleHarnessTempDirs(now: number = Date.now()): void {
  * itself. Confinement is re-checked here rather than trusted, because the manifest is durable state
  * on disk and `removeTreeSync` validates nothing of its own.
  *
- * The dedup key is the raw spelling on purpose. Both sources are already normalized upstream — the
- * manifest reader rejects any manifest whose roots collide under `canonicalPath`, and the run map
- * only ever holds `mkdtempSync` output — so an alias cannot reach here, and keying on the canonical
- * form would hand `removeTreeSync` a POSIX-folded path instead of the OS-native one it was given.
+ * Targets and dedup key are both whatever `runTempRoots` yields, which is the canonical identity —
+ * the same value `isHarnessTempRoot` approved. That equality is the point: a manifest is
+ * hand-editable durable state, and validating one spelling while deleting another is how an
+ * accepted-but-aliased root (`<dir>\.`) silently no-ops on POSIX and leaks the real directory.
  */
 function ownedTargets(): string[] {
   const seen = new Set<string>();

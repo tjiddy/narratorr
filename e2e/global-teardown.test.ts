@@ -140,6 +140,27 @@ describe('globalTeardown', () => {
     expect(actualFs.existsSync(manifestPath)).toBe(false);
   });
 
+  it('removes the physical directory when an accepted manifest root uses an alias spelling', async () => {
+    // A lone alias is canonically UNIQUE, so it clears confinement and the collision check both —
+    // the round-1 distinctness key cannot see it. On POSIX `<dir>\.` is a different, nonexistent
+    // pathname, so a `force: true` removal silently no-ops and the owned directory survives.
+    let realSourcePath = '';
+    const { runs } = manifestOnlyRuns((payload) => {
+      realSourcePath = payload.forms!.sourcePath;
+      payload.forms = { ...payload.forms!, sourcePath: `${realSourcePath}\\.` };
+    });
+
+    expect(actualFs.existsSync(realSourcePath)).toBe(true);
+
+    await globalTeardown();
+
+    // The consequence, not the call: the directory the manifest actually owns must be gone.
+    expect(actualFs.existsSync(realSourcePath)).toBe(false);
+    for (const dir of runs.flatMap(runTempRoots)) {
+      expect(actualFs.existsSync(dir)).toBe(false);
+    }
+  });
+
   it('does not throw when a target directory was already removed', async () => {
     const run = createRunTempDirs();
     orphans.push(...runTempRoots(run));
