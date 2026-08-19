@@ -266,7 +266,8 @@ describe('Torrent file handoff — DownloadArtifact pipeline', () => {
       );
       expect(rename).toHaveBeenCalledWith(
         vi.mocked(writeFile).mock.calls.at(-1)![0],
-        expect.stringMatching(/[/\\]tmp[/\\]watch[/\\]download-\d+\.torrent$/),
+        // #2482: the UUID segment is the whole point — never relax this to a bare `\.torrent$`.
+        expect.stringMatching(/[/\\]tmp[/\\]watch[/\\]download-\d+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.torrent$/),
       );
     });
 
@@ -281,7 +282,8 @@ describe('Torrent file handoff — DownloadArtifact pipeline', () => {
       );
       expect(rename).toHaveBeenCalledWith(
         vi.mocked(writeFile).mock.calls.at(-1)![0],
-        expect.stringMatching(/[/\\]tmp[/\\]watch[/\\]download-\d+\.torrent$/),
+        // #2482: the UUID segment is the whole point — never relax this to a bare `\.torrent$`.
+        expect.stringMatching(/[/\\]tmp[/\\]watch[/\\]download-\d+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.torrent$/),
       );
     });
   });
