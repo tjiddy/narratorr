@@ -1,8 +1,8 @@
-import { withBookAdmissionLock, hasPendingBookAdmission } from '../utils/book-admission-lock.js';
+import { withBookAdmissionLock, withBookAdmissionLocks, hasPendingBookAdmission } from '../utils/book-admission-lock.js';
 
 // The per-book mutex lives beside the other lock primitives in utils/ so utils-layer writers (the
 // OPF sidecar) can acquire it; re-exported here because this is the name every service imports.
-export { withBookAdmissionLock, hasPendingBookAdmission };
+export { withBookAdmissionLock, withBookAdmissionLocks, hasPendingBookAdmission };
 
 export interface ReleaseIdentityFields {
   guid?: string | undefined;
