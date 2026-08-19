@@ -98,6 +98,21 @@ describe('filesystem routes', () => {
         expect(res.json().files).toEqual(['ok.m4b']);
       });
 
+      it('#2495: lists a bare .mp4, omitting the hidden and unreadable ones', async () => {
+        mockReaddir.mockResolvedValue([
+          makeDirent('FortuneFunhouseMissFortuneMysteriesBook19.mp4', false),
+          makeDirent('.Book.mp4', false),
+          makeDirent('locked.mp4', false),
+        ]);
+        mockAccess.mockImplementation((p: string) =>
+          String(p).includes('locked.mp4') ? Promise.reject(new Error('EACCES')) : Promise.resolve(undefined));
+
+        const res = await app.inject({ method: 'GET', url: '/api/filesystem/browse?path=/media&include=audio' });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.json().files).toEqual(['FortuneFunhouseMissFortuneMysteriesBook19.mp4']);
+      });
+
       it('400s an unrecognized include value instead of falling back to the legacy shape', async () => {
         mockReaddir.mockResolvedValue(MIXED());
 

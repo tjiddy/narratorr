@@ -472,6 +472,15 @@ describe('refreshScanBook', () => {
       );
     });
 
+    it('#2495: a .mp4 pointer counts 1', async () => {
+      armPointerBook('/audiobooks/FortuneFunhouseMissFortuneMysteriesBook19.mp4');
+      await refreshScanBook(1, mockBookService, mockSettingsService, log);
+      expect(mockBookService.update).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({ topLevelAudioFileCount: 1 }),
+      );
+    });
+
     // These branch tests need the mocked scanner; the real scanner returns NO_AUDIO_FILES
     // before count calculation. The following table pins that operator outcome.
     it.each([

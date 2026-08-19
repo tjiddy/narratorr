@@ -160,6 +160,16 @@ describe('reconcileBookSidecars (#1670)', () => {
     expect(downloadMock).not.toHaveBeenCalled();
   });
 
+  it('#2495: single-file pointer (.mp4) path takes the same skip, not a failure', async () => {
+    const outcome = await run({
+      bookFolder: '/audiobooks/FortuneFunhouseMissFortuneMysteriesBook19.mp4',
+      coverUrl: 'https://example.com/c.png',
+    });
+    expect(outcome).toEqual({ failed: false });
+    expect(writeOpfMock).not.toHaveBeenCalled();
+    expect(downloadMock).not.toHaveBeenCalled();
+  });
+
   /**
    * #2369 F2. The batch query is a pre-lock snapshot. Forwarding it into the section let a rename
    * land in between and split the two sidecars across two folders: the OPF writer's own ownership
