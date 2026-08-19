@@ -1145,6 +1145,35 @@ describe('enrichment job', () => {
       );
     });
 
+    it('narrators path: drops inserts when the book row is deleted mid-run and the captured asin is null', async () => {
+      // A vanished row must not read as "still same": rows[0]?.asin ?? null matched a null capture
+      // and sent narrator inserts at a dead FK (#2446 assess).
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: null }]))
+        .mockReturnValueOnce(mockDbChain([{
+          duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null,
+          publishedDate: null, seriesName: null, seriesPosition: null,
+        }]))
+        .mockReturnValueOnce(mockDbChain([]))                                                  // existingNarrators
+        .mockReturnValueOnce(mockDbChain([]));                                                 // isStillSameAsin: row deleted
+
+      metadataService.resolveBook.mockResolvedValueOnce({
+        title: 'X',
+        authors: [{ name: 'A' }],
+        narrators: ['Some Narrator'],
+      });
+      db.update.mockReturnValue(mockDbChain([]));
+      db.insert.mockReturnValue(mockDbChain());
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      expect(db.insert).not.toHaveBeenCalled();
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1, asin: null }),
+        'stale enrichment dropped (narrators)',
+      );
+    });
+
     it('scalar UPDATE is scoped WHERE id = ? AND asin = capturedAsin (logs debug when 0 rows match)', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_OLD' }]))

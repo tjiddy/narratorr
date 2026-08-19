@@ -42,8 +42,10 @@ async function isStillSameAsin(db: Db, bookId: number, capturedAsin: string | nu
     .from(books)
     .where(eq(books.id, bookId))
     .limit(1);
-  const current = rows[0]?.asin ?? null;
-  return current === capturedAsin;
+  // A deleted row must read as stale — chaining `?? null` would make a vanished book match a
+  // null captured ASIN and send narrator inserts at a dead FK (#2446 assess).
+  const row = rows[0];
+  return row !== undefined && (row.asin ?? null) === capturedAsin;
 }
 
 // SQL equality never matches NULL; null-ASIN candidates require IS NULL.
