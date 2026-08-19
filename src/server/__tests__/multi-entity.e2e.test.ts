@@ -43,6 +43,27 @@ const mswServer = setupServer(
   http.post(WEBHOOK_URL, () => new HttpResponse(null, { status: 200 })),
 );
 
+/**
+ * The monitor cycle's own qBittorrent list double. Extracted from its handler so the #2485 AC7c
+ * filter semantics — no surviving id part means NO filter, and therefore the full list — are
+ * assertable directly rather than only through the cycle that happens to hit the fast path.
+ */
+function monitorTorrentList(params: URLSearchParams, savePath: string): unknown[] {
+  const hashes = params.get('hashes');
+  if (!servesFullList(params) && hashes!.toLowerCase() !== TORRENT_HASH.toLowerCase()) return [];
+  return [{
+    hash: TORRENT_HASH.toLowerCase(),
+    name: 'Monitor Test Book',
+    save_path: savePath,
+    content_path: `${savePath}/Monitor Test Book`,
+    state: 'uploading',
+    progress: 1,
+    size: 1073741824,
+    added_on: Math.floor(Date.now() / 1000) - 86400,
+    completion_on: Math.floor(Date.now() / 1000) - 3600,
+  }];
+}
+
 const INDEXER_2_BASE = 'http://indexer2.test';
 const MAGNET_URI = `magnet:?xt=urn:btih:${TORRENT_HASH}&dn=Test+Book`;
 
@@ -340,6 +361,18 @@ describe('Job lifecycle E2E', () => {
     expect(activity.some((d) => d.status === 'downloading')).toBe(true);
   });
 
+  // #2485 AC7e — the monitor cycle below resolves on the fast path, so it never exercises the
+  // no-filter arm on its own; these three cases are what keep this double honest.
+  it.each([
+    ['an absent hashes param', '', 1],
+    ['an empty hashes value', '?hashes=', 1],
+    ['a non-matching filter', '?hashes=deadbeefdeadbeefdeadbeefdeadbeefdeadbeef', 0],
+  ])('the monitor list double answers %s with the right list', (_label, query, expected) => {
+    const params = new URL(`${QB_BASE}/api/v2/torrents/info${query}`).searchParams;
+
+    expect(monitorTorrentList(params, downloadParent)).toHaveLength(expected);
+  });
+
   it('monitor job marks download as completed with completedAt (does NOT trigger import)', async () => {
     const bookRes = await e2e.app.inject({
       method: 'POST',
@@ -361,25 +394,9 @@ describe('Job lifecycle E2E', () => {
 
     mswServer.use(
       qbLoginHandler(),
-      http.get(`${QB_BASE}/api/v2/torrents/info`, ({ request }) => {
-        const params = new URL(request.url).searchParams;
-        const hashes = params.get('hashes');
-        // No effective filter means the FULL list, not an empty one (#2485 AC7c).
-        if (servesFullList(params) || hashes!.toLowerCase() === TORRENT_HASH.toLowerCase()) {
-          return HttpResponse.json([{
-            hash: TORRENT_HASH.toLowerCase(),
-            name: 'Monitor Test Book',
-            save_path: downloadParent,
-            content_path: `${downloadParent}/Monitor Test Book`,
-            state: 'uploading',
-            progress: 1,
-            size: 1073741824,
-            added_on: Math.floor(Date.now() / 1000) - 86400,
-            completion_on: Math.floor(Date.now() / 1000) - 3600,
-          }]);
-        }
-        return HttpResponse.json([]);
-      }),
+      http.get(`${QB_BASE}/api/v2/torrents/info`, ({ request }) => HttpResponse.json(
+        monitorTorrentList(new URL(request.url).searchParams, downloadParent),
+      )),
     );
 
     // Omit the quality-gate orchestrator so this run cannot trigger inline import.

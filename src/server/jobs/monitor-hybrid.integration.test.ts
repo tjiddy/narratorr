@@ -76,9 +76,9 @@ describe('#2423 monitor over the real QBittorrentClient', () => {
   });
 
   /** The row stores the grabbed v1 hash and is well outside the grace window (#2423 Part B). */
-  function seedRow() {
+  function seedRow(externalId: string = V1) {
     db.select.mockReturnValueOnce(mockDbChain([{
-      id: 1, externalId: V1, downloadClientId: 10,
+      id: 1, externalId, downloadClientId: 10,
       clientStatus: 'downloading', pipelineStage: 'idle',
       bookId: null, title: 'Hybrid Audiobook', infoHash: V1, guid: null,
       completedAt: null, progress: 0, outputPath: null,
@@ -181,6 +181,46 @@ describe('#2423 monitor over the real QBittorrentClient', () => {
       expect(log.warn).not.toHaveBeenCalledWith({ id: 1 }, 'Download not found in client');
       // A11 — the memo is transient state; the row's identity is never rewritten.
       expect(writtenPayloads().every((p) => !('externalId' in p))).toBe(true);
+    });
+
+    /**
+     * #2485 — monitor.ts guards on `!download.externalId`, so a whitespace-only stored id is
+     * truthy and clears it. Before the adapter's refusal, the blank `?hashes=` probe read back the
+     * client's full list and the row inherited whatever torrent happened to be first.
+     */
+    it('does not import an unrelated torrent for a row whose external id is whitespace', async () => {
+      // First in the list, so an implementation that probed the blank filter would adopt THIS one.
+      const unrelated = {
+        ...hybridTorrent,
+        hash: 'ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00',
+        infohash_v1: '', infohash_v2: '',
+        name: "Someone Else's Audiobook", progress: 0.75,
+      };
+      const info = trackInfo((params) => HttpResponse.json(
+        servesFullList(params)
+          ? [unrelated, hybridTorrent]
+          : (params.get('hashes') === CANONICAL ? [hybridTorrent] : []),
+      ));
+
+      seedRow('   ');
+      await runCycle();
+
+      expect(info.urls).toEqual([]);
+      expect(writtenPayloads().some((p) => p.progress === 0.75)).toBe(false);
+      expect(writtenPayloads().some((p) => p.clientStatus === 'downloading')).toBe(false);
+      // It takes the missing-item path instead — the row is well outside the add grace window.
+      expect(writtenPayloads()).toContainEqual(
+        expect.objectContaining({ clientStatus: 'failed', errorMessage: 'Download not found in download client' }),
+      );
+
+      // Control: the same client and the same seeded list still record progress for a real hash,
+      // so the case cannot pass by the cycle simply doing nothing.
+      seedRow();
+      await runCycle();
+
+      expect(writtenPayloads()).toContainEqual(
+        expect.objectContaining({ clientStatus: 'downloading', progress: 0.25 }),
+      );
     });
 
     it('does not false-fail a hybrid sitting under a category other than the configured one', async () => {
