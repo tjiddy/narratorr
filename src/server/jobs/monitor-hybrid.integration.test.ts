@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { Mock } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '@core/__tests__/msw/server.js';
+import { servesFullList } from '@core/__tests__/qb-hash-filter.js';
 import { QBittorrentClient } from '@core/download-clients/qbittorrent.js';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import type { Db } from '@db/index.js';
@@ -75,9 +76,9 @@ describe('#2423 monitor over the real QBittorrentClient', () => {
   });
 
   /** The row stores the grabbed v1 hash and is well outside the grace window (#2423 Part B). */
-  function seedRow() {
+  function seedRow(externalId: string = V1) {
     db.select.mockReturnValueOnce(mockDbChain([{
-      id: 1, externalId: V1, downloadClientId: 10,
+      id: 1, externalId, downloadClientId: 10,
       clientStatus: 'downloading', pipelineStage: 'idle',
       bookId: null, title: 'Hybrid Audiobook', infoHash: V1, guid: null,
       completedAt: null, progress: 0, outputPath: null,
@@ -113,7 +114,7 @@ describe('#2423 monitor over the real QBittorrentClient', () => {
     seedRow();
     server.use(
       http.get(`${BASE_URL}/api/v2/torrents/info`, ({ request }) => HttpResponse.json(
-        new URL(request.url).searchParams.has('hashes') ? [] : [hybridTorrent],
+        servesFullList(new URL(request.url).searchParams) ? [hybridTorrent] : [],
       )),
     );
 
@@ -161,9 +162,9 @@ describe('#2423 monitor over the real QBittorrentClient', () => {
   describe('the canonical-hash memo across polls', () => {
     it('re-resolves a hybrid in one request on the second cycle, persisting nothing', async () => {
       const info = trackInfo((params) => HttpResponse.json(
-        params.has('hashes')
-          ? (params.get('hashes') === CANONICAL ? [hybridTorrent] : [])
-          : [hybridTorrent],
+        servesFullList(params)
+          ? [hybridTorrent]
+          : (params.get('hashes') === CANONICAL ? [hybridTorrent] : []),
       ));
 
       seedRow();
@@ -182,11 +183,51 @@ describe('#2423 monitor over the real QBittorrentClient', () => {
       expect(writtenPayloads().every((p) => !('externalId' in p))).toBe(true);
     });
 
+    /**
+     * #2485 — monitor.ts guards on `!download.externalId`, so a whitespace-only stored id is
+     * truthy and clears it. Before the adapter's refusal, the blank `?hashes=` probe read back the
+     * client's full list and the row inherited whatever torrent happened to be first.
+     */
+    it('does not import an unrelated torrent for a row whose external id is whitespace', async () => {
+      // First in the list, so an implementation that probed the blank filter would adopt THIS one.
+      const unrelated = {
+        ...hybridTorrent,
+        hash: 'ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00',
+        infohash_v1: '', infohash_v2: '',
+        name: "Someone Else's Audiobook", progress: 0.75,
+      };
+      const info = trackInfo((params) => HttpResponse.json(
+        servesFullList(params)
+          ? [unrelated, hybridTorrent]
+          : (params.get('hashes') === CANONICAL ? [hybridTorrent] : []),
+      ));
+
+      seedRow('   ');
+      await runCycle();
+
+      expect(info.urls).toEqual([]);
+      expect(writtenPayloads().some((p) => p.progress === 0.75)).toBe(false);
+      expect(writtenPayloads().some((p) => p.clientStatus === 'downloading')).toBe(false);
+      // It takes the missing-item path instead — the row is well outside the add grace window.
+      expect(writtenPayloads()).toContainEqual(
+        expect.objectContaining({ clientStatus: 'failed', errorMessage: 'Download not found in download client' }),
+      );
+
+      // Control: the same client and the same seeded list still record progress for a real hash,
+      // so the case cannot pass by the cycle simply doing nothing.
+      seedRow();
+      await runCycle();
+
+      expect(writtenPayloads()).toContainEqual(
+        expect.objectContaining({ clientStatus: 'downloading', progress: 0.25 }),
+      );
+    });
+
     it('does not false-fail a hybrid sitting under a category other than the configured one', async () => {
       client = buildClient('audiobooks');
       seedRow();
       const info = trackInfo((params) => HttpResponse.json(
-        params.has('hashes') || params.has('category') ? [] : [hybridTorrent],
+        !servesFullList(params) || params.has('category') ? [] : [hybridTorrent],
       ));
 
       await runCycle();

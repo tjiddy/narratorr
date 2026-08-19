@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
+import { servesFullList } from '../__tests__/qb-hash-filter.js';
 import { ADAPTER_FACTORIES } from './registry.js';
 import { downloadClientTypeSchema, type DownloadClientSettings } from '@shared/schemas/download-client.js';
 
@@ -111,7 +112,7 @@ describe('Download Client ADAPTER_FACTORIES', () => {
         // FIRST scan request only: since #2433 a configured category falls through to an unscoped
         // second scan, and it is the first one that carries the forwarding decision under test.
         http.get(`${BASE_URL}/api/v2/torrents/info`, ({ request }) => {
-          if (!new URL(request.url).searchParams.has('hashes')) fallbackUrl ??= request.url;
+          if (servesFullList(new URL(request.url).searchParams)) fallbackUrl ??= request.url;
           return HttpResponse.json([]);
         }),
       );

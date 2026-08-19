@@ -282,7 +282,12 @@ export class QBittorrentClient implements DownloadClientAdapter {
     return candidates.some((candidate) => !!candidate && candidate.toLowerCase() === wanted);
   }
 
-  /** A blank hash matches nothing, so it never keys the memo (#2433 A9). */
+  /**
+   * The single blank/non-blank decision for the whole adapter: a blank hash never keys the memo
+   * (#2433 A9) and, since #2485, never reaches the network either — `resolveTorrent` and the
+   * controls both refuse on `undefined`. The `.trim()` is load-bearing: a whitespace-only stored
+   * external ID is truthy and clears every upstream falsy guard.
+   */
   private memoKey(hash: string): string | undefined {
     return hash.trim().toLowerCase() || undefined;
   }
@@ -295,19 +300,22 @@ export class QBittorrentClient implements DownloadClientAdapter {
    */
   private async resolveTorrent(hash: string): Promise<QBTorrent | null> {
     const key = this.memoKey(hash);
-    const memoized = key ? this.canonicalHashes.get(key) : undefined;
+    // qBittorrent drops empty parts from the `hashes` filter and answers the FULL list, so probing
+    // on a blank hash would adopt an arbitrary torrent below. Refuse before any I/O (#2485).
+    if (!key) return null;
+    const memoized = this.canonicalHashes.get(key);
 
-    const probed = await this.fetchTorrents(`?hashes=${memoized ?? hash.toLowerCase()}`);
+    const probed = await this.fetchTorrents(`?hashes=${memoized ?? key}`);
     // A memo hit is NOT re-checked against isSameTorrent: a re-keyed hybrid whose client reports
     // `infohash_v1: ""` would fail that check and permanently lose the mapping in exactly the case
     // the memo exists for. Infohashes are content-derived, so a canonical hash that has come to
     // point at unrelated content is not a real failure mode.
     if (probed.length > 0) return probed[0]!;
     // Stale: drop it and rescan on the CALLER's hash, never the memoized one.
-    if (key && memoized) this.canonicalHashes.delete(key);
+    if (memoized) this.canonicalHashes.delete(key);
 
-    const scanned = await this.scanForTorrent(hash);
-    if (scanned && key) {
+    const scanned = await this.scanForTorrent(key);
+    if (scanned) {
       const canonical = scanned.hash.toLowerCase();
       // An identity mapping already costs one request; only a re-key is worth remembering.
       if (canonical !== key) this.canonicalHashes.set(key, canonical);
@@ -344,10 +352,22 @@ export class QBittorrentClient implements DownloadClientAdapter {
     return torrents.map((t) => this.mapItem(t));
   }
 
-  /** Controls take the same three-identity resolution; an unresolvable hash goes through as-is. */
+  /**
+   * Controls take the same three-identity resolution; an unresolvable hash goes through as-is.
+   * A BLANK one does not: qBittorrent would read the empty `hashes` filter as "no filter" and
+   * pause/resume/delete an arbitrary torrent. Refusing here — ahead of every caller's
+   * `URLSearchParams` construction — is what structurally prevents the POST (#2485).
+   */
   private async canonicalHashFor(hash: string): Promise<string> {
-    const torrent = await this.resolveTorrent(hash);
-    return (torrent?.hash ?? hash).toLowerCase();
+    const key = this.memoKey(hash);
+    if (!key) {
+      throw new DownloadClientError(
+        this.name,
+        'Refusing to act on a blank torrent hash: the stored external ID is empty or whitespace-only. Repair or cancel the download record before retrying.',
+      );
+    }
+    const torrent = await this.resolveTorrent(key);
+    return (torrent?.hash ?? key).toLowerCase();
   }
 
   async pauseDownload(hash: string): Promise<void> {
