@@ -78,6 +78,7 @@ import { migrateSecretsToEncrypted } from './utils/secret-migration.js';
 import { warnIfAuthBypassWithUser, checkReverseProxyBootConfig } from './boot-warnings.js';
 import { checkFfmpegVersionAtBoot } from './boot-ffmpeg-version.js';
 import { checkMutagenVersionAtBoot } from './boot-mutagen-version.js';
+import { checkCrashForensicsAtBoot, pruneCrashArtifactsAtBoot } from './boot-crash-forensics.js';
 import { buildFastifyOptions } from './fastify-options.js';
 import { registerRequestTraceLogging } from './request-trace-logging.js';
 import { registerV1OpenApi } from './routes/v1/openapi.js';
@@ -105,6 +106,11 @@ async function main() {
   if (!fs.existsSync(configDir)) {
     fs.mkdirSync(configDir, { recursive: true });
   }
+
+  // Before every other write to /config: cores are GB-scale and share the volume with the
+  // database, so on a segfault crashloop a later prune would never run — migrations would fail
+  // first for want of space, on precisely the loop the bound exists to break.
+  await pruneCrashArtifactsAtBoot(app.log);
 
   // Check for pending restore before DB is opened
   applyPendingRestore(config.configPath, config.dbPath, app.log);
@@ -141,6 +147,7 @@ async function main() {
 
   await checkFfmpegVersionAtBoot(app.log, services.settings);
   await checkMutagenVersionAtBoot(app.log);
+  await checkCrashForensicsAtBoot(app.log);
   await app.register(cookie);
   await app.register(authPlugin, { authService: services.auth, urlBase: config.urlBase });
   await app.register(errorHandlerPlugin);
