@@ -497,6 +497,17 @@ describe('tagFile', () => {
     expect(result.status).toBe('tagged');
   });
 
+  it('#2495: routes a .mp4 through the MP4 atom arm, not the ID3 arm', async () => {
+    const result = await tagFile('/books/file.mp4', '/usr/bin/python3', { artist: 'Author', album: 'Book' }, 'overwrite');
+
+    expect(result.status).toBe('tagged');
+    expect(result.file).toBe('file.mp4');
+    expect(mutagenRequest(0).format).toBe('mp4');
+    expect(mutagenRequest(0).ops).toContainEqual({ key: '©ART', kind: 'text', value: 'Author' });
+    expect(mutagenRequest(0).ops).toContainEqual({ key: '©alb', kind: 'text', value: 'Book' });
+    expect(mutagenRequest(0).ops.map(op => op.key)).not.toContain('TPE1');
+  });
+
   it('writes tags with a sanitized env (no secret leak, PATH preserved)', async () => {
     process.env.NARRATORR_SECRET_KEY = 'sentinel-secret';
     try {
@@ -1067,6 +1078,59 @@ describe('tagFile', () => {
       expect(result.tagged).toBe(2);
       expect(result.skipped).toBe(1);
       expect(result.warnings).toContainEqual(expect.stringContaining('.ogg'));
+    });
+
+    it('#2495: a .mp4-only folder tags cleanly with no "Unsupported format" warning', async () => {
+      _readdirFiles = ['FortuneFunhouseMissFortuneMysteriesBook19.mp4', 'cover.jpg'];
+      const db = createMockDb();
+      const settings = createMockSettingsService(taggingDefaults);
+      const log = createMockLog();
+      const service = new TaggingService(db as never, settings as never, log as never, mockBookService as never);
+
+      const result = await service.tagBook(1, '/books/test', {
+        title: 'Test', authorName: 'Author',
+      }, '/usr/bin/python3', 'overwrite', true);
+
+      expect(result.tagged).toBe(1);
+      expect(result.skipped).toBe(0);
+      expect(result.warnings.some(w => w.includes('.mp4'))).toBe(false);
+      expect(result.warnings).not.toContain('No taggable audio files found');
+      expect(log.warn).not.toHaveBeenCalledWith(
+        expect.objectContaining({ file: 'FortuneFunhouseMissFortuneMysteriesBook19.mp4' }),
+        'Tag write skipped',
+      );
+
+      const request = mutagenRequest(0);
+      expect(request.format).toBe('mp4');
+      expect(request.cover).toEqual({
+        path: expect.stringContaining('cover.jpg') as unknown as string,
+        mime: 'image/jpeg',
+      });
+      expect(writtenTags(0)).toEqual({ artist: 'Author', albumArtist: 'Author', album: 'Test', title: 'Test' });
+    });
+
+    // The registry-minus-taggable difference is where the two sets interact: .mp4 crossed from one
+    // side to the other, .flac did not.
+    it('#2495: a mixed .mp4 + .flac folder tags the mp4 and skips only the flac', async () => {
+      _readdirFiles = ['Book.mp4', 'Book.flac'];
+      const db = createMockDb();
+      const settings = createMockSettingsService(taggingDefaults);
+      const log = createMockLog();
+      const service = new TaggingService(db as never, settings as never, log as never, mockBookService as never);
+
+      const result = await service.tagBook(1, '/books/test', {
+        title: 'Test', authorName: 'Author',
+      }, '/usr/bin/python3', 'overwrite', false);
+
+      expect(result.tagged).toBe(1);
+      expect(result.skipped).toBe(1);
+      expect(result.warnings).toContainEqual(expect.stringContaining('Book.flac'));
+      expect(result.warnings.some(w => w.includes('Book.mp4'))).toBe(false);
+      expect(mutagenRequest(0).path.split('\\').join('/')).toContain('/Book.mp4');
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ file: 'Book.flac' }),
+        'Tag write skipped',
+      );
     });
 
     it('adds warning when cover embedding enabled but no cover file found', async () => {
