@@ -79,20 +79,41 @@ function nzbResponse(body: Uint8Array | string, init?: ResponseInit): Response {
 }
 
 const toPosix = (p: unknown) => String(p).split('\\').join('/');
+const basename = (p: unknown) => toPosix(p).split('/').at(-1)!;
 const TEMP_NAME_RE = /\/\.narratorr-[0-9a-f-]{36}\.part$/;
+
+const UUID_SRC = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+/** #2482: anchored at both ends, so a name carrying anything after the extension fails. The magnet
+ *  form has no `download-` prefix — that asymmetry is watcher-facing and deliberate. */
+const FINAL_NAME_RE = {
+  torrent: new RegExp(`^download-\\d+-${UUID_SRC}\\.torrent$`),
+  magnet: new RegExp(`^\\d+-${UUID_SRC}\\.magnet$`),
+  nzb: new RegExp(`^download-\\d+-${UUID_SRC}\\.nzb$`),
+};
+type ArtifactKind = keyof typeof FINAL_NAME_RE;
+
+/** A watcher globs the final basename, so the extension is load-bearing: exactly one dot, the type's
+ *  own extension, and never the staging suffix. A UUID contributes hyphens only. */
+function expectFinalName(name: string, kind: ArtifactKind): void {
+  expect(name).toMatch(FINAL_NAME_RE[kind]);
+  expect(name.split('.')).toHaveLength(2);
+  expect(name.endsWith('.part')).toBe(false);
+}
 
 /**
  * The artifact is only consumable after the rename, so both halves are the contract: the bytes go
  * to a random temp name, and only a completed write reaches the final one.
  */
-function expectArtifactWritten(finalName: RegExp, data: unknown): void {
+function expectArtifactWritten(kind: ArtifactKind, data: unknown): void {
   const lastWrite = vi.mocked(writeFile).mock.calls.at(-1)!;
   expect(toPosix(lastWrite[0])).toMatch(TEMP_NAME_RE);
   expect(lastWrite[1]).toEqual(data);
 
   const lastRename = vi.mocked(rename).mock.calls.at(-1)!;
   expect(lastRename[0]).toBe(lastWrite[0]);
-  expect(toPosix(lastRename[1])).toMatch(finalName);
+  // The two naming schemes stay disjoint: the published name is never a staging name.
+  expect(toPosix(lastRename[1])).not.toMatch(TEMP_NAME_RE);
+  expectFinalName(basename(lastRename[1]), kind);
 }
 
 describe('BlackholeClient', () => {
@@ -129,7 +150,7 @@ describe('BlackholeClient', () => {
       };
 
       await client.addDownload(artifact);
-      expectArtifactWritten(/download-\d+\.torrent$/, artifact.data);
+      expectArtifactWritten('torrent', artifact.data);
     });
 
     it('writes magnet-uri artifact as .magnet file', async () => {
@@ -141,7 +162,7 @@ describe('BlackholeClient', () => {
       };
 
       await client.addDownload(artifact);
-      expectArtifactWritten(/\d+\.magnet$/, magnetUri);
+      expectArtifactWritten('magnet', magnetUri);
     });
 
     it('fetches nzb-url artifact and writes .nzb file', async () => {
@@ -154,7 +175,7 @@ describe('BlackholeClient', () => {
       };
 
       await client.addDownload(artifact);
-      expectArtifactWritten(/download-\d+\.nzb$/, expect.any(Buffer));
+      expectArtifactWritten('nzb', expect.any(Buffer));
     });
 
     it('sends User-Agent: Narratorr/<version> on the nzb-url self-download (#1315)', async () => {
@@ -188,7 +209,7 @@ describe('BlackholeClient', () => {
       await client.addDownload(artifact);
 
       expect(mockFetch).toHaveBeenCalledTimes(2);
-      expectArtifactWritten(/download-\d+\.nzb$/, Buffer.from(nzbContent));
+      expectArtifactWritten('nzb', Buffer.from(nzbContent));
     });
 
     it('writes the exact bytes from a non-redirecting (direct 200) NZB URL', async () => {
@@ -202,7 +223,7 @@ describe('BlackholeClient', () => {
 
       await client.addDownload(artifact);
       expect(mockFetch).toHaveBeenCalledTimes(1);
-      expectArtifactWritten(/download-\d+\.nzb$/, Buffer.from(nzbContent));
+      expectArtifactWritten('nzb', Buffer.from(nzbContent));
     });
 
     it('threads the LAN allowlist into the dispatcher and fetch for a private-host NZB URL', async () => {
@@ -226,7 +247,7 @@ describe('BlackholeClient', () => {
         'http://192.168.0.22:9696/getnzb/abc.nzb',
         expect.objectContaining({ lanAllowlist: hostPort }),
       );
-      expectArtifactWritten(/download-\d+\.nzb$/, Buffer.from(nzbContent));
+      expectArtifactWritten('nzb', Buffer.from(nzbContent));
     });
 
     it('refuses a private-host NZB URL with no allowlist (SSRF default → DownloadClientError)', async () => {
@@ -412,10 +433,10 @@ describe('BlackholeClient', () => {
     const lastTempPath = () => String(vi.mocked(writeFile).mock.calls.at(-1)![0]);
 
     it.each([
-      ['torrent-bytes', { type: 'torrent-bytes', data: Buffer.from([0x64, 0x38]), infoHash: 'abc' }, Buffer.from([0x64, 0x38]), /download-\d+\.torrent$/],
-      ['magnet-uri', { type: 'magnet-uri', uri: 'magnet:?xt=urn:btih:abc', infoHash: 'abc' }, 'magnet:?xt=urn:btih:abc', /\d+\.magnet$/],
-      ['nzb-bytes', { type: 'nzb-bytes', data: Buffer.from('<nzb/>') }, Buffer.from('<nzb/>'), /download-\d+\.nzb$/],
-    ] as const)('stages %s to a random temp name and publishes nothing until commit', async (_label, artifact, data, finalName) => {
+      ['torrent-bytes', { type: 'torrent-bytes', data: Buffer.from([0x64, 0x38]), infoHash: 'abc' }, Buffer.from([0x64, 0x38]), 'torrent'],
+      ['magnet-uri', { type: 'magnet-uri', uri: 'magnet:?xt=urn:btih:abc', infoHash: 'abc' }, 'magnet:?xt=urn:btih:abc', 'magnet'],
+      ['nzb-bytes', { type: 'nzb-bytes', data: Buffer.from('<nzb/>') }, Buffer.from('<nzb/>'), 'nzb'],
+    ] as const)('stages %s to a random temp name and publishes nothing until commit', async (_label, artifact, data, kind) => {
       const staged = await usenetClient.stageDownload(artifact as DownloadArtifact);
 
       expect(vi.mocked(writeFile)).toHaveBeenCalledTimes(1);
@@ -428,7 +449,8 @@ describe('BlackholeClient', () => {
       expect(vi.mocked(rename)).toHaveBeenCalledTimes(1);
       const [from, to] = vi.mocked(rename).mock.calls[0]!;
       expect(from).toBe(vi.mocked(writeFile).mock.calls[0]![0]);
-      expect(toPosix(to)).toMatch(finalName);
+      expect(toPosix(to)).not.toMatch(TEMP_NAME_RE);
+      expectFinalName(basename(to), kind);
     });
 
     it('completes the nzb-url fetch and closes the dispatcher before returning the handle', async () => {
@@ -441,7 +463,7 @@ describe('BlackholeClient', () => {
       expect(rename).not.toHaveBeenCalled();
 
       await staged.commit();
-      expect(toPosix(vi.mocked(rename).mock.calls[0]![1])).toMatch(/download-\d+\.nzb$/);
+      expectFinalName(basename(vi.mocked(rename).mock.calls[0]![1]), 'nzb');
     });
 
     it('rejects a non-OK nzb-url response from stageDownload with no temp file and a closed dispatcher', async () => {
@@ -617,7 +639,7 @@ describe('BlackholeClient', () => {
       const nzbData = Buffer.from('<nzb><file subject="test"/></nzb>');
       await usenetClient.addDownload({ type: 'nzb-bytes', data: nzbData });
 
-      expectArtifactWritten(/download-\d+\.nzb$/, nzbData);
+      expectArtifactWritten('nzb', nzbData);
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
@@ -625,7 +647,7 @@ describe('BlackholeClient', () => {
       const binaryData = Buffer.from([0x00, 0x01, 0xFF, 0xFE, 0x80, 0x7F]);
       await usenetClient.addDownload({ type: 'nzb-bytes', data: binaryData });
 
-      expectArtifactWritten(/download-\d+\.nzb$/, binaryData);
+      expectArtifactWritten('nzb', binaryData);
     });
 
     it('rejects zero-length nzb-bytes with DownloadClientError before any filesystem write', async () => {
@@ -642,7 +664,7 @@ describe('BlackholeClient', () => {
 
       await usenetClient.addDownload({ type: 'nzb-url', url: 'https://indexer.test/nzb' });
 
-      expectArtifactWritten(/download-\d+\.nzb$/, expect.any(Buffer));
+      expectArtifactWritten('nzb', expect.any(Buffer));
     });
   });
 
@@ -698,15 +720,15 @@ describe('BlackholeClient', () => {
     });
 
     it.each([
-      ['torrent-bytes', { type: 'torrent-bytes', data: Buffer.from('d8:announce'), infoHash: 'a' }, /^download-\d+\.torrent$/, Buffer.from('d8:announce')],
-      ['magnet-uri', { type: 'magnet-uri', uri: 'magnet:?xt=urn:btih:abc', infoHash: 'a' }, /^\d+\.magnet$/, Buffer.from('magnet:?xt=urn:btih:abc')],
-      ['nzb-bytes', { type: 'nzb-bytes', data: Buffer.from('<nzb/>') }, /^download-\d+\.nzb$/, Buffer.from('<nzb/>')],
-    ] as const)('lands %s under its final name with the exact bytes and no temp survivor', async (_label, artifact, namePattern, expected) => {
+      ['torrent-bytes', { type: 'torrent-bytes', data: Buffer.from('d8:announce'), infoHash: 'a' }, 'torrent', Buffer.from('d8:announce')],
+      ['magnet-uri', { type: 'magnet-uri', uri: 'magnet:?xt=urn:btih:abc', infoHash: 'a' }, 'magnet', Buffer.from('magnet:?xt=urn:btih:abc')],
+      ['nzb-bytes', { type: 'nzb-bytes', data: Buffer.from('<nzb/>') }, 'nzb', Buffer.from('<nzb/>')],
+    ] as const)('lands %s under its final name with the exact bytes and no temp survivor', async (_label, artifact, kind, expected) => {
       await realClient.addDownload(artifact as DownloadArtifact);
 
       const names = await finalNames();
       expect(names).toHaveLength(1);
-      expect(names[0]).toMatch(namePattern);
+      expectFinalName(names[0]!, kind);
       expect(await actualFs.readFile(join(watchDir, names[0]!))).toEqual(expected);
       expect(await tempNames()).toEqual([]);
     });
@@ -718,7 +740,7 @@ describe('BlackholeClient', () => {
 
       const names = await finalNames();
       expect(names).toHaveLength(1);
-      expect(names[0]).toMatch(/^download-\d+\.nzb$/);
+      expectFinalName(names[0]!, 'nzb');
       expect(await actualFs.readFile(join(watchDir, names[0]!))).toEqual(Buffer.from('<nzb>fetched</nzb>'));
     });
 
@@ -762,10 +784,10 @@ describe('BlackholeClient', () => {
     // #2341: the directory contents are the property under test — a mock cannot show that a
     // staged artifact is invisible to the watching client.
     it.each([
-      ['torrent-bytes', { type: 'torrent-bytes', data: Buffer.from('d8:announce'), infoHash: 'a' }, /^download-\d+\.torrent$/, Buffer.from('d8:announce')],
-      ['magnet-uri', { type: 'magnet-uri', uri: 'magnet:?xt=urn:btih:abc', infoHash: 'a' }, /^\d+\.magnet$/, Buffer.from('magnet:?xt=urn:btih:abc')],
-      ['nzb-bytes', { type: 'nzb-bytes', data: Buffer.from('<nzb/>') }, /^download-\d+\.nzb$/, Buffer.from('<nzb/>')],
-    ] as const)('stages %s invisibly and publishes it only on commit', async (_label, artifact, namePattern, expected) => {
+      ['torrent-bytes', { type: 'torrent-bytes', data: Buffer.from('d8:announce'), infoHash: 'a' }, 'torrent', Buffer.from('d8:announce')],
+      ['magnet-uri', { type: 'magnet-uri', uri: 'magnet:?xt=urn:btih:abc', infoHash: 'a' }, 'magnet', Buffer.from('magnet:?xt=urn:btih:abc')],
+      ['nzb-bytes', { type: 'nzb-bytes', data: Buffer.from('<nzb/>') }, 'nzb', Buffer.from('<nzb/>')],
+    ] as const)('stages %s invisibly and publishes it only on commit', async (_label, artifact, kind, expected) => {
       const staged = await realClient.stageDownload(artifact as DownloadArtifact);
 
       expect(await tempNames()).toHaveLength(1);
@@ -775,7 +797,7 @@ describe('BlackholeClient', () => {
 
       const names = await finalNames();
       expect(names).toHaveLength(1);
-      expect(names[0]).toMatch(namePattern);
+      expectFinalName(names[0]!, kind);
       expect(await actualFs.readFile(join(watchDir, names[0]!))).toEqual(expected);
       expect(await tempNames()).toEqual([]);
     });
@@ -822,7 +844,9 @@ describe('BlackholeClient', () => {
       await staged.commit();
 
       expect(vi.mocked(rename)).toHaveBeenCalledTimes(2);
-      expect(await finalNames()).toHaveLength(1);
+      const published = await finalNames();
+      expect(published).toHaveLength(1);
+      expectFinalName(published[0]!, 'torrent');
       expect(await tempNames()).toEqual([]);
 
       // published guards the retry-published handoff too: a second commit is a no-op.
@@ -874,28 +898,174 @@ describe('BlackholeClient', () => {
       expect(await finalNames()).toHaveLength(1);
     });
 
-    // F7: final names are millisecond-stamped, so a deterministic `<final>.tmp` would let two
-    // same-millisecond handoffs clobber each other's staging file.
-    it('gives concurrent same-millisecond handoffs distinct temp files', async () => {
-      vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
-      const first = Buffer.from('first payload');
-      const second = Buffer.from('second payload');
+    // #2482: two handoffs landing in the same millisecond used to build the same final name, so one
+    // artifact silently replaced the other while both books kept a completed-looking download row.
+    // The clock is frozen rather than raced: the collision is a naming property, not a timing one.
+    describe('same-millisecond handoffs', () => {
+      const FROZEN_MS = 1_700_000_000_000;
+      let restoreClock: (() => void) | undefined;
 
-      await Promise.all([
-        realClient.addDownload({ type: 'torrent-bytes', data: first, infoHash: 'a' }),
-        realClient.addDownload({ type: 'torrent-bytes', data: second, infoHash: 'b' }),
-      ]);
+      function freezeClock(): void {
+        const spy = vi.spyOn(Date, 'now').mockReturnValue(FROZEN_MS);
+        restoreClock = () => { spy.mockRestore(); };
+      }
 
-      const tempPaths = vi.mocked(writeFile).mock.calls.map((c) => String(c[0]));
-      expect(tempPaths).toHaveLength(2);
-      expect(new Set(tempPaths).size).toBe(2);
+      afterEach(() => {
+        restoreClock?.();
+        restoreClock = undefined;
+        // armFetch installs a base implementation; the suite's beforeEach only clears calls.
+        mockFetch.mockReset();
+      });
 
-      // Both raced for one timestamped final name; whichever landed must be whole, never a mix.
-      const names = await finalNames();
-      expect(names).toEqual(['download-1700000000000.torrent']);
-      const landed = await actualFs.readFile(join(watchDir, names[0]!));
-      expect([first.toString(), second.toString()]).toContain(landed.toString());
-      expect(await tempNames()).toEqual([]);
+      const finalContents = async () =>
+        Promise.all((await finalNames()).map(async (n) => (await actualFs.readFile(join(watchDir, n))).toString()));
+
+      interface HandoffType {
+        label: string;
+        kind: ArtifactKind;
+        payload: (n: number) => string;
+        artifact: (n: number) => DownloadArtifact;
+        armFetch?: () => void;
+      }
+
+      // One entry per final-name construction site in stageDownload, fetched nzb-url included: a
+      // UUID cached anywhere that outlives one call collides on whichever site the cache is shared by.
+      const HANDOFF_TYPES: readonly HandoffType[] = [
+        {
+          label: 'torrent-bytes',
+          kind: 'torrent',
+          payload: (n) => `d8:announce ${n}`,
+          artifact: (n) => ({ type: 'torrent-bytes', data: Buffer.from(`d8:announce ${n}`), infoHash: `hash${n}` }),
+        },
+        {
+          label: 'magnet-uri',
+          kind: 'magnet',
+          payload: (n) => `magnet:?xt=urn:btih:abc${n}`,
+          artifact: (n) => ({ type: 'magnet-uri', uri: `magnet:?xt=urn:btih:abc${n}`, infoHash: `hash${n}` }),
+        },
+        {
+          label: 'nzb-bytes',
+          kind: 'nzb',
+          payload: (n) => `<nzb>${n}</nzb>`,
+          artifact: (n) => ({ type: 'nzb-bytes', data: Buffer.from(`<nzb>${n}</nzb>`) }),
+        },
+        {
+          label: 'nzb-url',
+          kind: 'nzb',
+          payload: (n) => `<nzb>fetched ${n}</nzb>`,
+          artifact: (n) => ({ type: 'nzb-url', url: `https://example.com/${n}.nzb` }),
+          // Keyed off the requested URL rather than a Once-queue, so each handoff is pinned to its
+          // own payload no matter which fetch resolves first.
+          armFetch: () => {
+            mockFetch.mockImplementation((url) => {
+              const n = new URL(String(url)).pathname.replace(/\D/g, '');
+              return Promise.resolve(nzbResponse(Buffer.from(`<nzb>fetched ${n}</nzb>`), { status: 200 }));
+            });
+          },
+        },
+      ];
+
+      it.each(HANDOFF_TYPES)('publishes two concurrent $label handoffs under distinct final names', async ({ kind, payload, artifact, armFetch }) => {
+        freezeClock();
+        armFetch?.();
+
+        // Both racers enter through addDownload: unequal pre-publish work would let one finish first
+        // and hide a shared name (see reservation-proof-needs-same-entry-point-race).
+        await Promise.all([realClient.addDownload(artifact(1)), realClient.addDownload(artifact(2))]);
+
+        const names = await finalNames();
+        expect(names).toHaveLength(2);
+        expect(new Set(names).size).toBe(2);
+        names.forEach((n) => { expectFinalName(n, kind); });
+        expect((await finalContents()).sort()).toEqual([payload(1), payload(2)].sort());
+        expect(await tempNames()).toEqual([]);
+
+        // #2341's distinct-temp-path property is separate from the final-name one; both must hold.
+        const tempPaths = vi.mocked(writeFile).mock.calls.map((c) => String(c[0]));
+        expect(new Set(tempPaths).size).toBe(2);
+      });
+
+      it.each(HANDOFF_TYPES)('publishes two sequential $label handoffs under distinct final names', async ({ kind, payload, artifact, armFetch }) => {
+        freezeClock();
+        armFetch?.();
+
+        await realClient.addDownload(artifact(1));
+        await realClient.addDownload(artifact(2));
+
+        const names = await finalNames();
+        expect(names).toHaveLength(2);
+        expect(new Set(names).size).toBe(2);
+        names.forEach((n) => { expectFinalName(n, kind); });
+        expect((await finalContents()).sort()).toEqual([payload(1), payload(2)].sort());
+        expect(await tempNames()).toEqual([]);
+      });
+
+      it('keeps three concurrent handoffs distinct, so the property is not "two happened to differ"', async () => {
+        freezeClock();
+        const payloads = [1, 2, 3].map((n) => `d8:announce ${n}`);
+
+        await Promise.all(payloads.map((p, i) =>
+          realClient.addDownload({ type: 'torrent-bytes', data: Buffer.from(p), infoHash: `hash${i}` })));
+
+        const names = await finalNames();
+        expect(names).toHaveLength(3);
+        expect(new Set(names).size).toBe(3);
+        expect((await finalContents()).sort()).toEqual([...payloads].sort());
+        expect(await tempNames()).toEqual([]);
+      });
+
+      // The staged path is the one download-record.ts drives, and the one that lands the row first.
+      it('publishes both handoffs staged in the same millisecond when both commit', async () => {
+        freezeClock();
+        const first = await realClient.stageDownload({ type: 'torrent-bytes', data: Buffer.from('first payload'), infoHash: 'a' });
+        const second = await realClient.stageDownload({ type: 'torrent-bytes', data: Buffer.from('second payload'), infoHash: 'b' });
+
+        expect(await finalNames()).toEqual([]);
+        expect(await tempNames()).toHaveLength(2);
+
+        await first.commit();
+        await second.commit();
+
+        const names = await finalNames();
+        expect(names).toHaveLength(2);
+        names.forEach((n) => { expectFinalName(n, 'torrent'); });
+        expect((await finalContents()).sort()).toEqual(['first payload', 'second payload']);
+        expect(await tempNames()).toEqual([]);
+      });
+
+      it('discards only the aborted handoff when its same-millisecond sibling commits', async () => {
+        freezeClock();
+        const first = await realClient.stageDownload({ type: 'torrent-bytes', data: Buffer.from('first payload'), infoHash: 'a' });
+        const second = await realClient.stageDownload({ type: 'torrent-bytes', data: Buffer.from('second payload'), infoHash: 'b' });
+        const secondTemp = vi.mocked(writeFile).mock.calls[1]![0];
+
+        await first.commit();
+        await second.abort();
+
+        expect(vi.mocked(unlink)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(unlink).mock.calls[0]![0]).toBe(secondTemp);
+
+        const names = await finalNames();
+        expect(names).toHaveLength(1);
+        expectFinalName(names[0]!, 'torrent');
+        expect(await actualFs.readFile(join(watchDir, names[0]!))).toEqual(Buffer.from('first payload'));
+        expect(await tempNames()).toEqual([]);
+      });
+
+      it('publishes each same-millisecond handoff exactly once across repeated commits', async () => {
+        freezeClock();
+        const first = await realClient.stageDownload({ type: 'torrent-bytes', data: Buffer.from('first payload'), infoHash: 'a' });
+        const second = await realClient.stageDownload({ type: 'torrent-bytes', data: Buffer.from('second payload'), infoHash: 'b' });
+        await first.commit();
+        await second.commit();
+        vi.mocked(rename).mockClear();
+
+        await first.commit();
+        await second.commit();
+
+        expect(rename).not.toHaveBeenCalled();
+        expect(await finalNames()).toHaveLength(2);
+      });
     });
   });
 });
