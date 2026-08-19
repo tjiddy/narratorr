@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { homedir, tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join } from 'node:path';
 
 // Spied, not replaced: every case but the isolation ones below removes real directories.
 const actualRemoveTree = await vi.importActual<typeof import('../src/core/utils/remove-tree.js')>('../src/core/utils/remove-tree.js');
@@ -210,21 +210,25 @@ describe('globalTeardown', () => {
     orphans.push(...runTempRoots(run));
     actualFs.writeFileSync(run.dbPath, 'db-bytes');
 
+    // Match on the identity teardown actually passes, not the raw field: `runTempRoots` canonicalizes,
+    // so on Windows a `run.libraryPath` comparison never fires and this case silently inverts.
+    const [dbRoot, libraryRoot, configRoot, downloadsRoot, sourceRoot] = runTempRoots(run);
+
     // Exactly one target fails, and it is not the last — the later ones are the observation point.
     vi.mocked(removeTreeSync).mockImplementation((target: string) => {
-      if (target === run.libraryPath) throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' });
+      if (target === libraryRoot) throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' });
       actualRemoveTree.removeTreeSync(target);
     });
 
     await expect(globalTeardown()).resolves.toBeUndefined();
 
     expect(attemptedRemovals()).toEqual(runTempRoots(run));
-    expect(actualFs.existsSync(dirname(run.dbPath))).toBe(false);
-    expect(actualFs.existsSync(run.configPath)).toBe(false);
-    expect(actualFs.existsSync(run.downloadsPath)).toBe(false);
-    expect(actualFs.existsSync(run.sourcePath)).toBe(false);
+    expect(actualFs.existsSync(dbRoot!)).toBe(false);
+    expect(actualFs.existsSync(configRoot!)).toBe(false);
+    expect(actualFs.existsSync(downloadsRoot!)).toBe(false);
+    expect(actualFs.existsSync(sourceRoot!)).toBe(false);
     // The failing one is the only survivor, which is what makes the assertions above non-vacuous.
-    expect(actualFs.existsSync(run.libraryPath)).toBe(true);
+    expect(actualFs.existsSync(libraryRoot!)).toBe(true);
   });
 
   it('ignores temp dirs created by an unrelated process', async () => {

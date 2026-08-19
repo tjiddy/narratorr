@@ -38,6 +38,9 @@ const SUBPATH = 'subpath';
 const FORMS = 'forms';
 const ALL_RUNS = [ROOT_RUN, SUBPATH, FORMS];
 
+/** For expected values only — `path.join` emits `\` on Windows, `canonicalPath` never does. */
+const toPosix = (p: string): string => p.split('\\').join('/');
+
 /** Every path `mkdtempSync` actually handed back — the ownership ledger the rollback cases assert on. */
 function allocatedPaths(): string[] {
   return vi.mocked(mkdtempSync).mock.results
@@ -196,17 +199,21 @@ describe('isHarnessTempRoot', () => {
     // What `runTempRoots` returns is what teardown deletes, so it must yield the same identity the
     // confinement predicate approved — otherwise a validated alias names a different pathname.
     const real = join(tmpdir(), `${HARNESS_TEMP_PREFIX}identity`);
+    // Built by concatenation, not `join`: on Windows `join` would normalize the `\.` away before
+    // the function under test ever sees it, and the alias is the whole point of the fixture.
     const roots = runTempRoots({
-      dbPath: join(`${real}-db\\.`, 'narratorr.db'),
+      dbPath: `${real}-db\\./narratorr.db`,
       libraryPath: `${real}-lib/.`,
       configPath: `${real}-cfg/../${HARNESS_TEMP_PREFIX}identity-cfg`,
       downloadsPath: `${real}-dl`,
       sourcePath: `${real}-src`,
     });
 
+    // `canonicalPath` folds separators last, so its output is POSIX-spelled on every platform
+    // while `real` carries `\` on Windows. Normalize the expected side, never the actual.
     expect(roots).toEqual([
       `${real}-db`, `${real}-lib`, `${real}-cfg`, `${real}-dl`, `${real}-src`,
-    ]);
+    ].map(toPosix));
   });
 
   it('rejects a prefix-matching path nested one level deeper than the temp dir', () => {
