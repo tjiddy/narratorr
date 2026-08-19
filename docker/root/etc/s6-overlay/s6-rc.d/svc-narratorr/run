@@ -6,11 +6,25 @@ cd /app || exit 1
 # Node report flags require a pre-existing directory writable by `abc`.
 s6-setuidgid abc mkdir -p /config/crash-reports
 
+# Arm core dumps here, while still root: the limit is inherited by the dropped-privilege node.
+# `-S` is mandatory on both arms — Bash sets the HARD limit too when neither -S nor -H is given,
+# which would make the opt-out a one-way door no in-process code could undo. Both arms act: the
+# container may inherit a nonzero soft limit, so "leave it alone" would not be a real opt-out.
+# A failure only warns; the boot readiness check tells the operator the limit did not take.
+if [[ "${CRASH_CORE_DUMPS}" == "false" ]]; then
+    ulimit -S -c 0 || echo "[narratorr] WARNING: could not disable core dumps" >&2
+else
+    ulimit -S -c unlimited || echo "[narratorr] WARNING: could not enable core dumps; the inherited hard limit may block the raise — start the container with --ulimit core=-1" >&2
+fi
+
 exec \
     s6-setuidgid abc \
     node \
         --enable-source-maps \
         --report-on-fatalerror \
         --report-uncaught-exception \
+        --report-on-signal \
+        --report-signal=SIGUSR2 \
+        --report-exclude-env \
         --report-directory=/config/crash-reports \
         dist/server/index.js
