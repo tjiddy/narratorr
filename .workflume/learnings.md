@@ -3474,3 +3474,24 @@ Implementation: `evaluateTeardownCrash` in `scripts/vitest-selection-guard.ts` (
 **Capturing the exit code in GitHub Actions:** the bash default is `-eo pipefail`, so `set +e` must precede the pipeline and the code must be read from `${PIPESTATUS[0]}`, not `$?`. Without `set +e` a non-zero run aborts the step before the guard sees it; with `$?` you get tee's status. Either mistake yields a silently-always-zero code, which turns the guard into a no-op that swallows real failures.
 
 Stated limit: a file the run never SELECTED does not appear in the report at all, and a file enumerated but never COLLECTED is indistinguishable from a legitimate `describe.todo`-only file (both `assertionResults: []`). Neither is covered by this rule; the first stays covered by the per-project selection checks plus the `REQUIRED_FILES` control. See [[vitest-passwithnotests-hides-empty-selection]] — whose 'deliberately ungated — if the tests failed the job is already red for the right reason' sentence is now false: the guard step is the job's only verdict and adjudicates the exit code.
+
+## playwright-webserver-precedes-globalsetup
+
+**source:** #2452  
+**added:** 2026-08-19  
+**files:** e2e/playwright.config.ts  
+**tags:** playwright, e2e-harness, process-lifecycle, config-evaluation
+
+---
+
+Two non-configurable facts about `@playwright/test` (verified on 1.62.1) that between them invalidate the natural reading of a harness config:
+
+**1. `webServer` entries start BEFORE `globalSetup`.** Anything `globalSetup` prepares for the server is observed as absent by every boot-time reader. In this repo that is `runMigrations`, the `settings.general` log-level read, `AuthService.initialize()`, and all of `startRuntime` (`src/server/index.ts:112-176`, `src/server/startup.ts:18`). Seeding in `globalSetup` is therefore a nondeterminism generator, not merely a style choice — it produced the #2452 critical-path flake.
+
+The fix shape is to move the setup into the server's own launch path so ordering is structural: make `webServer.command` a wrapper that seeds, verifies, then starts the server IN THE SAME PROCESS — `node --import tsx ./fixtures/seed-and-serve.ts`, which ends in `await import('../../dist/server/index.js')`. `--import tsx` registers the loader in-process so Playwright manages exactly one PID and its existing kill path keeps working; a bare `tsx <file>` CLI invocation forks a child and risks an orphaned server after teardown. Node has no `execve`, so a literal exec is unavailable. Verify the seed through a **fresh** connection before booting — a same-connection read cannot observe the defect this guards.
+
+**2. `playwright.config.ts` is evaluated in MULTIPLE processes** — the runner, every worker, and tooling (`--list`, IDE extensions). Module-scope side effects run once per process, not once per run. Three `createRunTempDirs()` calls at module scope (5 `mkdtempSync` each) leaked ~15 directories per config load; **14,962** `narratorr-e2e-*` directories were measured in %TEMP% on 2026-08-18. Guard such work behind a manifest published on `process.env` at config time — config-time env DOES reach worker processes, unlike `globalSetup` env mutations which are same-process only. The first loader allocates and publishes; later loaders adopt and allocate nothing. Tooling processes inheriting no env still allocate one batch, so pair the guard with an age-floored sweep as a second line.
+
+Two supporting details worth not re-deriving: `webServer.command` runs with `cwd` defaulting to the config file's directory (`runner/index.js:827`), and `webServer.env` is MERGED over `process.env` (`{...DEFAULT_ENVIRONMENT_VARIABLES, ...process.env, ...options.env}`, `runner/index.js:857-862`), so a shell override of a port variable does reach the wrapper.
+
+See `e2e/README.md` "How the harness is wired" and "Ownership model", and the config sentinels in `e2e/global-setup.test.ts` that red if a `command` is reverted to a bare bundle launch.
