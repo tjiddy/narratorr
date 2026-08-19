@@ -206,6 +206,42 @@ describe('stagedAudioReplace (#1287 manual import over populated target)', () =>
     expect(await pathExists(`${target}.import-bak`)).toBe(false);
   });
 
+  it('#2495: stages and commits a bare .mp4 over a stale target', async () => {
+    await writeFile(join(target, 'stale.m4b'), Buffer.alloc(500, 1));
+    const mp4Bytes = Buffer.alloc(400, 7);
+    await writeFile(join(source, 'FortuneFunhouseMissFortuneMysteriesBook19.mp4'), mp4Bytes);
+
+    await replaceFromSource();
+
+    expect(await listAllFiles(target)).toEqual(['FortuneFunhouseMissFortuneMysteriesBook19.mp4']);
+    expect(await readFile(join(target, 'FortuneFunhouseMissFortuneMysteriesBook19.mp4'))).toEqual(mp4Bytes);
+    const { stagingPath, backupPath } = deriveImportSiblings(target);
+    expect(await pathExists(stagingPath)).toBe(false);
+    expect(await pathExists(backupPath)).toBe(false);
+  });
+
+  it('#2495: a post-stage failure restores the prior .mp4 target byte-unchanged', async () => {
+    const originalBytes = Buffer.alloc(500, 3);
+    await writeFile(join(target, 'Existing.mp4'), originalBytes);
+
+    await expect(stagedAudioReplace({
+      targetPath: target,
+      libraryRoot,
+      log: makeLog(),
+      sourceAudioSize: 1000,
+      stage: async (stagingPath) => {
+        await mkdir(stagingPath, { recursive: true });
+        await writeFile(join(stagingPath, 'Replacement.mp4'), Buffer.alloc(400, 9));
+        throw new Error('Disk full mid-copy');
+      },
+    })).rejects.toThrow('Disk full mid-copy');
+
+    expect(await listAllFiles(target)).toEqual(['Existing.mp4']);
+    expect(await readFile(join(target, 'Existing.mp4'))).toEqual(originalBytes);
+    expect(await pathExists(`${target}.import-tmp`)).toBe(false);
+    expect(await pathExists(`${target}.import-bak`)).toBe(false);
+  });
+
   it('AC6: flattens nested source audio into the target top level, nothing stranded in staging', async () => {
     await writeFile(join(target, 'old.mp3'), Buffer.alloc(300, 1));
     await mkdir(join(source, 'Disc 1'), { recursive: true });
