@@ -268,7 +268,7 @@ async function artifactDirLeg(deps: CrashForensicsProbeDeps): Promise<Leg> {
       return disarmed('artifact-directory', `${CRASH_ARTIFACT_DIR} does not exist, so no core or report can be written there`);
     }
     if (code === 'EACCES') {
-      return disarmed('artifact-directory', `${CRASH_ARTIFACT_DIR} is not writable by this process, so no core or report can be written there`);
+      return disarmed('artifact-directory', `${CRASH_ARTIFACT_DIR} is not writable by this process — creating an entry needs both the write and the search bit — so no core or report can be written there`);
     }
     return unknown('artifact-directory');
   }
@@ -331,6 +331,17 @@ export async function logCrashForensicsAtBoot(
 // Production wrappers
 // ---------------------------------------------------------------------------
 
+/**
+ * Creating an entry in a directory needs the search bit as well as the write bit, so `W_OK`
+ * alone is not the mask this leg needs: verified that `access` resolves for a mode-0200
+ * directory while writing a file into it rejects `EACCES` — a probe that stopped at `W_OK`
+ * would report armed while every report and core failed to materialize. Named and exported so
+ * the mask is testable against a real directory rather than only through an injected double.
+ */
+export function probeArtifactDirWritable(dir: string): Promise<void> {
+  return access(dir, constants.W_OK | constants.X_OK);
+}
+
 /** Bind the production probes while retaining the independently tested best-effort contract. */
 export async function checkCrashForensicsAtBoot(log: FastifyBaseLogger): Promise<void> {
   await logCrashForensicsAtBoot({
@@ -344,7 +355,7 @@ export async function checkCrashForensicsAtBoot(log: FastifyBaseLogger): Promise
       signal: process.report?.signal ?? '',
       excludeEnv: process.report?.excludeEnv ?? false,
     }),
-    probeArtifactDir: () => access(CRASH_ARTIFACT_DIR, constants.W_OK),
+    probeArtifactDir: () => probeArtifactDirWritable(CRASH_ARTIFACT_DIR),
     cwd: () => process.cwd(),
   }, log);
 }

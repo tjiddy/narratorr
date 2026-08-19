@@ -78,6 +78,19 @@ Consequence: an operator who relocates `CONFIG_PATH` **still** gets crash artifa
 > only** and never durability. Provide an explicit bind or named mount, and prove it by seeding a
 > file, recreating the container, and confirming the file is still there.
 
+**If the boot log says the artifact directory is not writable**, check *both* permission bits, not
+just the write bit. Creating an entry inside a directory requires the search (execute) bit as well,
+so a directory that looks writable can still reject every report and core with `EACCES`:
+
+```bash
+docker exec <container> sh -c 'ls -ld /config/crash-reports'   # want drwx------ or better for abc
+docker exec <container> chown abc:abc /config/crash-reports
+docker exec <container> chmod 700 /config/crash-reports
+```
+
+The usual cause is a host bind mount whose directory was created with a mode or owner that does not
+grant `abc` both bits.
+
 ## 4. Core-dump limits
 
 The s6 run script sets the **soft** core limit while still root, before dropping privilege, so the

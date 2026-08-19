@@ -22,10 +22,34 @@ import {
   REPORT_PARSE_LIMIT,
   checkCrashForensicsAtBoot,
   logCrashForensicsAtBoot,
+  probeArtifactDirWritable,
   pruneCrashArtifacts,
   pruneCrashArtifactsAtBoot,
   type CrashForensicsProbeDeps,
 } from './boot-crash-forensics.js';
+
+/**
+ * Root ignores a directory's search bit and Windows does not model it at all, so the negative
+ * case is only observable where the OS actually enforces it. Probe the capability rather than
+ * branching on `process.platform` — an unprivileged Linux CI runner can run it, a root container
+ * cannot, and neither is knowable from the platform string.
+ */
+const ENFORCES_DIR_SEARCH_BIT = await (async () => {
+  if (process.platform === 'win32') return false;
+  const probeRoot = await actualFs.mkdtemp(path.join(os.tmpdir(), 'search-bit-probe-'));
+  const dir = path.join(probeRoot, 'd');
+  try {
+    await actualFs.mkdir(dir);
+    await actualFs.chmod(dir, 0o200);
+    await actualFs.writeFile(path.join(dir, 'x'), '');
+    return false;
+  } catch {
+    return true;
+  } finally {
+    await actualFs.chmod(dir, 0o700).catch(() => undefined);
+    await actualFs.rm(probeRoot, { recursive: true, force: true }).catch(() => undefined);
+  }
+})();
 
 function createLog() {
   return { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() };
@@ -422,6 +446,75 @@ describe('logCrashForensicsAtBoot — artifact-directory leg', () => {
     const line = readinessLine(log);
     expect(line.message).not.toMatch(/persist|durable|survive/i);
   });
+});
+
+describe('probeArtifactDirWritable — the production permission mask', () => {
+  let root: string;
+  const restored: string[] = [];
+
+  beforeEach(async () => {
+    root = await actualFs.mkdtemp(path.join(os.tmpdir(), 'crash-probe-'));
+    restored.length = 0;
+  });
+
+  afterEach(async () => {
+    // A 0200 directory cannot be descended into, so relax it before the recursive remove.
+    for (const dir of restored) await actualFs.chmod(dir, 0o700).catch(() => undefined);
+    try {
+      await actualFs.rm(root, { recursive: true, force: true });
+    } catch { /* tolerated: see windows-hostile-test-primitives */ }
+  });
+
+  async function makeDir(name: string, mode: number): Promise<string> {
+    const dir = path.join(root, name);
+    await actualFs.mkdir(dir);
+    await actualFs.chmod(dir, mode);
+    restored.push(dir);
+    return dir;
+  }
+
+  it('resolves for a directory that is both writable and searchable', async () => {
+    const dir = await makeDir('armed', 0o700);
+
+    await expect(probeArtifactDirWritable(dir)).resolves.toBeUndefined();
+  });
+
+  it.skipIf(!ENFORCES_DIR_SEARCH_BIT)(
+    'rejects EACCES for a writable but non-searchable directory',
+    async () => {
+      const dir = await makeDir('writable-only', 0o200);
+
+      // Establish the ground truth first: this is a directory where an artifact genuinely
+      // cannot be created, so a probe that resolves here is reporting a falsehood.
+      await expect(actualFs.writeFile(path.join(dir, 'report.json'), '{}'))
+        .rejects.toMatchObject({ code: 'EACCES' });
+
+      await expect(probeArtifactDirWritable(dir)).rejects.toMatchObject({ code: 'EACCES' });
+    },
+  );
+
+  it('rejects ENOENT for a missing directory, keeping the two disarmed messages distinguishable', async () => {
+    await expect(probeArtifactDirWritable(path.join(root, 'never-created')))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it.skipIf(!ENFORCES_DIR_SEARCH_BIT)(
+    'never reports armed for a write-only artifact directory, end to end',
+    async () => {
+      const dir = await makeDir('writable-only', 0o200);
+      const log = createLog();
+
+      await logCrashForensicsAtBoot(
+        probes({ probeArtifactDir: () => probeArtifactDirWritable(dir) }),
+        log as never,
+      );
+
+      const line = readinessLine(log);
+      expect(line.payload.readiness).toBe('disarmed');
+      expect(line.payload.disarmedLegs).toContain('artifact-directory');
+      expect(line.message).toContain('not writable');
+    },
+  );
 });
 
 describe('logCrashForensicsAtBoot — three-state aggregation', () => {
