@@ -3,6 +3,7 @@ import multipart from '@fastify/multipart';
 import { copyFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { computeInfoHash } from './torrent.js';
+import { servesFullList } from '../../src/core/__tests__/qb-hash-filter.js';
 
 /**
  * Fake qBittorrent endpoints used by the client. Completion must report `uploading` with
@@ -172,9 +173,12 @@ export async function createQBitFake(options: CreateQBitFakeOptions): Promise<QB
 
   server.get('/api/v2/torrents/info', async (request) => {
     const hashesParam = (request.query as { hashes?: string }).hashes;
-    if (!hashesParam) return Array.from(torrents.values());
+    // Same rule as every other qBittorrent list double (#2485): no surviving id part means no
+    // filter, so an absent, empty, or pipe-only `hashes` all answer the FULL list.
+    const params = new URLSearchParams(hashesParam === undefined ? '' : { hashes: hashesParam });
+    if (servesFullList(params)) return Array.from(torrents.values());
 
-    const wanted = new Set(hashesParam.toLowerCase().split('|').filter(Boolean));
+    const wanted = new Set(hashesParam!.toLowerCase().split('|').filter(Boolean));
     return Array.from(torrents.values()).filter((t) => wanted.has(t.hash.toLowerCase()));
   });
 

@@ -80,7 +80,7 @@ describe('#2485 a blank external id through the server call sites', () => {
 
   describe('removeOrDeferTorrent', () => {
     function makeDownload(externalId: string): DownloadRow {
-      return {
+      return inject<DownloadRow>({
         id: 1, bookId: 1, title: 'Test', status: 'imported',
         externalId, downloadClientId: 1, infoHash: 'abc',
         protocol: 'torrent', downloadUrl: null, size: 100,
@@ -88,7 +88,7 @@ describe('#2485 a blank external id through the server call sites', () => {
         outputPath: null, addedAt: new Date(), completedAt: new Date(Date.now() - 7_200_000),
         indexerId: 1, progressUpdatedAt: null, pendingCleanup: null,
         bookStatusAtGrab: 'wanted',
-      } as DownloadRow;
+      });
     }
 
     const removeWith = (externalId: string) => removeOrDeferTorrent(
