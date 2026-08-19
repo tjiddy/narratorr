@@ -396,6 +396,37 @@ describe('resolveRunTempDirs', () => {
     expect(getAllRuns()).toEqual([]);
   });
 
+  // Byte-distinct but canonically identical: each passes confinement on its own, so only a
+  // canonical distinctness key catches the collision. `/.` and the `..` round-trip are the POSIX
+  // spellings; the backslash form is the one `canonicalPath`'s fold-before-resolve exists for.
+  it.each([
+    ['a trailing "/." segment', (p: string) => `${p}/.`],
+    ['a backslash-spelled "." segment', (p: string) => `${p}\\.`],
+    ['a parent round-trip', (p: string) => `${p}/../${p.split(/[\\/]/).at(-1)!}`],
+  ])('rejects a manifest that aliases one directory through %s', (_label, alias) => {
+    const root = createRunTempDirs();
+    const subpath = createRunTempDirs(SUBPATH);
+    const forms = createRunTempDirs(FORMS);
+    createdPaths.push(...runTempRoots(root), ...runTempRoots(subpath), ...runTempRoots(forms));
+    const aliased = alias(root.sourcePath);
+
+    // Non-vacuity: the alias is a different string that the confinement gate accepts on its own,
+    // so the byte-identical case above cannot stand in for this one.
+    expect(aliased).not.toBe(root.sourcePath);
+    expect(isHarnessTempRoot(aliased)).toBe(true);
+
+    const manifestPath = writeManifest(root.configPath, {
+      [ROOT_RUN]: root,
+      [SUBPATH]: { ...subpath, sourcePath: aliased },
+      [FORMS]: forms,
+    });
+    _resetCurrentRunForTests();
+    process.env[RUN_MANIFEST_ENV] = manifestPath;
+
+    expect(() => resolveRunTempDirs(ALL_RUNS)).toThrow(new RegExp(escapeRegExp(manifestPath)));
+    expect(getAllRuns()).toEqual([]);
+  });
+
   it('keeps two independent manifests disjoint', () => {
     const first = resolveRunTempDirs(ALL_RUNS);
     const firstManifest = process.env[RUN_MANIFEST_ENV]!;
@@ -559,6 +590,17 @@ describe('readManifestRunsForCleanup', () => {
     const { manifestPath } = hostileManifest(createdPaths, (run) => ({
       ...run,
       libraryPath: join(homedir(), 'real-data'),
+    }));
+
+    expect(readManifestRunsForCleanup(manifestPath)).toEqual([]);
+  });
+
+  it('returns nothing when two runs alias one directory through different spellings', () => {
+    // Teardown is the consumer where an accepted alias does the damage the config load prevents:
+    // removing a shared root on behalf of one run would take the other run's state with it.
+    const { manifestPath } = hostileManifest(createdPaths, (run) => ({
+      ...run,
+      sourcePath: `${run.libraryPath}/.`,
     }));
 
     expect(readManifestRunsForCleanup(manifestPath)).toEqual([]);

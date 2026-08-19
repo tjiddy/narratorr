@@ -87,6 +87,11 @@ export function sweepStaleHarnessTempDirs(now: number = Date.now()): void {
  * Every directory this invocation owns: the manifest's runs plus whatever this process allocated
  * itself. Confinement is re-checked here rather than trusted, because the manifest is durable state
  * on disk and `removeTreeSync` validates nothing of its own.
+ *
+ * The dedup key is the raw spelling on purpose. Both sources are already normalized upstream — the
+ * manifest reader rejects any manifest whose roots collide under `canonicalPath`, and the run map
+ * only ever holds `mkdtempSync` output — so an alias cannot reach here, and keying on the canonical
+ * form would hand `removeTreeSync` a POSIX-folded path instead of the OS-native one it was given.
  */
 function ownedTargets(): string[] {
   const seen = new Set<string>();

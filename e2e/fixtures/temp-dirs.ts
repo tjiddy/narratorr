@@ -211,16 +211,23 @@ function loadManifest(manifestPath: string): Map<string, RunTempDirs> {
   }
 
   const loaded = new Map<string, RunTempDirs>();
+  // Keyed by canonical identity, not by spelling: `<dir>`, `<dir>/.` and `<dir>\.` are three
+  // strings naming one directory, and each passes confinement on its own. Raw-string keys would
+  // let an alias-bearing manifest fill two of the 15 slots with one physical root, so two
+  // nominally isolated servers would share a temp directory while validation reported 15 distinct.
   const seen = new Set<string>();
   for (const [name, run] of entries) {
     for (const dir of runTempRoots(run)) {
       if (!isHarnessTempRoot(dir)) {
         throw new Error(`E2E run manifest ${manifestPath} names a path outside the harness temp namespace: ${dir}`);
       }
-      if (seen.has(dir)) {
-        throw new Error(`E2E run manifest ${manifestPath} reuses one directory across runs: ${dir}`);
+      const identity = canonicalPath(dir);
+      if (seen.has(identity)) {
+        throw new Error(
+          `E2E run manifest ${manifestPath} reuses one directory across runs: ${dir} (resolves to ${identity})`,
+        );
       }
-      seen.add(dir);
+      seen.add(identity);
     }
     loaded.set(name, run);
   }
