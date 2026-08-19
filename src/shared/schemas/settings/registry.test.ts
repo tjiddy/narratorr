@@ -465,6 +465,15 @@ describe('settingsRegistry', () => {
       }
     });
 
+    // SettingsService deep-clones these on every fallback return (#2455). A future default holding a
+    // function, a Zod object or a class instance would throw DataCloneError on the first settings
+    // miss in production; fail here instead.
+    it('every category default round-trips through structuredClone', () => {
+      for (const key of SETTINGS_CATEGORIES) {
+        expect(structuredClone(DEFAULT_SETTINGS[key]), key).toEqual(DEFAULT_SETTINGS[key]);
+      }
+    });
+
     it('CATEGORY_SCHEMAS derived from registry has schema for every category', () => {
       for (const key of SETTINGS_CATEGORIES) {
         expect(CATEGORY_SCHEMAS[key]).toBe(settingsRegistry[key].schema);

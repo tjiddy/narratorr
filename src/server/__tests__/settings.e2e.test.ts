@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createE2EApp, type E2EApp } from './e2e-helpers.js';
 import { SECRET_CATEGORIES, SECRET_SETTINGS_CATEGORIES } from '../utils/secret-category-map.js';
+import { DEFAULT_SETTINGS } from '@shared/schemas.js';
 
 describe('Settings E2E', () => {
   let e2e: E2EApp;
@@ -20,6 +21,27 @@ describe('Settings E2E', () => {
     expect(settings).toHaveProperty('library');
     expect(settings).toHaveProperty('search');
     expect(settings).toHaveProperty('general');
+  });
+
+  /**
+   * The real service over the real (empty) settings table, so the endpoint composes its payload from
+   * the packaged defaults. A consumer holding a never-written category must not be able to change
+   * what the endpoint serves everyone else (#2455).
+   */
+  it('GET /api/settings serves the packaged default after a consumer mutates a never-written category', async () => {
+    const pristineSystem = structuredClone(DEFAULT_SETTINGS.system);
+    try {
+      const held = await e2e.services.settings.get('system');
+      held.backupRetention = 999;
+
+      const res = await e2e.app.inject({ method: 'GET', url: '/api/settings' });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json().system).toEqual(pristineSystem);
+      expect(DEFAULT_SETTINGS.system).toEqual(pristineSystem);
+    } finally {
+      Object.assign(DEFAULT_SETTINGS.system, pristineSystem);
+    }
   });
 
   it('PUT /api/settings updates library path', async () => {
