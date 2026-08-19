@@ -70,6 +70,8 @@ export async function finalizeForcedImportRefusal(deps: RefusedDispositionDeps, 
   // Only reporting leaves the section, and the disposition is already durable by now — so neither
   // half may disturb the caller, which here is the worker's catch block. `safeEmit` encodes that
   // rule for the broadcaster; the post-commit event log gets the same isolation.
+  // A row only exists if `create` ran, so the `?.` here is unreachable-when-null rather than a
+  // second live branch — the testable nullable guard is the one on the insert.
   if (outcome.eventRow) {
     try {
       eventHistory?.logRecorded(outcome.eventRow);
