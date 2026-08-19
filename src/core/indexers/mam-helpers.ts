@@ -44,7 +44,7 @@ const ENGLISH_GROUPED = /^\d{1,3}(?:,\d{3})*(?:\.\d+)?$/;
  * would rescale by 1000, and the size gates fail open, so no size beats a wrong size.
  * Comma-free tokens skip this entirely and keep their exact pre-#2316 parse.
  */
-function normalizeGrouping(token: string): string | undefined {
+export function normalizeGrouping(token: string): string | undefined {
   if (!token.includes(',')) return token;
   return ENGLISH_GROUPED.test(token) ? token.replace(/,/g, '') : undefined;
 }

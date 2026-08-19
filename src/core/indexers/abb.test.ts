@@ -275,9 +275,10 @@ describe('AudioBookBayIndexer', () => {
 
     /**
      * The positive observation point for `readAbbMetadata($, $el)`. Without it an implementation
-     * that drops the row-scoped metadata read satisfies every other row assertion here — the values
-     * come off the row's own annotated elements, and the fixture writes the block on one source
-     * line so a regression to a `.text()`-run regex reds on exact values.
+     * that drops the row-scoped metadata read satisfies every other row assertion here — microdata
+     * values come off the row's annotated elements (with plain-text info lines as the fallback for
+     * microdata-free posts), and the fixture writes the block on one source line so a regression
+     * to a naive whole-row regex reds on exact values.
      */
     it('reads author, narrator and format off the row\'s own elements, with no detail request', async () => {
       serveSearchPages();

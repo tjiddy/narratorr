@@ -332,8 +332,8 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       const coverUrl = $el.find('img').first().attr('src') ||
                        $el.find('img').first().attr('data-src');
 
-      // Row metadata comes from the row's own annotated elements or not at all: its post text is
-      // free prose over an uploader byline.
+      // Row metadata: microdata wins where the row carries it; the plain-text info lines
+      // (Language:/Format:/File Size:) fill the rest — old posts have no microdata at all.
       const fields = readAbbMetadata($, $el);
 
       results.push({

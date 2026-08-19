@@ -1,14 +1,19 @@
 import type { CheerioAPI } from 'cheerio';
 import { normalizeFormat } from './normalize-format.js';
+import { normalizeLanguage } from '../utils/language-codes.js';
+import { normalizeGrouping } from './mam-helpers.js';
 
 /** cheerio does not re-export domhandler's node types, so name the selection through its own API. */
 type CheerioSelection = ReturnType<ReturnType<CheerioAPI['root']>['closest']>;
 
-/** The book's own metadata, read from the block ABB annotates with schema.org microdata. */
+/** The book's own metadata: microdata when the post carries it, plain-text info lines otherwise. */
 export interface AbbMetadataFields {
   author?: string;
   narrator?: string;
   format?: string;
+  language?: string;
+  size?: number;
+  rawSize?: string;
 }
 
 /** The post's own content. ABB writes the `Shared by:` byline outside it, in the post's meta block. */
@@ -26,11 +31,61 @@ const BLOCK_MARKERS = [
 ];
 
 /**
- * Read author, narrator and format off the page's own elements. `scope` limits the read to a single
- * search row; omit it for a detail page. Nothing is read from the surrounding text: the paragraph
- * below the block is the post's body — free prose, and where `By:` used to find the uploader.
+ * Read the post's metadata. `scope` limits the read to a single search row; omit it for a detail
+ * page. Microdata wins wherever both sources carry a field; the plain-text info lines fill the
+ * rest — old posts carry no microdata at all (verified against live listing markup 2026-08-19),
+ * so without the text fallback their releases are blind: no language for the language filter,
+ * no size for the quality gate.
  */
 export function readAbbMetadata($: CheerioAPI, scope?: CheerioSelection): AbbMetadataFields {
+  const info = readAbbInfoLines((scope ?? $.root()).text());
+  const micro = readMicrodataBlock($, scope);
+  return { ...info, ...micro };
+}
+
+/**
+ * The listing rows' plain-text info lines: `Language:` sits in `.postInfo`, `Format:` and
+ * `File Size:` in the post body. Values wear style-only spans separated by `<br>`s that cheerio's
+ * `.text()` zero-widths (a live row reads `2025Format: M4B`), so every read anchors on its own
+ * label and never on element structure or preceding whitespace. `MBs` is read with the 1024
+ * multipliers to match the codebase's other size parses; ABB does not say which it means and the
+ * quality band tolerates the difference.
+ */
+const ABB_SIZE_MULTIPLIERS: Record<string, number> = {
+  KBS: 1024,
+  MBS: 1024 * 1024,
+  GBS: 1024 * 1024 * 1024,
+  TBS: 1024 * 1024 * 1024 * 1024,
+};
+
+function readAbbInfoLines(text: string): Pick<AbbMetadataFields, 'language' | 'format' | 'size' | 'rawSize'> {
+  // Case-anchored: the flattened row reads "Language: SpanishKeywords: …" (zero-width <br>), so
+  // the capture must stop at the next label's capital rather than eating it.
+  const language = normalizeLanguage(/Language:\s*([A-Z][a-z]+)/.exec(text)?.[1]);
+  const format = normalizeFormat(/Format:\s*([A-Za-z0-9]+)/.exec(text)?.[1]);
+
+  let size: number | undefined;
+  let rawSize: string | undefined;
+  const sizeMatch = /File\s*Size:\s*([\d.,]+)\s*([KMGT]Bs)/i.exec(text);
+  if (sizeMatch) {
+    rawSize = `${sizeMatch[1]} ${sizeMatch[2]}`;
+    const normalized = normalizeGrouping(sizeMatch[1]!);
+    const num = normalized === undefined ? undefined : parseFloat(normalized);
+    const multiplier = ABB_SIZE_MULTIPLIERS[sizeMatch[2]!.toUpperCase()];
+    if (num !== undefined && num > 0 && isFinite(num) && multiplier !== undefined) {
+      size = Math.round(num * multiplier);
+    }
+  }
+
+  return {
+    ...(language !== undefined && { language }),
+    ...(format !== undefined && { format }),
+    ...(size !== undefined && { size }),
+    ...(rawSize !== undefined && { rawSize }),
+  };
+}
+
+function readMicrodataBlock($: CheerioAPI, scope?: CheerioSelection): Pick<AbbMetadataFields, 'author' | 'narrator' | 'format'> {
   const inScope = (selector: string) => (scope ? scope.find(selector) : $(selector));
   const region = inScope(CONTENT_REGION).first();
   const inRegion = (selector: string) => (region.length > 0 ? region.find(selector) : inScope(selector));
