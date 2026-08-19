@@ -18,6 +18,7 @@ import {
 } from './mutagen-tag-payload.js';
 import { writeTagsWithMutagen } from './mutagen-tag-writer.js';
 import { withPathWriteLock } from '../utils/path-write-lock.js';
+import { withBookAdmissionLock } from './book-admission.js';
 import {
   readExistingTags,
   resolveTags,
@@ -304,11 +305,26 @@ export class TaggingService {
     return result;
   }
 
+  /**
+   * Serialized entry point. The per-audio-file keys `tagBook` takes are FILE keys, not the folder
+   * claim key rename holds — different keys exclude nothing — so before this outer acquisition
+   * nothing stopped a retag from writing tags into a folder a rename was moving.
+   */
   async retagBook(
     bookId: number,
     excludeFields: ReadonlySet<RetagExcludableField> = new Set(),
     overrides: { mode?: TagMode; embedCover?: boolean } = {},
   ): Promise<RetagResult> {
+    return withBookAdmissionLock(bookId, () => this.retagBookWithinAdmissionLock(bookId, excludeFields, overrides));
+  }
+
+  /** Caller must hold the admission lock for `bookId`. */
+  async retagBookWithinAdmissionLock(
+    bookId: number,
+    excludeFields: ReadonlySet<RetagExcludableField> = new Set(),
+    overrides: { mode?: TagMode; embedCover?: boolean } = {},
+  ): Promise<RetagResult> {
+    // Inside the section per AC3: `book.path` and the tag projection are what the writes derive from.
     const { book, mutagenPython, taggingSettings } = await this.resolveRetagInputs(bookId);
     const mode = overrides.mode ?? taggingSettings.mode;
     const embedCover = overrides.embedCover ?? taggingSettings.embedCover;

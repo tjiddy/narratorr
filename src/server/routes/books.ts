@@ -68,6 +68,7 @@ type LibraryBooksListQuery = z.infer<typeof libraryBooksListQuerySchema>;
 type IdParam = z.infer<typeof idParamSchema>;
 
 import { refreshScanBook } from '../services/refresh-scan.service.js';
+import { withBookAdmissionLock } from '../services/book-admission.js';
 
 
 async function registerDeleteBookRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookDeletionService'>) {
@@ -329,7 +330,9 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       const body = request.body;
 
       // Only operator edits create clear-field tombstones; internal nulls retain fill-empty semantics.
-      const book = await bookService.update(id, body, { userAsserted: true });
+      // The acquisition lives here, not in `BookService.update`: that method is a shared write
+      // primitive with nine non-test callers, most of them already inside a held section.
+      const book = await withBookAdmissionLock(id, () => bookService.update(id, body, { userAsserted: true }));
 
       if (!book) {
         return reply.status(404).send({ error: 'Book not found' });

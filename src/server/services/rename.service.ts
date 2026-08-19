@@ -17,6 +17,8 @@ import { recoverInterruptedCommit } from '../utils/recover-interrupted-commit.js
 import { sidecarLockKey } from '../utils/opf-writer.js';
 import { withPathWriteLock, withPathWriteLocks } from '../utils/path-write-lock.js';
 import { claimLockKey } from '../utils/claim-lock.js';
+import { withBookAdmissionLock } from './book-admission.js';
+import { beginRootCommit } from './library-root-gate.js';
 import { canonicalPath } from '../utils/path-identity.js';
 import { assertNoOtherOwner, classifyTargetOccupancy, clearVerifiedEmptyTarget, type TargetOccupancy } from '../utils/rename-target-guard.js';
 import { RenameError } from '../utils/rename-error.js';
@@ -134,23 +136,38 @@ export class RenameService {
   }
 
   /**
-   * The claim span opens BEFORE `recoverInterruptedCommit`, not at the conflict check: recovery is
-   * not a read — with no marker present it recursively deletes the target's staging and backup
-   * siblings, and with one present it restores a backup into the target. Starting later would
-   * leave rename's single most destructive step unserialized against a second rename of the book.
+   * Admission first, then the claim keys — the outermost-to-innermost order every mutator shares.
+   * Without the outer acquisition the claim keys exclude only the four claim-protocol participants,
+   * so a merge, import, retag or cover write would still land in a folder this rename is moving.
+   *
+   * The claim span still opens BEFORE `recoverInterruptedCommit`, not at the conflict check:
+   * recovery is not a read — with no marker present it recursively deletes the target's staging and
+   * backup siblings, and with one present it restores a backup into the target.
    *
    * Source and target are taken in one sorted acquisition, so two renames with mirrored
    * source/target cannot deadlock.
    */
   async renameBook(bookId: number): Promise<RenameResult> {
-    const ctx = await this.planApply(bookId);
-    const keys = ctx.pathChanged
-      ? [claimLockKey(ctx.oldPath), claimLockKey(ctx.targetPath)]
-      : [claimLockKey(ctx.oldPath)];
-    return withPathWriteLocks(keys, () => this.applyRename(ctx));
+    return withBookAdmissionLock(bookId, () => this.renameWithinAdmissionLock(bookId));
   }
 
-  private async planApply(bookId: number): Promise<ApplyContext> {
+  /** Caller must hold the admission lock for `bookId`. */
+  private async renameWithinAdmissionLock(bookId: number): Promise<RenameResult> {
+    // Rename derives its target from the library root, so it registers as a root-dependent commit
+    // and takes the canonical root from the gate rather than reading settings for itself.
+    const rootCommit = await beginRootCommit(this.settingsService);
+    try {
+      const ctx = await this.planApply(bookId, rootCommit.library);
+      const keys = ctx.pathChanged
+        ? [claimLockKey(ctx.oldPath), claimLockKey(ctx.targetPath)]
+        : [claimLockKey(ctx.oldPath)];
+      return await withPathWriteLocks(keys, () => this.applyRename(ctx));
+    } finally {
+      rootCommit.release();
+    }
+  }
+
+  private async planApply(bookId: number, librarySettings: AppSettings['library']): Promise<ApplyContext> {
     const book = await this.bookService.getById(bookId);
     if (!book) {
       throw new RenameError('Book not found', 'NOT_FOUND');
@@ -159,7 +176,6 @@ export class RenameService {
       throw new RenameError('Book has no path — not imported yet', 'NO_PATH');
     }
 
-    const librarySettings = await this.settingsService.get('library');
     const namingOptions = toNamingOptions(librarySettings);
     const authorName = book.authors?.[0]?.name ?? null;
     const { targetPath, changed: pathChanged } = computeFolderTarget(

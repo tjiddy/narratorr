@@ -3,12 +3,13 @@ import { join, extname } from 'node:path';
 import { and, eq, isNull, or } from 'drizzle-orm';
 import type { Db, DbOrTx } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books, bookNarrators } from '@db/schema.js';
+import { bookNarrators, books, narrators } from '@db/schema.js';
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
 import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/audio-constants.js';
 import { tokenizeNarrators } from '@core/utils/similarity.js';
 import type { BookService } from './book.service.js';
-import { downloadRemoteCover, isRemoteCoverUrl } from './cover-download.js';
+import { downloadRemoteCoverWithinAdmissionLock, isRemoteCoverUrl } from './cover-download.js';
+import { withBookAdmissionLock } from './book-admission.js';
 import { mimeToExt } from '../utils/mime.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
@@ -138,13 +139,87 @@ async function acquireCoverArt(
     }
   }
 
+  // Awaited, not fired and forgotten: an un-awaited download outlives whatever lock its caller
+  // holds, so its file write and DB localization would land unserialized by construction.
+  // The `catch` keeps the previous error isolation — the writer never throws by contract, but a
+  // cover failure must not become an enrichment failure if that ever changes.
   if (isRemoteCoverUrl(book.coverUrl) && !update.coverUrl) {
-    downloadRemoteCover(bookId, targetPath, book.coverUrl!, db, log)
-      .catch((err: unknown) => log.warn({ error: serializeError(err), bookId }, 'Fire-and-forget remote cover download failed'));
+    await downloadRemoteCoverWithinAdmissionLock(bookId, targetPath, book.coverUrl!, db, log)
+      .catch((err: unknown) => log.warn({ error: serializeError(err), bookId }, 'Remote cover download failed'));
   }
 }
 
+/**
+ * The controlling snapshot the unlocked entry substitutes for its caller's: folder, fill-empty
+ * duration and cover, and the narrator provenance the tag-fill gate reads. Null when the row is
+ * gone or owns no folder.
+ */
+async function readEnrichmentSnapshot(
+  db: Db,
+  bookId: number,
+  narratorSource: NarratorSource | undefined,
+): Promise<{ targetPath: string; book: AudioEnrichmentBook } | null> {
+  const rows = await db
+    .select({ path: books.path, duration: books.duration, coverUrl: books.coverUrl })
+    .from(books)
+    .where(eq(books.id, bookId))
+    .limit(1);
+  const row = rows[0];
+  if (!row?.path) return null;
+
+  const narratorRows = await db
+    .select({ name: narrators.name })
+    .from(bookNarrators)
+    .innerJoin(narrators, eq(narrators.id, bookNarrators.narratorId))
+    .where(eq(bookNarrators.bookId, bookId));
+
+  return {
+    targetPath: row.path,
+    book: {
+      narrators: narratorRows,
+      duration: row.duration,
+      coverUrl: row.coverUrl,
+      ...(narratorSource !== undefined && { narratorSource }),
+    },
+  };
+}
+
+/**
+ * Serialized entry point for callers that hold no admission lock. Like `downloadRemoteCover`, it
+ * takes no folder or row snapshot: anything an unlocked caller could hand in was read before the
+ * section, so a call queued behind a rename would scan the vacated folder, drop its cover there and
+ * then commit that scan to the row it no longer describes (AC3). `narratorSource` is the exception —
+ * it is per-import provenance carried on the job payload, not a column, so there is no row to read
+ * it from.
+ */
 export async function enrichBookFromAudio(
+  bookId: number,
+  db: Db,
+  log: FastifyBaseLogger,
+  bookService?: BookService,
+  ffprobePath?: string,
+  narratorSource?: NarratorSource,
+): Promise<EnrichmentResult> {
+  return withBookAdmissionLock(bookId, async () => {
+    const snapshot = await readEnrichmentSnapshot(db, bookId, narratorSource);
+    if (!snapshot) {
+      log.debug({ bookId }, 'Audio enrichment skipped — the book owns no folder now');
+      return { enriched: false };
+    }
+    return enrichBookFromAudioWithinAdmissionLock(
+      bookId, snapshot.targetPath, snapshot.book, db, log, bookService, ffprobePath,
+    );
+  });
+}
+
+/**
+ * Caller must hold the admission lock for `bookId`.
+ *
+ * The scan, the embedded cover-art extraction, the narrator writeback and the scalar row update are
+ * one operation: they all target `targetPath` and the same row, and splitting them would let a
+ * rename land between the cover write and the row update.
+ */
+export async function enrichBookFromAudioWithinAdmissionLock(
   bookId: number,
   targetPath: string,
   book: AudioEnrichmentBook,
@@ -189,9 +264,10 @@ export async function enrichBookFromAudio(
 
     await applyTagNarrators(db, bookId, scanResult.tagNarrator, book, bookService, opts);
 
-    // An attach acquires NO cover: covers commit on the filesystem, where three writers target the
-    // same canonical `cover.<ext>`, so a row guard is the wrong altitude and the safe protocol is
-    // cross-cutting work fenced to #2369. Not acquiring beats acquiring unsafely.
+    // An attach acquires NO cover (#2435 AC — the offered item has no authority over the
+    // incumbent's art). Every other caller runs the in-lock cover protocol: #2435 fenced this
+    // to #2369, and the fence has arrived — acquireCoverArt now writes and downloads inside the
+    // admission section this function requires of its caller.
     if (!opts?.attach) {
       await acquireCoverArt(update, bookId, targetPath, scanResult, book, db, log);
     }

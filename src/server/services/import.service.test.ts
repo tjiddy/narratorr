@@ -56,9 +56,12 @@ const realEnrichBookFromAudio = vi.hoisted(() => {
 
 vi.mock('./enrichment-utils.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, (...args: unknown[]) => Promise<unknown>>;
-  realEnrichBookFromAudio.setReal(actual.enrichBookFromAudio!);
+  // Import holds the admission lock across enrichment, so it calls the inner form; spread `actual`
+  // so the public wrapper stays real rather than becoming undefined.
+  realEnrichBookFromAudio.setReal(actual.enrichBookFromAudioWithinAdmissionLock!);
   return {
-    enrichBookFromAudio: vi.fn().mockImplementation((...args: unknown[]) => realEnrichBookFromAudio.call(...args)),
+    ...actual,
+    enrichBookFromAudioWithinAdmissionLock: vi.fn().mockImplementation((...args: unknown[]) => realEnrichBookFromAudio.call(...args)),
   };
 });
 
@@ -92,7 +95,7 @@ vi.mock('../utils/import-steps.js', async (importOriginal) => {
 
 import { mkdir, cp, stat, readdir, writeFile, rename, rm, rmdir, statfs } from 'node:fs/promises';
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
-import { enrichBookFromAudio } from './enrichment-utils.js';
+import { enrichBookFromAudioWithinAdmissionLock } from './enrichment-utils.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
 import { copyToLibrary, MarkerPathConflictError } from '../utils/import-steps.js';
 
@@ -1502,7 +1505,7 @@ describe('ImportService', () => {
 
       await service.importDownload(1);
 
-      expect(enrichBookFromAudio).toHaveBeenCalledWith(
+      expect(enrichBookFromAudioWithinAdmissionLock).toHaveBeenCalledWith(
         expect.any(Number), // bookId
         expect.any(String), // targetPath
         expect.anything(),  // book
@@ -1681,7 +1684,7 @@ describe('ImportService', () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      const enrichMock = vi.mocked(enrichBookFromAudio);
+      const enrichMock = vi.mocked(enrichBookFromAudioWithinAdmissionLock);
       enrichMock.mockRejectedValueOnce(new Error('Enrichment exploded'));
 
       const result = await svc.importDownload(1);
@@ -2555,7 +2558,7 @@ describe('ImportService consolidation (issue #79)', () => {
           callOrder.push('transaction-done');
           return result;
         });
-        vi.mocked(enrichBookFromAudio).mockImplementation(async () => {
+        vi.mocked(enrichBookFromAudioWithinAdmissionLock).mockImplementation(async () => {
           callOrder.push('enrich');
           return { enriched: true };
         });
@@ -2587,7 +2590,7 @@ describe('ImportService consolidation (issue #79)', () => {
       it('enrichment returning { enriched: false } → warning logged, import stays successful', async () => {
         db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
         db.update.mockReturnValue(mockDbChain());
-        vi.mocked(enrichBookFromAudio).mockResolvedValueOnce({ enriched: false, error: 'scan failed' });
+        vi.mocked(enrichBookFromAudioWithinAdmissionLock).mockResolvedValueOnce({ enriched: false, error: 'scan failed' });
 
         const result = await service.importDownload(1);
 
@@ -2601,7 +2604,7 @@ describe('ImportService consolidation (issue #79)', () => {
       it('enrichment throwing unexpectedly → caught, import still succeeds', async () => {
         db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
         db.update.mockReturnValue(mockDbChain());
-        vi.mocked(enrichBookFromAudio).mockRejectedValueOnce(new Error('unexpected crash'));
+        vi.mocked(enrichBookFromAudioWithinAdmissionLock).mockRejectedValueOnce(new Error('unexpected crash'));
 
         const result = await service.importDownload(1);
 

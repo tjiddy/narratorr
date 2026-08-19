@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   withBookAdmissionLock,
+  hasPendingBookAdmission,
   singleFlightReplace,
   hasInFlightReplace,
   canonicalReleaseIdentity,
@@ -59,6 +60,64 @@ describe('withBookAdmissionLock (#1857 AC5/AC17)', () => {
     await expect(withBookAdmissionLock(9, async () => { throw new Error('boom'); })).rejects.toThrow('boom');
     const ok = await withBookAdmissionLock(9, async () => 'ok');
     expect(ok).toBe('ok');
+  });
+
+  /**
+   * #2369 F9. A follow-up acquisition completing is NOT evidence of eviction: a settled promise
+   * left in the map still lets the next caller through, so the map grows one entry per book
+   * forever and nothing fails. `hasPendingBookAdmission` observes the entry directly, the way
+   * `hasPendingPathWrite` does for the path tier.
+   */
+  describe('key eviction', () => {
+    it('holds the key while a section runs and drops it once the section resolves', async () => {
+      let release!: () => void;
+      const run = withBookAdmissionLock(31, async () => {
+        await new Promise<void>((r) => { release = r; });
+      });
+
+      await Promise.resolve();
+      expect(hasPendingBookAdmission(31)).toBe(true);
+
+      release();
+      await run;
+      // Eviction is scheduled on the tail's continuation, so it lands a microtask later.
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(hasPendingBookAdmission(31)).toBe(false);
+    });
+
+    it('drops the key after a section REJECTS, not only after it resolves', async () => {
+      await expect(withBookAdmissionLock(32, async () => { throw new Error('boom'); })).rejects.toThrow('boom');
+
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(hasPendingBookAdmission(32)).toBe(false);
+    });
+
+    it('keeps the key held while a successor is still queued behind the current holder', async () => {
+      let releaseFirst!: () => void;
+      const first = withBookAdmissionLock(33, async () => {
+        await new Promise<void>((r) => { releaseFirst = r; });
+      });
+      const second = withBookAdmissionLock(33, async () => 'second');
+
+      await Promise.resolve();
+      expect(hasPendingBookAdmission(33)).toBe(true);
+
+      releaseFirst();
+      await first;
+      // The first holder's eviction must not drop a key the successor still owns.
+      expect(hasPendingBookAdmission(33)).toBe(true);
+
+      await second;
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(hasPendingBookAdmission(33)).toBe(false);
+    });
+
+    it('reports no pending key for a book that was never acquired', () => {
+      expect(hasPendingBookAdmission(34)).toBe(false);
+    });
   });
 });
 

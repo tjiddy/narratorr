@@ -14,11 +14,11 @@ vi.mock('@core/utils/audio-processor.js', async (importOriginal) => ({
 // Extend, don't replace: `isRemoteCoverUrl` must stay real or the suppression under test is faked.
 vi.mock('../cover-download.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../cover-download.js')>()),
-  downloadRemoteCover: vi.fn().mockResolvedValue('written'),
+  downloadRemoteCoverWithinAdmissionLock: vi.fn().mockResolvedValue('written'),
 }));
 
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
-import { downloadRemoteCover } from '../cover-download.js';
+import { downloadRemoteCoverWithinAdmissionLock } from '../cover-download.js';
 import { runCoverBackfill } from '../../jobs/cover-backfill.js';
 import { createDb, runMigrations, type Db } from '@db/index.js';
 import { bookEvents, books, importJobs, importSubmissionItems, importSubmissions } from '@db/schema.js';
@@ -351,7 +351,7 @@ describe('ManualImportAdapter attach path (DB-backed, #2435)', () => {
     const row = await rowOf(bookId);
     expect(row.coverUrl).toBe('https://example.com/c.jpg');
     expect(readdirSync(row.path!).filter((f) => f.startsWith('cover.'))).toEqual([]);
-    expect(downloadRemoteCover).not.toHaveBeenCalled();
+    expect(downloadRemoteCoverWithinAdmissionLock).not.toHaveBeenCalled();
   });
 
   it('retains an http:// incumbent cover unchanged — no localization, no rewrite (AC28)', async () => {
@@ -364,7 +364,7 @@ describe('ManualImportAdapter attach path (DB-backed, #2435)', () => {
     await adapter.process(await enqueueAttach(bookId, source), adapterContext());
 
     expect((await rowOf(bookId)).coverUrl).toBe('http://example.com/c.jpg');
-    expect(downloadRemoteCover).not.toHaveBeenCalled();
+    expect(downloadRemoteCoverWithinAdmissionLock).not.toHaveBeenCalled();
   });
 
   it('does not overwrite cover bytes already sitting at the canonical filename (AC28)', async () => {
@@ -391,7 +391,7 @@ describe('ManualImportAdapter attach path (DB-backed, #2435)', () => {
     // Invoked directly: no production handoff is scheduled, so asserting one would be a fiction.
     await runCoverBackfill(db, inject(log));
 
-    expect(downloadRemoteCover).toHaveBeenCalledWith(
+    expect(downloadRemoteCoverWithinAdmissionLock).toHaveBeenCalledWith(
       bookId, expect.any(String), 'http://example.com/c.jpg', db, expect.anything(),
     );
   });

@@ -9,7 +9,7 @@ import { books } from '@db/schema.js';
 import { BookService } from './book.service.js';
 import { BookDeletionService } from './book-deletion.service.js';
 import { BookRejectionService } from './book-rejection.service.js';
-import { RenameService, RenameError } from './rename.service.js';
+import { RenameService, RenameError, type RenameResult } from './rename.service.js';
 import { cleanupOldBookPath } from '../utils/import-steps.js';
 import { claimLockKey } from '../utils/claim-lock.js';
 import { hasPendingPathWrite, withPathWriteLock } from '../utils/path-write-lock.js';
@@ -303,9 +303,16 @@ describe('claim-key protocol — rename and the three destroyers serialize (#230
     const oldPath = join(root, 'Wrong', 'Old');
     const target = join(root, 'Unknown Author', 'Wanderer');
 
-    // The rename completes during blacklistAndRetrySearch, before rejection picks its key.
+    // The folder moves during blacklistAndRetrySearch, before rejection picks its key. Landed
+    // directly rather than through `renameService`: after #2369 the rejection holds the book's
+    // admission lock across this await, so a real same-book rename would (correctly) queue behind
+    // it rather than interleave — the concurrent-rename arm is the case below. What is under test
+    // here is unchanged: the claim key comes from a read taken AFTER the await, not before it.
     (blacklistAndRetrySearch as Mock).mockImplementationOnce(async () => {
-      await renameService.renameBook(bookId);
+      await actualFs.mkdir(target, { recursive: true });
+      await actualFs.rename(join(oldPath, 'Wanderer.m4b'), join(target, 'Wanderer.m4b'));
+      await actualFs.rm(oldPath, { recursive: true, force: true });
+      await db.update(books).set({ path: target }).where(eq(books.id, bookId));
     });
 
     await rejectionService.rejectAsWrongRelease(bookId);
@@ -315,6 +322,38 @@ describe('claim-key protocol — rename and the three destroyers serialize (#230
     const [row] = await db.select().from(books).where(eq(books.id, bookId));
     expect(row?.status).toBe('wanted');
     expect(row?.path).toBeNull();
+  });
+
+  it('defers a concurrent same-book rename until the rejection has finished (#2369)', async () => {
+    const bookId = await seedBook('Wanderer', join('Wrong', 'Old'), { lastGrabGuid: 'guid-a' });
+    const order: string[] = [];
+    let releaseBlacklist!: () => void;
+    const blacklistGate = new Promise<void>((resolve) => { releaseBlacklist = resolve; });
+
+    (blacklistAndRetrySearch as Mock).mockImplementationOnce(async () => {
+      order.push('rejection:inside');
+      await blacklistGate;
+    });
+
+    const rejection = rejectionService.rejectAsWrongRelease(bookId).then(() => { order.push('rejection:done'); });
+    await settle();
+
+    // Issued while the rejection is parked mid-flight, inside the section it holds.
+    const renameRun = renameService.renameBook(bookId)
+      .then(() => { order.push('rename:done'); }, () => { order.push('rename:done'); });
+    await settle();
+
+    // Before #2369 the rename would have run straight through: it takes claim keys, and the
+    // rejection had not chosen one yet.
+    expect(order).toEqual(['rejection:inside']);
+
+    releaseBlacklist();
+    await rejection;
+    await renameRun;
+
+    expect(order).toEqual(['rejection:inside', 'rejection:done', 'rename:done']);
+    // The rejection won, so the rename woke to a pathless row and took its NO_PATH arm.
+    expect(await pathOf(bookId)).toBeNull();
   });
 
   it('abandons the destructive half when a replacement release imported during the blacklist await', async () => {
@@ -475,11 +514,16 @@ describe('claim-key protocol — rename and the three destroyers serialize (#230
 
     gate.resolve();
     await first;
-    const error = await second;
+    const outcome = await second;
 
-    // The queued plan is refused by post-lock re-verification before it can recover a second time.
-    expect((error as RenameError).code).toBe('STALE_PATH');
-    expect(recoverInterruptedCommit).toHaveBeenCalledTimes(1);
+    // #2369 changed what the queued rename wakes up holding. It used to carry a plan built from a
+    // pre-lock read and be refused by `assertPlanStillFresh` with STALE_PATH; the plan is now built
+    // INSIDE the admission section, so it wakes, re-reads, and finds the book already at its target.
+    // The property this case exists for is unchanged and stronger: it never entered recovery while
+    // the first rename was inside it.
+    expect((outcome as RenameError).code).toBeUndefined();
+    expect((outcome as RenameResult).message).toBe('Already organized');
+    expect(norm(await pathOf(bookId))).toBe(norm(join(root, 'Unknown Author', 'Wanderer')));
   });
 
   it('lets a queued rename of a second row at the same folder enter recovery only once the claim releases', async () => {

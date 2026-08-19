@@ -6,7 +6,7 @@ import type { BookService } from './book.service.js';
 import type { NarratorSource } from './import-adapters/types.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
-import { enrichBookFromAudio, rowHasNarrators, type AudioEnrichmentOptions } from './enrichment-utils.js';
+import { enrichBookFromAudioWithinAdmissionLock, rowHasNarrators, type AudioEnrichmentOptions } from './enrichment-utils.js';
 import { resolveFfprobePathFromSettings } from '@core/utils/ffprobe-path.js';
 import { resolveFfmpegPath } from '@core/utils/audio-processor.js';
 import type { BookMetadata } from '@core/metadata/index.js';
@@ -49,7 +49,13 @@ export interface EnrichmentDeps {
   metadataService: MetadataService;
 }
 
-/** Runs audio before provider enrichment; callers own statuses, events, and errors. */
+/**
+ * Caller must hold the admission lock for `bookId`.
+ *
+ * Runs audio before provider enrichment; callers own statuses, events, and errors. Both halves
+ * write the same row and the same folder, so they belong to one section — a split would let a Fix
+ * Match land between the audio writeback and the provider writeback.
+ */
 export async function orchestrateBookEnrichment(
   bookId: number,
   finalPath: string,
@@ -59,7 +65,7 @@ export async function orchestrateBookEnrichment(
   opts?: AudioEnrichmentOptions,
 ): Promise<{ audioEnriched: boolean }> {
   const ffprobePath = resolveFfprobePathFromSettings(await resolveFfmpegPath());
-  const audioResult = await enrichBookFromAudio(
+  const audioResult = await enrichBookFromAudioWithinAdmissionLock(
     bookId,
     finalPath,
     {
@@ -81,6 +87,7 @@ export async function orchestrateBookEnrichment(
   return { audioEnriched: audioResult.enriched };
 }
 
+/** Caller must hold the admission lock for `bookId`. */
 export async function applyAudnexusEnrichment(
   bookId: number,
   opts: AudnexusConfig,

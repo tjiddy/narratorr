@@ -35,7 +35,8 @@ export async function retagMergedOutput(
       return [];
     }
 
-    const result = await deps.taggingService.retagBook(bookId);
+    // Merge holds the admission lock across this step, so the inner form is required.
+    const result = await deps.taggingService.retagBookWithinAdmissionLock(bookId);
     if (result.failed > 0) {
       deps.log.warn({ bookId, failed: result.failed }, 'Post-merge tag write reported failures — merge still succeeded');
     }

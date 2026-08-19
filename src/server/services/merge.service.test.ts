@@ -4,7 +4,7 @@ import { createMockDbBook } from '../__tests__/factories.js';
 import { MergeService, clampConcurrency } from './merge.service.js';
 import { processAudioFiles } from '@core/utils/audio-processor.js';
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
-import { enrichBookFromAudio } from './enrichment-utils.js';
+import { enrichBookFromAudioWithinAdmissionLock } from './enrichment-utils.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
@@ -49,7 +49,7 @@ vi.mock('@core/utils/audio-scanner.js', () => ({
 }));
 
 vi.mock('./enrichment-utils.js', () => ({
-  enrichBookFromAudio: vi.fn(),
+  enrichBookFromAudioWithinAdmissionLock: vi.fn(),
 }));
 
 // Mocked fs short-circuits marker recovery; merge.service.marker.test.ts covers real disk behavior (#1418).
@@ -69,7 +69,7 @@ function createService(opts?: {
   processing?: Partial<{ outputFormat: 'm4b' | 'mp3'; bitrate: number; keepOriginalBitrate: boolean; maxConcurrentProcessing: number }>;
   tagging?: Partial<{ enabled: boolean; mode: 'populate_missing' | 'overwrite'; embedCover: boolean }>;
   /** Pass `null` to exercise "tag embedding enabled but no tagger wired" (AC10's absent arm). */
-  taggingService?: { retagBook: ReturnType<typeof vi.fn> } | null;
+  taggingService?: { retagBookWithinAdmissionLock: ReturnType<typeof vi.fn> } | null;
 }) {
   const db = createMockDb();
   const bookService = {
@@ -204,7 +204,7 @@ describe('MergeService', () => {
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 500_000_000 });
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
       const { service } = createService();
 
       await service.enqueueMerge(42);
@@ -293,7 +293,7 @@ describe('MergeService', () => {
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 500_000_000 });
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
 
       const { service } = createService({ processing: { outputFormat: 'mp3' } });
 
@@ -390,7 +390,7 @@ describe('MergeService', () => {
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 500_000_000 });
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
       const { service } = createService();
 
       await service.enqueueMerge(42);
@@ -401,14 +401,14 @@ describe('MergeService', () => {
       expect(unlink).not.toHaveBeenCalledWith(join(BOOK_PATH, 'The Way of Kings.m4b'));
     });
 
-    it('calls enrichBookFromAudio with bookService after successful move', async () => {
+    it('calls enrichBookFromAudioWithinAdmissionLock with bookService after successful move', async () => {
       setupHappyPath();
       const { service } = createService();
 
       await service.enqueueMerge(42);
       await settle();
 
-      expect(enrichBookFromAudio).toHaveBeenCalledWith(
+      expect(enrichBookFromAudioWithinAdmissionLock).toHaveBeenCalledWith(
         42,
         BOOK_PATH,
         expect.objectContaining({ id: 42 }),
@@ -859,21 +859,21 @@ describe('MergeService', () => {
       expect(unlink).not.toHaveBeenCalled();
     });
 
-    it('does not call enrichBookFromAudio when scan fails', async () => {
+    it('does not call enrichBookFromAudioWithinAdmissionLock when scan fails', async () => {
       setupScanFailure();
       const { service } = createService();
 
       await service.enqueueMerge(42);
       await settle();
 
-      expect(enrichBookFromAudio).not.toHaveBeenCalled();
+      expect(enrichBookFromAudioWithinAdmissionLock).not.toHaveBeenCalled();
     });
   });
 
   describe('enqueueMerge — post-commit enrichment failure', () => {
-    it('surfaces enrichmentWarning via merge_complete event when enrichBookFromAudio returns { enriched: false }', async () => {
+    it('surfaces enrichmentWarning via merge_complete event when enrichBookFromAudioWithinAdmissionLock returns { enriched: false }', async () => {
       setupHappyPath();
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: false });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: false });
       const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
       const { service, log } = createService({ eventBroadcaster });
 
@@ -893,7 +893,7 @@ describe('MergeService', () => {
 
     it('M4B remains in book.path after enrichment failure (no rollback)', async () => {
       setupHappyPath();
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: false });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: false });
       const { service } = createService();
 
       await service.enqueueMerge(42);
@@ -1273,7 +1273,7 @@ describe('#257 merge observability — merge service', () => {
       (stat as Mock).mockResolvedValue({ size: 100 });
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
     }
 
     it('3 identical lines logged once with × 3 suffix', async () => {
@@ -1376,7 +1376,7 @@ describe('#257 merge observability — merge service', () => {
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 100 });
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
     }
 
     function createServiceWithBroadcaster() {
@@ -1574,7 +1574,7 @@ describe('#257 merge observability — merge service', () => {
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 100 });
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
 
       let resolveFirst!: () => void;
       const firstPromise = new Promise<void>((resolve) => { resolveFirst = resolve; });
@@ -1617,7 +1617,7 @@ describe('#257 merge observability — merge service', () => {
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 100 });
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
 
       let resolveFirst!: () => void;
       const firstPromise = new Promise<void>((resolve) => { resolveFirst = resolve; });
@@ -1708,7 +1708,7 @@ describe('#257 merge observability — merge service', () => {
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 100 });
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
 
       let resolveFirst!: () => void;
       const firstPromise = new Promise<void>((resolve) => { resolveFirst = resolve; });
@@ -1740,7 +1740,7 @@ describe('#257 merge observability — merge service', () => {
 
     it('merge_complete includes enrichmentWarning when enrichment fails', async () => {
       setupHappyPath();
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: false });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: false });
       const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
       const { service } = createService({ eventBroadcaster });
 
@@ -1789,7 +1789,7 @@ describe('#257 merge observability — merge service', () => {
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 100 });
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
 
       (processAudioFiles as Mock)
         .mockRejectedValueOnce(new Error('FFmpeg crashed'))
@@ -1915,7 +1915,7 @@ describe('#257 merge observability — merge service', () => {
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 100 });
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
 
       let resolveFirst!: () => void;
       const firstPromise = new Promise<void>((resolve) => { resolveFirst = resolve; });
@@ -1983,7 +1983,7 @@ describe('#257 merge observability — merge service', () => {
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 100 });
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
 
       return { bookService };
     }
@@ -2243,7 +2243,7 @@ describe('#257 merge observability — merge service', () => {
       (unlink as Mock).mockResolvedValue(undefined);
       (rm as Mock).mockResolvedValue(undefined);
       (stat as Mock).mockResolvedValue({ size: 100 });
-      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      (enrichBookFromAudioWithinAdmissionLock as Mock).mockResolvedValue({ enriched: true });
     }
 
     describe('cancel from queue', () => {
@@ -2555,7 +2555,7 @@ describe('#1838 merge origin — event provenance', () => {
   });
 });
 
-// Source-tag forwarding cannot apply canonical DB tags; post-merge tagging must reuse retagBook (#2078).
+// Source-tag forwarding cannot apply canonical DB tags; post-merge tagging must reuse retagBookWithinAdmissionLock (#2078).
 
 const MERGED_OUTPUT = join(BOOK_PATH, 'The Way of Kings.m4b');
 
@@ -2572,7 +2572,7 @@ function retagResult(over: Partial<RetagResult> = {}): RetagResult {
 }
 
 function tagger(result: RetagResult = retagResult()) {
-  return { retagBook: vi.fn().mockResolvedValue(result) };
+  return { retagBookWithinAdmissionLock: vi.fn().mockResolvedValue(result) };
 }
 
 const TAGGING_ON = { enabled: true, mode: 'overwrite' as const, embedCover: true };
@@ -2582,7 +2582,7 @@ describe('#2078 post-merge re-tag', () => {
     vi.resetAllMocks();
   });
 
-  it('calls retagBook(bookId) exactly once, with no overrides, when tag embedding is on (AC10)', async () => {
+  it('calls retagBookWithinAdmissionLock(bookId) exactly once, with no overrides, when tag embedding is on (AC10)', async () => {
     setupHappyPath();
     const tagging = tagger();
     const { service } = createService({ tagging: TAGGING_ON, taggingService: tagging });
@@ -2590,15 +2590,15 @@ describe('#2078 post-merge re-tag', () => {
     await service.enqueueMerge(42);
     await settle();
 
-    // Omitting overrides keeps merge-time tagging on retagBook's canonical projection.
-    expect(tagging.retagBook).toHaveBeenCalledTimes(1);
-    expect(tagging.retagBook).toHaveBeenCalledWith(42);
-    expect(tagging.retagBook.mock.calls[0]).toHaveLength(1);
+    // Omitting overrides keeps merge-time tagging on retagBookWithinAdmissionLock's canonical projection.
+    expect(tagging.retagBookWithinAdmissionLock).toHaveBeenCalledTimes(1);
+    expect(tagging.retagBookWithinAdmissionLock).toHaveBeenCalledWith(42);
+    expect(tagging.retagBookWithinAdmissionLock.mock.calls[0]).toHaveLength(1);
   });
 
   it('does not start the tag write until the merge commit has landed the output (AC10)', async () => {
     setupHappyPath();
-    // Gate the staging rename: retagBook resolves book.path and must see its output and cover.
+    // Gate the staging rename: retagBookWithinAdmissionLock resolves book.path and must see its output and cover.
     let releaseCommit!: () => void;
     const committed = new Promise<void>((res) => { releaseCommit = res; });
     (rename as Mock).mockImplementation(() => committed);
@@ -2610,12 +2610,12 @@ describe('#2078 post-merge re-tag', () => {
     await settle();
 
     expect(rename).toHaveBeenCalledWith(join(STAGING_DIR, 'The Way of Kings.m4b'), MERGED_OUTPUT);
-    expect(tagging.retagBook).not.toHaveBeenCalled();
+    expect(tagging.retagBookWithinAdmissionLock).not.toHaveBeenCalled();
 
     releaseCommit();
     await settle();
 
-    expect(tagging.retagBook).toHaveBeenCalledWith(42);
+    expect(tagging.retagBookWithinAdmissionLock).toHaveBeenCalledWith(42);
   });
 
   it('survives a rejecting tagging-settings read — the merge is already committed (AC10)', async () => {
@@ -2640,11 +2640,11 @@ describe('#2078 post-merge re-tag', () => {
       'merge_complete', expect.objectContaining({ success: true }),
     );
     expect(vi.mocked(eventBroadcaster.emit).mock.calls.some((c) => c[0] === 'merge_failed')).toBe(false);
-    expect(tagging.retagBook).not.toHaveBeenCalled();
-    expect(enrichBookFromAudio).toHaveBeenCalled();
+    expect(tagging.retagBookWithinAdmissionLock).not.toHaveBeenCalled();
+    expect(enrichBookFromAudioWithinAdmissionLock).toHaveBeenCalled();
   });
 
-  it('never calls retagBook when tag embedding is off — Layer 1 alone governs (AC14)', async () => {
+  it('never calls retagBookWithinAdmissionLock when tag embedding is off — Layer 1 alone governs (AC14)', async () => {
     setupHappyPath();
     const tagging = tagger();
     const { service } = createService({
@@ -2655,18 +2655,18 @@ describe('#2078 post-merge re-tag', () => {
     const ack = await service.enqueueMerge(42);
     await settle();
 
-    // retagBook is also the ungated manual entry point, so merge must enforce enabled here.
-    expect(tagging.retagBook).not.toHaveBeenCalled();
+    // retagBookWithinAdmissionLock is also the ungated manual entry point, so merge must enforce enabled here.
+    expect(tagging.retagBookWithinAdmissionLock).not.toHaveBeenCalled();
     expect(ack).toEqual({ status: 'started', bookId: 42 });
-    expect(enrichBookFromAudio).toHaveBeenCalled();
+    expect(enrichBookFromAudioWithinAdmissionLock).toHaveBeenCalled();
   });
 
   it.each([
     ['a plain Error', new Error('ffmpeg blew up')],
     ['a RetagError', new RetagError('PATH_MISSING', 'Book path does not exist on disk')],
-  ])('survives a rejected retagBook (%s) — merge still reports success (AC10)', async (_label, error) => {
+  ])('survives a rejected retagBookWithinAdmissionLock (%s) — merge still reports success (AC10)', async (_label, error) => {
     setupHappyPath();
-    const tagging = { retagBook: vi.fn().mockRejectedValue(error) };
+    const tagging = { retagBookWithinAdmissionLock: vi.fn().mockRejectedValue(error) };
     const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
     const { service, log } = createService({ tagging: TAGGING_ON, taggingService: tagging, eventBroadcaster });
 
@@ -2678,7 +2678,7 @@ describe('#2078 post-merge re-tag', () => {
       'merge_complete', expect.objectContaining({ success: true }),
     );
     expect(log.error).not.toHaveBeenCalled();
-    expect(enrichBookFromAudio).toHaveBeenCalled();
+    expect(enrichBookFromAudioWithinAdmissionLock).toHaveBeenCalled();
   });
 
   it('survives a returned failed > 0 and surfaces its warnings to the operator (AC10, AC13)', async () => {
@@ -2697,7 +2697,7 @@ describe('#2078 post-merge re-tag', () => {
       success: true,
       message: expect.stringContaining('Output file suspiciously small'),
     }));
-    expect(enrichBookFromAudio).toHaveBeenCalled();
+    expect(enrichBookFromAudioWithinAdmissionLock).toHaveBeenCalled();
   });
 
   it('warns and continues when tag embedding is on but no tagger is wired (AC10)', async () => {
@@ -2713,7 +2713,7 @@ describe('#2078 post-merge re-tag', () => {
       success: true,
       message: 'Merged 2 files into The Way of Kings.m4b',
     }));
-    expect(enrichBookFromAudio).toHaveBeenCalled();
+    expect(enrichBookFromAudioWithinAdmissionLock).toHaveBeenCalled();
   });
 
   function statsOnOutput(): number {
@@ -2726,16 +2726,16 @@ describe('#2078 post-merge re-tag', () => {
     const sizes = [500_000_000, 500_004_096];
     (stat as Mock).mockImplementation(async () => ({ size: sizes.shift() ?? 500_004_096 }));
 
-    // Gating retagBook proves ordering; sequential stat values alone do not.
+    // Gating retagBookWithinAdmissionLock proves ordering; sequential stat values alone do not.
     let release!: (r: RetagResult) => void;
     const gate = new Promise<RetagResult>((res) => { release = res; });
-    const tagging = { retagBook: vi.fn().mockReturnValue(gate) };
+    const tagging = { retagBookWithinAdmissionLock: vi.fn().mockReturnValue(gate) };
     const { service, db } = createService({ tagging: TAGGING_ON, taggingService: tagging });
 
     await service.enqueueMerge(42);
     await settle();
 
-    expect(tagging.retagBook).toHaveBeenCalled();
+    expect(tagging.retagBookWithinAdmissionLock).toHaveBeenCalled();
     expect(statsOnOutput()).toBe(1);
 
     release(retagResult());
@@ -2764,7 +2764,7 @@ describe('#2078 post-merge re-tag', () => {
     // Identify the post-tag update by tag state, not brittle call order.
     let tagWriteDone = false;
     const tagging = {
-      retagBook: vi.fn().mockImplementation(async () => { tagWriteDone = true; return retagResult(); }),
+      retagBookWithinAdmissionLock: vi.fn().mockImplementation(async () => { tagWriteDone = true; return retagResult(); }),
     };
     const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
     const { service, db } = createService({ tagging: TAGGING_ON, taggingService: tagging, eventBroadcaster });
@@ -2775,13 +2775,13 @@ describe('#2078 post-merge re-tag', () => {
     await settle();
 
     expect(gatedWhere).toHaveBeenCalledTimes(1);
-    expect(enrichBookFromAudio).not.toHaveBeenCalled();
+    expect(enrichBookFromAudioWithinAdmissionLock).not.toHaveBeenCalled();
     expect(vi.mocked(eventBroadcaster.emit).mock.calls.some((c) => c[0] === 'merge_complete')).toBe(false);
 
     releasePersist();
     await settle();
 
-    expect(enrichBookFromAudio).toHaveBeenCalled();
+    expect(enrichBookFromAudioWithinAdmissionLock).toHaveBeenCalled();
     expect(vi.mocked(eventBroadcaster.emit)).toHaveBeenCalledWith('merge_complete', expect.objectContaining({ success: true }));
   });
 
@@ -2792,7 +2792,7 @@ describe('#2078 post-merge re-tag', () => {
     const capturedWhere: unknown[] = [];
     let tagWriteDone = false;
     const tagging = {
-      retagBook: vi.fn().mockImplementation(async () => { tagWriteDone = true; return retagResult(); }),
+      retagBookWithinAdmissionLock: vi.fn().mockImplementation(async () => { tagWriteDone = true; return retagResult(); }),
     };
     const { service, db } = createService({ tagging: TAGGING_ON, taggingService: tagging });
     (db.update as Mock).mockImplementation(() => {
@@ -2870,22 +2870,22 @@ describe('#2078 post-merge re-tag', () => {
 
   it('finishes the tag write BEFORE enrichment reads the file back', async () => {
     setupHappyPath();
-    // Gating resolution catches an un-awaited retagBook; call order does not.
+    // Gating resolution catches an un-awaited retagBookWithinAdmissionLock; call order does not.
     let release!: (r: RetagResult) => void;
     const gate = new Promise<RetagResult>((res) => { release = res; });
-    const tagging = { retagBook: vi.fn().mockReturnValue(gate) };
+    const tagging = { retagBookWithinAdmissionLock: vi.fn().mockReturnValue(gate) };
     const { service } = createService({ tagging: TAGGING_ON, taggingService: tagging });
 
     await service.enqueueMerge(42);
     await settle();
 
-    expect(tagging.retagBook).toHaveBeenCalled();
-    expect(enrichBookFromAudio).not.toHaveBeenCalled();
+    expect(tagging.retagBookWithinAdmissionLock).toHaveBeenCalled();
+    expect(enrichBookFromAudioWithinAdmissionLock).not.toHaveBeenCalled();
 
     release(retagResult());
     await settle();
 
-    expect(enrichBookFromAudio).toHaveBeenCalled();
+    expect(enrichBookFromAudioWithinAdmissionLock).toHaveBeenCalled();
   });
 });
 

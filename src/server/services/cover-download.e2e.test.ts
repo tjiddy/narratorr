@@ -42,8 +42,14 @@ function createMockLogger() {
   });
 }
 
+// The public entry reads `books.path` inside its section (#2369 AC3/AC12); `/tmp/book` is that row.
 function createMockDb() {
   return {
+    select: vi.fn().mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue([{ path: '/tmp/book' }]) }),
+      }),
+    }),
     update: vi.fn().mockReturnValue({
       set: vi.fn().mockReturnValue({
         where: vi.fn().mockResolvedValue(undefined),
@@ -137,7 +143,6 @@ describe('downloadRemoteCover (real-HTTP e2e — DNS rebinding revalidation)', (
 
     const result = await downloadRemoteCover(
       1,
-      '/tmp/book',
       `http://origin.test:${port}/cover.jpg`,
       inject<Db>(mockDb),
       log,
@@ -190,7 +195,6 @@ describe('downloadRemoteCover (real-HTTP e2e — DNS rebinding revalidation)', (
 
     const result = await downloadRemoteCover(
       1,
-      '/tmp/book',
       `http://origin.test:${port}/cover.jpg`,
       inject<Db>(mockDb),
       log,

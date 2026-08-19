@@ -5,37 +5,65 @@ import type { BookService } from './book.service.js';
 
 // Mock cross-module seams so orchestration and failure accounting remain observable.
 vi.mock('../utils/opf-writer.js', () => ({
-  writeOpfSidecar: vi.fn().mockResolvedValue('written'),
+  writeOpfSidecarWithinAdmissionLock: vi.fn().mockResolvedValue('written'),
 }));
 vi.mock('./cover-download.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./cover-download.js')>()),
-  downloadRemoteCover: vi.fn().mockResolvedValue('written'),
+  downloadRemoteCoverWithinAdmissionLock: vi.fn().mockResolvedValue('written'),
 }));
 
 import { reconcileBookSidecars, runSidecarReconcile } from './bulk-sidecar-reconcile.js';
 import type { BulkJobFailure } from './bulk-job.js';
-import { writeOpfSidecar } from '../utils/opf-writer.js';
-import { downloadRemoteCover } from './cover-download.js';
+import { writeOpfSidecarWithinAdmissionLock } from '../utils/opf-writer.js';
+import { downloadRemoteCoverWithinAdmissionLock } from './cover-download.js';
 import type { ConnectorService } from './connector.service.js';
 
-const writeOpfMock = vi.mocked(writeOpfSidecar);
-const downloadMock = vi.mocked(downloadRemoteCover);
+const writeOpfMock = vi.mocked(writeOpfSidecarWithinAdmissionLock);
+const downloadMock = vi.mocked(downloadRemoteCoverWithinAdmissionLock);
 
 function makeLog(): FastifyBaseLogger {
   return { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), fatal: vi.fn(), trace: vi.fn(), child: vi.fn().mockReturnThis(), silent: vi.fn(), level: 'info' } as unknown as FastifyBaseLogger;
 }
 
 const bookService = { getById: vi.fn() } as unknown as BookService;
-const db = {} as unknown as Db;
+
+type FreshRow = { path: string | null; coverUrl: string | null };
+
+/**
+ * The section re-reads `books.path`/`coverUrl` (#2369 F2), so the row is part of every fixture.
+ * `rows` are served to successive single-row reads in the order the per-book loop makes them.
+ */
+function makeDb(rows: FreshRow[], batch: unknown[] = []): Db {
+  let next = 0;
+  return {
+    select: () => ({
+      from: () => ({
+        where: () => {
+          const pending = Promise.resolve(batch) as Promise<unknown[]> & { limit: (n: number) => Promise<FreshRow[]> };
+          pending.limit = () => {
+            const row = rows[next++];
+            return Promise.resolve(row ? [row] : []);
+          };
+          return pending;
+        },
+      }),
+    }),
+  } as unknown as Db;
+}
 
 let notifyRefresh: ReturnType<typeof vi.fn>;
 
-function run(overrides: { bookFolder?: string; coverUrl?: string | null; title?: string } = {}) {
+function run(overrides: { bookFolder?: string; coverUrl?: string | null; title?: string; fresh?: FreshRow | null } = {}) {
+  const bookFolder = overrides.bookFolder ?? '/lib/Author/Book';
+  const coverUrl = overrides.coverUrl ?? null;
+  // Default: nothing moved between the batch query and the section.
+  const fresh = overrides.fresh === undefined ? { path: bookFolder, coverUrl } : overrides.fresh;
+  const db = makeDb(fresh === null ? [{ path: null, coverUrl: null }] : [fresh]);
   return reconcileBookSidecars({
     bookId: 1,
     title: overrides.title ?? 'Book One',
-    bookFolder: overrides.bookFolder ?? '/lib/Author/Book',
-    coverUrl: overrides.coverUrl ?? null,
+    bookFolder,
+    coverUrl,
     bookService,
     db,
     log: makeLog(),
@@ -58,7 +86,7 @@ describe('reconcileBookSidecars (#1670)', () => {
 
   it('OPF written + remote cover materialized → success', async () => {
     const outcome = await run({ coverUrl: 'https://example.com/c.png' });
-    expect(downloadMock).toHaveBeenCalledWith(1, '/lib/Author/Book', 'https://example.com/c.png', db, expect.anything(), expect.any(Function));
+    expect(downloadMock).toHaveBeenCalledWith(1, '/lib/Author/Book', 'https://example.com/c.png', expect.anything(), expect.anything(), expect.any(Function));
     expect(outcome).toEqual({ failed: false });
   });
 
@@ -130,6 +158,59 @@ describe('reconcileBookSidecars (#1670)', () => {
     expect(outcome).toEqual({ failed: false });
     expect(writeOpfMock).not.toHaveBeenCalled();
     expect(downloadMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #2369 F2. The batch query is a pre-lock snapshot. Forwarding it into the section let a rename
+   * land in between and split the two sidecars across two folders: the OPF writer's own ownership
+   * re-read skipped, while the cover half still wrote into the folder the book had vacated.
+   */
+  describe('the batch snapshot is re-read inside the section (AC3, F2)', () => {
+    it('retargets BOTH sidecars and the refresh at the folder the row names now', async () => {
+      const outcome = await run({
+        bookFolder: '/lib/Author/Old',
+        coverUrl: 'https://example.com/c.png',
+        fresh: { path: '/lib/Author/Renamed', coverUrl: 'https://example.com/c.png' },
+      });
+
+      expect(outcome).toEqual({ failed: false });
+      expect(writeOpfMock).toHaveBeenCalledWith(expect.objectContaining({ bookFolder: '/lib/Author/Renamed' }));
+      expect(downloadMock).toHaveBeenCalledWith(1, '/lib/Author/Renamed', 'https://example.com/c.png', expect.anything(), expect.anything(), expect.any(Function));
+      expect(notifyRefresh).toHaveBeenCalledWith('metadata', [expect.objectContaining({ libraryPath: '/lib/Author/Renamed' })]);
+    });
+
+    it('takes the fresh coverUrl, so a cover localized since the batch query is not re-downloaded', async () => {
+      const outcome = await run({
+        bookFolder: '/lib/Author/Book',
+        coverUrl: 'https://example.com/c.png',
+        fresh: { path: '/lib/Author/Book', coverUrl: '/api/books/1/cover' },
+      });
+
+      expect(outcome).toEqual({ failed: false });
+      expect(downloadMock).not.toHaveBeenCalled();
+    });
+
+    it('writes nothing when the book lost its row or its path while the section was queued', async () => {
+      const outcome = await run({ coverUrl: 'https://example.com/c.png', fresh: null });
+
+      // Not a failure: the book legitimately moved on and the operator has nothing to fix.
+      expect(outcome).toEqual({ failed: false });
+      expect(writeOpfMock).not.toHaveBeenCalled();
+      expect(downloadMock).not.toHaveBeenCalled();
+      expect(notifyRefresh).not.toHaveBeenCalled();
+    });
+
+    it('writes nothing when the row now points at a loose audio file', async () => {
+      const outcome = await run({
+        bookFolder: '/lib/Author/Book',
+        coverUrl: 'https://example.com/c.png',
+        fresh: { path: '/audiobooks/Doctor Sleep.m4b', coverUrl: 'https://example.com/c.png' },
+      });
+
+      expect(outcome).toEqual({ failed: false });
+      expect(writeOpfMock).not.toHaveBeenCalled();
+      expect(downloadMock).not.toHaveBeenCalled();
+    });
   });
 });
 
@@ -209,9 +290,9 @@ describe('reconcileBookSidecars — named failure reasons (#2159)', () => {
 
 describe('runSidecarReconcile — one tick, one detail per book (#2159)', () => {
   function makeDeps(rows: Array<{ id: number; path: string | null; coverUrl: string | null; title: string }>) {
-    const chain = { from: () => ({ where: () => Promise.resolve(rows) }) };
     return {
-      db: { select: () => chain } as unknown as Db,
+      // Each eligible row is re-read inside its own section before either sidecar is written.
+      db: makeDb(rows.map((r) => ({ path: r.path, coverUrl: r.coverUrl })), rows),
       bookService,
       log: makeLog(),
       jobId: 'job-1',

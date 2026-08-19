@@ -19,7 +19,10 @@ import { recordImportFailedEvent } from '../../utils/import-side-effects.js';
 import { transitionBookStatus } from '../../utils/book-status.js';
 import { serializeError } from '../../utils/serialize-error.js';
 import { fireAndForget } from '../../utils/fire-and-forget.js';
-import { writeOpfForImport } from '../../utils/opf-writer.js';
+import { writeOpfForImportWithinAdmissionLock } from '../../utils/opf-writer.js';
+import { withBookAdmissionLock } from '../book-admission.js';
+import { beginRootCommit } from '../library-root-gate.js';
+import type { BookMetadata } from '@core/metadata/index.js';
 
 // Prefer this import's unpersisted edition label with ?? so an empty label survives.
 function buildRenameableBook(
@@ -108,17 +111,31 @@ export class ManualImportAdapter implements ImportAdapter {
   }
 
   async process(job: ImportJob, ctx: ImportAdapterContext): Promise<void> {
-    const { db, log } = ctx;
-    const { eventHistory, broadcaster } = this.deps;
-
     const offered: ManualImportJobPayload = parseManualPayload(job.id, job.metadata);
-    const mode = offered.mode; // undefined = pointer mode
-    const attach = offered.attach === true;
     const bookId = job.bookId;
 
     if (bookId == null) {
       throw new Error('ManualImportAdapter requires a bookId on the job');
     }
+
+    return withBookAdmissionLock(bookId, () => this.processWithinAdmissionLock(bookId, offered, ctx));
+  }
+
+  /**
+   * Caller must hold the admission lock for `bookId`. The row read, the attach hydration, the
+   * library root and the copy all sit inside it, so an import queued behind a rename or a delete
+   * cannot copy into — or commit a `path` naming — a folder the row no longer owns, and an attach
+   * cannot substitute an incumbent identity that a queued mutation is about to change.
+   */
+  private async processWithinAdmissionLock(
+    bookId: number,
+    offered: ManualImportJobPayload,
+    ctx: ImportAdapterContext,
+  ): Promise<void> {
+    const { db, log } = ctx;
+    const { eventHistory, broadcaster } = this.deps;
+    const mode = offered.mode; // undefined = pointer mode
+    const attach = offered.attach === true;
 
     log.info({ bookId, title: offered.title, mode: mode ?? 'pointer', attach }, 'Processing manual import');
 
@@ -140,30 +157,9 @@ export class ManualImportAdapter implements ImportAdapter {
         throw new Error('Cannot import a multi-disc set in pointer (in-place) mode — re-import with copy or move so the discs flatten into one book folder');
       }
 
-      let finalPath = payload.path;
-      // Persist the edition discriminator so rescans reuse it instead of re-deriving it.
-      let editionLabel: string | undefined;
-      if (mode) {
-        const librarySettings = await this.deps.settingsService.get('library');
-        await ctx.setPhase('copying');
-        const copyResult = await copyToLibrary(item, extracted.meta ?? null, mode, this.deps, (progress, byteCounter) => {
-          ctx.emitProgress('copying', progress, byteCounter);
-        }, naming);
-        finalPath = copyResult.targetPath;
-        editionLabel = copyResult.editionLabel;
-
-        await this.renameIfConfigured(finalPath, bookId, bookRow, payload, ctx, librarySettings, editionLabel);
-      }
-
-      const stats = await getAudioStats(finalPath, log);
-      log.debug({ bookId, finalPath, fileCount: stats.fileCount, totalSize: stats.totalSize }, 'Audio stats collected');
-
-      await db.update(books).set({
-        path: finalPath,
-        size: stats.totalSize,
-        ...(editionLabel !== undefined && { editionLabel }),
-        updatedAt: new Date(),
-      }).where(eq(books.id, bookId));
+      const finalPath = mode
+        ? await this.commitCopyUnderRootCommit(item, extracted.meta ?? null, mode, bookId, bookRow, payload, ctx, naming)
+        : await this.commitImportedPath(bookId, payload.path, undefined, ctx);
 
       await ctx.setPhase('fetching_metadata');
 
@@ -213,7 +209,8 @@ export class ManualImportAdapter implements ImportAdapter {
    * on purpose: a row deleted between enqueue and processing must fail the job having written
    * nothing at all — no files, no `books` update and no `book_events` row — exactly as the
    * missing-row throw already does today. (`book_events.book_id` is an FK, so an event for a
-   * deleted book could not be written even if it were wanted.)
+   * deleted book could not be written even if it were wanted.) Runs inside the admission section,
+   * so the incumbent read here is the controlling snapshot for the whole import (#2369 AC3).
    */
   private async resolveAttachContext(
     offered: ManualImportJobPayload, bookId: number, attach: boolean,
@@ -228,10 +225,66 @@ export class ManualImportAdapter implements ImportAdapter {
     return { payload: toAttachPayload(offered, incumbent), naming: buildAttachNaming(incumbent) };
   }
 
+  /**
+   * Copy mode derives its target from the library root, so it registers as a root-dependent commit,
+   * takes the canonical root from the gate — no second settings read — and holds the registration
+   * from that derivation through the `path` commit. Releasing at the end of the copy would let a
+   * `library` write land between the files committing under the old root and the row committing
+   * that old-root path. Pointer mode never reads the root and registers nothing.
+   */
+  private async commitCopyUnderRootCommit(
+    item: ImportConfirmItem,
+    extractedMeta: BookMetadata | null,
+    mode: NonNullable<ManualImportJobPayload['mode']>,
+    bookId: number,
+    bookRow: { title: string; seriesName: string | null; seriesPosition: number | null; publishedDate: string | null },
+    payload: ManualImportJobPayload,
+    ctx: ImportAdapterContext,
+    naming: AttachNaming | undefined,
+  ): Promise<string> {
+    const rootCommit = await beginRootCommit(this.deps.settingsService);
+    try {
+      await ctx.setPhase('copying');
+      const copyResult = await copyToLibrary(item, extractedMeta, mode, this.deps, rootCommit.library, (progress, byteCounter) => {
+        ctx.emitProgress('copying', progress, byteCounter);
+      }, naming);
+      await this.renameIfConfigured(
+        copyResult.targetPath, bookId, bookRow, payload, ctx, rootCommit.library, copyResult.editionLabel,
+      );
+      return await this.commitImportedPath(bookId, copyResult.targetPath, copyResult.editionLabel, ctx);
+    } finally {
+      rootCommit.release();
+    }
+  }
+
+  /**
+   * Half of the import commit; the `imported` transition in the caller is the other half. They are
+   * two statements because enrichment runs between them and a failure there must not leave the row
+   * claiming `imported` — this is NOT atomic. What makes the intermediate `path=new,
+   * status=importing` state unobservable is the admission lock: every other mutator of this book,
+   * including the reconciler and rename, has to wait for the section to finish.
+   */
+  private async commitImportedPath(
+    bookId: number,
+    finalPath: string,
+    editionLabel: string | undefined,
+    ctx: ImportAdapterContext,
+  ): Promise<string> {
+    const stats = await getAudioStats(finalPath, ctx.log);
+    ctx.log.debug({ bookId, finalPath, fileCount: stats.fileCount, totalSize: stats.totalSize }, 'Audio stats collected');
+
+    await transitionBookStatus(ctx.db, bookId, {
+      path: finalPath,
+      size: stats.totalSize,
+      ...(editionLabel !== undefined && { editionLabel }),
+    });
+    return finalPath;
+  }
+
   private async writeOpfSidecar(bookId: number, finalPath: string, log: ImportAdapterContext['log']): Promise<void> {
     try {
       const taggingSettings = await this.deps.settingsService.get('tagging');
-      await writeOpfForImport({
+      await writeOpfForImportWithinAdmissionLock({
         enabled: taggingSettings.writeOpf, bookService: this.deps.bookService,
         bookId, bookFolder: finalPath, log,
         // Unattended: the DB may be wrong, so a diverged sidecar is preserved before replacement.
