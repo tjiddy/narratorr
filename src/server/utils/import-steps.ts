@@ -8,11 +8,13 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Db, DbOrTx } from '@db/index.js';
 import { transitionDownloadState } from './download-state.js';
 import { withPathWriteLock } from './path-write-lock.js';
+import { withBookAdmissionLock } from './book-admission-lock.js';
 import { claimLockKey } from './claim-lock.js';
-import { findOtherPathOwner } from './path-identity.js';
+import { canonicalPath, findOtherPathOwner } from './path-identity.js';
 import { AUDIO_EXTENSIONS, isHiddenName } from '@core/utils/index.js';
 import { getErrorMessage } from './error-message.js';
 import type { TaggingService } from '../services/tagging.service.js';
+import type { BookService } from '../services/book.service.js';
 import { serializeError } from './serialize-error.js';
 import { resolveMutagenPython } from '@core/utils/mutagen-resolver.js';
 
@@ -287,16 +289,64 @@ export interface EmbedTagsArgs {
     genres?: string[] | null | undefined;
     coverUrl: string | null | undefined;
   };
+  /** The in-section re-read; the sole controlling snapshot this step revalidates. */
+  bookService: BookService;
   log: FastifyBaseLogger;
 }
 
+/**
+ * Serialized entry point: the auto-import orchestrator dispatches this AFTER
+ * `ImportService.importDownload` has released the book's admission lock, so no current caller holds
+ * it. The lock is not re-entrant — a future locked caller needs an already-locked inner form rather
+ * than nesting (#2369 AC14); none exists because none is needed today.
+ *
+ * The section spans the row re-read plus N mutagen subprocess runs. #2369 AC17 already accepted
+ * holding one book for the length of an ffmpeg merge, and the acquisition sits outermost, above
+ * `tagBook`'s per-audio-file keys, preserving admission → claim key → file key. The settings read
+ * and the interpreter probe stay outside it: neither is a path or a root, so neither is a
+ * controlling snapshot, and keeping the subprocess probe out keeps the hold minimal.
+ */
 export async function embedTagsForImport(args: EmbedTagsArgs): Promise<void> {
-  const { taggingService, taggingEnabled, taggingMode, embedCover, bookId, targetPath, book, log } = args;
+  const { taggingService, taggingEnabled, bookId, log } = args;
   if (!taggingService) return;
   if (!taggingEnabled) return;
   const mutagenPython = await resolveMutagenPython();
   if (!mutagenPython) {
     log.warn({ bookId }, 'Tag embedding enabled but Python with the mutagen module is not available — skipping');
+    return;
+  }
+
+  await withBookAdmissionLock(bookId, () => tagImportedFolder(args, taggingService, mutagenPython));
+}
+
+// Local on purpose: `opf-writer.ts`'s private `ownsFolder` compares with a bare `resolve`, which on
+// POSIX leaves a backslash-spelled parent segment unresolved. Widening that one is a behavior
+// change to four sidecar writers.
+function ownsImportedFolder(book: { path: string | null } | null, targetPath: string): boolean {
+  return book?.path != null && canonicalPath(book.path) === canonicalPath(targetPath);
+}
+
+/**
+ * Runs inside the book's admission section. The guard decides only whether to write: a row that has
+ * moved on means `targetPath` AND the `ImportContext` projection were both superseded by a later
+ * mutator, so following the row would silently turn a best-effort import step into a retag of a
+ * folder nobody asked to tag. Cost is stated and bounded — a book renamed inside the window stays
+ * untagged until an operator retag, and the skip is warn-logged.
+ */
+async function tagImportedFolder(args: EmbedTagsArgs, taggingService: TaggingService, mutagenPython: string): Promise<void> {
+  const { taggingMode, embedCover, bookId, targetPath, book, bookService, log } = args;
+
+  let row: Awaited<ReturnType<BookService['getById']>>;
+  try {
+    row = await bookService.getById(bookId);
+  } catch (readError: unknown) {
+    // New I/O in an already-committed import's tail; it must never be what fails the import.
+    log.warn({ error: serializeError(readError), bookId, targetPath }, 'Tag embedding skipped during import — could not re-read the book row');
+    return;
+  }
+
+  if (!ownsImportedFolder(row, targetPath)) {
+    log.warn({ bookId, targetPath, bookPath: row?.path ?? null }, 'Tag embedding skipped during import — the book no longer owns the imported folder');
     return;
   }
 
