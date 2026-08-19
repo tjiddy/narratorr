@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { createRunTempDirs } from './fixtures/temp-dirs.js';
+import { ROOT_RUN, resolveRunTempDirs } from './fixtures/temp-dirs.js';
 import { serverEnv } from './fixtures/server-env.js';
 import {
   ROOT_PORT,
@@ -22,16 +22,25 @@ import {
  * Root/subpath bypass auth; forms exercises real sessions. Run `pnpm build` first.
  */
 
-// Allocate once at config load so webServer env and teardown share each isolated run.
-const rootRun = createRunTempDirs();
-const subpathRun = createRunTempDirs(SUBPATH_RUN);
-const formsRun = createRunTempDirs(FORMS_RUN);
+// Allocated by the first config load of the invocation and published as a manifest; every later
+// load (workers, tooling) adopts it. Playwright evaluates this config in several processes, so an
+// unconditional allocation here leaks a fresh batch of 15 directories per process.
+const [rootRun, subpathRun, formsRun] = resolveRunTempDirs([ROOT_RUN, SUBPATH_RUN, FORMS_RUN]);
 
 // Config-time env reaches workers; globalSetup env does not. Keep this on the root manual-import run.
 process.env.E2E_RUN_STATE_DIR = rootRun.configPath;
 
 // Keep output paths stable regardless of the caller's cwd.
 const CONFIG_DIR = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Every server boots through the seed wrapper, never `node ../dist/server/index.js` directly:
+ * Playwright starts `webServer` entries before `globalSetup`, so seeding anywhere else lets the
+ * health probe reach a server that came up against an empty DB (#2452). `--import tsx` registers
+ * the loader in-process, so this stays one PID and Playwright's existing kill path still works.
+ * `webServer.command` runs with cwd = this config's directory.
+ */
+const SEED_AND_SERVE_COMMAND = 'node --import tsx ./fixtures/seed-and-serve.ts';
 
 // Suite selectors accept both Windows and POSIX path separators.
 const SUBPATH_SPECS = /[\\/]subpath[\\/].*\.spec\.ts$/;
@@ -92,7 +101,7 @@ export default defineConfig({
 
   webServer: [
     {
-      command: 'node ../dist/server/index.js',
+      command: SEED_AND_SERVE_COMMAND,
       url: `http://localhost:${ROOT_PORT}/api/health`,
       reuseExistingServer: false,
       timeout: 60_000,
@@ -101,7 +110,7 @@ export default defineConfig({
       env: serverEnv(rootRun, '/', ROOT_PORT),
     },
     {
-      command: 'node ../dist/server/index.js',
+      command: SEED_AND_SERVE_COMMAND,
       // Unprefixed `/api/health` intentionally 404s on the subpath server.
       url: `http://localhost:${SUBPATH_PORT}${URL_BASE_SUBPATH}/api/health`,
       reuseExistingServer: false,
@@ -111,7 +120,7 @@ export default defineConfig({
       env: serverEnv(subpathRun, URL_BASE_SUBPATH, SUBPATH_PORT),
     },
     {
-      command: 'node ../dist/server/index.js',
+      command: SEED_AND_SERVE_COMMAND,
       // Health is public while the server boots in `none`; setup later flips it to `forms`.
       url: `http://localhost:${FORMS_PORT}/api/health`,
       reuseExistingServer: false,

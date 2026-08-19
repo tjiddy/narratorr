@@ -8,17 +8,15 @@ import { books, settings } from '../../src/db/schema.js';
 import { canonicalPath } from '../../src/server/utils/path-identity.js';
 import { seedE2ERun } from './seed.js';
 import { E2E_DEFAULT_PORTS, resolvePort } from './ports.js';
+import { SEED_LIBRARY_DIR_ENV } from './server-env.js';
 
 /**
  * Each `webServer` launches this file instead of the production bundle directly, because Playwright
  * starts `webServer` entries BEFORE `globalSetup` and that is not configurable. Seeding here puts
  * the seed and the boot in one process in one order, so Playwright's health probe structurally
  * cannot observe a server that booted against an empty DB (#2452).
- *
- * `LIBRARY_PATH` is deliberately not the name of the library input: the server ignores that key and
- * `global-setup.test.ts` pins its absence from `playwright.config.ts` with a naive substring check.
  */
-export const SEED_LIBRARY_DIR_ENV = 'E2E_SEED_LIBRARY_DIR';
+export { SEED_LIBRARY_DIR_ENV };
 
 export interface SeedInputs {
   dbPath: string;

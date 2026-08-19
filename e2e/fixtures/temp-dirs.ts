@@ -69,7 +69,9 @@ export function createRunTempDirs(name: string = ROOT_RUN): RunTempDirs {
  * the original error. A half-allocated run would strand directories no manifest names and that the
  * 24h sweep floor then protects for a full day.
  */
-export function resolveRunTempDirs(names: readonly string[]): RunTempDirs[] {
+export function resolveRunTempDirs<const T extends readonly string[]>(
+  names: T,
+): { [K in keyof T]: RunTempDirs } {
   if (!names.includes(ROOT_RUN)) {
     throw new Error(`resolveRunTempDirs: the run set must include "${ROOT_RUN}"; got [${names.join(', ')}]`);
   }
@@ -78,7 +80,8 @@ export function resolveRunTempDirs(names: readonly string[]): RunTempDirs[] {
   const resolved = manifestPath ? adoptManifest(manifestPath, names) : allocateAndPublish(names);
 
   for (const [name, run] of resolved) runs.set(name, run);
-  return names.map((name) => resolved.get(name)!);
+  // The mapped return type pins the arity for destructuring callers; `map` cannot express it.
+  return names.map((name) => resolved.get(name)!) as { [K in keyof T]: RunTempDirs };
 }
 
 export function getCurrentRun(): RunTempDirs | undefined {
