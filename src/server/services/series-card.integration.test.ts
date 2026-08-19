@@ -8,6 +8,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from '@db/index.js';
 import { books, bookAuthors, authors, series, seriesMembers } from '@db/schema.js';
 import { SeriesCardService } from './series-card.service.js';
+import { loadLibraryBooksForSeriesNames } from './series-library-pool.js';
 import type { SettingsService } from './settings.service.js';
 import { upsertSeriesLink } from './book-series-link.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
@@ -1612,12 +1613,9 @@ describe('SeriesCardService — integration', () => {
 
       it('an empty name list returns an empty pool without issuing a query', async () => {
         await seedBookWithSeries(db, { title: 'Kings of the Wyld', seriesName: 'The Band', seriesPosition: 1, authorName: 'Nicholas Eames' });
-        const svc = libraryOnly() as unknown as {
-          loadLibraryBooksForSeriesNames: (names: string[]) => Promise<{ books: unknown[]; positionClearedIds: Set<number> }>;
-        };
 
         const spy = spyStatements(db);
-        const pool = await svc.loadLibraryBooksForSeriesNames([]);
+        const pool = await loadLibraryBooksForSeriesNames(db, [], log);
         spy.restore();
 
         expect(pool).toEqual({ books: [], positionClearedIds: new Set() });
@@ -1907,7 +1905,13 @@ describe('SeriesCardService — integration', () => {
     }
 
     describe('AC1 — the statement count', () => {
-      it('a bind with a prior series name issues one pool statement inside the transaction and one post-commit', async () => {
+      /**
+       * #2447 moved the bind's pool read out of its transaction: the enumeration and the in-lock
+       * snapshot S are both `client`-scoped, the transaction consumes S and loads nothing, and the
+       * post-commit render reads once more. The count is unchanged in kind — still one statement
+       * per read, none of them parameterized — but the scopes are the property this pins now.
+       */
+      it('a bind with a prior series name issues both pool statements before its transaction and one post-commit', async () => {
         const initiating = await seedBookWithSeries(db, { title: 'A Wizard of Earthsea', seriesName: 'The Earthsea Cycle', seriesPosition: 1, authorName: 'Ursula K. Le Guin' });
         const sibling = await seedBookWithSeries(db, { title: 'An Unrelated Sibling', seriesName: 'The Earthsea Cycle', seriesPosition: 9, authorName: 'Ursula K. Le Guin' });
         mockHardcover(seriesPayload(4242, 'The Earthsea Quartet', 'Ursula K. Le Guin', [[1, 5001, 'A Wizard of Earthsea']]));
@@ -1917,8 +1921,8 @@ describe('SeriesCardService — integration', () => {
         spy.restore();
 
         const pool = poolStatements(spy.executed);
-        expect(pool.map((s) => s.scope)).toEqual(['tx1', 'client']);
-        expect(pool.map((s) => s.args)).toEqual([[], []]);
+        expect(pool.map((s) => s.scope)).toEqual(['client', 'client', 'client']);
+        expect(pool.map((s) => s.args)).toEqual([[], [], []]);
         expect(pool.every((s) => /"series_name" is not null/i.test(s.sql))).toBe(true);
         // The unmatched sibling keeps its pre-bind name, so the post-commit canonical pool has
         // nothing unclaimed and reconcileUnclaimedMembers never opens a second transaction.
@@ -1954,7 +1958,7 @@ describe('SeriesCardService — integration', () => {
         await boundService().bindHardcoverSeries(initiating, 4244);
         spy.restore();
 
-        expect(poolStatements(spy.executed).map((s) => s.scope)).toEqual(['tx1', 'client']);
+        expect(poolStatements(spy.executed).map((s) => s.scope)).toEqual(['client', 'client', 'client']);
         expect(spy.transactions).toHaveLength(1);
         expect(localRows(await allMembers()).map((r) => r.bookId)).toEqual([sibling]);
       });
@@ -2095,7 +2099,9 @@ describe('SeriesCardService — integration', () => {
         const bound = await boundService().bindHardcoverSeries(initiating, 4247);
         spy.restore();
 
-        expect(poolStatements(spy.executed).filter((s) => s.scope === 'tx1')).toHaveLength(1);
+        // The bind's transaction consumes the in-lock snapshot and issues no pool read of its own.
+        expect(poolStatements(spy.executed).filter((s) => s.scope === 'tx1')).toHaveLength(0);
+        expect(poolStatements(spy.executed).filter((s) => s.scope === 'client')).toHaveLength(3);
         expect(bound!.syncedIds).toEqual([initiating]);
         expect(localRows(await allMembers())).toHaveLength(0);
       });

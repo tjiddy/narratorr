@@ -9,6 +9,7 @@ import { EventHistoryServiceError } from '../services/event-history.service.js';
 import { UserExistsError, AuthConfigError, IncorrectPasswordError } from '../services/auth.service.js';
 import { ScanInProgressError, LibraryPathError } from '../services/library-scan.service.js';
 import { LibraryRootBusyError } from '../services/library-root-gate.js';
+import { SeriesBindChurnError } from '../services/series-bind-admission.js';
 import { DownloadError, DuplicateDownloadError } from '../services/download-errors.js';
 import { TaskRegistryError } from '../services/task-registry.js';
 import { BookRejectionError } from '../services/book-rejection.service.js';
@@ -37,6 +38,7 @@ const ERROR_REGISTRY = new Map<new (...args: any[]) => Error, ErrorEntry>([
   [IncorrectPasswordError, { type: 'flat', status: 400 }],
   [ScanInProgressError, { type: 'flat', status: 409 }],
   [LibraryRootBusyError, { type: 'flat', status: 409 }],
+  [SeriesBindChurnError, { type: 'flat', status: 409 }],
   [LibraryPathError, { type: 'flat', status: 400 }],
   [DownloadError, { type: 'coded', codes: { NOT_FOUND: 404, NO_BOOK_LINKED: 404, INVALID_STATUS: 400, IMPORTED_BOOK_NO_RETRY: 409 } }],
   [DuplicateDownloadError, { type: 'coded', codes: { ACTIVE_DOWNLOAD_EXISTS: 409, PIPELINE_ACTIVE: 409 } }],
