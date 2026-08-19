@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { Mock } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '@core/__tests__/msw/server.js';
+import { servesFullList } from '@core/__tests__/qb-hash-filter.js';
 import { QBittorrentClient } from '@core/download-clients/qbittorrent.js';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import type { Db } from '@db/index.js';
@@ -113,7 +114,7 @@ describe('#2423 monitor over the real QBittorrentClient', () => {
     seedRow();
     server.use(
       http.get(`${BASE_URL}/api/v2/torrents/info`, ({ request }) => HttpResponse.json(
-        new URL(request.url).searchParams.has('hashes') ? [] : [hybridTorrent],
+        servesFullList(new URL(request.url).searchParams) ? [hybridTorrent] : [],
       )),
     );
 
@@ -161,9 +162,9 @@ describe('#2423 monitor over the real QBittorrentClient', () => {
   describe('the canonical-hash memo across polls', () => {
     it('re-resolves a hybrid in one request on the second cycle, persisting nothing', async () => {
       const info = trackInfo((params) => HttpResponse.json(
-        params.has('hashes')
-          ? (params.get('hashes') === CANONICAL ? [hybridTorrent] : [])
-          : [hybridTorrent],
+        servesFullList(params)
+          ? [hybridTorrent]
+          : (params.get('hashes') === CANONICAL ? [hybridTorrent] : []),
       ));
 
       seedRow();
@@ -186,7 +187,7 @@ describe('#2423 monitor over the real QBittorrentClient', () => {
       client = buildClient('audiobooks');
       seedRow();
       const info = trackInfo((params) => HttpResponse.json(
-        params.has('hashes') || params.has('category') ? [] : [hybridTorrent],
+        !servesFullList(params) || params.has('category') ? [] : [hybridTorrent],
       ));
 
       await runCycle();

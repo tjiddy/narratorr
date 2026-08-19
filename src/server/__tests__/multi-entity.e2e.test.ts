@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { eq } from 'drizzle-orm';
 import { downloads, books } from '@db/schema.js';
 import { scanAudioDirectory } from '@core/utils/audio-scanner.js';
+import { servesFullList } from '@core/__tests__/qb-hash-filter.js';
 import { createE2EApp, seedBookAndDownload, type E2EApp } from './e2e-helpers.js';
 import {
   QB_BASE,
@@ -361,9 +362,10 @@ describe('Job lifecycle E2E', () => {
     mswServer.use(
       qbLoginHandler(),
       http.get(`${QB_BASE}/api/v2/torrents/info`, ({ request }) => {
-        const url = new URL(request.url);
-        const hashes = url.searchParams.get('hashes');
-        if (hashes && hashes.toLowerCase() === TORRENT_HASH.toLowerCase()) {
+        const params = new URL(request.url).searchParams;
+        const hashes = params.get('hashes');
+        // No effective filter means the FULL list, not an empty one (#2485 AC7c).
+        if (servesFullList(params) || hashes!.toLowerCase() === TORRENT_HASH.toLowerCase()) {
           return HttpResponse.json([{
             hash: TORRENT_HASH.toLowerCase(),
             name: 'Monitor Test Book',
