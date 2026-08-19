@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { AUDIO_EXTENSIONS } from '@core/utils/audio-constants.js';
 import {
   parseRangeHeader,
   getAudioMimeType,
@@ -63,8 +64,19 @@ describe('getAudioMimeType', () => {
     expect(getAudioMimeType('.flac')).toBe('audio/flac');
   });
 
+  it('returns audio/mp4 for .mp4 (#2495 — AAC-in-MP4 is byte-identical to .m4b)', () => {
+    expect(getAudioMimeType('.mp4')).toBe('audio/mp4');
+  });
+
   it('returns application/octet-stream for unknown extension', () => {
     expect(getAudioMimeType('.xyz')).toBe('application/octet-stream');
+  });
+
+  // #2495: AUDIO_MIME_MAP is hand-maintained beside the registry. Every registry member is
+  // streamable, so the map must be exhaustive against it — a missing entry serves the file as
+  // application/octet-stream and the browser silently refuses to play it.
+  it.each([...AUDIO_EXTENSIONS])('registry member %s has a real MIME type', (ext) => {
+    expect(getAudioMimeType(ext)).not.toBe('application/octet-stream');
   });
 });
 
@@ -122,6 +134,17 @@ describe('resolvePreviewAudioFile', () => {
 
     const result = await resolvePreviewAudioFile(workDir);
     expect(result).toBe(join(workDir, 'Disc 1', 'track1.mp3'));
+  });
+
+  it('#2495: returns the .mp4 path for a direct-file input', async () => {
+    const file = join(workDir, 'Book.mp4');
+    await writeFile(file, 'data');
+    expect(await resolvePreviewAudioFile(file)).toBe(file);
+  });
+
+  it('#2495: resolves a directory holding only a .mp4', async () => {
+    await writeFile(join(workDir, 'Book.mp4'), 'data');
+    expect(await resolvePreviewAudioFile(workDir)).toBe(join(workDir, 'Book.mp4'));
   });
 
   it('handles a flat directory with numerically-ordered tracks (02 before 10)', async () => {
