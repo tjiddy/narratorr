@@ -51,6 +51,14 @@ export const SCAN_RESULT = {
 
 export const settle = () => new Promise((r) => setTimeout(r, 50));
 
+/** Externally settled promise: the parking primitive for holding the real admission lock. */
+export function deferred() {
+  let resolve!: () => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
 export function setupHappyPath() {
   (readdir as Mock).mockImplementation(async (dir: string) => {
     if (dir.endsWith('.merge-tmp')) return ['The Way of Kings.m4b'];

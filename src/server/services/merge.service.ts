@@ -71,6 +71,12 @@ export class MergeService {
   private currentPhase = new Map<number, MergePhase>();
   // Per-book provenance follows queue/inProgress lifetime and is installed only after preflight succeeds.
   private origins = new Map<number, MergeOrigin>();
+  /**
+   * Books cancelled after promotion to active but before the admission lock was acquired, where
+   * there is no controller to abort. `cancelMerge` settles those at cancel time and the waking
+   * merge consumes the flag instead of running (#2462).
+   */
+  private cancelRequested = new Set<number>();
   // merge_state clears before terminal emit; the maps above clear afterward (#2129).
   private mergeState: MergeStateBroadcaster;
 
@@ -90,6 +96,13 @@ export class MergeService {
 
   private originFor(bookId: number): MergeOrigin {
     return this.origins.get(bookId) ?? 'manual';
+  }
+
+  /** Every exit of the merge chain clears all three, so no flag outlives the merge that armed it. */
+  private clearBookLifecycle(bookId: number): void {
+    this.inProgress.delete(bookId);
+    this.origins.delete(bookId);
+    this.cancelRequested.delete(bookId);
   }
 
   /** Synchronous by contract: awaiting the SSE greeting could let stale state overwrite a newer frame (#2129). */
@@ -144,7 +157,8 @@ export class MergeService {
       // holds no waiters of its own and drainQueue stays the sole promoter of `queue` on both paths.
       this.semaphore.setMax(clampConcurrency(validated.processing?.maxConcurrentProcessing));
     } catch (error: unknown) {
-      this.inProgress.delete(bookId);
+      // This path never reaches the chain's `.finally()`, so it owns its own cleanup.
+      this.clearBookLifecycle(bookId);
       throw error;
     }
 
@@ -161,8 +175,7 @@ export class MergeService {
           this.log.error({ error: serializeError(error) }, 'Merge failed for book %d', bookId);
         })
         .finally(() => {
-          this.inProgress.delete(bookId);
-          this.origins.delete(bookId);
+          this.clearBookLifecycle(bookId);
           this.mergeState.clearResidue(bookId); // Backstop for exits without a terminal event.
           this.processNext(releaseSlot);
         });
@@ -211,8 +224,7 @@ export class MergeService {
         this.log.error({ error: serializeError(error) }, 'Queued merge failed for book %d', bookId);
       })
       .finally(() => {
-        this.inProgress.delete(bookId);
-        this.origins.delete(bookId);
+        this.clearBookLifecycle(bookId);
         this.mergeState.clearResidue(bookId); // Backstop for exits without a terminal event.
         this.processNext(releaseSlot);
       });
@@ -223,6 +235,9 @@ export class MergeService {
     try {
       await validateDequeueTime(this.bookService, bookId);
     } catch (error: unknown) {
+      // A cancel landing inside revalidation has already emitted this merge's terminal event; the
+      // revalidation failure it raced must not add a second one (#2462).
+      if (this.cancelRequested.has(bookId)) return;
       if (error instanceof MergeError) {
         // Use the promoted snapshot title to keep terminal sequencing await-free.
         const bookTitle = this.mergeState.titleFor(bookId);
@@ -249,8 +264,21 @@ export class MergeService {
    * The lock is held across the ffmpeg run, deliberately. The bound that makes that acceptable is
    * stated on {@link MergeService} and pinned by the reconciler's semaphore ordering (AC17).
    */
-  private async executeMerge(bookId: number): Promise<MergeResult> {
-    return withBookAdmissionLock(bookId, () => this.executeMergeLocked(bookId));
+  private async executeMerge(bookId: number): Promise<MergeResult | null> {
+    return withBookAdmissionLock(bookId, () => this.executeUnlessCancelled(bookId));
+  }
+
+  /**
+   * The first act on waking, and deliberately outside executeMergeLocked's try: `cancelMerge` has
+   * already emitted this merge's one terminal event, so that catch would report a second (#2462).
+   * Nothing awaits between this check and executeMergeLocked's `abortControllers.set` —
+   * `withBookAdmissionLock` invokes `fn()` synchronously in the predecessor's reaction, so the
+   * merge is either refused here or abortable, never neither. `null` means it ran nothing; no
+   * caller reads the result.
+   */
+  private async executeUnlessCancelled(bookId: number): Promise<MergeResult | null> {
+    if (this.cancelRequested.has(bookId)) return null;
+    return this.executeMergeLocked(bookId);
   }
 
   private async executeMergeLocked(bookId: number): Promise<MergeResult> {
@@ -475,6 +503,18 @@ export class MergeService {
     return outputPath;
   }
 
+  /**
+   * Settle now and leave the flag the waking merge consumes: the operator sees cancelled at cancel
+   * time rather than whenever the blocking mutator happens to finish. Ordering mirrors the queued
+   * arm — snapshot title first, then finishTerminal, so origin is still installed for the row.
+   */
+  private cancelDuringAdmissionWait(bookId: number): CancelResult {
+    this.cancelRequested.add(bookId);
+    const bookTitle = this.mergeState.titleFor(bookId);
+    this.mergeState.finishTerminal(bookId, () => this.emitMergeFailed(bookId, bookTitle, 'Cancelled by user', 'cancelled'));
+    return { status: 'cancelled' };
+  }
+
   async cancelMerge(bookId: number): Promise<CancelResult> {
     const queueIdx = this.queue.indexOf(bookId);
     if (queueIdx !== -1) {
@@ -489,12 +529,18 @@ export class MergeService {
 
     const phase = this.currentPhase.get(bookId);
     if (!phase) {
-      // Controller exists before the first phase update, leaving a cancellation race window.
+      // A controller exists from admission acquisition until the merge settles, so it covers the
+      // window before the first phase update. Earlier than that — promoted to active, still waiting
+      // for another mutator to release the book — there is nothing to abort, and that wait is as
+      // long as the holder runs, so it is settled here instead (#2462).
       const controller = this.abortControllers.get(bookId);
       if (controller) {
         controller.abort();
         return { status: 'cancelled' };
       }
+      // Already settled during this same wait; re-answering must not emit a second terminal.
+      if (this.cancelRequested.has(bookId)) return { status: 'cancelled' };
+      if (this.mergeState.isActive(bookId)) return this.cancelDuringAdmissionWait(bookId);
       return { status: 'not-found' };
     }
 
