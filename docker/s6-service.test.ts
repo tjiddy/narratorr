@@ -51,6 +51,118 @@ describe('s6-overlay service definition', () => {
       expect(content).toContain('--report-directory=/config/crash-reports');
     });
 
+    describe('native crash forensics (#2496)', () => {
+      const run = () => fs.readFileSync(path.join(serviceDir, 'run'), 'utf-8');
+
+      /** Runbook prose in the header must not be able to satisfy a command assertion. */
+      const executableLines = () => run()
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line !== '' && !line.startsWith('#'));
+
+      const ulimitLines = () => executableLines().filter((line) => /(^|[^\w-])ulimit\b/.test(line));
+
+      it('arms core dumps by default and actively disarms them on CRASH_CORE_DUMPS=false', () => {
+        // A script that only ever raises the limit would leave an inherited nonzero soft limit
+        // in place, so `false` would not be a real opt-out.
+        expect(run()).toContain('ulimit -S -c unlimited');
+        expect(run()).toContain('ulimit -S -c 0');
+        expect(run()).toContain('CRASH_CORE_DUMPS');
+      });
+
+      it('passes -S on every ulimit invocation', () => {
+        // Bash without -S clamps the HARD limit too, making the opt-out arm irreversible.
+        const lines = ulimitLines();
+        expect(lines.length).toBeGreaterThan(0);
+        for (const line of lines) {
+          expect(line, `bare ulimit without -S: ${line}`).toMatch(/\bulimit\s+-S\b/);
+        }
+      });
+
+      it('sets the limit while still privileged — before exec, outside s6-setuidgid', () => {
+        const lines = executableLines();
+        const execIndex = lines.findIndex((line) => line.startsWith('exec'));
+        expect(execIndex).toBeGreaterThan(-1);
+
+        for (const line of ulimitLines()) {
+          expect(lines.indexOf(line)).toBeLessThan(execIndex);
+          expect(line).not.toContain('s6-setuidgid');
+        }
+      });
+
+      it('treats a failed ulimit as non-fatal — warns and continues', () => {
+        for (const line of ulimitLines()) {
+          expect(line).toContain('||');
+        }
+        expect(run()).not.toMatch(/^\s*exit\s+1\b/m);
+      });
+
+      it('enables the live-snapshot signal and excludes the secret-bearing environment', () => {
+        expect(run()).toContain('--report-on-signal');
+        expect(run()).toContain('--report-signal=SIGUSR2');
+        expect(run()).toContain('--report-exclude-env');
+      });
+
+      it('does not override the report filename, which readiness treats as disarmed', () => {
+        expect(run()).not.toContain('--report-filename');
+      });
+
+      it('writes both the directory and the report flag from the one shared constant', async () => {
+        // Bash owns a second copy of the artifact path; drift silently splits generation from
+        // pruning. Importing the constant is what makes the assertion fail on disagreement.
+        const { CRASH_ARTIFACT_DIR } = await import('../src/server/boot-crash-forensics.js');
+        expect(run()).toContain(`mkdir -p ${CRASH_ARTIFACT_DIR}`);
+        expect(run()).toContain(`--report-directory=${CRASH_ARTIFACT_DIR}`);
+      });
+
+      // Runs each arm in a real Bash and compares the hard limit before and after, so the
+      // assertion holds whatever core limit the host happens to hand the test runner.
+      const hardLimitAround = (command: string) => {
+        const result = spawnSync(
+          'bash',
+          ['-c', `before=$(ulimit -H -c); ${command}; echo "$before|$(ulimit -H -c)|$(ulimit -S -c)"`],
+          { encoding: 'utf-8', timeout: 5000 },
+        );
+        expect(result.status).toBe(0);
+        const [before, after, soft] = result.stdout.trim().split('|');
+        return { before, after, soft };
+      };
+
+      it.skipIf(process.platform === 'win32')(
+        'leaves the hard limit intact on both arms, so the opt-out stays reversible',
+        () => {
+          const arms = ulimitLines()
+            .map((line) => line.split('||')[0]!.trim())
+            .filter((command) => /^ulimit\s/.test(command));
+          expect(arms).toHaveLength(2);
+
+          for (const arm of arms) {
+            const { before, after } = hardLimitAround(arm);
+            expect(after, `${arm} clamped the hard limit`).toBe(before);
+          }
+        },
+      );
+
+      // A host that already hands out a hard core limit of 0 cannot demonstrate the clamp.
+      const ambientHardLimit = process.platform === 'win32'
+        ? '0'
+        : spawnSync('bash', ['-c', 'ulimit -H -c'], { encoding: 'utf-8', timeout: 5000 }).stdout?.trim();
+
+      it.skipIf(ambientHardLimit === '0' || !ambientHardLimit)(
+        'is not a stylistic choice — the same command without -S does clamp the hard limit',
+        () => {
+          const guarded = hardLimitAround('ulimit -S -c 0');
+          const bare = hardLimitAround('ulimit -c 0');
+
+          expect(guarded.soft).toBe('0');
+          expect(bare.soft).toBe('0');
+          expect(bare.after).toBe('0');
+          expect(guarded.after).toBe(guarded.before);
+          expect(guarded.after).not.toBe(bare.after);
+        },
+      );
+    });
+
     it('finish script exists and logs node exit code/signal for sub-JS crash diagnosis', () => {
       const finishPath = path.join(serviceDir, 'finish');
       expect(fs.existsSync(finishPath)).toBe(true);
