@@ -187,3 +187,69 @@ describe('readAbbMetadata', () => {
     expect(readAbbMetadata($, $('#row'))).toEqual({});
   });
 });
+
+describe('readAbbMetadata — plain-text info lines (no microdata)', () => {
+  /**
+   * A real listing row captured live 2026-08-19 (trimmed): old posts carry NO itemprop markup at
+   * all — Language: sits in .postInfo, Format:/File Size: in a styled paragraph whose <br>s
+   * cheerio zero-widths ("2025Format: M4B" in flattened text).
+   */
+  const LIVE_ROW = `
+    <div class="post" id="row">
+      <div class="postTitle"><h2><a href="/abss/x/" rel="bookmark">Parque Jurasico (Jurassic Park) - Michael Crichton</a></h2></div>
+      <div class="postInfo">Category: Adults&nbsp; Adventure&nbsp; <br />Language: Spanish<span style="margin-left:100px;">Keywords: Jurassic Park&nbsp;</span><br /></div>
+      <div class="postContent">
+        <p style='text-align:center;'>Posted: 9 Jun 2025<br />Format: <span style='color:#a00;'>M4B</span> / Bitrate: <span style='color:#a00;'>?</span><br />File Size: <span style='color:#00f;'>901.51</span> MBs</p>
+      </div>
+    </div>`;
+
+  function readRow(html: string) {
+    const $ = cheerio.load(`<html><body>${html}</body></html>`);
+    return readAbbMetadata($, $('#row'));
+  }
+
+  it('reads language, format and size from a real microdata-free listing row', () => {
+    expect(readRow(LIVE_ROW)).toEqual({
+      language: 'spanish',
+      format: 'm4b',
+      size: Math.round(901.51 * 1024 * 1024),
+      rawSize: '901.51 MBs',
+    });
+  });
+
+  it('normalizes an English-grouped size and tolerates the ? bitrate', () => {
+    const row = LIVE_ROW.replace('901.51', '1,001.51');
+    expect(readRow(row)).toMatchObject({ size: Math.round(1001.51 * 1024 * 1024), rawSize: '1,001.51 MBs' });
+  });
+
+  it('yields no size for a malformed grouping instead of a thousandth-scale parse', () => {
+    // The #2316 trap: parseFloat('1,0') would silently read as 1.
+    const row = LIVE_ROW.replace('901.51', '1,0');
+    const fields = readRow(row);
+    expect(fields.size).toBeUndefined();
+    expect(fields.rawSize).toBe('1,0 MBs');
+  });
+
+  it('reads GBs with the 1024 multiplier chain', () => {
+    const row = LIVE_ROW.replace('901.51</span> MBs', '1.20</span> GBs');
+    expect(readRow(row)).toMatchObject({ size: Math.round(1.2 * 1024 * 1024 * 1024) });
+  });
+
+  it('yields nothing extra when the info lines are absent', () => {
+    const bare = '<div class="post" id="row"><div class="postContent"><p>Free prose only.</p></div></div>';
+    expect(readRow(bare)).toEqual({});
+  });
+
+  it('lets microdata win over the text lines where both carry a format', () => {
+    const both = LIVE_ROW.replace(
+      '<p style=\'text-align:center;\'>Posted:',
+      `${metadataBlock({ narrator: 'Frank Muller', format: 'MP3' })}<p style='text-align:center;'>Posted:`,
+    );
+    const fields = readRow(both);
+    expect(fields.format).toBe('mp3');
+    expect(fields.narrator).toBe('Frank Muller');
+    // Text-only fields still fill in beside the microdata.
+    expect(fields.language).toBe('spanish');
+    expect(fields.size).toBe(Math.round(901.51 * 1024 * 1024));
+  });
+});

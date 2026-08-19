@@ -205,9 +205,11 @@ describe('MyAnonamouseIndexer', () => {
       expect(capturedCookie).toBe('mam_id=test-mam-id');
     });
 
-    // #2422 — the apostrophe-bearing channel is ABB's alone. MAM tokenizes, so `riders` matches
-    // there, and reading the option would change a request this issue is not allowed to touch.
-    it('ignores queryWithApostrophes and keeps the stripped positional query in tor[text]', async () => {
+    // #2422's pin assumed "MAM tokenizes, so `riders` matches there" — falsified live 2026-08-19:
+    // MAM stores "Lion's" as `lion`+`s`, so the stripped `lions` matched nothing on any rung and
+    // every apostrophe-titled book was MAM-invisible. MAM needs the apostrophe-bearing twin, the
+    // mirror of ABB's remedy (ABB drops the words; MAM must keep them intact).
+    it('sends the apostrophe-bearing twin in tor[text] when the search carries one', async () => {
       let capturedUrl = '';
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
@@ -219,8 +221,22 @@ describe('MyAnonamouseIndexer', () => {
       await indexer.search('A Dragon Riders Guide', { queryWithApostrophes: "A Dragon Rider's Guide" });
 
       const url = new URL(capturedUrl);
+      expect(url.searchParams.get('tor[text]')).toBe("A Dragon Rider's Guide");
+    });
+
+    it('falls back to the positional query when no apostrophe twin is provided', async () => {
+      let capturedUrl = '';
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({ data: [] });
+        }),
+      );
+
+      await indexer.search('A Dragon Riders Guide');
+
+      const url = new URL(capturedUrl);
       expect(url.searchParams.get('tor[text]')).toBe('A Dragon Riders Guide');
-      expect(capturedUrl).not.toContain('Rider%27s');
     });
   });
 
