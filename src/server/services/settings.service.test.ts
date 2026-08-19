@@ -1840,6 +1840,180 @@ describe('SettingsService — cache (#554)', () => {
       expect(parseWarns()).toHaveLength(1);
     });
   });
+
+  /**
+   * The caller owns what get()/getAll() hand back. Returning the shared DEFAULT_SETTINGS entry let
+   * one caller's mutation corrupt the packaged defaults process-wide, for every later miss in every
+   * service — permanently, unlike the TTL-bounded sharing of a cached value (#2455).
+   */
+  describe('fallback returns are copies, never the packaged defaults (#2455)', () => {
+    // A red run of the mutation cases really does corrupt the module-level defaults, so restore them
+    // between tests: a counterfactual then reds the assertions under test, not every later suite.
+    const PRISTINE = structuredClone(DEFAULT_SETTINGS);
+    afterEach(() => {
+      for (const key of SETTINGS_CATEGORIES) {
+        Object.assign(
+          DEFAULT_SETTINGS[key] as unknown as Record<string, unknown>,
+          structuredClone(PRISTINE[key]) as unknown as Record<string, unknown>,
+        );
+      }
+    });
+
+    it('get() on a missing row returns a copy of the category default', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const result = await service.get('library');
+
+      expect(result).toEqual(DEFAULT_SETTINGS.library);
+      expect(result).not.toBe(DEFAULT_SETTINGS.library);
+    });
+
+    // A present row, so a no-row-only fix stays red here.
+    it('get() on a stored JSON null returns a copy', async () => {
+      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: null }]));
+
+      const result = await service.get('library');
+
+      expect(result).toEqual(DEFAULT_SETTINGS.library);
+      expect(result).not.toBe(DEFAULT_SETTINGS.library);
+    });
+
+    it('get() on a malformed row returns a copy and still warns', async () => {
+      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: 'not-an-object' }]));
+
+      const result = await service.get('library');
+
+      expect(result).toEqual(DEFAULT_SETTINGS.library);
+      expect(result).not.toBe(DEFAULT_SETTINGS.library);
+      expect(parseWarns()).toHaveLength(1);
+    });
+
+    // metadata.languages is the only container-valued default, so it is what a shallow spread misses.
+    it('copies nested containers, not just the category object', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const result = await service.get('metadata');
+
+      expect(result.languages).toEqual(['english']);
+      expect(result.languages).not.toBe(DEFAULT_SETTINGS.metadata.languages);
+    });
+
+    it('assigning to a missed get() result leaves the defaults and the next read pristine', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const held = await service.get('library');
+      held.path = '/hacked';
+
+      expect(DEFAULT_SETTINGS.library.path).toBe('/audiobooks');
+      expect((await service.get('library')).path).toBe('/audiobooks');
+    });
+
+    it('pushing to a missed get() array leaves metadata.languages at its one packaged entry', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const held = await service.get('metadata');
+      held.languages.push('german');
+
+      expect(DEFAULT_SETTINGS.metadata.languages).toEqual(['english']);
+    });
+
+    // Instance caches are per-service; the defaults are a module export, so the guarantee has to hold
+    // across instances or it is only accidentally scoped by the per-test cache.
+    it('a mutation through one service cannot reach a fresh instance over a fresh db', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+      (await service.get('library')).path = '/hacked';
+
+      const otherDb = createMockDb();
+      otherDb.select.mockReturnValue(mockDbChain([]));
+      const other = new SettingsService(inject<Db>(otherDb), inject<FastifyBaseLogger>(createMockLogger()));
+
+      expect((await other.get('library')).path).toBe('/audiobooks');
+    });
+
+    // Catches a module-level `const COPY = structuredClone(DEFAULT_SETTINGS)` half-fix: it stops
+    // aliasing the defaults but still shares one object between every caller on the miss path.
+    it('two successive misses return two distinct objects', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const first = await service.get('library');
+      const second = await service.get('library');
+
+      expect(first).toEqual(second);
+      expect(first).not.toBe(second);
+    });
+
+    it('two concurrent misses resolve to distinct copies', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const [a, b] = await Promise.all([service.get('library'), service.get('library')]);
+
+      expect(a).not.toBe(b);
+      expect(a).not.toBe(DEFAULT_SETTINGS.library);
+      expect(b).not.toBe(DEFAULT_SETTINGS.library);
+    });
+
+    it('getAll() over zero rows returns a copy for every registered category', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const all = await service.getAll();
+
+      for (const key of SETTINGS_CATEGORIES) {
+        expect(all[key], key).toEqual(DEFAULT_SETTINGS[key]);
+        expect(all[key], key).not.toBe(DEFAULT_SETTINGS[key]);
+      }
+    });
+
+    // The one composition getAll() does pin for a full TTL, so a shared reference here would be a
+    // corruption held in the cache rather than one that merely passes through.
+    it('getAll() caches the copy, not the defaults, for an all-present set with one malformed row', async () => {
+      db.select.mockReturnValue(mockDbChain(allCategoryRows({ library: 'not-an-object' })));
+
+      const all = await service.getAll();
+      expect(all.library).not.toBe(DEFAULT_SETTINGS.library);
+
+      all.library.path = '/hacked';
+      expect(DEFAULT_SETTINGS.library.path).toBe('/audiobooks');
+    });
+
+    it('a mutation through getAll() cannot reach a later get() on a fresh instance', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+      (await service.getAll()).metadata.languages.push('german');
+
+      const otherDb = createMockDb();
+      otherDb.select.mockReturnValue(mockDbChain([]));
+      const other = new SettingsService(inject<Db>(otherDb), inject<FastifyBaseLogger>(createMockLogger()));
+
+      expect((await other.get('metadata')).languages).toEqual(['english']);
+    });
+
+    // The secret categories decrypt a spread of the raw row before parsing; the fallback still has to
+    // hand back a copy on both arms it can reach.
+    it('a secret category returns a copy on both the missing-row and the failed-parse arm', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+      expect(await service.get('metadata')).not.toBe(DEFAULT_SETTINGS.metadata);
+
+      db.select.mockReturnValue(mockDbChain([{ key: 'network', value: { proxyUrl: 42 } }]));
+      const network = await service.get('network');
+
+      expect(network).toEqual(DEFAULT_SETTINGS.network);
+      expect(network).not.toBe(DEFAULT_SETTINGS.network);
+    });
+
+    // Scope, stated honestly: within a live TTL a cached category is still one object shared by every
+    // caller. That sharing is deliberate and expires; only the permanent defaults aliasing is the bug.
+    it('still returns one shared object for repeated cache hits on a malformed row', async () => {
+      db.select.mockReturnValue(mockDbChain([{ key: 'library', value: 'not-an-object' }]));
+
+      const first = await service.get('library');
+      const second = await service.get('library');
+
+      expect(second).toBe(first);
+      expect(db.select).toHaveBeenCalledTimes(1);
+
+      first.path = '/hacked';
+      expect(DEFAULT_SETTINGS.library.path).toBe('/audiobooks');
+    });
+  });
 });
 
 // Logger propagation through secret reads surfaces lost or regenerated secret.key failures (#1404).

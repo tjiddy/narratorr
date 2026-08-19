@@ -22,13 +22,22 @@ import { withLibraryRootWrite } from './library-root-gate.js';
 
 export type { AppSettings };
 
+/**
+ * Callers own what get()/getAll() hand back. Returning the shared DEFAULT_SETTINGS entry would let
+ * one caller's mutation corrupt the packaged defaults process-wide, for every later miss in every
+ * service. Deep, not a spread: metadata.languages is an array and a shallow copy still shares it.
+ */
+function defaultsFor<K extends SettingsCategory>(key: K): AppSettings[K] {
+  return structuredClone(DEFAULT_SETTINGS[key]);
+}
+
 function parseCategory<K extends SettingsCategory>(
   key: K,
   raw: unknown,
   log: FastifyBaseLogger,
 ): AppSettings[K] {
   if (raw === undefined || raw === null) {
-    return DEFAULT_SETTINGS[key];
+    return defaultsFor(key);
   }
   const schema = CATEGORY_SCHEMAS[key];
   const result = schema.safeParse(raw);
@@ -36,7 +45,7 @@ function parseCategory<K extends SettingsCategory>(
     return result.data as AppSettings[K];
   }
   log.warn({ category: key, errors: result.error.issues }, 'Settings parse failed, using defaults');
-  return DEFAULT_SETTINGS[key];
+  return defaultsFor(key);
 }
 
 // Covers page-load and navigation jitter without hiding settings flips for long.
@@ -73,7 +82,7 @@ export class SettingsService {
     // hide it for the full TTL. Gate on the DB result, not on whether an entry already exists —
     // an expired entry lingers here (the hit check above compares expiresAt without deleting).
     if (result.length === 0) {
-      return DEFAULT_SETTINGS[key];
+      return defaultsFor(key);
     }
 
     let raw = result[0]!.value;
