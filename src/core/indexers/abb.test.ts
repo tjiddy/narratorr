@@ -15,7 +15,8 @@ vi.mock('../utils/network-service.js', async (importActual) => {
 });
 
 import { AudioBookBayIndexer } from './abb.js';
-import { IndexerError, ProxyError, isProxyRelatedError } from './errors.js';
+import { IndexerError, ProxyError, httpStatusOf, isProxyRelatedError } from './errors.js';
+import { getErrorMessage } from '@shared/error-message.js';
 import { ABB_DETAILS_SENTINEL_PREFIX, abbDetailsSentinel } from './abb-sentinel.js';
 import { abbGuid } from './abb-url.js';
 import { abbThrottle, _resetAbbThrottleForTesting } from './abb-throttle.js';
@@ -1545,6 +1546,171 @@ describe('AudioBookBayIndexer', () => {
         await expect(solverIndexer.search('Brandon Sanderson')).rejects.toThrow('FlareSolverr');
         expect(calls.probes()).toEqual([]);
       });
+    });
+  });
+
+  /**
+   * #2483 — the solver relays the ORIGIN's status inside its own 200 envelope. ABB is the one
+   * indexer that bans, so a challenge page parsing as zero rows was recorded as an answered empty
+   * search, which reset the breaker and kept the ladder pacing requests at a site telling us to
+   * stop. These cases are the adapter half of the gate: which page it kills, and which it spares.
+   */
+  describe('#2483 a solver-delivered non-2xx status', () => {
+    const SOLVER_URL = 'http://flaresolverr.test:8191';
+    const SOLVER_ENDPOINT = `${SOLVER_URL}/v1`;
+    const CHALLENGE = '<html><body>Checking your browser…</body></html>';
+
+    let routed: RoutedFetch | undefined;
+
+    afterEach(() => {
+      routed?.restore();
+      routed = undefined;
+    });
+
+    function solverIndexer(pageLimit = 1): AudioBookBayIndexer {
+      return new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit, flareSolverrUrl: SOLVER_URL });
+    }
+
+    /** An `ok` envelope whose delivered status is `status`, keyed on the target page the solver asked for. */
+    function serveSolver(statusFor: (targetUrl: string) => { body: string; status: number }): { targets: string[] } {
+      const targets: string[] = [];
+      server.use(
+        http.post(SOLVER_ENDPOINT, async ({ request }) => {
+          const { url } = await request.json() as { url: string };
+          targets.push(url);
+          const { body, status } = statusFor(url);
+          return HttpResponse.json({ status: 'ok', solution: { response: body, status } });
+        }),
+      );
+      return { targets };
+    }
+
+    const isPageTwo = (url: string) => url.includes('/page/2/');
+
+    it('rejects rather than reporting an answered zero when page one is answered 503', async () => {
+      serveSolver(() => ({ body: CHALLENGE, status: 503 }));
+
+      const error = await solverIndexer().search('test').catch((e: unknown) => e);
+
+      expect(httpStatusOf(error)).toBe(503);
+      expect(getErrorMessage(error)).toContain('503');
+    });
+
+    /**
+     * The pairing is the point: a delivered status means the origin ANSWERED, so it must classify
+     * as an upstream answer and leave the page-one rows standing — which is exactly what
+     * `mustPropagate`'s `isProxyRelatedError` arm would undo if the message led with `FlareSolverr`.
+     */
+    it('degrades to the page-one rows when a LATER page is answered 503', async () => {
+      serveSolver((url) => (isPageTwo(url)
+        ? { body: CHALLENGE, status: 503 }
+        : { body: searchHtml, status: 200 }));
+
+      const { results } = await solverIndexer(2).search('test');
+
+      expect(results).toHaveLength(2);
+    });
+
+    it('does not classify the delivered status as a proxy-related error', async () => {
+      serveSolver(() => ({ body: CHALLENGE, status: 503 }));
+      const settled = vi.fn();
+
+      const error = await solverIndexer().search('test').then(settled, (e: unknown) => e);
+
+      // Without this the assertion below reads a RESOLVED search response, and passes vacuously
+      // against a build that has no gate at all.
+      expect(settled).not.toHaveBeenCalled();
+      expect(isProxyRelatedError(error)).toBe(false);
+    });
+
+    /** Without this, "page two degrades" reads as a solver quirk rather than transport parity. */
+    describe('direct-path parity control', () => {
+      it('rejects on a direct 503 on page one', async () => {
+        server.use(http.get(`${ABB_BASE}/`, () => new HttpResponse(null, { status: 503 })));
+
+        const error = await indexer.search('test').catch((e: unknown) => e);
+
+        expect(httpStatusOf(error)).toBe(503);
+      });
+
+      it('degrades to the page-one rows on a direct 503 on page two', async () => {
+        server.use(
+          http.get(`${ABB_BASE}/`, () => new HttpResponse(searchHtml, { headers: { 'Content-Type': 'text/html' } })),
+          http.get(`${ABB_BASE}/page/2/`, () => new HttpResponse(null, { status: 503 })),
+        );
+
+        const { results } = await new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 2 }).search('test');
+
+        expect(results).toHaveLength(2);
+      });
+    });
+
+    describe('the connection test (AC11)', () => {
+      it('fails with a message naming the delivered status', async () => {
+        routed = routeFetch((url, method) => (method === 'POST' && url.startsWith(SOLVER_ENDPOINT)
+          ? solverEnvelope({ status: 'ok', solution: { response: CHALLENGE, status: 503 } })
+          : new Response(null, { status: 200 })));
+
+        const result = await solverIndexer().test();
+
+        expect(result.success).toBe(false);
+        expect(result.message).toContain('503');
+      });
+
+      /**
+       * The branch the finding exists for. With the target's own probe refused, the old path
+       * rendered `Target unreachable: … (ECONNREFUSED)` — no status, and a flat misdescription of
+       * an origin that demonstrably answered. Asserting no HEAD was issued is what makes the probe
+       * outcome irrelevant rather than merely lucky.
+       */
+      it('names the status even when a direct probe of the target would be refused', async () => {
+        const calls = routeFetch((url, method) => {
+          if (method === 'POST' && url.startsWith(SOLVER_ENDPOINT)) {
+            return solverEnvelope({ status: 'ok', solution: { response: CHALLENGE, status: 503 } });
+          }
+          return codedRejection('ECONNREFUSED');
+        });
+        routed = calls;
+
+        const result = await solverIndexer().test();
+
+        expect(result.message).toContain('503');
+        expect(result.message).not.toContain('ECONNREFUSED');
+        expect(calls.probes()).toEqual([]);
+      });
+    });
+
+    /** AC8 — the detail wrapper has no degrade arm, so the status travels through the retained cause. */
+    it('surfaces the delivered status through resolveDownloadUrl\'s IndexerError wrapper', async () => {
+      serveSolver(() => ({ body: CHALLENGE, status: 503 }));
+
+      const error = await solverIndexer()
+        .resolveDownloadUrl({ downloadUrl: abbDetailsSentinel(MURDER_URL), protocol: 'torrent', isFreeleech: false })
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(IndexerError);
+      expect(getErrorMessage(error)).toContain('503');
+      expect(getErrorMessage(error)).not.toContain('carried no info hash');
+      expect(isProxyRelatedError((error as IndexerError).cause)).toBe(false);
+      expect(httpStatusOf(error)).toBe(503);
+    });
+
+    /**
+     * AC16 — the delivered non-2xx is a new exit path through `fetchViaSolver`'s `finally`. A leaked
+     * mutex would hang the second search rather than fail it, which is why the assertion is that the
+     * second request reaches the solver at all.
+     */
+    it('releases the ABB solver mutex, so the next search still reaches the solver', async () => {
+      const { targets } = serveSolver((url) => (url.includes('s=second')
+        ? { body: searchHtml, status: 200 }
+        : { body: CHALLENGE, status: 503 }));
+      const abb = solverIndexer();
+
+      await expect(abb.search('first')).rejects.toThrow('503');
+      const { results } = await abb.search('second');
+
+      expect(results).toHaveLength(2);
+      expect(targets).toHaveLength(2);
     });
   });
 

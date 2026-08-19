@@ -25,10 +25,18 @@ export interface SolverFailure {
    * resolver is down", and the code is the only thing that can.
    */
   transportCode?: string;
+  /**
+   * The upstream status the solver DELIVERED, on `solver-answered` only (#2483). It is the origin's
+   * own answer relayed through the solver, so it is conclusive evidence the target responded — the
+   * one thing a reachability probe could otherwise have established, already established.
+   */
+  httpStatus?: number;
 }
 
 const ORIGIN_KEY = 'solverFailureOrigin';
 const CODE_KEY = 'solverTransportCode';
+/** `httpStatusError`'s own property, read here rather than re-attached under a solver-specific key. */
+const STATUS_KEY = 'httpStatus';
 
 /**
  * Every arm the round-trip can throw from. Exported so the classifier's table test enumerates the
@@ -57,13 +65,15 @@ export function markSolverFailure<E extends Error>(
 /** The discriminant an error carries, or `undefined` when it never came from a solver round-trip. */
 export function solverFailureOf(error: unknown): SolverFailure | undefined {
   if (!(error instanceof Error)) return undefined;
-  const marked = error as Error & { [ORIGIN_KEY]?: unknown; [CODE_KEY]?: unknown };
+  const marked = error as Error & { [ORIGIN_KEY]?: unknown; [CODE_KEY]?: unknown; [STATUS_KEY]?: unknown };
   const origin = marked[ORIGIN_KEY];
   if (typeof origin !== 'string' || !SOLVER_FAILURE_ORIGINS.includes(origin as SolverFailureOrigin)) return undefined;
   const transportCode = marked[CODE_KEY];
+  const httpStatus = marked[STATUS_KEY];
   return {
     origin: origin as SolverFailureOrigin,
     ...(typeof transportCode === 'string' && { transportCode }),
+    ...(typeof httpStatus === 'number' && { httpStatus }),
   };
 }
 

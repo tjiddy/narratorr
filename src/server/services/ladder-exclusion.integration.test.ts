@@ -384,6 +384,8 @@ describe.each(SURFACES)('#2375 AC1/AC9 — the real AudioBookBay adapter, on the
     _resetAbbThrottleForTesting();
   });
 
+  const SOLVER_URL = 'http://flaresolverr.test:8191';
+
   /** Indexer 1 is the real ABB over MSW; indexer 2 is a healthy companion so the ladder advances. */
   function buildWithRealAbb(respond: () => Response) {
     let abbRequests = 0;
@@ -401,6 +403,29 @@ describe.each(SURFACES)('#2375 AC1/AC9 — the real AudioBookBay adapter, on the
     ) as never);
 
     return { harness, alive, abbRequests: () => abbRequests };
+  }
+
+  /** The same pair, but ABB reaches the target only through a solver that answers `deliver`. */
+  function buildWithSolverAbb(deliver: () => { body: string; status: number }) {
+    let solverRequests = 0;
+    server.use(http.post(`${SOLVER_URL}/v1`, () => {
+      solverRequests++;
+      const { body, status } = deliver();
+      return HttpResponse.json({ status: 'ok', solution: { response: body, status } });
+    }));
+
+    const alive = healthy();
+    const harness = build([
+      { id: 1, name: 'AudioBookBay', search: vi.fn() },
+      { id: 2, name: 'Torznab', search: alive },
+    ]);
+    harness.getAdapter.mockImplementation(async (indexer) => (
+      indexer.id === 1
+        ? new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 1, flareSolverrUrl: SOLVER_URL })
+        : { type: 'torznab', name: indexer.name, search: alive, test: vi.fn() }
+    ) as never);
+
+    return { harness, alive, solverRequests: () => solverRequests };
   }
 
   it('asks a direct HTTP 503 exactly once across an eight-rung run', async () => {
@@ -431,6 +456,51 @@ describe.each(SURFACES)('#2375 AC1/AC9 — the real AudioBookBay adapter, on the
     await runQueryLadder(LADDER, await executorFor(surface, harness));
 
     expect(abbRequests()).toBe(8);
+    expect(alive).toHaveBeenCalledTimes(8);
+  });
+
+  /**
+   * #2483 — the same amplification, arriving on the solver transport instead. A delivered 503 used
+   * to parse as an answered zero, so ABB stayed eligible and absorbed one paced request per rung at
+   * a site that had already said 503.
+   */
+  it('asks a solver-delivered 503 exactly once across an eight-rung run', async () => {
+    const { harness, alive, solverRequests } = buildWithSolverAbb(
+      () => ({ body: '<html><body>Checking your browser…</body></html>', status: 503 }),
+    );
+
+    const ran = await runQueryLadder(LADDER, await executorFor(surface, harness));
+
+    expect(solverRequests()).toBe(1);
+    expect(alive).toHaveBeenCalledTimes(8);
+    expect(ran.exhausted).toBe(true);
+  });
+
+  /**
+   * The negative half of the same rule: 400 is one of the four statuses a different query can
+   * clear, so the indexer stays eligible and is re-asked on every rung. Without this the exclusion
+   * case above passes equally against "exclude on any solver failure".
+   */
+  it('keeps a solver-delivered 400 eligible for every later rung', async () => {
+    const { harness, alive, solverRequests } = buildWithSolverAbb(
+      () => ({ body: '<html><body>Bad request</body></html>', status: 400 }),
+    );
+
+    await runQueryLadder(LADDER, await executorFor(surface, harness));
+
+    expect(solverRequests()).toBe(8);
+    expect(alive).toHaveBeenCalledTimes(8);
+  });
+
+  /** Control: a delivered 2xx is a genuine answered zero and keeps ABB eligible throughout. */
+  it('control: a solver-delivered 200 empty page stays eligible for every rung', async () => {
+    const { harness, alive, solverRequests } = buildWithSolverAbb(
+      () => ({ body: '<html><body></body></html>', status: 200 }),
+    );
+
+    await runQueryLadder(LADDER, await executorFor(surface, harness));
+
+    expect(solverRequests()).toBe(8);
     expect(alive).toHaveBeenCalledTimes(8);
   });
 
