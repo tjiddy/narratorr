@@ -32,12 +32,18 @@ import { withBookAdmissionLocks } from './book-admission.js';
 /** Mirrors `MAX_CLAIM_KEY_REACQUIRES`: the same bound on the same read/lock/re-read loop. */
 export const MAX_BIND_SET_REACQUIRES = 3;
 
-/** Sustained churn: the in-lock snapshot outgrew the held set on every attempt. */
+/**
+ * Sustained churn: the in-lock snapshot outgrew the held set on every attempt.
+ *
+ * `lastSetSize` is the size of the last set actually ACQUIRED, never the widened set the final
+ * failed attempt computed — that one was never locked and naming it would send an operator hunting
+ * contention on books nothing held.
+ */
 export class SeriesBindChurnError extends Error {
   constructor(public readonly lastSetSize: number) {
     super(
       `Series bind candidates grew on every attempt after ${MAX_BIND_SET_REACQUIRES} re-acquisitions ` +
-        `(last held set size ${lastSetSize})`,
+        `(last attempted set size ${lastSetSize})`,
     );
     this.name = 'SeriesBindChurnError';
   }
@@ -64,10 +70,16 @@ export interface BindSetProtocol<S, T> {
  */
 export async function withValidatedBindSet<S, T>(protocol: BindSetProtocol<S, T>): Promise<T> {
   const held = new Set(await protocol.enumerate());
+  // The size ACQUIRED on the final attempt, not `held.size` at the throw: the last iteration widens
+  // `held` and then exhausts the bound, so `held` ends up describing a set no acquisition ever took.
+  // An operator reading the 409 is diagnosing contention over books that were actually locked.
+  let lastAttemptedSize = held.size;
 
   for (let attempt = 0; attempt <= MAX_BIND_SET_REACQUIRES; attempt++) {
+    const attempted = [...held];
+    lastAttemptedSize = attempted.length;
     const outcome = await withBookAdmissionLocks(
-      [...held],
+      attempted,
       async (): Promise<{ widened: number[] } | { value: T }> => {
         const snapshot = await protocol.snapshot();
         const widened = protocol.idsOf(snapshot).filter((id) => !held.has(id));
@@ -81,5 +93,5 @@ export async function withValidatedBindSet<S, T>(protocol: BindSetProtocol<S, T>
     for (const id of outcome.widened) held.add(id);
   }
 
-  throw new SeriesBindChurnError(held.size);
+  throw new SeriesBindChurnError(lastAttemptedSize);
 }

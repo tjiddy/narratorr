@@ -192,26 +192,38 @@ describe('series bind admission protocol (#2447)', () => {
   }
 
   /**
-   * Park AFTER acquisition and the in-lock snapshot, BEFORE `db.transaction` opens — the only moment
-   * at which the admission locks alone are held. Parking inside the transaction instead would let
-   * the serialized-transaction lane produce the asserted ordering on its own, leaving the
-   * acquisition-deletion counterfactual green (layered-lock-boundary-park-point).
+   * Run `onOpen` when the case's FIRST `db.transaction` opens — after acquisition and the in-lock
+   * snapshot, but before the serialized-transaction lane is entered. That is the only moment at
+   * which the admission locks alone are held, so it is both the correct park point and the correct
+   * point to observe which keys the batch holds when it commits.
    */
-  function parkBeforeBindTransaction(): { gate: { resolve: () => void }; entered: Promise<void>; restore: () => void } {
-    const gate = deferred();
-    const entered = deferred();
+  function interceptFirstTransaction(onOpen: () => void | Promise<void>): { restore: () => void } {
     type TxFn = Db['transaction'];
     const original = db.transaction.bind(db) as TxFn;
     let armed = true;
     (db as { transaction: TxFn }).transaction = (async (cb: never) => {
       if (armed) {
         armed = false;
-        entered.resolve();
-        await gate.promise;
+        await onOpen();
       }
       return original(cb);
     }) as TxFn;
-    return { gate, entered: entered.promise, restore: () => { (db as { transaction: TxFn }).transaction = original; } };
+    return { restore: () => { (db as { transaction: TxFn }).transaction = original; } };
+  }
+
+  /**
+   * Park at that same point. Parking INSIDE the transaction instead would let the serialized
+   * transaction lane produce the asserted ordering on its own, leaving the acquisition-deletion
+   * counterfactual green (layered-lock-boundary-park-point).
+   */
+  function parkBeforeBindTransaction(): { gate: { resolve: () => void }; entered: Promise<void>; restore: () => void } {
+    const gate = deferred();
+    const entered = deferred();
+    const { restore } = interceptFirstTransaction(async () => {
+      entered.resolve();
+      await gate.promise;
+    });
+    return { gate, entered: entered.promise, restore };
   }
 
   // ── AC4: the initiator's controlling snapshot is the in-lock read ────────────────────────────
@@ -585,6 +597,51 @@ describe('series bind admission protocol (#2447)', () => {
       expect((await rowFor(newcomer))!.seriesPosition).toBe(4);
     });
 
+    /**
+     * AC3's SECOND, independently breakable widening cause. The newcomer case above widens because a
+     * book joins the CANONICAL name; here nothing joins any name — the initiator's own prior name
+     * changes under the fetch, so `extraSeriesNames` newly matches a sibling that was outside the
+     * enumerated pool. Dropping `extraSeriesNames` from the in-lock snapshot leaves the negative
+     * old-name-exclusion case green and reds only this one.
+     */
+    it('re-acquires when a changed prior name widens the pool onto a sibling the enumeration missed', async () => {
+      const initiator = await seedBook({ title: 'A Wizard of Earthsea', seriesName: 'Old Name', seriesPosition: 1 });
+      const sibling = await seedBook({ title: 'The Tombs of Atuan', seriesName: 'Other Name', seriesPosition: 2 });
+      mockHardcover(seriesPayload(4273, 'Earthsea Quartet', 'Ursula K. Le Guin', [
+        [1, 5001, 'A Wizard of Earthsea'], [2, 5002, 'The Tombs of Atuan'],
+      ]));
+
+      const before = vi.mocked(withBookAdmissionLocks).mock.calls.length;
+      const park = parkBeforeAcquisition();
+      const bind = cardService().bindHardcoverSeries(initiator, 4273);
+      await park.entered;
+
+      // Neither 'Earthsea Quartet' nor 'Old Name' reaches the sibling, so the enumeration cannot
+      // have locked it. Repointing the initiator onto the sibling's name is what widens the targets.
+      await withBookAdmissionLock(initiator, () =>
+        bookService.update(initiator, { seriesName: 'Other Name' }, { userAsserted: true }));
+
+      // Arm only now: the contender above opens a transaction of its own, and the bind's is the
+      // next one — the point at which the batch must already hold every id it is about to write.
+      let heldAtCommit: boolean | null = null;
+      const observer = interceptFirstTransaction(() => { heldAtCommit = hasPendingBookAdmission(sibling); });
+
+      park.gate.resolve();
+      const bound = await bind;
+      observer.restore();
+
+      const calls = vi.mocked(withBookAdmissionLocks).mock.calls.slice(before);
+      expect(calls).toHaveLength(2);
+      expect(calls[0]![0]).not.toContain(sibling);
+      expect(calls[1]![0]).toContain(sibling);
+      // Written, and written only under its own lock.
+      expect(heldAtCommit).toBe(true);
+      expect([...bound!.syncedIds].sort((a, b) => a - b)).toEqual([initiator, sibling]);
+      const row = await rowFor(sibling);
+      expect(row!.seriesName).toBe('Earthsea Quartet');
+      expect(row!.seriesPosition).toBe(2);
+    });
+
     it('acquires exactly once when nothing changes under the enumeration', async () => {
       const initiator = await seedBook({ title: 'A Wizard of Earthsea', seriesName: 'Earthsea Quartet', seriesPosition: 1 });
       mockHardcover(seriesPayload(4263, 'Earthsea Quartet', 'Ursula K. Le Guin', [[1, 5001, 'A Wizard of Earthsea']]));
@@ -680,11 +737,11 @@ describe('series bind admission protocol (#2447)', () => {
       const initiator = await seedBook({ title: 'A Wizard of Earthsea', seriesName: 'Earthsea Quartet', seriesPosition: 1 });
       mockHardcover(seriesPayload(4267, 'Earthsea Quartet', 'Ursula K. Le Guin', [[1, 5001, 'A Wizard of Earthsea']]));
 
-      const acquired: number[] = [];
+      const attemptedSets: number[][] = [];
       // A fresh matching book lands before EVERY acquisition, so S outgrows the held set each time.
       vi.mocked(withBookAdmissionLocks).mockImplementation(async (ids, fn) => {
-        acquired.push(...ids);
-        await seedBook({ title: `Churn ${acquired.length}`, seriesName: 'Earthsea Quartet', seriesPosition: null });
+        attemptedSets.push([...ids]);
+        await seedBook({ title: `Churn ${attemptedSets.length}`, seriesName: 'Earthsea Quartet', seriesPosition: null });
         return actualLocks.withBookAdmissionLocks(ids, fn);
       });
 
@@ -695,11 +752,20 @@ describe('series bind admission protocol (#2447)', () => {
 
       expect(error).toBeInstanceOf(SeriesBindChurnError);
       expect(vi.mocked(withBookAdmissionLocks)).toHaveBeenCalledTimes(MAX_BIND_SET_REACQUIRES + 1);
+      // The diagnostic names the set that was ACTUALLY acquired last. The final attempt still
+      // computes a widening it never locks, so reporting the post-widening size would send an
+      // operator hunting contention on a set no acquisition ever held.
+      const lastAttempted = attemptedSets[attemptedSets.length - 1]!;
+      expect(lastAttempted).toHaveLength(MAX_BIND_SET_REACQUIRES + 1);
+      expect((error as SeriesBindChurnError).lastSetSize).toBe(lastAttempted.length);
+      expect((error as SeriesBindChurnError).message)
+        .toContain(`last attempted set size ${lastAttempted.length}`);
+
       expect(spy.transactions).toHaveLength(0);
       // Every pre-existing row is byte-unchanged; only the churn fixture's own inserts are new.
       for (const row of before) expect(await rowFor(row.id)).toEqual(row);
       await settle();
-      expect([...new Set(acquired)].map((id) => hasPendingBookAdmission(id))).not.toContain(true);
+      expect(attemptedSets.flat().map((id) => hasPendingBookAdmission(id))).not.toContain(true);
     });
 
     it('drops a book that left the pool before the snapshot rather than writing it', async () => {
