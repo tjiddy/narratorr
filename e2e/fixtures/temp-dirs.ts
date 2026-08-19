@@ -52,7 +52,11 @@ export function isHarnessTempRoot(p: string): boolean {
   return dirname(canonical) === canonicalPath(tmpdir()) && basename(canonical).startsWith(HARNESS_TEMP_PREFIX);
 }
 
-/** Allocates five isolated temp roots and records them for teardown. */
+/**
+ * Allocates one run's five temp roots unconditionally and records it for teardown. The Playwright
+ * config deliberately does NOT use this — it goes through `resolveRunTempDirs`, which allocates at
+ * most once per invocation. This is the primitive for suites that want a throwaway run.
+ */
 export function createRunTempDirs(name: string = ROOT_RUN): RunTempDirs {
   const run = claimRun([]);
   runs.set(name, run);
