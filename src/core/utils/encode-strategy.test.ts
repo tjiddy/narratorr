@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { AUDIO_EXTENSIONS } from './audio-constants.js';
 import {
   resolveEncodeStrategy,
   resolveTargetBitrate,
@@ -80,6 +81,45 @@ describe('resolveEncodeStrategy — stream-copy selection (AC1, AC2)', () => {
   ])('rejects the copy path: %s', (_label, input) => {
     const strategy = resolveEncodeStrategy({ outputFormat: 'm4b', sources: [], ...input });
     expect(strategy.mode).toBe('encode');
+  });
+
+  // #2495: ABB serves AAC-in-MP4 as bare .mp4. Remuxing it to m4b is a container change only, so it
+  // must take the copy arm — otherwise a lossless remux becomes a needless re-encode.
+  it('copies a .mp4 / aac source into m4b (#2495)', () => {
+    const strategy = resolve({ sources: [aacSource({ extension: '.mp4' })] });
+    expect(strategy.mode).toBe('copy');
+    expect(buildCodecArgs(strategy)).toEqual(['-c:a', 'copy']);
+    expect(buildCodecArgs(strategy)).not.toContain('aac');
+  });
+
+  it('copies a mixed .mp4 + .m4b AAC set at equal rate/channels (#2495)', () => {
+    const sources = [aacSource({ extension: '.mp4' }), aacSource({ extension: '.m4b' })];
+    expect(resolve({ sources }).mode).toBe('copy');
+  });
+
+  it.each<[string, Partial<EncodeStrategyInput>]>([
+    ['non-AAC .mp4 into m4b', { sources: [aacSource({ extension: '.mp4', codec: 'mp3' })] }],
+    ['.mp4 into mp3 output', { outputFormat: 'mp3', sources: [aacSource({ extension: '.mp4' })] }],
+    ['.mp4 with an absent sample rate', { sources: [aacSource({ extension: '.mp4', sampleRate: undefined })] }],
+  ])('#2495 keeps %s on the encode path', (_label, input) => {
+    const strategy = resolveEncodeStrategy({ outputFormat: 'm4b', sources: [], ...input });
+    expect(strategy.mode).toBe('encode');
+  });
+
+  it('#2495: a .mp4 targeting mp3 output encodes with libmp3lame, not copy', () => {
+    const strategy = resolve({ outputFormat: 'mp3', sources: [aacSource({ extension: '.mp4' })] });
+    expect(buildCodecArgs(strategy)).toContain('libmp3lame');
+    expect(buildCodecArgs(strategy)).not.toContain('copy');
+  });
+
+  // MP4_FAMILY_EXTENSIONS is deliberately a codec-family SUBSET of AUDIO_EXTENSIONS, not a mirror of
+  // it, so it gets pinned rather than guarded as exhaustive (#2495). Raw ADTS `.aac` stays out: m4b
+  // needs `aac_adtstoasc`.
+  it('pins the m4b copy-eligible container set to exactly .m4b/.m4a/.mp4', () => {
+    const eligible = [...AUDIO_EXTENSIONS].filter(
+      (extension) => resolve({ sources: [aacSource({ extension })] }).mode === 'copy',
+    );
+    expect(eligible.sort()).toEqual(['.m4a', '.m4b', '.mp4']);
   });
 
   it('never copies when a usable explicit target is configured, even for a homogeneous AAC set', () => {
