@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { serverEnv, SEED_LIBRARY_DIR_ENV } from './server-env.js';
 import type { RunTempDirs } from './temp-dirs.js';
 
@@ -41,5 +41,25 @@ describe('serverEnv', () => {
     expect(env[SEED_LIBRARY_DIR_ENV]).toBe(run.libraryPath);
     expect(SEED_LIBRARY_DIR_ENV).not.toContain('LIBRARY_PATH');
     expect(env.LIBRARY_PATH).toBeUndefined();
+  });
+
+  // #2458: globalSetup binds the fake on resolvePort('E2E_AUDIBLE_PORT'), so the URL the servers
+  // dial must derive from the same contract or an override moves the fake while servers dial 4300.
+  describe('AUDIBLE_BASE_URL follows the E2E_AUDIBLE_PORT contract', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('defaults to the shared audible port when E2E_AUDIBLE_PORT is unset', () => {
+      vi.stubEnv('E2E_AUDIBLE_PORT', '');
+      const env = serverEnv(run, '/', 3100);
+      expect(env.AUDIBLE_BASE_URL).toBe('http://localhost:4300');
+    });
+
+    it('honors an E2E_AUDIBLE_PORT override', () => {
+      vi.stubEnv('E2E_AUDIBLE_PORT', '4999');
+      const env = serverEnv(run, '/', 3100);
+      expect(env.AUDIBLE_BASE_URL).toBe('http://localhost:4999');
+    });
   });
 });
