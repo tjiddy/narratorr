@@ -106,6 +106,24 @@ describe('folder-parsing (extracted from library-scan.service)', () => {
         expect(result.title).not.toBe('Book');
       });
 
+      it('#2495: strips .mp4 — a bare ABB download parses the same as a folder', () => {
+        expect(parseFolderStructure(['Fortune Funhouse Book 19.mp4']))
+          .toEqual(parseFolderStructure(['Fortune Funhouse Book 19']));
+      });
+
+      it('#2495: does not strip the near-miss .mp4v', () => {
+        expect(parseFolderStructure(['Book.mp4v']).title).not.toBe('Book');
+      });
+
+      it('#2495: a .mp4 3-part path yields the same fields as the extensionless path', () => {
+        expect(parseFolderStructure(['Brandon Sanderson', 'Stormlight Archive', 'The Way of Kings.mp4']))
+          .toMatchObject({
+            title: 'The Way of Kings',
+            author: 'Brandon Sanderson',
+            series: 'Stormlight Archive',
+          });
+      });
+
       it('extension match is case-insensitive', () => {
         const result = parseFolderStructure(['Doctor Sleep.M4B']);
         expect(result).toEqual({ title: 'Doctor Sleep', author: null, series: null });

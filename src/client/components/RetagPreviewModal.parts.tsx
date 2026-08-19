@@ -101,7 +101,7 @@ export function EmptyState({ plan, excludeSet }: { plan: RetagPlan; excludeSet: 
   if (allUnsupported) {
     return (
       <div className="text-sm text-muted-foreground py-4 space-y-2 text-center">
-        <p>None of the audio files in this folder are in a taggable format. Re-tagging supports <code className="font-mono">.mp3</code>, <code className="font-mono">.m4a</code>, and <code className="font-mono">.m4b</code>.</p>
+        <p>None of the audio files in this folder are in a taggable format. Re-tagging supports <code className="font-mono">.mp3</code>, <code className="font-mono">.m4a</code>, <code className="font-mono">.m4b</code>, and <code className="font-mono">.mp4</code>.</p>
         <ul className="font-mono text-xs space-y-0.5">
           {unsupportedFiles.map(f => <li key={f.file}>{f.file}</li>)}
         </ul>

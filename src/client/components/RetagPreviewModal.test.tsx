@@ -392,6 +392,46 @@ describe('RetagPreviewModal', () => {
     expect(screen.getByRole('button', { name: /Re-tag 0 files/ })).toBeDisabled();
   });
 
+  it('#2495: the unsupported-format copy lists .mp4 among the taggable formats', async () => {
+    vi.mocked(api.getBookRetagPreview).mockResolvedValue({
+      mode: 'overwrite',
+      embedCover: false,
+      hasCoverFile: false,
+      isSingleFile: false,
+      canonical: { artist: 'A', album: 'B', title: 'B' },
+      files: [{ file: 'book.flac', outcome: 'skip-unsupported' }],
+      warnings: ['No taggable audio files found'],
+    } satisfies RetagPlan);
+    renderModal();
+
+    // The formats sit in <code> children, which the default text matcher does not traverse.
+    const copy = await screen.findByText(/Re-tagging supports/);
+    expect(copy.textContent).toContain('.mp4');
+    expect(copy.textContent).toContain('.m4b');
+  });
+
+  it('#2495: a .mp4-only will-tag plan renders the diff table, not the unsupported empty state', async () => {
+    vi.mocked(api.getBookRetagPreview).mockResolvedValue({
+      mode: 'overwrite',
+      embedCover: false,
+      hasCoverFile: false,
+      isSingleFile: true,
+      canonical: { artist: 'A', album: 'B', title: 'B' },
+      files: [{
+        file: 'FortuneFunhouseMissFortuneMysteriesBook19.mp4',
+        outcome: 'will-tag',
+        diff: [{ field: 'artist', current: null, next: 'A' }],
+        coverPending: false,
+      }],
+      warnings: [],
+    } satisfies RetagPlan);
+    renderModal();
+
+    await screen.findByRole('heading', { name: /These values will be written/ });
+    expect(screen.queryByText(/None of the audio files in this folder are in a taggable format/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Re-tag 1 file/ })).toBeEnabled();
+  });
+
   it('dependency-not-configured renders inline error naming mutagen and hides apply button', async () => {
     vi.mocked(api.getBookRetagPreview).mockRejectedValue(
       new RetagDependencyNotConfiguredError('mutagen is not configured'),

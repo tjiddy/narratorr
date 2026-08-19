@@ -30,7 +30,8 @@ export const MP3_BITRATES_RATE_AGNOSTIC: readonly number[] =
 
 const MPEG1_SAMPLE_RATES = new Set([32_000, 44_100, 48_000]);
 const MPEG2_SAMPLE_RATES = new Set([8000, 11_025, 12_000, 16_000, 22_050, 24_000]);
-const MP4_FAMILY_EXTENSIONS = new Set(['.m4b', '.m4a']);
+/** Codec-family subset of AUDIO_EXTENSIONS: containers an AAC stream remuxes into m4b without re-encoding. */
+const MP4_FAMILY_EXTENSIONS = new Set(['.m4b', '.m4a', '.mp4']);
 
 /**
  * FFmpeg AAC accepts arbitrary requests and normalizes internally; libmp3lame may reject or rerate

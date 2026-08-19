@@ -439,6 +439,29 @@ describe('ImportOrchestrator', () => {
       expect(mergeService.enqueueMerge).not.toHaveBeenCalled();
     });
 
+    it('#2495: two top-level .mp4 files count as 2 and enqueue an auto merge', async () => {
+      vi.mocked(readdir).mockResolvedValue(['Part 1.mp4', 'Part 2.mp4', 'cover.jpg'] as never);
+      const orch = withToggle(true);
+
+      await orch.importDownload(1);
+
+      expect(mergeService.enqueueMerge).toHaveBeenCalledTimes(1);
+      expect(mergeService.enqueueMerge).toHaveBeenCalledWith(1, 'auto');
+    });
+
+    it('#2495: a lone .mp4 is a single-file download and enqueues nothing', async () => {
+      vi.mocked(readdir).mockResolvedValue(['FortuneFunhouseMissFortuneMysteriesBook19.mp4'] as never);
+      const orch = withToggle(true);
+
+      await orch.importDownload(1);
+
+      expect(mergeService.enqueueMerge).not.toHaveBeenCalled();
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1, topLevelAudioCount: 1 }),
+        'Auto-merge skipped — fewer than 2 top-level audio files',
+      );
+    });
+
     // Hidden staging files must not inflate the live admission count.
     it('#1852 F4: toggle ON + one visible + one hidden top-level file → does not enqueue', async () => {
       vi.mocked(readdir).mockResolvedValue(['01.mp3', '.02.tmp.mp3'] as never);
