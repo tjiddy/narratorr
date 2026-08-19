@@ -171,7 +171,7 @@ export function explainTitlePairing(aTitle: string, bTitle: string): TitlePairVe
  */
 export function findInLibraryMatch(
   member: HardcoverMemberSummary,
-  candidates: LibraryBookSummary[],
+  candidates: readonly LibraryBookSummary[],
   alreadyMatched?: ReadonlySet<number>,
 ): LibraryBookSummary | null {
   for (const candidate of candidates) {

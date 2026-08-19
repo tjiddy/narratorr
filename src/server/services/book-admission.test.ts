@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   withBookAdmissionLock,
+  withBookAdmissionLocks,
   hasPendingBookAdmission,
   singleFlightReplace,
   hasInFlightReplace,
@@ -118,6 +119,111 @@ describe('withBookAdmissionLock (#1857 AC5/AC17)', () => {
     it('reports no pending key for a book that was never acquired', () => {
       expect(hasPendingBookAdmission(34)).toBe(false);
     });
+  });
+});
+
+describe('withBookAdmissionLocks (#2447 AC1/AC1a)', () => {
+  function deferred() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => { resolve = r; });
+    return { promise, resolve };
+  }
+  const settle = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0)); };
+
+  it('serializes mirrored sets instead of deadlocking', async () => {
+    const order: string[] = [];
+    const gate = deferred();
+    const first = withBookAdmissionLocks([3, 7], async () => {
+      order.push('first:start');
+      await gate.promise;
+      order.push('first:end');
+    });
+    const second = withBookAdmissionLocks([7, 3], async () => { order.push('second'); });
+
+    await settle();
+    expect(order).toEqual(['first:start']);
+
+    gate.resolve();
+    await Promise.all([first, second]);
+    expect(order).toEqual(['first:start', 'first:end', 'second']);
+  });
+
+  /**
+   * The observable difference between numeric and lexicographic order, not a hang: `[2, 10].sort()`
+   * and `[10, 2].sort()` both yield `[10, 2]`, so a bare sort is deterministic and therefore still
+   * deadlock-free — just not id order. Under it the batch would already hold 10 while blocked on 2.
+   */
+  it('acquires in numeric ascending order, so a batch blocked on its low key never touched its high one', async () => {
+    const holder = deferred();
+    const held = withBookAdmissionLock(2, () => holder.promise);
+    const batch = withBookAdmissionLocks([2, 10], async () => 'done');
+
+    await settle();
+    expect(hasPendingBookAdmission(2)).toBe(true);
+    expect(hasPendingBookAdmission(10)).toBe(false);
+
+    holder.resolve();
+    expect(await batch).toBe('done');
+    await held;
+  });
+
+  it('holds its acquired prefix while blocked: a disjoint batch proceeds, an overlapping one waits', async () => {
+    const holder = deferred();
+    const held = withBookAdmissionLock(5, () => holder.promise);
+    const order: string[] = [];
+    const blocked = withBookAdmissionLocks([1, 5, 9], async () => { order.push('blocked'); });
+    await settle();
+
+    const disjoint = withBookAdmissionLocks([2, 8], async () => { order.push('disjoint'); });
+    // Shares key 1, which the blocked batch already holds — head-of-line blocking (AC1a).
+    const overlapping = withBookAdmissionLocks([1, 9], async () => { order.push('overlapping'); });
+
+    await disjoint;
+    expect(order).toEqual(['disjoint']);
+
+    holder.resolve();
+    await Promise.all([held, blocked, overlapping]);
+    expect(order).toEqual(['disjoint', 'blocked', 'overlapping']);
+  });
+
+  it('collapses duplicate ids rather than self-deadlocking on the non-reentrant lock', async () => {
+    await expect(withBookAdmissionLocks([4, 4, 4], async () => 'ok')).resolves.toBe('ok');
+  });
+
+  it('runs fn exactly once and acquires nothing for an empty set', async () => {
+    const fn = vi.fn().mockResolvedValue('empty');
+    expect(await withBookAdmissionLocks([], fn)).toBe('empty');
+    expect(fn).toHaveBeenCalledTimes(1);
+    for (const id of [0, 1, 2]) expect(hasPendingBookAdmission(id)).toBe(false);
+  });
+
+  it('releases every level when the body throws, and poisons no key', async () => {
+    await expect(withBookAdmissionLocks([11, 12, 13], async () => { throw new Error('boom'); })).rejects.toThrow('boom');
+
+    await settle();
+    for (const id of [11, 12, 13]) expect(hasPendingBookAdmission(id)).toBe(false);
+    await expect(withBookAdmissionLocks([11, 12, 13], async () => 'ok')).resolves.toBe('ok');
+  });
+
+  it('evicts every key after a successful multi-acquisition', async () => {
+    await withBookAdmissionLocks([21, 22], async () => 'ok');
+
+    await settle();
+    expect([21, 22].map((id) => hasPendingBookAdmission(id))).toEqual([false, false]);
+  });
+
+  it('composes with a single acquisition: the batch waits for the single holder', async () => {
+    const gate = deferred();
+    const order: string[] = [];
+    const single = withBookAdmissionLock(5, async () => { await gate.promise; order.push('single'); });
+    const batch = withBookAdmissionLocks([1, 5, 9], async () => { order.push('batch'); });
+
+    await settle();
+    expect(order).toEqual([]);
+
+    gate.resolve();
+    await Promise.all([single, batch]);
+    expect(order).toEqual(['single', 'batch']);
   });
 });
 

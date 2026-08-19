@@ -11,6 +11,7 @@ import { RetagError } from '../services/tagging.service.js';
 import { MergeError } from '../services/merge.service.js';
 import { DuplicateDownloadError } from '../services/download.service.js';
 import { BookRejectionError } from '../services/book-rejection.service.js';
+import { SeriesBindChurnError } from '../services/series-bind-admission.js';
 import { PathOutsideLibraryError } from '../utils/paths.js';
 import { SEARCH_DEADLINE_MS } from '@core/utils/constants.js';
 import { _resetSearchRegistryForTesting } from '../services/search-deadline.js';
@@ -4200,6 +4201,23 @@ describe('#1071 series routes', () => {
       expect(writeOpfMock).toHaveBeenCalledTimes(3);
       expect(writeOpfMock.mock.calls.every(([a]) => a.enabled === false)).toBe(true);
       expect(notify()).not.toHaveBeenCalled();
+    });
+
+    /**
+     * #2447 AC7. `SeriesBindChurnError` reaches the route unwrapped, so without its ERROR_REGISTRY
+     * entry it falls through to the generic 500 arm and an operator retry looks like a server fault
+     * rather than the transient contention it is.
+     */
+    it('maps sustained bind churn to 409 rather than the generic 500', async () => {
+      primeBind([1]);
+      (services.seriesCard.bindHardcoverSeries as Mock).mockRejectedValue(new SeriesBindChurnError(4));
+
+      const res = await bind();
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error).toContain('re-acquisitions');
+      // The post-bind refresh never runs for a bind that did not commit.
+      expect(writeOpfMock).not.toHaveBeenCalled();
     });
 
     it('a legitimate OPF skip is neither a failure nor a refresh', async () => {
