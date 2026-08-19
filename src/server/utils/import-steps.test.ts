@@ -5,19 +5,27 @@ import { deriveImportSiblings } from '../utils/import-sibling-paths.js';
 import { inject, mockDbChain } from '../__tests__/helpers.js';
 import { claimLockKey } from '../utils/claim-lock.js';
 import { hasPendingPathWrite } from '../utils/path-write-lock.js';
+import { hasPendingBookAdmission, withBookAdmissionLock } from '../utils/book-admission-lock.js';
+import type { BookService } from '../services/book.service.js';
 import type { Db } from '@db/index.js';
 
 // Mutable arrow mock survives clearAllMocks; flip false for the unavailable test.
-const { ffmpegState, mutagenState } = vi.hoisted(() => ({
+// `callOrder` is the observation point for "which inputs are read before the section is entered" —
+// the resolver is a plain arrow rather than a spy, so ordering cannot be read off mock.calls.
+const { ffmpegState, mutagenState, callOrder } = vi.hoisted(() => ({
   ffmpegState: { resolves: true },
   mutagenState: { resolves: true },
+  callOrder: [] as string[],
 }));
 vi.mock('@core/utils/audio-processor.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@core/utils/audio-processor.js')>();
   return { ...actual, resolveFfmpegPath: () => Promise.resolve(ffmpegState.resolves ? '/usr/bin/ffmpeg' : null) };
 });
 vi.mock('@core/utils/mutagen-resolver.js', () => ({
-  resolveMutagenPython: () => Promise.resolve(mutagenState.resolves ? '/usr/bin/python3' : null),
+  resolveMutagenPython: () => {
+    callOrder.push('resolveMutagenPython');
+    return Promise.resolve(mutagenState.resolves ? '/usr/bin/python3' : null);
+  },
 }));
 
 vi.mock('node:fs/promises', () => ({
@@ -286,6 +294,17 @@ describe('embedTagsForImport', () => {
   // Extra bibliographic fields exercise end-to-end propagation into tagBook.
   const bookMeta = { title: 'Book', authorName: 'Author', narrator: 'Narrator', seriesName: 'Series', seriesPosition: 1, publisher: 'Tor Books', coverUrl: 'http://cover.jpg' };
 
+  /** The in-section re-read. `path` is the only value the guard compares against `targetPath`. */
+  const rowNaming = (path: string | null) =>
+    inject<BookService>({ getById: vi.fn().mockResolvedValue({ id: 1, title: 'Book', path }) });
+  const noRow = () => inject<BookService>({ getById: vi.fn().mockResolvedValue(null) });
+
+  function deferred() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => { resolve = r; });
+    return { promise, resolve };
+  }
+
   it('calls tagBook with the resolved interpreter when tagging is enabled', async () => {
     const log = createMockLog();
     const tagBook = vi.fn().mockResolvedValue({ tagged: 1, skipped: 0, failed: 0 });
@@ -293,17 +312,23 @@ describe('embedTagsForImport', () => {
 
     await embedTagsForImport({
       taggingService, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
-      bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
+      bookId: 1, targetPath: '/lib/book', book: bookMeta, bookService: rowNaming('/lib/book'), log,
     });
 
     expect(tagBook).toHaveBeenCalledWith(1, '/lib/book', bookMeta, '/usr/bin/python3', 'overwrite', true);
+    // The success record is part of the contract; without this the message or its counters could
+    // drift while every tagBook-tuple assertion stayed green.
+    expect(log.info).toHaveBeenCalledWith(
+      { bookId: 1, tagged: 1, skipped: 0, failed: 0 },
+      'Tag embedding during import',
+    );
   });
 
   it('skips when taggingService is null', async () => {
     const log = createMockLog();
     await embedTagsForImport({
       taggingService: undefined, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
-      bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
+      bookId: 1, targetPath: '/lib/book', book: bookMeta, bookService: rowNaming('/lib/book'), log,
     });
     expect(log.warn).not.toHaveBeenCalled();
   });
@@ -313,7 +338,7 @@ describe('embedTagsForImport', () => {
     const tagBook = vi.fn();
     await embedTagsForImport({
       taggingService: { tagBook } as never, taggingEnabled: false, taggingMode: 'overwrite', embedCover: true,
-      bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
+      bookId: 1, targetPath: '/lib/book', book: bookMeta, bookService: rowNaming('/lib/book'), log,
     });
     expect(tagBook).not.toHaveBeenCalled();
   });
@@ -326,7 +351,7 @@ describe('embedTagsForImport', () => {
       const tagBook = vi.fn();
       await expect(embedTagsForImport({
         taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
-        bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
+        bookId: 1, targetPath: '/lib/book', book: bookMeta, bookService: rowNaming('/lib/book'), log,
       })).resolves.toBeUndefined();
       expect(tagBook).not.toHaveBeenCalled();
       expect(log.warn).toHaveBeenCalledWith({ bookId: 1 }, expect.stringContaining('mutagen'));
@@ -342,7 +367,7 @@ describe('embedTagsForImport', () => {
       const tagBook = vi.fn().mockResolvedValue({ tagged: 1, skipped: 0, failed: 0 });
       await embedTagsForImport({
         taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
-        bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
+        bookId: 1, targetPath: '/lib/book', book: bookMeta, bookService: rowNaming('/lib/book'), log,
       });
       expect(tagBook).toHaveBeenCalledWith(1, '/lib/book', bookMeta, '/usr/bin/python3', 'overwrite', true);
     } finally {
@@ -355,7 +380,7 @@ describe('embedTagsForImport', () => {
     const tagBook = vi.fn().mockRejectedValue(new Error('tag failed'));
     await embedTagsForImport({
       taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
-      bookId: 1, targetPath: '/lib/book', book: bookMeta, log,
+      bookId: 1, targetPath: '/lib/book', book: bookMeta, bookService: rowNaming('/lib/book'), log,
     });
     expect(log.warn).toHaveBeenCalled();
   });
@@ -365,13 +390,154 @@ describe('embedTagsForImport', () => {
     const tagBook = vi.fn().mockResolvedValue({ tagged: 1, skipped: 0, failed: 0 });
     await embedTagsForImport({
       taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'populate_missing', embedCover: false,
-      bookId: 42, targetPath: '/lib/book', book: bookMeta, log,
+      bookId: 42, targetPath: '/lib/book', book: bookMeta, bookService: rowNaming('/lib/book'), log,
     });
     expect(tagBook).toHaveBeenCalledWith(
       42, '/lib/book',
       { title: 'Book', authorName: 'Author', narrator: 'Narrator', seriesName: 'Series', seriesPosition: 1, publisher: 'Tor Books', coverUrl: 'http://cover.jpg' },
       '/usr/bin/python3', 'populate_missing', false,
     );
+  });
+
+  // ── The in-section ownership guard (#2461) ──────────────────────────────────────────────────
+
+  it('skips without tagging when the row vanished while the embed was queued', async () => {
+    const log = createMockLog();
+    const tagBook = vi.fn();
+    await expect(embedTagsForImport({
+      taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
+      bookId: 1, targetPath: '/lib/book', book: bookMeta, bookService: noRow(), log,
+    })).resolves.toBeUndefined();
+
+    expect(tagBook).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    // `bookPath` is present on every skip warn; a vanished row is the null case, not an absent key.
+    expect(log.warn).toHaveBeenCalledWith(
+      { bookId: 1, targetPath: '/lib/book', bookPath: null },
+      'Tag embedding skipped during import — the book no longer owns the imported folder',
+    );
+  });
+
+  it('skips without tagging when the row no longer carries a path', async () => {
+    const log = createMockLog();
+    const tagBook = vi.fn();
+    await embedTagsForImport({
+      taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
+      bookId: 1, targetPath: '/lib/book', book: bookMeta, bookService: rowNaming(null), log,
+    });
+
+    expect(tagBook).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      { bookId: 1, targetPath: '/lib/book', bookPath: null },
+      'Tag embedding skipped during import — the book no longer owns the imported folder',
+    );
+  });
+
+  it('skips rather than retargeting when the row names a different folder', async () => {
+    const log = createMockLog();
+    const tagBook = vi.fn();
+    await embedTagsForImport({
+      taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
+      bookId: 1, targetPath: '/lib/book', book: bookMeta, bookService: rowNaming('/lib/moved'), log,
+    });
+
+    // Neither operand: skip means skip. Following the row would silently convert a best-effort
+    // import step into a retag of a folder nobody asked to tag.
+    expect(tagBook).not.toHaveBeenCalled();
+    const folders = tagBook.mock.calls.map((c) => c[1] as string);
+    expect(folders).not.toContain('/lib/book');
+    expect(folders).not.toContain('/lib/moved');
+    expect(log.warn).toHaveBeenCalledWith(
+      { bookId: 1, targetPath: '/lib/book', bookPath: '/lib/moved' },
+      'Tag embedding skipped during import — the book no longer owns the imported folder',
+    );
+  });
+
+  // Only the backslash-parent fixture reds against a bare `resolve`; the other two are vacuous for
+  // that property (see the posix-resolve-ignores-backslash learning).
+  it.each([
+    ['a trailing separator', '/lib/book/'],
+    ['mixed separators', '\\lib\\book'],
+    ['a backslash-spelled parent segment', '/lib\\other\\..\\book'],
+  ])('still tags when the row spells the same folder with %s', async (_label, storedPath) => {
+    const log = createMockLog();
+    const tagBook = vi.fn().mockResolvedValue({ tagged: 1, skipped: 0, failed: 0 });
+    await embedTagsForImport({
+      taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
+      bookId: 1, targetPath: '/lib/book', book: bookMeta, bookService: rowNaming(storedPath), log,
+    });
+
+    expect(tagBook).toHaveBeenCalledWith(1, '/lib/book', bookMeta, '/usr/bin/python3', 'overwrite', true);
+  });
+
+  it.each([
+    ['taggingService is absent', { taggingService: undefined, taggingEnabled: true, mutagen: true }],
+    ['tagging is disabled', { taggingService: { tagBook: vi.fn() } as never, taggingEnabled: false, mutagen: true }],
+    ['no mutagen interpreter resolves', { taggingService: { tagBook: vi.fn() } as never, taggingEnabled: true, mutagen: false }],
+  ])('returns without acquiring the book section when %s', async (_label, arm) => {
+    mutagenState.resolves = arm.mutagen;
+    const parked = deferred();
+    // A helper that acquired first would queue behind this hold and never resolve.
+    const holder = withBookAdmissionLock(7, () => parked.promise);
+    try {
+      const log = createMockLog();
+      const bookService = rowNaming('/lib/book');
+
+      await expect(embedTagsForImport({
+        taggingService: arm.taggingService, taggingEnabled: arm.taggingEnabled,
+        taggingMode: 'overwrite', embedCover: true,
+        bookId: 7, targetPath: '/lib/book', book: bookMeta, bookService, log,
+      })).resolves.toBeUndefined();
+
+      expect(bookService.getById).not.toHaveBeenCalled();
+    } finally {
+      mutagenState.resolves = true;
+      parked.resolve();
+      await holder;
+    }
+  });
+
+  it('warns and skips without wedging the key when the in-section row read rejects', async () => {
+    const log = createMockLog();
+    const tagBook = vi.fn();
+    const bookService = inject<BookService>({ getById: vi.fn().mockRejectedValue(new Error('db gone')) });
+
+    await expect(embedTagsForImport({
+      taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'overwrite', embedCover: true,
+      bookId: 3, targetPath: '/lib/book', book: bookMeta, bookService, log,
+    })).resolves.toBeUndefined();
+
+    expect(tagBook).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 3, targetPath: '/lib/book' }),
+      'Tag embedding skipped during import — could not re-read the book row',
+    );
+    expect(hasPendingBookAdmission(3)).toBe(false);
+  });
+
+  it('re-reads only the persisted path inside the section, after the transient inputs are resolved', async () => {
+    callOrder.length = 0;
+    const log = createMockLog();
+    const tagBook = vi.fn().mockImplementation(() => {
+      callOrder.push('tagBook');
+      return Promise.resolve({ tagged: 1, skipped: 0, failed: 0 });
+    });
+    const bookService = inject<BookService>({
+      getById: vi.fn().mockImplementation(() => {
+        callOrder.push('getById');
+        // A divergent projection: nothing here may reach tagBook.
+        return Promise.resolve({ id: 1, title: 'Superseded Title', path: '/lib/book' });
+      }),
+    });
+
+    await embedTagsForImport({
+      taggingService: { tagBook } as never, taggingEnabled: true, taggingMode: 'populate_missing', embedCover: false,
+      bookId: 1, targetPath: '/lib/book', book: bookMeta, bookService, log,
+    });
+
+    expect(callOrder).toEqual(['resolveMutagenPython', 'getById', 'tagBook']);
+    // The settings-sourced mode/embedCover and the ImportContext projection are all pre-lock values.
+    expect(tagBook).toHaveBeenCalledWith(1, '/lib/book', bookMeta, '/usr/bin/python3', 'populate_missing', false);
   });
 });
 

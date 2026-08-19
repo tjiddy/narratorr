@@ -123,20 +123,27 @@ export class ImportOrchestrator {
 
   private async dispatchSuccessSideEffects(result: ImportResult, ctx: ImportContext): Promise<void> {
     try {
-      const taggingSettings = await this.settingsService.get('tagging');
-      await embedTagsForImport({
-        taggingService: this.taggingService, taggingEnabled: taggingSettings.enabled,
-        taggingMode: taggingSettings.mode, embedCover: taggingSettings.embedCover,
-        bookId: ctx.bookId, targetPath: result.targetPath,
-        book: {
-          title: ctx.book.title, authorName: ctx.authorName, narrator: ctx.narratorStr,
-          seriesName: ctx.book.seriesName, seriesPosition: ctx.book.seriesPosition,
-          asin: ctx.book.asin, subtitle: ctx.book.subtitle, description: ctx.book.description,
-          publisher: ctx.book.publisher, publishedDate: ctx.book.publishedDate, genres: ctx.book.genres,
-          coverUrl: ctx.book.coverUrl,
-        },
-        log: this.log,
-      });
+      // The embed's ownership guard IS the bookService read, so an unwired one means running
+      // unguarded — skip instead, mirroring the OPF write's `if (this.bookService)` gate below.
+      if (!this.bookService) {
+        this.log.warn({ bookId: ctx.bookId }, 'Tag embedding skipped during import — no book service wired');
+      } else {
+        const taggingSettings = await this.settingsService.get('tagging');
+        await embedTagsForImport({
+          taggingService: this.taggingService, taggingEnabled: taggingSettings.enabled,
+          taggingMode: taggingSettings.mode, embedCover: taggingSettings.embedCover,
+          bookId: ctx.bookId, targetPath: result.targetPath,
+          book: {
+            title: ctx.book.title, authorName: ctx.authorName, narrator: ctx.narratorStr,
+            seriesName: ctx.book.seriesName, seriesPosition: ctx.book.seriesPosition,
+            asin: ctx.book.asin, subtitle: ctx.book.subtitle, description: ctx.book.description,
+            publisher: ctx.book.publisher, publishedDate: ctx.book.publishedDate, genres: ctx.book.genres,
+            coverUrl: ctx.book.coverUrl,
+          },
+          bookService: this.bookService,
+          log: this.log,
+        });
+      }
     } catch (tagError: unknown) {
       this.log.warn({ error: serializeError(tagError), bookId: ctx.bookId }, 'Tagging failed during import — continuing');
     }

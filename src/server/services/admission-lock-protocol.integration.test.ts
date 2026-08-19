@@ -13,6 +13,7 @@ import { refreshScanBook, RefreshScanError } from './refresh-scan.service.js';
 import { TaggingService, RetagError } from './tagging.service.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { writeOpfSidecar } from '../utils/opf-writer.js';
+import { embedTagsForImport } from '../utils/import-steps.js';
 import type { CoverUploadError } from './cover-upload.js';
 import { generatePublicId } from '../utils/public-id.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
@@ -441,6 +442,112 @@ describe('admission-lock protocol — every folder and identity mutator serializ
 
       expect(await enrichRun).toEqual({ enriched: false });
       expect(vi.mocked(scanAudioDirectory)).not.toHaveBeenCalled();
+    });
+
+    /**
+     * #2461. The auto-import success tail embeds tags against the pre-release `result.targetPath`
+     * while holding only per-audio-FILE keys — the same disjoint-key gap Case 10 closed for retag.
+     *
+     * Park point: at `fs.rename` the rename holds admission AND the folder claim keys, while the
+     * embed takes admission plus file keys. Those two key domains exclude nothing from each other,
+     * so admission is the only tier that can order this pair — which is why deleting the embed's
+     * acquisition reds this case while every pre-existing one stays green.
+     */
+    const importEmbed = (bookId: number, targetPath: string, taggingService: TaggingService) =>
+      embedTagsForImport({
+        taggingService, taggingEnabled: true, taggingMode: 'overwrite', embedCover: false,
+        bookId, targetPath,
+        book: { title: 'Wanderer', authorName: null, narrator: null, seriesName: null, seriesPosition: null, coverUrl: null },
+        bookService, log: inject<FastifyBaseLogger>(log),
+      });
+
+    // Case 13 — rename direction: skip, not retarget. Neither folder is written.
+    it('makes an import tag embed queued behind a rename write no tags at all — vacated folder or new', async () => {
+      const bookId = await seedBook('Wanderer', join('Wrong', 'Old'));
+      const oldPath = join(root, 'Wrong', 'Old');
+      const target = join(root, 'Unknown Author', 'Wanderer');
+      const taggingService = new TaggingService(db, taggingSettings(), inject<FastifyBaseLogger>(log), bookService);
+
+      const { gate, entered } = gateNextRename();
+      const renameRun = renameService.renameBook(bookId);
+      await entered.promise;
+
+      const embedRun = importEmbed(bookId, oldPath, taggingService);
+      await settle();
+      // Queued on admission, not merely slow: it has not resolved a single audio file.
+      expect(vi.mocked(writeTagsWithMutagen)).not.toHaveBeenCalled();
+
+      gate.resolve();
+      await renameRun;
+      await embedRun;
+
+      expect(vi.mocked(writeTagsWithMutagen)).not.toHaveBeenCalled();
+      // The file the rename produced is byte-unchanged; nothing was recreated at the vacated path.
+      expect(await actualFs.readFile(join(target, 'Wanderer.m4b'), 'utf8')).toBe('Wanderer');
+      expect(await exists(oldPath)).toBe(false);
+      expect(log.warn).toHaveBeenCalledWith(
+        { bookId, targetPath: oldPath, bookPath: target },
+        'Tag embedding skipped during import — the book no longer owns the imported folder',
+      );
+
+      await settle();
+      expect(hasPendingBookAdmission(bookId)).toBe(false);
+    });
+
+    // Case 14, delete direction — a vanished row skips on the null path, recreating nothing.
+    it('makes an import tag embed queued behind a delete skip on the vanished row', async () => {
+      const bookId = await seedBook('Wanderer', join('Wrong', 'Old'));
+      const oldPath = join(root, 'Wrong', 'Old');
+      const taggingService = new TaggingService(db, taggingSettings(), inject<FastifyBaseLogger>(log), bookService);
+
+      const parked = deferred();
+      const holder = withBookAdmissionLock(bookId, async () => {
+        await parked.promise;
+        await deletionService.deleteBookWithinAdmissionLock(bookId, { deleteFiles: true });
+      });
+
+      const embedRun = importEmbed(bookId, oldPath, taggingService);
+      await settle();
+      expect(vi.mocked(writeTagsWithMutagen)).not.toHaveBeenCalled();
+
+      parked.resolve();
+      await holder;
+      await embedRun;
+
+      expect(vi.mocked(writeTagsWithMutagen)).not.toHaveBeenCalled();
+      expect(await exists(oldPath)).toBe(false);
+      expect(log.warn).toHaveBeenCalledWith(
+        { bookId, targetPath: oldPath, bookPath: null },
+        'Tag embedding skipped during import — the book no longer owns the imported folder',
+      );
+
+      await settle();
+      expect(hasPendingBookAdmission(bookId)).toBe(false);
+    });
+
+    // Case 15 — what keeps the guard from degenerating into "skip whenever anything else ran".
+    it('makes an import tag embed queued behind a mutator that leaves the path alone tag normally', async () => {
+      const bookId = await seedBook('Wanderer', join('Wrong', 'Old'));
+      const bookPath = join(root, 'Wrong', 'Old');
+      const taggingService = new TaggingService(db, taggingSettings(), inject<FastifyBaseLogger>(log), bookService);
+
+      // The merge shape: it holds the section for a long time but never moves the folder.
+      const parked = deferred();
+      const holder = withBookAdmissionLock(bookId, () => parked.promise);
+
+      const embedRun = importEmbed(bookId, bookPath, taggingService);
+      await settle();
+      expect(vi.mocked(writeTagsWithMutagen)).not.toHaveBeenCalled();
+
+      parked.resolve();
+      await holder;
+      await embedRun;
+
+      const tagged = vi.mocked(writeTagsWithMutagen).mock.calls.map((c) => norm(String(c[1]?.path)));
+      expect(tagged).toEqual([norm(join(bookPath, 'Wanderer.m4b'))]);
+
+      await settle();
+      expect(hasPendingBookAdmission(bookId)).toBe(false);
     });
 
     // Case 12 — cover upload behind a rename localizes against the folder the book owns now.
