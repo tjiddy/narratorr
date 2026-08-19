@@ -29,6 +29,9 @@ import {
 
 const orphans: string[] = [];
 
+// Fakes are reachable in unit scope; the real TCP waiter is covered in wait-for-ports.test.ts.
+const fakesReady = async (): Promise<void> => { /* reachable */ };
+
 function makeRunDirs(): { dbPath: string; libraryPath: string } {
   const dbDir = mkdtempSync(join(tmpdir(), HARNESS_TEMP_PREFIX));
   const libraryPath = mkdtempSync(join(tmpdir(), HARNESS_TEMP_PREFIX));
@@ -136,15 +139,23 @@ describe('seedAndServe', () => {
       return result;
     });
     const startServer = vi.fn(async () => { order.push('start'); });
+    const waitForFakes = vi.fn(async () => { order.push('fakes'); });
     const log = vi.fn((message: string) => { order.push(message.trim()); });
 
     await seedAndServe(
       readSeedInputs({ DATABASE_URL: dbPath, [SEED_LIBRARY_DIR_ENV]: libraryPath }),
-      { startServer, log },
+      { startServer, waitForFakes, log },
     );
 
-    // The middle entry is the line the captured webServer stdout carries as the ordering evidence.
-    expect(order).toEqual(['seed', `[seed-and-serve] seed verified for ${dbPath}; starting the server`, 'start']);
+    // The logged lines are what the captured webServer stdout carries as the ordering evidence:
+    // seed committed → verified fresh → fakes reachable → boot. Nothing may reorder.
+    expect(order).toEqual([
+      'seed',
+      `[seed-and-serve] seed verified for ${dbPath}`,
+      'fakes',
+      '[seed-and-serve] fakes reachable; starting the server',
+      'start',
+    ]);
     expect(startServer).toHaveBeenCalledTimes(1);
   });
 
@@ -154,7 +165,7 @@ describe('seedAndServe', () => {
 
     await seedAndServe(
       readSeedInputs({ DATABASE_URL: dbPath, [SEED_LIBRARY_DIR_ENV]: libraryPath }),
-      { startServer: async () => { /* no server in unit scope */ } },
+      { startServer: async () => { /* no server in unit scope */ }, waitForFakes: fakesReady },
     );
 
     // `readSeededRows` opens its own client, so this cannot observe the seed transaction's session.
@@ -173,7 +184,7 @@ describe('seedAndServe', () => {
         E2E_MAM_PORT: '4577',
         E2E_QBIT_PORT: '4578',
       }),
-      { startServer: async () => { /* no server in unit scope */ } },
+      { startServer: async () => { /* no server in unit scope */ }, waitForFakes: fakesReady },
     );
 
     const rows = await readSeededRows(dbPath);
@@ -191,7 +202,7 @@ describe('seedAndServe', () => {
         E2E_MAM_PORT: 'abc',
         E2E_QBIT_PORT: '0',
       }),
-      { startServer: async () => { /* no server in unit scope */ } },
+      { startServer: async () => { /* no server in unit scope */ }, waitForFakes: fakesReady },
     );
 
     const rows = await readSeededRows(dbPath);
@@ -205,7 +216,7 @@ describe('seedAndServe', () => {
     const startServer = vi.fn(async () => { /* must not run */ });
 
     await expect(
-      seedAndServe(readSeedInputs({ DATABASE_URL: dbPath, [SEED_LIBRARY_DIR_ENV]: libraryPath }), { startServer }),
+      seedAndServe(readSeedInputs({ DATABASE_URL: dbPath, [SEED_LIBRARY_DIR_ENV]: libraryPath }), { startServer, waitForFakes: fakesReady }),
     ).rejects.toThrow(/seed exploded/);
 
     expect(startServer).not.toHaveBeenCalled();
@@ -220,7 +231,7 @@ describe('seedAndServe', () => {
     const startServer = vi.fn(async () => { /* must not run */ });
 
     await expect(
-      seedAndServe(readSeedInputs({ DATABASE_URL: dbPath, [SEED_LIBRARY_DIR_ENV]: libraryPath }), { startServer }),
+      seedAndServe(readSeedInputs({ DATABASE_URL: dbPath, [SEED_LIBRARY_DIR_ENV]: libraryPath }), { startServer, waitForFakes: fakesReady }),
     ).rejects.toThrow(new RegExp(dbPath.split('\\').join('\\\\').replace(/[.*+?^${}()|[\]]/g, '\\$&')));
 
     expect(startServer).not.toHaveBeenCalled();
@@ -233,9 +244,26 @@ describe('seedAndServe', () => {
     const startServer = vi.fn(async () => { /* must not run */ });
 
     await expect(
-      seedAndServe(readSeedInputs({ DATABASE_URL: dbPath, [SEED_LIBRARY_DIR_ENV]: libraryPath }), { startServer }),
+      seedAndServe(readSeedInputs({ DATABASE_URL: dbPath, [SEED_LIBRARY_DIR_ENV]: libraryPath }), { startServer, waitForFakes: fakesReady }),
     ).rejects.toThrow(/does not exist/);
 
+    expect(startServer).not.toHaveBeenCalled();
+  });
+
+  it('refuses to start the server while the fakes stay unreachable (#2474)', async () => {
+    // The structural pin: a server booting against an unbound fake port opens the indexer breaker
+    // for ~60s and starves whichever spec searches inside the window.
+    const { dbPath, libraryPath } = makeRunDirs();
+    const startServer = vi.fn(async () => { /* must not run */ });
+    const waitForFakes = vi.fn(async () => {
+      throw new Error('waitForTcpPorts: not reachable on 127.0.0.1 within 30000ms: 4100');
+    });
+
+    await expect(
+      seedAndServe(readSeedInputs({ DATABASE_URL: dbPath, [SEED_LIBRARY_DIR_ENV]: libraryPath }), { startServer, waitForFakes }),
+    ).rejects.toThrow(/not reachable/);
+
+    expect(waitForFakes).toHaveBeenCalledTimes(1);
     expect(startServer).not.toHaveBeenCalled();
   });
 
@@ -246,9 +274,9 @@ describe('seedAndServe', () => {
     const inputs = readSeedInputs({ DATABASE_URL: dbPath, [SEED_LIBRARY_DIR_ENV]: libraryPath });
     const startServer = vi.fn(async () => { /* no server in unit scope */ });
 
-    await seedAndServe(inputs, { startServer });
+    await seedAndServe(inputs, { startServer, waitForFakes: fakesReady });
 
-    await expect(seedAndServe(inputs, { startServer })).rejects.toThrow(/Failed query: insert/);
+    await expect(seedAndServe(inputs, { startServer, waitForFakes: fakesReady })).rejects.toThrow(/Failed query: insert/);
     expect(startServer).toHaveBeenCalledTimes(1);
 
     const rows = await readSeededRows(dbPath);
@@ -269,7 +297,7 @@ describe('runSeedAndServeCli', () => {
     const writeStdout = vi.fn();
     const startServer = vi.fn(async () => { /* must not run */ });
 
-    await runSeedAndServeCli({ env: cliEnv(dbPath, libraryPath), exit, writeStderr, writeStdout, startServer });
+    await runSeedAndServeCli({ env: cliEnv(dbPath, libraryPath), exit, writeStderr, writeStdout, startServer, waitForFakes: fakesReady });
 
     expect(exit).toHaveBeenCalledTimes(1);
     expect(exit).toHaveBeenCalledWith(1);
@@ -280,12 +308,28 @@ describe('runSeedAndServeCli', () => {
     expect(message).toContain('seed exploded');
   });
 
+  it('exits non-zero and never boots when the fakes stay unreachable', async () => {
+    const { dbPath, libraryPath } = makeRunDirs();
+    const exit = vi.fn();
+    const writeStderr = vi.fn();
+    const startServer = vi.fn(async () => { /* must not run */ });
+    const waitForFakes = vi.fn(async () => {
+      throw new Error('waitForTcpPorts: not reachable on 127.0.0.1 within 30000ms: 4100, 4300');
+    });
+
+    await runSeedAndServeCli({ env: cliEnv(dbPath, libraryPath), exit, writeStderr, startServer, waitForFakes });
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(startServer).not.toHaveBeenCalled();
+    expect(writeStderr.mock.calls.at(-1)![0]).toContain('not reachable');
+  });
+
   it('reports an unusable env without reaching libSQL', async () => {
     const exit = vi.fn();
     const writeStderr = vi.fn();
     const startServer = vi.fn(async () => { /* must not run */ });
 
-    await runSeedAndServeCli({ env: { DATABASE_URL: '' }, exit, writeStderr, startServer });
+    await runSeedAndServeCli({ env: { DATABASE_URL: '' }, exit, writeStderr, startServer, waitForFakes: fakesReady });
 
     expect(exit).toHaveBeenCalledWith(1);
     expect(startServer).not.toHaveBeenCalled();
@@ -300,11 +344,13 @@ describe('runSeedAndServeCli', () => {
     const writeStdout = vi.fn();
     const startServer = vi.fn(async () => { /* no server in unit scope */ });
 
-    await runSeedAndServeCli({ env: cliEnv(dbPath, libraryPath), exit, writeStderr, writeStdout, startServer });
+    await runSeedAndServeCli({ env: cliEnv(dbPath, libraryPath), exit, writeStderr, writeStdout, startServer, waitForFakes: fakesReady });
 
     expect(startServer).toHaveBeenCalledTimes(1);
     expect(exit).not.toHaveBeenCalled();
     expect(writeStderr).not.toHaveBeenCalled();
-    expect(writeStdout.mock.calls.at(-1)![0]).toContain('seed verified');
+    const stdoutLines = writeStdout.mock.calls.map((c) => c[0] as string);
+    expect(stdoutLines.some((line) => line.includes('seed verified'))).toBe(true);
+    expect(stdoutLines.at(-1)).toContain('fakes reachable; starting the server');
   });
 });

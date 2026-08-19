@@ -11,24 +11,16 @@ import {
   RUN_MANIFEST_ENV,
   SWEEP_MAX_AGE_MS,
 } from './fixtures/temp-dirs.js';
-import { getRegisteredFakes, clearRegisteredFakes } from './fixtures/run-state.js';
 import { cleanupRunPathsFile } from './global-setup.js';
 
 /**
- * Three independently guarded stages — close the fakes, remove the paths this invocation owns,
- * sweep stale strays — in that order. A failure in one never skips a later one, and teardown never
- * rejects: a Windows `EPERM` on a directory that held a libSQL database is expected, not an error.
+ * Two independently guarded stages — remove the paths this invocation owns, then sweep stale
+ * strays. A failure in one never skips the other, and teardown never rejects: a Windows `EPERM`
+ * on a directory that held a libSQL database is expected, not an error. The fakes need no stage
+ * here: they live in a Playwright-owned webServer process (`fakes/host.ts`) whose listeners die
+ * with it (#2474).
  */
 export default async function globalTeardown(): Promise<void> {
-  for (const fake of getRegisteredFakes()) {
-    try {
-      await fake.close();
-    } catch {
-      // Best-effort — a dangling listener is better than a failed teardown.
-    }
-  }
-  clearRegisteredFakes();
-
   try {
     cleanupRunPathsFile();
     for (const target of ownedTargets()) {

@@ -8,6 +8,7 @@ import { books, settings } from '../../src/db/schema.js';
 import { canonicalPath } from '../../src/server/utils/path-identity.js';
 import { seedE2ERun } from './seed.js';
 import { E2E_DEFAULT_PORTS, resolvePort } from './ports.js';
+import { waitForTcpPorts } from './wait-for-ports.js';
 import { SEED_LIBRARY_DIR_ENV } from './server-env.js';
 
 /**
@@ -30,6 +31,13 @@ export interface SeedInputs {
 export interface SeedAndServeDeps {
   /** Injected so the core is unit-testable; the CLI defaults it to importing the production bundle. */
   startServer: () => Promise<void>;
+  /**
+   * Resolves only when every fake is reachable; the boot is refused otherwise. The fakes host is
+   * the first `webServer` entry, but that ordering lives in config — this gate is what makes
+   * "no server boots against an unbound fake port" hold by construction (#2474): a lost race
+   * opens the indexer breaker for ~60s and starves whichever spec searches inside the window.
+   */
+  waitForFakes: () => Promise<void>;
   /** Emitted between the marker check and the boot, so captured stdout carries the ordering proof. */
   log?: (message: string) => void;
 }
@@ -40,6 +48,7 @@ export interface SeedAndServeCliHooks {
   writeStderr?: (message: string) => void;
   writeStdout?: (message: string) => void;
   startServer?: () => Promise<void>;
+  waitForFakes?: () => Promise<void>;
 }
 
 /** Derives every seed input from the wrapper's own env — nothing here depends on globalSetup. */
@@ -78,7 +87,10 @@ export async function seedAndServe(inputs: SeedInputs, deps: SeedAndServeDeps): 
     libraryPath: inputs.libraryPath,
   });
   await assertSeedVisible(inputs.dbPath);
-  deps.log?.(`[seed-and-serve] seed verified for ${inputs.dbPath}; starting the server\n`);
+  deps.log?.(`[seed-and-serve] seed verified for ${inputs.dbPath}\n`);
+
+  await deps.waitForFakes();
+  deps.log?.(`[seed-and-serve] fakes reachable; starting the server\n`);
 
   await deps.startServer();
 }
@@ -91,10 +103,15 @@ export async function runSeedAndServeCli(hooks: SeedAndServeCliHooks = {}): Prom
     writeStderr = (message: string): void => { process.stderr.write(message); },
     writeStdout = (message: string): void => { process.stdout.write(message); },
     startServer = importServerBundle,
+    waitForFakes = (): Promise<void> => waitForTcpPorts([
+      resolvePort('E2E_MAM_PORT', E2E_DEFAULT_PORTS.mam, env),
+      resolvePort('E2E_QBIT_PORT', E2E_DEFAULT_PORTS.qbit, env),
+      resolvePort('E2E_AUDIBLE_PORT', E2E_DEFAULT_PORTS.audible, env),
+    ]),
   } = hooks;
 
   try {
-    await seedAndServe(readSeedInputs(env), { startServer, log: writeStdout });
+    await seedAndServe(readSeedInputs(env), { startServer, waitForFakes, log: writeStdout });
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
     writeStderr(

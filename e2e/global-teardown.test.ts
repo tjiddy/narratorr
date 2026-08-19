@@ -31,8 +31,6 @@ import {
   SWEEP_MAX_AGE_MS,
   type RunTempDirs,
 } from './fixtures/temp-dirs.js';
-import { registerFake, _resetRegisteredFakesForTests, getRegisteredFakes } from './fixtures/run-state.js';
-
 const orphans: string[] = [];
 
 /** A real `narratorr-e2e-*` directory in the OS temp dir, aged to `ageMs` before `now`. */
@@ -72,7 +70,6 @@ function manifestOnlyRuns(mutate: (runs: Record<string, RunTempDirs>) => void = 
 describe('globalTeardown', () => {
   beforeEach(() => {
     _resetCurrentRunForTests();
-    _resetRegisteredFakesForTests();
     orphans.length = 0;
     delete process.env[RUN_MANIFEST_ENV];
     vi.mocked(removeTreeSync).mockReset();
@@ -174,37 +171,6 @@ describe('globalTeardown', () => {
     }
   });
 
-  it('closes registered fake-server handles before removing temp directories', async () => {
-    const run = createRunTempDirs();
-    orphans.push(...runTempRoots(run));
-
-    const closeMam = vi.fn(async () => { /* no-op */ });
-    const closeQbit = vi.fn(async () => { /* no-op */ });
-    registerFake({ name: 'mam', close: closeMam });
-    registerFake({ name: 'qbit', close: closeQbit });
-
-    await globalTeardown();
-
-    expect(closeMam).toHaveBeenCalledTimes(1);
-    expect(closeQbit).toHaveBeenCalledTimes(1);
-    expect(getRegisteredFakes()).toEqual([]);
-  });
-
-  it('does not throw when a fake-server handle rejects during close', async () => {
-    const run = createRunTempDirs();
-    orphans.push(...runTempRoots(run));
-
-    registerFake({ name: 'mam', close: async () => { throw new Error('boom'); } });
-    const qbitClose = vi.fn(async () => { /* no-op */ });
-    registerFake({ name: 'qbit', close: qbitClose });
-
-    await expect(globalTeardown()).resolves.toBeUndefined();
-
-    // The second fake must still close even though the first threw.
-    expect(qbitClose).toHaveBeenCalledTimes(1);
-    expect(actualFs.existsSync(run.libraryPath)).toBe(false);
-  });
-
   it('one target whose removal keeps failing does not abort the loop', async () => {
     const run = createRunTempDirs();
     orphans.push(...runTempRoots(run));
@@ -244,16 +210,13 @@ describe('globalTeardown', () => {
     expect(attemptedRemovals()).not.toContain(unrelated.path);
   });
 
-  it('performs zero manifest-owned removals with no manifest, but still closes fakes and sweeps', async () => {
+  it('performs zero manifest-owned removals with no manifest, but still sweeps', async () => {
     // An early `return` would pass a bare `resolves` assertion while defeating the sweep entirely.
     const now = Date.now();
     const stale = agedTempDir(now, 25 * 60 * 60 * 1000);
-    const close = vi.fn(async () => { /* no-op */ });
-    registerFake({ name: 'mam', close });
 
     await expect(globalTeardown()).resolves.toBeUndefined();
 
-    expect(close).toHaveBeenCalledTimes(1);
     expect(actualFs.existsSync(stale.path)).toBe(false);
   });
 
@@ -264,8 +227,6 @@ describe('globalTeardown', () => {
       const hostile = join(homedir(), 'narratorr-e2e-not-really-temp');
       const now = Date.now();
       const stale = agedTempDir(now, 25 * 60 * 60 * 1000);
-      const close = vi.fn(async () => { /* no-op */ });
-      registerFake({ name: 'mam', close });
       const { runs } = manifestOnlyRuns((payload) => {
         payload.forms = { ...payload.forms!, libraryPath: hostile };
       });
@@ -276,7 +237,6 @@ describe('globalTeardown', () => {
       for (const dir of runs.flatMap(runTempRoots)) {
         expect(attemptedRemovals()).not.toContain(dir);
       }
-      expect(close).toHaveBeenCalledTimes(1);
       expect(attemptedRemovals()).toContain(stale.path);
     });
 
@@ -303,11 +263,9 @@ describe('globalTeardown', () => {
       ['unreadable', (file: string) => { actualFs.rmSync(file); actualFs.mkdirSync(file); }],
       ['truncated JSON', (file: string) => { actualFs.writeFileSync(file, '{"version":1,"runs":{', 'utf-8'); }],
       ['valid JSON of the wrong shape', (file: string) => { actualFs.writeFileSync(file, '{"runs":[1,2,3]}', 'utf-8'); }],
-    ])('a %s manifest yields zero owned removals while fakes close and the sweep runs', async (_label, corrupt) => {
+    ])('a %s manifest yields zero owned removals while the sweep runs', async (_label, corrupt) => {
       const now = Date.now();
       const stale = agedTempDir(now, 25 * 60 * 60 * 1000);
-      const close = vi.fn(async () => { /* no-op */ });
-      registerFake({ name: 'mam', close });
       const { manifestPath, runs } = manifestOnlyRuns();
       corrupt(manifestPath);
 
@@ -317,7 +275,6 @@ describe('globalTeardown', () => {
       for (const dir of runs.flatMap(runTempRoots)) {
         expect(attemptedRemovals()).not.toContain(dir);
       }
-      expect(close).toHaveBeenCalledTimes(1);
       expect(attemptedRemovals()).toContain(stale.path);
       expect(actualFs.existsSync(stale.path)).toBe(false);
     });

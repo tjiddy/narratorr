@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { ROOT_RUN, resolveRunTempDirs } from './fixtures/temp-dirs.js';
 import { serverEnv } from './fixtures/server-env.js';
+import { E2E_DEFAULT_PORTS, resolvePort } from './fixtures/ports.js';
 import {
   ROOT_PORT,
   SUBPATH_PORT,
@@ -41,6 +42,18 @@ const CONFIG_DIR = dirname(fileURLToPath(import.meta.url));
  * `webServer.command` runs with cwd = this config's directory.
  */
 const SEED_AND_SERVE_COMMAND = 'node --import tsx ./fixtures/seed-and-serve.ts';
+
+/**
+ * The fakes run as the FIRST `webServer` entry, not in globalSetup: Playwright sets webServer
+ * entries up sequentially, awaiting each one's readiness before spawning the next, and starts all
+ * of them before globalSetup — so fakes started there lose a race against the app servers' first
+ * cron ticks, and a lost race opens the indexer breaker for ~60s (#2474). The host binds MAM last,
+ * so readiness on its port implies all three fakes are up. Reordering this array is guarded by the
+ * seed wrapper's own waitForFakes gate, which refuses to boot an app server while any fake port is
+ * unbound.
+ */
+const FAKES_HOST_COMMAND = 'node --import tsx ./fakes/host.ts';
+const MAM_PORT = resolvePort('E2E_MAM_PORT', E2E_DEFAULT_PORTS.mam);
 
 // Suite selectors accept both Windows and POSIX path separators.
 const SUBPATH_SPECS = /[\\/]subpath[\\/].*\.spec\.ts$/;
@@ -100,6 +113,16 @@ export default defineConfig({
   ],
 
   webServer: [
+    {
+      command: FAKES_HOST_COMMAND,
+      // Port readiness on MAM, the host's last bind — see FAKES_HOST_COMMAND's comment.
+      port: MAM_PORT,
+      reuseExistingServer: false,
+      timeout: 30_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { E2E_DOWNLOADS_PATH: rootRun.downloadsPath },
+    },
     {
       command: SEED_AND_SERVE_COMMAND,
       url: `http://localhost:${ROOT_PORT}/api/health`,
