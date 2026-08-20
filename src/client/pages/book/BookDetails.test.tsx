@@ -1966,6 +1966,8 @@ describe('BookDetails — Import Files (#2435)', () => {
 
     await openPicker(user);
     await user.click(screen.getByRole('radio', { name: 'Move' }));
+    // #2478 gates Import on an explicit choice; the folder affordance is the one that yields `/`.
+    await user.click(screen.getByRole('button', { name: 'Use this folder' }));
     await user.click(screen.getByRole('button', { name: 'Import' }));
 
     await waitFor(() => expect(mockImport()).toHaveBeenCalledWith(42, { path: '/', mode: 'move' }));
@@ -1990,6 +1992,7 @@ describe('BookDetails — Import Files (#2435)', () => {
     expect(screen.getByRole('radio', { name: 'Copy' })).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByRole('radio', { name: 'Move' })).toHaveAttribute('aria-checked', 'false');
 
+    await user.click(screen.getByRole('button', { name: 'Use this folder' }));
     await user.click(screen.getByRole('button', { name: 'Import' }));
 
     await waitFor(() => expect(mockImport()).toHaveBeenCalledWith(42, { path: '/', mode: 'copy' }));
@@ -2002,10 +2005,12 @@ describe('BookDetails — Import Files (#2435)', () => {
 
     await openPicker(user);
     await user.click(screen.getByRole('radio', { name: 'Move' }));
+    await user.click(screen.getByRole('button', { name: 'Use this folder' }));
     await user.click(screen.getByRole('button', { name: 'Import' }));
     await waitFor(() => expect(mockImport()).toHaveBeenCalledWith(42, { path: '/', mode: 'move' }));
 
     await openPicker(user);
+    await user.click(screen.getByRole('button', { name: 'Use this folder' }));
     await user.click(screen.getByRole('button', { name: 'Import' }));
 
     await waitFor(() => expect(mockImport()).toHaveBeenLastCalledWith(42, { path: '/', mode: 'copy' }));
@@ -2017,6 +2022,7 @@ describe('BookDetails — Import Files (#2435)', () => {
     renderBookDetails({ path: null, status: 'wanted' });
 
     await openPicker(user);
+    await user.click(screen.getByRole('button', { name: 'Use this folder' }));
     await user.click(screen.getByRole('button', { name: 'Import' }));
 
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Import queued'));
@@ -2029,6 +2035,7 @@ describe('BookDetails — Import Files (#2435)', () => {
     renderBookDetails({ path: null, status: 'wanted' });
 
     await openPicker(user);
+    await user.click(screen.getByRole('button', { name: 'Use this folder' }));
     await user.click(screen.getByRole('button', { name: 'Import' }));
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(
