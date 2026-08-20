@@ -4997,6 +4997,11 @@ describe('gate interaction with the ABB metadata fields (#2365)', () => {
  * carry `author`/`narrator` only on rows whose markup does. Each of those absences lands on a gate
  * that already has a rule for missing data; what these cases pin is that the rule is the one the
  * rework relies on, and each is paired with a control that a "keeps everything" regression fails.
+ *
+ * The shape has since moved on: an ABB row whose listing carries `File Size:`/`Language:` info
+ * lines now arrives with `size`, `language` and `bitrateKbps` populated, so the absences above are
+ * per-row rather than universal. The `parsed listing metadata` block below is the other half —
+ * what the gates do once ABB actually feeds them.
  */
 describe('#2420 — the ABB result shape through the pipeline', () => {
   const ABB_DETAILS_URL = 'https://audiobookbay.test/audio-books/murder-in-the-new-forest/';
@@ -5080,6 +5085,107 @@ describe('#2420 — the ABB result shape through the pipeline', () => {
       );
 
       expect(results.map((r) => r.title)).toEqual(['Murder in the New Forest']);
+    });
+  });
+
+  /**
+   * #2504 — the other half of `absent size`: what the gates do once ABB's listing info lines are
+   * actually parsed into `size` and `language`. Every drop is paired with the same result kept
+   * under a threshold it passes, so no case is satisfiable by "ABB is always dropped" — or kept.
+   */
+  describe('parsed listing metadata through the gates (#2504)', () => {
+    const noGates = { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' } as const;
+
+    it('drops a parsed-size ABB result below minDownloadSize and keeps one above it', () => {
+      const options = { ...noGates, minDownloadSize: 100 };
+
+      const under = filterAndRankResults([abbResult({ size: 10 * MB })], undefined, options);
+      const over = filterAndRankResults([abbResult({ size: 500 * MB })], undefined, options);
+
+      expect(under.results).toHaveLength(0);
+      expect(under.dropSummary.reasons).toEqual([{ reason: 'below-min-size', count: 1, threshold: '100 MB' }]);
+      expect(over.results).toHaveLength(1);
+      expect(over.dropSummary).toEqual({ total: 0, reasons: [] });
+    });
+
+    it('drops a parsed-size ABB result above maxDownloadSize and keeps one below it', () => {
+      const options = { ...noGates, maxDownloadSize: 5 };
+
+      const over = filterAndRankResults([abbResult({ size: 20 * GB })], undefined, options);
+      const under = filterAndRankResults([abbResult({ size: 500 * MB })], undefined, options);
+
+      expect(over.results).toHaveLength(0);
+      expect(over.dropSummary.reasons).toEqual([{ reason: 'over-max-size', count: 1, threshold: '5 GB' }]);
+      expect(under.results).toHaveLength(1);
+    });
+
+    // The grab floor is MB/hour, so the same byte count passes or fails on the book's duration.
+    it('drops a parsed-size ABB result below the grab floor and keeps one above it', () => {
+      const options = { ...noGates, grabFloor: 30 };
+      const oneHour = 3600;
+
+      const thin = filterAndRankResults([abbResult({ size: 10 * MB })], oneHour, options);
+      const fat = filterAndRankResults([abbResult({ size: 500 * MB })], oneHour, options);
+
+      expect(thin.results).toHaveLength(0);
+      expect(thin.dropSummary.reasons).toEqual([{ reason: 'below-grab-floor', count: 1, threshold: '30 MB/hour' }]);
+      expect(fat.results).toHaveLength(1);
+    });
+
+    /** The motivating case: three Jurassic Park rows that differ only by language. */
+    it('drops a parsed-language ABB result the operator did not ask for, and keeps an unknown one', () => {
+      const options = { ...noGates, languages: ['english'] };
+
+      const spanish = filterAndRankResults([abbResult({ language: 'spanish' })], undefined, options);
+      const unknown = filterAndRankResults([abbResult({ language: undefined })], undefined, options);
+      const english = filterAndRankResults([abbResult({ language: 'english' })], undefined, options);
+
+      expect(spanish.results).toHaveLength(0);
+      expect(spanish.dropSummary.reasons).toEqual([{ reason: 'language-mismatch', count: 1, threshold: 'english' }]);
+      // Unknown is not mismatch — the absence tolerance the info-line parse depends on.
+      expect(unknown.results).toHaveLength(1);
+      expect(english.results).toHaveLength(1);
+    });
+
+    // Gates run sequentially over the survivors, so a result failing both is attributed to the
+    // first that saw it — the size gates run ahead of the language partition.
+    it('attributes a result failing both the size and language gates to the size gate', () => {
+      const { results, dropSummary } = filterAndRankResults(
+        [
+          abbResult({ title: 'Tiny Spanish', size: 10 * MB, language: 'spanish' }),
+          abbResult({ title: 'Big Spanish', size: 500 * MB, language: 'spanish' }),
+          abbResult({ title: 'Big English', size: 500 * MB, language: 'english' }),
+        ],
+        undefined,
+        { ...noGates, minDownloadSize: 100, languages: ['english'] },
+      );
+
+      expect(results.map((r) => r.title)).toEqual(['Big English']);
+      expect(dropSummary.reasons).toEqual([
+        { reason: 'below-min-size', count: 1, threshold: '100 MB' },
+        { reason: 'language-mismatch', count: 1, threshold: 'english' },
+      ]);
+    });
+
+    /**
+     * The guard that keeps `bitrateKbps` display-only. `canonicalCompare` has no bitrate arm and
+     * ties on every arm for this pair, and `Array.prototype.sort` is stable, so a comparator
+     * returning 0 preserves input order — in BOTH directions. One order alone is vacuous: a
+     * bitrate-aware comparator passes whichever order already matches its preferred direction.
+     * Observed at `filterAndRankResults` because its `filtered.sort(...)` is the only seam the
+     * field would have to travel through to reach ranking.
+     */
+    it('leaves ranking untouched by bitrate, in both input orders', () => {
+      const low = abbResult({ title: 'Low Bitrate', bitrateKbps: 64 });
+      const high = abbResult({ title: 'High Bitrate', bitrateKbps: 320 });
+
+      const lowFirst = filterAndRankResults([low, high], undefined, noGates);
+      const highFirst = filterAndRankResults([high, low], undefined, noGates);
+
+      expect(lowFirst.results.map((r) => r.title)).toEqual(['Low Bitrate', 'High Bitrate']);
+      expect(highFirst.results.map((r) => r.title)).toEqual(['High Bitrate', 'Low Bitrate']);
+      expect(lowFirst.dropSummary).toEqual({ total: 0, reasons: [] });
+      expect(highFirst.dropSummary).toEqual({ total: 0, reasons: [] });
     });
   });
 
