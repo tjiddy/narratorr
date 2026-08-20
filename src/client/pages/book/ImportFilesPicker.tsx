@@ -27,6 +27,9 @@ function ImportFilesPickerContent({ isOpen, isPending, onSubmit, onClose }: Impo
       isOpen={isOpen}
       initialPath="/"
       selectableFiles
+      // #2478: the picker opens at `/`, so an ungated Import is two clicks from moving every audio
+      // file on the host into one book folder and deleting the sources.
+      requireExplicitSelection
       title="Import Files"
       subtitle="Choose an audio file, or a folder containing one"
       selectLabel={isPending ? 'Importing...' : 'Import'}
