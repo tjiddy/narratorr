@@ -308,9 +308,8 @@ export async function embedTagsForImport(args: EmbedTagsArgs): Promise<void> {
   await withBookAdmissionLock(bookId, () => tagImportedFolder(args, taggingService, mutagenPython));
 }
 
-// Local on purpose: `opf-writer.ts`'s private `ownsFolder` compares with a bare `resolve`, which on
-// POSIX leaves a backslash-spelled parent segment unresolved. Widening that one is a behavior
-// change to four sidecar writers.
+// Same folder-identity function as `opf-writer.ts`'s `ownsFolder` since #2469; kept local because
+// the two guards narrow different shapes (this one is a type predicate over a nullable-path row).
 function ownsImportedFolder<T extends { path: string | null }>(book: T | null, targetPath: string): book is T & { path: string } {
   return book?.path != null && canonicalPath(book.path) === canonicalPath(targetPath);
 }
