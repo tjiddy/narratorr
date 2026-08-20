@@ -7,6 +7,7 @@ import {
 import { vi, type Mock } from 'vitest';
 import type { Db } from '@db/index.js';
 import { config } from '../config.js';
+import { SEARCH_DEADLINE_MS } from '@core/utils/constants.js';
 import type { AggregateSearchStatus } from '../services/indexer-search.service.js';
 import { registerRoutes } from '../routes/index.js';
 import type { AuthService } from '../services/auth.service.js';
@@ -345,4 +346,26 @@ export function mockSearchAllWithStatus<T>(results: T[], overrides?: SearchStatu
 /** `searchAllWithStatus` double mapping each transport query to its results; unlisted queries answer zero. */
 export function answeringSearchStatus<T>(byQuery: Record<string, T[]>, overrides?: SearchStatusOverrides): Mock {
   return vi.fn().mockImplementation(async (query: string) => searchStatus(byQuery[query] ?? [], overrides));
+}
+
+/**
+ * Park the search deadline's own timer and hand back its callbacks, so an expiry case fires the
+ * real production deadline on demand instead of waiting 25 minutes or doubling `withSearchDeadline`.
+ * Every other timer in the process stays real — the delay is the discriminator.
+ *
+ * This only works because the deadline is a hand-rolled `AbortController` + `setTimeout`;
+ * `AbortSignal.timeout` schedules on a native timer the spy never sees. Restore with
+ * `vi.restoreAllMocks()`.
+ */
+export function captureDeadlineTimers(): Array<() => void> {
+  const captured: Array<() => void> = [];
+  const original = globalThis.setTimeout;
+  vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, delay?: number, ...rest: unknown[]) => {
+    if (delay !== SEARCH_DEADLINE_MS) return original(fn as never, delay as never, ...rest as never[]);
+    captured.push(fn);
+    const parked = original(() => { /* never fires within a test */ }, 2 ** 30);
+    parked.unref();
+    return parked;
+  }) as never);
+  return captured;
 }

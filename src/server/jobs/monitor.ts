@@ -12,7 +12,7 @@ import {
 import type { ClientStatus } from '@shared/schemas/activity.js';
 import type { DownloadClientService } from '../services';
 import type { NotifierService } from '../services';
-import { retrySearch, type RetrySearchDeps } from '../services/retry-search.js';
+import { retrySearch, RETRY_ERROR_MESSAGE, type RetrySearchDeps } from '../services/retry-search.js';
 import type { BlacklistService } from '../services';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import type { DownloadStatus } from '@shared/schemas/activity.js';
@@ -386,13 +386,15 @@ async function handleDownloadFailure(
         await recoverBookStatus(db, bookId, downloadId, log, broadcaster);
         return 'no_candidates';
       case 'retry_error':
-        await db.update(downloads).set({ errorMessage: 'Retry failed - will retry next cycle' }).where(eq(downloads.id, downloadId));
-        // Preserve status so the next monitor cycle can retry.
+        // No automatic retry follows: `transitionDownloadState` already wrote clientStatus='failed',
+        // which `clientPolledDownloadCondition()` excludes from every later poll, and the book keeps
+        // its grab-time status because this arm skips `recoverBookStatus`. Only the operator can.
+        await db.update(downloads).set({ errorMessage: RETRY_ERROR_MESSAGE }).where(eq(downloads.id, downloadId));
         return 'retry_error';
     }
   } catch (error: unknown) {
     log.error({ downloadId, bookId, error: serializeError(error) }, 'handleDownloadFailure unexpected error');
-    await db.update(downloads).set({ errorMessage: 'Retry failed - will retry next cycle' }).where(eq(downloads.id, downloadId));
+    await db.update(downloads).set({ errorMessage: RETRY_ERROR_MESSAGE }).where(eq(downloads.id, downloadId));
     return 'retry_error';
   }
 }
