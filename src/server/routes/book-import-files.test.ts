@@ -142,6 +142,20 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
   // ── AC15: schema ──────────────────────────────────────────────────────────────────────────────
 
   describe('schema validation', () => {
+    /**
+     * #2476 AC10 — a validator rejection never reaches the handler, so it keeps Fastify's preserved
+     * envelope from `errorHandlerPlugin` and carries NO `code`. That absence is the whole
+     * discriminator now that both classes of refusal answer 400: a status assertion alone cannot
+     * tell a malformed request from a business refusal, and would stay green if someone routed
+     * validation failures through the handler's envelope.
+     */
+    function expectValidationEnvelope(res: Awaited<ReturnType<typeof post>>): void {
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ statusCode: 400, error: 'Bad Request' });
+      expect(typeof res.json().message).toBe('string');
+      expect(res.json()).not.toHaveProperty('code');
+    }
+
     it.each(['copy', 'move'] as const)('accepts mode=%s', async (mode) => {
       const id = await seedBook();
       const res = await post(id, { path: seedAudioDir(`src-${mode}`), mode });
@@ -151,14 +165,14 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
     it('rejects an OMITTED mode — pointer adoption is not offered on this surface', async () => {
       const id = await seedBook();
       const res = await post(id, { path: seedAudioDir() });
-      expect(res.statusCode).toBe(400);
+      expectValidationEnvelope(res);
       await expectUntouched(id);
     });
 
     it('rejects an unknown mode', async () => {
       const id = await seedBook();
       const res = await post(id, { path: seedAudioDir(), mode: 'teleport' });
-      expect(res.statusCode).toBe(400);
+      expectValidationEnvelope(res);
       await expectUntouched(id);
     });
 
@@ -169,8 +183,15 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
     ])('rejects %s', async (_label, body) => {
       const id = await seedBook();
       const res = await post(id, body);
-      expect(res.statusCode).toBe(400);
+      expectValidationEnvelope(res);
       await expectUntouched(id);
+    });
+
+    // Params land on the same branch as body: a non-numeric `:id` never reaches the 404 guard, so
+    // this 400 must not be mistakable for `book_not_found`'s envelope either.
+    it('rejects a non-numeric :id with the validation envelope, not a business refusal', async () => {
+      const res = await post('not-a-number', { path: seedAudioDir('bad-id-src'), mode: 'copy' });
+      expectValidationEnvelope(res);
     });
   });
 
@@ -187,7 +208,7 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
       const id = await seedBook({ path: join(libraryRoot, 'Existing'), status: 'imported' });
       const res = await post(id, { path: seedAudioDir(), mode: 'copy' });
       expect(res.statusCode).toBe(409);
-      expect(res.json().error).toBe('book_has_file');
+      expect(res.json().code).toBe('book_has_file');
     });
 
     it.each(BOOK_STATUSES)('classifies a fileless %s book against the status matrix', async (status) => {
@@ -198,7 +219,10 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
         expect(res.statusCode).toBe(202);
       } else {
         expect(res.statusCode).toBe(409);
-        expect(res.json().error).toBe('status_not_attachable');
+        expect(res.json().code).toBe('status_not_attachable');
+        // #2476 T3 — the sentence names the status it refused, so a hard-coded generic one reds
+        // here for every member of the matrix rather than only for the one status a spot check picks.
+        expect(res.json().error).toBe(`A book with status "${status}" cannot receive a manually-obtained file`);
         await expectUntouched(id, status);
       }
     });
@@ -208,7 +232,7 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
       const id = await seedBook({ status: 'downloading' });
       const res = await post(id, { path: seedAudioDir(), mode: 'copy' });
       expect(res.statusCode).toBe(409);
-      expect(res.json().error).toBe('status_not_attachable');
+      expect(res.json().code).toBe('status_not_attachable');
       await expectUntouched(id, 'downloading');
     });
 
@@ -217,7 +241,7 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
       await db.insert(importJobs).values({ bookId: id, type: 'manual', status: 'pending', metadata: '{}' });
       const res = await post(id, { path: seedAudioDir(), mode: 'copy' });
       expect(res.statusCode).toBe(409);
-      expect(res.json().error).toBe('already_importing');
+      expect(res.json().code).toBe('already_importing');
       const row = await rowOf(id);
       expect(row.status).toBe('wanted');
       expect(row.path).toBeNull();
@@ -239,7 +263,7 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
       writeFileSync(join(inside, 'book.m4b'), Buffer.alloc(1024));
       const res = await post(id, { path: inside, mode: 'copy' });
       expect(res.statusCode).toBe(400);
-      expect(res.json().error).toBe('source_inside_library');
+      expect(res.json().code).toBe('source_inside_library');
       await expectUntouched(id);
     });
 
@@ -247,7 +271,122 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
     it('answers book_has_file, not status_not_attachable, when a book trips both', async () => {
       const id = await seedBook({ path: join(libraryRoot, 'Existing'), status: 'imported' });
       const res = await post(id, { path: seedAudioDir(), mode: 'copy' });
-      expect(res.json().error).toBe('book_has_file');
+      expect(res.json().code).toBe('book_has_file');
+    });
+  });
+
+  // ── #2476: the envelope every handler-emitted refusal answers ────────────────────────────────
+
+  /**
+   * `ApiError` prefers `body.error` over `body.message`, so the operator only ever reads `error` —
+   * the sentence lives there and the machine token in `code`. Every case asserts the WHOLE body with
+   * `toEqual`, which is what makes a re-added `message` (the field that used to strand the useful
+   * copy) fail rather than pass unnoticed.
+   */
+  describe('error envelope (#2476)', () => {
+    it('404 — unknown book id', async () => {
+      const res = await post(999_999, { path: seedAudioDir('env-404'), mode: 'copy' });
+
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toEqual({ error: 'Book not found', code: 'book_not_found' });
+    });
+
+    it('409 — the book already holds a library folder', async () => {
+      const id = await seedBook({ path: join(libraryRoot, 'Existing'), status: 'imported' });
+
+      const res = await post(id, { path: seedAudioDir('env-has-file'), mode: 'copy' });
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toEqual({
+        error: 'This book already has a library folder',
+        code: 'book_has_file',
+      });
+    });
+
+    it('409 — a status that cannot receive a file, with the status interpolated', async () => {
+      const id = await seedBook({ status: 'importing' });
+
+      const res = await post(id, { path: seedAudioDir('env-status'), mode: 'copy' });
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toEqual({
+        error: 'A book with status "importing" cannot receive a manually-obtained file',
+        code: 'status_not_attachable',
+      });
+      await expectUntouched(id, 'importing');
+    });
+
+    it('409 — the pre-check active-job arm', async () => {
+      const id = await seedBook();
+      await db.insert(importJobs).values({ bookId: id, type: 'manual', status: 'pending', metadata: '{}' });
+
+      const res = await post(id, { path: seedAudioDir('env-active'), mode: 'copy' });
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toEqual({
+        error: 'An import is already in progress for this book',
+        code: 'already_importing',
+      });
+    });
+
+    // The lost-race arm is a SECOND send site with its own literal, so the pre-check case above
+    // cannot speak for it: a migration that missed this one leaves the raced operator on a token.
+    it('409 — the lost-race arm reached through AttachGuardMissed', async () => {
+      const id = await seedBook();
+      vi.spyOn(bookService, 'getById').mockImplementation(async () => {
+        const row = await rowOf(id);
+        await db.update(books).set({ status: 'downloading' }).where(eq(books.id, id));
+        return { ...row, authors: [], narrators: [] } as never;
+      });
+
+      const res = await post(id, { path: seedAudioDir('env-race'), mode: 'copy' });
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toEqual({
+        error: 'An import is already in progress for this book',
+        code: 'already_importing',
+      });
+    });
+
+    it('400 — a containment refusal forwards the classifier\'s own sentence', async () => {
+      const id = await seedBook();
+      const inside = join(libraryRoot, 'Managed');
+      mkdirSync(inside, { recursive: true });
+      writeFileSync(join(inside, 'book.m4b'), Buffer.alloc(1024));
+
+      const res = await post(id, { path: inside, mode: 'copy' });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toEqual({
+        error: 'Source path is inside the library root — it is already managed by the library',
+        code: 'source_inside_library',
+      });
+      // T2: `toEqual` treats an explicitly-undefined `message` as equal, so key absence needs its
+      // own assertion — this is the field whose loss the operator actually feels.
+      expect(res.json()).not.toHaveProperty('message');
+    });
+
+    it('400 — an inadmissible source forwards the admission reason', async () => {
+      const id = await seedBook();
+
+      const res = await post(id, { path: join(dir, 'env-missing'), mode: 'copy' });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toEqual({
+        error: 'Source path does not exist or could not be read',
+        code: 'source_invalid',
+      });
+      expect(res.json()).not.toHaveProperty('message');
+    });
+
+    it('leaks neither error nor code onto the accepted response', async () => {
+      const id = await seedBook();
+
+      const res = await post(id, { path: seedAudioDir('env-ok'), mode: 'copy' });
+
+      expect(res.statusCode).toBe(202);
+      const [job] = await db.select().from(importJobs);
+      expect(res.json()).toEqual({ jobId: job!.id });
     });
   });
 
@@ -267,7 +406,7 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
       const res = await post(id, { path: '/', mode: 'move' });
 
       expect(res.statusCode).toBe(400);
-      expect(res.json().error).toBe('source_is_filesystem_root');
+      expect(res.json().code).toBe('source_is_filesystem_root');
       // The direct observation, not a wall-clock bound: `hasReadableAudio` returns on the first
       // readable audio file it meets, so an admission-first route can finish fast on CI and still
       // walk an operator's whole filesystem.
@@ -282,7 +421,7 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
       const res = await post(id, { path: dir, mode: 'move' });
 
       expect(res.statusCode).toBe(400);
-      expect(res.json().error).toBe('source_contains_library');
+      expect(res.json().code).toBe('source_contains_library');
       await expectUntouched(id);
     });
 
@@ -294,7 +433,7 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
       const res = await post(id, { path: libraryRoot, mode: 'copy' });
 
       expect(res.statusCode).toBe(400);
-      expect(res.json().error).toBe('source_inside_library');
+      expect(res.json().code).toBe('source_inside_library');
       await expectUntouched(id);
     });
 
@@ -306,7 +445,7 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
       const rootRes = await post(rooted, { path: '/', mode: 'move' });
 
       expect(rootRes.statusCode).toBe(400);
-      expect(rootRes.json().error).toBe('source_is_filesystem_root');
+      expect(rootRes.json().code).toBe('source_is_filesystem_root');
       await expectUntouched(rooted);
 
       const normal = await seedBook();
@@ -322,18 +461,18 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
       seedManagedBookInLibrary();
 
       const insideRes = await post(await seedBook(), { path: join(libraryRoot, 'Managed Book'), mode: 'copy' });
-      expect(insideRes.json()).toMatchObject({
-        error: 'source_inside_library',
-        message: 'Source path is inside the library root — it is already managed by the library',
+      expect(insideRes.json()).toEqual({
+        code: 'source_inside_library',
+        error: 'Source path is inside the library root — it is already managed by the library',
       });
 
       const containsRes = await post(await seedBook(), { path: dir, mode: 'copy' });
-      expect(containsRes.json().error).toBe('source_contains_library');
-      expect(containsRes.json().message).toMatch(/contains the library root/i);
+      expect(containsRes.json().code).toBe('source_contains_library');
+      expect(containsRes.json().error).toMatch(/contains the library root/i);
 
       const rootRes = await post(await seedBook(), { path: '/', mode: 'copy' });
-      expect(rootRes.json().error).toBe('source_is_filesystem_root');
-      expect(rootRes.json().message).toMatch(/filesystem root/i);
+      expect(rootRes.json().code).toBe('source_is_filesystem_root');
+      expect(rootRes.json().error).toMatch(/filesystem root/i);
     });
 
     /**
@@ -352,14 +491,14 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
         const id = await seedBook({ path: join(libraryRoot, 'Existing'), status: 'imported' });
         const res = await post(id, { path: '/', mode: 'move' });
         expect(res.statusCode).toBe(409);
-        expect(res.json().error).toBe('book_has_file');
+        expect(res.json().code).toBe('book_has_file');
       });
 
       it('answers status_not_attachable, not a containment refusal', async () => {
         const id = await seedBook({ status: 'downloading' });
         const res = await post(id, { path: dir, mode: 'move' });
         expect(res.statusCode).toBe(409);
-        expect(res.json().error).toBe('status_not_attachable');
+        expect(res.json().code).toBe('status_not_attachable');
         await expectUntouched(id, 'downloading');
       });
 
@@ -368,7 +507,7 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
         await db.insert(importJobs).values({ bookId: id, type: 'manual', status: 'pending', metadata: '{}' });
         const res = await post(id, { path: '/', mode: 'move' });
         expect(res.statusCode).toBe(409);
-        expect(res.json().error).toBe('already_importing');
+        expect(res.json().code).toBe('already_importing');
         expect((await rowOf(id)).status).toBe('wanted');
         expect(nudge).not.toHaveBeenCalled();
       });
@@ -397,30 +536,39 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
       expect(res.statusCode).toBe(202);
     });
 
-    async function expectSourceInvalid(sourcePath: string): Promise<void> {
+    /**
+     * #2476 T5 — `expectedReason`, where given, is `admitAttachSource`'s own sentence for that
+     * class. Asserting the DISTINCT text is what catches a route that answers one hard-coded
+     * fallback for every inadmissible source; a `typeof === 'string'` check cannot.
+     */
+    async function expectSourceInvalid(sourcePath: string, expectedReason?: string): Promise<void> {
       const id = await seedBook();
       const res = await post(id, { path: sourcePath, mode: 'copy' });
       expect(res.statusCode).toBe(400);
-      expect(res.json().error).toBe('source_invalid');
-      expect(typeof res.json().message).toBe('string');
+      expect(res.json().code).toBe('source_invalid');
+      if (expectedReason !== undefined) {
+        expect(res.json().error).toBe(expectedReason);
+      } else {
+        expect(typeof res.json().error).toBe('string');
+      }
       await expectUntouched(id);
     }
 
     it('refuses a nonexistent path', async () => {
-      await expectSourceInvalid(join(dir, 'nope'));
+      await expectSourceInvalid(join(dir, 'nope'), 'Source path does not exist or could not be read');
     });
 
     it('refuses a hidden root', async () => {
       const hidden = join(dir, '.stuff');
       mkdirSync(hidden, { recursive: true });
       writeFileSync(join(hidden, 'book.m4b'), Buffer.alloc(1024));
-      await expectSourceInvalid(hidden);
+      await expectSourceInvalid(hidden, 'Source path is hidden (leading dot) and cannot be imported');
     });
 
     it('refuses a direct file with an unsupported extension', async () => {
       const file = join(dir, 'notes.txt');
       writeFileSync(file, 'hello');
-      await expectSourceInvalid(file);
+      await expectSourceInvalid(file, 'Source file is not a supported audio format');
     });
 
     // Load-bearing: assertCopyVerified(0, 0) does not throw, so without this refusal the book
@@ -429,7 +577,7 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
       const root = join(dir, 'audio-empty');
       mkdirSync(join(root, 'sub'), { recursive: true });
       writeFileSync(join(root, 'sub', 'readme.txt'), 'hello');
-      await expectSourceInvalid(root);
+      await expectSourceInvalid(root, 'Source directory contains no readable supported audio files');
     });
 
     // Neither a regular file nor a directory. The real fixture is Linux-only; the stubbed case
@@ -724,7 +872,7 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
       const res = await post(id, { path: source, mode: 'copy' });
 
       expect(res.statusCode).toBe(409);
-      expect(res.json().error).toBe('already_importing');
+      expect(res.json().code).toBe('already_importing');
       expect((await rowOf(id)).status).toBe('downloading');
       expect(await db.select().from(importJobs)).toHaveLength(0);
       expect(nudge).not.toHaveBeenCalled();
@@ -766,7 +914,7 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
       const res = await post(id, { path: source, mode: 'copy' });
 
       expect(res.statusCode).toBe(409);
-      expect(res.json().error).toBe('already_importing');
+      expect(res.json().code).toBe('already_importing');
       expect((await rowOf(id)).status).toBe('wanted');
       expect(nudge).not.toHaveBeenCalled();
     });
