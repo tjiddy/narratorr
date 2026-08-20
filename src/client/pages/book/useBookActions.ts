@@ -17,7 +17,8 @@ function useImportFilesMutation(bookId: number, invalidateBookQueries: () => voi
       toast.success('Import queued');
     },
     onError: (error: Error) => {
-      // Surface the server's own refusal message — it names which condition failed.
+      // Surface the server's own refusal sentence — the route puts it in `error`, the field
+      // `ApiError` prefers, so the toast names the condition that failed rather than its code.
       toast.error(`Import files failed: ${getErrorMessage(error)}`);
     },
   });

@@ -3,7 +3,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockBook, createMockSettings } from '@/__tests__/factories';
-import { api, RetagDependencyNotConfiguredError } from '@/lib/api';
+import { api, ApiError, RetagDependencyNotConfiguredError } from '@/lib/api';
 import { BookDetails } from './BookDetails';
 import type { BookWithAuthor } from '@/lib/api';
 import type { MetadataBook } from './helpers';
@@ -2029,19 +2029,29 @@ describe('BookDetails — Import Files (#2435)', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Import' })).not.toBeInTheDocument());
   });
 
-  it('surfaces the server message in an error toast and leaves the picker open', async () => {
+  /**
+   * #2476 — the refusal arrives as a real `ApiError` carrying the route's body, the only shape that
+   * can observe the field the client actually reads: `ApiError` prefers `body.error` over
+   * `body.message`, so a route that puts its token there toasts `book_has_file` at the operator. A
+   * `new Error(<sentence>)` sets `.message` directly and stays green against exactly that defect.
+   */
+  it.each([
+    [409, 'This book already has a library folder', 'book_has_file'],
+    [400, 'Source path is hidden (leading dot) and cannot be imported', 'source_invalid'],
+  ])('surfaces the %s refusal sentence in an error toast, never its code', async (status, sentence, code) => {
     const user = userEvent.setup();
-    mockImport().mockRejectedValue(new Error('Source path is hidden (leading dot)'));
+    mockImport().mockRejectedValue(new ApiError(status, { error: sentence, code }));
     renderBookDetails({ path: null, status: 'wanted' });
 
     await openPicker(user);
     await user.click(screen.getByRole('button', { name: 'Use this folder' }));
     await user.click(screen.getByRole('button', { name: 'Import' }));
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(
-      expect.stringContaining('Source path is hidden (leading dot)'),
-    ));
-    // Back to idle rather than stuck pending, so the user can correct and retry.
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(`Import files failed: ${sentence}`));
+    expect(vi.mocked(toast.error).mock.calls.flat().join(' ')).not.toContain(code);
+    // Back to idle rather than stuck pending, so the user can correct and retry — and still open,
+    // since correcting the source is the recovery.
     expect(screen.getByRole('button', { name: 'Import' })).toBeEnabled();
+    expect(screen.getByText('Import Files', { selector: 'h2' })).toBeInTheDocument();
   });
 });
