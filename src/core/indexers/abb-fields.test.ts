@@ -3,7 +3,7 @@ import * as cheerio from 'cheerio';
 import { readAbbMetadata } from './abb-fields.js';
 
 /** The structured block ABB annotates with schema.org microdata, as it appears on a real post. */
-function metadataBlock(opts: { author?: string | string[]; narrator?: string | string[]; format?: string } = {}): string {
+function metadataBlock(opts: { author?: string | string[]; narrator?: string | string[]; format?: string; bitrate?: string } = {}): string {
   // ABB renders several names as sibling anchors separated by a literal ', ' — the shape that makes
   // `.text()` on the selection concatenate them into one name.
   const anchors = (names: string | string[], cls: string, href: string): string =>
@@ -20,6 +20,9 @@ function metadataBlock(opts: { author?: string | string[]; narrator?: string | s
   }
   if (opts.format !== undefined) {
     parts.push(`Format: <span class="format" itemprop="encodingFormat">${opts.format}</span>`);
+  }
+  if (opts.bitrate !== undefined) {
+    parts.push(`Bitrate: <span class="bitrate" itemprop="bitrate">${opts.bitrate}</span>`);
   }
   return `<p>${parts.join('<br>')}</p>`;
 }
@@ -162,7 +165,7 @@ describe('readAbbMetadata', () => {
     const flat = '<p>Written by <span class="author" itemprop="author">Carol Cole</span><br>Read by <span class="narrator" itemprop="author">James MacNaughton</span><br>Format: <span class="format" itemprop="encodingFormat">M4B</span><br>Bitrate: <span class="bitrate" itemprop="bitrate">128 Kbps</span><br><span class="is_abridged">Unabridged</span></p>';
     const fields = read(flat);
 
-    expect(fields).toEqual({ author: 'Carol Cole', narrator: 'James MacNaughton', format: 'm4b' });
+    expect(fields).toEqual({ author: 'Carol Cole', narrator: 'James MacNaughton', format: 'm4b', bitrateKbps: 128 });
   });
 
   it('falls back to the annotated spans\' immediate parent when the block is not a paragraph', () => {
@@ -251,5 +254,113 @@ describe('readAbbMetadata — plain-text info lines (no microdata)', () => {
     // Text-only fields still fill in beside the microdata.
     expect(fields.language).toBe('spanish');
     expect(fields.size).toBe(Math.round(901.51 * 1024 * 1024));
+  });
+
+  describe('bitrate (#2504)', () => {
+    /** The live row's own bitrate slot; ABB writes `?` there when the uploader left it blank. */
+    const withBitrate = (value: string): string => LIVE_ROW.replace('>?<', `>${value}<`);
+
+    /**
+     * After the text lines, not before: the info-line read takes the FIRST `Bitrate:` in the
+     * flattened row, so a block placed above would let a text-line read pass as a microdata win.
+     */
+    const withMicrodata = (row: string, block: string): string => row.replace(' MBs</p>', ` MBs</p>${block}`);
+
+    it('reads the bitrate alongside the other info-line fields', () => {
+      expect(readRow(withBitrate('128 Kbps'))).toEqual({
+        language: 'spanish',
+        format: 'm4b',
+        size: Math.round(901.51 * 1024 * 1024),
+        rawSize: '901.51 MBs',
+        bitrateKbps: 128,
+      });
+    });
+
+    // Same number throughout, so the table isolates spelling: only the unit's shape varies.
+    it.each(['128 Kbps', '128 kbps', '128Kbps', '128 KBPS'])('reads %s as 128', (value) => {
+      expect(readRow(withBitrate(value)).bitrateKbps).toBe(128);
+    });
+
+    // The case table alone cannot tell a real capture from a hardcoded 128.
+    it('reads a differently-valued bitrate rather than echoing a constant', () => {
+      expect(readRow(withBitrate('64 Kbps')).bitrateKbps).toBe(64);
+    });
+
+    it.each([
+      ['?', 'the placeholder the live fixture carries'],
+      ['Variable', 'a word where a number belongs'],
+      ['VBR', 'the abbreviation of the same'],
+      ['Unknown', 'the uploader admitting it'],
+      ['', 'an empty span'],
+      ['0 Kbps', 'a value no real release has, and one a falsy check would read as unknown'],
+      ['64.5 Kbps', 'a fraction, which must not round or truncate'],
+      ['1,4 Kbps', 'a malformed grouping, the #2316 thousandth-scale trap'],
+    ])('yields no bitrateKbps key for %s — %s', (value) => {
+      expect(readRow(withBitrate(value))).not.toHaveProperty('bitrateKbps');
+    });
+
+    it('yields no bitrateKbps key for a bare Bitrate: with no value after it', () => {
+      const bare = LIVE_ROW.replace('Bitrate: <span style=\'color:#a00;\'>?</span>', 'Bitrate:');
+
+      expect(readRow(bare)).not.toHaveProperty('bitrateKbps');
+    });
+
+    it('normalizes an English-grouped bitrate instead of truncating it to its first group', () => {
+      const fields = readRow(withBitrate('1,411 Kbps'));
+
+      expect(fields.bitrateKbps).toBe(1411);
+      // The named trap: bare parseFloat('1,411') is 1, which is a plausible-looking number.
+      expect(fields.bitrateKbps).not.toBe(1);
+    });
+
+    /**
+     * The row's `<br>`s carry no surrounding whitespace, so the flattened text reads
+     * `Bitrate: 128 KbpsFile Size: 901.51 MBs` — the shape a `([^\n]+)` capture would bleed.
+     */
+    it('reads both bitrate and size out of a run with no separator between them', () => {
+      const fields = readRow(withBitrate('128 Kbps'));
+
+      expect(fields.bitrateKbps).toBe(128);
+      expect(fields.size).toBe(Math.round(901.51 * 1024 * 1024));
+    });
+
+    it('leaves size intact when the bitrate slot is a placeholder in that same run', () => {
+      const fields = readRow(LIVE_ROW.replace('901.51', '468.6'));
+
+      expect(fields).not.toHaveProperty('bitrateKbps');
+      expect(fields.size).toBe(Math.round(468.6 * 1024 * 1024));
+    });
+
+    it('lets a microdata bitrate win over the text line', () => {
+      const row = withMicrodata(withBitrate('64 Kbps'), metadataBlock({ bitrate: '128 Kbps' }));
+
+      expect(readRow(row).bitrateKbps).toBe(128);
+    });
+
+    // Without this control the assertion above is satisfiable by "always take the microdata".
+    it('falls back to the text line when the microdata block carries no bitrate span', () => {
+      const row = withMicrodata(withBitrate('64 Kbps'), metadataBlock({ format: 'M4B' }));
+
+      expect(readRow(row).bitrateKbps).toBe(64);
+    });
+
+    it('fills from the text line when the microdata bitrate is non-numeric', () => {
+      const row = withMicrodata(withBitrate('64 Kbps'), metadataBlock({ bitrate: 'Variable' }));
+
+      expect(readRow(row).bitrateKbps).toBe(64);
+    });
+
+    it('takes the first bitrate of a multi-file post', () => {
+      expect(readRow(withBitrate('64 Kbps / 128 Kbps')).bitrateKbps).toBe(64);
+    });
+
+    it('reads only the scoped row when two rows carry different bitrates', () => {
+      const first = withBitrate('64 Kbps');
+      const second = withBitrate('128 Kbps').replace('id="row"', 'id="second"');
+      const $ = cheerio.load(`<html><body>${first}${second}</body></html>`);
+
+      expect(readAbbMetadata($, $('#second')).bitrateKbps).toBe(128);
+      expect(readAbbMetadata($, $('#row')).bitrateKbps).toBe(64);
+    });
   });
 });

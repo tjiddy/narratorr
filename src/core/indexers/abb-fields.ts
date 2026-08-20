@@ -14,6 +14,7 @@ export interface AbbMetadataFields {
   language?: string;
   size?: number;
   rawSize?: string;
+  bitrateKbps?: number;
 }
 
 /** The post's own content. ABB writes the `Shared by:` byline outside it, in the post's meta block. */
@@ -58,11 +59,34 @@ const ABB_SIZE_MULTIPLIERS: Record<string, number> = {
   TBS: 1024 * 1024 * 1024 * 1024,
 };
 
-function readAbbInfoLines(text: string): Pick<AbbMetadataFields, 'language' | 'format' | 'size' | 'rawSize'> {
+/**
+ * Digits-and-commas plus a REQUIRED `kbps`: self-terminating, so the flattened run
+ * `Bitrate: 128 KbpsFile Size: 901.51 MBs` cannot bleed the next label into the value. The class
+ * excludes `.` deliberately — a fractional `64.5 Kbps` is absent rather than rounded or truncated.
+ */
+const BITRATE_LINE = /Bitrate:\s*([\d,]+)\s*kbps/i;
+/** The microdata span holds the value alone, so the label anchor goes and `^…$` takes its place. */
+const BITRATE_VALUE = /^([\d,]+)\s*kbps$/i;
+
+/**
+ * ABB writes `?`, `Variable`, `VBR` or `Unknown` where an uploader left the bitrate blank, and
+ * renders large values grouped. Everything that is not a whole positive count of kbps folds to
+ * absence: `0` would read as a known-and-zero release, and bare `parseFloat('1,411')` is 1 (#2316).
+ */
+function normalizeBitrateKbps(token: string | undefined): number | undefined {
+  if (token === undefined) return undefined;
+  const normalized = normalizeGrouping(token);
+  if (normalized === undefined) return undefined;
+  const kbps = Number(normalized);
+  return Number.isInteger(kbps) && kbps > 0 ? kbps : undefined;
+}
+
+function readAbbInfoLines(text: string): Pick<AbbMetadataFields, 'language' | 'format' | 'size' | 'rawSize' | 'bitrateKbps'> {
   // Case-anchored: the flattened row reads "Language: SpanishKeywords: …" (zero-width <br>), so
   // the capture must stop at the next label's capital rather than eating it.
   const language = normalizeLanguage(/Language:\s*([A-Z][a-z]+)/.exec(text)?.[1]);
   const format = normalizeFormat(/Format:\s*([A-Za-z0-9]+)/.exec(text)?.[1]);
+  const bitrateKbps = normalizeBitrateKbps(BITRATE_LINE.exec(text)?.[1]);
 
   let size: number | undefined;
   let rawSize: string | undefined;
@@ -82,10 +106,11 @@ function readAbbInfoLines(text: string): Pick<AbbMetadataFields, 'language' | 'f
     ...(format !== undefined && { format }),
     ...(size !== undefined && { size }),
     ...(rawSize !== undefined && { rawSize }),
+    ...(bitrateKbps !== undefined && { bitrateKbps }),
   };
 }
 
-function readMicrodataBlock($: CheerioAPI, scope?: CheerioSelection): Pick<AbbMetadataFields, 'author' | 'narrator' | 'format'> {
+function readMicrodataBlock($: CheerioAPI, scope?: CheerioSelection): Pick<AbbMetadataFields, 'author' | 'narrator' | 'format' | 'bitrateKbps'> {
   const inScope = (selector: string) => (scope ? scope.find(selector) : $(selector));
   const region = inScope(CONTENT_REGION).first();
   const inRegion = (selector: string) => (region.length > 0 ? region.find(selector) : inScope(selector));
@@ -119,10 +144,12 @@ function readMicrodataBlock($: CheerioAPI, scope?: CheerioSelection): Pick<AbbMe
   const author = readAll('span.author');
   const narrator = readAll('span.narrator');
   const format = normalizeFormat(readOne('span.format'));
+  const bitrateKbps = normalizeBitrateKbps(BITRATE_VALUE.exec(readOne('span.bitrate') ?? '')?.[1]);
 
   return {
     ...(author !== undefined && { author }),
     ...(narrator !== undefined && { narrator }),
     ...(format !== undefined && { format }),
+    ...(bitrateKbps !== undefined && { bitrateKbps }),
   };
 }

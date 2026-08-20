@@ -56,6 +56,9 @@ export const searchResultSchema = z.object({
   isFreeleech: z.boolean().optional(),
   isVipOnly: z.boolean().optional(),
   format: z.string().optional(),
+  // Kilobits per second. Unbounded above on purpose — a lossless listing legitimately reports
+  // 1411 — so `bitrateField` (32-512, which bounds OUR encoder's output) must not be reused here.
+  bitrateKbps: z.number().int().positive().optional(),
   // A contract we own, so .optional() is correct here; the tolerant .nullish() belongs to the
   // MAM response schema. Both halves are required together — a partial pair has no meaning.
   unsatisfied: z.object({ count: z.number(), limit: z.number() }).optional(),

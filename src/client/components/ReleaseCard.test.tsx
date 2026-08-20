@@ -89,6 +89,18 @@ describe('ReleaseCard', () => {
       expect(screen.queryByText('mp3')).not.toBeInTheDocument();
     });
 
+    it('renders the bitrate with a lowercase unit, matching the format badge beside it', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(<ReleaseCard {...defaultProps} result={{ ...baseResult, bitrateKbps: 128 }} />);
+      expect(screen.getByText('128 kbps')).toBeInTheDocument();
+    });
+
+    it('renders no bitrate badge when the indexer supplied none', () => {
+      mockCalculateQuality.mockReturnValue(null);
+      renderWithProviders(<ReleaseCard {...defaultProps} result={baseResult} />);
+      expect(screen.queryByText(/kbps/i)).not.toBeInTheDocument();
+    });
+
     it('does not render badges when flags are undefined', () => {
       mockCalculateQuality.mockReturnValue(null);
       renderWithProviders(<ReleaseCard {...defaultProps} />);
@@ -264,12 +276,12 @@ describe('ReleaseCard', () => {
       expect(screen.getByText(IN_LIBRARY)).toBeInTheDocument();
     });
 
-    it('badge coexists with freeleech, VIP, language, and quality badges', () => {
+    it('badge coexists with freeleech, VIP, language, format, bitrate and quality badges', () => {
       mockCalculateQuality.mockReturnValue({ tier: 'Good', mbPerHour: 64 });
       renderWithProviders(
         <ReleaseCard
           {...defaultProps}
-          result={{ ...baseResult, guid: 'match-guid', isFreeleech: true, isVipOnly: true, language: 'English' }}
+          result={{ ...baseResult, guid: 'match-guid', isFreeleech: true, isVipOnly: true, language: 'English', format: 'm4b', bitrateKbps: 128, size: 500 * 1024 * 1024 }}
           lastGrabGuid="match-guid"
           bookDurationSeconds={36000}
         />,
@@ -278,6 +290,9 @@ describe('ReleaseCard', () => {
       expect(screen.getByText('Freeleech')).toBeInTheDocument();
       expect(screen.getByText('VIP')).toBeInTheDocument();
       expect(screen.getByText('english')).toBeInTheDocument();
+      expect(screen.getByText('m4b')).toBeInTheDocument();
+      expect(screen.getByText('128 kbps')).toBeInTheDocument();
+      expect(screen.getByText('500 MB')).toBeInTheDocument();
       expect(screen.getByText(/Good · 64 MB\/hr/)).toBeInTheDocument();
     });
   });

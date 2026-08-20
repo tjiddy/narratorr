@@ -217,6 +217,40 @@ describe('searchResultSchema — rawSize (#2316)', () => {
   });
 });
 
+describe('searchResultSchema — bitrateKbps (#2504)', () => {
+  const base = { title: 'Jurassic Park', protocol: 'torrent', indexer: 'AudioBookBay' };
+
+  it('accepts and round-trips a kbps integer', () => {
+    const result = searchResultSchema.safeParse({ ...base, bitrateKbps: 64 });
+    expect(result.success).toBe(true);
+    expect(result.data?.bitrateKbps).toBe(64);
+  });
+
+  it('accepts a result without the key and leaves it off the parsed output', () => {
+    const result = searchResultSchema.safeParse(base);
+    expect(result.success).toBe(true);
+    expect(result.data).not.toHaveProperty('bitrateKbps');
+  });
+
+  // Deliberately unbounded above: a lossless listing reports 1411, which `bitrateField`'s 32-512
+  // encoder range would reject. This is the case that reds if someone "tidies" the two together.
+  it('accepts a lossless-scale value with no upper bound', () => {
+    const result = searchResultSchema.safeParse({ ...base, bitrateKbps: 1411 });
+    expect(result.success).toBe(true);
+    expect(result.data?.bitrateKbps).toBe(1411);
+  });
+
+  it.each<[string | number, string]>([
+    ['64 Kbps', 'a display string — what a formatting shortcut would send'],
+    [64.5, 'a fraction'],
+    [-64, 'a negative'],
+    [0, 'zero, the absence decision enforced at the wire'],
+    [NaN, 'NaN'],
+  ])('rejects %s — %s', (value) => {
+    expect(searchResultSchema.safeParse({ ...base, bitrateKbps: value }).success).toBe(false);
+  });
+});
+
 describe('searchResultSchema — unsatisfied (#2322)', () => {
   const base = { title: 'Play of Shadows', protocol: 'torrent', indexer: 'MAM' };
 

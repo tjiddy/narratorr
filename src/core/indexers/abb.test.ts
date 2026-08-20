@@ -2067,4 +2067,151 @@ describe('AudioBookBayIndexer', () => {
     });
   });
 
+  /**
+   * #2504 — the listing row's own metadata, end to end through the real adapter. `abb-fields.test.ts`
+   * pins the parse; what is pinned here is that `search()` actually surfaces it, on the two markup
+   * generations ABB serves at once, and that reading it costs no request it did not already make.
+   */
+  describe('listing-row metadata through search() (#2504)', () => {
+    const page = (...posts: string[]): string => `<html><body>${posts.join('')}</body></html>`;
+    const plainPost = (inner: string): string => `<div class="post">${inner}</div>`;
+
+    const titleBlock = (slug: string, title: string): string =>
+      `<div class="postTitle"><h2><a href="/audio-books/${slug}/" rel="bookmark">${title}</a></h2></div>`;
+
+    /**
+     * An old post, captured live 2026-08-19: no itemprop markup anywhere, `Language:` in `.postInfo`
+     * and the rest in a styled paragraph whose `<br>`s cheerio zero-widths into one run.
+     */
+    function plainRow(slug: string, title: string, opts: { bitrate?: string; size?: string } = {}): string {
+      const bitrate = opts.bitrate ?? '128 Kbps';
+      const size = opts.size ?? '901.51';
+      return plainPost([
+        titleBlock(slug, title),
+        '<div class="postInfo">Category: Adventure<br />Language: Spanish<span>Keywords: dinosaurs</span><br /></div>',
+        '<div class="postContent">',
+        `<p style='text-align:center;'>Posted: 9 Jun 2025<br />Format: <span style='color:#a00;'>M4B</span> / Bitrate: <span style='color:#a00;'>${bitrate}</span><br />File Size: <span style='color:#00f;'>${size}</span> MBs</p>`,
+        '</div>',
+      ].join(''));
+    }
+
+    /** A newer post: the schema.org block, exactly as `abb-search.html`'s first row writes it. */
+    function microdataRow(slug: string, title: string): string {
+      return plainPost([
+        titleBlock(slug, title),
+        '<div class="postContent">',
+        '<p>Written by <a href="/a/"><span class="author" itemprop="author">Michael Crichton</span></a><br>Read by <a href="/n/"><span class="narrator" itemprop="author">Scott Brick</span></a><br>Format: <span class="format" itemprop="encodingFormat">M4B</span><br>Bitrate: <span class="bitrate" itemprop="bitrate">128 Kbps</span></p>',
+        '</div>',
+      ].join(''));
+    }
+
+    /** No info lines and no microdata: the row a parse miss would be tempting to drop. */
+    const bareRow = (slug: string, title: string): string =>
+      plainPost(`${titleBlock(slug, title)}<div class="postContent"><p>Free prose only.</p></div>`);
+
+    it('carries size, rawSize, format, language and bitrate off a microdata-free row', async () => {
+      const { urls } = serveSearchPages(page(plainRow('jurassic-park', 'Parque Jurasico')));
+      const details = countDetailRequests();
+
+      const { results } = await indexer.search('test');
+
+      expect(results[0]).toMatchObject({
+        size: Math.round(901.51 * 1024 * 1024),
+        rawSize: '901.51 MBs',
+        format: 'm4b',
+        language: 'spanish',
+        bitrateKbps: 128,
+      });
+      // Both observation points: the detail counter sees only `/audio-books/:slug/`, so on its own
+      // it cannot prove the SEARCH request sequence is unchanged (F6).
+      expect(details.count).toBe(0);
+      expect(urls).toEqual([`${ABB_BASE}/?s=test&tt=1`]);
+    });
+
+    it('reads the bitrate off a microdata row without disturbing its author, narrator or format', async () => {
+      const { urls } = serveSearchPages(page(microdataRow('jurassic-park', 'Jurassic Park')));
+      const details = countDetailRequests();
+
+      const { results } = await indexer.search('test');
+
+      expect(results[0]).toMatchObject({
+        bitrateKbps: 128,
+        format: 'm4b',
+        author: 'Michael Crichton',
+        narrator: 'Scott Brick',
+      });
+      expect(details.count).toBe(0);
+      expect(urls).toEqual([`${ABB_BASE}/?s=test&tt=1`]);
+    });
+
+    it('keeps a row carrying no metadata lines at all, identity intact and counted', async () => {
+      serveSearchPages(page(bareRow('bare-row', 'Bare Row')));
+
+      const { results, parseStats } = await indexer.search('test');
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).not.toHaveProperty('bitrateKbps');
+      expect(results[0]).toMatchObject({
+        title: 'Bare Row',
+        guid: 'abb:/audio-books/bare-row/',
+        detailsUrl: `${ABB_BASE}/audio-books/bare-row/`,
+        downloadUrl: abbDetailsSentinel(`${ABB_BASE}/audio-books/bare-row/`),
+      });
+      expect(parseStats.kept).toBe(1);
+    });
+
+    // Scoping at the adapter level: `readAbbMetadata` is passed one row, but only a real two-row
+    // page proves the row loop passes the right one.
+    it('does not bleed a rich row\'s metadata onto a bare row beside it', async () => {
+      serveSearchPages(page(plainRow('rich-row', 'Rich Row'), bareRow('bare-row', 'Bare Row')));
+
+      const { results } = await indexer.search('test');
+
+      expect(results.map((r) => r.title)).toEqual(['Rich Row', 'Bare Row']);
+      expect(results[0]).toMatchObject({ bitrateKbps: 128, size: Math.round(901.51 * 1024 * 1024), language: 'spanish' });
+      expect(results[1]).not.toHaveProperty('bitrateKbps');
+      expect(results[1]).not.toHaveProperty('size');
+      expect(results[1]).not.toHaveProperty('language');
+    });
+
+    it('reads two rows\' differing bitrates independently', async () => {
+      serveSearchPages(page(
+        plainRow('slow-row', 'Slow Row', { bitrate: '64 Kbps' }),
+        plainRow('fast-row', 'Fast Row', { bitrate: '1,411 Kbps' }),
+      ));
+
+      const { results } = await indexer.search('test');
+
+      expect(results.map((r) => r.bitrateKbps)).toEqual([64, 1411]);
+    });
+
+    it('leaves the bitrate absent on a row whose value is ABB\'s ? placeholder', async () => {
+      serveSearchPages(page(plainRow('unknown-row', 'Unknown Row', { bitrate: '?' })));
+
+      const { results } = await indexer.search('test');
+
+      expect(results[0]).not.toHaveProperty('bitrateKbps');
+      // The rest of the row still reads — one blank field does not blind the release.
+      expect(results[0]).toMatchObject({ size: Math.round(901.51 * 1024 * 1024), format: 'm4b' });
+    });
+
+    /**
+     * AC9 — the shared fixture's second row is the *no format/size/bitrate* negative, not the
+     * metadata-free one: it carries `Language: English` and always has. Asserted so a future edit
+     * cannot mistake it for the bare case and quietly delete the line.
+     */
+    it('yields language but no format or bitrate for the shared fixture\'s second row', async () => {
+      serveSearchPages();
+
+      const { results } = await indexer.search('test');
+
+      expect(results).toHaveLength(2);
+      expect(results[1]).toMatchObject({ title: 'Wish You Were Here Yet?', language: 'english' });
+      expect(results[1]).not.toHaveProperty('format');
+      expect(results[1]).not.toHaveProperty('bitrateKbps');
+      // Row 1 is the microdata-bearing one, and its bitrate span is what makes the pair a contrast.
+      expect(results[0]).toMatchObject({ language: 'english', format: 'm4b', bitrateKbps: 128 });
+    });
+  });
+
 });
