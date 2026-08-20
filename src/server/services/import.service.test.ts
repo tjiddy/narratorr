@@ -2013,26 +2013,17 @@ describe('ImportService consolidation (issue #79)', () => {
     settingsService = createMockSettingsService();
   });
 
-  it('getImportContext() narrator delimiter is ", " (comma-space), not "; "', async () => {
+  // The ", "-join narrator pin moved to src/server/utils/tag-projection.test.ts with #2480: the
+  // context no longer carries a narrator projection, and the tag write reads the row directly.
+  it('getImportContext() returns authorName from junction position-0 author', async () => {
     const bookSvc = { getById: vi.fn().mockResolvedValue(makeBookWithNarrators(['Kate Reading', 'Michael Kramer'])) };
     const svc = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, bookSvc as never);
 
     db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
 
     const ctx = await svc.getImportContext(1);
-    expect(ctx.narratorStr).toBe('Kate Reading, Michael Kramer');
-    expect(ctx.narratorStr).not.toContain(';');
-  });
-
-  it('getImportContext() returns authorName from junction position-0 author', async () => {
-    const bookSvc = { getById: vi.fn().mockResolvedValue(makeBookWithNarrators([])) };
-    const svc = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, bookSvc as never);
-
-    db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-
-    const ctx = await svc.getImportContext(1);
     expect(ctx.authorName).toBe('Brandon Sanderson');
-    expect(ctx.narratorStr).toBeNull();
+    expect(ctx.book.narrators.map(n => n.name)).toEqual(['Kate Reading', 'Michael Kramer']);
   });
 
   describe('logging improvements (#229)', () => {
