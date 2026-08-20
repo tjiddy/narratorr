@@ -1,8 +1,9 @@
 import { eq, and, isNull, sql } from 'drizzle-orm';
-import type { Db } from '@db/index.js';
+import type { Db, DbOrTx } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books, bookNarrators } from '@db/schema.js';
 import { findOrCreateNarrator } from '../utils/find-or-create-person.js';
+import { rowHasNarrators } from '../services/enrichment-utils.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { isUniqueViolation } from '@shared/error-message.js';
 import { canonicalizeAsin } from '@shared/asin.js';
@@ -33,19 +34,6 @@ interface ExistingBookFields {
 
 function isAllCaps(title: string): boolean {
   return title === title.toUpperCase() && title !== title.toLowerCase();
-}
-
-// Drop narrator writes if Fix Match changed the book identity mid-run.
-async function isStillSameAsin(db: Db, bookId: number, capturedAsin: string | null): Promise<boolean> {
-  const rows = await db
-    .select({ asin: books.asin })
-    .from(books)
-    .where(eq(books.id, bookId))
-    .limit(1);
-  // A deleted row must read as stale — chaining `?? null` would make a vanished book match a
-  // null captured ASIN and send narrator inserts at a dead FK (#2446 assess).
-  const row = rows[0];
-  return row !== undefined && (row.asin ?? null) === capturedAsin;
 }
 
 // SQL equality never matches NULL; null-ASIN candidates require IS NULL.
@@ -103,8 +91,17 @@ function suppressTombstonedUpdates(
 
 type EnrichmentWriteOutcome = 'applied' | 'stale' | 'unique-conflict';
 
+interface EnrichmentWriteResult {
+  outcome: EnrichmentWriteOutcome;
+  filledNarrators: number;
+  filledGenres: number;
+  genresWritten: string[] | null;
+}
+
+const NO_WRITES = { filledNarrators: 0, filledGenres: 0, genresWritten: null } as const;
+
 /**
- * Re-read identity and tombstones in the transaction, then commit scalar and genre
+ * Re-read identity and tombstones in the transaction, then commit scalar, narrator and genre
  * writes atomically. Tombstones suppress fields without failing the pass. Genre
  * telemetry returns to the owner for post-commit execution. A raced ASIN conflict
  * rolls back and becomes a guarded failure; other errors rethrow.
@@ -118,7 +115,8 @@ async function applyEnrichmentWrites(
   updates: Record<string, unknown>,
   resolvedAsin: string | null,
   genresToFill: string[] | null,
-): Promise<{ outcome: EnrichmentWriteOutcome; filledGenres: number; genresWritten: string[] | null }> {
+  narrators: string[] | undefined,
+): Promise<EnrichmentWriteResult> {
   try {
     return await db.transaction(async (tx) => {
       const rows = await tx
@@ -131,7 +129,7 @@ async function applyEnrichmentWrites(
       // A missing row needs no branch; it drops through to the guarded update.
       if (row && (row.asin ?? null) !== capturedAsin) {
         log.debug({ bookId, asin: capturedAsin }, 'stale enrichment dropped (identity re-read)');
-        return { outcome: 'stale' as const, filledGenres: 0, genresWritten: null };
+        return { outcome: 'stale' as const, ...NO_WRITES };
       }
 
       const cleared = new Set(parseClearedFields(row?.userClearedFields ?? null, log, bookId));
@@ -145,15 +143,19 @@ async function applyEnrichmentWrites(
 
       if (scalarResult.length === 0) {
         log.debug({ bookId, asin: capturedAsin }, 'stale enrichment dropped (scalar update)');
-        return { outcome: 'stale' as const, filledGenres: 0, genresWritten: null };
+        return { outcome: 'stale' as const, ...NO_WRITES };
       }
+
+      // Only past the identity re-read and a row-returning guarded UPDATE: a junction insert can
+      // then never precede — nor outlive — the scalar write it belongs to (#2479).
+      const filledNarrators = await insertNarratorsIfEmpty(tx, log, bookId, narrators);
 
       // The transaction's identity guard scopes this service call and avoids nesting.
       if (genresToFill && !cleared.has('genres')) {
         await bookService.update(bookId, { genres: genresToFill }, { tx });
-        return { outcome: 'applied' as const, filledGenres: 1, genresWritten: genresToFill };
+        return { outcome: 'applied' as const, filledNarrators, filledGenres: 1, genresWritten: genresToFill };
       }
-      return { outcome: 'applied' as const, filledGenres: 0, genresWritten: null };
+      return { outcome: 'applied' as const, filledNarrators, filledGenres: 0, genresWritten: null };
     });
   } catch (error: unknown) {
     if (!isUniqueViolation(error, ASIN_UNIQUE_VIOLATION)) throw error;
@@ -162,7 +164,7 @@ async function applyEnrichmentWrites(
       'Resolved ASIN hit a unique-constraint race — marking failed',
     );
     await markFailedGuarded(db, log, bookId, capturedAsin, 'unique recovery');
-    return { outcome: 'unique-conflict', filledGenres: 0, genresWritten: null };
+    return { outcome: 'unique-conflict', ...NO_WRITES };
   }
 }
 
@@ -263,9 +265,10 @@ export interface ResolvedEnrichmentResult {
  *
  * One operation, deliberately: the collision check, the fill-empty snapshot, the narrator junction
  * inserts and the scalar/genre commit all key on the SAME captured identity. Before this was one
- * section, a Fix Match could land after `isStillSameAsin` passed and before the first narrator
- * insert — the later scalar guard then dropped its own write while the stale narrators it could
- * not see were already committed.
+ * section, a Fix Match could land between a standalone narrator identity check and the first
+ * narrator insert — the later scalar guard then dropped its own write while the stale narrators it
+ * could not see were already committed. The narrator inserts now share the scalar write's
+ * transaction, so a lost ASIN race takes them down with it rather than stranding them (#2479).
  *
  * The fill-empty snapshot is read here rather than by the sweep for the same reason: an owner edit
  * to a same-ASIN field would otherwise land after the prefetch and be overwritten by it.
@@ -331,10 +334,8 @@ export async function applyResolvedEnrichmentWithinAdmissionLock(
     }
   }
 
-  const filledNarrators = await insertNarratorsIfEmpty(db, log, candidate.id, capturedAsin, result.narrators);
-
   const written = await applyEnrichmentWrites(
-    db, bookService, log, candidate.id, capturedAsin, updates, resolvedAsin, genresToFill,
+    db, bookService, log, candidate.id, capturedAsin, updates, resolvedAsin, genresToFill, result.narrators,
   );
   // Count only writes that survived identity and tombstone guards.
   if (written.outcome !== 'applied') return NOTHING;
@@ -346,47 +347,46 @@ export async function applyResolvedEnrichmentWithinAdmissionLock(
     filledTitle: 'title' in updates ? 1 : 0,
     filledDescription: 'description' in updates ? 1 : 0,
     filledGenres: written.filledGenres,
-    filledNarrators,
+    filledNarrators: written.filledNarrators,
     genresWritten: written.genresWritten,
   };
 }
 
-/** Returns 1 when this pass claimed the narrator fill, matching the sweep's existing counter. */
+/**
+ * Runs on the caller's transaction handle so a rollback discards the junctions AND any narrator
+ * rows this pass created. Returns 1 only when a junction insert was actually issued — all-blank
+ * and all-rejecting lists are a zero, not a claimed fill.
+ */
 async function insertNarratorsIfEmpty(
-  db: Db,
+  tx: DbOrTx,
   log: FastifyBaseLogger,
   bookId: number,
-  capturedAsin: string | null,
   narrators: string[] | undefined,
 ): Promise<number> {
   if (!narrators?.length) return 0;
+  if (await rowHasNarrators(tx, bookId)) return 0;
 
-  const existingNarrators = await db
-    .select({ id: bookNarrators.narratorId })
-    .from(bookNarrators)
-    .where(eq(bookNarrators.bookId, bookId))
-    .limit(1);
-  if (existingNarrators.length > 0) return 0;
-
-  if (!(await isStillSameAsin(db, bookId, capturedAsin))) {
-    log.debug({ bookId, asin: capturedAsin }, 'stale enrichment dropped (narrators)');
-    return 0;
-  }
-
+  let filled = 0;
   for (let i = 0; i < narrators.length; i++) {
     const name = narrators[i]!.trim();
     if (!name) continue;
     let narratorId: number | undefined;
     try {
-      narratorId = await findOrCreateNarrator(db, name);
-    } catch (_error: unknown) {
-      // One bad narrator must not abort the book or batch.
+      narratorId = await findOrCreateNarrator(tx, name);
+    } catch (error: unknown) {
+      // One bad narrator must not abort the book or batch. No reachable path issues a failing SQL
+      // statement here, so the transaction stays usable for the remaining names.
+      log.warn(
+        { bookId, narrator: name, error: serializeError(error) },
+        'Failed to resolve narrator during enrichment',
+      );
     }
     if (narratorId !== undefined) {
-      await db.insert(bookNarrators).values({ bookId, narratorId, position: i }).onConflictDoNothing();
+      await tx.insert(bookNarrators).values({ bookId, narratorId, position: i }).onConflictDoNothing();
+      filled = 1;
     }
   }
-  return 1;
+  return filled;
 }
 
 export { markFailedGuarded };

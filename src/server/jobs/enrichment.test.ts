@@ -335,15 +335,18 @@ describe('enrichment job', () => {
       });
       db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.insert.mockReturnValue(mockDbChain([]));
-      // narrator lookup: no existing narrators
+      // in-tx precondition re-read — the narrator block now runs INSIDE the transaction, behind it
+      db.select.mockReturnValueOnce(mockDbChain([{ asin: 'B003P2WO5E', userClearedFields: null }]));
+      // rowHasNarrators: none yet
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // findOrCreateNarrator: not found, insert
+      // findOrCreateNarrator: not found, then inserted
       db.select.mockReturnValueOnce(mockDbChain([]));
+      db.insert.mockReturnValueOnce(mockDbChain([{ id: 42 }]));
 
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
 
       expect(log.info).toHaveBeenCalledWith(
-        expect.objectContaining({ filledDuration: expect.any(Number), filledNarrators: expect.any(Number) }),
+        expect.objectContaining({ filledDuration: 1, filledNarrators: 1 }),
         'Enrichment batch completed',
       );
     });
@@ -360,10 +363,10 @@ describe('enrichment job', () => {
       });
       db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
 
-      // narrator lookup: no existing narrators in junction table
+      // in-tx precondition re-read — it now precedes the narrator block, which moved inside the tx
+      db.select.mockReturnValueOnce(mockDbChain([{ asin: 'B_NAR_FAIL', userClearedFields: null }]));
+      // rowHasNarrators: no existing narrators in junction table
       db.select.mockReturnValueOnce(mockDbChain([]));
-      // isStillSameAsin check before narrator-fill loop (#1129 stale guard)
-      db.select.mockReturnValueOnce(mockDbChain([{ asin: 'B_NAR_FAIL' }]));
 
       // select: not found
       db.select.mockReturnValueOnce(mockDbChain([]));
@@ -382,6 +385,11 @@ describe('enrichment job', () => {
 
       expect(junctionChain.values).toHaveBeenCalledWith(
         expect.objectContaining({ bookId: 1, narratorId: 55, position: 1 }),
+      );
+      // #2372: the rejection is reported, not swallowed.
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1, narrator: 'Failing Narrator' }),
+        'Failed to resolve narrator during enrichment',
       );
 
       expect(log.info).toHaveBeenCalledWith(
@@ -957,14 +965,13 @@ describe('enrichment job', () => {
       });
       db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.insert.mockReturnValue(mockDbChain([]));
-      // narrator lookup: no existing narrators
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      // isStillSameAsin (narrators) — #1129
-      db.select.mockReturnValueOnce(mockDbChain([{ asin: 'B_ALL' }]));
-      // findOrCreateNarrator: not found, insert
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      // in-tx precondition re-read — LAST, after the narrator block
+      // in-tx precondition re-read — FIRST, the narrator block now runs behind it inside the tx
       db.select.mockReturnValueOnce(mockDbChain([{ asin: 'B_ALL', userClearedFields: null }]));
+      // rowHasNarrators: no existing narrators
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // findOrCreateNarrator: not found, then inserted
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.insert.mockReturnValueOnce(mockDbChain([{ id: 42 }]));
 
       await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
 
@@ -1125,8 +1132,7 @@ describe('enrichment job', () => {
           duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null,
           publishedDate: null, seriesName: null, seriesPosition: null,
         }]))
-        .mockReturnValueOnce(mockDbChain([]))                                                  // existingNarrators
-        .mockReturnValueOnce(mockDbChain([{ asin: 'B_NEW' }]));                                // isStillSameAsin (narrators)
+        .mockReturnValueOnce(mockDbChain([{ asin: 'B_NEW', userClearedFields: null }]));       // in-tx identity re-read
 
       metadataService.resolveBook.mockResolvedValueOnce({
         title: 'X',
@@ -1141,21 +1147,21 @@ describe('enrichment job', () => {
       expect(db.insert).not.toHaveBeenCalled();
       expect(log.debug).toHaveBeenCalledWith(
         expect.objectContaining({ bookId: 1, asin: 'B_OLD' }),
-        'stale enrichment dropped (narrators)',
+        'stale enrichment dropped (identity re-read)',
       );
     });
 
     it('narrators path: drops inserts when the book row is deleted mid-run and the captured asin is null', async () => {
-      // A vanished row must not read as "still same": rows[0]?.asin ?? null matched a null capture
-      // and sent narrator inserts at a dead FK (#2446 assess).
+      // A vanished row must not reach a junction insert at a dead FK (#2446 assess). It now reads as
+      // absent at the in-tx re-read and is stopped by the zero-row guarded UPDATE, structurally: a
+      // junction insert cannot precede a successful scalar write on the same row in the same tx.
       db.select
         .mockReturnValueOnce(mockDbChain([{ id: 1, asin: null }]))
         .mockReturnValueOnce(mockDbChain([{
           duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null,
           publishedDate: null, seriesName: null, seriesPosition: null,
         }]))
-        .mockReturnValueOnce(mockDbChain([]))                                                  // existingNarrators
-        .mockReturnValueOnce(mockDbChain([]));                                                 // isStillSameAsin: row deleted
+        .mockReturnValueOnce(mockDbChain([]));                                                 // in-tx re-read: row deleted
 
       metadataService.resolveBook.mockResolvedValueOnce({
         title: 'X',
@@ -1170,7 +1176,7 @@ describe('enrichment job', () => {
       expect(db.insert).not.toHaveBeenCalled();
       expect(log.debug).toHaveBeenCalledWith(
         expect.objectContaining({ bookId: 1, asin: null }),
-        'stale enrichment dropped (narrators)',
+        'stale enrichment dropped (scalar update)',
       );
     });
 
@@ -1263,7 +1269,7 @@ describe('enrichment job', () => {
 
       // The collision check passes, then the scalar write loses a uniqueness race.
       metadataService.resolveBook
-        .mockResolvedValueOnce({ asin: 'B_OWNED', title: 'Race', authors: [{ name: 'Author' }], description: 'desc' })
+        .mockResolvedValueOnce({ asin: 'B_OWNED', title: 'Race', authors: [{ name: 'Author' }], description: 'desc', narrators: ['Raced Narrator'] })
         .mockResolvedValueOnce(null);  // candidate 2 → no-match
       bookService.findAsinCollision.mockResolvedValueOnce(null);
 
@@ -1283,6 +1289,11 @@ describe('enrichment job', () => {
       );
       expect(metadataService.resolveBook).toHaveBeenCalledTimes(2);
       expect(log.warn).toHaveBeenCalledWith({ bookId: 2, asin: 'B_TWO' }, 'Book enrichment failed');
+      // The rolled-back candidate claims no narrator fill (#2479).
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ enrichedCount: 0, filledNarrators: 0 }),
+        'Enrichment batch completed',
+      );
     });
 
     it('unique-constraint recovery: detects the violation when the ASIN UNIQUE text is only in error.cause.message', async () => {
@@ -1574,6 +1585,108 @@ describe('enrichment job', () => {
       const setArg = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
       expect(setArg).toHaveProperty('enrichmentStatus', 'failed');
       expect(whereSql(setArg.enrichmentAttempts)).toContain('"enrichment_attempts" + 1');
+    });
+  });
+
+  // The mock's `tx` IS `db`, so an executor-identity assertion cannot pin "the narrator work opened
+  // no transaction of its own" — the transaction COUNT is what pins it (#2479).
+  describe('the narrator writes share the scalar write\'s transaction (#2479)', () => {
+    const existingRow = {
+      duration: null, genres: null, title: 'Some Book', description: null, coverUrl: null,
+      publishedDate: null, seriesName: null, seriesPosition: null,
+    };
+
+    it('opens exactly one transaction per candidate that reaches the writeback', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_TX' }]))
+        .mockReturnValueOnce(mockDbChain([existingRow]))
+        .mockReturnValueOnce(mockDbChain([{ asin: 'B_TX', userClearedFields: null }]))  // in-tx re-read
+        .mockReturnValueOnce(mockDbChain([]))                                           // rowHasNarrators
+        .mockReturnValueOnce(mockDbChain([]));                                          // narrator slug lookup
+      metadataService.resolveBook.mockResolvedValueOnce({
+        title: 'Book', authors: [{ name: 'Author' }], narrators: ['Jim Dale'], duration: 600,
+      });
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.insert.mockReturnValueOnce(mockDbChain([{ id: 9 }])).mockReturnValue(mockDbChain([]));
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      expect(db.transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('opens N transactions for N candidates that all pass the collision precheck', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 1, asin: 'B_ONE', title: 'One', author: 'A' },
+          { id: 2, asin: 'B_TWO', title: 'Two', author: 'B' },
+        ]))
+        .mockReturnValueOnce(mockDbChain([existingRow]))
+        .mockReturnValueOnce(mockDbChain([{ asin: 'B_ONE', userClearedFields: null }]))
+        .mockReturnValueOnce(mockDbChain([existingRow]))
+        .mockReturnValueOnce(mockDbChain([{ asin: 'B_TWO', userClearedFields: null }]));
+      metadataService.resolveBook
+        .mockResolvedValueOnce({ title: 'One', authors: [], duration: 100 })
+        .mockResolvedValueOnce({ title: 'Two', authors: [], duration: 200 });
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      expect(db.transaction).toHaveBeenCalledTimes(2);
+    });
+
+    it('opens zero transactions for a no-match candidate', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_NONE', title: 'None', author: 'A' }]));
+      metadataService.resolveBook.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      expect(db.transaction).toHaveBeenCalledTimes(0);
+    });
+
+    it('commits narrators and genres in the same transaction and still defers the genre telemetry', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_BOTH' }]))
+        .mockReturnValueOnce(mockDbChain([existingRow]))
+        .mockReturnValueOnce(mockDbChain([{ asin: 'B_BOTH', userClearedFields: null }]))  // in-tx re-read
+        .mockReturnValueOnce(mockDbChain([]))                                             // rowHasNarrators
+        .mockReturnValueOnce(mockDbChain([]));                                            // narrator slug lookup
+      metadataService.resolveBook.mockResolvedValueOnce({
+        title: 'Book', authors: [{ name: 'Author' }], narrators: ['Jim Dale'], genres: ['Fantasy'],
+      });
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.insert.mockReturnValueOnce(mockDbChain([{ id: 9 }])).mockReturnValue(mockDbChain([]));
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      expect(db.transaction).toHaveBeenCalledTimes(1);
+      expect(bookService.update).toHaveBeenCalledWith(1, { genres: ['Fantasy'] }, { tx: expect.anything() });
+      expect(bookService.trackUnmatchedGenres).toHaveBeenCalledWith(['Fantasy']);
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ filledNarrators: 1, filledGenres: 1 }),
+        'Enrichment batch completed',
+      );
+    });
+
+    it('strands no telemetry when the transaction rolls back on the unique-conflict arm', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_OLD', title: 'Race', author: 'Author' }]))
+        .mockReturnValueOnce(mockDbChain([existingRow]));
+      metadataService.resolveBook.mockResolvedValueOnce({
+        asin: 'B_OWNED', title: 'Race', authors: [{ name: 'Author' }],
+        narrators: ['Jim Dale'], genres: ['Fantasy'],
+      });
+      db.update
+        .mockReturnValueOnce(mockDbChain([], { error: new Error('UNIQUE constraint failed: books.asin') }))
+        .mockReturnValueOnce(mockDbChain([{ id: 1 }]));  // guarded recovery
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+      expect(bookService.trackUnmatchedGenres).not.toHaveBeenCalled();
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ enrichedCount: 0, filledNarrators: 0, filledGenres: 0 }),
+        'Enrichment batch completed',
+      );
     });
   });
 
