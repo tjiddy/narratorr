@@ -24,7 +24,6 @@ export interface EnrichmentBookInput {
   narrators: Array<{ name: string }> | null;
   duration: number | null;
   coverUrl: string | null;
-  existingGenres: string[] | null;
   /** Absent keeps existing narrator semantics. */
   narratorSource?: NarratorSource | undefined;
 }
@@ -238,6 +237,10 @@ async function applyEnrichmentArrayFields(
   tx: DbOrTx,
   liveGenres: string[] | null,
 ): Promise<string[] | null> {
+  // Deliberately NOT per-name isolated, unlike the sweep's insertNarratorsIfEmpty (#2479): a
+  // findOrCreateNarrator throw here rolls back the whole enrichment transaction, and the sweep
+  // re-derives everything on its next pass. Isolating would need the jobs-layer helper across the
+  // services/jobs boundary for a window that requires a non-race DB insert failure to open (#2514).
   if (!opts.existingNarrator && data.narrators?.length && !(await rowHasNarrators(tx, bookId))) {
     await deps.bookService.update(bookId, { narrators: data.narrators }, { tx });
   }
@@ -265,7 +268,6 @@ export function buildEnrichmentBookInput(
     narrators?: Array<{ name: string }> | null;
     duration?: number | null;
     coverUrl?: string | null;
-    genres?: string[] | null;
     narratorSource?: NarratorSource | undefined;
   },
 ): EnrichmentBookInput {
@@ -273,7 +275,6 @@ export function buildEnrichmentBookInput(
     narrators: book.narrators ?? null,
     duration: book.duration ?? null,
     coverUrl: book.coverUrl ?? null,
-    existingGenres: book.genres ?? null,
     ...(book.narratorSource !== undefined && { narratorSource: book.narratorSource }),
   };
 }

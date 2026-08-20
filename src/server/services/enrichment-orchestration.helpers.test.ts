@@ -103,7 +103,7 @@ describe('orchestrateBookEnrichment', () => {
       await orchestrateBookEnrichment(
         42,
         '/audiobooks/MyBook',
-        { narrators: [{ name: 'Jim Dale' }], duration: 3600, coverUrl: 'http://cover.jpg', existingGenres: ['Fantasy'] },
+        { narrators: [{ name: 'Jim Dale' }], duration: 3600, coverUrl: 'http://cover.jpg' },
         deps,
         { primaryAsin: 'B001', alternateAsins: [], existingNarrator: 'Jim Dale' },
       );
@@ -124,7 +124,7 @@ describe('orchestrateBookEnrichment', () => {
     it('resolves ffprobe path from the auto-detected ffmpeg before calling enrichBookFromAudioWithinAdmissionLock', async () => {
       mockResolveFfprobePath.mockReturnValue('/custom/ffprobe');
 
-      await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null }, deps, { primaryAsin: null });
+      await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null }, deps, { primaryAsin: null });
 
       expect(mockResolveFfprobePath).toHaveBeenCalledWith('/usr/bin/ffmpeg');
       expect(mockEnrichBookFromAudio).toHaveBeenCalledWith(
@@ -134,7 +134,7 @@ describe('orchestrateBookEnrichment', () => {
 
     it('forwards the attach option through to the audio enrichment (#2435)', async () => {
       await orchestrateBookEnrichment(
-        42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null },
+        42, '/path', { narrators: null, duration: null, coverUrl: null },
         deps, { primaryAsin: null }, { attach: true },
       );
 
@@ -146,7 +146,7 @@ describe('orchestrateBookEnrichment', () => {
     it('returns audioEnriched: true when enrichBookFromAudioWithinAdmissionLock reports enrichment', async () => {
       mockEnrichBookFromAudio.mockResolvedValue({ enriched: true });
 
-      const result = await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null }, deps, { primaryAsin: null });
+      const result = await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null }, deps, { primaryAsin: null });
 
       expect(result).toEqual({ audioEnriched: true });
     });
@@ -154,7 +154,7 @@ describe('orchestrateBookEnrichment', () => {
     it('returns audioEnriched: false when enrichBookFromAudioWithinAdmissionLock reports no enrichment', async () => {
       mockEnrichBookFromAudio.mockResolvedValue({ enriched: false });
 
-      const result = await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null }, deps, { primaryAsin: null });
+      const result = await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null }, deps, { primaryAsin: null });
 
       expect(result).toEqual({ audioEnriched: false });
     });
@@ -164,7 +164,7 @@ describe('orchestrateBookEnrichment', () => {
     it('calls metadataService.enrichBook with provided ASIN', async () => {
       (deps.metadataService.enrichBook as ReturnType<typeof vi.fn>).mockResolvedValue({ duration: 7200 });
 
-      await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null }, deps, {
+      await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null }, deps, {
         primaryAsin: 'B001',
         alternateAsins: [],
         existingNarrator: null,
@@ -184,7 +184,7 @@ describe('orchestrateBookEnrichment', () => {
         return { duration: 7200 };
       });
 
-      await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null }, deps, { primaryAsin: 'B001' });
+      await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null }, deps, { primaryAsin: 'B001' });
 
       expect(callOrder).toEqual(['audio', 'audnexus']);
     });
@@ -195,12 +195,12 @@ describe('orchestrateBookEnrichment', () => {
       mockEnrichBookFromAudio.mockRejectedValue(new Error('Audio scan failed'));
 
       await expect(
-        orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null }, deps, { primaryAsin: null }),
+        orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null }, deps, { primaryAsin: null }),
       ).rejects.toThrow('Audio scan failed');
     });
 
     it('does not emit events — eventHistory is not part of EnrichmentDeps', async () => {
-      await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null, existingGenres: null }, deps, { primaryAsin: null });
+      await orchestrateBookEnrichment(42, '/path', { narrators: null, duration: null, coverUrl: null }, deps, { primaryAsin: null });
 
       expect('eventHistory' in deps).toBe(false);
       expect(Object.keys(deps).sort()).toEqual(['bookService', 'db', 'log', 'metadataService', 'settingsService']);

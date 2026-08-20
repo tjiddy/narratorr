@@ -163,7 +163,7 @@ export class ManualImportAdapter implements ImportAdapter {
 
       await ctx.setPhase('fetching_metadata');
 
-      await this.enrich(db, bookId, finalPath, payload, extracted, attach);
+      await this.enrich(bookId, finalPath, payload, extracted, attach);
 
       await transitionBookStatus(db, bookId, { status: 'imported' });
       safeEmit(broadcaster, 'book_status_change', { book_id: bookId, old_status: 'importing', new_status: 'imported' }, log);
@@ -183,19 +183,14 @@ export class ManualImportAdapter implements ImportAdapter {
 
   /** On an attach `payload` is already incumbent-derived, so every input built here is too. */
   private async enrich(
-    db: ImportAdapterContext['db'], bookId: number, finalPath: string,
+    bookId: number, finalPath: string,
     payload: ManualImportJobPayload, extracted: ReturnType<typeof extractImportMetadata>, attach: boolean,
   ): Promise<void> {
-    const [currentBook] = await db
-      .select({ genres: books.genres })
-      .from(books).where(eq(books.id, bookId)).limit(1);
-
     await orchestrateBookEnrichment(
       bookId, finalPath,
       // Runner-computed narrator provenance lives on the job payload, not the confirm item.
       buildEnrichmentBookInput({
         ...extracted.bookInput,
-        genres: currentBook?.genres ?? null,
         ...(payload.narratorSource !== undefined && { narratorSource: payload.narratorSource }),
       }),
       this.deps.enrichmentDeps,
