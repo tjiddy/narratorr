@@ -1082,6 +1082,19 @@ describe('ImportService', () => {
       expect(rm).not.toHaveBeenCalledWith(SAME_PATH, expect.objectContaining({ recursive: true }));
     });
 
+    const posixOf = (p: string) => p.split('\\').join('/');
+    const STAGING_POSIX = posixOf(STAGING);
+    const TARGET_AUDIO = `${SAME_PATH}/old.mp3`;
+
+    /**
+     * fs-spy calls with the leading path POSIX-folded. `deleteManagedBookFiles` reaches each entry
+     * through `join`, so the per-file argument is backslash-spelled on Windows — which would let a
+     * `not.toHaveBeenCalledWith` pass on the spelling rather than on the file surviving.
+     */
+    function fsCallsPosix(spy: Mock): unknown[][] {
+      return spy.mock.calls.map(([p, ...rest]: unknown[]) => [posixOf(String(p)), ...rest]);
+    }
+
     /** Drive a pre-commit copy failure with `storedPath` as the book's persisted `books.path`. */
     async function failCopyWithStoredPath(storedPath: string) {
       useSamePathSettings();
@@ -1102,16 +1115,16 @@ describe('ImportService', () => {
       await failCopyWithStoredPath(storedPath);
 
       // Unprotected cleanup is per-file managed delete + rmdir, never a recursive rm of the target.
-      expect(rm).not.toHaveBeenCalledWith(join(SAME_PATH, 'old.mp3'), { force: true });
-      expect(rmdir).not.toHaveBeenCalledWith(SAME_PATH);
-      expect(rm).toHaveBeenCalledWith(STAGING, { recursive: true, force: true });
+      expect(fsCallsPosix(vi.mocked(rm))).not.toContainEqual([TARGET_AUDIO, { force: true }]);
+      expect(fsCallsPosix(vi.mocked(rmdir))).not.toContainEqual([SAME_PATH]);
+      expect(fsCallsPosix(vi.mocked(rm))).toContainEqual([STAGING_POSIX, { recursive: true, force: true }]);
     });
 
     it('#2475: a case-only difference still reads as two folders — the target is cleaned', async () => {
       await failCopyWithStoredPath(SAME_PATH.toLowerCase());
 
-      expect(rm).toHaveBeenCalledWith(join(SAME_PATH, 'old.mp3'), { force: true });
-      expect(rmdir).toHaveBeenCalledWith(SAME_PATH);
+      expect(fsCallsPosix(vi.mocked(rm))).toContainEqual([TARGET_AUDIO, { force: true }]);
+      expect(fsCallsPosix(vi.mocked(rmdir))).toContainEqual([SAME_PATH]);
     });
 
     it('#2475: a successful re-import from a trailing-separator stored path persists the computed target and sweeps nothing', async () => {
@@ -1123,10 +1136,12 @@ describe('ImportService', () => {
 
       const result = await service.importDownload(1);
 
-      expect(result.targetPath).toBe(SAME_PATH);
-      expect(collectSetArgs(db)).toContainEqual(expect.objectContaining({ status: 'imported', path: SAME_PATH }));
+      expect(posixOf(result.targetPath)).toBe(SAME_PATH);
+      const persisted = collectSetArgs(db)
+        .map((a) => (typeof a.path === 'string' ? { ...a, path: posixOf(a.path) } : a));
+      expect(persisted).toContainEqual(expect.objectContaining({ status: 'imported', path: SAME_PATH }));
       // The post-commit old-path sweep must recognise the stored spelling as the folder just imported.
-      expect(rm).not.toHaveBeenCalledWith(join(SAME_PATH, 'old.mp3'), { force: true });
+      expect(fsCallsPosix(vi.mocked(rm))).not.toContainEqual([TARGET_AUDIO, { force: true }]);
     });
 
     it('AC4: a first-import copy failure cleans up its own partial (staged) files', async () => {
