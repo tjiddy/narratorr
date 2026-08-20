@@ -140,7 +140,11 @@ describe('BookImportService — enqueue (#747 integration with real libsql)', ()
     await db.update(books).set({ status: 'failed' }).where(eq(books.id, book!.id));
 
     const r2 = await service.retryImport(book!.id, nudge);
-    expect(r2).toEqual({ error: 'active-job-exists', status: 409 });
+    expect(r2).toEqual({
+      error: 'An import job for this book is already queued or running',
+      code: 'active_job_exists',
+      status: 409,
+    });
 
     const activeRows = await db
       .select()
