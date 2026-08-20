@@ -95,6 +95,10 @@ export async function createE2EApp(): Promise<E2EApp> {
   app.setSerializerCompiler(serializerCompiler);
 
   clearImportAdapters(); // Reset module-level registry between test runs
+  // Production and both unit-tier helpers register this; without it every ERROR_REGISTRY-mapped
+  // error reads as a generic 500 here, and no e2e test can protect a registry mapping (#2460).
+  const { errorHandlerPlugin } = await import('../plugins/error-handler.js');
+  await app.register(errorHandlerPlugin);
   const services = await createServices(db, app.log);
   await registerRoutes(app, services, db);
   await app.ready();

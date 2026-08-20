@@ -252,7 +252,9 @@ describe('Search → Grab flow E2E', () => {
       },
     });
 
-    expect(grabRes.statusCode).toBe(500);
+    // Production semantics since the harness registers errorHandlerPlugin (#2460):
+    // DownloadClientError maps to 502 in ERROR_REGISTRY, no longer a blanket 500.
+    expect(grabRes.statusCode).toBe(502);
     expect(grabRes.json().error).toBeDefined();
 
     const activityRes = await e2e.app.inject({ method: 'GET', url: '/api/activity' });
@@ -293,7 +295,8 @@ describe('Search → Grab flow E2E', () => {
       },
     });
 
-    expect(grabRes.statusCode).toBe(500);
+    // A failed qBittorrent login surfaces as DownloadClientError → 502 via ERROR_REGISTRY (#2460).
+    expect(grabRes.statusCode).toBe(502);
     expect(grabRes.json().error).toBeDefined();
 
     const activityRes = await e2e.app.inject({ method: 'GET', url: '/api/activity' });
