@@ -1,4 +1,3 @@
-import { relative, isAbsolute } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
@@ -16,7 +15,7 @@ import {
   isAttachActiveJobConflict,
 } from '../services/attach-enqueue.js';
 import { admitAttachSource } from '../utils/attach-source.js';
-import { canonicalPath } from '../utils/path-identity.js';
+import { classifyImportSource } from '../utils/import-source-containment.js';
 
 const paramsSchema = z.object({
   id: z.coerce.number().int().positive(),
@@ -30,13 +29,6 @@ const bodySchema = z.object({
   // construction, breaking the containment rename, delete and companion-ebook eligibility rely on.
   mode: z.enum(['copy', 'move']),
 });
-
-/** Is the source inside the configured library root? Separators fold BEFORE resolving, or a
- * `..` segment spelled with backslashes survives on POSIX and escapes the check. */
-function isInsideLibrary(sourcePath: string, libraryRoot: string): boolean {
-  const rel = relative(canonicalPath(libraryRoot), canonicalPath(sourcePath));
-  return !rel.startsWith('..') && !isAbsolute(rel);
-}
 
 async function hasActiveJob(db: DbOrTx, bookId: number): Promise<boolean> {
   const [row] = await db
@@ -98,12 +90,12 @@ export async function bookImportFilesRoute(
         return reply.status(409).send({ error: 'already_importing', message: 'An import is already in progress for this book' });
       }
 
+      // Ahead of admission on purpose (#2478): `admitAttachSource('/')` would recurse the whole
+      // filesystem looking for one audio file before anything refused it.
       const librarySettings = await deps.settingsService.get('library');
-      if (librarySettings.path && isInsideLibrary(sourcePath, librarySettings.path)) {
-        return reply.status(400).send({
-          error: 'source_inside_library',
-          message: 'Source path is inside the library root — it is already managed by the library',
-        });
+      const containment = classifyImportSource(sourcePath, librarySettings.path);
+      if (!containment.admissible) {
+        return reply.status(400).send({ error: containment.reason, message: containment.message });
       }
 
       const admission = await admitAttachSource(sourcePath);

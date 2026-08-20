@@ -6,8 +6,35 @@ vi.mock('@core/utils/audio-processor.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@core/utils/audio-processor.js')>()),
   resolveFfmpegPath: () => Promise.resolve('/usr/bin/ffmpeg'),
 }));
+
+/**
+ * #2478 — three passthrough spies, each existing for a "was NOT called" assertion that no state
+ * observation can make: admission is skipped (its own side effect is a filesystem walk), the move
+ * cleanup never ran (a surviving source tree is trivially true when the code never ran), and the
+ * forced-refusal terminal was not mistaken for the generic one. Behaviour is unchanged everywhere.
+ */
+const spies = vi.hoisted(() => ({
+  admitAttachSource: vi.fn(),
+  deleteManagedBookFiles: vi.fn(),
+  finalizeForcedImportRefusal: vi.fn(),
+}));
+vi.mock('../utils/attach-source.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/attach-source.js')>();
+  spies.admitAttachSource.mockImplementation(actual.admitAttachSource);
+  return { ...actual, admitAttachSource: spies.admitAttachSource };
+});
+vi.mock('../utils/delete-managed-files.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/delete-managed-files.js')>();
+  spies.deleteManagedBookFiles.mockImplementation(actual.deleteManagedBookFiles);
+  return { ...actual, deleteManagedBookFiles: spies.deleteManagedBookFiles };
+});
+vi.mock('../services/import-refused.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/import-refused.js')>();
+  spies.finalizeForcedImportRefusal.mockImplementation(actual.finalizeForcedImportRefusal);
+  return { ...actual, finalizeForcedImportRefusal: spies.finalizeForcedImportRefusal };
+});
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
@@ -29,6 +56,8 @@ import type { BlacklistService } from '../services/blacklist.service.js';
 import type { MetadataService } from '../services/metadata.service.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import { bookEvents } from '@db/schema.js';
+import { ImportQueueWorker } from '../services/import-queue-worker.js';
+import { clearImportAdapters, registerImportAdapter } from '../services/import-adapters/registry.js';
 
 const isWin = process.platform === 'win32';
 
@@ -46,7 +75,7 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
   let nudge: ReturnType<typeof vi.fn>;
   const log = createMockLogger();
 
-  async function buildApp(): Promise<void> {
+  async function buildApp(libraryPath: string = libraryRoot): Promise<void> {
     app = Fastify({ logger: false, routerOptions: { maxParamLength: 2048 } }).withTypeProvider<ZodTypeProvider>();
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
@@ -55,7 +84,7 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
       db,
       bookService,
       bookImportService,
-      settingsService: createMockSettingsService({ library: { path: libraryRoot } }),
+      settingsService: createMockSettingsService({ library: { path: libraryPath } }),
       nudgeImportWorker: nudge as unknown as () => void,
     });
     await app.ready();
@@ -222,6 +251,130 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
     });
   });
 
+  // ── #2478: source containment — root, ancestor, and the existing inside-library class ──────────
+
+  describe('source containment (#2478)', () => {
+    /** An ancestor source that is genuinely admissible by content: its only audio is the library's. */
+    function seedManagedBookInLibrary(): void {
+      const managed = join(libraryRoot, 'Managed Book');
+      mkdirSync(managed, { recursive: true });
+      writeFileSync(join(managed, 'book.m4b'), Buffer.alloc(1024));
+    }
+
+    it('400 source_is_filesystem_root for `/`, without ever reaching admission', async () => {
+      const id = await seedBook();
+
+      const res = await post(id, { path: '/', mode: 'move' });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toBe('source_is_filesystem_root');
+      // The direct observation, not a wall-clock bound: `hasReadableAudio` returns on the first
+      // readable audio file it meets, so an admission-first route can finish fast on CI and still
+      // walk an operator's whole filesystem.
+      expect(spies.admitAttachSource).not.toHaveBeenCalled();
+      await expectUntouched(id);
+    });
+
+    it('400 source_contains_library for a source that holds the library root', async () => {
+      const id = await seedBook();
+      seedManagedBookInLibrary();
+
+      const res = await post(id, { path: dir, mode: 'move' });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toBe('source_contains_library');
+      await expectUntouched(id);
+    });
+
+    // AC3's empty-relative arm: equality is inside-library, never contains-library.
+    it('400 source_inside_library for the library root ITSELF', async () => {
+      const id = await seedBook();
+      writeFileSync(join(libraryRoot, 'book.m4b'), Buffer.alloc(1024));
+
+      const res = await post(id, { path: libraryRoot, mode: 'copy' });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toBe('source_inside_library');
+      await expectUntouched(id);
+    });
+
+    it('refuses `/` with NO library path configured, while a normal source still lands', async () => {
+      await app.close();
+      await buildApp('');
+      const rooted = await seedBook();
+
+      const rootRes = await post(rooted, { path: '/', mode: 'move' });
+
+      expect(rootRes.statusCode).toBe(400);
+      expect(rootRes.json().error).toBe('source_is_filesystem_root');
+      await expectUntouched(rooted);
+
+      const normal = await seedBook();
+      expect((await post(normal, { path: seedAudioDir('unconfigured-src'), mode: 'copy' })).statusCode).toBe(202);
+    });
+
+    /**
+     * The messages are operator-visible copy: `useBookActions` renders `getErrorMessage(error)`
+     * straight into a toast. Without this, a route answering a bare `{ error }` — or silently
+     * rewording the pre-existing contract — passes every other assertion here.
+     */
+    it('answers every containment class with its own human-readable message', async () => {
+      seedManagedBookInLibrary();
+
+      const insideRes = await post(await seedBook(), { path: join(libraryRoot, 'Managed Book'), mode: 'copy' });
+      expect(insideRes.json()).toMatchObject({
+        error: 'source_inside_library',
+        message: 'Source path is inside the library root — it is already managed by the library',
+      });
+
+      const containsRes = await post(await seedBook(), { path: dir, mode: 'copy' });
+      expect(containsRes.json().error).toBe('source_contains_library');
+      expect(containsRes.json().message).toMatch(/contains the library root/i);
+
+      const rootRes = await post(await seedBook(), { path: '/', mode: 'copy' });
+      expect(rootRes.json().error).toBe('source_is_filesystem_root');
+      expect(rootRes.json().message).toMatch(/filesystem root/i);
+    });
+
+    /**
+     * AC12 — each pre-existing guard paired with a source that WOULD trip containment. The suite's
+     * other 404/status cases use normal sources and so prove nothing about precedence; the three
+     * containment classes carry distinct codes precisely so a deleted guard stays attributable.
+     */
+    describe('precedence against the pre-existing guards', () => {
+      it('404s an unknown book id before any containment refusal', async () => {
+        const res = await post(999_999, { path: '/', mode: 'move' });
+        expect(res.statusCode).toBe(404);
+        expect(await db.select().from(importJobs)).toHaveLength(0);
+      });
+
+      it('answers book_has_file, not a containment refusal', async () => {
+        const id = await seedBook({ path: join(libraryRoot, 'Existing'), status: 'imported' });
+        const res = await post(id, { path: '/', mode: 'move' });
+        expect(res.statusCode).toBe(409);
+        expect(res.json().error).toBe('book_has_file');
+      });
+
+      it('answers status_not_attachable, not a containment refusal', async () => {
+        const id = await seedBook({ status: 'downloading' });
+        const res = await post(id, { path: dir, mode: 'move' });
+        expect(res.statusCode).toBe(409);
+        expect(res.json().error).toBe('status_not_attachable');
+        await expectUntouched(id, 'downloading');
+      });
+
+      it('answers already_importing, not a containment refusal', async () => {
+        const id = await seedBook();
+        await db.insert(importJobs).values({ bookId: id, type: 'manual', status: 'pending', metadata: '{}' });
+        const res = await post(id, { path: '/', mode: 'move' });
+        expect(res.statusCode).toBe(409);
+        expect(res.json().error).toBe('already_importing');
+        expect((await rowOf(id)).status).toBe('wanted');
+        expect(nudge).not.toHaveBeenCalled();
+      });
+    });
+  });
+
   // ── AC16: admissibility ───────────────────────────────────────────────────────────────────────
 
   describe('source admissibility', () => {
@@ -336,6 +489,9 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
    * a guard that only the staged runner's payload happens to satisfy would pass there and fail here.
    */
   describe('completion through the adapter', () => {
+    // The adapter registry is module-global; a leak here reaches sibling suites.
+    afterEach(() => clearImportAdapters());
+
     const settings = () => createMockSettingsService({
       tagging: { writeOpf: false },
       library: { path: libraryRoot, folderFormat: '{author}/{title}', fileFormat: '' },
@@ -422,6 +578,84 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
       const detail = await bookService.getById(created.id);
       expect(detail!.narrators.map((n) => n.name)).toEqual(['Curated Narrator']);
       expect((await rowOf(created.id)).duration).toBe(600);
+    });
+
+    /**
+     * #2478 AC14 — the job the route would now refuse, queued straight into the table: the shape of
+     * a job enqueued before this fix, or by the staged submission runner. The worker-side guard has
+     * to refuse it, and the refusal has to be raised INSIDE the adapter's try, or its two
+     * adapter-owned failure signals are silently dropped.
+     */
+    it('refuses an ancestor-of-library source at the adapter, mutating nothing', async () => {
+      setTags();
+      const created = await bookService.create({ title: 'Bypass', status: 'wanted', authors: [{ name: 'A' }] } as never);
+      await db.update(books).set({ status: 'importing', path: null }).where(eq(books.id, created.id));
+      const source = seedAudioDir('bypass-src');
+      const emit = vi.fn();
+      const adapter = buildAdapter({ emit } as unknown as EventBroadcasterService);
+      // `dir` holds BOTH the library root and this source — the "feeds managed content back into
+      // its own import" shape, bypassing the route entirely.
+      await db.insert(importJobs).values({
+        bookId: created.id, type: 'manual', status: 'processing',
+        metadata: JSON.stringify({ path: dir, title: 'Bypass', mode: 'move', attach: true }),
+      });
+
+      await expect(runQueuedJob(adapter)).rejects.toThrow();
+
+      // "The source files still exist" is trivially true when nothing ran; the spy is the observation.
+      expect(spies.deleteManagedBookFiles).not.toHaveBeenCalled();
+      expect(existsSync(join(source, 'book.m4b'))).toBe(true);
+      expect(readdirSync(libraryRoot)).toEqual([]);
+      const row = await rowOf(created.id);
+      expect(row.status).not.toBe('imported');
+      expect(row.path).toBeNull();
+
+      const statusCalls = emit.mock.calls.filter(([event]) => event === 'book_status_change');
+      expect(statusCalls).toHaveLength(1);
+      expect(statusCalls[0]![1]).toMatchObject({ book_id: created.id, old_status: 'importing', new_status: 'failed' });
+      // Fire-and-forget insert, so poll for the durable row rather than racing it.
+      await vi.waitFor(async () => {
+        const events = await db.select().from(bookEvents).where(eq(bookEvents.bookId, created.id));
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ eventType: 'import_failed', source: 'manual' });
+      });
+    });
+
+    /**
+     * #2478 AC14b — the worker half. `runQueuedJob` awaits `adapter.process` directly, so it cannot
+     * see the job/book terminal or the `import_failed` SSE: those are written only by
+     * `markJobFailed`. This drives a real worker over the same DB through the established
+     * `drainOne` seam and pins that the new error class lands on the GENERIC terminal.
+     */
+    it('routes the refusal through the worker\'s generic failure terminal, not the forced-refusal one', async () => {
+      setTags();
+      const created = await bookService.create({ title: 'Queued', status: 'wanted', authors: [{ name: 'A' }] } as never);
+      await db.update(books).set({ status: 'importing', path: null }).where(eq(books.id, created.id));
+      seedAudioDir('worker-src');
+      const emit = vi.fn();
+      const broadcaster = { emit } as unknown as EventBroadcasterService;
+      registerImportAdapter(buildAdapter(broadcaster));
+      const worker = new ImportQueueWorker(db, inject(log), broadcaster);
+      const [job] = await db.insert(importJobs).values({
+        bookId: created.id, type: 'manual', status: 'pending',
+        metadata: JSON.stringify({ path: dir, title: 'Queued', mode: 'move', attach: true }),
+      }).returning();
+
+      // Direct calls must pass the production pre-claim running check.
+      (worker as unknown as { running: boolean }).running = true;
+      await (worker as unknown as { drainOne(): Promise<boolean> }).drainOne();
+
+      const [jobRow] = await db.select().from(importJobs).where(eq(importJobs.id, job!.id));
+      expect(jobRow!.status).toBe('failed');
+      expect(jobRow!.phase).toBe('failed');
+      // The message discriminates a refusal from an incidental copy crash: without the guard this
+      // source copies its own library back into itself and fails verification instead.
+      expect(jobRow!.lastError).toMatch(/contains the library root/i);
+      expect(spies.deleteManagedBookFiles).not.toHaveBeenCalled();
+      expect(readdirSync(libraryRoot)).toEqual([]);
+      expect((await rowOf(created.id)).status).toBe('failed');
+      expect(emit.mock.calls.filter(([event]) => event === 'import_failed')).toHaveLength(1);
+      expect(spies.finalizeForcedImportRefusal).not.toHaveBeenCalled();
     });
 
     it('acquires no cover on the route entry point either', async () => {
