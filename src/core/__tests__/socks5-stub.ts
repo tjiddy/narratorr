@@ -40,6 +40,12 @@ export interface Socks5StubOptions {
   rejectAuth?: boolean;
   /** Accept the TCP connection and never send a byte, so undici's own SOCKS5 timeout governs. */
   silent?: boolean;
+  /**
+   * Record the CONNECT and answer host-unreachable without dialing the target at all. Required for
+   * any case whose target is a port the test does not own (the default-port derivation asks for
+   * :80/:443): dialing those makes the outcome depend on whatever the runner happens to be running.
+   */
+  noUpstream?: boolean;
 }
 
 export interface Socks5Stub {
@@ -122,7 +128,11 @@ export async function startSocks5Stub(options: Socks5StubOptions = {}): Promise<
     socket.on('error', () => socket.destroy());
   };
 
-  const openTunnel = (socket: net.Socket, target: Socks5Connect, buffered: Buffer): net.Socket => {
+  const openTunnel = (socket: net.Socket, target: Socks5Connect, buffered: Buffer): net.Socket | undefined => {
+    if (options.noUpstream === true) {
+      socket.end(reply(REPLY_HOST_UNREACHABLE));
+      return undefined;
+    }
     const upstream = net.connect(target.port, target.host);
     track(upstream);
     upstream.once('connect', () => {

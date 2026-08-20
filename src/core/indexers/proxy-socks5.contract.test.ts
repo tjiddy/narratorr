@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProxyError, IndexerAuthError } from './errors.js';
 import { fetchWithProxyAgent } from './proxy.js';
 import { TorznabIndexer } from './torznab.js';
-import type { DispatcherFetchInit } from '../utils/network-service.js';
+import type { DispatcherFetchInit, FetchWithSsrfRedirectOptions } from '../utils/network-service.js';
 import {
   ATYP_DOMAIN,
   ATYP_IPV4,
@@ -126,14 +126,23 @@ describe('#2484 SOCKS5 transport contract — real agent, real fetch, real liste
   });
 
   it('derives the default tunnel port from the target scheme (80 / 443)', async () => {
-    const socks = await useSocks();
+    // `noUpstream` so the stub records the CONNECT and refuses without dialing :80/:443. Whether
+    // the runner has something bound there — or something that accepts and stalls past the 30s
+    // production timeout — must not decide the outcome. Refusing also removes the need for a
+    // certificate on the https: half; the contract is the port the proxy was asked to reach.
+    const socks = await useSocks({ noUpstream: true });
 
-    // Both are expected to fail past the tunnel — nothing valid listens on :80/:443 here. The
-    // contract under test is the port the proxy was asked to reach, which needs no certificate.
-    await fetchWithProxyAgent('http://127.0.0.1/x', { proxyUrl: socks.url }).catch(() => undefined);
-    await fetchWithProxyAgent('https://127.0.0.1/x', { proxyUrl: socks.url }).catch(() => undefined);
+    await expect(
+      fetchWithProxyAgent('http://127.0.0.1/x', { proxyUrl: socks.url }),
+    ).rejects.toThrow(ProxyError);
+    await expect(
+      fetchWithProxyAgent('https://127.0.0.1/x', { proxyUrl: socks.url }),
+    ).rejects.toThrow(ProxyError);
 
-    expect(socks.connects.map((c) => c.port)).toEqual([80, 443]);
+    expect(socks.connects).toEqual([
+      { atyp: ATYP_IPV4, host: '127.0.0.1', port: 80 },
+      { atyp: ATYP_IPV4, host: '127.0.0.1', port: 443 },
+    ]);
   });
 
   it('encodes a hostname target as ATYP 0x03 — remote DNS (socks5h) is the contract', async () => {
@@ -322,8 +331,15 @@ describe('#2484 SOCKS5 abort paths', () => {
   });
 });
 
+/**
+ * AC3 closes two independently widenable holes, so each gets its own assertion. Guarding only the
+ * first would leave the second defended by nothing but incidental inference: `fetchWithSsrfRedirect`
+ * forwards its `dispatcher` into a `DispatcherFetchInit`, so widening the field alone reds
+ * `network-service.ts` — but silencing that with a one-line `as Dispatcher` cast at the forward
+ * reopens the hole with a fully green suite. These assertions do not depend on that plumbing.
+ */
 describe('#2484 dispatcher typing (AC3)', () => {
-  it('rejects a Node http.Agent-shaped value for `dispatcher` at compile time', () => {
+  it('rejects a Node http.Agent-shaped value on DispatcherFetchInit at compile time', () => {
     const init: DispatcherFetchInit = {
       // @ts-expect-error An `http.Agent` is not an undici `Dispatcher`; this line reds if
       // `DispatcherFetchInit['dispatcher']` is ever widened back to `unknown`.
@@ -331,6 +347,16 @@ describe('#2484 dispatcher typing (AC3)', () => {
     };
 
     expect(init.dispatcher).toBeDefined();
+  });
+
+  it('rejects a Node http.Agent-shaped value on FetchWithSsrfRedirectOptions at compile time', () => {
+    const options: FetchWithSsrfRedirectOptions = {
+      // @ts-expect-error Same contract on the SSRF-redirect entry point; this line reds if
+      // `FetchWithSsrfRedirectOptions['dispatcher']` is ever widened back to `unknown`.
+      dispatcher: { addRequest: () => undefined },
+    };
+
+    expect(options.dispatcher).toBeDefined();
   });
 });
 
