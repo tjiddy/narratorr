@@ -32,6 +32,13 @@ export interface SearchResult {
   /** Lowercase MAM container. Absence is unknown, not mp3; display only. */
   format?: string;
   /**
+   * Audio bitrate in KILObits per second, always an integer >= 1. Absence is unknown — the
+   * indexers that report it also report `?`/`Variable`, which fold to absence rather than to 0.
+   * Named for its unit: the repo also carries bitrate in bps (`books.audio_bitrate`), and the two
+   * must never be compared. Display only; no gate or ranking arm reads it.
+   */
+  bitrateKbps?: number;
+  /**
    * The unsatisfied allowance the source indexer reported for THIS search, attached where
    * indexerId is stamped. Request-scoped telemetry, never stored: absence is the fail-open
    * state, so an unannotated result is never blocked. Only MAM reports it.
