@@ -12,8 +12,7 @@ vi.mock('../utils/network-service.js', async (importActual) => {
 });
 
 import { createProxyAgent, fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
-import { ProxyAgent } from 'undici';
-import { SocksProxyAgent } from 'socks-proxy-agent';
+import { Dispatcher, ProxyAgent, Socks5ProxyAgent } from 'undici';
 
 describe('ProxyError', () => {
   it('is instanceof Error', () => {
@@ -50,28 +49,64 @@ describe('isProxyRelatedError', () => {
   });
 });
 
+const TARGET = 'https://indexer.example.org/api';
+
 describe('createProxyAgent', () => {
-  it('creates undici ProxyAgent for http:// URL', () => {
-    const agent = createProxyAgent('http://proxy.example.com:8080');
+  // Every branch is asserted against `Dispatcher`, not a concrete class: class identity is what let
+  // a non-dispatcher SOCKS agent ship (#2484), and only the base-class assertion would have caught it.
+  it('creates an undici Dispatcher for http:// URL', () => {
+    const agent = createProxyAgent('http://proxy.example.com:8080', TARGET);
     expect(agent).toBeInstanceOf(ProxyAgent);
+    expect(agent).toBeInstanceOf(Dispatcher);
   });
 
-  it('creates undici ProxyAgent for https:// URL', () => {
-    const agent = createProxyAgent('https://proxy.example.com:8443');
+  it('creates an undici Dispatcher for https:// URL', () => {
+    const agent = createProxyAgent('https://proxy.example.com:8443', TARGET);
     expect(agent).toBeInstanceOf(ProxyAgent);
+    expect(agent).toBeInstanceOf(Dispatcher);
   });
 
-  it('creates socks-proxy-agent for socks5:// URL', () => {
-    const agent = createProxyAgent('socks5://proxy.example.com:1080');
-    expect(agent).toBeInstanceOf(SocksProxyAgent);
+  it("creates undici's Socks5ProxyAgent — an undici Dispatcher — for socks5:// URL", () => {
+    const agent = createProxyAgent('socks5://proxy.example.com:1080', TARGET);
+    expect(agent).toBeInstanceOf(Socks5ProxyAgent);
+    expect(agent).toBeInstanceOf(Dispatcher);
   });
 
   it('returns undefined when no proxy URL provided', () => {
-    expect(createProxyAgent(undefined)).toBeUndefined();
+    expect(createProxyAgent(undefined, TARGET)).toBeUndefined();
+    // The AC9 guard must run AFTER this early return: with no proxy there is no SOCKS path to
+    // protect, and firing first would refuse ordinary direct IPv6 requests.
+    expect(createProxyAgent(undefined, 'http://[::1]:8080/x')).toBeUndefined();
   });
 
   it('returns undefined when proxy URL is empty string', () => {
-    expect(createProxyAgent('')).toBeUndefined();
+    expect(createProxyAgent('', TARGET)).toBeUndefined();
+    expect(createProxyAgent('', 'http://[::1]:8080/x')).toBeUndefined();
+  });
+});
+
+describe('createProxyAgent — IPv6-literal targets over SOCKS5 (#2484 AC9)', () => {
+  it('refuses an IPv6-literal target with a message naming the target and the limitation', () => {
+    expect(() => createProxyAgent('socks5://p:1080', 'http://[::1]:8080/x')).toThrow(ProxyError);
+    // The factory's bare catch rewrites everything it catches as "Invalid proxy URL"; only an
+    // assertion on the text catches a guard that drifted inside the try.
+    expect(() => createProxyAgent('socks5://p:1080', 'http://[::1]:8080/x')).toThrow(/\[::1\]/);
+    expect(() => createProxyAgent('socks5://p:1080', 'http://[::1]:8080/x')).toThrow(/SOCKS5/);
+    expect(() => createProxyAgent('socks5://p:1080', 'http://[::1]:8080/x')).not.toThrow(/Invalid proxy URL/);
+  });
+
+  it('does not fire for http:// or https:// proxies, which tunnel bracketed IPv6 fine', () => {
+    expect(createProxyAgent('http://p:8080', 'http://[::1]:8080/x')).toBeInstanceOf(ProxyAgent);
+    expect(createProxyAgent('https://p:8443', 'http://[::1]:8080/x')).toBeInstanceOf(ProxyAgent);
+  });
+
+  it('leaves IPv4 and hostname targets on the SOCKS5 path untouched', () => {
+    expect(createProxyAgent('socks5://p:1080', 'http://127.0.0.1:8080/x')).toBeInstanceOf(Socks5ProxyAgent);
+    expect(createProxyAgent('socks5://p:1080', 'https://tracker.example.org/x')).toBeInstanceOf(Socks5ProxyAgent);
+  });
+
+  it('does not turn an unparseable target into an IPv6 refusal', () => {
+    expect(createProxyAgent('socks5://p:1080', 'not a url')).toBeInstanceOf(Socks5ProxyAgent);
   });
 });
 

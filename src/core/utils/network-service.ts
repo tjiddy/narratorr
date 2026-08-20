@@ -6,6 +6,7 @@
 
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { Agent, fetch as undiciFetchImpl } from 'undici';
+import type { Dispatcher } from 'undici';
 import type { LookupFunction } from 'node:net';
 import { mapNetworkError } from './map-network-error.js';
 
@@ -17,7 +18,13 @@ import { HTTP_DOWNLOAD_TIMEOUT_MS } from './constants.js';
  */
 export const undiciFetch = undiciFetchImpl;
 
-export type DispatcherFetchInit = RequestInit & { dispatcher?: unknown };
+/**
+ * `Dispatcher | undefined` rather than a bare optional: under `exactOptionalPropertyTypes` the bare
+ * form reds the idiomatic `dispatcher` shorthand at call sites that may legitimately pass undefined,
+ * while still rejecting a non-Dispatcher — which is the check that was missing when a Node
+ * `http.Agent` reached `undici.fetch` (#2484).
+ */
+export type DispatcherFetchInit = RequestInit & { dispatcher?: Dispatcher | undefined };
 
 /**
  * Uses npm undici with a dispatcher so class identity matches; otherwise uses global fetch so MSW
@@ -287,7 +294,7 @@ export class UnsupportedRedirectSchemeError extends Error {
 }
 
 export interface FetchWithSsrfRedirectOptions {
-  dispatcher?: unknown;
+  dispatcher?: Dispatcher | undefined;
   timeoutMs?: number;
   maxHops?: number;
   /**

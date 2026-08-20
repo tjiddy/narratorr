@@ -80,7 +80,7 @@ export async function probeReachable(
 ): Promise<ProbeOutcome> {
   let dispatcher: ReturnType<typeof createProxyAgent>;
   try {
-    dispatcher = createProxyAgent(options.proxyUrl);
+    dispatcher = createProxyAgent(options.proxyUrl, url);
   } catch (error: unknown) {
     return { state: 'inconclusive', reason: getErrorMessage(error) };
   }
