@@ -330,14 +330,18 @@ describe('embedTagsForImport', () => {
    */
   const hydratedRow = (path: string | null) => ({
     id: 1, title: 'Book', path,
-    authors: [{ name: 'Author' }], narrators: [{ name: 'Narrator' }],
+    // Two of each on purpose: with one name per side the join delimiter is unobservable here, and a
+    // mutation inside the helper the retag path shares would slip past every import-side assertion.
+    authors: [{ name: 'Author' }, { name: 'Second Author' }],
+    narrators: [{ name: 'Narrator' }, { name: 'Second Narrator' }],
     seriesName: 'Series', seriesPosition: 1, asin: null, subtitle: null, description: null,
     publisher: 'Tor Books', publishedDate: null, genres: null, coverUrl: 'http://cover.jpg',
   });
 
   /** Frozen literal, never `buildTagProjection(row)`: a mutation inside the shared helper must red here. */
   const rowTags = {
-    title: 'Book', authorName: 'Author', narrator: 'Narrator', seriesName: 'Series', seriesPosition: 1,
+    title: 'Book', authorName: 'Author, Second Author', narrator: 'Narrator, Second Narrator',
+    seriesName: 'Series', seriesPosition: 1,
     asin: null, subtitle: null, description: null, publisher: 'Tor Books', publishedDate: null,
     genres: null, coverUrl: 'http://cover.jpg',
   };
@@ -442,7 +446,9 @@ describe('embedTagsForImport', () => {
     });
     expect(tagBook).toHaveBeenCalledWith(
       42, '/lib/book',
-      { title: 'Book', authorName: 'Author', narrator: 'Narrator', seriesName: 'Series', seriesPosition: 1,
+      // Both names on each axis, joined with ', ' — the import path now shares retag's semantics (AC5).
+      { title: 'Book', authorName: 'Author, Second Author', narrator: 'Narrator, Second Narrator',
+        seriesName: 'Series', seriesPosition: 1,
         asin: null, subtitle: null, description: null, publisher: 'Tor Books', publishedDate: null,
         genres: null, coverUrl: 'http://cover.jpg' },
       '/usr/bin/python3', 'populate_missing', false,
