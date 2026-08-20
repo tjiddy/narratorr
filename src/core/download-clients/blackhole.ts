@@ -164,7 +164,9 @@ export class BlackholeClient implements DownloadClientAdapter {
 
   async test(): Promise<{ success: boolean; message?: string }> {
     try {
-      await access(this.config.watchDir, constants.R_OK | constants.W_OK);
+      // X_OK too: a writable-but-non-searchable directory passes W_OK and then fails every
+      // actual write with EACCES, so without it this probe lies in the one case it guards (#2503).
+      await access(this.config.watchDir, constants.R_OK | constants.W_OK | constants.X_OK);
       return { success: true, message: `Watch directory exists and is writable: ${this.config.watchDir}` };
     } catch (error: unknown) {
       const code = error instanceof Error && 'code' in error ? (error as NodeJS.ErrnoException).code : undefined;

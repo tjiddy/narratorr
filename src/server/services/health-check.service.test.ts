@@ -284,10 +284,13 @@ describe('HealthCheckService', () => {
 
   describe('checkLibraryRoot', () => {
     it('returns healthy when library root exists and is writable', async () => {
-      const { service } = createService();
+      const fsAccess = vi.fn().mockResolvedValue(undefined);
+      const { service } = createService({ fsAccess });
       const results = await service.runAllChecks();
       const check = results.find((r) => r.checkName === 'library-root');
       expect(check).toMatchObject({ state: 'healthy' });
+      // R_OK | W_OK | X_OK — without the search bit a non-traversable root probes healthy (#2503).
+      expect(fsAccess).toHaveBeenCalledWith('/audiobooks', 4 | 2 | 1);
     });
 
     it('returns error with path in message when library root missing', async () => {
