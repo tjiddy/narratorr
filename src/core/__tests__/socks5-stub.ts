@@ -53,6 +53,13 @@ export interface Socks5Stub {
   readonly url: string;
   readonly connects: Socks5Connect[];
   readonly credentials: Socks5Credentials[];
+  /**
+   * Dials the stub attempted against the target, counted immediately before `net.connect`. Distinct
+   * from `connects`, which records the CONNECT frame the client sent — that happens in both modes.
+   * This is the only observable that separates them, so it is what makes `noUpstream` deletable-with-
+   * a-red-suite rather than a silent regression back to dialing host-owned ports.
+   */
+  readonly upstreamAttempts: number;
   close(): Promise<void>;
 }
 
@@ -121,6 +128,7 @@ export async function startSocks5Stub(options: Socks5StubOptions = {}): Promise<
   const connects: Socks5Connect[] = [];
   const credentials: Socks5Credentials[] = [];
   const sockets = new Set<net.Socket>();
+  let upstreamAttempts = 0;
 
   const track = (socket: net.Socket): void => {
     sockets.add(socket);
@@ -133,6 +141,7 @@ export async function startSocks5Stub(options: Socks5StubOptions = {}): Promise<
       socket.end(reply(REPLY_HOST_UNREACHABLE));
       return undefined;
     }
+    upstreamAttempts += 1;
     const upstream = net.connect(target.port, target.host);
     track(upstream);
     upstream.once('connect', () => {
@@ -211,6 +220,9 @@ export async function startSocks5Stub(options: Socks5StubOptions = {}): Promise<
     url: `socks5://127.0.0.1:${port}`,
     connects,
     credentials,
+    get upstreamAttempts(): number {
+      return upstreamAttempts;
+    },
     async close(): Promise<void> {
       for (const socket of sockets) socket.destroy();
       sockets.clear();

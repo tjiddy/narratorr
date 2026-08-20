@@ -116,13 +116,16 @@ describe('#2484 SOCKS5 transport contract — real agent, real fetch, real liste
     expect(result.requestUrl).toBe(origin.url('/ok'));
   });
 
-  it('actually traverses the proxy — the listener saw a CONNECT for the origin', async () => {
+  it('actually traverses the proxy — the listener saw a CONNECT and dialed the origin', async () => {
     const origin = await useOrigin();
     const socks = await useSocks();
 
     await fetchWithProxyAgent(origin.url('/ok'), { proxyUrl: socks.url });
 
     expect(socks.connects).toEqual([{ atyp: ATYP_IPV4, host: '127.0.0.1', port: origin.port }]);
+    // Positive control for the zero-attempt assertion in the default-port case below: without it,
+    // a counter that never increments would satisfy `toBe(0)` vacuously.
+    expect(socks.upstreamAttempts).toBe(1);
   });
 
   it('derives the default tunnel port from the target scheme (80 / 443)', async () => {
@@ -143,6 +146,10 @@ describe('#2484 SOCKS5 transport contract — real agent, real fetch, real liste
       { atyp: ATYP_IPV4, host: '127.0.0.1', port: 80 },
       { atyp: ATYP_IPV4, host: '127.0.0.1', port: 443 },
     ]);
+    // The isolation property itself, not just its consequence: two CONNECTs were recorded and zero
+    // dials left the process. Deleting the `noUpstream` branch reds here even on a runner where
+    // :80/:443 are closed, which is the case the recorded-port assertion alone cannot distinguish.
+    expect(socks.upstreamAttempts).toBe(0);
   });
 
   it('encodes a hostname target as ATYP 0x03 — remote DNS (socks5h) is the contract', async () => {
