@@ -205,7 +205,7 @@ describe('ImportOrchestrator — context-resolution failure (#2307)', () => {
       vi.mocked(importService.getImportContext).mockResolvedValue({
         downloadId: 113, downloadTitle: 'The Stranger [2026]', downloadStatus: 'completed',
         bookId: 42, bookTitle: 'The Stranger', bookStatus: 'downloading', bookStatusAtGrab: 'wanted',
-        bookPath: null, authorName: 'Albert Camus', narratorStr: null,
+        bookPath: null, authorName: 'Albert Camus',
         book: { id: 42, title: 'The Stranger' } as never,
         infoHash: null, guid: null,
       });
@@ -224,7 +224,7 @@ describe('ImportOrchestrator — context-resolution failure (#2307)', () => {
       vi.mocked(importService.getImportContext).mockResolvedValue({
         downloadId: 113, downloadTitle: 'The Stranger [2026]', downloadStatus: 'completed',
         bookId: 42, bookTitle: 'The Stranger', bookStatus: 'downloading', bookStatusAtGrab: 'wanted',
-        bookPath: null, authorName: 'Albert Camus', narratorStr: null,
+        bookPath: null, authorName: 'Albert Camus',
         book: { id: 42, title: 'The Stranger' } as never,
         infoHash: 'abc123', guid: null,
       });

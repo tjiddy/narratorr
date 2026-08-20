@@ -457,7 +457,7 @@ describe('admission-lock protocol — every folder and identity mutator serializ
       embedTagsForImport({
         taggingService, taggingEnabled: true, taggingMode: 'overwrite', embedCover: false,
         bookId, targetPath,
-        book: { title: 'Wanderer', authorName: null, narrator: null, seriesName: null, seriesPosition: null, coverUrl: null },
+        // #2480: no caller projection — the real DB-backed service supplies the tags it writes.
         bookService, log: inject<FastifyBaseLogger>(log),
       });
 
@@ -547,6 +547,43 @@ describe('admission-lock protocol — every folder and identity mutator serializ
 
       const tagged = vi.mocked(writeTagsWithMutagen).mock.calls.map((c) => norm(String(c[1]?.path)));
       expect(tagged).toEqual([norm(join(bookPath, 'Wanderer.m4b'))]);
+
+      await settle();
+      expect(hasPendingBookAdmission(bookId)).toBe(false);
+    });
+
+    /**
+     * Case 16 — the edit direction (#2480). The rename cases prove the embed refuses a folder the
+     * book no longer owns; this one proves that when it DOES write, the bytes carry the row as it
+     * exists at embed time. The operator edit commits while the embed is queued, so a caller-supplied
+     * pre-import projection would land on disk and, under populate_missing, stick.
+     */
+    it('makes an import tag embed queued behind an operator edit write the post-edit metadata', async () => {
+      const bookId = await seedBook('Wanderer', join('Wrong', 'Old'));
+      const bookPath = join(root, 'Wrong', 'Old');
+      const taggingService = new TaggingService(db, taggingSettings(), inject<FastifyBaseLogger>(log), bookService);
+
+      const parked = deferred();
+      // The shape `PATCH /api/books/:id` takes: the edit runs inside the section it holds.
+      const holder = withBookAdmissionLock(bookId, async () => {
+        await parked.promise;
+        await bookService.update(bookId, { title: 'Corrected Wanderer', authors: [{ name: 'Edited Author' }] });
+      });
+
+      const embedRun = importEmbed(bookId, bookPath, taggingService);
+      await settle();
+      expect(vi.mocked(writeTagsWithMutagen)).not.toHaveBeenCalled();
+
+      parked.resolve();
+      await holder;
+      await embedRun;
+
+      const request = vi.mocked(writeTagsWithMutagen).mock.calls[0]![1] as unknown as { ops: { value: unknown }[] };
+      const written = request.ops.map((op) => String(op.value));
+      expect(written).toContain('Corrected Wanderer');
+      expect(written).toContain('Edited Author');
+      // The pre-edit title is exactly what the stale projection used to carry into the file.
+      expect(written).not.toContain('Wanderer');
 
       await settle();
       expect(hasPendingBookAdmission(bookId)).toBe(false);

@@ -18,6 +18,7 @@ import {
 } from './mutagen-tag-payload.js';
 import { writeTagsWithMutagen } from './mutagen-tag-writer.js';
 import { withPathWriteLock } from '../utils/path-write-lock.js';
+import { buildTagProjection } from '../utils/tag-projection.js';
 import { withBookAdmissionLock } from './book-admission.js';
 import {
   readExistingTags,
@@ -199,14 +200,6 @@ async function warnUnsupportedFormats(
   return { skipped: unsupported.length, warnings, entries: unsupported };
 }
 
-function bookAuthorString(book: { authors: { name: string }[] }): string | null {
-  return book.authors.length > 0 ? book.authors.map(a => a.name).join(', ') : null;
-}
-
-function bookNarratorString(book: { narrators: { name: string }[] }): string | null {
-  return book.narrators.length > 0 ? book.narrators.map(n => n.name).join(', ') : null;
-}
-
 export class TaggingService {
   constructor(
     _db: Db,
@@ -332,15 +325,7 @@ export class TaggingService {
     return this.tagBook(
       bookId,
       book.path!,
-      {
-        title: book.title,
-        authorName: bookAuthorString(book),
-        narrator: bookNarratorString(book),
-        seriesName: book.seriesName, seriesPosition: book.seriesPosition,
-        asin: book.asin, subtitle: book.subtitle, description: book.description,
-        publisher: book.publisher, publishedDate: book.publishedDate, genres: book.genres,
-        coverUrl: book.coverUrl,
-      },
+      buildTagProjection(book),
       mutagenPython,
       mode,
       embedCover,
@@ -358,14 +343,7 @@ export class TaggingService {
     const embedCover = overrides.embedCover ?? taggingSettings.embedCover;
     const warnings: string[] = [];
 
-    const canonicalTags = buildCanonicalTags({
-      title: book.title,
-      authorName: bookAuthorString(book),
-      narrator: bookNarratorString(book),
-      seriesName: book.seriesName, seriesPosition: book.seriesPosition,
-      asin: book.asin, subtitle: book.subtitle, description: book.description,
-      publisher: book.publisher, publishedDate: book.publishedDate, genres: book.genres,
-    });
+    const canonicalTags = buildCanonicalTags(buildTagProjection(book));
 
     const audioFiles = await collectAudioFiles(book.path!);
     const unsupported = await warnUnsupportedFormats(book.path!, this.log);

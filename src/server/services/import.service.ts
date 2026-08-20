@@ -69,7 +69,6 @@ export interface ImportContext {
   bookStatusAtGrab: BookStatus | null;
   bookPath: string | null;
   authorName: string | null;
-  narratorStr: string | null;
   book: BookWithAuthor;
   infoHash: string | null;
   guid: string | null;
@@ -93,8 +92,6 @@ export class ImportService {
     const book = await this.bookService!.getById(download.bookId);
     if (!book) throw new Error(`Book ${download.bookId} not found`);
     const authorName = book.authors[0]?.name ?? null;
-    const narratorNames = book.narrators.map(n => n.name);
-    const narratorStr = narratorNames.length > 0 ? narratorNames.join(', ') : null;
 
     return {
       downloadId,
@@ -106,7 +103,6 @@ export class ImportService {
       bookStatusAtGrab: download.bookStatusAtGrab ?? null,
       bookPath: book.path,
       authorName,
-      narratorStr,
       book,
       infoHash: download.infoHash ?? null,
       guid: download.guid ?? null,

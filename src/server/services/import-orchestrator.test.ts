@@ -83,7 +83,6 @@ const mockContext: ImportContext = {
   bookStatusAtGrab: 'wanted',
   bookPath: null,
   authorName: 'Brandon Sanderson',
-  narratorStr: 'Michael Kramer',
   book: {
     id: 1, title: 'The Way of Kings', status: 'wanted', path: null,
     narrators: [{ name: 'Michael Kramer' }], seriesName: 'Stormlight', seriesPosition: 1, coverUrl: '/covers/1.jpg',
@@ -182,7 +181,7 @@ describe('ImportOrchestrator', () => {
       expect(emitBookImporting).toHaveBeenCalled();
     });
 
-    it('dispatches tagging after successful import (best-effort)', async () => {
+    it('dispatches tagging after successful import (best-effort), with no caller-supplied projection', async () => {
       await orchestrator.importDownload(1);
 
       // bookService is the embed's own in-section re-read (#2461); without it the helper would
@@ -190,6 +189,10 @@ describe('ImportOrchestrator', () => {
       expect(embedTagsForImport).toHaveBeenCalledWith(expect.objectContaining({
         bookId: 1, targetPath: '/audiobooks/Brandon Sanderson/The Way of Kings', bookService,
       }));
+      // #2480: the stale pre-import projection is gone from the payload. `not.objectContaining`
+      // would pass on a present-but-undefined key, so the key itself is what gets asserted.
+      const embedArgs = vi.mocked(embedTagsForImport).mock.calls[0]![0] as unknown as Record<string, unknown>;
+      expect(embedArgs).not.toHaveProperty('book');
     });
 
     it('skips the tag embed with a warn when no book service is wired, and still runs every later side effect', async () => {
@@ -213,6 +216,8 @@ describe('ImportOrchestrator', () => {
       expect(runImportPostProcessing).toHaveBeenCalledWith(expect.objectContaining({
         targetPath: '/audiobooks/Brandon Sanderson/The Way of Kings',
         bookTitle: 'The Way of Kings',
+        // Survives #2480's narratorStr removal: the script contract still reads ctx.authorName.
+        bookAuthor: 'Brandon Sanderson',
       }));
     });
 

@@ -133,13 +133,6 @@ export class ImportOrchestrator {
           taggingService: this.taggingService, taggingEnabled: taggingSettings.enabled,
           taggingMode: taggingSettings.mode, embedCover: taggingSettings.embedCover,
           bookId: ctx.bookId, targetPath: result.targetPath,
-          book: {
-            title: ctx.book.title, authorName: ctx.authorName, narrator: ctx.narratorStr,
-            seriesName: ctx.book.seriesName, seriesPosition: ctx.book.seriesPosition,
-            asin: ctx.book.asin, subtitle: ctx.book.subtitle, description: ctx.book.description,
-            publisher: ctx.book.publisher, publishedDate: ctx.book.publishedDate, genres: ctx.book.genres,
-            coverUrl: ctx.book.coverUrl,
-          },
           bookService: this.bookService,
           log: this.log,
         });
