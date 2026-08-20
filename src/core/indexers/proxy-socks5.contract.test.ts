@@ -321,19 +321,19 @@ describe('#2484 SOCKS5 abort paths', () => {
     const socks = await useSocks();
     const controller = new AbortController();
 
-    const started = Date.now();
     const promise = fetchWithProxyAgent(origin.url('/hang'), {
       proxyUrl: socks.url,
       signal: controller.signal,
     });
-    // Let the tunnel open and the request go out before cancelling.
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    // Abort only once the CONNECT is observed at the proxy — a fixed sleep can fire before the
+    // tunnel opens on a loaded runner, cancelling a request that was never sent (#2524). The
+    // rejection settling under the suite timeout IS the promptness proof; no wall-clock bound.
+    await socks.connectObserved();
     controller.abort();
 
     // No message assertion: proxy.ts classifies on `error.name === 'AbortError'`, which a caller
     // abort and the internal timeout both produce, so the string would pin a known wart.
     await expect(promise).rejects.toThrow(ProxyError);
-    expect(Date.now() - started).toBeLessThan(5_000);
     expect(socks.connects).toHaveLength(1);
   });
 });

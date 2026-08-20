@@ -60,6 +60,14 @@ export interface Socks5Stub {
    * a-red-suite rather than a silent regression back to dialing host-owned ports.
    */
   readonly upstreamAttempts: number;
+  /**
+   * Resolves once a CONNECT frame has been observed — the settlement barrier for cancellation
+   * tests (#2524): a fixed sleep can fire before the tunnel opens on a loaded runner, cancelling a
+   * request that was never sent. A frame already recorded resolves immediately (with the most
+   * recent one), so arming after the fetch launched cannot miss it — which also means it cannot
+   * distinguish the Nth request through one stub; grow a cursor before writing that test.
+   */
+  connectObserved(): Promise<Socks5Connect>;
   close(): Promise<void>;
 }
 
@@ -128,6 +136,7 @@ export async function startSocks5Stub(options: Socks5StubOptions = {}): Promise<
   const connects: Socks5Connect[] = [];
   const credentials: Socks5Credentials[] = [];
   const sockets = new Set<net.Socket>();
+  const connectWaiters: Array<(connect: Socks5Connect) => void> = [];
   let upstreamAttempts = 0;
 
   const track = (socket: net.Socket): void => {
@@ -191,6 +200,7 @@ export async function startSocks5Stub(options: Socks5StubOptions = {}): Promise<
         const parsed = parseRequest(buf);
         if (!parsed) return;
         connects.push(parsed.connect);
+        for (const waiter of connectWaiters.splice(0)) waiter(parsed.connect);
         stage = 'tunnel';
         upstream = openTunnel(socket, parsed.connect, parsed.rest);
         buf = Buffer.alloc(0);
@@ -222,6 +232,11 @@ export async function startSocks5Stub(options: Socks5StubOptions = {}): Promise<
     credentials,
     get upstreamAttempts(): number {
       return upstreamAttempts;
+    },
+    connectObserved(): Promise<Socks5Connect> {
+      const last = connects[connects.length - 1];
+      if (last) return Promise.resolve(last);
+      return new Promise((resolve) => connectWaiters.push(resolve));
     },
     async close(): Promise<void> {
       for (const socket of sockets) socket.destroy();
