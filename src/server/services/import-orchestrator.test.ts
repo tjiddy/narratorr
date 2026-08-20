@@ -301,6 +301,25 @@ describe('ImportOrchestrator', () => {
       }));
     });
 
+    it('side effects carry the live row identity over the pre-import ctx snapshot (#2511)', async () => {
+      // An operator edit landed mid-copy: the row no longer matches the ctx captured at dispatch.
+      vi.mocked(bookService.getById).mockResolvedValue({
+        id: 1, title: 'The Way of Kings (Edited)', authors: [{ name: 'B. Sanderson' }],
+      } as never);
+
+      await orchestrator.importDownload(1);
+
+      expect(notifyImportComplete).toHaveBeenCalledWith(expect.objectContaining({
+        bookTitle: 'The Way of Kings (Edited)', authorName: 'B. Sanderson',
+      }));
+      expect(recordImportEvent).toHaveBeenCalledWith(expect.objectContaining({
+        bookTitle: 'The Way of Kings (Edited)', authorName: 'B. Sanderson',
+      }));
+      expect(connector.notifyRefresh).toHaveBeenCalledWith('import', [
+        expect.objectContaining({ title: 'The Way of Kings (Edited)', authorName: 'B. Sanderson' }),
+      ]);
+    });
+
     it('returns ImportResult from importService', async () => {
       const result = await orchestrator.importDownload(1);
       expect(result).toEqual(mockResult);

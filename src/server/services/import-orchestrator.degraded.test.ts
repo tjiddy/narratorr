@@ -215,7 +215,9 @@ describe('ImportOrchestrator — context-resolution failure (#2307)', () => {
 
       await orchestrator.importDownload(113, undefined, { bookId: 42 });
 
-      expect(getById).not.toHaveBeenCalled();
+      // Exactly the #2511 live-identity read and nothing more: degraded context recovery would
+      // issue its own lookup on top, so a second call is the regression this case guards.
+      expect(getById).toHaveBeenCalledTimes(1);
       expect(log.error).not.toHaveBeenCalled();
     });
 

@@ -156,12 +156,22 @@ export class ImportOrchestrator {
       this.log.warn({ error: serializeError(opfError), bookId: ctx.bookId }, 'OPF write failed during import — continuing');
     }
 
+    // Post-enrichment identity for the four consumers below, read AFTER the embed/OPF steps —
+    // those can run for minutes on a large book, and an edit or Fix Match landing during them is
+    // exactly the staleness this closes. The ctx values are only the fallback for an unwired book
+    // service or a vanished row (#2511 — the tag embed's own in-lock read did the same for tag
+    // bytes in #2480).
+    const live = await this.readLiveIdentity(ctx.bookId);
+    const bookTitle = live?.title ?? ctx.bookTitle;
+    // The live row wins wholesale — its null author is an assertion, not an absence to paper over.
+    const authorName = live ? live.authorName : ctx.authorName;
+
     try {
       const processingForScript = await this.settingsService.get('processing');
       await runImportPostProcessing({
         postProcessingScript: processingForScript.postProcessingScript,
         postProcessingScriptTimeout: processingForScript.postProcessingScriptTimeout,
-        targetPath: result.targetPath, bookTitle: ctx.bookTitle, bookAuthor: ctx.authorName,
+        targetPath: result.targetPath, bookTitle, bookAuthor: authorName,
         fileCount: result.fileCount, bookId: ctx.bookId, log: this.log,
       });
     } catch (scriptError: unknown) {
@@ -171,14 +181,14 @@ export class ImportOrchestrator {
     // The worker, not this status transition, owns the import_complete lifecycle event.
     emitImportStatusSuccess({ broadcaster: this.broadcaster, downloadId: result.downloadId, bookId: result.bookId, log: this.log });
 
-    notifyImportComplete({ notifierService: this.notifierService, bookTitle: ctx.bookTitle, authorName: ctx.authorName, targetPath: result.targetPath, fileCount: result.fileCount, log: this.log });
+    notifyImportComplete({ notifierService: this.notifierService, bookTitle, authorName, targetPath: result.targetPath, fileCount: result.fileCount, log: this.log });
 
-    recordImportEvent({ eventHistory: this.eventHistory, bookId: ctx.bookId, bookTitle: ctx.bookTitle, authorName: ctx.authorName, downloadId: result.downloadId, bookPath: ctx.bookPath, targetPath: result.targetPath, fileCount: result.fileCount, totalSize: result.totalSize, log: this.log });
+    recordImportEvent({ eventHistory: this.eventHistory, bookId: ctx.bookId, bookTitle, authorName, downloadId: result.downloadId, bookPath: ctx.bookPath, targetPath: result.targetPath, fileCount: result.fileCount, totalSize: result.totalSize, log: this.log });
 
     // Dispatch connector refresh only after commit and final-path creation; never await it.
     if (this.connectorService) {
       fireAndForget(
-        this.connectorService.notifyRefresh('import', [{ bookId: ctx.bookId, title: ctx.bookTitle, authorName: ctx.authorName, libraryPath: result.targetPath }]),
+        this.connectorService.notifyRefresh('import', [{ bookId: ctx.bookId, title: bookTitle, authorName, libraryPath: result.targetPath }]),
         this.log,
         'Failed to enqueue connector refresh on auto-import',
       );
@@ -186,6 +196,19 @@ export class ImportOrchestrator {
 
     // Download-only auto-merge is the final awaited step; manual/library imports never enter this dispatcher.
     await this.maybeEnqueueAutoMerge(result, ctx);
+  }
+
+  /** A read failure falls back to the ctx snapshot — identity refresh must never fail the side effects. */
+  private async readLiveIdentity(bookId: number): Promise<{ title: string; authorName: string | null } | null> {
+    if (!this.bookService) return null;
+    try {
+      const book = await this.bookService.getById(bookId);
+      if (!book) return null;
+      return { title: book.title, authorName: book.authors?.[0]?.name ?? null };
+    } catch (error: unknown) {
+      this.log.debug({ bookId, error: serializeError(error) }, 'Live identity read failed — using pre-import snapshot');
+      return null;
+    }
   }
 
   /**
