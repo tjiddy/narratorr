@@ -152,6 +152,35 @@ describe('insertDownloadRecordOrCompensate', () => {
         completedAt: undefined,
       }));
     });
+
+    it('treats a whitespace-only external id as a handoff and stores null, never the blank (#2489)', async () => {
+      const { release, values } = gateInsert();
+      const staged = fakeStaged();
+
+      const running = run({ staged, externalId: '   ' });
+      release();
+      await running;
+
+      expect(values).toHaveBeenCalledWith(expect.objectContaining({
+        clientStatus: 'completed',
+        progress: 1,
+        externalId: null,
+        completedAt: expect.any(Date),
+      }));
+    });
+
+    it('stores a padded external id trimmed, keeping it a tracked download (#2489)', async () => {
+      const { release, values } = gateInsert();
+
+      const running = run({ externalId: '  ext-42  ' });
+      release();
+      await running;
+
+      expect(values).toHaveBeenCalledWith(expect.objectContaining({
+        clientStatus: 'downloading',
+        externalId: 'ext-42',
+      }));
+    });
   });
 
   describe('a publish that fails while the process is alive', () => {
