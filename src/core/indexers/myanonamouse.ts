@@ -311,7 +311,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     const signal = callerSignal
       ? AbortSignal.any([controller.signal, callerSignal])
       : controller.signal;
-    const dispatcher = createProxyAgent(this.proxyUrl);
+    const dispatcher = createProxyAgent(this.proxyUrl, url);
 
     try {
       const fetchOptions: DispatcherFetchInit = {
@@ -410,7 +410,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     const signal = callerSignal
       ? AbortSignal.any([controller.signal, callerSignal])
       : controller.signal;
-    const dispatcher = createProxyAgent(this.proxyUrl);
+    const dispatcher = createProxyAgent(this.proxyUrl, url);
 
     try {
       const fetchOptions: DispatcherFetchInit = {
