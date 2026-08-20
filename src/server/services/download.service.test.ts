@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
-import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService, searchStatus, mockSearchAllWithStatus } from '../__tests__/helpers.js';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
+import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService, searchStatus, mockSearchAllWithStatus, captureDeadlineTimers } from '../__tests__/helpers.js';
 import { DownloadService, DownloadError, DuplicateDownloadError } from './download.service.js';
 import { type DownloadClientService } from './download-client.service.js';
 import { DownloadUrl } from '@core/utils/download-url.js';
@@ -10,6 +10,18 @@ import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
 import { createMockDbBook, createMockDbIndexer } from '../__tests__/factories.js';
 import * as statusRegistry from '@shared/download-status-registry.js';
 import { deriveDisplayStatus } from '@shared/download-status-registry.js';
+import { _resetSearchRegistryForTesting } from './search-deadline.js';
+import { retrySearch } from './retry-search.js';
+
+// #2477 AC11: `retry()` calls the real `retrySearch`, so `inFlightSearches` is live module state
+// here — a parked run left registered would gate a later case's retry as `already_active`.
+beforeEach(() => {
+  _resetSearchRegistryForTesting();
+});
+
+afterEach(() => {
+  _resetSearchRegistryForTesting();
+});
 
 const dialect = new SQLiteSyncDialect();
 function toSQL(expr: unknown): { sql: string; params: unknown[] } {
@@ -1456,7 +1468,8 @@ describe('DownloadService', () => {
 
         expect(result.status).toBe('retry_error');
         expect((result as { error: string }).error).toBe('Indexer down');
-        expect(chain.set).toHaveBeenCalledWith({ errorMessage: 'Retry failed - will retry next cycle' });
+        // #2477 AC7: nothing re-drives a retry_error row, so the persisted copy stopped promising it.
+        expect(chain.set).toHaveBeenCalledWith({ errorMessage: 'Retry search failed — manual retry required' });
       });
 
       it('resets retry budget for the book before searching', async () => {
@@ -1506,6 +1519,79 @@ describe('DownloadService', () => {
 
         expect(resetSpy).not.toHaveBeenCalled();
         expect(mockRetryDeps.indexerSearchService.searchAllWithStatus).not.toHaveBeenCalled();
+      });
+
+      // #2477 — the manual retry now shares the per-book registry and the search deadline with the
+      // four automatic surfaces. The real production timer is fired here, never doubled away.
+      describe('bounded by the shared search deadline (#2477)', () => {
+        let armed: Array<() => void>;
+
+        const failedDownload = () => ({ ...mockDownload, id: 1, clientStatus: 'failed' as const, pipelineStage: 'idle' as const });
+        const parkedSearch = () => vi.fn(() => new Promise<never>(() => { /* never settles */ }));
+
+        beforeEach(() => {
+          armed = captureDeadlineTimers();
+        });
+
+        afterEach(() => {
+          vi.restoreAllMocks();
+        });
+
+        it('returns already_active and preserves the failed row when a search is already in flight', async () => {
+          const searchAllWithStatus = parkedSearch();
+          mockRetryDeps.indexerSearchService.searchAllWithStatus = searchAllWithStatus;
+          const holder = retrySearch(1, mockRetryDeps as never);
+          await vi.waitFor(() => expect(searchAllWithStatus).toHaveBeenCalledTimes(1));
+
+          db.select.mockReturnValue(mockDbChain([{ download: failedDownload(), book: mockBook }]));
+          const chain = mockDbChain();
+          db.update.mockReturnValue(chain);
+
+          // The route answers 200 { status: 'already_active' }; no new status reaches the client.
+          await expect(retryService.retry(1)).resolves.toEqual({ status: 'already_active' });
+          expect(searchAllWithStatus).toHaveBeenCalledTimes(1);
+          expect(chain.set).not.toHaveBeenCalled();
+          expect(db.delete).not.toHaveBeenCalled();
+
+          armed[0]!();
+          await expect(holder).resolves.toMatchObject({ outcome: 'retry_error' });
+        });
+
+        it('returns retry_error with the deadline message and writes the manual-retry copy on expiry', async () => {
+          mockRetryDeps.indexerSearchService.searchAllWithStatus = parkedSearch();
+          db.select.mockReturnValue(mockDbChain([{ download: failedDownload(), book: mockBook }]));
+          const chain = mockDbChain();
+          db.update.mockReturnValue(chain);
+
+          const running = retryService.retry(1);
+          await vi.waitFor(() => expect(armed).toHaveLength(1));
+          armed[0]!();
+
+          const result = await running;
+          expect(result.status).toBe('retry_error');
+          expect((result as { error: string }).error).toContain('deadline');
+          expect(chain.set).toHaveBeenCalledWith({ errorMessage: 'Retry search failed — manual retry required' });
+        });
+
+        it('resets the budget before the wrap, so a colliding manual retry consumes no attempt', async () => {
+          const searchAllWithStatus = parkedSearch();
+          mockRetryDeps.indexerSearchService.searchAllWithStatus = searchAllWithStatus;
+          const holder = retrySearch(1, mockRetryDeps as never);
+          await vi.waitFor(() => expect(searchAllWithStatus).toHaveBeenCalledTimes(1));
+          const resetSpy = vi.spyOn(retryBudget, 'reset');
+          const consumeSpy = vi.spyOn(retryBudget, 'consumeAttempt');
+
+          db.select.mockReturnValue(mockDbChain([{ download: failedDownload(), book: mockBook }]));
+          db.update.mockReturnValue(mockDbChain());
+
+          await expect(retryService.retry(1)).resolves.toEqual({ status: 'already_active' });
+
+          expect(resetSpy).toHaveBeenCalledWith(1);
+          expect(consumeSpy).not.toHaveBeenCalled();
+
+          armed[0]!();
+          await holder;
+        });
       });
     });
   });

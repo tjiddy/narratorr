@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vite
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@db/index.js';
 import type { SearchResult } from '@core/index.js';
-import { createMockDb, mockDbChain, createMockLogger, inject, searchStatus, mockSearchAllWithStatus } from '../__tests__/helpers.js';
+import { createMockDb, mockDbChain, createMockLogger, inject, searchStatus, mockSearchAllWithStatus, captureDeadlineTimers } from '../__tests__/helpers.js';
 import { DownloadService } from './download.service.js';
 import { DownloadOrchestrator } from './download-orchestrator.js';
 import type { DownloadClientService } from './download-client.service.js';
@@ -12,7 +12,6 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { searchAndGrabForBook } from './search-pipeline.js';
 import { SearchDeadlineError, _resetSearchRegistryForTesting } from './search-deadline.js';
-import { SEARCH_DEADLINE_MS } from '@core/utils/constants.js';
 import { BlackholeClient } from '@core/download-clients/blackhole.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -83,20 +82,6 @@ describe('#2310 grab integrity and excluded surfaces — real download chain', (
   let orchestrator: DownloadOrchestrator;
   let indexerSearchService: IndexerSearchService;
   let armed: Array<() => void>;
-
-  /** Only the deadline's own timer is captured; every other timer in the process stays real. */
-  function captureDeadlineTimers(): Array<() => void> {
-    const captured: Array<() => void> = [];
-    const original = globalThis.setTimeout;
-    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, delay?: number, ...rest: unknown[]) => {
-      if (delay !== SEARCH_DEADLINE_MS) return original(fn as never, delay as never, ...rest as never[]);
-      captured.push(fn);
-      const parked = original(() => { /* never fires within a test */ }, 2 ** 30);
-      parked.unref();
-      return parked;
-    }) as never);
-    return captured;
-  }
 
   // The real `resolveAdapterDownloadUrl` walks getById → getAdapter → adapter.resolveDownloadUrl,
   // so the double must carry all three or the excluded boundary is never reached.

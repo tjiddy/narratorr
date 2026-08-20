@@ -12,6 +12,20 @@ import type { EventBroadcasterService } from '../services/event-broadcaster.serv
 import type { EventHistoryService } from '../services/event-history.service.js';
 import { createMockDbBook } from '../__tests__/factories.js';
 import { monitorDownloads } from './monitor.js';
+import { _resetSearchRegistryForTesting } from '../services/search-deadline.js';
+import { retrySearch } from '../services/retry-search.js';
+import { captureDeadlineTimers } from '../__tests__/helpers.js';
+
+// #2477 AC11: the monitor awaits the REAL `retrySearch`, so `inFlightSearches` is live module state
+// here. A case that parks a retry and never settles it would convert a later case's retry into a
+// silent `already_active`.
+beforeEach(() => {
+  _resetSearchRegistryForTesting();
+});
+
+afterEach(() => {
+  _resetSearchRegistryForTesting();
+});
 
 describe('monitor job', () => {
   let db: ReturnType<typeof createMockDb>;
@@ -842,7 +856,7 @@ describe('monitor job', () => {
       expect(setCalls).toContainEqual(expect.objectContaining({ errorMessage: 'Retrying' }));
     });
 
-    it('sets errorMessage to "Retry failed" on retry_error', async () => {
+    it('sets the manual-retry errorMessage on retry_error from a throwing indexer', async () => {
       retryDeps.retrySearchDeps.indexerSearchService.searchAllWithStatus.mockRejectedValue(new Error('Indexer down'));
 
       db.select.mockReturnValueOnce(mockDbChain([
@@ -855,7 +869,8 @@ describe('monitor job', () => {
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
       const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
-      expect(setCalls).toContainEqual(expect.objectContaining({ errorMessage: 'Retry failed - will retry next cycle' }));
+      // #2477 AC7: no automatic retry follows a retry_error row, so the persisted copy says so.
+      expect(setCalls).toContainEqual(expect.objectContaining({ errorMessage: 'Retry search failed — manual retry required' }));
     });
 
     it('deletes old failed record when retry search succeeds', async () => {
@@ -2303,5 +2318,180 @@ describe('#2423 missing-item grace window', () => {
     const written = (chain.set as Mock).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
     expect(written.some((s) => s.clientStatus === 'failed')).toBe(false);
     expect(retryDeps.blacklistService.create).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #2477 — the monitor's serial poll loop awaits `retrySearch` inline, so an unbounded ladder holds
+ * every other download hostage. These cases fire the REAL production deadline via
+ * `captureDeadlineTimers()`; none of them replaces `withSearchDeadline` with a double.
+ */
+describe('monitor job — bounded retry (#2477)', () => {
+  const MANUAL_RETRY_MESSAGE = 'Retry search failed — manual retry required';
+
+  let db: ReturnType<typeof createMockDb>;
+  let log: ReturnType<typeof createMockLogger>;
+  let adapter: { getDownload: Mock };
+  let downloadClientService: { getAdapter: Mock };
+  let notifierService: { notify: Mock };
+  let armed: Array<() => void>;
+  let retryDeps: {
+    blacklistService: { create: Mock };
+    retrySearchDeps: {
+      indexerSearchService: { searchAllWithStatus: Mock };
+      indexerService: { getLanAllowlist: Mock };
+      downloadOrchestrator: { grab: Mock; grabForRetry: Mock; hasGrabBlocker: Mock };
+      blacklistService: { getBlacklistedHashes: Mock; getBlacklistedIdentifiers: Mock };
+      bookService: { getById: Mock };
+      settingsService: ReturnType<typeof createMockSettingsService>;
+      retryBudget: RetryBudget;
+      eventHistory: { create: Mock };
+      log: ReturnType<typeof createMockLogger>;
+    };
+  };
+
+  const parkedSearch = () => vi.fn(() => new Promise<never>(() => { /* never settles */ }));
+
+  const failedRow = (id: number, bookId: number, title: string) => ({
+    id, externalId: `ext-${id}`, downloadClientId: 10, clientStatus: 'downloading',
+    pipelineStage: 'idle', bookId, title, infoHash: `hash-${id}`,
+  });
+
+  const run = () => monitorDownloads(
+    inject<Db>(db),
+    inject<DownloadClientService>(downloadClientService),
+    inject<NotifierService>(notifierService),
+    inject<FastifyBaseLogger>(log),
+    retryDeps as never,
+  );
+
+  const written = (chain: ReturnType<typeof mockDbChain>) =>
+    (chain.set as Mock).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+
+  beforeEach(async () => {
+    const { RetryBudget } = await import('../services/retry-budget.js');
+    armed = captureDeadlineTimers();
+    db = createMockDb();
+    log = createMockLogger();
+    adapter = { getDownload: vi.fn().mockResolvedValue(null) };
+    downloadClientService = { getAdapter: vi.fn().mockResolvedValue(adapter) };
+    notifierService = { notify: vi.fn().mockResolvedValue(undefined) };
+    retryDeps = {
+      blacklistService: { create: vi.fn().mockResolvedValue(undefined) },
+      retrySearchDeps: {
+        indexerSearchService: { searchAllWithStatus: mockSearchAllWithStatus([]) },
+        indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }) },
+        downloadOrchestrator: {
+          grab: vi.fn().mockResolvedValue({ id: 99 }),
+          grabForRetry: vi.fn().mockResolvedValue({ id: 99 }),
+          hasGrabBlocker: vi.fn().mockResolvedValue(false),
+        },
+        blacklistService: {
+          getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()),
+          getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }),
+        },
+        bookService: {
+          getById: vi.fn().mockImplementation((id: number) => Promise.resolve({
+            id, title: `Book ${id}`, duration: 3600, path: null, authors: [{ name: 'Author' }], narrators: [],
+          })),
+        },
+        settingsService: createMockSettingsService(),
+        retryBudget: new RetryBudget(),
+        eventHistory: { create: vi.fn().mockResolvedValue({ id: 1 }) },
+        log: createMockLogger(),
+      },
+    };
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('writes the manual-retry copy and preserves the failed row when the retry expires', async () => {
+    retryDeps.retrySearchDeps.indexerSearchService.searchAllWithStatus = parkedSearch();
+    db.select.mockReturnValueOnce(mockDbChain([failedRow(1, 42, 'Book 42')]));
+    const chain = mockDbChain([{ id: 1 }]);
+    db.update.mockReturnValue(chain);
+
+    const running = run();
+    await vi.waitFor(() => expect(armed).toHaveLength(1));
+    armed[0]!();
+    await running;
+
+    expect(written(chain)).toContainEqual(expect.objectContaining({ errorMessage: MANUAL_RETRY_MESSAGE }));
+    // The row survives and the book keeps its grab-time status: this arm skips recoverBookStatus.
+    expect(db.delete).not.toHaveBeenCalled();
+    expect(log.info).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'Book status recovered after download failure',
+    );
+  });
+
+  // The case the issue exists for: pre-fix, download two is never reached.
+  it('advances to the next download in the same cycle after the first book\'s retry expires', async () => {
+    retryDeps.retrySearchDeps.indexerSearchService.searchAllWithStatus = vi.fn((query: string) =>
+      query.includes('Book 42')
+        ? new Promise<never>(() => { /* never settles */ })
+        : Promise.resolve(searchStatus([{
+          title: 'Book 43', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:abc', infoHash: 'abc',
+          size: 500000000, seeders: 10, indexer: 'Test',
+        }])));
+    db.select.mockReturnValueOnce(mockDbChain([failedRow(1, 42, 'Book 42'), failedRow(2, 43, 'Book 43')]));
+    const chain = mockDbChain([{ id: 1 }]);
+    db.update.mockReturnValue(chain);
+    db.delete.mockReturnValue(mockDbChain([{ id: 2 }]));
+
+    const running = run();
+    await vi.waitFor(() => expect(armed).toHaveLength(1));
+    armed[0]!();
+    await running;
+
+    expect(adapter.getDownload).toHaveBeenCalledTimes(2);
+    expect(written(chain)).toContainEqual(expect.objectContaining({ errorMessage: MANUAL_RETRY_MESSAGE }));
+    expect(written(chain)).toContainEqual(expect.objectContaining({ errorMessage: 'Retrying' }));
+    expect(retryDeps.retrySearchDeps.downloadOrchestrator.grabForRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves already_active without a second ladder when a detached retry already holds the book', async () => {
+    const searchAllWithStatus = parkedSearch();
+    retryDeps.retrySearchDeps.indexerSearchService.searchAllWithStatus = searchAllWithStatus;
+    // Exactly what `rejection-helpers` fires and never awaits.
+    const detached = retrySearch(42, retryDeps.retrySearchDeps as never);
+    await vi.waitFor(() => expect(searchAllWithStatus).toHaveBeenCalledTimes(1));
+
+    db.select.mockReturnValueOnce(mockDbChain([failedRow(1, 42, 'Book 42')]));
+    const chain = mockDbChain([{ id: 1 }]);
+    db.update.mockReturnValue(chain);
+
+    await run();
+
+    expect(searchAllWithStatus).toHaveBeenCalledTimes(1);
+    expect(db.delete).not.toHaveBeenCalled();
+    expect(written(chain)).not.toContainEqual(expect.objectContaining({ errorMessage: MANUAL_RETRY_MESSAGE }));
+    expect(log.info).toHaveBeenCalledWith(
+      { downloadId: 1, bookId: 42 },
+      'Retry skipped — book already has a blocking download or import',
+    );
+
+    armed[0]!();
+    await expect(detached).resolves.toMatchObject({ outcome: 'retry_error' });
+  });
+
+  // The two retry_error writers are independently pinned: this one is the outer catch, which only a
+  // rejecting pre-check can still reach once AC6 makes the ladder body total.
+  it('writes the same manual-retry copy from the unexpected-error arm', async () => {
+    retryDeps.retrySearchDeps.bookService.getById.mockRejectedValue(new Error('DB unavailable'));
+    db.select.mockReturnValueOnce(mockDbChain([failedRow(1, 42, 'Book 42')]));
+    const chain = mockDbChain([{ id: 1 }]);
+    db.update.mockReturnValue(chain);
+
+    await run();
+
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ downloadId: 1, bookId: 42 }),
+      'handleDownloadFailure unexpected error',
+    );
+    expect(written(chain)).toContainEqual(expect.objectContaining({ errorMessage: MANUAL_RETRY_MESSAGE }));
+    expect(db.delete).not.toHaveBeenCalled();
   });
 });

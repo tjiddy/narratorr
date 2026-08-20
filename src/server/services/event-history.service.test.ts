@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService, mockSearchAllWithStatus } from '../__tests__/helpers.js';
@@ -14,6 +14,18 @@ import { EventHistoryService, EventHistoryServiceError } from './event-history.s
 import { retrySearch } from './retry-search.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { BookService } from './book.service.js';
+import { _resetSearchRegistryForTesting } from './search-deadline.js';
+
+// #2477 AC11: this suite wraps the REAL `retrySearch` (`vi.fn(actual.retrySearch)`), so
+// `inFlightSearches` is live module state — and markFailed's dispatch is fire-and-forget, which is
+// exactly the shape that leaves a book registered past the end of a case.
+beforeEach(() => {
+  _resetSearchRegistryForTesting();
+});
+
+afterEach(() => {
+  _resetSearchRegistryForTesting();
+});
 
 describe('EventHistoryService', () => {
   let db: ReturnType<typeof createMockDb>;
@@ -521,6 +533,48 @@ describe('EventHistoryService', () => {
       await vi.waitFor(() => {
         expect(mockSearchAll).toHaveBeenCalled();
       });
+    });
+
+    // #2477 error isolation: the registry collision is an OUTCOME, not a rejection, so the
+    // fire-and-forget `.catch` warn below must stay silent when a retry arrives on a busy book.
+    it('resolves already_active without rejecting when a search is already in flight for the book', async () => {
+      const event = createMockDbBookEvent({ downloadId: 5, bookId: 42 });
+      const download = { id: 5, infoHash: 'abc123', title: 'Test' };
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([event]))
+        .mockReturnValueOnce(mockDbChain([download]));
+
+      const { RetryBudget } = await import('./retry-budget.js');
+      const parked = vi.fn(() => new Promise<never>(() => { /* never settles */ }));
+      const deps = {
+        indexerSearchService: { searchAllWithStatus: parked },
+        indexerService: { getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set(), hostname: new Set() }) },
+        downloadOrchestrator: { grabForRetry: vi.fn(), hasGrabBlocker: vi.fn().mockResolvedValue(false) },
+        downloadService: { grab: vi.fn() },
+        blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
+        bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test', duration: 3600, path: null, authors: [{ name: 'Author' }] }) },
+        settingsService: createMockSettingsService(),
+        retryBudget: new RetryBudget(),
+        eventHistory: { create: vi.fn().mockResolvedValue({ id: 1 }) },
+        log: createMockLogger(),
+      };
+      vi.mocked(retrySearch).mockClear();
+      // Holds the registry for book 42 and never settles — the shape a detached retry leaves behind.
+      const holder = retrySearch(42, deps as never);
+      await vi.waitFor(() => expect(parked).toHaveBeenCalledTimes(1));
+
+      const fresh = freshService();
+      fresh.wire({ retrySearchDeps: deps } as never);
+
+      await expect(fresh.markFailed(1)).resolves.toEqual({ success: true });
+
+      await vi.waitFor(() => expect(retrySearch).toHaveBeenCalledTimes(2));
+      const dispatched = vi.mocked(retrySearch).mock.results[1]!.value as Promise<unknown>;
+      await expect(dispatched).resolves.toEqual({ outcome: 'already_active' });
+      expect(parked).toHaveBeenCalledTimes(1);
+      expect(log.warn).not.toHaveBeenCalledWith(expect.anything(), 'Mark-as-failed retry search failed');
+      expect(holder).toBeInstanceOf(Promise);
     });
 
     it('logs canonical serialized warning when retrySearch promise itself rejects', async () => {
