@@ -44,6 +44,9 @@ function MetaRow({ result, isInLibrary, quality, comparison }: {
       {result.format && (
         <span className={`${BADGE} bg-purple-500/10 text-purple-400 border border-purple-500/20`}>{result.format}</span>
       )}
+      {result.bitrateKbps !== undefined && (
+        <span className={`${BADGE} bg-purple-500/10 text-purple-400 border border-purple-500/20`}>{result.bitrateKbps} kbps</span>
+      )}
       {result.language && (
         <span className={`${BADGE} bg-blue-500/10 text-blue-400 border border-blue-500/20 capitalize`}>
           {result.language.toLowerCase()}
