@@ -690,10 +690,15 @@ describe('admission-lock protocol — every folder and identity mutator serializ
 
     /**
      * The F4 counterfactual, and the reason the writeback had to become ONE section rather than a
-     * check followed by a loop. Fix Match is issued while the writeback is parked between its
-     * `isStillSameAsin` check and its first narrator insert. Unlocked, Fix Match lands there: the
-     * later scalar guard drops its own write while the stale narrators it cannot see commit anyway,
-     * leaving a row that is half one identity and half the other.
+     * check followed by a loop. Fix Match is issued while the writeback is parked on its first
+     * narrator lookup — since #2479 that park point sits INSIDE the writeback's open transaction,
+     * after the identity re-read and the guarded scalar UPDATE. Unlocked, Fix Match lands there:
+     * the later scalar guard drops its own write while the stale narrators it cannot see commit
+     * anyway, leaving a row that is half one identity and half the other.
+     *
+     * What holds Fix Match here is the book's admission lock alone: `withBookAdmissionLock` does not
+     * invoke its callback until the sweep's promise settles, so `fixMatchWithinAdmissionLock` — and
+     * with it `db.transaction` — has not been entered yet and nothing is queued on the connection.
      */
     it('does not let Fix Match interleave between the identity check and the narrator inserts', async () => {
       const bookId = await seedRow('Identity', null);
@@ -705,7 +710,7 @@ describe('admission-lock protocol — every folder and identity mutator serializ
         }),
       });
 
-      // Park on the first narrator insert — past the guard, before anything has committed.
+      // Park on the first narrator lookup — past the guard, inside the still-open transaction.
       const gate = deferred();
       const entered = deferred();
       vi.mocked(findOrCreateNarrator).mockImplementationOnce(async (...args) => {
