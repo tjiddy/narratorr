@@ -1,5 +1,4 @@
 import { eq, and, isNotNull } from 'drizzle-orm';
-import { normalize } from 'node:path';
 import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads } from '@db/schema.js';
@@ -16,6 +15,7 @@ import type { RemotePathMappingService } from './remote-path-mapping.service.js'
 import type { BookService, BookWithAuthor } from './book.service.js';
 import type { BookStatus } from '@shared/schemas/book.js';
 import type { DownloadStatus } from '@shared/schemas/activity.js';
+import { canonicalPath } from '../utils/path-identity.js';
 import { resolveSavePath } from '../utils/download-path.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
 import { toNamingOptions } from '@core/utils/naming.js';
@@ -176,7 +176,10 @@ export class ImportService {
       targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, book, authorName, namingOptions, book.editionLabel);
       // Same-path re-imports own existing audio and must never be blanket-removed on failure.
       // Compute before marker preflight so collision cleanup already has protection set.
-      protectTarget = book.path != null && normalize(targetPath) === normalize(book.path);
+      // `canonicalPath`, not a raw compare: pointer/adopt persists `books.path` verbatim, so the
+      // stored spelling can differ from the computed target by trailing separator or separator
+      // flavor — and this guard must agree with the claim lock, which keys on the same function.
+      protectTarget = book.path != null && canonicalPath(targetPath) === canonicalPath(book.path);
       // Check marker collision before deriving/clearing siblings; an adjacent backup must survive.
       await assertMarkerPathWritable(targetPath);
       // Dot-led scratch prevents concurrent library scans from ingesting partial copies.

@@ -959,6 +959,47 @@ describe('cleanupOldBookPath', () => {
     expect(rm).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['a trailing separator', '/library/Author/Title/'],
+    ['a doubled trailing separator', '/library/Author/Title//'],
+    ['backslash separators', '/library\\Author\\Title'],
+  ])('#2475: %s in bookPath still names the target folder — no lock, no lookup, no sweep', async (_label, bookPath) => {
+    const log = createMockLog();
+    // The owner lookup runs inside the lock, so "never selected" is the observation point for
+    // returning before both.
+    const select = vi.fn(() => mockDbChain([]));
+
+    await cleanupOldBookPath({
+      bookPath,
+      targetPath: '/library/Author/Title',
+      libraryRoot: '/library',
+      log,
+      db: inject<Db>({ select }),
+    });
+
+    expect(select).not.toHaveBeenCalled();
+    expect(rm).not.toHaveBeenCalled();
+    expect(rmdir).not.toHaveBeenCalled();
+  });
+
+  it('#2475: a same-folder bookPath spelled differently emits no owner warn', async () => {
+    const log = createMockLog();
+    await cleanupOldBookPath({
+      bookPath: '/library/Author/Title/',
+      targetPath: '/library/Author/Title',
+      libraryRoot: '/library',
+      log,
+      // Production's post-commit shape: the book's own row already names the committed target,
+      // which is what masked the drift behind a misleading "another book owns this folder" warn.
+      db: ownerDb([{ id: 7, title: 'Same Book', path: '/library/Author/Title' }]),
+    });
+    expect(rm).not.toHaveBeenCalled();
+    expect(log.warn).not.toHaveBeenCalledWith(
+      expect.objectContaining({ ownerBookId: 7 }),
+      expect.stringMatching(/another book owns this folder/i),
+    );
+  });
+
   it('keeps a managed-deletion failure nonfatal — recorded + logged, import continues', async () => {
     const log = createMockLog();
     vi.mocked(rm).mockRejectedValueOnce(Object.assign(new Error('EPERM'), { code: 'EPERM' }));

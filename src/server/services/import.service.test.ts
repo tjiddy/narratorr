@@ -296,6 +296,13 @@ describe('ImportService', () => {
     };
   }
 
+  function collectSetArgs(database: typeof db): Record<string, unknown>[] {
+    const setCalls = database.update.mock.results
+      .map((r: { value: unknown }) => { try { return (r.value as { set: ReturnType<typeof vi.fn> }).set; } catch { return null; } })
+      .filter(Boolean);
+    return setCalls.flatMap((s: ReturnType<typeof vi.fn> | null) => s!.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+  }
+
   function setupDefaults() {
     vi.clearAllMocks();
     db = createMockDb();
@@ -1075,6 +1082,53 @@ describe('ImportService', () => {
       expect(rm).not.toHaveBeenCalledWith(SAME_PATH, expect.objectContaining({ recursive: true }));
     });
 
+    /** Drive a pre-commit copy failure with `storedPath` as the book's persisted `books.path`. */
+    async function failCopyWithStoredPath(storedPath: string) {
+      useSamePathSettings();
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: storedPath })));
+      withExistingAudioAndCover();
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+      vi.mocked(cp).mockRejectedValueOnce(new Error('ENOSPC during staging'));
+
+      await expect(service.importDownload(1)).rejects.toThrow('ENOSPC during staging');
+    }
+
+    it.each([
+      ['a trailing separator', `${SAME_PATH}/`],
+      ['a doubled trailing separator', `${SAME_PATH}//`],
+      ['backslash separators', '/audiobooks\\Brandon Sanderson\\The Way of Kings'],
+    ])('#2475: a pre-commit failure preserves the operator audio when the stored path uses %s', async (_label, storedPath) => {
+      await failCopyWithStoredPath(storedPath);
+
+      // Unprotected cleanup is per-file managed delete + rmdir, never a recursive rm of the target.
+      expect(rm).not.toHaveBeenCalledWith(join(SAME_PATH, 'old.mp3'), { force: true });
+      expect(rmdir).not.toHaveBeenCalledWith(SAME_PATH);
+      expect(rm).toHaveBeenCalledWith(STAGING, { recursive: true, force: true });
+    });
+
+    it('#2475: a case-only difference still reads as two folders — the target is cleaned', async () => {
+      await failCopyWithStoredPath(SAME_PATH.toLowerCase());
+
+      expect(rm).toHaveBeenCalledWith(join(SAME_PATH, 'old.mp3'), { force: true });
+      expect(rmdir).toHaveBeenCalledWith(SAME_PATH);
+    });
+
+    it('#2475: a successful re-import from a trailing-separator stored path persists the computed target and sweeps nothing', async () => {
+      useSamePathSettings();
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(createMockDbBook({ status: 'downloading' as const, path: `${SAME_PATH}/` })));
+      withExistingAudioAndCover();
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const result = await service.importDownload(1);
+
+      expect(result.targetPath).toBe(SAME_PATH);
+      expect(collectSetArgs(db)).toContainEqual(expect.objectContaining({ status: 'imported', path: SAME_PATH }));
+      // The post-commit old-path sweep must recognise the stored spelling as the folder just imported.
+      expect(rm).not.toHaveBeenCalledWith(join(SAME_PATH, 'old.mp3'), { force: true });
+    });
+
     it('AC4: a first-import copy failure cleans up its own partial (staged) files', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
@@ -1092,13 +1146,6 @@ describe('ImportService', () => {
     const NEW_TARGET = '/audiobooks/Brandon Sanderson/The Way of Kings';
     const OLD_PATH = '/audiobooks/Brandon Sanderson/Old Title';
     const { stagingPath: STAGING, backupPath: BACKUP } = deriveImportSiblings(NEW_TARGET);
-
-    function collectSetArgs(database: typeof db): Record<string, unknown>[] {
-      const setCalls = database.update.mock.results
-        .map((r: { value: unknown }) => { try { return (r.value as { set: ReturnType<typeof vi.fn> }).set; } catch { return null; } })
-        .filter(Boolean);
-      return setCalls.flatMap((s: ReturnType<typeof vi.fn> | null) => s!.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
-    }
 
     /** Reject update #3 after commit; earlier writes and later failure reverts resolve. */
     function failPostCommitUpdate() {

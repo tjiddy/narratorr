@@ -3,7 +3,7 @@ import { createReadStream, createWriteStream } from 'node:fs';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { Stats } from 'node:fs';
-import { join, extname, basename, normalize } from 'node:path';
+import { join, extname, basename } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db, DbOrTx } from '@db/index.js';
 import { transitionDownloadState } from './download-state.js';
@@ -224,7 +224,9 @@ export interface CleanupOldBookPathArgs {
 // Delete managed old-book files on re-import; awaited but nonfatal, foreign files preserved.
 export async function cleanupOldBookPath(args: CleanupOldBookPathArgs): Promise<void> {
   const { bookPath, targetPath, libraryRoot, log, db } = args;
-  if (!bookPath || normalize(targetPath) === normalize(bookPath)) return;
+  // `canonicalPath` matches the claim key the sweep locks on below; the null guard stays first
+  // because `canonicalPath('')` resolves to the process cwd.
+  if (!bookPath || canonicalPath(targetPath) === canonicalPath(bookPath)) return;
   // The sweep runs after the import's DB commit, so the book's own row already names the new
   // target; "no OTHER row owns it" is the form with meaning here. No re-acquire arm applies —
   // the path swept is an argument, not a row lookup.
