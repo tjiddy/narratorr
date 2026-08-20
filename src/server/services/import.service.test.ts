@@ -962,7 +962,10 @@ describe('ImportService', () => {
 
       await expect(service.importDownload(1)).rejects.toThrow('ENOSPC during staging');
 
-      expect(rm).not.toHaveBeenCalledWith(SAME_PATH, expect.objectContaining({ recursive: true }));
+      // Per-file pair, not a recursive-rm negative: cleanup never issues rm(target, {recursive}),
+      // so that shape passes under every implementation, including one deleting file-by-file (#2534).
+      expect(fsCallsPosix(vi.mocked(rm))).not.toContainEqual([TARGET_AUDIO, { force: true }]);
+      expect(fsCallsPosix(vi.mocked(rmdir))).not.toContainEqual([SAME_PATH]);
       expect(rename).not.toHaveBeenCalledWith(join(SAME_PATH, 'old.mp3'), join(BACKUP, 'old.mp3'));
       expect(rm).toHaveBeenCalledWith(STAGING, { recursive: true, force: true });
     });
@@ -985,7 +988,8 @@ describe('ImportService', () => {
       await expect(service.importDownload(1)).rejects.toThrow('EIO during swap');
 
       expect(rename).toHaveBeenCalledWith(join(BACKUP, 'old.mp3'), join(SAME_PATH, 'old.mp3'));
-      expect(rm).not.toHaveBeenCalledWith(SAME_PATH, expect.objectContaining({ recursive: true }));
+      expect(fsCallsPosix(vi.mocked(rm))).not.toContainEqual([TARGET_AUDIO, { force: true }]);
+      expect(fsCallsPosix(vi.mocked(rmdir))).not.toContainEqual([SAME_PATH]);
       expect(rm).toHaveBeenCalledWith(STAGING, { recursive: true, force: true });
       expect(rm).toHaveBeenCalledWith(BACKUP, { recursive: true, force: true });
     });
@@ -1011,7 +1015,8 @@ describe('ImportService', () => {
       expect(writeFile).not.toHaveBeenCalledWith(`${SAME_PATH}.import-commit-pending`, expect.anything(), expect.anything());
       expect(rm).not.toHaveBeenCalledWith(STAGING, expect.objectContaining({ recursive: true }));
       expect(rm).not.toHaveBeenCalledWith(BACKUP, expect.objectContaining({ recursive: true }));
-      expect(rm).not.toHaveBeenCalledWith(SAME_PATH, expect.objectContaining({ recursive: true }));
+      expect(fsCallsPosix(vi.mocked(rm))).not.toContainEqual([TARGET_AUDIO, { force: true }]);
+      expect(fsCallsPosix(vi.mocked(rmdir))).not.toContainEqual([SAME_PATH]);
     });
 
     it('#1336 window 4: a pre-flight validateSource throw with a marker on disk preserves .import-bak + the marker', async () => {
@@ -1079,7 +1084,8 @@ describe('ImportService', () => {
       await expect(service.importDownload(1)).rejects.toThrow('EACCES');
 
       expect(cp).not.toHaveBeenCalled();
-      expect(rm).not.toHaveBeenCalledWith(SAME_PATH, expect.objectContaining({ recursive: true }));
+      expect(fsCallsPosix(vi.mocked(rm))).not.toContainEqual([TARGET_AUDIO, { force: true }]);
+      expect(fsCallsPosix(vi.mocked(rmdir))).not.toContainEqual([SAME_PATH]);
     });
 
     const posixOf = (p: string) => p.split('\\').join('/');
