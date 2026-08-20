@@ -216,7 +216,7 @@ describe('ImportOrchestrator', () => {
       expect(runImportPostProcessing).toHaveBeenCalledWith(expect.objectContaining({
         targetPath: '/audiobooks/Brandon Sanderson/The Way of Kings',
         bookTitle: 'The Way of Kings',
-        // Survives #2480's narratorStr removal: the script contract still reads ctx.authorName.
+        // Survives #2480's context-projection removal: the script contract still reads ctx.authorName.
         bookAuthor: 'Brandon Sanderson',
       }));
     });

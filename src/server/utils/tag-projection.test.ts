@@ -28,7 +28,7 @@ describe('buildTagProjection', () => {
 
     expect(projection.authorName).toBe('Brandon Sanderson, Co Author');
     expect(projection.narrator).toBe('Michael Kramer, Kate Reading');
-    // The delimiter is part of the contract this re-homes from ImportContext.narratorStr.
+    // The delimiter is part of the contract this re-homes from the import context's narrator projection.
     expect(projection.narrator).not.toContain(';');
   });
 
