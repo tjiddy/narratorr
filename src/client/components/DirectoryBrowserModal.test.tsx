@@ -481,6 +481,46 @@ describe('DirectoryBrowserModal — requireExplicitSelection (#2478)', () => {
     expect(confirm()).toBeDisabled();
   });
 
+  /**
+   * The two answers are mutually exclusive, and `handleSelect` prioritizes `selectedFile` — so a
+   * dropped clear in either direction leaves a stale choice both visibly active and, in the
+   * file → folder direction, silently authoritative over the path actually submitted. Every other
+   * test in this suite starts from a clean slate, so neither transition is observed anywhere else.
+   */
+  describe('the two choices are mutually exclusive', () => {
+    const fileButton = () => screen.getByRole('button', { name: 'book.m4b' });
+
+    it('choosing a file releases an already-chosen folder and submits the file', async () => {
+      const onSelect = vi.fn();
+      renderGated({ onSelect });
+      await screen.findByText('book.m4b');
+      await userEvent.click(useFolder());
+      expect(useFolder()).toHaveAttribute('aria-pressed', 'true');
+
+      await userEvent.click(fileButton());
+
+      expect(useFolder()).toHaveAttribute('aria-pressed', 'false');
+      expect(fileButton()).toHaveAttribute('aria-pressed', 'true');
+      await userEvent.click(confirm());
+      expect(onSelect).toHaveBeenCalledWith('/media/book.m4b');
+    });
+
+    it('choosing the folder releases an already-selected file and submits the directory', async () => {
+      const onSelect = vi.fn();
+      renderGated({ onSelect });
+
+      await userEvent.click(await screen.findByText('book.m4b'));
+      expect(fileButton()).toHaveAttribute('aria-pressed', 'true');
+
+      await userEvent.click(useFolder());
+
+      expect(fileButton()).toHaveAttribute('aria-pressed', 'false');
+      expect(useFolder()).toHaveAttribute('aria-pressed', 'true');
+      await userEvent.click(confirm());
+      expect(onSelect).toHaveBeenCalledWith('/media');
+    });
+  });
+
   it('composes with selectDisabled — an explicit choice cannot re-enable a pending confirm', async () => {
     renderGated({ selectDisabled: true } as Partial<typeof defaultProps>);
     await screen.findByText('book.m4b');
