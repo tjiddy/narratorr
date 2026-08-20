@@ -3495,3 +3495,260 @@ The fix shape is to move the setup into the server's own launch path so ordering
 Two supporting details worth not re-deriving: `webServer.command` runs with `cwd` defaulting to the config file's directory (`runner/index.js:827`), and `webServer.env` is MERGED over `process.env` (`{...DEFAULT_ENVIRONMENT_VARIABLES, ...process.env, ...options.env}`, `runner/index.js:857-862`), so a shell override of a port variable does reach the wrapper.
 
 See `e2e/README.md` "How the harness is wired" and "Ownership model", and the config sentinels in `e2e/global-setup.test.ts` that red if a `command` is reverted to a bare bundle launch.
+
+## mutation-loop-restore-clobbers-uncommitted
+
+**source:** #2440  
+**added:** 2026-08-19  
+**files:** src/server/services/enrichment-orchestration.helpers.ts  
+**tags:** mutation-testing, git, test-observability
+
+---
+
+A mutate → run → restore counterfactual loop must NOT restore with `git checkout -- <file>` while the implementation under test is still uncommitted. The first restore reverts the file to the base branch, so every subsequent mutation is applied to unmodified code and the reds you record are the pre-implementation red set, not the mutation's.
+
+Measured on #2440 (`src/server/services/enrichment-orchestration.helpers.ts`): mutation 1 red 3 tests correctly; mutations 2-4 each red exactly the 2 tests that are red on the base branch by construction (the new behaviour-change tests). Re-run with a file-copy restore gave the true 3/4/3/3 against a 129/129 green baseline.
+
+The working shape:
+
+```sh
+cp $F /tmp/x.bak                  # before the loop
+# per mutation: patch $F; run suites; cp /tmp/x.bak $F
+diff /tmp/x.bak $F && echo RESTORED OK   # after the loop
+```
+
+Two detectors that catch it independently of the restore mechanism: (1) record an unmutated BASELINE run first — a mutation whose red set equals the baseline's proves nothing; (2) treat an identical red set across structurally different mutations as a harness failure, not a coverage result. Both are cheap and belong in any counterfactual pass, since the failure mode is silent and produces a receipt that reads as thorough.
+
+Related: [[symmetric-mutation-cannot-observe-shared-derivation]] (its rule 2 — 'run the mutation, don't predict the red set' — is necessary but insufficient when the harness reverted the subject), [[shared-suite-state-inflates-counterfactual]] (misattributing a red that genuinely fired), [[vacuous-assertion-observation-points]] (the parent discipline).
+
+## admission-handoff-continuation-order
+
+**source:** #2462  
+**added:** 2026-08-19  
+**files:** src/server/utils/book-admission-lock.ts  
+**tags:** book-admission-lock, promises, cancellation, test-observability
+
+---
+
+**A continuation attached to the promise `withBookAdmissionLock` returns fires after the next waiter's `fn()` has already begun.** The primitive (src/server/utils/book-admission-lock.ts:27-37) returns `run = prev.then(() => fn(), () => fn())` and separately registers `tail = run.then(...)` as the map entry, so the successor's `fn()` is invoked synchronously inside the predecessor's reaction. A test that parks the holder on a deferred and attaches `holder.then(() => cancel())` therefore lands on fully-registered successor state — measured in #2462, where the merge had already created its AbortController and reached `processAudioFiles` by the time the callback ran. Do not derive this from promise semantics on paper; the on-paper derivation predicts the opposite and produces a test that fails against correct code.
+
+**Consequence:** there is no observable interleaving in which a waiter is 'awake but not yet registered', so a test aiming at that gap is unwritable. Pin the two sides of the boundary instead — before the wake takes one arm, after the wake takes the other, neither yields a wrong verdict — and write the structural argument (which statements share a synchronous block) into the test as a comment, per [[vacuous-assertion-observation-points]]. Related: [[layered-lock-boundary-park-point]] covers which lock TIER a parked test observes; this entry covers WHEN within one tier's handoff a continuation lands.
+
+## empty-filter-param-is-no-filter
+
+**source:** #2485  
+**added:** 2026-08-19  
+**files:** src/core/__tests__/qb-hash-filter.ts  
+**tags:** qbittorrent, test-doubles, query-params, msw
+
+---
+
+**A filter parameter sent empty is usually 'no filter', not 'a filter matching nothing' — and a test double that gates on `params.has(name)` models the opposite.** qBittorrent's `/api/v2/torrents/info` splits `hashes` on `|` with `Qt::SkipEmptyParts` and builds an id set only when at least one part survives (torrentscontroller.cpp:608-625). So an absent `hashes`, `?hashes=`, and `?hashes=||` all mean NO filter and answer with the FULL list; a surviving part — including a whitespace-only one, which SkipEmptyParts does not drop — is a real filter and answers `[]` on a miss.
+
+Every qBittorrent list double in this repo used `params.has('hashes')` (or a truthiness gate on the value) as its fast-path/scan discriminator. That made a blank hash look like a filter that matched nothing, which is precisely the shape that masked #2485: `resolveTorrent` probed `?hashes=` with a raw blank hash, the real client answered the full list, and the memo-hit `probed[0]` adoption returned an arbitrary torrent — so `removeDownload('', true)` deleted the wrong torrent's files. Two prior issues (#2423, #2433) worked on this exact resolver with the mask in place and read the memo guard as holding end-to-end.
+
+**Rule.** When a double stands in for a filtering endpoint, write the API's filter rule down ONCE as a shared predicate with its own unit fence, and make every double consult it — do not re-express it per site. `servesFullList(params: URLSearchParams)` in `src/core/__tests__/qb-hash-filter.ts` is that home here (`@core/__tests__/` is importable from core, server, and `e2e/` suites alike); `qb-hash-filter.test.ts` is the one place the semantics are asserted rather than used. Seven consumers route through it: `qbittorrent.test.ts`, `registry.test.ts`, `monitor-hybrid.integration.test.ts`, `blank-external-id.integration.test.ts` (#2485's own suite), `msw-handlers.ts` (whose default IS production behavior for six e2e suites — see [[shared-test-double-defaults]]), the `multi-entity.e2e.test.ts` inline handler, and `e2e/fakes/qbit.ts`.
+
+**Two encoding traps in the fence.** `%20%20%20` and `+++` both decode to three real space characters through `URLSearchParams`, so they are surviving parts and therefore a real filter. Raw literal trailing whitespace is stripped by the WHATWG URL parser before `searchParams` ever sees it and is indistinguishable from `?hashes=` — which is why blank-input production behavior is pinned by request COUNT, not param value ([[url-strips-trailing-query-whitespace]]).
+
+**Auditing for this shape:** grep the suite for `params.has(<filter>)`, `searchParams.get(<filter>)` used as a boolean, or `if (value)` gating a filtered response, and ask what the real server does with an empty value. Scope the grep past `src/` — the Playwright fake at `e2e/fakes/qbit.ts` carried its own copy of the rule and diverged on `?hashes=||`. Related: [[degrading-adapter-invisible-to-mock-suite]] (drive the real adapter over MSW, since a fake that returns the item only exercises the branch where resolution already succeeded) and [[qbittorrent-hybrid-v2-hash-rekey]] for the three-identity resolver this filter feeds.
+
+## solver-abort-after-slot-not-after-call
+
+**source:** #2483  
+**added:** 2026-08-19  
+**files:** src/core/__tests__/solver-routes.ts  
+**tags:** abortcontroller, solver-concurrency, vitest, test-observability
+
+---
+
+On the solver transport a concurrency slot is acquired BEFORE the request is issued (`fetchViaProxy` awaits `acquireSolverSlot` at src/core/indexers/fetch.ts:113, then calls `postToSolver`). A cancellation test that aborts synchronously after calling `fetchWithProxy` therefore aborts in the pre-request window and never reaches the `AbortError` arm it means to exercise — abort only once the POST is genuinely on the wire, by resolving a barrier promise from inside the fetch stub and awaiting it first.
+
+Compounding it: a fetch stub that models a stalled request with `signal?.addEventListener('abort', reject)` alone NEVER settles when the signal is already aborted, because an `abort` event does not re-fire. The result is a 15s timeout instead of a readable assertion failure, and the still-held solver slot then corrupts unrelated cases in the same file (`_resetSolverConcurrencyForTesting` restores bookkeeping but holds no handle on in-flight fetches), so the first visible symptom is a wrong concurrency count in a different test. Always guard with `if (signal?.aborted) return abort()` before subscribing.
+
+`hangUntilAborted(signal)` in `src/core/__tests__/solver-routes.ts:92-96` has this gap today — it hangs unconditionally for a null/undefined or already-aborted signal. It is currently safe only because its callers pass live signals. Reference shape: the `cancellation (AC17)` describe in `src/core/indexers/fetch.test.ts` (#2483). Related: [[abort-verdict-not-error-shape]] (keep the verdict on `signal.aborted`, never on the error), [[msw-network-error-has-no-transport-code]] (why this harness exists at all).
+
+## event-history-tx-arm-partial-doubles
+
+**source:** #2481  
+**added:** 2026-08-19  
+**files:** src/server/services/event-history.service.ts  
+**tags:** event-history, test-doubles, transactions, drizzle
+
+---
+
+`EventHistoryService.create` has two arms. Without `tx` it inserts and logs. With `tx` (`src/server/services/event-history.service.ts:63-81`) it is deliberately side-effect-free — no logging, because the caller may still roll back — and returns the inserted `BookEventRow` so the transaction owner calls `eventHistory.logRecorded(row)` after its commit (`:83-86`). `BookDeletionService.commitDeletion`/`reportCommitted` is the reference shape.
+
+**The trap when adopting that arm.** Existing suites commonly fake the service as `{ create: vi.fn().mockResolvedValue({}) } as unknown as EventHistoryService` (`import-queue-worker.refused.test.ts:43-44`). That fake returns a TRUTHY non-row and has no `logRecorded`, so the owner's post-commit call throws `TypeError: eventHistory.logRecorded is not a function`. The throw lands AFTER the transaction has committed, so the durable assertions in those suites still pass and only the post-commit work disappears — in #2481 the `import_failed` SSE, presenting as three failures in a suite the change never touched. There is no way to distinguish the fake's `{}` from a real row at runtime, so this cannot be defended against by inspecting the return value.
+
+**Two rules.** (1) When you move an event write onto the `tx` arm, grep sibling suites for partial `EventHistoryService` doubles in the same change; the suite that breaks is not the suite you edited. (2) Isolate post-commit reporting. Once the transaction has committed, the operation has succeeded, and neither the event log nor anything else in the reporting tail may reject into the caller — `src/server/utils/safe-emit.ts:7-19` already encodes exactly this rule for the broadcaster (null-guard plus try/catch at debug), and `src/server/services/import-refused.ts` applies it to the `logRecorded` call. `BookDeletionService.reportCommitted` (`book-deletion.service.ts:239-247`) still calls it un-isolated, so a throw there would reject `deleteBook` for a deletion that durably committed.
+
+Related: [[shared-test-double-defaults]] — the same family, where a shared double's shape silently becomes production behaviour for suites that never changed.
+
+## node-report-triggers-miss-native-sigsegv
+
+**source:** #2496  
+**added:** 2026-08-19  
+**files:** src/server/boot-crash-forensics.ts  
+**tags:** node-diagnostic-report, sigsegv, core-dumps, docker
+
+---
+
+**Node's diagnostic-report triggers do not cover native crashes.** `--report-on-fatalerror` fires on V8 fatal errors and `--report-uncaught-exception` on the uncaught-JS path; neither fires for a SIGSEGV raised inside a native addon (e.g. the libsql `.node` binding). The same gap applies to everything registered at the top of `src/server/index.ts` — `uncaughtException`, `unhandledRejection`, the `exit` logger, the `process.exit` interceptor, and `src/server/utils/crash-logger.ts`. For a native fault the evidence paths are core dumps and the host kernel log (`journalctl -k | grep -i segfault` names the faulting `.node` object), not reports. Do not add report flags in response to a signal-11 crash and expect them to help.
+
+**`--report-on-signal --report-signal=SIGUSR2` is the one genuinely new capability**, because it snapshots a LIVE process (libuv handles, heap, native + JS stacks) during a pre-crash window without killing it.
+
+**Always pair it with `--report-exclude-env`.** Reports serialize an `environmentVariables` block by default, and this process's environment holds `NARRATORR_SECRET_KEY` and `DATABASE_URL` — the same secret-bearing environment `src/core/utils/sanitized-env.ts` exists to keep out of spawned scripts. Verified: with the flag, a captured report contains zero occurrences of `environmentVariables`.
+
+**`process.report` fields read back RAW, not resolved.** `--report-directory=rel/dir` reads back as the literal `rel/dir`, and the default `''` means the process CWD. Resolve before comparing (`path.posix.resolve(cwd, directory)` in `reportConfigLeg`, `src/server/boot-crash-forensics.ts`) — a `startsWith` or raw-equality check silently passes a deployment whose reports land in `/app`. `process.report.filename` is likewise operator-settable at runtime through `NODE_OPTIONS`, which is why the artifact classifier keys on content and never on a name.
+
+**Node's written report file starts with a leading newline** before the opening `{` (confirmed with `od -c`), so a byte-prefix check on report files is wrong; parse the document. Real captured report: `header.reportVersion === 5`, ~13 KB with `--report-exclude-env`. Both the default and `--report-compact` forms parse to the same `header.reportVersion`.
+
+**`kernel.core_pattern` is a global, non-namespaced sysctl.** A container cannot set it and must not try; it is a host step, documented in `docs/crash-forensics.md`. For the non-pipe form the kernel writes through the crashing process's mount namespace, so an absolute host pattern under `/config/crash-reports` lands in the container's volume. For the pipe form a host handler (systemd-coredump, apport) owns the core and `coredumpctl` is the retrieval path.
+
+## boot-entrypoint-call-order-vitest
+
+**source:** #2496  
+**added:** 2026-08-19  
+**files:** src/server/boot-crash-forensics.wiring.test.ts  
+**tags:** vitest, vi-mock, boot-order, fastify
+
+---
+
+**When a boot step's correctness IS its position, assert the order at runtime.** A static source-text assertion (`expect(source).toContain('await fooAtBoot(app.log);')`) is fine as a supplement — it catches a helper that exists but is never called — but it cannot distinguish correct ordering from exactly-backwards ordering, which is usually the whole defect. `src/server/index.ts` can be booted in a Vitest file with its boundaries mocked, giving a real call-order recorder. Reference implementation: `src/server/boot-crash-forensics.wiring.test.ts`.
+
+Shape: a module-scope `const order: string[] = []`, ~16 `vi.mock` factories that push their own name, then `await import('./index.js')`, then assert with `order.indexOf(a) < order.indexOf(b)`. Modules to mock: `./config.js`, `fastify` (a stub app with `log`, `withTypeProvider`, `setValidatorCompiler`, `setSerializerCompiler`, `register`), `@db/index.js`, `./routes`, `./startup.js`, `./server-utils.js`, `./shutdown.js`, `./services/backup.service.js`, `./plugins/{auth,error-handler,security-plugins}.js`, `./routes/v1/openapi.js`, `./request-trace-logging.js`, `./boot-warnings.js`, `./boot-{ffmpeg,mutagen}-version.js`, `./utils/secret-codec.js`, `./utils/secret-migration.js`.
+
+Three traps, all of which bite:
+
+1. **`main()` fires from module scope**, so the `import()` promise resolves before boot finishes. Follow the import with `await vi.waitFor(() => expect(listenWithRetry).toHaveBeenCalled(), { timeout: 10_000 })` — asserting immediately after the import reads a half-built `order` array.
+2. **`src/server/index.ts` reassigns `process.exit` and registers `process.on('exit')` at import time.** This is only survivable because Vitest's forks pool isolates per test file. It also means any mock gap that lets `main()` reject reaches `main().catch(() => process.exit(1))` and kills the worker with no useful output — a mysteriously vanishing test file is almost always an under-mocked boundary.
+3. **Mock the module under test PARTIALLY**, via `importOriginal()` and wrapping its real exports, rather than replacing them. The order recorder still works, and the real implementations run — which in the reference case also covers the first-boot shape (a real prune against a non-existent directory) for free in the same test.
+
+**Prove it isn't vacuous.** Move the call being ordered to the wrong side and confirm only the ordering test reds. See `vacuous-assertion-observation-points`.
+
+## testing-library-nested-text-matcher
+
+**source:** #2495  
+**added:** 2026-08-19  
+**files:** src/client/components/RetagPreviewModal.test.tsx  
+**tags:** testing-library, jsdom, react-testing
+
+---
+
+testing-library's default text matcher calls `getNodeText`, which concatenates ONLY an element's direct TEXT_NODE children — nested element text is excluded (this is not `textContent`). So copy with inline markup, e.g. `<p>Re-tagging supports <code>.mp3</code>, <code>.m4a</code>, and <code>.mp4</code>.</p>`, presents to the matcher as 'Re-tagging supports , , and .'. A regex spanning the tags (/supports .*\.mp3.*\.mp4/) can never match, and the failure reads as missing copy rather than a matcher limitation — inviting a debug of the wrong layer.
+
+Prefer: match a contiguous prefix, then assert on the element's textContent:
+```ts
+const copy = await screen.findByText(/Re-tagging supports/);
+expect(copy.textContent).toContain('.mp4');
+```
+A matcher function `(_, el) => el?.textContent?.includes(x)` also works but matches every ancestor as well, so it needs a tag/role narrowing to stay unambiguous. Live example: src/client/components/RetagPreviewModal.test.tsx (#2495). Note the near-miss that hides this: an assertion on a contiguous clause in the SAME paragraph passes normally, so the file can look like it already proves the matcher works.
+
+## join-delimiter-needs-two-element-fixture
+
+**source:** #2480  
+**added:** 2026-08-20  
+**files:** src/server/utils/import-steps.test.ts  
+**tags:** mutation-testing, test-fixtures, vitest
+
+---
+
+A fixture with one element in a collection cannot observe how that collection is JOINED: `['A'].join('; ')` and `['A'].join(', ')` are byte-identical. So an assertion pinning a joined string against a single-item fixture is vacuous for the delimiter, however precise its expected literal looks.
+
+Measured on #2480: `buildTagProjection` (`src/server/utils/tag-projection.ts`) joins `authors`/`narrators` with `', '` and feeds BOTH the retag path (`tagging.service.ts`) and the import embed (`import-steps.ts`). Mutating `joinNames` to `join('; ')` left all 150 tests in `src/server/utils/import-steps.test.ts` green — every fixture there carried one author and one narrator. Widening the fixture to two names per axis reds 6 of them on the same mutation.
+
+Rule: when the property under test is how a list is combined (join delimiter, sort order, dedup, first-vs-all selection), the fixture needs at least two elements, and they must be distinguishable. This is the fixture-cardinality sibling of [[symmetric-mutation-cannot-observe-shared-derivation]]: there the wrong MUTATION was chosen, here the mutation is right and the FIXTURE cannot see it. Both are instances of [[vacuous-assertion-observation-points]], and both are only findable by running the mutation — reading the assertion suggests it is airtight.
+
+Same-shaped joins elsewhere in this repo: `snapshotBookForEvent` (`src/server/utils/event-helpers.ts`) and `buildCanonicalTags`'s `artist`/`albumArtist`/`composer` (`src/server/services/retag-plan.ts`).
+
+## iteach-mixed-type-column-arity
+
+**source:** #2504  
+**added:** 2026-08-20  
+**files:** src/shared/schemas/search-stream.test.ts  
+**tags:** vitest, typescript, table-tests
+
+---
+
+An `it.each` table whose rows mix value types in a single column infers a UNION of tuple types (`[string, string] | [number, string]`), and TypeScript cannot spread a union of tuples into a callback that declares fewer parameters than the row's arity. The same shorter callback is accepted against a homogeneous table, where the rows infer as one tuple type and TS's ordinary 'a function may declare fewer parameters' rule applies.
+
+This bites the common negative-case table shape — each row pairing a bad input with a description used only in the test name:
+
+```ts
+// fails typecheck: 'Source has 2 element(s) but target allows only 1'
+it.each([
+  ['64 Kbps', 'a display string'],
+  [64.5, 'a fraction'],
+])('rejects %s — %s', (value) => { ... });
+
+// passes: the annotation collapses the rows to one tuple type
+it.each<[string | number, string]>([...])('rejects %s — %s', (value) => { ... });
+```
+
+Verified under Vitest 4.1.10. The error message names the arity, not the mixed types, so it reads as though the callback simply needs a second parameter — declaring one works but leaves an unused binding; the annotation is the smaller fix. Note this fails `pnpm typecheck` and NOT `vitest run`, so a targeted test-file run will not surface it. Live example: the `searchResultSchema — bitrateKbps (#2504)` describe in `src/shared/schemas/search-stream.test.ts` (annotated) against the absence table in `src/core/indexers/abb-fields.test.ts` (homogeneous, unannotated, and fine).
+
+## undici-socks5-bracketed-ipv6-atyp
+
+**source:** #2484  
+**added:** 2026-08-20  
+**files:** src/core/indexers/proxy.ts  
+**tags:** undici, socks5, proxy, ipv6
+
+---
+
+undici 8.9.0 exports a first-party `Socks5ProxyAgent` that `extends Dispatcher`, so it works with `undici.fetch`. `socks-proxy-agent`'s `SocksProxyAgent` does NOT — it is a Node `http.Agent` (`addRequest`), and handing it to `undici.fetch` fails as `TypeError: fetch failed` / `cause: TypeError: agent.dispatch is not a function` with no `code` on either error. That shipped undetected because `proxy.test.ts` mocks `fetchWithOptionalDispatcher` down to `globalThis.fetch` and only asserted `instanceof <concrete class>`; assert `instanceof Dispatcher` for every branch instead (see [[degrading-adapter-invisible-to-mock-suite]]).
+
+Target address encoding, measured against a stub RFC 1928 listener:
+- IPv4 literal → ATYP `0x01`.
+- Hostname → ATYP `0x03`, hostname bytes intact: remote DNS (socks5h). The proxy resolves the target, so `makeValidatingLookup` never sees it on this path — correct for a privacy proxy, and not a reason to add address-blocking (the proxy is an operator-configured destination).
+- **IPv6 literal → ATYP `0x03` carrying the bracketed string `[::1]`, not ATYP `0x04`.** undici passes `new URL(origin).hostname` through unchanged and its `parseAddress` tests `net.isIPv6`, which is false for a bracketed string — the same Node quirk `normalizeHostname` (`src/core/utils/network-service.ts:88`) exists for. A conforming proxy resolves `[::1]` as a domain name and returns host-unreachable. Not fixable via options: `connect` configures the hop to the *proxy*, and a URL cannot carry an unbracketed IPv6 literal.
+
+#2484 therefore refuses IPv6-literal targets on the SOCKS5 path with a `ProxyError` before any tunnel opens (`createProxyAgent` takes a required target URL). Two placement traps, both pinned by tests: the guard must sit AFTER the `if (!proxyUrl) return undefined` early return, or it refuses ordinary *direct* IPv6 requests; and OUTSIDE the factory's bare `catch`, which rewrites everything it catches as `Invalid proxy URL: …` and would silently swallow the actionable message. If IPv6 over SOCKS5 is ever actually needed, the path is a custom `Agent` whose `connect` hook opens the tunnel via the `socks` package and passes the socket to `buildConnector` as `httpSocket` — `socks` left the tree with `socks-proxy-agent` and would have to be re-added directly.
+
+Other measured behaviours worth not rediscovering: URL credentials are percent-decoded with `decodeURIComponent`, so malformed encoding throws `URIError` from the CONSTRUCTOR (keep the factory's catch-all); a proxy that accepts TCP then goes silent fails at undici's own 5s ceiling with `cause.message === 'SOCKS5 authentication timeout'`, so it lands in the generic `Proxy connection failed:` arm, never `Proxy timed out after Ns`; rejected RFC 1929 auth gives `cause.code === 'UND_ERR_SOCKS5_AUTH_FAILED'`. Agent construction emits a one-per-process `ExperimentalWarning` — accurate and cheap, do not suppress it. Exemplars: `src/core/indexers/proxy-socks5.contract.test.ts` and the reusable listener at `src/core/__tests__/socks5-stub.ts`.
+
+## race-ordering-counterfactual-needs-leaf-promise
+
+**source:** #2477  
+**added:** 2026-08-20  
+**files:** src/server/services/search-deadline.ts  
+**tags:** promise-race, abortcontroller, mutation-testing, test-observability
+
+---
+
+The reject-before-abort ordering in [[race-timeout-reject-before-abort]] is only OBSERVABLE where the raced promise is the leaf itself. Write that counterfactual at the deadline helper's own suite; do not re-point it at a caller.
+
+Mechanism: the timer callback settles the `timeout` promise synchronously. A leaf that rejects from its own abort listener also settles synchronously — so with the wrong order it can win. But once the raced `work` is an async chain (and especially one with a catch that converts failures into resolved outcomes), the leaf's settlement needs several microtask hops to reach `work`, and the timeout always wins regardless of statement order. The counterfactual then passes under the mutation and proves nothing.
+
+Measured on #2477: flipping `search-deadline.ts:75-76` reds exactly `search-deadline.test.ts:125` (where `fn` returns the leaf promise directly) and leaves the byte-equivalent case in `retry-search.test.ts` green, because `runBoundedRetryLadder`'s `try/catch` converts the leaf rejection into a resolved `retry_error`.
+
+Two corollaries for any caller with a converting inner catch:
+- The helper's `'Abandoned search work FAILED after its deadline'` warn is unreachable from that caller; the `'...RESOLVED after its deadline'` arm fires instead. A test plan asking for the warn is asking for a state the code cannot reach.
+- A caller-level abort-listener case is still worth keeping, but as a control on the VERDICT — the caller receives the canonical deadline error, never the leaf the abort provoked. Comment it as such so nobody later reads a green mutation run as proof the ordering is pinned.
+
+An instance of [[vacuous-assertion-observation-points]]: the observation point moved layers, and the property moved with it.
+
+## import-failure-cleanup-is-per-file
+
+**source:** #2475  
+**added:** 2026-08-20  
+**files:** src/server/utils/import-steps.ts  
+**tags:** import-staging, vitest, test-observability, node-fs
+
+---
+
+`handleImportFailure` (src/server/utils/import-steps.ts:403-437) never calls `rm(targetPath, { recursive: true })`. Its unprotected arm calls `deleteManagedBookFiles`, which issues `rm(file, { force: true })` per managed entry and then `rmdirIfEmpty` → `rmdir(targetPath)`. The recursive form is reserved for the `.import-staging` / `.import-backup` siblings (`removeImportSibling`). `cleanupOldBookPath`'s sweep shares the same helper and the same property.
+
+**Consequence:** `expect(rm).not.toHaveBeenCalledWith(TARGET, expect.objectContaining({ recursive: true }))` is VACUOUS as a proof that the target's files survived — it passes under every implementation, including one that deletes the whole folder file by file. Several pre-existing #1255 assertions in src/server/services/import.service.test.ts (lines 958, 981, 1007, 1075) have this shape.
+
+**The observation point that works** is the pair:
+
+```ts
+expect(rm).not.toHaveBeenCalledWith(join(TARGET, 'old.mp3'), { force: true });
+expect(rmdir).not.toHaveBeenCalledWith(TARGET);
+```
+
+with the positive form (`toHaveBeenCalledWith`) for the arm that SHOULD clean. Arm `readdir` to return real entries first (the `withExistingAudioAndCover()` helper in that suite), or the per-file assertion has nothing to observe. Reference: the `#2475: a pre-commit failure preserves the operator audio when the stored path uses %s` it.each and its case-only negative in src/server/services/import.service.test.ts, plus the `#2475` cases in src/server/utils/import-steps.test.ts.
+
+Related: [[import-cleanup-marker-aware-fs-mock]] (a blanket `stat` mock flips the same assertions to pass via marker preservation instead) and [[vacuous-assertion-observation-points]].
