@@ -50,9 +50,61 @@ describe('ImportFilesPicker (#2435 AC19)', () => {
     await screen.findByRole('dialog');
 
     await user.click(screen.getByRole('radio', { name: 'Move' }));
+    // #2478: Import is gated on an explicit choice, so the mode travels with a real selection.
+    await user.click(screen.getByRole('button', { name: 'Use this folder' }));
     await user.click(screen.getByRole('button', { name: 'Import' }));
 
     expect(props.onSubmit).toHaveBeenCalledWith({ path: '/', mode: 'move' });
+  });
+
+  // ── #2478: nothing is importable until the user says what they mean ───────────────────────────
+
+  it('keeps Import disabled — and submits nothing — while no file or folder is chosen', async () => {
+    const user = userEvent.setup();
+    const { props } = renderPicker();
+    await screen.findByRole('dialog');
+
+    const importButton = screen.getByRole('button', { name: 'Import' });
+    expect(importButton).toBeDisabled();
+    await user.click(importButton);
+
+    expect(props.onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('enables Import on a file click and submits that file', async () => {
+    const user = userEvent.setup();
+    const { props } = renderPicker();
+    await user.click(await screen.findByText('book.m4b'));
+    expect(screen.getByRole('button', { name: 'Import' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Import' }));
+
+    expect(props.onSubmit).toHaveBeenCalledWith({ path: '/book.m4b', mode: 'copy' });
+  });
+
+  // The deliberate escape hatch: a normal download folder stays importable in one gesture.
+  it('enables Import on the folder affordance and submits the folder', async () => {
+    const user = userEvent.setup();
+    const { props } = renderPicker();
+    await screen.findByRole('dialog');
+
+    await user.click(screen.getByRole('button', { name: 'Use this folder' }));
+    expect(screen.getByRole('button', { name: 'Import' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Import' }));
+
+    expect(props.onSubmit).toHaveBeenCalledWith({ path: '/', mode: 'copy' });
+  });
+
+  // Two independent disable inputs combining; the pending one wins.
+  it('stays disabled with an explicit selection while the import is pending', async () => {
+    const user = userEvent.setup();
+    const { props } = renderPicker({ isPending: true });
+
+    await user.click(await screen.findByText('book.m4b'));
+
+    const importButton = screen.getByRole('button', { name: 'Importing...' });
+    expect(importButton).toBeDisabled();
+    await user.click(importButton);
+    expect(props.onSubmit).not.toHaveBeenCalled();
   });
 
   /**
@@ -84,12 +136,19 @@ describe('ImportFilesPicker (#2435 AC19)', () => {
     await user.click(screen.getByRole('button', { name: 'open picker' }));
     await screen.findByRole('dialog');
     await user.click(screen.getByRole('radio', { name: 'Move' }));
+    await user.click(screen.getByRole('button', { name: 'Use this folder' }));
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
     await user.click(screen.getByRole('button', { name: 'open picker' }));
     await screen.findByRole('dialog');
 
     expect(screen.getByRole('radio', { name: 'Copy' })).toHaveAttribute('aria-checked', 'true');
+    // #2478: the folder choice resets with the mode, so Import is gated again on reopen.
+    expect(screen.getByRole('button', { name: 'Use this folder' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'Import' })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: 'Use this folder' }));
+    // The SUBMITTED payload, not `aria-checked`: the latter can read fresh while the value sent is stale.
     await user.click(screen.getByRole('button', { name: 'Import' }));
     expect(onSubmit).toHaveBeenCalledWith({ path: '/', mode: 'copy' });
   });
