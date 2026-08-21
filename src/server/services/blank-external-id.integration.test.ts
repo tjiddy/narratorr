@@ -465,8 +465,12 @@ describe('#2488 a blank external id through the server call sites (Transmission)
       await runCycle();
 
       // The outputPath can only come from the real client's payload, so this cannot pass against
-      // a cycle that simply did nothing.
-      expect(writtenPayloads()).toContainEqual(
+      // a cycle that simply did nothing. It is a `join` product, so fold the actual before
+      // comparing — the platform spelling differs on Windows.
+      const folded = writtenPayloads().map((p) => (
+        typeof p.outputPath === 'string' ? { ...p, outputPath: p.outputPath.split('\\').join('/') } : p
+      ));
+      expect(folded).toContainEqual(
         expect.objectContaining({
           clientStatus: 'completed',
           progress: 1,
