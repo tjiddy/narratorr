@@ -6,6 +6,7 @@ import type { qbTorrentSchema } from './schemas.js';
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
 import { DownloadClientAuthError, DownloadClientError } from './errors.js';
+import { externalIdRefusal, normalizeExternalId } from './external-id.js';
 import { requestWithRetry } from './retry.js';
 import { getErrorMessage } from '@shared/error-message.js';
 
@@ -285,11 +286,11 @@ export class QBittorrentClient implements DownloadClientAdapter {
   /**
    * The single blank/non-blank decision for the whole adapter: a blank hash never keys the memo
    * (#2433 A9) and, since #2485, never reaches the network either — `resolveTorrent` and the
-   * controls both refuse on `undefined`. The `.trim()` is load-bearing: a whitespace-only stored
-   * external ID is truthy and clears every upstream falsy guard.
+   * controls both refuse on `undefined`. The lowercasing is qBittorrent-specific (its three hash
+   * identities are case-folded on both sides); the blankness rule itself is shared (#2488).
    */
   private memoKey(hash: string): string | undefined {
-    return hash.trim().toLowerCase() || undefined;
+    return normalizeExternalId(hash)?.toLowerCase();
   }
 
   /**
@@ -360,12 +361,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
    */
   private async canonicalHashFor(hash: string): Promise<string> {
     const key = this.memoKey(hash);
-    if (!key) {
-      throw new DownloadClientError(
-        this.name,
-        'Refusing to act on a blank torrent hash: the stored external ID is empty or whitespace-only. Repair or cancel the download record before retrying.',
-      );
-    }
+    if (!key) throw externalIdRefusal(this.name);
     const torrent = await this.resolveTorrent(key);
     return (torrent?.hash ?? key).toLowerCase();
   }
