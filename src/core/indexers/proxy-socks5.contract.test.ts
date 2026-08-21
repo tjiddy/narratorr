@@ -11,9 +11,11 @@
 
 import http from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Socks5ProxyAgent } from 'undici';
 import { ProxyError, IndexerAuthError } from './errors.js';
 import { fetchWithProxyAgent } from './proxy.js';
 import { TorznabIndexer } from './torznab.js';
+import { INDEXER_TIMEOUT_MS } from '../utils/constants.js';
 import type { DispatcherFetchInit, FetchWithSsrfRedirectOptions } from '../utils/network-service.js';
 import {
   ATYP_DOMAIN,
@@ -316,10 +318,11 @@ describe('#2484 SOCKS5 abort paths', () => {
     expect(clearSpy.mock.calls.map(([handle]) => handle)).toContain(handles[0]);
   });
 
-  it('settles promptly when the caller aborts an in-flight tunnelled request', async () => {
+  it('settles promptly when the caller aborts an in-flight tunnelled request, attributing it to the caller', async () => {
     const origin = await useOrigin();
     const socks = await useSocks();
     const controller = new AbortController();
+    const reason = new Error('caller cancelled the search');
 
     const promise = fetchWithProxyAgent(origin.url('/hang'), {
       proxyUrl: socks.url,
@@ -327,14 +330,36 @@ describe('#2484 SOCKS5 abort paths', () => {
     });
     // Abort only once the CONNECT is observed at the proxy — a fixed sleep can fire before the
     // tunnel opens on a loaded runner, cancelling a request that was never sent (#2524). The
-    // rejection settling under the suite timeout IS the promptness proof; no wall-clock bound.
+    // rejection settling under the suite timeout IS the promptness proof; no wall-clock bound —
+    // and it is also AC12's proof that the awaited `close()` does not stall the rejection.
     await socks.connectObserved();
-    controller.abort();
+    controller.abort(reason);
 
-    // No message assertion: proxy.ts classifies on `error.name === 'AbortError'`, which a caller
-    // abort and the internal timeout both produce, so the string would pin a known wart.
-    await expect(promise).rejects.toThrow(ProxyError);
+    // #2539 pins the verdict positively: undici forwards the signal's reason, and the caller-abort
+    // guard rethrows it verbatim rather than reclassifying it as the internal timeout.
+    const rejection = await promise.catch((error: unknown) => error);
+    expect(rejection).toBe(reason);
+    expect(rejection).not.toBeInstanceOf(ProxyError);
+    expect((rejection as Error).message).not.toMatch(/Proxy timed out/);
     expect(socks.connects).toHaveLength(1);
+  });
+
+  /**
+   * #2539 AC8 against a REAL `Socks5ProxyAgent`. The mocked routing suites capture a dispatcher the
+   * transport never actually used, so they cannot tell that the close happens on a live agent; this
+   * is the one place the real one is observed.
+   */
+  it('closes the real Socks5ProxyAgent it constructed', async () => {
+    const origin = await useOrigin();
+    const socks = await useSocks();
+    const closeSpy = vi.spyOn(Socks5ProxyAgent.prototype, 'close');
+
+    const result = await fetchWithProxyAgent(origin.url('/ok'), { proxyUrl: socks.url });
+
+    expect(result.body).toBe(ORIGIN_BODY);
+    // `DispatcherBase.close()` re-enters `this.close(cb)` internally, so the prototype spy sees the
+    // one production call plus undici's own recursion — the contract here is "released", not a count.
+    expect(closeSpy).toHaveBeenCalled();
   });
 });
 
@@ -383,5 +408,64 @@ describe('#2484 end-to-end through a real indexer adapter', () => {
     expect(response.results.map((r) => r.title)).toEqual(['Dune - Frank Herbert']);
     expect(response.requestUrl).toContain(`http://127.0.0.1:${origin.port}/api?`);
     expect(socks.connects).toEqual([{ atyp: ATYP_IPV4, host: '127.0.0.1', port: origin.port }]);
+  });
+
+  /**
+   * #2539 AC1 end to end. This is the ONLY case that exercises real `undici.fetch` cancellation
+   * attribution through a real dispatcher: MSW cannot observe a dispatcher-routed request at all
+   * (`fetchWithOptionalDispatcher` calls undici's fetch directly when one is present), and the
+   * family suites rewire that helper back to `globalThis.fetch` precisely to keep MSW working —
+   * which is what makes them non-coverage here.
+   */
+  it('attributes a caller abort to the caller through a real adapter and a real tunnel', async () => {
+    const origin = await useOrigin();
+    const socks = await useSocks();
+    const controller = new AbortController();
+    const reason = new Error('search deadline reached');
+    // `/hang` is accepted and never answered, so the request is still in flight when we abort; the
+    // adapter appends `/api?…`, which still matches the stub's prefix test.
+    const indexer = new TorznabIndexer({
+      apiUrl: `http://127.0.0.1:${origin.port}/hang`,
+      apiKey: 'test-key',
+      proxyUrl: socks.url,
+    });
+
+    const pending = indexer.search('dune', { signal: controller.signal });
+    await socks.connectObserved();
+    controller.abort(reason);
+
+    const rejection = await pending.catch((error: unknown) => error);
+    expect(rejection).toBe(reason);
+    expect(rejection).not.toBeInstanceOf(ProxyError);
+    expect((rejection as Error).message).not.toMatch(/Proxy timed out/);
+  });
+
+  // Control for the case above: the arm this work must not have touched. Without it, a
+  // rethrow-everything regression in the guard would be invisible on the real transport.
+  it('control: the same real leg with no caller abort still reports the internal timeout', async () => {
+    const origin = await useOrigin();
+    const socks = await useSocks();
+    const realSetTimeout = globalThis.setTimeout;
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((
+      fn: Parameters<typeof globalThis.setTimeout>[0],
+      ms?: number,
+      ...rest: unknown[]
+    ) =>
+      // The adapter passes no timeoutMs, so its budget is INDEXER_TIMEOUT_MS. Redirect only that
+      // delay: proxy.ts hand-rolls `AbortController` + `setTimeout`, so the spy genuinely captures
+      // it, unlike an `AbortSignal.timeout`.
+      ms === INDEXER_TIMEOUT_MS
+        ? realSetTimeout(fn, 0)
+        : realSetTimeout(fn, ms, ...rest)) as typeof globalThis.setTimeout);
+    const indexer = new TorznabIndexer({
+      apiUrl: `http://127.0.0.1:${origin.port}/hang`,
+      apiKey: 'test-key',
+      proxyUrl: socks.url,
+    });
+
+    const rejection = await indexer.search('dune').catch((error: unknown) => error);
+
+    expect(rejection).toBeInstanceOf(ProxyError);
+    expect((rejection as Error).message).toBe('Proxy timed out after 30s');
   });
 });
