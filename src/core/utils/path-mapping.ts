@@ -34,5 +34,10 @@ export function applyPathMapping(fullPath: string, mappings: PathMapping[]): str
   const remainder = normalizedPath.slice(normalizedRemote.length - 1); // keep the leading /
   const mapped = normalizedLocal.slice(0, -1) + remainder; // remove the local trailing slash before adding the remainder
 
+  // A root local ('/' or 'C:\') is nothing but its separator, so a whole-path match strips it to
+  // '' or a drive-relative 'C:' — both resolve to the process CWD downstream (#2551). Restore the
+  // root spelling; non-root locals keep the exact pre-#2551 output.
+  if (mapped === '' || /^[A-Za-z]:$/.test(mapped)) return normalizedLocal;
+
   return mapped;
 }

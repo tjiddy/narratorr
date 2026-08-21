@@ -63,4 +63,21 @@ describe('applyPathMapping', () => {
     const result = applyPathMapping('/downloads/complete/BookTitle', mappings);
     expect(result).toBe('C:/downloads/BookTitle');
   });
+
+  // #2551: a root local stripped of its separator is '' (POSIX) or a drive-RELATIVE 'C:' —
+  // both resolve to the process CWD downstream, silently pointing imports at the wrong tree.
+  it('maps a whole-path match onto a POSIX-root local as "/", never the empty string (#2551)', () => {
+    const result = applyPathMapping('/downloads', [{ remotePath: '/downloads', localPath: '/' }]);
+    expect(result).toBe('/');
+  });
+
+  it('maps a whole-path match onto a drive-root local as "C:/", never drive-relative "C:" (#2551)', () => {
+    const result = applyPathMapping('/downloads', [{ remotePath: '/downloads', localPath: 'C:\\' }]);
+    expect(result).toBe('C:/');
+  });
+
+  it('keeps the partial-match arithmetic for a root local (#2551 control)', () => {
+    const result = applyPathMapping('/downloads/Book', [{ remotePath: '/downloads', localPath: '/' }]);
+    expect(result).toBe('/Book');
+  });
 });

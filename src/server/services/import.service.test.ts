@@ -1766,12 +1766,19 @@ describe('ImportService', () => {
     });
 
     /**
-     * `applyPathMapping` cannot emit a bare root (the local side loses its trailing separator), so the
-     * filesystem-root class is driven through what the client itself reports as the save path.
+     * The filesystem-root class has two entry routes since #2551: what the client itself reports as
+     * the save path, and a whole-path mapping whose local side is a root — `applyPathMapping` now
+     * emits the root spelling ('/', 'C:/') instead of the pre-#2551 degenerate '' there.
      */
     it('refuses a client save path that is a filesystem root', async () => {
       mockAdapter.getDownload.mockResolvedValueOnce({ ...defaultDownloadItem, savePath: '/', name: '' });
       const svc = arm([]);
+
+      await expect(svc.importDownload(1)).rejects.toThrow(ROOT_MESSAGE);
+    });
+
+    it('refuses a whole-path mapping whose local side is a filesystem root (#2551)', async () => {
+      const svc = arm([{ remotePath: FULL_REMOTE, localPath: '/' }]);
 
       await expect(svc.importDownload(1)).rejects.toThrow(ROOT_MESSAGE);
     });
@@ -1865,8 +1872,10 @@ describe('ImportService', () => {
      */
     it('refuses a lexically-innocent save path whose realpath is the library root', async () => {
       const svc = arm([]);
+      // Fold before comparing: the save path arrives platform-spelled (`join` backslashes it on
+      // Windows), and an exact-string predicate silently never matches there.
       vi.mocked(realpath).mockImplementation(async (p: unknown) =>
-        (String(p) === FULL_REMOTE ? '/audiobooks' : String(p)));
+        (String(p).split('\\').join('/') === FULL_REMOTE ? '/audiobooks' : String(p)));
 
       await expect(svc.importDownload(1)).rejects.toThrow(INSIDE_MESSAGE);
     });
@@ -1883,17 +1892,19 @@ describe('ImportService', () => {
 
       // Exact values, not expect.any(String): a matcher that accepts any string cannot tell a
       // correct savePath from `undefined`, and reading the mis-mapping off this log is the point.
-      expect(serviceLog.error).toHaveBeenCalledWith(
-        expect.objectContaining({
-          downloadId: 1,
-          bookId: 1,
-          originalPath: FULL_REMOTE,
-          savePath: '/audiobooks',
-          libraryRoot: '/audiobooks',
-          reason: 'source_inside_library',
-        }),
-        'Refusing automatic import — source path fails library containment',
-      );
+      // `originalPath` is the pre-mapping join output, so it is platform-spelled — fold the actual.
+      const refusal = vi.mocked(serviceLog.error).mock.calls
+        .find((c) => c[1] === 'Refusing automatic import — source path fails library containment');
+      expect(refusal).toBeDefined();
+      const fields = refusal![0] as Record<string, unknown>;
+      expect({ ...fields, originalPath: String(fields.originalPath).split('\\').join('/') }).toMatchObject({
+        downloadId: 1,
+        bookId: 1,
+        originalPath: FULL_REMOTE,
+        savePath: '/audiobooks',
+        libraryRoot: '/audiobooks',
+        reason: 'source_inside_library',
+      });
       expect(serviceLog.error).toHaveBeenCalledWith(
         expect.objectContaining({ elapsedMs: expect.any(Number) }),
         'Import failed',
