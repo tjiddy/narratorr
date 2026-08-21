@@ -322,6 +322,29 @@ describe('POST /api/books — every wire persistence field survives to the row (
     expect(row).not.toHaveProperty('searchImmediately');
   });
 
+  // The marker rule lives at the create choke point, so only a full route → addBook → createResolved
+  // → storage → response pass proves it reaches a persisted row (#2535).
+  it('infers the litRPG genre from the subtitle and persists it', async () => {
+    const res = await e2e.app.inject({
+      method: 'POST',
+      url: '/api/books',
+      payload: {
+        title: 'The Land: Founding',
+        subtitle: 'A LitRPG Saga (Chaos Seeds, Book 1)',
+        authors: [{ name: 'Aleron Kong' }],
+        asin: 'B0CHAOSEED',
+        genres: ['Humor', 'Fantasy'],
+        searchImmediately: false,
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().genres).toEqual(['Humor', 'Fantasy', 'LitRPG']);
+
+    const rows = await e2e.db.select({ genres: books.genres }).from(books).where(eq(books.asin, 'B0CHAOSEED'));
+    expect(rows).toEqual([{ genres: ['Humor', 'Fantasy', 'LitRPG'] }]);
+  });
+
   // Each author's own ASIN reaches `findOrCreateAuthor` through `syncAuthors`, and is invisible in
   // the book payload — the authors table is the only place it can be observed. Arranges and measures
   // its own POST: reading a row another case created makes a focused run fail with no regression.

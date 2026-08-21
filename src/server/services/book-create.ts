@@ -2,6 +2,7 @@ import { type books } from '@db/schema.js';
 import { generatePublicId } from '../utils/public-id.js';
 import { productionTypeSchema, type ProductionType } from '@shared/schemas/book.js';
 import { usefulString } from './metadata-recording-collapse.js';
+import { inferGenresFromTitleMarkers, mergeInferredGenres } from '@core/metadata/genres.js';
 import type { BookRow } from './types.js';
 
 /** Public create payload; providerId is consumed before the insert primitive. */
@@ -39,6 +40,14 @@ export function buildNewBookValues(
     ? { seriesName: data.seriesName, seriesPosition: data.seriesPosition }
     : {};
 
+  // The single create choke point, so every add path — POST /api/books, import-list sync, series
+  // add-all, import commit — picks the marker up here (#2535). An unmarked create is unchanged,
+  // undefined included: `recomputeClearedFields` reads an empty array as an operator clear.
+  const inferred = mergeInferredGenres(
+    data.genres,
+    inferGenresFromTitleMarkers(data.title, data.subtitle, data.seriesName),
+  );
+
   return {
     publicId: generatePublicId('bk'),
     title: data.title,
@@ -51,7 +60,7 @@ export function buildNewBookValues(
     ...seriesPair,
     duration: data.duration,
     publishedDate: data.publishedDate,
-    genres: data.genres,
+    genres: inferred.changed ? inferred.genres : data.genres,
     status: data.status || 'wanted',
     enrichmentStatus: data.enrichmentStatus,
     productionType: productionTypeSchema.parse(data.productionType ?? 'unknown'),
