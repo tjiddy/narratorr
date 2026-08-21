@@ -4,8 +4,9 @@
  * stubbed transport so every AC12 transport code is asserted on the same fixture table the
  * classifier reads, which is what keeps the three places that code governs from drifting.
  */
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, vi, type MockInstance } from 'vitest';
 import { http, HttpResponse } from 'msw';
+import type { Dispatcher } from 'undici';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { useSolverBound } from '../__tests__/solver-bound.js';
 import type * as NetworkServiceModule from '../utils/network-service.js';
@@ -603,6 +604,84 @@ describe('solver diagnosis — the probe primitive (AC5, AC13, AC16)', () => {
 
     it('reports inconclusive rather than throwing for an unparseable proxy URL', async () => {
       await expect(probeReachable(TARGET_URL, { proxyUrl: 'not a url' })).resolves.toMatchObject({ state: 'inconclusive' });
+    });
+  });
+
+  /**
+   * #2539 — the probe mints a throwaway dispatcher per call (its doc comment explains why it does
+   * not share `fetchWithProxyAgent`'s), so it owns releasing it too. The totality contract is the
+   * constraint that makes this different from the other three sites: nothing here, including a
+   * rejecting `close()`, may propagate.
+   */
+  describe('dispatcher lifecycle (#2539 AC8, AC11)', () => {
+    /**
+     * Spies the `close()` of whatever dispatcher the probe hands to fetch. Stubbed rather than
+     * called through: undici's `DispatcherBase.close()` re-enters `this.close(cb)`, so calling
+     * through would record two hits for one production call.
+     */
+    function captureProbeDispatcher(
+      respond: () => Promise<Response>,
+      options: { closeRejects?: boolean } = {},
+    ): { closeCalls(): number; fetchCalls(): number } {
+      let close: MockInstance<() => Promise<void>> | undefined;
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+        const dispatcher = (init as { dispatcher?: Dispatcher }).dispatcher;
+        if (dispatcher && !close) {
+          close = vi.spyOn(dispatcher, 'close');
+          if (options.closeRejects) close.mockRejectedValue(new Error('close failed'));
+          else close.mockResolvedValue(undefined);
+        }
+        return respond();
+      });
+      return {
+        closeCalls: () => close?.mock.calls.length ?? 0,
+        fetchCalls: () => fetchSpy.mock.calls.length,
+      };
+    }
+
+    it('closes the dispatcher on the reachable arm', async () => {
+      const captured = captureProbeDispatcher(async () => new Response(null, { status: 200 }));
+
+      await expect(probeReachable(TARGET_URL, { proxyUrl: PROXY_URL })).resolves.toEqual({ state: 'reachable', status: 200 });
+
+      expect(captured.closeCalls()).toBe(1);
+    });
+
+    it('closes the dispatcher on the inconclusive-through-proxy arm', async () => {
+      const captured = captureProbeDispatcher(async () => new Response(null, { status: 502 }));
+
+      await expect(probeReachable(TARGET_URL, { proxyUrl: PROXY_URL })).resolves.toMatchObject({ state: 'inconclusive' });
+
+      expect(captured.closeCalls()).toBe(1);
+    });
+
+    it('closes the dispatcher on the transport-failure arm', async () => {
+      const cause = Object.assign(new Error('connect ECONNREFUSED 10.0.0.5:8080'), { code: 'ECONNREFUSED' });
+      const captured = captureProbeDispatcher(async () => {
+        throw Object.assign(new TypeError('fetch failed'), { cause });
+      });
+
+      await expect(probeReachable(TARGET_URL, { proxyUrl: PROXY_URL })).resolves.toMatchObject({ state: 'inconclusive' });
+
+      expect(captured.closeCalls()).toBe(1);
+    });
+
+    it('closes nothing and still returns inconclusive when createProxyAgent itself throws', async () => {
+      const captured = captureProbeDispatcher(async () => new Response(null, { status: 200 }));
+
+      await expect(probeReachable(TARGET_URL, { proxyUrl: 'not a url' })).resolves.toMatchObject({ state: 'inconclusive' });
+
+      // The factory threw above the try, so no request was issued and there is nothing to release.
+      expect(captured.fetchCalls()).toBe(0);
+      expect(captured.closeCalls()).toBe(0);
+    });
+
+    it('keeps its never-throws contract when close() itself rejects', async () => {
+      const captured = captureProbeDispatcher(async () => new Response(null, { status: 200 }), { closeRejects: true });
+
+      await expect(probeReachable(TARGET_URL, { proxyUrl: PROXY_URL })).resolves.toEqual({ state: 'reachable', status: 200 });
+
+      expect(captured.closeCalls()).toBe(1);
     });
   });
 });

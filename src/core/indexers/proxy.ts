@@ -150,6 +150,9 @@ export async function fetchWithProxyAgent(
     return { body, requestUrl: url, httpStatus: response.status };
   } finally {
     clearTimeout(timeoutId);
+    // Inside the finally so every exit path releases it, and after the body read above: closing
+    // first would truncate the response. Best-effort — a failing close is not the caller's problem.
+    await dispatcher?.close().catch(() => { /* best-effort cleanup */ });
   }
 }
 

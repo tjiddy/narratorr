@@ -349,6 +349,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       return { body, httpStatus: response.status };
     } finally {
       clearTimeout(timeoutId);
+      await dispatcher?.close().catch(() => { /* best-effort cleanup */ });
     }
   }
 
@@ -440,6 +441,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       return undefined;
     } finally {
       clearTimeout(timeoutId);
+      await dispatcher?.close().catch(() => { /* best-effort cleanup */ });
     }
   }
 }
