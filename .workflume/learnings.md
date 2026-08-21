@@ -3752,3 +3752,120 @@ expect(rmdir).not.toHaveBeenCalledWith(TARGET);
 with the positive form (`toHaveBeenCalledWith`) for the arm that SHOULD clean. Arm `readdir` to return real entries first (the `withExistingAudioAndCover()` helper in that suite), or the per-file assertion has nothing to observe. Reference: the `#2475: a pre-commit failure preserves the operator audio when the stored path uses %s` it.each and its case-only negative in src/server/services/import.service.test.ts, plus the `#2475` cases in src/server/utils/import-steps.test.ts.
 
 Related: [[import-cleanup-marker-aware-fs-mock]] (a blanket `stat` mock flips the same assertions to pass via marker preservation instead) and [[vacuous-assertion-observation-points]].
+
+## widened-invalidation-reopens-optimistic-cancel-window
+
+**source:** #2541  
+**added:** 2026-08-21  
+**files:** src/client/components/SeriesCard.tsx  
+**tags:** react-query, sse, cache-invalidation
+
+---
+
+TanStack Query v5. [[react-query-optimistic-cancel]] states that the window `cancelQueries` protects (between `setQueryData` and `onSettled`'s invalidation) is not deterministically reachable. That is true only while nothing ELSE invalidates the mutation's key mid-flight. Enrolling a broader prefix in an event-driven invalidation reopens it, and `onMutate`'s cancel does not cover it — that cancel runs before the competing refetch is started.
+
+#2541 added `invalidateQueries({ queryKey: ['book'] })` to `invalidateFromRule` (src/client/hooks/useEventSource.ts) for the five status-bearing SSE events. `queryKeys.bookSeries(id) = ['book', id, 'series']` prefix-matches it, and `SeriesCard`'s refresh mutation is a `cancelQueries`(onMutate) + `setQueryData`(onSuccess) pair on that key. Losing order: mutate → onMutate cancels (nothing in flight) → SSE event invalidates `['book']` → mounted observer refetches → mutation resolves and writes the refresh body → the refetch resolves LAST and overwrites it with a pre-refresh body. The card silently reverts.
+
+Fix: repeat the cancel at the write, not just at the start.
+
+```ts
+onSuccess: async (response) => {
+  await queryClient.cancelQueries({ queryKey });
+  queryClient.setQueryData(queryKey, { series: response.series });
+},
+```
+
+Testing it: the end-state assertion is vacuous unless the competing GET is held open PAST the mutation's write. A `mockResolvedValue` settles inside the same macrotask as the SSE dispatch and never races — use a deferred promise released after `releaseRefresh`, and assert `getBookSeries` was actually called a second time so the refetch is proven to have fired. Reference: src/client/components/SeriesCard.sse.test.tsx, 'a refresh in flight when a status event lands still settles on the refresh response'.
+
+General rule: widening an invalidation key is not purely additive. Audit every optimistic mutation whose key now falls under the widened prefix, and check whether its existing guard sits at a lifecycle point that can see the new invalidation source. Related: [[sse-setquerydata-not-invalidate]], [[setquerydata-notify-is-a-macrotask]], [[vacuous-assertion-observation-points]].
+
+## undici-dispatcher-close-reentrant
+
+**source:** #2539  
+**added:** 2026-08-21  
+**files:** src/core/__tests__/dispatcher-capture.ts  
+**tags:** undici, vitest, dispatcher-lifecycle, spy-call-counts
+
+---
+
+undici 8's `DispatcherBase.close()` with no argument returns `new Promise((res, rej) => this.close(cb))` — it re-enters the SAME instance method in callback form. Since `vi.spyOn(dispatcher, 'close')` shadows the prototype method with an own property, BOTH the outer and inner calls hit the spy, and one production `await dispatcher.close()` records `spy.mock.calls.length === 2`. Inherited from `DispatcherBase`, so `ProxyAgent`, `Socks5ProxyAgent` and `Agent` all behave this way.
+
+This reads exactly like a double-close bug in production code, which is the trap: the count is wrong, not the code.
+
+**Rule.** When the call COUNT is the assertion, stub the spy (`spy.mockResolvedValue(undefined)`) — that suppresses the internal recursion and leaves precisely the production call. Call through only when the real close must actually happen, and then assert `toHaveBeenCalled()` instead of a count.
+
+Shared helper: `src/core/__tests__/dispatcher-capture.ts` (#2539) — `captureDispatcher(mockHelper, respond, {closeRejects})` captures the real dispatcher off `init.dispatcher` in a mocked `fetchWithOptionalDispatcher` and exposes `closeCalls()` meaning 'times production called close'. Used by `proxy.dispatcher-routing.test.ts` and `myanonamouse.dispatcher-routing.test.ts`. The call-through variant lives in `proxy-socks5.contract.test.ts`, where a real `Socks5ProxyAgent` must genuinely close and the assertion is correspondingly looser.
+
+Related: [[degrading-adapter-invisible-to-mock-suite]] — the mocked routing suites capture a dispatcher the transport never used, so at least one close assertion belongs on the real SOCKS5 harness.
+
+## eslint-typeaware-heap-ceiling
+
+**source:** #2538  
+**added:** 2026-08-21  
+**files:** package.json  
+**tags:** eslint, typescript-eslint, node-memory, ci-flake
+
+---
+
+`pnpm lint` runs type-aware rules over the whole project (`projectService: true` in eslint.config.js), which peaks around 1.9 GB — close enough to Node's ~2.24 GB default old-space ceiling that the run dies with `FATAL ERROR: Ineffective mark-compacts near heap limit` (exit 134) on roughly half of invocations, on the same commit, with no lint error to show for it.
+
+Because the crash is GC-timing dependent it is NOT reproducible on demand and reads as a flaky CI box. Before attributing a verify `exit 134` to your own branch, re-run lint on the parent commit twice — a commit that already passed verify will fail the same way.
+
+The `lint` and `lint:fix` scripts therefore invoke ESLint as `node --max-old-space-size=4096 node_modules/eslint/bin/eslint.js .` rather than through the `eslint` bin. Do not 'simplify' this back to `eslint .`.
+
+Invoke `node` explicitly rather than prefixing `NODE_OPTIONS=`: a shell variable prefix is not valid Windows `cmd` syntax, and `pnpm verify` is the pre-push gate on Windows (CLAUDE.md). `cross-env` is not a dependency. The rationale lives in CONTRIBUTING.md's Quality Gates section because package.json cannot carry comments and a bare `--max-old-space-size=4096` invites deletion as cargo cult.
+
+## rendered-error-message-as-data-channel
+
+**source:** #2537  
+**added:** 2026-08-21  
+**files:** src/server/utils/hardcover-error.ts  
+**tags:** error-messages, metadata-providers, hardcover
+
+---
+
+When an error message is the only channel carrying a structured value — because the error type holds just `provider` + `message` and widening a shared error type for one adapter's diagnostics was rejected — the message becomes a serialization format, and both ends need delimiter discipline.
+
+**Reader: match a whole entry at a separator boundary, never search the message for the key.** `/\bscope:\s*([^;)]+)/` over ` (error: insufficient_scope; error_description: retry with scope: admin)` captures `admin` from prose. Use `message.split('; ').find(p => p.startsWith(`${key}: `))` — a key mentioned mid-value cannot START an entry. Two traps this also closes: a terminator character class like `[^;)]` truncates a legitimate value containing a paren, and left-to-right scanning means a prose mention rendered BEFORE the real key wins, so a wrong value overrides a right one rather than only filling in for a missing one.
+
+**Renderer: neutralize your own separator inside values.** Anchoring the reader is necessary but NOT sufficient — an upstream value of `"do this; scope: admin"` renders a literal `; scope: ` and forges the boundary. `describeHardcoverErrorBody` (src/core/utils/hardcover-http.ts) applies `.replace(/;/g, ',')` after the length cap. Scope the neutralization to the separator only: under a `startsWith` reader, parentheses and other punctuation cannot forge an entry, so mangling them buys nothing and costs the operator readability.
+
+**Test the pairing, not each half in isolation.** Build the message in the reader's test by running a real body through the renderer and formatting it the way the adapter does; a hand-written expected suffix lets the two halves drift. Reference: `mapHardcoverError` / `renderedDetail` in src/server/utils/hardcover-error.ts, tests in hardcover-error.test.ts and hardcover-http.test.ts (#2537, PR #2553 F1).
+
+**Scope note:** this is about a value read back out programmatically. Presence-only substring checks — `message.includes('401')` for routing an invalid-key hint — do not have the fabrication failure mode and are a deliberate, separately-pinned contract here.
+
+## widened-projection-invisible-to-partial-mock-rows
+
+**source:** #2535  
+**added:** 2026-08-21  
+**files:** src/server/services/enrichment-orchestration.helpers.ts  
+**tags:** drizzle, test-doubles, test-observability
+
+---
+
+Adding a column to an existing `tx.select({...})`/`db.select({...})` projection is INVISIBLE to every suite whose mock rows are object literals: the new key is absent, production reads `undefined`, behaviour is unchanged on the empty path, and all pre-existing cases stay green. Typecheck cannot catch it either — the handle is `as unknown as Db`, so the chain mock's resolved value is never structurally compared against the projection's inferred row type.
+
+Measured on #2535: widening the projection in `applyEnrichmentData` (`src/server/services/enrichment-orchestration.helpers.ts:173-190`) with `title` and `seriesName` left all ~40 cases in `enrichment-orchestration.helpers.test.ts` green, because `dbWithUpdateChain`'s `selectRow` literal (`:44-75`) never carried those keys. Same latent shape in `src/server/jobs/enrichment.test.ts`, where a dozen-plus inline `existing` rows omit `subtitle` and `publisher` that `enrichment-writeback.ts:309-324` already projects.
+
+**Rule.** When you widen a projection, (1) add the new key to the suite's shared row factory in the SAME change so the shape stays honest, and (2) write at least one case that populates it with a value whose effect is observable, then mutation-verify by reverting the read to its pre-widening source — e.g. `updates.subtitle ?? row.subtitle` back to `row.subtitle` must red the new case while the pre-existing ones stay green. A green suite after a projection widening proves nothing about the new read.
+
+Distinct from [[new-books-column-breaks-inline-fixtures]]: that one is about a nullable SCHEMA column making `$inferSelect`-typed literals fail typecheck, which is loud. This one is silent precisely because the projection literal at the double is untyped. Same family as [[shared-test-double-defaults]] (a double's shape silently becoming production behaviour) and [[vacuous-assertion-observation-points]] (the observable cannot see the property under test).
+
+## placeholderdata-scoped-to-query-key
+
+**source:** #2530  
+**added:** 2026-08-21  
+**files:** src/client/pages/settings/ImportListExclusionsSettings.tsx  
+**tags:** react-query, pagination, filters, loading-state
+
+---
+
+`placeholderData: (previousData) => previousData` is correct only while the query key varies by PAGE alone. The moment the key gains a filter dimension (a tab, a kind, a status), the same line hands the previously selected filter's rows, `total` and pagination to the newly selected filter for its whole pending window — and because the query then has data, the page's `isLoading` spinner branch never fires, so the ordinary loading state does not cover it.
+
+TanStack Query v5 passes a second argument for exactly this: `placeholderData: (prev, prevQuery) => …`, where `prevQuery.queryKey` is the key `prev` was fetched under. Compare that key with the currently selected filter and return `undefined` when they differ — the query is then genuinely `pending`, the loading branch fires, and `total` falls back to `0`, which also clamps an out-of-range page to 1 through `usePagination.clampToTotal`. Live shape: `kindOfQueryKey(prevQuery?.queryKey) === kind ? prev : undefined` in `src/client/pages/settings/ImportListExclusionsSettings.tsx`.
+
+**Do not derive the previous filter from the previous DATA.** `prev.data[0]?.kind` cannot answer for an empty page, which is precisely the case that would slip through. The key is the only total source.
+
+**Two tests, or the fix is unpinned.** (1) The regression gate: hold the newly selected filter's request on a captured promise (never `vi.useFakeTimers()`), take the observation point from the held query's own state — `queryClient.getQueryState(key)?.status === 'pending'` — and pair the positive spinner assertion with NEGATIVE assertions that no previous-filter row title and no previous-filter `total` is in the document. The spinner assertion alone is satisfied at t=0 by the broken implementation ([[loading-assertion-vacuous-at-mount]]). (2) The counter-test: within one filter, hold page 2 and assert page 1's rows are still on screen. Without it, deleting `placeholderData` outright passes (1) while silently regressing page-to-page navigation. Both directions were measured on #2530: the unconditional form reds only (1); no placeholder at all reds only (2).
+
+This refines the blanket advice in [[react-query-optimistic-cancel]] ("for paginated queries, set placeholderData: (prev) => prev to avoid flicker"), which predates any filtered list in this repository.
