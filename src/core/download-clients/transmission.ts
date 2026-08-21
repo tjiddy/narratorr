@@ -5,6 +5,7 @@ import type { transmissionTorrentSchema } from './schemas.js';
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
 import { DownloadClientAuthError, DownloadClientError } from './errors.js';
+import { externalIdRefusal, normalizeExternalId } from './external-id.js';
 import { requestWithRetry } from './retry.js';
 import { getErrorMessage } from '@shared/error-message.js';
 
@@ -87,9 +88,25 @@ export class TransmissionClient implements DownloadClientAdapter {
     throw new DownloadClientError(this.name, 'Could not extract torrent hash from response');
   }
 
+  /**
+   * An OMITTED `ids` means EVERY torrent (rpc-spec.md §3.1), so a blank id sits one dropped key
+   * away from `torrent-remove` acting on the whole session. Refusing here — ahead of the args
+   * object — is what makes the request structurally impossible to build rather than filtered
+   * later (#2488). Reads return `null` instead; `monitor` escalates a thrown read through
+   * `blacklistOnInfraError`, while a `null` takes the intended missing-item path.
+   */
+  private requireTorrentId(id: string): string {
+    const torrentId = normalizeExternalId(id);
+    if (!torrentId) throw externalIdRefusal(this.name);
+    return torrentId;
+  }
+
   async getDownload(id: string): Promise<DownloadItemInfo | null> {
+    const torrentId = normalizeExternalId(id);
+    if (!torrentId) return null;
+
     const response = await this.rpc('torrent-get', {
-      ids: [id],
+      ids: [torrentId],
       fields: [...TORRENT_FIELDS],
     });
 
@@ -130,16 +147,16 @@ export class TransmissionClient implements DownloadClientAdapter {
   }
 
   async pauseDownload(id: string): Promise<void> {
-    await this.rpc('torrent-stop', { ids: [id] });
+    await this.rpc('torrent-stop', { ids: [this.requireTorrentId(id)] });
   }
 
   async resumeDownload(id: string): Promise<void> {
-    await this.rpc('torrent-start', { ids: [id] });
+    await this.rpc('torrent-start', { ids: [this.requireTorrentId(id)] });
   }
 
   async removeDownload(id: string, deleteFiles = false): Promise<void> {
     await this.rpc('torrent-remove', {
-      ids: [id],
+      ids: [this.requireTorrentId(id)],
       'delete-local-data': deleteFiles,
     });
   }
