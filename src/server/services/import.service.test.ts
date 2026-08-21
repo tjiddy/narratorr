@@ -100,6 +100,10 @@ import { renameFilesWithTemplate } from '../utils/paths.js';
 import { copyToLibrary, MarkerPathConflictError } from '../utils/import-steps.js';
 
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
+import { useMswServer } from '@core/__tests__/msw/server.js';
+import { http, HttpResponse } from 'msw';
+import { transmissionSelects } from '@core/__tests__/download-client-id-semantics.js';
+import { TransmissionClient } from '@core/download-clients/transmission.js';
 
 const now = new Date();
 
@@ -2969,5 +2973,185 @@ describe('ImportService.getEligibleDownloads — externalId truthiness alignment
 
     const eligible = await svc(db).getEligibleDownloads();
     expect(eligible).toHaveLength(0);
+  });
+});
+
+/**
+ * #2488 AC7 — `handleTorrentRemoval` is private and reachable only through `importDownload`, and
+ * the point of these cases is that a real adapter REFUSES a blank stored external id. A mock
+ * adapter told to reject proves the caller's `catch` and nothing about the adapter
+ * ([[degrading-adapter-invisible-to-mock-suite]]), so this describe drives the real
+ * TransmissionClient over MSW instead.
+ */
+describe('ImportService import-time torrent removal over the real TransmissionClient (#2488)', () => {
+  const server = useMswServer();
+  const RPC_URL = 'http://localhost:9091/transmission/rpc';
+  const VALID = 'aa11bb22cc33dd44ee55ff66aa77bb88cc99dd00';
+  const BLANK = '   ';
+
+  const torrent = {
+    hashString: VALID,
+    name: 'The Way of Kings',
+    status: 6,
+    percentDone: 1,
+    totalSize: 500_000_000,
+    downloadedEver: 500_000_000,
+    uploadedEver: 1_000_000_000,
+    uploadRatio: 2,
+    peersSendingToUs: 1,
+    peersGettingFromUs: 0,
+    eta: 0,
+    downloadDir: '/downloads',
+    addedDate: 1_700_000_000,
+    doneDate: 1_700_003_600,
+    errorString: '',
+    leftUntilDone: 0,
+  };
+
+  let db: ReturnType<typeof createMockDb>;
+  let log: ReturnType<typeof createMockLogger>;
+  let settingsService: ReturnType<typeof createMockSettingsService>;
+  let service: ImportService;
+  let client: TransmissionClient;
+  let removals: string[];
+  let updateChain: ReturnType<typeof mockDbChain>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    db = createMockDb();
+    log = createMockLogger();
+    settingsService = createMockSettingsService();
+    removals = [];
+    client = new TransmissionClient({
+      host: 'localhost', port: 9091, username: 'admin', password: 'password', useSsl: false,
+    });
+
+    const clientService = inject<DownloadClientService>({
+      getAdapter: vi.fn().mockResolvedValue(client),
+      getById: vi.fn().mockResolvedValue({ id: 1, name: 'Transmission', type: 'transmission', enabled: true }),
+    });
+    const bookService = {
+      getById: vi.fn().mockResolvedValue({ ...mockBook, authors: [mockAuthor], narrators: [] }),
+      update: vi.fn().mockResolvedValue(undefined),
+    };
+    service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, bookService as never);
+
+    vi.mocked(rm).mockResolvedValue(undefined);
+    vi.mocked(rename).mockResolvedValue(undefined);
+    vi.mocked(cp).mockResolvedValue(undefined);
+    vi.mocked(stat).mockImplementation(async (p: unknown) =>
+      String(p).endsWith('.import-commit-pending')
+        ? Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
+        : ({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never));
+    vi.mocked(readdir).mockResolvedValue([
+      { name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false },
+    ] as never);
+    vi.mocked(statfs).mockResolvedValue({ bavail: BigInt(100_000_000_000), bsize: BigInt(1) } as never);
+
+    server.use(
+      http.post(RPC_URL, async ({ request }) => {
+        const body = await request.json() as { method: string; arguments?: Record<string, unknown> };
+        if (body.method === 'torrent-remove') {
+          for (const t of transmissionSelects(body.arguments?.ids, [torrent])) removals.push(t.hashString);
+          return HttpResponse.json({ result: 'success', arguments: {} });
+        }
+        return HttpResponse.json({
+          result: 'success',
+          arguments: { torrents: transmissionSelects(body.arguments?.ids, [torrent]) },
+        });
+      }),
+    );
+  });
+
+  function seed(externalId: string, importSettings: Record<string, unknown>) {
+    const settingsGet = settingsService.get as Mock;
+    settingsGet.mockImplementation((key: string) => {
+      if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+      if (key === 'import') return Promise.resolve(importSettings);
+      return Promise.resolve({});
+    });
+    db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, externalId }]));
+    updateChain = mockDbChain();
+    db.update.mockReturnValue(updateChain);
+  }
+
+  function writtenPayloads() {
+    return (updateChain.set as Mock).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+  }
+
+  /**
+   * The reachability boundary AC7's immediate-removal bullet turns on: `resolveSavePath`
+   * (`src/server/utils/download-path.ts:22`) throws on a `null` read, and it runs BEFORE the
+   * import body, so a blank-id row aborts there and `handleTorrentRemoval` is never reached at
+   * all. Unchanged by the guard — the pre-#2488 adapter's `ids: ['   ']` matched nothing and
+   * produced the same `null` — so this pins existing behavior rather than adding any.
+   */
+  it('aborts a blank-id import at save-path resolution, never reaching the removal stage', async () => {
+    seed(BLANK, { deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 0 });
+
+    await expect(service.importDownload(1)).rejects.toThrow(/not found in client/);
+
+    expect(removals).toEqual([]);
+    expect(writtenPayloads().some((p) => 'pendingCleanup' in p)).toBe(false);
+    expect(log.error).not.toHaveBeenCalledWith(expect.anything(), 'Failed to remove torrent after import');
+  });
+
+  it('control: the same harness imports a valid id and deletes the torrent with its files', async () => {
+    seed(VALID, { deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 0, minFreeSpaceGB: 0 });
+
+    const result = await service.importDownload(1);
+
+    expect(result.downloadId).toBe(1);
+    expect(removals).toEqual([VALID]);
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ externalId: VALID, clientType: 'transmission', deleteFiles: true }),
+      'Torrent removed from client after import',
+    );
+    expect(log.error).not.toHaveBeenCalled();
+  });
+
+  /**
+   * AC7's second arm reached where it IS reachable. With `minSeedRatio > 0` the ratio read runs
+   * first; a row the client cannot resolve yields `live-state-unavailable`, which defers and sets
+   * `pendingCleanup` for the next cycle rather than failing the import.
+   */
+  it('defers and sets pendingCleanup when the ratio gate cannot resolve the row', async () => {
+    seed(VALID, { deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 1.0, minFreeSpaceGB: 0 });
+    // Resolve the save path, then answer the ratio read as a torrent the client no longer holds.
+    let reads = 0;
+    server.use(
+      http.post(RPC_URL, async ({ request }) => {
+        const body = await request.json() as { method: string; arguments?: Record<string, unknown> };
+        if (body.method === 'torrent-remove') {
+          for (const t of transmissionSelects(body.arguments?.ids, [torrent])) removals.push(t.hashString);
+          return HttpResponse.json({ result: 'success', arguments: {} });
+        }
+        const held = reads++ === 0 ? [torrent] : [];
+        return HttpResponse.json({
+          result: 'success',
+          arguments: { torrents: transmissionSelects(body.arguments?.ids, held) },
+        });
+      }),
+    );
+
+    await service.importDownload(1);
+
+    expect(removals).toEqual([]);
+    expect(writtenPayloads()).toContainEqual(
+      expect.objectContaining({ pendingCleanup: expect.any(Date) }),
+    );
+    expect(log.info).toHaveBeenCalledWith(
+      { downloadId: 1 },
+      'Skipping torrent removal — cannot fetch current state, deferring',
+    );
+  });
+
+  it('control: a satisfied ratio removes instead of deferring', async () => {
+    seed(VALID, { deleteAfterImport: true, minSeedTime: 0, minSeedRatio: 1.0, minFreeSpaceGB: 0 });
+
+    await service.importDownload(1);
+
+    expect(removals).toEqual([VALID]);
+    expect(writtenPayloads().some((p) => 'pendingCleanup' in p)).toBe(false);
   });
 });
