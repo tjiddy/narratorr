@@ -13,7 +13,7 @@
     "build:server": "tsup",
     "build:client": "vite build",
     "start": "node dist/server/index.js",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p e2e/tsconfig.json",
+    "typecheck": "node --max-old-space-size=4096 node_modules/typescript/bin/tsc --noEmit && node --max-old-space-size=4096 node_modules/typescript/bin/tsc --noEmit -p e2e/tsconfig.json",
     "lint": "node --max-old-space-size=4096 node_modules/eslint/bin/eslint.js .",
     "lint:fix": "node --max-old-space-size=4096 node_modules/eslint/bin/eslint.js . --fix",
     "test": "vitest run",

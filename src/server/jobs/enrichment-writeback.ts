@@ -11,6 +11,7 @@ import type { BookService } from '../services/book.service.js';
 import { pickPrimarySeries } from '@shared/pick-primary-series.js';
 import { usefulString } from '../services/metadata-recording-collapse.js';
 import { parseClearedFields } from '../utils/cleared-fields.js';
+import { resolveGenreWrite, type GenreMarkerFields, type GenreWritePlan } from '../utils/genre-write-plan.js';
 import type { ClearableBookField } from '@shared/schemas/book.js';
 
 /**
@@ -100,6 +101,36 @@ interface EnrichmentWriteResult {
 
 const NO_WRITES = { filledNarrators: 0, filledGenres: 0, genresWritten: null } as const;
 
+/** The genre decision's raw inputs, resolved inside the transaction so tombstones apply first. */
+interface GenreWriteInputs {
+  providerGenres: string[] | undefined;
+  liveGenres: string[] | null;
+  /** Pre-update text; `updates` overrides each field the same pass is actually writing. */
+  base: GenreMarkerFields;
+}
+
+const NO_GENRE_INPUTS: GenreWriteInputs = { providerGenres: undefined, liveGenres: null, base: {} };
+
+/**
+ * A same-pass fill wins over the stored value — the all-caps title rewrite and the subtitle /
+ * seriesName fill-empty all land in `updates`. Read AFTER `suppressTombstonedUpdates`, so a fill a
+ * tombstone just deleted correctly falls back to the stored value.
+ */
+function planGenreWrite(
+  inputs: GenreWriteInputs,
+  updates: Record<string, unknown>,
+  cleared: ReadonlySet<ClearableBookField>,
+): GenreWritePlan {
+  if (cleared.has('genres')) return { genres: null, providerFilled: false };
+  const effective = (field: 'title' | 'subtitle' | 'seriesName') =>
+    typeof updates[field] === 'string' ? updates[field] : inputs.base[field];
+  return resolveGenreWrite(inputs.providerGenres, inputs.liveGenres, {
+    title: effective('title'),
+    subtitle: effective('subtitle'),
+    seriesName: effective('seriesName'),
+  });
+}
+
 /**
  * Re-read identity and tombstones in the transaction, then commit scalar, narrator and genre
  * writes atomically. Tombstones suppress fields without failing the pass. Genre
@@ -114,7 +145,7 @@ async function applyEnrichmentWrites(
   capturedAsin: string | null,
   updates: Record<string, unknown>,
   resolvedAsin: string | null,
-  genresToFill: string[] | null,
+  genreInputs: GenreWriteInputs,
   narrators: string[] | undefined,
 ): Promise<EnrichmentWriteResult> {
   try {
@@ -151,9 +182,16 @@ async function applyEnrichmentWrites(
       const filledNarrators = await insertNarratorsIfEmpty(tx, log, bookId, narrators);
 
       // The transaction's identity guard scopes this service call and avoids nesting.
-      if (genresToFill && !cleared.has('genres')) {
-        await bookService.update(bookId, { genres: genresToFill }, { tx });
-        return { outcome: 'applied' as const, filledNarrators, filledGenres: 1, genresWritten: genresToFill };
+      const genrePlan = planGenreWrite(genreInputs, updates, cleared);
+      if (genrePlan.genres) {
+        await bookService.update(bookId, { genres: genrePlan.genres }, { tx });
+        // filledGenres stays the provider fill-empty counter; an inference-only write is a 0.
+        return {
+          outcome: 'applied' as const,
+          filledNarrators,
+          filledGenres: genrePlan.providerFilled ? 1 : 0,
+          genresWritten: genrePlan.genres,
+        };
       }
       return { outcome: 'applied' as const, filledNarrators, filledGenres: 0, genresWritten: null };
     });
@@ -273,7 +311,6 @@ export interface ResolvedEnrichmentResult {
  * The fill-empty snapshot is read here rather than by the sweep for the same reason: an owner edit
  * to a same-ASIN field would otherwise land after the prefetch and be overwritten by it.
  */
-// eslint-disable-next-line complexity -- linear writeback with a null guard per provider category
 export async function applyResolvedEnrichmentWithinAdmissionLock(
   db: Db,
   bookService: BookService,
@@ -323,19 +360,21 @@ export async function applyResolvedEnrichmentWithinAdmissionLock(
     .where(eq(books.id, candidate.id))
     .limit(1);
 
-  // Tombstone authority is re-read in the transaction; this only prepares a fill.
-  let genresToFill: string[] | null = null;
+  // Tombstone authority is re-read in the transaction; this only prepares the inputs.
+  let genreInputs = NO_GENRE_INPUTS;
 
   if (existing.length > 0) {
     const book = existing[0]!;
     Object.assign(updates, buildMetadataUpdates(book, result).updates);
-    if (result.genres?.length && (!book.genres || book.genres.length === 0)) {
-      genresToFill = result.genres;
-    }
+    genreInputs = {
+      providerGenres: result.genres,
+      liveGenres: book.genres,
+      base: { title: book.title, subtitle: book.subtitle, seriesName: book.seriesName },
+    };
   }
 
   const written = await applyEnrichmentWrites(
-    db, bookService, log, candidate.id, capturedAsin, updates, resolvedAsin, genresToFill, result.narrators,
+    db, bookService, log, candidate.id, capturedAsin, updates, resolvedAsin, genreInputs, result.narrators,
   );
   // Count only writes that survived identity and tombstone guards.
   if (written.outcome !== 'applied') return NOTHING;

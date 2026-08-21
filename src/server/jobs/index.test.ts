@@ -25,9 +25,11 @@ vi.mock('./rss.js', () => ({ runRssJob: vi.fn() }));
 vi.mock('./backup.js', () => ({ runBackupJob: vi.fn() }));
 vi.mock('./version-check.js', () => ({ checkForUpdate: vi.fn() }));
 vi.mock('./cover-backfill.js', () => ({ runCoverBackfill: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('./genre-marker-sweep.js', () => ({ runGenreMarkerSweep: vi.fn().mockResolvedValue(undefined) }));
 
 import { Cron, type CronCallback } from 'croner';
 import { runCoverBackfill } from './cover-backfill.js';
+import { runGenreMarkerSweep } from './genre-marker-sweep.js';
 import { checkForUpdate } from './version-check.js';
 import { createMockDb, mockDbChain, inject as injectHelper } from '../__tests__/helpers.js';
 
@@ -889,6 +891,22 @@ describe('startJobs', () => {
         expect.anything(), // db
         log,
         services.connector, // enables refresh notifications
+      );
+    });
+
+    it('calls runGenreMarkerSweep after the batch methods (#2535)', async () => {
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const { startJobs } = await import('./index.js');
+      startJobs(injectHelper<Db>(db), services, log);
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(services.importOrchestrator.processCompletedDownloads).toHaveBeenCalled();
+      expect(runGenreMarkerSweep).toHaveBeenCalledWith(
+        expect.anything(), // db
+        services.book,
+        log,
       );
     });
 
