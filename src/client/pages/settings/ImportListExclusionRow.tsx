@@ -1,12 +1,7 @@
 import { memo } from 'react';
 import type { ImportListExclusion } from '@/lib/api';
-import type { ImportListExclusionKind } from '@shared/schemas/import-list-exclusion.js';
 import { TrashIcon } from '@/components/icons';
-
-const KIND_LABELS: Record<ImportListExclusionKind, string> = {
-  deleted: 'Deleted',
-  added: 'Added by a list',
-};
+import { KIND_LABELS } from './importListExclusionKind';
 
 interface ImportListExclusionRowProps {
   entry: ImportListExclusion;

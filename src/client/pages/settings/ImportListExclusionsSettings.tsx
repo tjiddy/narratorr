@@ -5,17 +5,13 @@ import { api, type ImportListExclusion } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { Pagination } from '@/components/Pagination';
-import { Tabs, type TabItem } from '@/components/Tabs';
+import { Tabs } from '@/components/Tabs';
 import { usePagination } from '@/hooks/usePagination';
 import { DEFAULT_LIMITS } from '@shared/schemas/common.js';
 import type { ImportListExclusionKind } from '@shared/schemas/import-list-exclusion.js';
 import { LoadingSpinner, XCircleIcon } from '@/components/icons';
 import { ImportListExclusionRow } from './ImportListExclusionRow';
-
-const KIND_TABS: TabItem[] = [
-  { value: 'deleted', label: 'Deleted' },
-  { value: 'added', label: 'Added by a list' },
-];
+import { KIND_TABS } from './importListExclusionKind';
 
 const EMPTY_STATE: Record<ImportListExclusionKind, { heading: string; detail: string }> = {
   deleted: {
