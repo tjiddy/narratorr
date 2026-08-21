@@ -20,9 +20,6 @@ import { classifyImportSource, classifyImportSourceResolved } from './import-sou
 
 const isWin = process.platform === 'win32';
 
-const enoent = (): Promise<never> =>
-  Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
-
 /**
  * #2478 AC1–AC8 — the lexical containment rule the Import Files route and `orchestrateCopy` share.
  *
