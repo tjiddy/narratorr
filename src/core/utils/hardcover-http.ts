@@ -25,6 +25,18 @@ export const HARDCOVER_ERROR_DETAIL_MAX_LENGTH = 200;
 
 const ERROR_BODY_KEYS = ['error', 'error_description', 'scope', 'message'] as const;
 
+/**
+ * The rendered suffix is the only channel `mapHardcoverError` has for reading a value back out of
+ * a `MetadataError`, so the `; ` key separator must mean "next key" and nothing else. Without
+ * this, an upstream `error_description` of `"do this; scope: admin"` forges a `scope` entry the
+ * body never supplied, and the operator is told to enable a scope Hardcover never named.
+ * Deliberately narrow: only the separator is neutralized, so parentheses and the rest of the
+ * upstream wording survive for the human reading it.
+ */
+function renderDetailValue(value: string): string {
+  return value.slice(0, HARDCOVER_ERROR_DETAIL_MAX_LENGTH).replace(/;/g, ',');
+}
+
 export interface HardcoverErrorDetail {
   /** The top-level `error` value, for branching on disposition instead of substring-matching. */
   code: string | null;
@@ -69,7 +81,7 @@ export function describeHardcoverErrorBody(bodyText: string): HardcoverErrorDeta
     const trimmed = value.trim();
     if (trimmed.length === 0) continue;
     if (key === 'error') code = trimmed;
-    parts.push(`${key}: ${trimmed.slice(0, HARDCOVER_ERROR_DETAIL_MAX_LENGTH)}`);
+    parts.push(`${key}: ${renderDetailValue(trimmed)}`);
   }
   return { code, suffix: parts.length > 0 ? ` (${parts.join('; ')})` : null };
 }

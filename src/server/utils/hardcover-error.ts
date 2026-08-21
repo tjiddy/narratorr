@@ -1,9 +1,23 @@
 import { RateLimitError, TransientError, MetadataError } from '@core/metadata/errors.js';
 import { getErrorMessage } from './error-message.js';
 
-/** Reads back the scope the adapter rendered into the message, when the body supplied one. */
+/**
+ * Reads one entry back out of the suffix `describeHardcoverErrorBody` rendered. Matching a whole
+ * `<key>: ` entry at a `; ` boundary — rather than searching the message for the key anywhere — is
+ * what keeps prose in a sibling field (`error_description: "retry with scope: admin"`) from being
+ * mistaken for the dedicated field. The renderer neutralizes `;` inside values so the boundary
+ * cannot be forged from upstream text.
+ */
+function renderedDetail(message: string, key: string): string | null {
+  const prefix = `${key}: `;
+  const entry = message.split('; ').find((part) => part.startsWith(prefix));
+  if (entry === undefined) return null;
+  return entry.slice(prefix.length).replace(/\)$/, '').trim() || null;
+}
+
+/** Names a scope only when the body supplied the dedicated top-level field. */
 function scopeGuidance(message: string): string {
-  const scope = /\bscope:\s*([^;)]+)/.exec(message)?.[1]?.trim();
+  const scope = renderedDetail(message, 'scope');
   return scope
     ? `Your Hardcover API key is missing a required scope (${scope}). Regenerate the token with that scope enabled.`
     : 'Your Hardcover API key is missing a required scope. Regenerate the token with the scopes this feature needs.';

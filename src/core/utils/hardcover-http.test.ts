@@ -146,6 +146,46 @@ describe('describeHardcoverErrorBody (#2537 AC4)', () => {
     });
   });
 
+  // The rendered suffix is the only channel the server-side mapper has for reading a value back
+  // out of a MetadataError, so `; <key>: ` must mean "next key" and never appear inside a value.
+  describe('structural delimiters cannot be forged from inside a value', () => {
+    it('neutralizes a separator a value tries to smuggle in', () => {
+      const detail = describeHardcoverErrorBody(JSON.stringify({
+        error: 'insufficient_scope',
+        error_description: 'do this; scope: admin',
+      }));
+
+      expect(detail.suffix).not.toContain('; scope:');
+      expect(detail.suffix).toContain('admin');
+    });
+
+    it('neutralizes a separator inside the error code', () => {
+      const detail = describeHardcoverErrorBody('{"error":"insufficient_scope; scope: admin"}');
+
+      expect(detail.suffix).not.toContain('; scope:');
+    });
+
+    // Parentheses cannot forge an entry — a part has to START with `<key>: ` to count — so they
+    // stay verbatim rather than mangling the wording the operator reads.
+    it('preserves parentheses inside a value', () => {
+      const detail = describeHardcoverErrorBody('{"error_description":"see docs (section 4) now"}');
+
+      expect(detail.suffix).toBe(' (error_description: see docs (section 4) now)');
+    });
+
+    it('leaves the genuine key separators intact between surviving keys', () => {
+      const detail = describeHardcoverErrorBody(JSON.stringify({
+        error: 'insufficient_scope',
+        error_description: 'Token lacks a scope',
+        scope: 'read:series',
+      }));
+
+      expect(detail.suffix).toBe(
+        ' (error: insufficient_scope; error_description: Token lacks a scope; scope: read:series)',
+      );
+    });
+  });
+
   describe('length cap', () => {
     it('truncates an over-long string value at the documented cap', () => {
       const detail = describeHardcoverErrorBody(JSON.stringify({ error_description: 'x'.repeat(5000) }));
