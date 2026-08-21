@@ -607,6 +607,21 @@ describe('HealthCheckService', () => {
       expect(check!.message).toContain('Invalid Hardcover API key');
     });
 
+    // Re-pasting the key cannot fix an under-scoped token, so the hint must differ (#2537 AC5).
+    it('returns error with scope guidance for an insufficient_scope MetadataError', async () => {
+      vi.spyOn(HardcoverClient.prototype, 'searchSeries').mockRejectedValue(
+        new MetadataError('hardcover', 'Hardcover API returned 403: Forbidden (error: insufficient_scope; scope: read:series)'),
+      );
+      const { service } = createService({
+        settings: createMockSettingsService({ metadata: { hardcoverApiKey: 'under-scoped-key' } }),
+      });
+      const results = await service.runAllChecks();
+      const check = results.find((r) => r.checkName === 'hardcover');
+      expect(check).toMatchObject({ checkName: 'hardcover', state: 'error' });
+      expect(check!.message).toContain('read:series');
+      expect(check!.message).not.toContain('Invalid Hardcover API key');
+    });
+
     it('returns error with the unreachable hint for a TransientError', async () => {
       vi.spyOn(HardcoverClient.prototype, 'searchSeries').mockRejectedValue(
         new TransientError('hardcover', 'ECONNRESET'),

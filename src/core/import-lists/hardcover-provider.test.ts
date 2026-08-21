@@ -3,6 +3,11 @@ import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { HardcoverProvider, type HardcoverConfig } from './hardcover-provider.js';
 import { ImportListError } from './errors.js';
+import {
+  MAX_RATE_LIMIT_WAIT_MS,
+  MAX_TOTAL_RATE_LIMIT_WAIT_MS,
+  RATE_LIMIT_MAX_ATTEMPTS,
+} from '../utils/hardcover-http.js';
 
 const GQL_URL = 'https://api.hardcover.app/v1/graphql';
 
@@ -985,6 +990,503 @@ describe('HardcoverProvider', () => {
           const result = await makeProvider({ importMax: 50 }).test();
           expect(result).toEqual({ success: false, message: 'Invalid API key' });
         }
+      });
+    });
+  });
+
+  describe('rate limiting and structured error bodies (#2537)', () => {
+    const CUSTOM_URL = 'https://hardcover.app/@LisaRae/lists/2025-year-in-books';
+    const PAGE_SIZE = 100;
+
+    // Exact-delay assertions with real MSW responses: capture the requested backoff and
+    // re-dispatch it at 0. Full fake timers would stall MSW and the native AbortSignal.timeout
+    // inside fetchWithTimeout.
+    function recordSleeps(): number[] {
+      const delays: number[] = [];
+      const originalSetTimeout = globalThis.setTimeout;
+      vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms?: number) => {
+        delays.push(ms ?? 0);
+        return originalSetTimeout(fn, 0);
+      }) as typeof globalThis.setTimeout);
+      return delays;
+    }
+
+    afterEach(() => { vi.restoreAllMocks(); });
+
+    function tooMany(opts: { retryAfter?: string; body?: string } = {}): Response {
+      return new HttpResponse(opts.body ?? null, {
+        status: 429,
+        statusText: 'Too Many Requests',
+        ...(opts.retryAfter === undefined ? {} : { headers: { 'Retry-After': opts.retryAfter } }),
+      });
+    }
+
+    /** Serves the scripted responses in arrival order, repeating the last one thereafter. */
+    function scripted(responses: Array<() => Response>, onRequest?: (vars: Record<string, unknown>) => void) {
+      let i = 0;
+      return http.post(GQL_URL, async ({ request }) => {
+        const body = await request.json() as GqlBody;
+        onRequest?.(body.variables ?? {});
+        const next = responses[Math.min(i, responses.length - 1)]!;
+        i += 1;
+        return next();
+      });
+    }
+
+    const shelfProvider = () => new HardcoverProvider({ apiKey: 'k', listType: 'shelf', shelfId: 3 });
+    const customProvider = (overrides: Partial<HardcoverConfig> = {}) =>
+      new HardcoverProvider({ apiKey: 'k', listType: 'custom', listUrl: CUSTOM_URL, ...overrides });
+
+    const shelfBooks = () => HttpResponse.json({
+      data: { user_books: [{ book: { id: 1, title: 'Shelved', contributions: [] } }] },
+    });
+
+    const listRow = (id: number) => ({ id, position: id, book: { id, title: `Book ${id}`, contributions: [] } });
+    const listPage = (offset: number, count: number, booksCount: number) => HttpResponse.json({
+      data: {
+        lists: [{
+          id: 1, name: 'L', ranked: true, books_count: booksCount,
+          list_books: Array.from({ length: count }, (_, i) => listRow(offset + i)),
+        }],
+      },
+    });
+
+    describe('retry lives in executeQuery, so every request site gets it (AC2)', () => {
+      it('retries a throttled trending ids leg once and completes the two-step flow', async () => {
+        const delays = recordSleeps();
+        let requests = 0;
+        server.use(http.post(GQL_URL, async ({ request }) => {
+          requests += 1;
+          const body = await request.json() as GqlBody;
+          if (requests === 1) return tooMany({ retryAfter: '1' });
+          if (isTrendingIdsQuery(body.query)) return HttpResponse.json({ data: { books_trending: { ids: [7] } } });
+          return HttpResponse.json({ data: { books: [{ id: 7, title: 'Seven', contributions: [] }] } });
+        }));
+
+        const items = await new HardcoverProvider({ apiKey: 'k', listType: 'trending' }).fetchItems();
+
+        expect(items).toEqual([expect.objectContaining({ title: 'Seven' })]);
+        expect(delays).toEqual([1000]);
+        // Two ids attempts plus the books leg.
+        expect(requests).toBe(3);
+      });
+
+      it('retries a throttled shelf query once', async () => {
+        const delays = recordSleeps();
+        let requests = 0;
+        server.use(scripted([() => { requests += 1; return tooMany({ retryAfter: '1' }); }, () => { requests += 1; return shelfBooks(); }]));
+
+        const items = await shelfProvider().fetchItems();
+
+        expect(items).toEqual([expect.objectContaining({ title: 'Shelved' })]);
+        expect(delays).toEqual([1000]);
+        expect(requests).toBe(2);
+      });
+
+      it('retries a throttled fixed-limit custom query once', async () => {
+        const delays = recordSleeps();
+        server.use(scripted([() => tooMany({ retryAfter: '1' }), () => listPage(0, 2, 2)]));
+
+        const items = await customProvider({ importMax: 50 }).fetchItems();
+
+        expect(items).toHaveLength(2);
+        expect(delays).toEqual([1000]);
+      });
+
+      it('retries the second trending leg and still restores the ids rank order', async () => {
+        const delays = recordSleeps();
+        let booksAttempts = 0;
+        server.use(http.post(GQL_URL, async ({ request }) => {
+          const body = await request.json() as GqlBody;
+          if (isTrendingIdsQuery(body.query)) return HttpResponse.json({ data: { books_trending: { ids: [2, 1] } } });
+          booksAttempts += 1;
+          if (booksAttempts === 1) return tooMany({ retryAfter: '2' });
+          return HttpResponse.json({
+            data: {
+              books: [
+                { id: 1, title: 'First by id', contributions: [] },
+                { id: 2, title: 'Second by id', contributions: [] },
+              ],
+            },
+          });
+        }));
+
+        const items = await new HardcoverProvider({ apiKey: 'k', listType: 'trending' }).fetchItems();
+
+        expect(items.map((i) => i.title)).toEqual(['Second by id', 'First by id']);
+        expect(delays).toEqual([2000]);
+        expect(booksAttempts).toBe(2);
+      });
+    });
+
+    describe('per-request attempt cap and per-wait clamp (AC2)', () => {
+      it('gives up after RATE_LIMIT_MAX_ATTEMPTS requests and one fewer sleeps', async () => {
+        const delays = recordSleeps();
+        let requests = 0;
+        server.use(http.post(GQL_URL, () => { requests += 1; return tooMany({ retryAfter: '1' }); }));
+
+        const error: unknown = await shelfProvider().fetchItems().catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ImportListError);
+        expect((error as ImportListError).message).toContain('429');
+        expect((error as ImportListError).message).toContain('rate limited');
+        expect(requests).toBe(RATE_LIMIT_MAX_ATTEMPTS);
+        expect(delays).toHaveLength(RATE_LIMIT_MAX_ATTEMPTS - 1);
+      });
+
+      it('clamps an over-long Retry-After to the per-wait maximum', async () => {
+        const delays = recordSleeps();
+        server.use(scripted([() => tooMany({ retryAfter: '600' }), () => shelfBooks()]));
+
+        await shelfProvider().fetchItems();
+
+        expect(delays).toEqual([MAX_RATE_LIMIT_WAIT_MS]);
+      });
+
+      it('clamps the 60s default when Retry-After is absent', async () => {
+        const delays = recordSleeps();
+        server.use(scripted([() => tooMany(), () => shelfBooks()]));
+
+        await shelfProvider().fetchItems();
+
+        expect(delays).toEqual([MAX_RATE_LIMIT_WAIT_MS]);
+      });
+    });
+
+    describe('cumulative budget across a paginated call (AC2 × AC3)', () => {
+      // Each 30s wait is the clamped maximum, so four of them spend the whole call budget.
+      const WAIT_HEADER = '30';
+
+      /** Two full pages that each need two retries, then the caller-supplied tail. */
+      function twoThrottledPagesThen(tail: () => Response) {
+        return scripted([
+          () => tooMany({ retryAfter: WAIT_HEADER }),
+          () => tooMany({ retryAfter: WAIT_HEADER }),
+          () => listPage(0, PAGE_SIZE, 1000),
+          () => tooMany({ retryAfter: WAIT_HEADER }),
+          () => tooMany({ retryAfter: WAIT_HEADER }),
+          () => listPage(PAGE_SIZE, PAGE_SIZE, 1000),
+          tail,
+        ]);
+      }
+
+      it('completes when the waits total exactly the budget', async () => {
+        const delays = recordSleeps();
+        server.use(twoThrottledPagesThen(() => listPage(PAGE_SIZE * 2, 50, 1000)));
+
+        const items = await customProvider({ importMax: 'all' }).fetchItems();
+
+        expect(items).toHaveLength(250);
+        expect(delays.reduce((a, b) => a + b, 0)).toBe(MAX_TOTAL_RATE_LIMIT_WAIT_MS);
+      });
+
+      it('fails with no partial result — and no extra sleep — one wait past the budget', async () => {
+        const delays = recordSleeps();
+        server.use(twoThrottledPagesThen(() => tooMany({ retryAfter: WAIT_HEADER })));
+
+        const result: unknown = await customProvider({ importMax: 'all' }).fetchItems()
+          .then((items) => ({ leaked: items }), (error: unknown) => error);
+
+        expect(result).toBeInstanceOf(ImportListError);
+        expect((result as ImportListError).message).toContain('rate limited');
+        // The over-budget wait is refused outright, not slept-then-failed.
+        expect(delays).toHaveLength(4);
+        expect(delays.reduce((a, b) => a + b, 0)).toBe(MAX_TOTAL_RATE_LIMIT_WAIT_MS);
+      });
+    });
+
+    describe('the budget is call-local, not instance state (AC2)', () => {
+      it('gives a second sequential fetchItems() on the same instance a full budget', async () => {
+        const delays = recordSleeps();
+        // One call's worth of script, twice: each spends the full 4 × 30s allowance.
+        const oneCall: Array<() => Response> = [
+          () => tooMany({ retryAfter: '30' }),
+          () => tooMany({ retryAfter: '30' }),
+          () => listPage(0, PAGE_SIZE, 200),
+          () => tooMany({ retryAfter: '30' }),
+          () => tooMany({ retryAfter: '30' }),
+          () => listPage(PAGE_SIZE, 20, 200),
+        ];
+        server.use(scripted([...oneCall, ...oneCall]));
+
+        const provider = customProvider({ importMax: 'all' });
+        await expect(provider.fetchItems()).resolves.toHaveLength(120);
+        await expect(provider.fetchItems()).resolves.toHaveLength(120);
+
+        expect(delays).toHaveLength(8);
+        expect(delays.reduce((a, b) => a + b, 0)).toBeGreaterThan(MAX_TOTAL_RATE_LIMIT_WAIT_MS);
+      });
+
+      it('gives two concurrent fetchItems() on the same instance independent budgets', async () => {
+        const delays = recordSleeps();
+        // Both calls walk the same two offsets, so each offset sees two attempts per call before
+        // succeeding. The fixture is symmetric: each call spends exactly half the recorded waits.
+        const throttledPerOffset = new Map<number, number>();
+        server.use(http.post(GQL_URL, async ({ request }) => {
+          const body = await request.json() as GqlBody;
+          const offset = Number(body.variables?.offset ?? 0);
+          const seen = throttledPerOffset.get(offset) ?? 0;
+          if (seen < 4) {
+            throttledPerOffset.set(offset, seen + 1);
+            return tooMany({ retryAfter: '20' });
+          }
+          return offset === 0 ? listPage(0, PAGE_SIZE, 200) : listPage(PAGE_SIZE, 20, 200);
+        }));
+
+        const provider = customProvider({ importMax: 'all' });
+        const [first, second] = await Promise.all([provider.fetchItems(), provider.fetchItems()]);
+
+        expect(first).toHaveLength(120);
+        expect(second).toHaveLength(120);
+        expect(delays).toEqual(Array.from({ length: 8 }, () => 20_000));
+        const spendPerCall = delays.reduce((a, b) => a + b, 0) / 2;
+        expect(spendPerCall).toBeLessThanOrEqual(MAX_TOTAL_RATE_LIMIT_WAIT_MS);
+        // Only independent budgets can fund more total waiting than one budget allows.
+        expect(delays.reduce((a, b) => a + b, 0)).toBeGreaterThan(MAX_TOTAL_RATE_LIMIT_WAIT_MS);
+      });
+    });
+
+    describe('what is NOT retried (AC2)', () => {
+      it.each([401, 403, 500])('issues exactly one request for HTTP %i', async (status) => {
+        const delays = recordSleeps();
+        let requests = 0;
+        server.use(http.post(GQL_URL, () => {
+          requests += 1;
+          return new HttpResponse(null, { status, statusText: 'Nope' });
+        }));
+
+        await expect(shelfProvider().fetchItems()).rejects.toBeInstanceOf(ImportListError);
+
+        expect(requests).toBe(1);
+        expect(delays).toHaveLength(0);
+      });
+
+      it('refuses to wait out a structural top_level_limit_exceeded 429', async () => {
+        const delays = recordSleeps();
+        let requests = 0;
+        server.use(http.post(GQL_URL, () => {
+          requests += 1;
+          return tooMany({ retryAfter: '1', body: '{"error":"top_level_limit_exceeded"}' });
+        }));
+
+        const error: unknown = await shelfProvider().fetchItems().catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ImportListError);
+        expect((error as ImportListError).message).toContain('top_level_limit_exceeded');
+        expect((error as ImportListError).message).not.toContain('rate limited');
+        expect(requests).toBe(1);
+        expect(delays).toHaveLength(0);
+      });
+    });
+
+    describe('interaction with the existing pagination guards (AC2 × AC3)', () => {
+      it('does not let a retried page count against the repeated-page or full-page guards', async () => {
+        recordSleeps();
+        // books_count 200 funds exactly two full pages; the retry must not consume a third slot.
+        server.use(scripted([
+          () => listPage(0, PAGE_SIZE, 200),
+          () => tooMany({ retryAfter: '1' }),
+          () => listPage(PAGE_SIZE, PAGE_SIZE, 200),
+          () => listPage(PAGE_SIZE * 2, 50, 200),
+        ]));
+
+        const items = await customProvider({ importMax: 'all' }).fetchItems();
+
+        expect(items).toHaveLength(250);
+      });
+
+      it('still reports the runaway guard, not rate limiting, when the page budget is what overruns', async () => {
+        recordSleeps();
+        // books_count 100 funds one full page; every page comes back full. The single 429 is
+        // retried successfully, so the guard that actually trips is the page budget.
+        let throttledSecondPage = false;
+        server.use(http.post(GQL_URL, async ({ request }) => {
+          const body = await request.json() as GqlBody;
+          const offset = Number(body.variables?.offset ?? 0);
+          if (offset === PAGE_SIZE && !throttledSecondPage) {
+            throttledSecondPage = true;
+            return tooMany({ retryAfter: '1' });
+          }
+          return listPage(offset, PAGE_SIZE, 100);
+        }));
+
+        const error: unknown = await customProvider({ importMax: 'all' }).fetchItems().catch((e: unknown) => e);
+
+        expect((error as ImportListError).message).toMatch(/pagination runaway/);
+        expect((error as ImportListError).message).not.toContain('rate limited');
+      });
+    });
+
+    describe('structured error bodies through executeQuery (AC4)', () => {
+      const PROVIDER_BASELINE = 'Hardcover API returned 500: Internal Server Error';
+
+      async function syncError(body: BodyInit | null, init: ResponseInit): Promise<ImportListError> {
+        server.use(http.post(GQL_URL, () => new HttpResponse(body, init)));
+        const error: unknown = await shelfProvider().fetchItems().catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(ImportListError);
+        return error as ImportListError;
+      }
+
+      it('surfaces an insufficient_scope 403 with its code and scope', async () => {
+        const error = await syncError(
+          JSON.stringify({ error: 'insufficient_scope', error_description: 'Token lacks a scope', scope: 'read:series' }),
+          { status: 403, statusText: 'Forbidden' },
+        );
+
+        expect(error.message).toContain('403');
+        expect(error.message).toContain('insufficient_scope');
+        expect(error.message).toContain('read:series');
+      });
+
+      it('surfaces an invalid_token 401 with its code', async () => {
+        const error = await syncError('{"error":"invalid_token"}', { status: 401, statusText: 'Unauthorized' });
+
+        expect(error.message).toContain('401');
+        expect(error.message).toContain('invalid_token');
+      });
+
+      it('names insufficient_scope with no scope field and prints no undefined/null placeholder', async () => {
+        const error = await syncError('{"error":"insufficient_scope"}', { status: 403, statusText: 'Forbidden' });
+
+        expect(error.message).toContain('insufficient_scope');
+        expect(error.message).not.toMatch(/undefined|null/);
+      });
+
+      it('caps an over-long field value rather than echoing the whole body', async () => {
+        const error = await syncError(
+          JSON.stringify({ error_description: 'y'.repeat(5000) }),
+          { status: 400, statusText: 'Bad Request' },
+        );
+
+        expect(error.message.length).toBeLessThan(400);
+        expect(error.message).toContain('400');
+      });
+
+      it('does not leak an HTML outage page into lastSyncError', async () => {
+        const error = await syncError(
+          '<!DOCTYPE html><html><body>Hardcover is down</body></html>',
+          { status: 500, statusText: 'Internal Server Error' },
+        );
+
+        expect(error.message).toBe(PROVIDER_BASELINE);
+        expect(error.message).not.toContain('<html');
+        expect(error.message).not.toContain('<!DOCTYPE');
+      });
+
+      it.each([
+        ['undocumented keys', '{"foo":"bar"}'],
+        ['an empty body', ''],
+        ['an empty object', '{}'],
+        ['a JSON array', '[]'],
+        ['a JSON string primitive', '"nope"'],
+        ['a JSON number primitive', '42'],
+      ])('%s keeps the pre-change provider baseline', async (_label, body) => {
+        expect((await syncError(body, { status: 500, statusText: 'Internal Server Error' })).message)
+          .toBe(PROVIDER_BASELINE);
+      });
+
+      it('drops every documented key whose value is not a string', async () => {
+        const error = await syncError(
+          JSON.stringify({ error: { a: 1 }, error_description: ['x'], scope: 42, message: null }),
+          { status: 500, statusText: 'Internal Server Error' },
+        );
+
+        expect(error.message).toBe(PROVIDER_BASELINE);
+        expect(error.message).not.toContain('[object Object]');
+        expect(error.message).not.toContain('{"a":1}');
+        expect(error.message).not.toContain('"x"');
+        expect(error.message).not.toContain('42');
+      });
+
+      it('leaves a 200 GraphQL envelope on its existing path — the body descriptor never sees it', async () => {
+        server.use(http.post(GQL_URL, () => HttpResponse.json({ errors: [{ message: 'top_level_limit_exceeded' }] })));
+
+        const error: unknown = await shelfProvider().fetchItems().catch((e: unknown) => e);
+
+        expect((error as ImportListError).message).toBe('Hardcover GraphQL error: top_level_limit_exceeded');
+      });
+    });
+
+    describe('test() probe (AC6)', () => {
+      it('reports rate limiting without retrying or sleeping', async () => {
+        const delays = recordSleeps();
+        let requests = 0;
+        server.use(http.post(GQL_URL, () => { requests += 1; return tooMany({ retryAfter: '60' }); }));
+
+        const result = await shelfProvider().test();
+
+        expect(result.success).toBe(false);
+        expect(result.message).toMatch(/rate-limiting/i);
+        expect(result.message).toMatch(/shortly/i);
+        expect(requests).toBe(1);
+        expect(delays).toHaveLength(0);
+      });
+
+      it('reports a structural top_level_limit_exceeded 429 as the code, not as a throttle', async () => {
+        let requests = 0;
+        server.use(http.post(GQL_URL, () => {
+          requests += 1;
+          return tooMany({ retryAfter: '60', body: '{"error":"top_level_limit_exceeded"}' });
+        }));
+
+        const result = await shelfProvider().test();
+
+        expect(result.message).toContain('top_level_limit_exceeded');
+        expect(result.message).not.toMatch(/rate-limiting/i);
+        expect(requests).toBe(1);
+      });
+
+      it('names the missing scope on an under-scoped 403 instead of a bare invalid-key message', async () => {
+        server.use(http.post(GQL_URL, () => new HttpResponse(
+          JSON.stringify({ error: 'insufficient_scope', scope: 'read:lists' }),
+          { status: 403, statusText: 'Forbidden' },
+        )));
+
+        const result = await shelfProvider().test();
+
+        expect(result.success).toBe(false);
+        expect(result.message).toContain('insufficient_scope');
+        expect(result.message).toContain('read:lists');
+        expect(result.message).not.toBe('Invalid API key');
+      });
+
+      it('names invalid_token on a 401', async () => {
+        server.use(http.post(GQL_URL, () => new HttpResponse(
+          '{"error":"invalid_token"}',
+          { status: 401, statusText: 'Unauthorized' },
+        )));
+
+        const result = await shelfProvider().test();
+
+        expect(result.success).toBe(false);
+        expect(result.message).toContain('invalid_token');
+      });
+    });
+
+    describe('Bearer paste normalization (AC7)', () => {
+      it('sends a single Bearer prefix for a pasted "Bearer <token>" key', async () => {
+        let authorization: string | null = null;
+        server.use(http.post(GQL_URL, ({ request }) => {
+          authorization = request.headers.get('Authorization');
+          return shelfBooks();
+        }));
+
+        await new HardcoverProvider({ apiKey: 'Bearer hc_pat_x', listType: 'shelf', shelfId: 3 }).fetchItems();
+
+        expect(authorization).toBe('Bearer hc_pat_x');
+      });
+
+      it('still issues the request for a key that normalizes to empty, failing on the server answer', async () => {
+        let requests = 0;
+        server.use(http.post(GQL_URL, () => {
+          requests += 1;
+          return new HttpResponse('{"error":"invalid_token"}', { status: 401, statusText: 'Unauthorized' });
+        }));
+
+        const provider = new HardcoverProvider({ apiKey: 'Bearer ', listType: 'shelf', shelfId: 3 });
+
+        await expect(provider.fetchItems()).rejects.toThrow(/401/);
+        expect(requests).toBe(1);
       });
     });
   });

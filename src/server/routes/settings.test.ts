@@ -1365,6 +1365,26 @@ describe('settings routes', () => {
       expect(body).toEqual({ success: false, message: INVALID_KEY_HINT });
     });
 
+    // An under-scoped token is correctly typed, so re-pasting the key would not fix it (#2537 AC5).
+    it('MetadataError with an insufficient_scope 403 maps to scope guidance, not the Bearer hint', async () => {
+      mockHardcoverSearchSeries.mockRejectedValue(new MetadataError(
+        'hardcover',
+        'Hardcover API returned 403: Forbidden (error: insufficient_scope; scope: read:series)',
+      ));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/settings/metadata/hardcover/test',
+        payload: { apiKey: 'plain-key' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload) as { success: boolean; message: string };
+      expect(body.success).toBe(false);
+      expect(body.message).toContain('read:series');
+      expect(body.message).not.toBe(INVALID_KEY_HINT);
+    });
+
     it('MetadataError with 403 message maps to the Bearer-hint text', async () => {
       mockHardcoverSearchSeries.mockRejectedValue(
         new MetadataError('hardcover', 'Hardcover API returned 403: Forbidden'),

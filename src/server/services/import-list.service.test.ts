@@ -7,6 +7,7 @@ import { OwnedRecordingError } from './book-dedup.js';
 import { TaskRegistry, TaskRegistryError } from './task-registry.js';
 import type { MetadataService } from './metadata.service.js';
 import { RateLimitError, TransientError } from '@core/index.js';
+import { ImportListError } from '@core/import-lists/errors.js';
 import { initializeKey, _resetKey, encrypt, getKey } from '../utils/secret-codec.js';
 import { randomBytes } from 'node:crypto';
 import { mockDbChain, createMockDb, createMockLogger, inject } from '../__tests__/helpers.js';
@@ -2522,6 +2523,59 @@ describe('ImportListService', () => {
           expect(setCall.lastSyncError).toBe('Connection timeout');
           expect(setCall).not.toHaveProperty('lastRunAt');
           expect(setCall.nextRunAt).toEqual(new Date(NOW_MS + 30 * 60_000));
+        });
+
+        // The new rate-limit exhaustion error is an ordinary ImportListError, so the
+        // persisted-vs-transient split must not change shape for it (#2537 AC2).
+        describe('a Hardcover rate-limit exhaustion (#2537)', () => {
+          const EXHAUSTED =
+            'Hardcover API returned 429: Too Many Requests (rate limited; gave up after 3 attempts)';
+
+          function hardcoverSetup(providers: Array<{ fetchItems: ReturnType<typeof vi.fn> }>) {
+            for (const provider of providers) {
+              mockFactories.hardcover!.mockReturnValueOnce({ ...provider, test: vi.fn() });
+            }
+            const db = createMockDb();
+            db.select.mockReturnValue(mockDbChain([dueNytList({
+              id: 7, name: 'Throttled Hardcover', type: 'hardcover',
+              settings: { apiKey: 'key', listType: 'trending' },
+              syncIntervalMinutes: 30,
+            })]));
+            db.insert.mockReturnValue(mockDbChain([]));
+            const updateChain = mockDbChain([]);
+            db.update.mockReturnValue(updateChain);
+            return {
+              service: new ImportListService(inject<Db>(db), mockLog, makeBookService(), undefined, makeSearchDeps()),
+              updateChain,
+            };
+          }
+
+          it('records the exhaustion message and still advances nextRunAt by one interval', async () => {
+            const { service: svc, updateChain } = hardcoverSetup([
+              { fetchItems: vi.fn().mockRejectedValue(new ImportListError('Hardcover', EXHAUSTED)) },
+            ]);
+
+            const outcome = await svc.runNow(7);
+
+            expect(outcome).toEqual({ status: 'failed', message: EXHAUSTED });
+            const setCall = updateChain.set.mock.calls[0]![0] as Record<string, unknown>;
+            expect(setCall.lastSyncError).toBe(EXHAUSTED);
+            expect(setCall.nextRunAt).toEqual(new Date(NOW_MS + 30 * 60_000));
+          });
+
+          it('clears lastSyncError on the next successful sync', async () => {
+            const { service: svc, updateChain } = hardcoverSetup([
+              { fetchItems: vi.fn().mockRejectedValue(new ImportListError('Hardcover', EXHAUSTED)) },
+              { fetchItems: vi.fn().mockResolvedValue([]) },
+            ]);
+
+            await svc.runNow(7);
+            const recovered = await svc.runNow(7);
+
+            expect(recovered).toMatchObject({ status: 'ok' });
+            const setCall = updateChain.set.mock.calls[1]![0] as Record<string, unknown>;
+            expect(setCall.lastSyncError).toBeNull();
+          });
         });
 
         it('logs the caught error serialized, not the derived message string', async () => {
