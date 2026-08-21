@@ -60,7 +60,7 @@ vi.mock('../utils/recover-interrupted-commit.js', () => ({
 import { withBookAdmissionLock, hasPendingBookAdmission } from './book-admission.js';
 import {
   BOOK_PATH, STAGING_DIR, mockAuthor, mockBook, processingOverrides, SCAN_RESULT,
-  settle, setupHappyPath, setupBlockingMerge, deferred,
+  settle, setupHappyPath, setupBlockingMerge, deferred, createMergeHarness,
 } from './__tests__/merge-fixtures.js';
 
 function createService(opts?: {
@@ -2373,43 +2373,6 @@ describe('#257 merge observability — merge service', () => {
      * only way to reproduce the wait is to hold the book's admission chain from the test.
      */
     describe('cancel while waiting for the admission lock (#2462)', () => {
-      type Frame = { event: string; payload: Record<string, unknown> };
-      type HistoryRow = { bookId: number; eventType: string; source: string; reason?: { error: string } };
-
-      function createWaitHarness(rows: Array<{ id: number; title: string; path: string }>) {
-        const frames: Frame[] = [];
-        const eventBroadcaster = inject<EventBroadcasterService>({
-          emit: vi.fn((event: string, payload: Record<string, unknown>) => { frames.push({ event, payload }); }),
-        });
-        const historyRows: HistoryRow[] = [];
-        const create = vi.fn(async (row: HistoryRow) => { historyRows.push(row); });
-        const eventHistory = inject<EventHistoryService>({ create });
-
-        const byId = new Map(rows.map((r) => [r.id, {
-          ...createMockDbBook({ id: r.id, title: r.title, path: r.path, status: 'imported' }),
-          authors: [mockAuthor], narrators: [],
-        }]));
-        const bookService = {
-          getById: vi.fn(async (id: number) => byId.get(id) ?? null),
-          update: vi.fn().mockResolvedValue(undefined),
-        };
-        const db = createMockDb();
-        const service = new MergeService(
-          inject<Db>(db),
-          inject<BookService>(bookService),
-          createMockSettingsService({ processing: { ...processingOverrides.processing, maxConcurrentProcessing: 1 } }),
-          inject<FastifyBaseLogger>(createMockLogger()),
-          eventHistory,
-          eventBroadcaster,
-        );
-
-        return {
-          service, db, bookService, create, frames, rowFor: (id: number) => byId.get(id)!,
-          framesOf: (event: string, bookId: number) => frames.filter((f) => f.event === event && f.payload.book_id === bookId),
-          historyOf: (bookId: number, eventType: string) => historyRows.filter((r) => r.bookId === bookId && r.eventType === eventType),
-        };
-      }
-
       function internals(service: MergeService) {
         return service as unknown as {
           inProgress: Set<number>;
@@ -2427,7 +2390,7 @@ describe('#257 merge observability — merge service', () => {
 
       it('settles the cancel at cancel time and runs nothing when the lock frees', async () => {
         setupHappyPath();
-        const h = createWaitHarness([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+        const h = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }] });
         const parked = deferred();
         const holder = withBookAdmissionLock(42, () => parked.promise);
 
@@ -2470,10 +2433,10 @@ describe('#257 merge observability — merge service', () => {
 
       it('answers the same on the queued promotion path', async () => {
         const { release } = setupBlockingMerge();
-        const h = createWaitHarness([
+        const h = createMergeHarness({ books: [
           { id: 42, title: 'Dogs of War', path: '/lib/AAA' },
           { id: 43, title: 'The Shining', path: '/lib/BBB' },
-        ]);
+        ] });
         const parked = deferred();
         const holder = withBookAdmissionLock(43, () => parked.promise);
 
@@ -2510,10 +2473,10 @@ describe('#257 merge observability — merge service', () => {
       // speak for it: a regression that clears only on the slot path leaves this book unmergeable.
       it('clears the queued-path flag on settlement, so the same book merges again', async () => {
         const { release } = setupBlockingMerge();
-        const h = createWaitHarness([
+        const h = createMergeHarness({ books: [
           { id: 42, title: 'Dogs of War', path: '/lib/AAA' },
           { id: 43, title: 'The Shining', path: '/lib/BBB' },
-        ]);
+        ] });
         const parked = deferred();
         const holder = withBookAdmissionLock(43, () => parked.promise);
 
@@ -2548,10 +2511,10 @@ describe('#257 merge observability — merge service', () => {
 
       it('emits one terminal only, even when dequeue revalidation then fails on the cancelled book', async () => {
         const { release } = setupBlockingMerge();
-        const h = createWaitHarness([
+        const h = createMergeHarness({ books: [
           { id: 42, title: 'Dogs of War', path: '/lib/AAA' },
           { id: 43, title: 'The Shining', path: '/lib/BBB' },
-        ]);
+        ] });
 
         // Park 43's dequeue-time read so the cancel lands inside revalidation, then vanish the row
         // so that revalidation raises its own MergeError after the cancel has already settled.
@@ -2583,7 +2546,7 @@ describe('#257 merge observability — merge service', () => {
 
       it('is idempotent — a second cancel during the same wait adds no event', async () => {
         setupHappyPath();
-        const h = createWaitHarness([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+        const h = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }] });
         const parked = deferred();
         const holder = withBookAdmissionLock(42, () => parked.promise);
 
@@ -2605,7 +2568,7 @@ describe('#257 merge observability — merge service', () => {
 
       it('preserves the merge origin on the cancel-time history row', async () => {
         setupHappyPath();
-        const h = createWaitHarness([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+        const h = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }] });
         const parked = deferred();
         const holder = withBookAdmissionLock(42, () => parked.promise);
 
@@ -2624,7 +2587,7 @@ describe('#257 merge observability — merge service', () => {
 
       it('answers not-found while enqueue is still in pre-flight, and leaves no flag when pre-flight rejects', async () => {
         setupHappyPath();
-        const h = createWaitHarness([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+        const h = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }] });
 
         // Park pre-flight's own book read: inProgress is already set, but nothing is broadcast yet.
         const parkedPreflight = deferred();
@@ -2650,7 +2613,7 @@ describe('#257 merge observability — merge service', () => {
 
       it('takes the cancelled exit even when the blocking holder rejects', async () => {
         setupHappyPath();
-        const h = createWaitHarness([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+        const h = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }] });
         const parked = deferred();
         // withBookAdmissionLock runs the successor on both settle paths.
         const holder = withBookAdmissionLock(42, () => parked.promise).catch(() => undefined);
@@ -2678,7 +2641,7 @@ describe('#257 merge observability — merge service', () => {
         // later side, so this pins THAT one: registered, therefore aborted — never a 404, never a
         // second terminal, never a completion.
         setupHappyPath();
-        const h = createWaitHarness([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+        const h = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }] });
         const parked = deferred();
         const holder = withBookAdmissionLock(42, () => parked.promise);
 
@@ -2700,10 +2663,10 @@ describe('#257 merge observability — merge service', () => {
 
       it('keeps the semaphore slot until the holder finishes, then drains the queue', async () => {
         setupHappyPath();
-        const h = createWaitHarness([
+        const h = createMergeHarness({ books: [
           { id: 42, title: 'Dogs of War', path: '/lib/AAA' },
           { id: 43, title: 'The Shining', path: '/lib/BBB' },
-        ]);
+        ] });
         const parked = deferred();
         const holder = withBookAdmissionLock(42, () => parked.promise);
 
@@ -2732,7 +2695,7 @@ describe('#257 merge observability — merge service', () => {
 
       it('cancels even when the cancel-time history write rejects', async () => {
         setupHappyPath();
-        const h = createWaitHarness([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+        const h = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }] });
         const parked = deferred();
         const holder = withBookAdmissionLock(42, () => parked.promise);
 
@@ -2751,7 +2714,7 @@ describe('#257 merge observability — merge service', () => {
 
       it('leaves no per-book state behind once the cancelled merge settles', async () => {
         setupHappyPath();
-        const h = createWaitHarness([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+        const h = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }] });
         const parked = deferred();
         const holder = withBookAdmissionLock(42, () => parked.promise);
 
@@ -2851,32 +2814,9 @@ describe('#1838 merge origin — event provenance', () => {
       .filter((e) => e.bookId === bookId && e.eventType === eventType);
   }
 
-  function createServiceWithHistory(books: Array<{ id: number; title: string; path: string }>, maxConcurrentProcessing = 1) {
-    const db = createMockDb();
-    const byId = new Map(books.map((b) => [b.id, {
-      ...createMockDbBook({ id: b.id, title: b.title, path: b.path, status: 'imported' }),
-      authors: [mockAuthor], narrators: [],
-    }]));
-    const bookService = {
-      getById: vi.fn(async (id: number) => byId.get(id) ?? null),
-      update: vi.fn().mockResolvedValue(undefined),
-    };
-    const settingsService = createMockSettingsService({
-      processing: { ...processingOverrides.processing, maxConcurrentProcessing },
-    });
-    const create = vi.fn().mockResolvedValue(undefined);
-    const eventHistory = { create } as unknown as EventHistoryService;
-    const log = createMockLogger();
-    const service = new MergeService(
-      inject<Db>(db), inject<BookService>(bookService), settingsService,
-      inject<FastifyBaseLogger>(log), eventHistory, undefined,
-    );
-    return { service, bookService, create };
-  }
-
   it('auto immediate-start success records merge_started and merged with source auto', async () => {
     setupHappyPath();
-    const { service, create } = createServiceWithHistory([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+    const { service, create } = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }], broadcaster: 'absent' });
 
     await service.enqueueMerge(42, 'auto');
     await settle();
@@ -2891,7 +2831,7 @@ describe('#1838 merge origin — event provenance', () => {
     (cp as Mock).mockResolvedValue(undefined);
     (processAudioFiles as Mock).mockResolvedValue({ success: false, error: 'ffmpeg error' });
     (rm as Mock).mockResolvedValue(undefined);
-    const { service, create } = createServiceWithHistory([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+    const { service, create } = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }], broadcaster: 'absent' });
 
     await service.enqueueMerge(42, 'auto');
     await settle();
@@ -2907,9 +2847,10 @@ describe('#1838 merge origin — event provenance', () => {
     (processAudioFiles as Mock)
       .mockImplementationOnce(async () => { await firstPromise; return { success: true, outputFiles: [STAGING_DIR + '/out.m4b'] }; })
       .mockResolvedValue({ success: true, outputFiles: [STAGING_DIR + '/out.m4b'] });
-    const { service, create } = createServiceWithHistory(
-      [{ id: 42, title: 'Book A', path: '/lib/A' }, { id: 43, title: 'Book B', path: '/lib/B' }],
-    );
+    const { service, create } = createMergeHarness({
+      books: [{ id: 42, title: 'Book A', path: '/lib/A' }, { id: 43, title: 'Book B', path: '/lib/B' }],
+      broadcaster: 'absent',
+    });
 
     await service.enqueueMerge(42, 'manual');
     const ack = await service.enqueueMerge(43, 'auto');
@@ -2927,9 +2868,10 @@ describe('#1838 merge origin — event provenance', () => {
   it('cancel of a queued auto merge emits merge_failed(cancelled) with source auto', async () => {
     setupHappyPath();
     (processAudioFiles as Mock).mockImplementation(async () => new Promise(() => {}));
-    const { service, create } = createServiceWithHistory(
-      [{ id: 42, title: 'Book A', path: '/lib/A' }, { id: 43, title: 'Book B', path: '/lib/B' }],
-    );
+    const { service, create } = createMergeHarness({
+      books: [{ id: 42, title: 'Book A', path: '/lib/A' }, { id: 43, title: 'Book B', path: '/lib/B' }],
+      broadcaster: 'absent',
+    });
 
     await service.enqueueMerge(42, 'manual');
     await service.enqueueMerge(43, 'auto');
@@ -2944,7 +2886,7 @@ describe('#1838 merge origin — event provenance', () => {
 
   it('rejected auto enqueue leaves no stale origin — a later manual merge records source manual (F1)', async () => {
     (readdir as Mock).mockResolvedValue(['01.mp3']);
-    const { service, create } = createServiceWithHistory([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+    const { service, create } = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }], broadcaster: 'absent' });
 
     await expect(service.enqueueMerge(42, 'auto')).rejects.toThrow(/No top-level audio files/);
     expect(historyFor(create, 42, 'merge_started')).toHaveLength(0);
@@ -2960,7 +2902,7 @@ describe('#1838 merge origin — event provenance', () => {
 
   it('origin is cleared after a merge completes — a subsequent same-book merge uses the new origin', async () => {
     setupHappyPath();
-    const { service, create } = createServiceWithHistory([{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }]);
+    const { service, create } = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }], broadcaster: 'absent' });
 
     await service.enqueueMerge(42, 'auto');
     await settle();

@@ -4,7 +4,6 @@ import { createMockDbBook } from '../__tests__/factories.js';
 import { MergeService } from './merge.service.js';
 import { processAudioFiles } from '@core/utils/audio-processor.js';
 import type { BookService } from './book.service.js';
-import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -12,8 +11,9 @@ import type { MergeStateSnapshot } from '@shared/schemas/sse-events.js';
 import { readdir, rename } from 'node:fs/promises';
 import { withBookAdmissionLock } from './book-admission.js';
 import {
-  BOOK_PATH, STAGING_DIR, mockAuthor, mockBook, processingOverrides,
+  BOOK_PATH, STAGING_DIR, mockBook, processingOverrides,
   settle, setupHappyPath, setupBlockingMerge, deferred,
+  createMergeHarness, type MergeHarness,
 } from './__tests__/merge-fixtures.js';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -51,75 +51,18 @@ vi.mock('../utils/recover-interrupted-commit.js', () => ({
 }));
 
 describe('#2129 merge_state snapshot', () => {
-  type Frame = { event: string; payload: unknown };
-
-  /** Capture state during terminal emit; final state alone cannot prove delete-before-emit ordering. */
-  function createSnapshotHarness(opts?: {
-    books?: Array<{ id: number; title: string; path?: string }>;
-    maxConcurrentProcessing?: number;
-  }) {
-    const bookRows = (opts?.books ?? [{ id: 42, title: 'Dogs of War' }]).map((b) => ({
-      ...createMockDbBook({ id: b.id, title: b.title, path: b.path ?? `/lib/${b.id}`, status: 'imported' }),
-      authors: [mockAuthor], narrators: [],
-    }));
-
-    const frames: Frame[] = [];
-    const stateAtTerminal = new Map<number, MergeStateSnapshot>();
-    const holder: { service?: MergeService } = {};
-
-    const eventBroadcaster = {
-      emit: vi.fn((event: string, payload: unknown) => {
-        frames.push({ event, payload });
-        if (event === 'merge_complete' || event === 'merge_failed') {
-          stateAtTerminal.set((payload as { book_id: number }).book_id, holder.service!.getMergeStateSnapshot());
-        }
-      }),
-    } as unknown as EventBroadcasterService;
-
-    const bookService = {
-      getById: vi.fn(async (id: number) => bookRows.find((b) => b.id === id) ?? null),
-      update: vi.fn().mockResolvedValue(undefined),
-    };
-
-    const historyRows: Array<{ bookId: number; eventType: string }> = [];
-    const eventHistory = {
-      create: vi.fn(async (input: { bookId: number; eventType: string }) => { historyRows.push(input); }),
-    } as unknown as EventHistoryService;
-
-    const service = new MergeService(
-      inject<Db>(createMockDb()),
-      inject<BookService>(bookService),
-      createMockSettingsService({
-        processing: { ...processingOverrides.processing, ...(opts?.maxConcurrentProcessing !== undefined && { maxConcurrentProcessing: opts.maxConcurrentProcessing }) },
-      }),
-      inject<FastifyBaseLogger>(createMockLogger()),
-      eventHistory,
-      eventBroadcaster,
-    );
-    holder.service = service;
-
-    const snapshots = () => frames.filter((f) => f.event === 'merge_state').map((f) => f.payload as MergeStateSnapshot);
-    const events = () => frames.map((f) => f.event);
-    const framesAfter = (event: string, bookId: number) =>
-      frames.slice(frames.findIndex((f) => f.event === event && (f.payload as { book_id?: number }).book_id === bookId) + 1);
-
-    const historyFor = (bookId: number, eventType: string) => historyRows.filter((r) => r.bookId === bookId && r.eventType === eventType);
-
-    return { service, bookService, frames, snapshots, events, framesAfter, stateAtTerminal, historyFor };
-  }
-
   beforeEach(() => {
     vi.resetAllMocks();
   });
 
   it('is empty with nothing in flight', () => {
-    const { service } = createSnapshotHarness();
+    const { service } = createMergeHarness();
     expect(service.getMergeStateSnapshot()).toEqual({ active: [], queued: [] });
   });
 
   it('is built synchronously, without a book read', () => {
     setupBlockingMerge();
-    const { service, bookService } = createSnapshotHarness();
+    const { service, bookService } = createMergeHarness();
 
     const readsBefore = bookService.getById.mock.calls.length;
     const snapshot = service.getMergeStateSnapshot();
@@ -131,7 +74,7 @@ describe('#2129 merge_state snapshot', () => {
 
   it('installs nothing and broadcasts nothing when pre-flight validation rejects', async () => {
     (readdir as Mock).mockResolvedValue(['01.mp3', '02.mp3']);
-    const { service, bookService, frames } = createSnapshotHarness({
+    const { service, bookService, frames } = createMergeHarness({
       books: [{ id: 42, title: 'Dogs of War' }],
     });
 
@@ -150,7 +93,7 @@ describe('#2129 merge_state snapshot', () => {
 
   it('reports an admitted merge as `starting` before its first progress emit', async () => {
     setupBlockingMerge();
-    const { service, snapshots } = createSnapshotHarness();
+    const { service, snapshots } = createMergeHarness();
 
     await service.enqueueMerge(42);
 
@@ -162,7 +105,7 @@ describe('#2129 merge_state snapshot', () => {
 
   it('carries the running merge in `active` and the waiting one in `queued`, with titles', async () => {
     setupBlockingMerge();
-    const { service } = createSnapshotHarness({
+    const { service } = createMergeHarness({
       books: [{ id: 42, title: 'Dogs of War' }, { id: 43, title: 'The Shining' }],
     });
 
@@ -178,7 +121,7 @@ describe('#2129 merge_state snapshot', () => {
 
   it('preserves FIFO order across three queued books', async () => {
     setupBlockingMerge();
-    const { service } = createSnapshotHarness({
+    const { service } = createMergeHarness({
       books: [42, 43, 44, 45].map((id) => ({ id, title: `Book ${id}` })),
     });
 
@@ -196,7 +139,7 @@ describe('#2129 merge_state snapshot', () => {
 
   it('promotes a queued book in a single frame — never in both lists, never in neither', async () => {
     const { release } = setupBlockingMerge();
-    const { service, snapshots } = createSnapshotHarness({
+    const { service, snapshots } = createMergeHarness({
       books: [{ id: 42, title: 'Dogs of War' }, { id: 43, title: 'The Shining' }],
     });
 
@@ -223,7 +166,7 @@ describe('#2129 merge_state snapshot', () => {
 
   it('promotion and queued-cancel read no other book rows (#2142 — the per-book position reads are gone)', async () => {
     const { release } = setupBlockingMerge();
-    const harness = createSnapshotHarness({
+    const harness = createMergeHarness({
       books: [42, 43, 44].map((id) => ({ id, title: `Book ${id}` })),
     });
 
@@ -247,7 +190,7 @@ describe('#2129 merge_state snapshot', () => {
 
   it('reflects and broadcasts every in-flight phase transition', async () => {
     setupHappyPath();
-    const { service, frames, snapshots } = createSnapshotHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }] });
+    const { service, frames, snapshots } = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }] });
 
     await service.enqueueMerge(42);
     await settle();
@@ -269,7 +212,7 @@ describe('#2129 merge_state snapshot', () => {
 
   it('each progress tick emits exactly one wire frame — the snapshot (#2142)', async () => {
     setupHappyPath();
-    const harness = createSnapshotHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }] });
+    const harness = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }] });
     let tickDelta = -1;
     let tickEvent: string | undefined;
     (processAudioFiles as Mock).mockImplementation(async (_dir: unknown, _cfg: unknown, _ctx: unknown, callbacks: { onProgress?: (phase: string, percentage: number) => void }) => {
@@ -296,7 +239,7 @@ describe('#2129 merge_state snapshot', () => {
       emitTick(0.35);
       return { success: true, outputFiles: [STAGING_DIR + '/The Way of Kings.m4b'] };
     });
-    const { service, snapshots } = createSnapshotHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }] });
+    const { service, snapshots } = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }] });
 
     await service.enqueueMerge(42);
     await settle();
@@ -307,7 +250,7 @@ describe('#2129 merge_state snapshot', () => {
 
   it('runs every merge in `active` when maxConcurrentProcessing is raised', async () => {
     setupBlockingMerge();
-    const { service } = createSnapshotHarness({
+    const { service } = createMergeHarness({
       books: [{ id: 42, title: 'Dogs of War' }, { id: 43, title: 'The Shining' }],
       maxConcurrentProcessing: 2,
     });
@@ -346,7 +289,7 @@ describe('#2129 merge_state snapshot', () => {
 
   describe('terminal transitions', () => {
     /** Assert delete → one terminal event → one cleared snapshot, with nothing between. */
-    function expectTerminalOrder(harness: ReturnType<typeof createSnapshotHarness>, bookId: number, terminalEvent: string) {
+    function expectTerminalOrder(harness: MergeHarness, bookId: number, terminalEvent: string) {
       // Count the event too: duplicate terminals create duplicate toasts/history even if snapshots coalesce.
       expect(harness.frames.filter((f) => f.event === terminalEvent && (f.payload as { book_id: number }).book_id === bookId)).toHaveLength(1);
 
@@ -368,7 +311,7 @@ describe('#2129 merge_state snapshot', () => {
 
     it('a successful merge: state dropped, merge_complete, then one cleared snapshot', async () => {
       setupHappyPath();
-      const harness = createSnapshotHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }] });
+      const harness = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }] });
 
       await harness.service.enqueueMerge(42);
       await settle();
@@ -381,7 +324,7 @@ describe('#2129 merge_state snapshot', () => {
     it('a failed merge: state dropped, merge_failed, then one cleared snapshot', async () => {
       setupHappyPath();
       (processAudioFiles as Mock).mockResolvedValue({ success: false, error: 'ffmpeg error' });
-      const harness = createSnapshotHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }] });
+      const harness = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }] });
 
       await harness.service.enqueueMerge(42);
       await settle();
@@ -396,7 +339,7 @@ describe('#2129 merge_state snapshot', () => {
         await new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }));
         return { success: false, error: 'Processing aborted' };
       });
-      const harness = createSnapshotHarness({ books: [{ id: 42, title: 'Dogs of War' }] });
+      const harness = createMergeHarness({ books: [{ id: 42, title: 'Dogs of War' }] });
 
       await harness.service.enqueueMerge(42);
       await settle();
@@ -411,7 +354,7 @@ describe('#2129 merge_state snapshot', () => {
 
     it('a queued cancel: state dropped, merge_failed(cancelled), then one cleared snapshot', async () => {
       setupBlockingMerge();
-      const harness = createSnapshotHarness({
+      const harness = createMergeHarness({
         books: [{ id: 42, title: 'Dogs of War' }, { id: 43, title: 'The Shining' }],
       });
 
@@ -430,7 +373,7 @@ describe('#2129 merge_state snapshot', () => {
     it('reports a queued merge that fails INSIDE executeMerge exactly once (F1)', async () => {
       // The inner MergeError already emits; the dequeue wrapper must not duplicate terminal/history.
       const { release } = setupBlockingMerge();
-      const harness = createSnapshotHarness({
+      const harness = createMergeHarness({
         books: [{ id: 42, title: 'Dogs of War' }, { id: 43, title: 'The Shining' }],
       });
 
@@ -453,7 +396,7 @@ describe('#2129 merge_state snapshot', () => {
       const failures = harness.frames.filter((f) => f.event === 'merge_failed' && (f.payload as { book_id: number }).book_id === 43);
       expect(failures).toHaveLength(1);
       expect(failures[0]!.payload).toMatchObject({ book_id: 43, book_title: 'The Shining', error: expect.stringContaining('No top-level audio files') });
-      expect(harness.historyFor(43, 'merge_failed')).toHaveLength(1);
+      expect(harness.historyOf(43, 'merge_failed')).toHaveLength(1);
 
       expectTerminalOrder(harness, 43, 'merge_failed');
       expect(harness.service.getMergeStateSnapshot()).toEqual({ active: [], queued: [] });
@@ -461,7 +404,7 @@ describe('#2129 merge_state snapshot', () => {
 
     it('a cancel during the admission wait: state dropped, merge_failed(cancelled), then one cleared snapshot', async () => {
       setupBlockingMerge();
-      const harness = createSnapshotHarness({ books: [{ id: 42, title: 'Dogs of War' }] });
+      const harness = createMergeHarness({ books: [{ id: 42, title: 'Dogs of War' }] });
 
       // Park the merge on the real admission lock: broadcast active, but with nothing yet to abort.
       const parked = deferred();
@@ -489,7 +432,7 @@ describe('#2129 merge_state snapshot', () => {
 
     it('does not add a second, backstop-driven frame on the normal terminal path', async () => {
       setupHappyPath();
-      const harness = createSnapshotHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }] });
+      const harness = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }] });
 
       await harness.service.enqueueMerge(42);
       await settle();
@@ -501,7 +444,7 @@ describe('#2129 merge_state snapshot', () => {
   describe('pre-flight failures inside executeMerge (#2142 — terminal-reported, not silent)', () => {
     it('reports merge_failed and clears the chip when executeMerge finds the book gone', async () => {
       setupBlockingMerge();
-      const harness = createSnapshotHarness({ books: [{ id: 42, title: 'Dogs of War' }] });
+      const harness = createMergeHarness({ books: [{ id: 42, title: 'Dogs of War' }] });
       const row = await harness.bookService.getById(42);
       // Pass pre-flight, then vanish before executeMerge's live read.
       harness.bookService.getById.mockResolvedValueOnce(row).mockResolvedValue(null);
@@ -520,7 +463,7 @@ describe('#2129 merge_state snapshot', () => {
 
     it('reports merge_failed when ffmpeg disappears between validation and execution', async () => {
       setupBlockingMerge();
-      const harness = createSnapshotHarness({ books: [{ id: 42, title: 'Dogs of War' }] });
+      const harness = createMergeHarness({ books: [{ id: 42, title: 'Dogs of War' }] });
       const row = await harness.bookService.getById(42);
       // Flip ffmpeg off at executeMerge's first await, after pre-flight has passed.
       let reads = 0;
@@ -549,7 +492,7 @@ describe('#2129 merge_state snapshot', () => {
     it('reports merge_failed and cleans up when the book read itself REJECTS', async () => {
       // A rejected live read must remain inside catch/finally or its AbortController leaks.
       setupBlockingMerge();
-      const harness = createSnapshotHarness({ books: [{ id: 42, title: 'Dogs of War' }] });
+      const harness = createMergeHarness({ books: [{ id: 42, title: 'Dogs of War' }] });
       const row = await harness.bookService.getById(42);
       harness.bookService.getById.mockResolvedValueOnce(row).mockRejectedValue(new Error('DB transport died'));
 
@@ -567,7 +510,7 @@ describe('#2129 merge_state snapshot', () => {
   describe('backstop for the exits that emit no terminal event', () => {
     it('clears the chip when dequeue-time validation throws a non-MergeError', async () => {
       const { release } = setupBlockingMerge();
-      const harness = createSnapshotHarness({
+      const harness = createMergeHarness({
         books: [{ id: 42, title: 'Dogs of War' }, { id: 43, title: 'The Shining' }],
       });
 
