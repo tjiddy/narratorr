@@ -3933,6 +3933,27 @@ describe('#1071 series routes', () => {
           imageUrl: null,
           inLibrary: true,
           libraryBookId: 1,
+          libraryBucket: 'imported',
+        },
+        {
+          hardcoverBookId: 7712,
+          slug: 'bloody-rose',
+          title: 'Bloody Rose',
+          position: 2,
+          imageUrl: null,
+          inLibrary: true,
+          libraryBookId: 2,
+          libraryBucket: 'downloading',
+        },
+        {
+          hardcoverBookId: 7713,
+          slug: 'the-grim-company',
+          title: 'The Grim Company',
+          position: 3,
+          imageUrl: null,
+          inLibrary: false,
+          libraryBookId: null,
+          libraryBucket: null,
         },
       ],
     });
@@ -3947,6 +3968,13 @@ describe('#1071 series routes', () => {
     expect(member.hardcoverBookId).toBe(7711);
     expect(member.inLibrary).toBe(true);
     expect(member.libraryBookId).toBe(1);
+    // The routes register no response serializer, so the wire body is the only proof the
+    // bucket survives serialization (#2541).
+    expect(json.series.members.map((m: { libraryBucket: string | null }) => m.libraryBucket)).toEqual([
+      'imported',
+      'downloading',
+      null,
+    ]);
   });
 
   it('GET /api/books/:id/series returns 404 for missing book', async () => {
@@ -3965,13 +3993,17 @@ describe('#1071 series routes', () => {
       hardcoverSeriesId: 5523,
       seriesAuthor: 'Nicholas Eames',
       lastFetchedAt: '2026-05-11T00:00:00.000Z',
-      members: [],
+      members: [
+        { hardcoverBookId: 7711, slug: null, title: 'Kings of the Wyld', position: 1, imageUrl: null, inLibrary: true, libraryBookId: 1, libraryBucket: 'wanted' },
+        { hardcoverBookId: 7712, slug: null, title: 'Bloody Rose', position: 2, imageUrl: null, inLibrary: false, libraryBookId: null, libraryBucket: null },
+      ],
     });
 
     const res = await app.inject({ method: 'POST', url: '/api/books/1/series/refresh' });
 
     expect(res.statusCode).toBe(200);
     expect(res.json().series.name).toBe('The Band');
+    expect(res.json().series.members.map((m: { libraryBucket: string | null }) => m.libraryBucket)).toEqual(['wanted', null]);
     expect(services.seriesCard.refreshSeriesForBook).toHaveBeenCalledWith(1);
   });
 

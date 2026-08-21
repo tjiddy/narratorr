@@ -21,6 +21,32 @@ export type LibraryFilterBucket = keyof typeof LIBRARY_FILTER_BUCKETS;
 
 export const LIBRARY_FILTER_BUCKET_KEYS = Object.keys(LIBRARY_FILTER_BUCKETS) as [LibraryFilterBucket, ...LibraryFilterBucket[]];
 
+/**
+ * Exported so the totality guard is provable against a deliberately broken partition instead of
+ * requiring a mutation of the production constant.
+ */
+export function invertLibraryFilterBuckets(
+  buckets: Record<LibraryFilterBucket, readonly BookLifecycle[]>,
+): Record<BookLifecycle, LibraryFilterBucket> {
+  const inverse = {} as Record<BookLifecycle, LibraryFilterBucket>;
+  for (const [bucket, statuses] of Object.entries(buckets) as [LibraryFilterBucket, readonly BookLifecycle[]][]) {
+    for (const status of statuses) inverse[status] = bucket;
+  }
+  const orphans = BOOK_STATUSES.filter((status) => inverse[status] === undefined);
+  if (orphans.length > 0) {
+    throw new Error(`LIBRARY_FILTER_BUCKETS no longer partitions BOOK_STATUSES; unbucketed: ${orphans.join(', ')}`);
+  }
+  return inverse;
+}
+
+// Derived, never a second literal: the partition comment above stays the one source of truth, and a
+// status added without a bucket fails here at import rather than projecting undefined into a payload.
+const STATUS_TO_BUCKET = invertLibraryFilterBuckets(LIBRARY_FILTER_BUCKETS);
+
+export function bucketForStatus(status: BookStatus): LibraryFilterBucket {
+  return STATUS_TO_BUCKET[status];
+}
+
 // The wire accepts bucket keys only; the client omits status for its `all` sentinel.
 export const libraryStatusFilterSchema = z.enum(LIBRARY_FILTER_BUCKET_KEYS);
 

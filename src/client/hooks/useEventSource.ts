@@ -116,6 +116,11 @@ function invalidateFromRule(
     if ('book_id' in data && typeof data.book_id === 'number') {
       queryClient.invalidateQueries({ queryKey: queryKeys.book(data.book_id) });
     }
+    // A series card shows its siblings' status buckets, but the event carries the SIBLING's id,
+    // not the open page's — a targeted key would need the sibling→series→page mapping the client
+    // deliberately does not hold. The whole singular root is cheap instead: react-query refetches
+    // active queries only, so one open book page is one local getBookSeries call (#2541).
+    queryClient.invalidateQueries({ queryKey: queryKeys.singularBookRoot() });
   }
   if (rule.eventHistory) {
     queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.root() });

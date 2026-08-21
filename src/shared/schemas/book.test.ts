@@ -9,6 +9,8 @@ import {
   LIBRARY_FILTER_BUCKET_KEYS,
   LIBRARY_FILTER_VALUES,
   libraryStatusFilterSchema,
+  bucketForStatus,
+  invertLibraryFilterBuckets,
 } from './book.js';
 
 describe('enrichmentStatusSchema', () => {
@@ -83,6 +85,47 @@ describe('libraryStatusFilterSchema — bucket-only wire contract (#1447)', () =
 
   it('bucket keys == LIBRARY_FILTER_VALUES minus `all`', () => {
     expect([...LIBRARY_FILTER_BUCKET_KEYS]).toEqual(LIBRARY_FILTER_VALUES.filter((v) => v !== 'all'));
+  });
+});
+
+describe('bucketForStatus — derived status→bucket inverse (#2541)', () => {
+  it('is total over BOOK_STATUSES and round-trips through LIBRARY_FILTER_BUCKETS', () => {
+    for (const status of BOOK_STATUSES) {
+      const bucket = bucketForStatus(status);
+      expect(LIBRARY_FILTER_BUCKETS[bucket]).toContain(status);
+    }
+  });
+
+  it('produces every bucket key — no bucket is left without a member status', () => {
+    const produced = new Set(BOOK_STATUSES.map(bucketForStatus));
+    expect([...produced].sort()).toEqual([...LIBRARY_FILTER_BUCKET_KEYS].sort());
+  });
+
+  // The two sub-transitions the series badge keys on: both sides of each pair must fold together,
+  // or the badge flickers mid-grab and mid-import.
+  it('folds searching and downloading onto the same bucket', () => {
+    expect(bucketForStatus('searching')).toBe('downloading');
+    expect(bucketForStatus('downloading')).toBe('downloading');
+  });
+
+  it('folds importing and imported onto the same bucket', () => {
+    expect(bucketForStatus('importing')).toBe('imported');
+    expect(bucketForStatus('imported')).toBe('imported');
+  });
+
+  it('is derived from the partition, not a second literal map', () => {
+    const swapped = invertLibraryFilterBuckets({
+      ...LIBRARY_FILTER_BUCKETS,
+      wanted: ['wanted', 'importing'],
+      imported: ['imported'],
+    });
+    expect(swapped.importing).toBe('wanted');
+  });
+
+  it('throws rather than yielding undefined when a status has no bucket', () => {
+    expect(() =>
+      invertLibraryFilterBuckets({ ...LIBRARY_FILTER_BUCKETS, missing: [] }),
+    ).toThrow(/missing/);
   });
 });
 

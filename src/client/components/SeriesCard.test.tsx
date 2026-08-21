@@ -26,6 +26,8 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { queryKeys } from '@/lib/queryKeys';
+import { seriesMemberBucketStyles } from '@/lib/status';
+import type { LibraryFilterBucket } from '@shared/schemas/book.js';
 import { createMockSettings } from '@/__tests__/factories';
 
 function createQueryClient() {
@@ -58,6 +60,9 @@ function makeMember(overrides: Partial<BookSeriesMemberCard> & { title: string }
     imageUrl: null,
     inLibrary: false,
     libraryBookId: null,
+    // Default to the payload invariant so an owned fixture exercises the bucket branch rather
+    // than the pre-upgrade fallback; a case testing that fallback passes null explicitly.
+    libraryBucket: overrides.inLibrary ? 'imported' : null,
     ...overrides,
   };
 }
@@ -613,5 +618,130 @@ describe('SeriesCard — Add All (#2200)', () => {
       expect(toast.success).not.toHaveBeenCalled();
       expect(toast.error).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('SeriesCard — bucket badges (#2541)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  function showCard(members: BookSeriesMemberCard[]) {
+    vi.mocked(api.getBookSeries).mockResolvedValue({
+      series: {
+        id: 7,
+        name: 'The Band',
+        hardcoverSeriesId: 5523,
+        seriesAuthor: 'Nicholas Eames',
+        lastFetchedAt: null,
+        members,
+      },
+    });
+    return renderCard({ bookId: 42 });
+  }
+
+  const BUCKET_LABELS: [LibraryFilterBucket, string][] = [
+    ['wanted', 'Wanted'],
+    ['downloading', 'Downloading'],
+    ['imported', 'In Library'],
+    ['failed', 'Failed'],
+    ['missing', 'Missing'],
+  ];
+
+  it.each(BUCKET_LABELS)('renders a %s member as "%s" with its bucket-keyed tone', async (bucket, label) => {
+    showCard([makeMember({ hardcoverBookId: 1001, title: 'Kings of the Wyld', position: 1, inLibrary: true, libraryBookId: 42, libraryBucket: bucket })]);
+
+    const badge = await screen.findByTestId('series-card-member-badge-link');
+    expect(badge).toHaveTextContent(label);
+    expect(badge).toHaveAttribute('href', '/books/42');
+    expect(badge.className).toContain(seriesMemberBucketStyles[bucket].textClass);
+    expect(screen.getByTestId('series-card-member')).toHaveAttribute('data-bucket', bucket);
+  });
+
+  it('tones the non-terminal buckets apart from the imported one', () => {
+    const imported = seriesMemberBucketStyles.imported.textClass;
+    expect(seriesMemberBucketStyles.wanted.textClass).not.toBe(imported);
+    expect(seriesMemberBucketStyles.downloading.textClass).not.toBe(imported);
+    expect(seriesMemberBucketStyles.failed.textClass).not.toBe(imported);
+  });
+
+  it('leaves the imported badge byte-identical to the pre-bucket rendering', async () => {
+    showCard([makeMember({ hardcoverBookId: 1001, title: 'Kings of the Wyld', position: 1, inLibrary: true, libraryBookId: 42, libraryBucket: 'imported' })]);
+
+    const badge = await screen.findByTestId('series-card-member-badge-link');
+    expect(badge).toHaveTextContent('In Library');
+    expect(badge).toHaveAttribute('href', '/books/42');
+    expect(badge.className).toContain('text-emerald-500');
+    expect(screen.queryByTestId('series-card-add')).toBeNull();
+  });
+
+  it('keeps an unlinked member on the unchanged + Add link and omits data-bucket', async () => {
+    showCard([makeMember({ hardcoverBookId: 1002, title: 'Bloody Rose', position: 2 })]);
+
+    const add = await screen.findByTestId('series-card-add');
+    expect(add).toHaveTextContent('+ Add');
+    expect(add).toHaveAttribute('href', '/search?q=Bloody%20Rose%20Nicholas%20Eames');
+    expect(screen.getByTestId('series-card-member')).not.toHaveAttribute('data-bucket');
+  });
+
+  // A payload cached before the server learned to send buckets must not demote an owned member.
+  it('falls back to In Library when an owned member carries no bucket', async () => {
+    showCard([makeMember({ hardcoverBookId: 1001, title: 'Kings of the Wyld', position: 1, inLibrary: true, libraryBookId: 42, libraryBucket: null })]);
+
+    const badge = await screen.findByTestId('series-card-member-badge-link');
+    expect(badge).toHaveTextContent('In Library');
+    expect(screen.queryByTestId('series-card-add')).toBeNull();
+    expect(screen.getByTestId('series-card-member')).not.toHaveAttribute('data-bucket');
+  });
+
+  it('renders the bucket label in the non-link span when the book id is missing', async () => {
+    showCard([makeMember({ hardcoverBookId: 1001, title: 'Kings of the Wyld', position: 1, inLibrary: true, libraryBookId: null, libraryBucket: 'wanted' })]);
+
+    await screen.findByText('Kings of the Wyld');
+    expect(screen.queryByTestId('series-card-member-badge-link')).toBeNull();
+    expect(screen.queryByTestId('series-card-add')).toBeNull();
+    expect(screen.getByText('Wanted')).toBeInTheDocument();
+  });
+
+  it('keeps data-in-library on the same true/false partition as before', async () => {
+    showCard([
+      makeMember({ hardcoverBookId: 1001, title: 'Kings of the Wyld', position: 1, inLibrary: true, libraryBookId: 42, libraryBucket: 'wanted' }),
+      makeMember({ hardcoverBookId: 1002, title: 'Bloody Rose', position: 2 }),
+    ]);
+
+    await screen.findByText('Kings of the Wyld');
+    expect(screen.getAllByTestId('series-card-member').map((li) => li.getAttribute('data-in-library'))).toEqual(['true', 'false']);
+  });
+
+  // AC16: Add All keys on ownership alone, so a wanted member is owned and stays excluded.
+  it('excludes wanted and downloading members from the Add All count', async () => {
+    showCard([
+      makeMember({ hardcoverBookId: 1001, title: 'Kings of the Wyld', position: 1, inLibrary: true, libraryBookId: 42, libraryBucket: 'wanted' }),
+      makeMember({ hardcoverBookId: 1002, title: 'Bloody Rose', position: 2, inLibrary: true, libraryBookId: 43, libraryBucket: 'downloading' }),
+      makeMember({ hardcoverBookId: 1003, title: 'Outlaw Empire', position: 3 }),
+    ]);
+
+    expect(await screen.findByRole('button', { name: 'Add all books in series' })).toHaveTextContent('Add All (1)');
+  });
+
+  it('does not remount a row whose bucket changes across a refresh', async () => {
+    const kings = (bucket: LibraryFilterBucket) =>
+      makeMember({ hardcoverBookId: 1001, title: 'Kings of the Wyld', position: 1, inLibrary: true, libraryBookId: 42, libraryBucket: bucket });
+    const rose = makeMember({ hardcoverBookId: 1002, title: 'Bloody Rose', position: 2 });
+    const card = (members: BookSeriesMemberCard[]) => ({
+      series: { id: 7, name: 'The Band', hardcoverSeriesId: 5523, seriesAuthor: 'Nicholas Eames', lastFetchedAt: null, members },
+    });
+
+    vi.mocked(api.getBookSeries).mockResolvedValueOnce(card([kings('wanted'), rose]));
+    vi.mocked(api.refreshBookSeries).mockResolvedValueOnce({ series: card([rose, kings('downloading')]).series });
+
+    const user = userEvent.setup();
+    renderCard({ bookId: 42 });
+
+    const before = (await screen.findByText('Wanted')).closest('li');
+    await user.click(screen.getByRole('button', { name: /refresh series/i }));
+
+    await waitFor(() => expect(screen.getByText('Downloading')).toBeInTheDocument());
+    expect(screen.getByText('Downloading').closest('li')).toBe(before);
   });
 });
