@@ -138,6 +138,24 @@ describe('startJobs', () => {
     expect(log.info).toHaveBeenCalledWith('Background jobs started');
   });
 
+  it('startup recovery runs every later step when an early one throws (#2557)', async () => {
+    // The first orchestrator batch fails; the boot-only backfill and sweep must still run —
+    // pre-#2557 a single throw abandoned the remainder for the process lifetime.
+    (services.qualityGateOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error('db locked at boot'));
+    const { startJobs } = await import('./index.js');
+    startJobs(injectHelper<Db>(db), services, log);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(services.importOrchestrator.processCompletedDownloads).toHaveBeenCalled();
+    expect(runCoverBackfill).toHaveBeenCalledTimes(1);
+    expect(runGenreMarkerSweep).toHaveBeenCalledTimes(1);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ type: 'Error', message: 'db locked at boot' }) }),
+      'Startup recovery: quality-gate batch failed',
+    );
+  });
+
   it('import-maintenance task callback calls qualityGate then importOrchestrator processCompletedDownloads then deferred cleanups', async () => {
     const { startJobs } = await import('./index.js');
     startJobs(injectHelper<Db>(db), services, log);
