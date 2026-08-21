@@ -10,14 +10,14 @@ import {
   type SearchResult,
 } from './types.js';
 import { IndexerAuthError, IndexerError, ProxyError, httpStatusError } from './errors.js';
-import { createProxyAgent, resolveProxyIp } from './proxy.js';
+import { classifyProxiedFetchError, createProxyAgent, resolveProxyIp } from './proxy.js';
 import { fetchWithOptionalDispatcher, type DispatcherFetchInit } from '../utils/network-service.js';
 import { normalizeLanguage } from '../utils/language-codes.js';
 import { readUnsatisfiedStatus, type UnsatisfiedStatus } from '../utils/mam-unsatisfied.js';
 import { MAM_LANGUAGES } from '@shared/indexer-registry.js';
 import { getUserAgent } from '@shared/user-agent.js';
 import type { WedgeMode } from '@shared/schemas/indexer.js';
-import { getErrorMessage, getErrorMessageWithCause } from '@shared/error-message.js';
+import { getErrorMessage } from '@shared/error-message.js';
 import { normalizeBaseUrl } from '@shared/normalize-base-url.js';
 import { parseDoubleEncodedNames, parseMamSize, isMamFreeleech } from './mam-helpers.js';
 import { normalizeFormat } from './normalize-format.js';
@@ -327,14 +327,8 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       try {
         response = await fetchWithOptionalDispatcher(url, fetchOptions);
       } catch (error: unknown) {
-        if (dispatcher) {
-          if (error instanceof DOMException && error.name === 'AbortError') {
-            throw new ProxyError(`Proxy timed out after ${Math.round(INDEXER_TIMEOUT_MS / 1000)}s`);
-          }
-          const msg = getErrorMessageWithCause(error);
-          throw new ProxyError(`Proxy connection failed: ${msg}`);
-        }
-        throw error;
+        // No `mapDirectError`: MAM deliberately leaves direct-path network errors unmapped.
+        throw classifyProxiedFetchError(error, { dispatcher, timeoutMs: INDEXER_TIMEOUT_MS, callerSignal });
       }
 
       if (response.status === 403) {
@@ -426,14 +420,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       try {
         response = await fetchWithOptionalDispatcher(url, fetchOptions);
       } catch (error: unknown) {
-        if (dispatcher) {
-          if (error instanceof DOMException && error.name === 'AbortError') {
-            throw new ProxyError(`Proxy timed out after ${Math.round(INDEXER_TIMEOUT_MS / 1000)}s`);
-          }
-          const msg = getErrorMessageWithCause(error);
-          throw new ProxyError(`Proxy connection failed: ${msg}`);
-        }
-        throw error;
+        throw classifyProxiedFetchError(error, { dispatcher, timeoutMs: INDEXER_TIMEOUT_MS, callerSignal });
       }
 
       if (!response.ok) {
@@ -443,6 +430,9 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       const buffer = Buffer.from(await response.arrayBuffer());
       return `data:application/x-bittorrent;base64,${buffer.toString('base64')}`;
     } catch (error: unknown) {
+      // Degrading is a cancellation sink: without this the rethrow one frame up would come back
+      // out as "returned no data" and a cancelled grab would read as an empty one.
+      if (callerSignal?.aborted) throw error;
       // ProxyError must propagate; other grab failures return undefined.
       if (error instanceof ProxyError) {
         throw error;

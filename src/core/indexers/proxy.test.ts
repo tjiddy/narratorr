@@ -247,6 +247,148 @@ describe('fetchWithProxyAgent — AbortSignal threading', () => {
   });
 });
 
+/**
+ * #2539: the caller's signal is the only thing that can tell a cancellation from an expiry — the
+ * composed signal this helper hands to fetch is aborted by its own timeout too. Every case below
+ * pairs its verdict with a control on the arm it must not have widened.
+ */
+describe('fetchWithProxyAgent — caller-abort attribution (#2539 AC1-AC4)', () => {
+  const PROXIED = { proxyUrl: 'http://proxy:8080' } as const;
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  async function rejectionOf(promise: Promise<unknown>): Promise<unknown> {
+    return promise.then(
+      () => { throw new Error('expected a rejection'); },
+      (error: unknown) => error,
+    );
+  }
+
+  it('rethrows a proxied caller abort verbatim instead of calling it a proxy timeout', async () => {
+    const abortError = new DOMException('This operation was aborted', 'AbortError');
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(abortError);
+    const controller = new AbortController();
+    controller.abort();
+
+    const rejection = await rejectionOf(
+      fetchWithProxyAgent('https://example.com', { ...PROXIED, signal: controller.signal }),
+    );
+
+    expect(rejection).toBe(abortError);
+    expect(rejection).not.toBeInstanceOf(ProxyError);
+    expect((rejection as Error).message).not.toMatch(/Proxy timed out/);
+  });
+
+  it('propagates a custom abort reason object unchanged (AC2)', async () => {
+    const reason = new Error('search deadline reached');
+    const controller = new AbortController();
+    controller.abort(reason);
+    // undici forwards the signal's reason as the rejection, so a custom reason arrives as `error`.
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(reason);
+
+    const rejection = await rejectionOf(
+      fetchWithProxyAgent('https://example.com', { ...PROXIED, signal: controller.signal }),
+    );
+
+    expect(rejection).toBe(reason);
+    expect(rejection).not.toBeInstanceOf(ProxyError);
+    expect((rejection as Error).message).not.toMatch(/Proxy connection failed/);
+  });
+
+  it('rethrows a caller abort on the DIRECT path rather than fabricating an ETIMEDOUT timeout', async () => {
+    const abortError = new DOMException('This operation was aborted', 'AbortError');
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(abortError);
+    const controller = new AbortController();
+    controller.abort();
+
+    const rejection = await rejectionOf(
+      fetchWithProxyAgent('https://example.com', { signal: controller.signal }),
+    );
+
+    expect(rejection).toBe(abortError);
+    expect((rejection as Error).message).not.toMatch(/Request timed out/);
+    // A DOMException carries the native ABORT_ERR code 20; what must NOT appear is the transport
+    // code mapNetworkError fabricates for its timeout arm.
+    expect((rejection as { code?: unknown }).code).not.toBe('ETIMEDOUT');
+  });
+
+  it('gives the caller attribution when the caller abort and the internal timeout have both fired (AC4)', async () => {
+    const abortError = new DOMException('This operation was aborted', 'AbortError');
+    const controller = new AbortController();
+    let composedWasAborted = false;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      // Let the 1ms internal timer fire first, THEN cancel: both signals are aborted by the time
+      // the catch classifies, so the verdict cannot be decided by which one happened to win.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      controller.abort();
+      composedWasAborted = (init as RequestInit).signal?.aborted ?? false;
+      throw abortError;
+    });
+
+    const rejection = await rejectionOf(
+      fetchWithProxyAgent('https://example.com', { ...PROXIED, timeoutMs: 1, signal: controller.signal }),
+    );
+
+    expect(composedWasAborted).toBe(true);
+    expect(controller.signal.aborted).toBe(true);
+    expect(rejection).toBe(abortError);
+    expect(rejection).not.toBeInstanceOf(ProxyError);
+  });
+
+  it('control: a LIVE caller signal leaves a genuine dispatcher failure as ProxyError', async () => {
+    const cause = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:1080'), { code: 'ECONNREFUSED' });
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(Object.assign(new TypeError('fetch failed'), { cause }));
+    const controller = new AbortController();
+
+    const rejection = await rejectionOf(
+      fetchWithProxyAgent('https://example.com', { ...PROXIED, signal: controller.signal }),
+    );
+
+    expect(rejection).toBeInstanceOf(ProxyError);
+    expect((rejection as Error).message).toMatch(/Proxy connection failed: .*ECONNREFUSED/);
+  });
+
+  it('control: with no caller signal the internal timeout still reads as the proxy timeout', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new DOMException('signal is aborted', 'AbortError'));
+
+    const rejection = await rejectionOf(
+      fetchWithProxyAgent('https://example.com', { ...PROXIED, timeoutMs: 30_000 }),
+    );
+
+    expect(rejection).toBeInstanceOf(ProxyError);
+    expect((rejection as Error).message).toBe('Proxy timed out after 30s');
+  });
+
+  it('control: with no caller signal the direct arm keeps mapNetworkError\'s message AND its code', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+    );
+
+    const rejection = await rejectionOf(fetchWithProxyAgent('https://example.com'));
+
+    expect(rejection).not.toBeInstanceOf(ProxyError);
+    expect((rejection as Error).message).toBe('Request timed out');
+    // The code is the load-bearing half: a classifier downstream reads it, never the string.
+    expect((rejection as { code?: string }).code).toBe('ETIMEDOUT');
+  });
+
+  it('control: an explicitly undefined caller signal behaves exactly as an absent one', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok'));
+    await expect(fetchWithProxyAgent('https://example.com', { ...PROXIED, signal: undefined }))
+      .resolves.toMatchObject({ body: 'ok' });
+
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('ECONNREFUSED'));
+    const rejection = await rejectionOf(
+      fetchWithProxyAgent('https://example.com', { ...PROXIED, signal: undefined }),
+    );
+
+    expect(rejection).toBeInstanceOf(ProxyError);
+    expect((rejection as Error).message).toMatch(/Proxy connection failed/);
+  });
+});
+
 describe('resolveProxyIp', () => {
   beforeEach(() => {
     vi.restoreAllMocks();

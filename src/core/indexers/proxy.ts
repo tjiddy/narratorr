@@ -68,6 +68,35 @@ export function createProxyAgent(proxyUrl: string | undefined, targetUrl: string
   }
 }
 
+/**
+ * The error a proxied fetch's failure should surface, shared by the three call sites that route a
+ * request through a dispatcher (here and both MAM helpers). Returns rather than throws so the
+ * caller's `throw` keeps the stack at the failing site.
+ *
+ * `callerSignal` must be the CALLER's signal, never the composed one handed to fetch: that one is
+ * aborted by the internal timeout too, so keying on it would reclassify every expiry as a
+ * cancellation. Nothing here reads the error's name, message or class to decide *cancellation* —
+ * one abort arrives as an `AbortError` DOMException, a custom reason, or whatever the deadline
+ * forwarded, and only the signal distinguishes all three from a genuine failure.
+ */
+export function classifyProxiedFetchError(
+  error: unknown,
+  options: {
+    dispatcher: ProxyDispatcher | undefined;
+    timeoutMs: number;
+    callerSignal?: AbortSignal | undefined;
+    /** The direct (no-dispatcher) arm's mapping; omitted where the site rethrows unmapped. */
+    mapDirectError?: ((error: unknown) => unknown) | undefined;
+  },
+): unknown {
+  if (options.callerSignal?.aborted) return error;
+  if (!options.dispatcher) return options.mapDirectError ? options.mapDirectError(error) : error;
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    return new ProxyError(`Proxy timed out after ${Math.round(options.timeoutMs / 1000)}s`);
+  }
+  return new ProxyError(`Proxy connection failed: ${getErrorMessageWithCause(error)}`);
+}
+
 /** Fetch through an optional proxy agent, preserving upstream HTTP errors. */
 export async function fetchWithProxyAgent(
   url: string,
@@ -98,12 +127,12 @@ export async function fetchWithProxyAgent(
     try {
       response = await fetchWithOptionalDispatcher(url, fetchOptions);
     } catch (error: unknown) {
-      if (!dispatcher) throw mapNetworkError(error); // Preserve direct network error mapping.
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        throw new ProxyError(`Proxy timed out after ${Math.round(timeoutMs / 1000)}s`);
-      }
-      const msg = getErrorMessageWithCause(error);
-      throw new ProxyError(`Proxy connection failed: ${msg}`);
+      throw classifyProxiedFetchError(error, {
+        dispatcher,
+        timeoutMs,
+        callerSignal: options.signal,
+        mapDirectError: mapNetworkError,
+      });
     }
 
     if (!response.ok) {
