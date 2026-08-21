@@ -758,6 +758,9 @@ describe('v1 action routes (search + grab)', () => {
         expect(optionsOf(0)).toHaveProperty('signal');
       });
 
+      // The *declaration* of these two statuses is observed by typecheck (`reply.status()` is
+      // narrowed to the response map's keys) and by the OpenAPI suite; this case observes the
+      // bodies themselves — strict-envelope-clean, with no id or URL riding along.
       it('serializes the 409 and 504 bodies clean against the strict v1 error envelope', async () => {
         const release = parkLadder();
         const first = search();
