@@ -2371,6 +2371,26 @@ describe('MyAnonamouseIndexer', () => {
         await pending;
         expect(armed).toEqual([INDEXER_TIMEOUT_MS]);
       });
+
+      it('arms no timer at all when the proxy factory refuses the config (#2548)', async () => {
+        const armed: number[] = [];
+        const realSetTimeout = globalThis.setTimeout;
+        const passThrough = realSetTimeout as unknown as (...args: unknown[]) => ReturnType<typeof setTimeout>;
+        vi.spyOn(globalThis, 'setTimeout').mockImplementation(((...args: unknown[]) => {
+          if (args[1] === INDEXER_TIMEOUT_MS) armed.push(args[1] as number);
+          return passThrough(...args);
+        }) as unknown as typeof globalThis.setTimeout);
+        vi.spyOn(mamThrottle, 'acquire').mockResolvedValue(undefined);
+        const broken = new MyAnonamouseIndexer({
+          mamId: 'test-mam-id', baseUrl: MAM_BASE, proxyUrl: 'socks5://user:p%ss@proxy.test:1080',
+          searchLanguages: [1], searchType: 'active',
+        });
+
+        await expect(broken.search('test')).rejects.toThrow(ProxyError);
+
+        // The factory threw before setTimeout ran; the pre-#2548 ordering leaked a live 30s timer.
+        expect(armed).toEqual([]);
+      });
     });
 
     describe('abort propagation through the adapter', () => {

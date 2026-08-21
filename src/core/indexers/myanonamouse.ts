@@ -306,12 +306,14 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     // Before the timeout is armed: a queued request must not spend its own budget waiting in line,
     // and a wait that rejects leaves no timer to leak.
     await mamThrottle.acquire(this.baseUrl, callerSignal);
+    // Factory before timer, matching fetchWithProxyAgent: createProxyAgent throws on a malformed
+    // proxy URL or a SOCKS5+IPv6 target, and a throw after setTimeout leaks the timer (#2548).
+    const dispatcher = createProxyAgent(this.proxyUrl, url);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), INDEXER_TIMEOUT_MS);
     const signal = callerSignal
       ? AbortSignal.any([controller.signal, callerSignal])
       : controller.signal;
-    const dispatcher = createProxyAgent(this.proxyUrl, url);
 
     try {
       const fetchOptions: DispatcherFetchInit = {
@@ -400,12 +402,14 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   private async fetchTorrentAsDataUri(torrentId: number, applyWedge = false, callerSignal?: AbortSignal): Promise<string | undefined> {
     const url = `${this.baseUrl}/tor/download.php?tid=${torrentId}${applyWedge ? '&fl' : ''}`;
     await mamThrottle.acquire(this.baseUrl, callerSignal);
+    // Factory before timer, matching fetchWithProxyAgent: createProxyAgent throws on a malformed
+    // proxy URL or a SOCKS5+IPv6 target, and a throw after setTimeout leaks the timer (#2548).
+    const dispatcher = createProxyAgent(this.proxyUrl, url);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), INDEXER_TIMEOUT_MS);
     const signal = callerSignal
       ? AbortSignal.any([controller.signal, callerSignal])
       : controller.signal;
-    const dispatcher = createProxyAgent(this.proxyUrl, url);
 
     try {
       const fetchOptions: DispatcherFetchInit = {
