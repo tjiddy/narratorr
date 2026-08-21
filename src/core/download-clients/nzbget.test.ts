@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { join } from 'node:path';
 import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
+import { nzbgetSelects } from '../__tests__/download-client-id-semantics.js';
 import { NZBGetClient } from './nzbget.js';
 import type { DownloadArtifact } from './types.js';
 import { DownloadClientAuthError, DownloadClientError, DownloadClientTimeoutError } from './errors.js';
@@ -1358,6 +1359,216 @@ describe('NZBGetClient', () => {
 
       const item = await client.getDownload('123');
       expect(item?.id).toBe('123');
+    });
+  });
+
+  /**
+   * #2488 — NZBGet addresses downloads by integer NZBID, and `parseInt` in front of `editqueue`
+   * made TWO ids unsafe: a blank one became `NaN`, which `JSON.stringify` serializes as `null` in
+   * the IDs array, and `'12abc'` became a plausible NZBID **12** naming an unrelated real download
+   * ([[parsefloat-grouped-number-truncation]]). The guard is therefore blank OR non-integer — the
+   * one deliberate exception to this issue's blankness-only rule, and it is what the adapter's own
+   * `parseInt` already implied rather than a shape rule imported from elsewhere.
+   */
+  describe('blank and non-integer external-id refusal (#2488)', () => {
+    /** NZBID 12 is present, so `parseInt('12abc') === 12` has a real download to act on. */
+    const twelve = { ...activeGroup, NZBID: 12, NZBName: 'Unrelated Download' };
+
+    /**
+     * Routes `editqueue`'s IDs array through the shared model, so the double acts only on the
+     * NZBIDs it was actually given and a `null`/non-integer element resolves to nothing.
+     */
+    function trackRpc(groups: Array<typeof activeGroup> = [activeGroup, twelve]) {
+      const calls: Array<{ method: string; params: unknown[] }> = [];
+      const edited: number[] = [];
+      server.use(
+        http.post(RPC_URL, async ({ request }) => {
+          const body = (await request.json()) as { method: string; params: unknown[] };
+          calls.push({ method: body.method, params: body.params });
+
+          if (body.method === 'editqueue') {
+            for (const item of nzbgetSelects(body.params[2], [...groups, historyItem])) {
+              edited.push(item.NZBID);
+            }
+            return HttpResponse.json({ result: true });
+          }
+          if (body.method === 'listgroups') return HttpResponse.json({ result: groups });
+          if (body.method === 'history') return HttpResponse.json({ result: [historyItem] });
+          return HttpResponse.json({ result: null });
+        }),
+      );
+      return {
+        calls,
+        edited,
+        of: (method: string) => calls.filter((c) => c.method === method),
+      };
+    }
+
+    const REFUSED: Array<[string, string]> = [
+      ['empty', ''],
+      ['spaces', '   '],
+      ['tab', '\t'],
+      ['newline', '\n '],
+      ['mixed whitespace', ' \t\n '],
+      ['a truncating prefix', '12abc'],
+      ['a non-numeric string', 'abc'],
+      ['a fraction', '12.5'],
+      ['a negative integer', '-1'],
+      ['exponent notation', '1e3'],
+      ['hex notation', '0x10'],
+      ['Infinity', 'Infinity'],
+    ];
+
+    // The column mixes string ids with a numeric NZBID, so the table needs its own annotation
+    // ([[iteach-mixed-type-column-arity]] — this reds `pnpm typecheck`, not `vitest run`).
+    const ACCEPTED: Array<[string, string, number]> = [
+      ['zero', '0', 0],
+      ['a plain integer', '123', 123],
+      ['a padded integer', ' 123 ', 123],
+      ['a zero-padded integer', '0007', 7],
+    ];
+
+    it.each(REFUSED)('getDownload returns null and issues zero RPCs for %s', async (_label, id) => {
+      const rpc = trackRpc();
+
+      expect(await client.getDownload(id)).toBeNull();
+
+      expect(rpc.calls).toEqual([]);
+    });
+
+    it('stays free on repeated refused calls', async () => {
+      const rpc = trackRpc();
+
+      expect(await client.getDownload('   ')).toBeNull();
+      expect(await client.getDownload('   ')).toBeNull();
+
+      expect(rpc.calls).toEqual([]);
+    });
+
+    it.each(REFUSED)('pauseDownload throws and issues no editqueue for %s', async (_label, id) => {
+      const rpc = trackRpc();
+
+      await expect(client.pauseDownload(id)).rejects.toThrow(DownloadClientError);
+
+      expect(rpc.of('editqueue')).toEqual([]);
+      expect(rpc.calls).toEqual([]);
+    });
+
+    it.each(REFUSED)('resumeDownload throws and issues no editqueue for %s', async (_label, id) => {
+      const rpc = trackRpc();
+
+      await expect(client.resumeDownload(id)).rejects.toThrow(DownloadClientError);
+
+      expect(rpc.calls).toEqual([]);
+    });
+
+    it.each(REFUSED)('removeDownload(%s, true) throws and issues no GroupFinalDelete', async (_label, id) => {
+      const rpc = trackRpc();
+
+      await expect(client.removeDownload(id, true)).rejects.toThrow(DownloadClientError);
+
+      expect(rpc.of('editqueue')).toEqual([]);
+      expect(rpc.edited).toEqual([]);
+    });
+
+    it('removeDownload refuses the default GroupDelete arm too', async () => {
+      const rpc = trackRpc();
+
+      await expect(client.removeDownload('   ')).rejects.toThrow(DownloadClientError);
+
+      expect(rpc.calls).toEqual([]);
+    });
+
+    it('names the blank stored external ID so an operator can repair the record', async () => {
+      trackRpc();
+
+      const error = await client.removeDownload('', true).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect((error as DownloadClientError).message).toMatch(/blank/i);
+      expect((error as DownloadClientError).message).toMatch(/external id/i);
+    });
+
+    /**
+     * The counterfactual for `parseInt('12abc') === 12`: NZBID 12 is present in `listgroups` and
+     * in the double's editqueue index, so a coercing implementation would read and act on it.
+     */
+    it.each([
+      ['GroupPause', (c: NZBGetClient) => c.pauseDownload('12abc')],
+      ['GroupResume', (c: NZBGetClient) => c.resumeDownload('12abc')],
+      ['GroupDelete', (c: NZBGetClient) => c.removeDownload('12abc')],
+      ['GroupFinalDelete', (c: NZBGetClient) => c.removeDownload('12abc', true)],
+    ] as const)('never coerces 12abc into NZBID 12 on %s', async (_command, call) => {
+      const rpc = trackRpc();
+
+      await expect(call(client)).rejects.toThrow(DownloadClientError);
+
+      expect(rpc.of('editqueue')).toEqual([]);
+      expect(rpc.edited).toEqual([]);
+    });
+
+    it('reads 12abc as null rather than resolving the real NZBID 12', async () => {
+      const rpc = trackRpc();
+
+      expect(await client.getDownload('12abc')).toBeNull();
+
+      expect(rpc.calls).toEqual([]);
+    });
+
+    /** No `editqueue` body may carry a `null` IDs element — the JSON serialization of `NaN`. */
+    it('never puts a null element in an editqueue IDs array', async () => {
+      const rpc = trackRpc();
+
+      await expect(client.removeDownload('', true)).rejects.toThrow(DownloadClientError);
+      await client.removeDownload('123', true);
+
+      for (const call of rpc.of('editqueue')) {
+        expect(call.params[2]).not.toContain(null);
+      }
+      expect(rpc.of('editqueue')).toHaveLength(1);
+    });
+
+    // Padding stays tolerated exactly as today's `parseInt` tolerated it.
+    it.each(ACCEPTED)('still resolves %s (%s) to NZBID %d on the read', async (_label, id, nzbId) => {
+      const rpc = trackRpc([{ ...activeGroup, NZBID: nzbId }]);
+
+      expect((await client.getDownload(id))!.id).toBe(String(nzbId));
+
+      expect(rpc.of('listgroups')).toHaveLength(1);
+    });
+
+    it.each(ACCEPTED)('sends %s (%s) to editqueue as the integer NZBID %d', async (_label, id, nzbId) => {
+      const rpc = trackRpc([{ ...activeGroup, NZBID: nzbId }]);
+
+      await client.removeDownload(id, true);
+
+      expect(rpc.of('editqueue')).toHaveLength(1);
+      expect(rpc.of('editqueue')[0]!.params[0]).toBe('GroupFinalDelete');
+      expect(rpc.of('editqueue')[0]!.params[2]).toEqual([nzbId]);
+      expect(rpc.edited).toEqual([nzbId]);
+    });
+
+    /** Positive control — the empty `edited` arrays above otherwise prove nothing was wired. */
+    it('control: a valid id is actually acted on by the modelled server', async () => {
+      const rpc = trackRpc();
+
+      await client.removeDownload(String(activeGroup.NZBID), true);
+
+      expect(rpc.of('editqueue')).toHaveLength(1);
+      expect(rpc.edited).toEqual([activeGroup.NZBID]);
+    });
+
+    it('leaves the refused call out of a race with a valid resolution', async () => {
+      const rpc = trackRpc();
+
+      const [refused, valid] = await Promise.all([
+        client.getDownload('   '),
+        client.getDownload(String(activeGroup.NZBID)),
+      ]);
+
+      expect(refused).toBeNull();
+      expect(valid!.id).toBe(String(activeGroup.NZBID));
+      expect(rpc.of('listgroups')).toHaveLength(1);
     });
   });
 });

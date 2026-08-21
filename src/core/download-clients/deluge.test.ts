@@ -669,7 +669,7 @@ describe('DelugeClient', () => {
     // rpcHandler always mirrors a numeric request id; force Deluge's valid id:null response here.
     it('accepts an RPC envelope with id:null and maps like a numeric-id envelope', async () => {
       const nullIdHandler = http.post(`${BASE_URL}/json`, async ({ request }) => {
-        const body = await request.json() as { method: string };
+        const body = await request.json() as { method: string; params: unknown[] };
         if (body.method === 'auth.login') {
           return HttpResponse.json(
             { id: null, result: true, error: null },
@@ -680,8 +680,7 @@ describe('DelugeClient', () => {
           return HttpResponse.json({ id: null, result: true, error: null });
         }
         if (body.method === 'core.get_torrent_status') {
-          const params = (body as { params: unknown[] }).params;
-          return HttpResponse.json({ id: null, result: statusFor(mockTorrentStatus)(params), error: null });
+          return HttpResponse.json({ id: null, result: statusFor(mockTorrentStatus)(body.params), error: null });
         }
         return HttpResponse.json({ id: null, result: null, error: null });
       });

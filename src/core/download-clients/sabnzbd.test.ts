@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
-import { sabnzbdSelects } from '../__tests__/download-client-id-semantics.js';
+import { sabnzbdSelects, type SabnzbdIdentifiable } from '../__tests__/download-client-id-semantics.js';
 import { SABnzbdClient } from './sabnzbd.js';
 import type { DownloadArtifact } from './types.js';
 import { DownloadClientAuthError, DownloadClientError, DownloadClientTimeoutError } from './errors.js';
@@ -1398,7 +1398,7 @@ describe('SABnzbdClient', () => {
 
           if (params.get('name') === 'delete') {
             // Each axis holds only its own jobs, so a per-axis delete cannot double-count.
-            const slots = axis === 'history' ? [historySlot] : [queueSlot];
+            const slots: SabnzbdIdentifiable[] = axis === 'history' ? [historySlot] : [queueSlot];
             for (const slot of sabnzbdSelects(axis, params.get('value'), slots)) {
               deleted.push(slot.nzo_id);
             }
