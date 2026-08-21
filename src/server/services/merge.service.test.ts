@@ -2812,23 +2812,17 @@ describe('#1838 merge origin — event provenance', () => {
     vi.resetAllMocks();
   });
 
-  function historyFor(create: Mock, bookId: number, eventType: string) {
-    return create.mock.calls
-      .map((c) => c[0] as { bookId: number; eventType: string; source: string })
-      .filter((e) => e.bookId === bookId && e.eventType === eventType);
-  }
-
   it('auto immediate-start success records merge_started and merged with source auto', async () => {
     setupHappyPath();
-    const { service, create, frames } = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }], broadcaster: 'absent' });
+    const { service, historyOf, frames } = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }], broadcaster: 'absent' });
 
     await service.enqueueMerge(42, 'auto');
     await settle();
     // AC9: this arm has never exercised the emit paths; a silent swap to the recording harness would.
     expect(frames).toEqual([]);
 
-    expect(historyFor(create, 42, 'merge_started')[0]?.source).toBe('auto');
-    expect(historyFor(create, 42, 'merged')[0]?.source).toBe('auto');
+    expect(historyOf(42, 'merge_started')[0]?.source).toBe('auto');
+    expect(historyOf(42, 'merged')[0]?.source).toBe('auto');
   });
 
   it('auto immediate-start failure records merge_failed with source auto', async () => {
@@ -2837,12 +2831,12 @@ describe('#1838 merge origin — event provenance', () => {
     (cp as Mock).mockResolvedValue(undefined);
     (processAudioFiles as Mock).mockResolvedValue({ success: false, error: 'ffmpeg error' });
     (rm as Mock).mockResolvedValue(undefined);
-    const { service, create } = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }], broadcaster: 'absent' });
+    const { service, historyOf } = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }], broadcaster: 'absent' });
 
     await service.enqueueMerge(42, 'auto');
     await settle();
 
-    const failed = historyFor(create, 42, 'merge_failed');
+    const failed = historyOf(42, 'merge_failed');
     expect(failed[0]?.source).toBe('auto');
   });
 
@@ -2853,7 +2847,7 @@ describe('#1838 merge origin — event provenance', () => {
     (processAudioFiles as Mock)
       .mockImplementationOnce(async () => { await firstPromise; return { success: true, outputFiles: [STAGING_DIR + '/out.m4b'] }; })
       .mockResolvedValue({ success: true, outputFiles: [STAGING_DIR + '/out.m4b'] });
-    const { service, create } = createMergeHarness({
+    const { service, historyOf } = createMergeHarness({
       books: [{ id: 42, title: 'Book A', path: '/lib/A' }, { id: 43, title: 'Book B', path: '/lib/B' }],
       broadcaster: 'absent',
     });
@@ -2865,16 +2859,16 @@ describe('#1838 merge origin — event provenance', () => {
     resolveFirst();
     await settle();
 
-    expect(historyFor(create, 42, 'merge_started')[0]?.source).toBe('manual');
-    expect(historyFor(create, 42, 'merged')[0]?.source).toBe('manual');
-    expect(historyFor(create, 43, 'merge_started')[0]?.source).toBe('auto');
-    expect(historyFor(create, 43, 'merged')[0]?.source).toBe('auto');
+    expect(historyOf(42, 'merge_started')[0]?.source).toBe('manual');
+    expect(historyOf(42, 'merged')[0]?.source).toBe('manual');
+    expect(historyOf(43, 'merge_started')[0]?.source).toBe('auto');
+    expect(historyOf(43, 'merged')[0]?.source).toBe('auto');
   });
 
   it('cancel of a queued auto merge emits merge_failed(cancelled) with source auto', async () => {
     setupHappyPath();
     (processAudioFiles as Mock).mockImplementation(async () => new Promise(() => {}));
-    const { service, create } = createMergeHarness({
+    const { service, historyOf } = createMergeHarness({
       books: [{ id: 42, title: 'Book A', path: '/lib/A' }, { id: 43, title: 'Book B', path: '/lib/B' }],
       broadcaster: 'absent',
     });
@@ -2885,37 +2879,37 @@ describe('#1838 merge origin — event provenance', () => {
     const result = await service.cancelMerge(43);
     expect(result.status).toBe('cancelled');
 
-    const failed = historyFor(create, 43, 'merge_failed');
+    const failed = historyOf(43, 'merge_failed');
     expect(failed[0]?.source).toBe('auto');
     expect(failed[0]).toMatchObject({ reason: { error: 'Cancelled by user' } });
   });
 
   it('rejected auto enqueue leaves no stale origin — a later manual merge records source manual (F1)', async () => {
     (readdir as Mock).mockResolvedValue(['01.mp3']);
-    const { service, create } = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }], broadcaster: 'absent' });
+    const { service, historyOf } = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }], broadcaster: 'absent' });
 
     await expect(service.enqueueMerge(42, 'auto')).rejects.toThrow(/No top-level audio files/);
-    expect(historyFor(create, 42, 'merge_started')).toHaveLength(0);
-    expect(historyFor(create, 42, 'merged')).toHaveLength(0);
+    expect(historyOf(42, 'merge_started')).toHaveLength(0);
+    expect(historyOf(42, 'merged')).toHaveLength(0);
 
     setupHappyPath();
     await service.enqueueMerge(42);
     await settle();
 
-    expect(historyFor(create, 42, 'merge_started')[0]?.source).toBe('manual');
-    expect(historyFor(create, 42, 'merged')[0]?.source).toBe('manual');
+    expect(historyOf(42, 'merge_started')[0]?.source).toBe('manual');
+    expect(historyOf(42, 'merged')[0]?.source).toBe('manual');
   });
 
   it('origin is cleared after a merge completes — a subsequent same-book merge uses the new origin', async () => {
     setupHappyPath();
-    const { service, create } = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }], broadcaster: 'absent' });
+    const { service, historyOf } = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }], broadcaster: 'absent' });
 
     await service.enqueueMerge(42, 'auto');
     await settle();
     await service.enqueueMerge(42, 'manual');
     await settle();
 
-    expect(historyFor(create, 42, 'merged').map((e) => e.source)).toEqual(['auto', 'manual']);
+    expect(historyOf(42, 'merged').map((e) => e.source)).toEqual(['auto', 'manual']);
   });
 });
 
