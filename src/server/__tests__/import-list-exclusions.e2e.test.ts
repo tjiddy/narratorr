@@ -55,7 +55,7 @@ describe('import-list exclusions — the delete/re-add loop, end to end (#2305)'
   async function listExclusions() {
     const res = await e2e.app.inject({ method: 'GET', url: '/api/import-list-exclusions' });
     expect(res.statusCode).toBe(200);
-    return res.json() as { data: { id: number; title: string; authorName: string | null; importListName: string | null }[]; total: number };
+    return res.json() as { data: { id: number; title: string; authorName: string | null; importListName: string | null; kind: 'added' | 'deleted' }[]; total: number };
   }
 
   it('deletes, stays deleted across syncs, and comes back once the exclusion is removed', async () => {
