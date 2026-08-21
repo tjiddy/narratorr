@@ -10,6 +10,7 @@ import type {
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
 import { DownloadClientAuthError, DownloadClientError, DownloadClientTimeoutError, isTimeoutError } from './errors.js';
+import { externalIdRefusal, normalizeExternalId } from './external-id.js';
 import { getErrorMessage } from '@shared/error-message.js';
 
 export interface NZBGetConfig {
@@ -91,8 +92,32 @@ export class NZBGetClient implements DownloadClientAdapter {
     return String(result);
   }
 
+  /**
+   * NZBGet addresses downloads by integer NZBID and `editqueue` takes an explicit IDs array with
+   * no empty-means-all axis, so the danger here is mis-resolution rather than widening. `parseInt`
+   * made two ids unsafe: a blank one became `NaN`, which `JSON.stringify` serializes as `null` in
+   * the IDs array, and `'12abc'` became a plausible NZBID 12 naming an unrelated real download
+   * ([[parsefloat-grouped-number-truncation]]). Requiring an exact non-negative integer after
+   * trimming keeps today's padding tolerance while removing both (#2488).
+   */
+  private parseNzbId(id: string): number | undefined {
+    const normalized = normalizeExternalId(id);
+    if (normalized === undefined || !/^\d+$/.test(normalized)) return undefined;
+    return Number(normalized);
+  }
+
+  /** Reads return `null`; only controls throw — `monitor` escalates a thrown read as infra. */
+  private requireNzbId(id: string): number {
+    const nzbId = this.parseNzbId(id);
+    if (nzbId === undefined) {
+      throw externalIdRefusal(this.name, 'it is blank or is not a non-negative integer NZBID');
+    }
+    return nzbId;
+  }
+
   async getDownload(id: string): Promise<DownloadItemInfo | null> {
-    const nzbId = parseInt(id, 10);
+    const nzbId = this.parseNzbId(id);
+    if (nzbId === undefined) return null;
 
     const rawGroups = await this.rpc<unknown[]>('listgroups');
     const groups = this.parseGroups(rawGroups);
@@ -135,16 +160,17 @@ export class NZBGetClient implements DownloadClientAdapter {
   }
 
   async pauseDownload(id: string): Promise<void> {
-    await this.rpc('editqueue', ['GroupPause', '', [parseInt(id, 10)]]);
+    await this.rpc('editqueue', ['GroupPause', '', [this.requireNzbId(id)]]);
   }
 
   async resumeDownload(id: string): Promise<void> {
-    await this.rpc('editqueue', ['GroupResume', '', [parseInt(id, 10)]]);
+    await this.rpc('editqueue', ['GroupResume', '', [this.requireNzbId(id)]]);
   }
 
   async removeDownload(id: string, deleteFiles = false): Promise<void> {
+    const nzbId = this.requireNzbId(id);
     const command = deleteFiles ? 'GroupFinalDelete' : 'GroupDelete';
-    await this.rpc('editqueue', [command, '', [parseInt(id, 10)]]);
+    await this.rpc('editqueue', [command, '', [nzbId]]);
   }
 
   async getCategories(): Promise<string[]> {

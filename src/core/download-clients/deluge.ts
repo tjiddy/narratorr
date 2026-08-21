@@ -3,6 +3,7 @@ import { type DownloadClientAdapter, type DownloadItemInfo, type AddDownloadOpti
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
 import { DownloadClientAuthError, DownloadClientError } from './errors.js';
+import { externalIdRefusal, normalizeExternalId } from './external-id.js';
 import { requestWithRetry } from './retry.js';
 import { getErrorMessage } from '@shared/error-message.js';
 import {
@@ -278,8 +279,23 @@ export class DelugeClient implements DownloadClientAdapter {
     );
   }
 
+  /**
+   * Deluge matches ids by exact string equality and has no empty-means-all axis, so a blank id
+   * resolves to nothing today — but the refusal keeps that from being something production
+   * depends on, and it saves the round trip either way (#2488). Reads return `null` instead of
+   * throwing: `monitor` escalates a thrown read through `blacklistOnInfraError`.
+   */
+  private requireTorrentId(id: string): string {
+    const torrentId = normalizeExternalId(id);
+    if (!torrentId) throw externalIdRefusal(this.name);
+    return torrentId;
+  }
+
   async getDownload(id: string): Promise<DownloadItemInfo | null> {
-    const result = await this.rpc('core.get_torrent_status', [id, TORRENT_STATUS_KEYS]);
+    const torrentId = normalizeExternalId(id);
+    if (!torrentId) return null;
+
+    const result = await this.rpc('core.get_torrent_status', [torrentId, TORRENT_STATUS_KEYS]);
 
     if (!result || (typeof result === 'object' && Object.keys(result).length === 0)) {
       return null;
@@ -293,7 +309,7 @@ export class DelugeClient implements DownloadClientAdapter {
         { cause: parsed.error },
       );
     }
-    return this.mapTorrent(id, parsed.data);
+    return this.mapTorrent(torrentId, parsed.data);
   }
 
   async getAllDownloads(category?: string): Promise<DownloadItemInfo[]> {
@@ -321,15 +337,15 @@ export class DelugeClient implements DownloadClientAdapter {
   }
 
   async pauseDownload(id: string): Promise<void> {
-    await this.rpc('core.pause_torrent', [[id]]);
+    await this.rpc('core.pause_torrent', [[this.requireTorrentId(id)]]);
   }
 
   async resumeDownload(id: string): Promise<void> {
-    await this.rpc('core.resume_torrent', [[id]]);
+    await this.rpc('core.resume_torrent', [[this.requireTorrentId(id)]]);
   }
 
   async removeDownload(id: string, deleteFiles = false): Promise<void> {
-    await this.rpc('core.remove_torrent', [id, deleteFiles]);
+    await this.rpc('core.remove_torrent', [this.requireTorrentId(id), deleteFiles]);
   }
 
   async getCategories(): Promise<string[]> {
