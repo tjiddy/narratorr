@@ -7,7 +7,7 @@
  * request body, or a missing cache invalidation — this test covers exactly that gap (#2200 F3).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Routes, Route } from 'react-router';
@@ -86,7 +86,7 @@ describe('Add All — connected client → route → database → rerender (#220
   let e2e: E2EApp;
   let anchorId: number;
   /** Every request the client actually put on the wire, so the seam itself is assertable. */
-  let apiCalls: Array<{ method: string; url: string; body: string | undefined }>;
+  let apiCalls: Array<{ method: string; url: string; body: string | undefined; responseBody: string }>;
 
   beforeEach(async () => {
     // The sonner double is module-scoped, so its call history would otherwise accumulate across tests.
@@ -110,6 +110,7 @@ describe('Add All — connected client → route → database → rerender (#220
       title: 'Leviathan Wakes',
       seriesName: 'The Expanse',
       seriesPosition: 1,
+      status: 'imported',
     }).returning();
     const [author] = await e2e.db.insert(authors).values({
       publicId: generatePublicId('au'), name: 'James S. A. Corey', slug: 'james-s-a-corey',
@@ -129,7 +130,6 @@ describe('Add All — connected client → route → database → rerender (#220
 
       const method = init?.method ?? 'GET';
       const body = typeof init?.body === 'string' ? init.body : undefined;
-      apiCalls.push({ method, url, body });
 
       const injected = await e2e.app.inject({
         method: method as 'GET' | 'POST',
@@ -137,6 +137,7 @@ describe('Add All — connected client → route → database → rerender (#220
         headers: init?.headers as Record<string, string>,
         ...(body !== undefined && { payload: body }),
       });
+      apiCalls.push({ method, url, body, responseBody: injected.payload });
       return new Response(injected.payload, {
         status: injected.statusCode,
         headers: { 'Content-Type': injected.headers['content-type'] as string ?? 'application/json' },
@@ -179,7 +180,43 @@ describe('Add All — connected client → route → database → rerender (#220
   const rowsByTitle = async () =>
     Object.fromEntries((await e2e.db.select().from(books)).map((b) => [b.title, b]));
 
-  it('adds every unowned major member and rerenders them as In Library', async () => {
+  /**
+   * The two `BookSeriesMemberCard` interfaces are hand-mirrored across the client/server boundary,
+   * so nothing else in the suite can catch the server projecting a field the client never reads.
+   * This asserts the literal wire body and the badge it produces in one pass (#2541).
+   */
+  it('carries libraryBucket from the real GET body into the rendered badge', async () => {
+    await e2e.db.insert(books).values({
+      publicId: generatePublicId('bk'),
+      title: "Caliban's War",
+      seriesName: 'The Expanse',
+      seriesPosition: 2,
+      status: 'wanted',
+    });
+
+    renderCard();
+
+    expect(await screen.findByText('Wanted', {}, { timeout: 5000 })).toBeInTheDocument();
+
+    const seriesGet = apiCalls.find((c) => c.method === 'GET' && c.url === `/api/books/${anchorId}/series`);
+    expect(seriesGet).toBeDefined();
+    const members = (JSON.parse(seriesGet!.responseBody) as {
+      series: { members: { title: string; libraryBucket: string | null }[] };
+    }).series.members;
+    expect(members.map((m) => [m.title, m.libraryBucket])).toEqual([
+      ['Leviathan Wakes', 'imported'],
+      ["Caliban's War", 'wanted'],
+      ['Gods of Risk', null],
+      ["Abaddon's Gate", null],
+    ]);
+
+    const wantedRow = screen.getAllByTestId('series-card-member')
+      .find((row) => row.textContent?.includes("Caliban's War"));
+    expect(wantedRow).toHaveAttribute('data-bucket', 'wanted');
+    expect(wantedRow).toHaveAttribute('data-in-library', 'true');
+  });
+
+  it('adds every unowned major member and rerenders them with their own status bucket', async () => {
     const user = userEvent.setup();
     renderCard();
 
@@ -218,13 +255,15 @@ describe('Add All — connected client → route → database → rerender (#220
     await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(1));
     expect(vi.mocked(toast.success).mock.calls[0]?.[0] as string).toContain('2 added');
 
-    // Invalidation refetched the card, and the new members now read In Library.
+    // Invalidation refetched the card, and the new members are owned — as `wanted` rows, not
+    // as imported ones, which is exactly what their bucket badge now says (#2541).
     await waitFor(() => {
-      expect(screen.getAllByText('In Library')).toHaveLength(3);
+      expect(screen.getAllByText('Wanted')).toHaveLength(2);
     }, { timeout: 5000 });
+    expect(screen.getAllByText('In Library')).toHaveLength(1);
     const memberRows = screen.getAllByTestId('series-card-member');
     const owned = memberRows
-      .filter((row) => within(row).queryByText('In Library') !== null)
+      .filter((row) => row.getAttribute('data-in-library') === 'true')
       .map((row) => row.textContent);
     expect(owned.some((t) => t?.includes("Caliban's War"))).toBe(true);
     expect(owned.some((t) => t?.includes("Abaddon's Gate"))).toBe(true);
