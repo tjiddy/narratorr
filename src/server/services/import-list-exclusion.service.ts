@@ -25,8 +25,8 @@ export interface ExclusionProvenance {
   importListName: string | null;
 }
 
-/** The insert shape every ledger writer goes through. */
-export type ExclusionValues = typeof importListExclusions.$inferInsert;
+/** The insert shape every ledger writer goes through, with `kind` narrowed from optional to given. */
+type ExclusionValues = typeof importListExclusions.$inferInsert & { kind: ImportListExclusionKind };
 
 function toDedupIdentity(row: ImportListExclusionRow): DedupIdentity {
   return { title: row.title, asin: row.asin, authorSlug: row.authorSlug, authorName: row.authorName };
@@ -109,7 +109,9 @@ export class ImportListExclusionService {
   }
 
   /**
-   * The gate's read: the matched row rather than a boolean, because the refusal reports its id.
+   * The gate's read: the matched row rather than a boolean, because the refusal reports its id and
+   * its kind. Kind-agnostic on purpose — both kinds mean "no list may add this", and what the
+   * caller does with the distinction (count it or not) is the caller's rule.
    *
    * Deliberately NOT transactional. It runs once per synced item on the hot path, and it is
    * advisory — an exclusion recorded after this read simply admits one more book that the next
@@ -166,7 +168,7 @@ export class ImportListExclusionService {
     identity: DedupIdentity,
     provenance: ExclusionProvenance,
   ): Promise<ExclusionRecordResult> {
-    return await this.recordExclusion(identity, provenance, 'added');
+    return this.recordExclusion(identity, provenance, 'added');
   }
 
   /**
@@ -181,7 +183,7 @@ export class ImportListExclusionService {
     identity: DedupIdentity,
     provenance: ExclusionProvenance,
     kind: ImportListExclusionKind,
-  ): ExclusionValues & { kind: ImportListExclusionKind } {
+  ): ExclusionValues {
     return {
       asin: canonicalizeAsin(identity.asin),
       title: identity.title,
