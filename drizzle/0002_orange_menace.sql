@@ -1,0 +1,1 @@
+ALTER TABLE `import_list_exclusions` ADD `kind` text DEFAULT 'deleted' NOT NULL;

@@ -8,6 +8,7 @@ import type { BookRejectionService } from '../services/book-rejection.service.js
 import type { BookDeletionService } from '../services/book-deletion.service.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
+import type { ImportListExclusionService } from '../services/import-list-exclusion.service.js';
 export interface BookRouteDeps {
   bookService: BookService;
   bookListService: BookListService;
@@ -28,6 +29,7 @@ export interface BookRouteDeps {
   metadataService: MetadataService;
   companionEbook: CompanionBookReconcileTrigger;
   connectorService?: ConnectorService;
+  importListExclusionService?: ImportListExclusionService;
 }
 import { searchAndGrabForBook, buildNarratorPriority, buildSearchFilterOptions } from '../services/search-pipeline.js';
 import { z } from 'zod';

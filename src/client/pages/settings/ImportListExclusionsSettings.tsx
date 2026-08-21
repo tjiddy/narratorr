@@ -5,22 +5,63 @@ import { api, type ImportListExclusion } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { Pagination } from '@/components/Pagination';
+import { Tabs, type TabItem } from '@/components/Tabs';
 import { usePagination } from '@/hooks/usePagination';
 import { DEFAULT_LIMITS } from '@shared/schemas/common.js';
+import type { ImportListExclusionKind } from '@shared/schemas/import-list-exclusion.js';
 import { LoadingSpinner, XCircleIcon } from '@/components/icons';
 import { ImportListExclusionRow } from './ImportListExclusionRow';
+
+const KIND_TABS: TabItem[] = [
+  { value: 'deleted', label: 'Deleted' },
+  { value: 'added', label: 'Added by a list' },
+];
+
+const EMPTY_STATE: Record<ImportListExclusionKind, { heading: string; detail: string }> = {
+  deleted: {
+    heading: 'No deleted books',
+    detail: "Deleting a book that an import list added excludes it, so the list won't add it back",
+  },
+  added: {
+    heading: 'No books added by a list',
+    detail: 'When a list adds a book it records it here, so renaming the book later cannot make the list add it a second time',
+  },
+};
+
+const REMOVE_CONSEQUENCE: Record<ImportListExclusionKind, string> = {
+  deleted: 'An import list may add it again on its next sync.',
+  added: 'The import list will treat this book as new and may add it again.',
+};
+
+/**
+ * Which kind the previous query was for, read from its key rather than from a row.
+ *
+ * A row-derived kind (`data[0]?.kind`) cannot answer for an EMPTY page — precisely the case that
+ * would otherwise slip the other tab's placeholder through.
+ */
+function kindOfQueryKey(key: readonly unknown[] | undefined): ImportListExclusionKind | undefined {
+  const params = key?.[1];
+  if (typeof params !== 'object' || params === null) return undefined;
+  const kind = (params as { kind?: unknown }).kind;
+  return kind === 'added' || kind === 'deleted' ? kind : undefined;
+}
 
 export function ImportListExclusionsSettings() {
   const queryClient = useQueryClient();
   const [deleteTarget, setDeleteTarget] = useState<ImportListExclusion | null>(null);
+  const [kind, setKind] = useState<ImportListExclusionKind>('deleted');
   const pagination = usePagination(DEFAULT_LIMITS.importListExclusions);
   const { clampToTotal } = pagination;
 
-  const paginationParams = { limit: pagination.limit, offset: pagination.offset };
+  const paginationParams = { limit: pagination.limit, offset: pagination.offset, kind };
   const { data: response, isLoading, isError, refetch } = useQuery({
     queryKey: queryKeys.importListExclusions(paginationParams),
     queryFn: () => api.getImportListExclusions(paginationParams),
-    placeholderData: (previousData) => previousData,
+    // Kind-scoped: page-to-page navigation within one kind stays spinner-free, but a kind change
+    // withholds the placeholder so the newly selected tab can never render the other one's rows,
+    // total or pagination — not even for the pending window.
+    placeholderData: (previousData, previousQuery) =>
+      kindOfQueryKey(previousQuery?.queryKey) === kind ? previousData : undefined,
   });
   const entries = response?.data ?? [];
   const total = response?.total ?? 0;
@@ -40,6 +81,8 @@ export function ImportListExclusionsSettings() {
     },
   });
 
+  const empty = EMPTY_STATE[kind];
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
@@ -51,6 +94,13 @@ export function ImportListExclusionsSettings() {
           <p className="text-sm text-muted-foreground">Books your import lists won't add again</p>
         </div>
       </div>
+
+      <Tabs
+        tabs={KIND_TABS}
+        value={kind}
+        onChange={(value) => setKind(value as ImportListExclusionKind)}
+        ariaLabel="Exclusion kind"
+      />
 
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
@@ -72,10 +122,8 @@ export function ImportListExclusionsSettings() {
       ) : entries.length === 0 ? (
         <div className="glass-card rounded-2xl p-8 sm:p-12 text-center">
           <XCircleIcon className="w-12 h-12 text-muted-foreground/40 mx-auto mb-4" />
-          <p className="text-lg font-medium">No exclusions</p>
-          <p className="text-sm text-muted-foreground mt-1">
-            Deleting a book that an import list added excludes it, so the list won't add it back
-          </p>
+          <p className="text-lg font-medium">{empty.heading}</p>
+          <p className="text-sm text-muted-foreground mt-1">{empty.detail}</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -101,7 +149,9 @@ export function ImportListExclusionsSettings() {
       <ConfirmModal
         isOpen={deleteTarget !== null}
         title="Remove Exclusion"
-        message={`Remove the exclusion for "${deleteTarget?.title}"? An import list may add it again on its next sync.`}
+        message={deleteTarget
+          ? `Remove the exclusion for "${deleteTarget.title}"? ${REMOVE_CONSEQUENCE[deleteTarget.kind]}`
+          : ''}
         onConfirm={() => { if (deleteTarget) { deleteMutation.mutate(deleteTarget.id); setDeleteTarget(null); } }}
         onCancel={() => setDeleteTarget(null)}
       />
