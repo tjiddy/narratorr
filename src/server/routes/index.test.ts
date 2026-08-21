@@ -45,6 +45,9 @@ vi.mock('../services/quality-gate-orchestrator.js', () => ({
   QualityGateOrchestrator: vi.fn().mockImplementation(function(this: Record<string, unknown>) { this.wire = vi.fn(); }),
 }));
 vi.mock('../services/import-list.service.js', () => ({ ImportListService: vi.fn() }));
+vi.mock('../services/import-list-add-ledger-backfill.js', () => ({
+  backfillImportListAddLedger: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('../services/library-scan.service.js', () => ({
   LibraryScanService: vi.fn().mockImplementation(function(this: Record<string, unknown>) {
     this.wire = vi.fn();
@@ -412,6 +415,41 @@ describe('createServices', () => {
     expect(callOrder).toEqual(['v2', 'maxConcurrent']);
   });
 
+
+  // AC24 of #2530: the backfill must land before `startJobs` arms the import-list cron, and
+  // `createServices` is the only place that ordering can be asserted structurally — `index.ts`
+  // awaits it (`src/server/index.ts:131`) before `startRuntime` (`:169`).
+  it('awaits the add-ledger backfill during construction, after the settings migrations', async () => {
+    const { SettingsService, ImportListExclusionService } = await import('../services/index.js');
+    const { backfillImportListAddLedger } = await import('../services/import-list-add-ledger-backfill.js');
+
+    const callOrder: string[] = [];
+    const maxConcurrentMigrate = vi.fn().mockImplementation(() => { callOrder.push('maxConcurrent'); return Promise.resolve(); });
+    vi.mocked(backfillImportListAddLedger).mockImplementation(() => { callOrder.push('backfill'); return Promise.resolve(); });
+
+    vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
+      this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
+      this.bootstrapProcessingDefaults = vi.fn().mockResolvedValue(undefined);
+      this.migrateLanguageSettings = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateRejectWordsAbridgedDefault = vi.fn().mockResolvedValue(undefined);
+      this.migrateMaxConcurrentProcessingDefaults = maxConcurrentMigrate;
+    } as never);
+
+    const { createServices } = await import('./index.js');
+    const db = {} as unknown as Db;
+    const log = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      child: vi.fn().mockReturnThis(), trace: vi.fn(), fatal: vi.fn(),
+    } as unknown as FastifyBaseLogger;
+
+    const services = await createServices(db, log);
+
+    expect(callOrder).toEqual(['maxConcurrent', 'backfill']);
+    expect(backfillImportListAddLedger).toHaveBeenCalledOnce();
+    expect(backfillImportListAddLedger).toHaveBeenCalledWith(db, services.importListExclusion, log);
+    expect(vi.mocked(ImportListExclusionService).mock.instances).toHaveLength(1);
+  });
 
   // Required cyclic dependencies use wire(deps) after construction (#739).
   it('calls wire() once on each required-wiring service with the correct cyclic deps', async () => {
