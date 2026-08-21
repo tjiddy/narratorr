@@ -489,4 +489,215 @@ describe('HardcoverClient', () => {
       await expect(new HardcoverClient('K').getSeriesMembers('A', 'X')).rejects.toBeInstanceOf(TransientError);
     });
   });
+
+  // `fetchMock` is a fresh vi.fn() per test (beforeEach), so the *Once() queues below cannot
+  // leak a 429 into a neighbouring case.
+  describe('429 retry-window normalization (#2537 AC1)', () => {
+    afterEach(() => { vi.useRealTimers(); });
+
+    async function rateLimitFrom(init: ResponseInit): Promise<RateLimitError> {
+      fetchMock.mockResolvedValueOnce(new Response('rate-limited', { status: 429, statusText: 'Too Many Requests', ...init }));
+      const error: unknown = await new HardcoverClient('K').getSeriesMembers('A', 'X').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(RateLimitError);
+      return error as RateLimitError;
+    }
+
+    it('honors delay-seconds', async () => {
+      expect((await rateLimitFrom({ headers: { 'Retry-After': '5' } })).retryAfterMs).toBe(5000);
+    });
+
+    it('honors an HTTP-date Retry-After instead of falling back to the default', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const header = new Date(Date.now() + 30_000).toUTCString();
+
+      expect((await rateLimitFrom({ headers: { 'Retry-After': header } })).retryAfterMs).toBeGreaterThan(29_000);
+      expect((await rateLimitFrom({ headers: { 'Retry-After': header } })).retryAfterMs).toBeLessThanOrEqual(30_000);
+    });
+
+    it('rejects a delay-seconds token with trailing garbage in favour of the default', async () => {
+      expect((await rateLimitFrom({ headers: { 'Retry-After': '120abc' } })).retryAfterMs).toBe(60_000);
+    });
+
+    it.each([
+      ['zero seconds', { 'Retry-After': '0' }, 0],
+      ['a negative window', { 'Retry-After': '-5' }, 60_000],
+      ['no header at all', {}, 60_000],
+      ['an overflowing digit run', { 'Retry-After': `1${'0'.repeat(306)}` }, 60_000],
+    ])('yields a finite, non-negative window for %s', async (_label, headers, expected) => {
+      const { retryAfterMs } = await rateLimitFrom({ headers });
+      expect(retryAfterMs).toBe(expected);
+      expect(Number.isFinite(retryAfterMs)).toBe(true);
+      expect(retryAfterMs).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  describe('structured error bodies (#2537 AC4/AC4a)', () => {
+    function respondWith(body: BodyInit | null, init: ResponseInit): void {
+      fetchMock.mockResolvedValueOnce(new Response(body, init));
+    }
+
+    async function thrownFrom(body: BodyInit | null, init: ResponseInit): Promise<unknown> {
+      respondWith(body, init);
+      return new HardcoverClient('K').getSeriesMembers('A', 'X').catch((e: unknown) => e);
+    }
+
+    it('surfaces an insufficient_scope 403 with its code and scope', async () => {
+      const error = await thrownFrom(
+        JSON.stringify({ error: 'insufficient_scope', error_description: 'Token lacks a scope', scope: 'read:series' }),
+        { status: 403, statusText: 'Forbidden' },
+      );
+
+      expect(error).toBeInstanceOf(MetadataError);
+      expect((error as MetadataError).message).toContain('403');
+      expect((error as MetadataError).message).toContain('insufficient_scope');
+      expect((error as MetadataError).message).toContain('read:series');
+    });
+
+    it('surfaces an invalid_token 401 with its code', async () => {
+      const error = await thrownFrom('{"error":"invalid_token"}', { status: 401, statusText: 'Unauthorized' });
+
+      expect(error).toBeInstanceOf(MetadataError);
+      expect((error as MetadataError).message).toContain('401');
+      expect((error as MetadataError).message).toContain('invalid_token');
+    });
+
+    it('names insufficient_scope with no scope field and prints no undefined/null placeholder', async () => {
+      const error = await thrownFrom('{"error":"insufficient_scope"}', { status: 403, statusText: 'Forbidden' });
+
+      expect((error as MetadataError).message).toContain('insufficient_scope');
+      expect((error as MetadataError).message).not.toMatch(/undefined|null/);
+    });
+
+    it('caps an over-long field value rather than echoing the whole body', async () => {
+      const error = await thrownFrom(
+        JSON.stringify({ error_description: 'y'.repeat(5000) }),
+        { status: 400, statusText: 'Bad Request' },
+      );
+
+      expect((error as MetadataError).message.length).toBeLessThan(400);
+      expect((error as MetadataError).message).toContain('400');
+    });
+
+    describe('bodies that carry no usable detail keep the pre-change message byte-for-byte', () => {
+      const TRANSIENT_BASELINE = 'hardcover transient failure: HTTP 500: Internal Server Error';
+      const METADATA_BASELINE = 'Hardcover API returned 403: Forbidden';
+
+      it('does not leak an HTML outage page into the message', async () => {
+        const error = await thrownFrom(
+          '<!DOCTYPE html><html><body>Hardcover is down</body></html>',
+          { status: 500, statusText: 'Internal Server Error' },
+        );
+
+        expect(error).toBeInstanceOf(TransientError);
+        expect((error as TransientError).message).toBe(TRANSIENT_BASELINE);
+        expect((error as TransientError).message).not.toContain('<html');
+        expect((error as TransientError).message).not.toContain('<!DOCTYPE');
+      });
+
+      it.each([
+        ['undocumented keys', '{"foo":"bar"}'],
+        ['an empty body', ''],
+        ['an empty object', '{}'],
+        ['a JSON array', '[]'],
+        ['a JSON string primitive', '"nope"'],
+        ['a JSON number primitive', '42'],
+      ])('%s → the 5xx transient baseline', async (_label, body) => {
+        const error = await thrownFrom(body, { status: 500, statusText: 'Internal Server Error' });
+        expect(error).toBeInstanceOf(TransientError);
+        expect((error as TransientError).message).toBe(TRANSIENT_BASELINE);
+      });
+
+      it.each([
+        ['undocumented keys', '{"foo":"bar"}'],
+        ['an empty body', ''],
+        ['an empty object', '{}'],
+        ['a JSON array', '[]'],
+        ['a JSON string primitive', '"nope"'],
+        ['a JSON number primitive', '42'],
+      ])('%s → the non-429 4xx baseline', async (_label, body) => {
+        const error = await thrownFrom(body, { status: 403, statusText: 'Forbidden' });
+        expect(error).toBeInstanceOf(MetadataError);
+        expect((error as MetadataError).message).toBe(METADATA_BASELINE);
+      });
+
+      it('drops every documented key whose value is not a string', async () => {
+        const error = await thrownFrom(
+          JSON.stringify({ error: { a: 1 }, error_description: ['x'], scope: 42, message: null }),
+          { status: 403, statusText: 'Forbidden' },
+        );
+
+        const message = (error as MetadataError).message;
+        expect(message).toBe(METADATA_BASELINE);
+        expect(message).not.toContain('[object Object]');
+        expect(message).not.toContain('{"a":1}');
+        expect(message).not.toContain('"x"');
+        expect(message).not.toContain('42');
+      });
+
+      it('still reports the status when the body stream errors after headers', async () => {
+        const broken = new ReadableStream({
+          start(controller) { controller.error(new Error('stream broke')); },
+        });
+        fetchMock.mockResolvedValueOnce(new Response(broken, { status: 500, statusText: 'Internal Server Error' }));
+
+        const error: unknown = await new HardcoverClient('K').getSeriesMembers('A', 'X').catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(TransientError);
+        expect((error as TransientError).message).toBe(TRANSIENT_BASELINE);
+        expect((error as TransientError).message).not.toContain('stream broke');
+      });
+    });
+
+    it.each([401, 403, 500])('keeps the numeric status %i in the message for the settings/health mapper', async (status) => {
+      const error = await thrownFrom('{"error":"invalid_token"}', { status, statusText: 'Whatever' });
+      expect((error as Error).message).toContain(String(status));
+    });
+
+    describe('the 429 arm is deliberately exempt from status and suffix', () => {
+      it('throws the fixed RateLimitError message and carries only the window', async () => {
+        const error = await thrownFrom(
+          JSON.stringify({ error: 'rate_limited', error_description: 'slow down' }),
+          { status: 429, statusText: 'Too Many Requests', headers: { 'Retry-After': '5' } },
+        );
+
+        expect(error).toBeInstanceOf(RateLimitError);
+        expect((error as RateLimitError).message).toBe('hardcover rate limit exceeded, retry after 5s');
+        expect((error as RateLimitError).message).not.toContain('429');
+        expect((error as RateLimitError).message).not.toContain('slow down');
+        expect((error as RateLimitError).retryAfterMs).toBe(5000);
+      });
+
+      it('classifies a top_level_limit_exceeded 429 as an actionable MetadataError instead', async () => {
+        const error = await thrownFrom(
+          '{"error":"top_level_limit_exceeded"}',
+          { status: 429, statusText: 'Too Many Requests', headers: { 'Retry-After': '5' } },
+        );
+
+        expect(error).toBeInstanceOf(MetadataError);
+        expect(error).not.toBeInstanceOf(RateLimitError);
+        expect((error as MetadataError).message).toContain('429');
+        expect((error as MetadataError).message).toContain('top_level_limit_exceeded');
+      });
+
+      it('keys the structural arm on the code, not the status', async () => {
+        const error = await thrownFrom(
+          '{"error":"top_level_limit_exceeded"}',
+          { status: 400, statusText: 'Bad Request' },
+        );
+
+        expect(error).toBeInstanceOf(MetadataError);
+        expect((error as MetadataError).message).toContain('400');
+        expect((error as MetadataError).message).toContain('top_level_limit_exceeded');
+      });
+    });
+
+    it('leaves a 200 GraphQL envelope on its existing path — the body descriptor never sees it', async () => {
+      fetchMock.mockResolvedValueOnce(buildJsonResponse({ errors: [{ message: 'top_level_limit_exceeded' }] }));
+
+      const error: unknown = await new HardcoverClient('K').getSeriesMembers('A', 'X').catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(MetadataError);
+      expect((error as MetadataError).message).toBe('Hardcover GraphQL error: top_level_limit_exceeded');
+    });
+  });
 });
