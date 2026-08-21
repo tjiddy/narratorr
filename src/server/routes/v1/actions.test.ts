@@ -19,7 +19,9 @@ import type { IndexerService } from '../../services/indexer.service.js';
 import * as searchPipeline from '../../services/search-pipeline.js';
 import { DuplicateDownloadError } from '../../services/download.service.js';
 import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '@core/download-clients/errors.js';
-import { createMockDb, mockDbChain, inject, searchStatus, answeringSearchStatus } from '../../__tests__/helpers.js';
+import { createMockDb, mockDbChain, inject, searchStatus, answeringSearchStatus, captureDeadlineTimers, installMockAppLog } from '../../__tests__/helpers.js';
+import { _resetSearchRegistryForTesting } from '../../services/search-deadline.js';
+import { MAX_SEARCH_RUNGS } from '../../services/search-query-ladder.js';
 import { createMockDbBook, createMockDbAuthor } from '../../__tests__/factories.js';
 import { v1ActionsRoutes } from './actions.js';
 import { releaseV1Schema, encodeReleaseId } from '@shared/schemas/v1/actions.js';
@@ -38,6 +40,7 @@ initializeKey(Buffer.alloc(32, 0x2b));
 const VALID_KEY = 'valid-key';
 const keyHeaders = { 'x-api-key': VALID_KEY };
 const BOOK_ID = 1;
+const SEARCH_URL = '/api/v1/books/bk_test000000000000000/search';
 
 function hydratedBook(overrides?: Record<string, unknown>) {
   return {
@@ -123,6 +126,11 @@ let downloadRows: Array<Record<string, unknown>>;
 
 describe('v1 action routes (search + grab)', () => {
   let app: FastifyInstance;
+  // The real production deadline, parked: `captureDeadlineTimers` passes every other delay through,
+  // so the array length IS the "one timer at exactly SEARCH_DEADLINE_MS" assertion.
+  let armed: Array<() => void>;
+  let logSpies: ReturnType<typeof installMockAppLog>['spies'];
+  let logRestore: () => void;
 
   beforeAll(async () => {
     app = Fastify({ logger: false, routerOptions: { maxParamLength: 2048 } }).withTypeProvider<ZodTypeProvider>();
@@ -138,6 +146,13 @@ describe('v1 action routes (search + grab)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // `inFlightSearches` is module-level: a run parked by an earlier case would turn a later 200
+    // into a 409. Reset on both sides so neither direction of leakage is possible.
+    _resetSearchRegistryForTesting();
+    armed = captureDeadlineTimers();
+    const installed = installMockAppLog(app);
+    logSpies = installed.spies;
+    logRestore = installed.restore;
     (authService.validateApiKey as Mock).mockResolvedValue(true);
     (authService.getStatus as Mock).mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false });
     (bookService.getById as Mock).mockResolvedValue(hydratedBook());
@@ -159,6 +174,12 @@ describe('v1 action routes (search + grab)', () => {
       if (keys.length === 1 && keys[0] === 'id') return mockDbChain(bookRows);
       return mockDbChain(downloadRows);
     });
+  });
+
+  afterEach(() => {
+    logRestore();
+    vi.restoreAllMocks();
+    _resetSearchRegistryForTesting();
   });
 
   describe('POST /api/v1/books/:publicId/search', () => {
@@ -235,6 +256,8 @@ describe('v1 action routes (search + grab)', () => {
         rankingAuthor: 'Brandon Sanderson',
         // #2422 — the executor forwards the rung's apostrophe form; here nothing has one to keep.
         queryWithApostrophes: 'The Way of Kings Brandon Sanderson',
+        // #2527 — the deadline signal is the ONLY addition to this options object.
+        signal: expect.any(AbortSignal),
       });
 
       // The author-dropped transport rung still keeps the canonical author for ranking.
@@ -427,6 +450,333 @@ describe('v1 action routes (search + grab)', () => {
         await app.inject({ method: 'POST', url: '/api/v1/books/bk_test000000000000000/search', headers: keyHeaders });
 
         expect(spy.mock.calls[0]![1]).toBeUndefined();
+      });
+    });
+
+    // #2527 — the sixth registration point on the shared per-book search registry. Nothing here
+    // doubles `withSearchDeadline`; the real production timer is parked and fired on demand.
+    describe('#2527 — bounded by the shared per-book search deadline', () => {
+      const searchMock = () => indexerSearchService.searchAllWithStatus as Mock;
+      const search = () => app.inject({ method: 'POST', url: SEARCH_URL, headers: keyHeaders });
+      const optionsOf = (i: number) => searchMock().mock.calls[i]![1] as { signal?: AbortSignal };
+
+      /** Park the ladder on its first rung; the returned function lets the abandoned work settle. */
+      function parkLadder(): () => void {
+        let release!: () => void;
+        const parked = new Promise<void>((resolve) => { release = resolve; });
+        searchMock().mockImplementation(async () => { await parked; return searchStatus([]); });
+        return release;
+      }
+
+      /** Park post-processing at its first outbound call — the seam that discriminates the wrap span. */
+      function parkPostProcessing(): () => void {
+        let release!: () => void;
+        const parked = new Promise<void>((resolve) => { release = resolve; });
+        (indexerService.getLanAllowlist as Mock).mockImplementation(async () => {
+          await parked;
+          return { hostPort: new Set<string>(), hostname: new Set<string>() };
+        });
+        return release;
+      }
+
+      /**
+       * The registry holds the WORK promise, so a 504's slot frees only once the abandoned run
+       * settles — hence the retry loop. A fresh timer plus a fresh ladder call is what separates
+       * "served again" from "answered 409 again".
+       */
+      async function expectFreshLadderServed() {
+        searchMock().mockResolvedValue(searchStatus([]));
+        (indexerService.getLanAllowlist as Mock).mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() });
+        (blacklistService.getBlacklistedIdentifiers as Mock).mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() });
+        const armedBefore = armed.length;
+        const callsBefore = searchMock().mock.calls.length;
+
+        await vi.waitFor(async () => {
+          expect((await search()).statusCode).toBe(200);
+        });
+
+        expect(armed.length).toBeGreaterThan(armedBefore);
+        expect(searchMock().mock.calls.length).toBeGreaterThan(callsBefore);
+      }
+
+      it('arms exactly one deadline timer, at exactly SEARCH_DEADLINE_MS, for an admitted request', async () => {
+        const res = await search();
+
+        expect(res.statusCode).toBe(200);
+        expect(armed).toHaveLength(1);
+      });
+
+      it('gives every rung an options object carrying a live, non-aborted signal', async () => {
+        await search();
+
+        expect(searchMock()).toHaveBeenCalled();
+        for (let i = 0; i < searchMock().mock.calls.length; i++) {
+          // `not.objectContaining({ signal: anything() })` and `toHaveBeenCalledWith` both pass
+          // against a present-but-undefined key; only `toHaveProperty` sees it.
+          expect(optionsOf(i)).toHaveProperty('signal');
+          expect(optionsOf(i).signal).toBeInstanceOf(AbortSignal);
+          expect(optionsOf(i).signal!.aborted).toBe(false);
+        }
+      });
+
+      it('hands one and the same signal instance to every rung of a multi-rung ladder', async () => {
+        // A colon-bearing title is load-bearing: the ladder derives rungs from colon segments, so a
+        // colonless title yields 2 rungs however many words it has.
+        (bookService.getById as Mock).mockResolvedValue({
+          ...hydratedBook(),
+          title: 'Star Wars: The High Republic: Haunted Starlight',
+        });
+
+        await search();
+
+        // Pinned so a change to the variant generator reds the fixture rather than silently
+        // shortening the run this case depends on.
+        expect(searchMock().mock.calls).toHaveLength(MAX_SEARCH_RUNGS);
+        const signals = searchMock().mock.calls.map((c) => (c[1] as { signal?: AbortSignal }).signal);
+        expect(new Set(signals).size).toBe(1);
+        expect(signals[0]).toBeInstanceOf(AbortSignal);
+      });
+
+      it('answers 504 SEARCH_TIMEOUT when the ladder outruns the deadline', async () => {
+        const release = parkLadder();
+        const pending = search();
+        await vi.waitFor(() => expect(searchMock()).toHaveBeenCalledTimes(1));
+
+        armed[0]!();
+        const res = await pending;
+
+        expect(res.statusCode).toBe(504);
+        expect(res.json()).toEqual({ error: { code: 'SEARCH_TIMEOUT', message: expect.any(String) } });
+        expect(res.json()).not.toEqual({ data: [], total: 0 });
+        expect(res.json().error.code).not.toBe('INTERNAL_ERROR');
+        release();
+      });
+
+      it('aborts the signal the executor carries when the deadline expires', async () => {
+        const release = parkLadder();
+        const pending = search();
+        await vi.waitFor(() => expect(searchMock()).toHaveBeenCalledTimes(1));
+        expect(optionsOf(0).signal!.aborted).toBe(false);
+
+        armed[0]!();
+        await pending;
+
+        // This is what evicts the ABB/MAM throttle and solver-slot waiters.
+        expect(optionsOf(0).signal!.aborted).toBe(true);
+        release();
+      });
+
+      it('answers 504 when post-processing outruns the deadline after the ladder resolved', async () => {
+        // Narrowing the wrap to the ladder alone leaves the ladder-expiry case green and reds only
+        // this one: post-processing fetches the LAN allowlist and NZB headers.
+        const release = parkPostProcessing();
+        const pending = search();
+        await vi.waitFor(() => expect(indexerService.getLanAllowlist as Mock).toHaveBeenCalledTimes(1));
+
+        armed[0]!();
+        const res = await pending;
+
+        expect(res.statusCode).toBe(504);
+        expect(res.json()).toEqual({ error: { code: 'SEARCH_TIMEOUT', message: expect.any(String) } });
+        release();
+      });
+
+      it('answers 409 SEARCH_IN_PROGRESS for a second request while the first holds the book', async () => {
+        const release = parkLadder();
+        const first = search();
+        await vi.waitFor(() => expect(searchMock()).toHaveBeenCalledTimes(1));
+
+        const second = await search();
+
+        expect(second.statusCode).toBe(409);
+        expect(second.json()).toEqual({ error: { code: 'SEARCH_IN_PROGRESS', message: expect.any(String) } });
+        expect(second.json()).not.toHaveProperty('data');
+        // No second ladder, no second post-processing pass, and no second timer.
+        expect(searchMock()).toHaveBeenCalledTimes(1);
+        expect(indexerService.getLanAllowlist as Mock).not.toHaveBeenCalled();
+        expect(armed).toHaveLength(1);
+
+        armed[0]!();
+        expect((await first).statusCode).toBe(504);
+        release();
+      });
+
+      it('logs the 409 refusal once at info with bookId, worded apart from the pipeline and retry lines', async () => {
+        const release = parkLadder();
+        const first = search();
+        await vi.waitFor(() => expect(searchMock()).toHaveBeenCalledTimes(1));
+
+        await search();
+
+        const refusals = logSpies.info.mock.calls.filter(
+          ([, msg]) => typeof msg === 'string' && /already has a search in flight/.test(msg),
+        );
+        expect(refusals).toHaveLength(1);
+        const [context, message] = refusals[0] as [Record<string, unknown>, string];
+        expect(context).toMatchObject({ bookId: BOOK_ID });
+        expect(message).toContain('v1 discovery search');
+        // The two sibling surfaces a debug trace has to tell this apart from.
+        expect(message).not.toBe('Search skipped — this book already has one in flight');
+        expect(message).not.toBe('Retry search skipped — this book already has one in flight');
+
+        armed[0]!();
+        await first;
+        release();
+      });
+
+      it.each([
+        {
+          arm: 'an unknown publicId (404)',
+          url: '/api/v1/books/bk_nope/search',
+          status: 404,
+          code: 'NOT_FOUND',
+          arrange: () => { bookRows = []; },
+        },
+        {
+          arm: 'a %20-encoded publicId (400)',
+          url: '/api/v1/books/%20/search',
+          status: 400,
+          code: 'BAD_REQUEST',
+          arrange: () => { /* strict param schema rejects before resolution */ },
+        },
+        {
+          arm: 'a %09-encoded publicId (400)',
+          url: '/api/v1/books/%09/search',
+          status: 400,
+          code: 'BAD_REQUEST',
+          arrange: () => { /* strict param schema rejects before resolution */ },
+        },
+        {
+          arm: 'a query that normalizes to empty (400)',
+          url: SEARCH_URL,
+          status: 400,
+          code: 'BAD_REQUEST',
+          arrange: () => {
+            (bookService.getById as Mock).mockResolvedValue({ ...createMockDbBook({ id: BOOK_ID, title: '...' }), authors: [] });
+          },
+        },
+      ])('rejects at the pre-check for $arm without registering the book or arming a timer', async ({ url, status, code, arrange }) => {
+        arrange();
+
+        const res = await app.inject({ method: 'POST', url, headers: keyHeaders });
+
+        expect(res.statusCode).toBe(status);
+        expect(res.json()).toEqual({ error: { code, message: expect.any(String) } });
+        expect(armed).toHaveLength(0);
+        expect(searchMock()).not.toHaveBeenCalled();
+
+        // The book was never registered, so the very next valid request is served, not gated.
+        bookRows = [{ id: BOOK_ID }];
+        (bookService.getById as Mock).mockResolvedValue(hydratedBook());
+        const next = await search();
+        expect(next.statusCode).toBe(200);
+        expect(armed).toHaveLength(1);
+      });
+
+      it.each([
+        {
+          arm: '200',
+          run: async () => { expect((await search()).statusCode).toBe(200); },
+        },
+        {
+          arm: '504',
+          run: async () => {
+            const release = parkLadder();
+            const pending = search();
+            await vi.waitFor(() => expect(searchMock()).toHaveBeenCalledTimes(1));
+            armed[0]!();
+            expect((await pending).statusCode).toBe(504);
+            // The abandoned run keeps the slot until it finally settles.
+            release();
+          },
+        },
+        {
+          arm: '500 from a rejecting collaborator',
+          run: async () => {
+            searchMock().mockResolvedValue(searchStatus([searchResult()]));
+            (blacklistService.getBlacklistedIdentifiers as Mock).mockRejectedValue(new Error('blacklist unavailable'));
+            expect((await search()).statusCode).toBe(500);
+          },
+        },
+      ])('releases the registry on the $arm arm, so the next request runs a fresh ladder', async ({ run }) => {
+        await run();
+
+        await expectFreshLadderServed();
+      });
+
+      it('keeps a non-deadline rejection a 500 INTERNAL_ERROR — not a 504 and not a 409', async () => {
+        searchMock().mockResolvedValue(searchStatus([searchResult()]));
+        (blacklistService.getBlacklistedIdentifiers as Mock).mockRejectedValue(new Error('blacklist unavailable'));
+
+        const res = await search();
+
+        expect(res.statusCode).toBe(500);
+        expect(res.json()).toEqual({ error: { code: 'INTERNAL_ERROR', message: expect.any(String) } });
+        // The catch discriminates on `SearchDeadlineError`, never on an error shape or message.
+        expect(res.statusCode).not.toBe(504);
+        expect(res.statusCode).not.toBe(409);
+      });
+
+      it('keeps the three empty-ish outcomes distinguishable: answered zero 200, collision 409, expiry 504', async () => {
+        // A genuine answered zero — every rung responded and found nothing.
+        searchMock().mockResolvedValue(searchStatus([], { succeeded: 2 }));
+        const zero = await search();
+        expect(zero.statusCode).toBe(200);
+        expect(zero.json()).toEqual({ data: [], total: 0 });
+
+        const rungsBefore = searchMock().mock.calls.length;
+        const timersBefore = armed.length;
+        const release = parkLadder();
+        const parked = search();
+        await vi.waitFor(() => expect(searchMock().mock.calls.length).toBe(rungsBefore + 1));
+
+        const collision = await search();
+        expect(collision.statusCode).toBe(409);
+        expect(collision.json().error.code).toBe('SEARCH_IN_PROGRESS');
+
+        armed[timersBefore]!();
+        const expiry = await parked;
+        expect(expiry.statusCode).toBe(504);
+        expect(expiry.json().error.code).toBe('SEARCH_TIMEOUT');
+        release();
+      });
+
+      it.each([
+        { arm: 'authors absent', book: () => ({ ...createMockDbBook({ id: BOOK_ID }), authors: undefined }) },
+        { arm: 'authors empty', book: () => ({ ...createMockDbBook({ id: BOOK_ID }), authors: [] }) },
+        // `books.duration` is minutes; the quality path converts to seconds.
+        { arm: 'duration null', book: () => hydratedBook({ audioDuration: null, duration: null }) },
+        { arm: 'duration in minutes', book: () => hydratedBook({ audioDuration: null, duration: 600 }) },
+      ])('serves a bounded 200 with the envelope unchanged when $arm', async ({ book }) => {
+        (bookService.getById as Mock).mockResolvedValue(book());
+
+        const res = await search();
+
+        expect(res.statusCode).toBe(200);
+        expect(Object.keys(res.json()).sort()).toEqual(['data', 'total']);
+        expect(armed).toHaveLength(1);
+        expect(optionsOf(0)).toHaveProperty('signal');
+      });
+
+      // The *declaration* of these two statuses is observed by typecheck (`reply.status()` is
+      // narrowed to the response map's keys) and by the OpenAPI suite; this case observes the
+      // bodies themselves — strict-envelope-clean, with no id or URL riding along.
+      it('serializes the 409 and 504 bodies clean against the strict v1 error envelope', async () => {
+        const release = parkLadder();
+        const first = search();
+        await vi.waitFor(() => expect(searchMock()).toHaveBeenCalledTimes(1));
+
+        const collision = await search();
+        armed[0]!();
+        const expiry = await first;
+
+        for (const res of [collision, expiry]) {
+          expect(v1ErrorEnvelopeSchema.parse(res.json())).toBeTruthy();
+          for (const leak of ['data', 'total', 'bookId', 'publicId', 'downloadUrl']) {
+            expect(res.json()).not.toHaveProperty(leak);
+          }
+        }
+        release();
       });
     });
   });

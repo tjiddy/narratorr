@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { eq } from 'drizzle-orm';
 import type { Db } from '@db/index.js';
@@ -13,9 +13,11 @@ import type { DownloadService } from '../../services/download.service.js';
 import { DuplicateDownloadError } from '../../services/download-errors.js';
 import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '@core/download-clients/errors.js';
 import { resolveBookQualityInputs } from '@core/utils/index.js';
+import { SEARCH_DEADLINE_MS } from '@core/utils/constants.js';
 import { buildSearchQuery, postProcessSearchResults } from '../../services/search-pipeline.js';
 import { buildQueryLadder, runQueryLadder } from '../../services/search-query-ladder.js';
 import { createAggregateExecutor } from '../../services/search-ladder-execution.js';
+import { withSearchDeadline, SearchDeadlineError } from '../../services/search-deadline.js';
 import { NOOP_SINK } from '../../services/search-event-sink.js';
 import { resolveByPublicId } from '../../utils/public-id.js';
 import { downloadV1Schema, toDownloadV1 } from '@shared/schemas/v1/downloads.js';
@@ -135,6 +137,58 @@ function mapGrabError(error: unknown, reply: FastifyReply): FastifyReply | null 
   return null;
 }
 
+type ResolvedBook = Awaited<ReturnType<typeof resolveBookOr404>>;
+
+/** `withSearchDeadline` already spends `null` on the collision, so the expiry needs its own
+ * discriminator; a const-asserted string keeps the union narrowable without a new type. */
+const SEARCH_TIMED_OUT = 'timed_out';
+
+type V1DiscoveryOutcome =
+  | Awaited<ReturnType<typeof postProcessSearchResults>>
+  | typeof SEARCH_TIMED_OUT
+  | null;
+
+/**
+ * The sixth registration point on the shared per-book registry. The wrap covers the ladder
+ * *through* post-processing because the latter fetches the LAN allowlist and NZB headers — stopping
+ * at the ladder would leave a real unbounded tail. The pure projection tail stays outside so the
+ * slot frees at the last I/O rather than after CPU work.
+ */
+async function runV1DiscoverySearch(
+  book: ResolvedBook,
+  deps: V1ActionsRouteDeps,
+  log: FastifyBaseLogger,
+): Promise<V1DiscoveryOutcome> {
+  return withSearchDeadline(
+    { budgetMs: SEARCH_DEADLINE_MS, bookId: book.id, log },
+    async (signal) => {
+      // Rung 1 derives the same buildSearchQuery(book) text internally; discovery runs the full
+      // relaxation ladder without exposing rung metadata.
+      const ladder = buildQueryLadder({ title: book.title, author: book.authors?.[0]?.name });
+      const { results: allResults } = await runQueryLadder(
+        ladder,
+        createAggregateExecutor(book, deps.indexerSearchService, NOOP_SINK, log, signal),
+      );
+
+      // Match UI filtering/ranking; `total` counts filtered results and duration uses the shared resolver.
+      // This is presentation parity, not enforcement: stable no-TTL tokens are not re-searched on grab.
+      const { durationSeconds } = resolveBookQualityInputs(book);
+      return postProcessSearchResults(
+        allResults,
+        durationSeconds ?? undefined,
+        deps.blacklistService,
+        deps.settingsService,
+        deps.indexerService,
+        log,
+      );
+    },
+  ).catch((error: unknown) => {
+    if (error instanceof SearchDeadlineError) return SEARCH_TIMED_OUT;
+    // Every other rejection keeps today's 500 via `v1ErrorHandler`.
+    throw error;
+  });
+}
+
 /** Keep the v1 error handler encapsulated away from internal routes. `releaseId` stays in the body
  * because Fastify path params default to a 100-character limit. */
 export async function v1ActionsRoutes(app: FastifyInstance, deps: V1ActionsRouteDeps, db: Db): Promise<void> {
@@ -148,40 +202,38 @@ export async function v1ActionsRoutes(app: FastifyInstance, deps: V1ActionsRoute
         {
           schema: {
             params: v1PublicIdParamSchema,
-            response: { 200: v1ListResponseSchema(releaseV1Schema), 400: v1ErrorEnvelopeSchema, 404: v1ErrorEnvelopeSchema },
+            response: {
+              200: v1ListResponseSchema(releaseV1Schema),
+              400: v1ErrorEnvelopeSchema,
+              404: v1ErrorEnvelopeSchema,
+              409: v1ErrorEnvelopeSchema.describe(
+                'Conflict — `code` is `SEARCH_IN_PROGRESS`. Searches are single-flight per book, so the slot is already held by another search for this book: an earlier call to this endpoint, a scheduled or manual library search, an import-list immediate search, or a failed-download retry. No search was started; retry once the in-flight one finishes.',
+              ),
+              504: v1ErrorEnvelopeSchema,
+            },
           },
         },
         async (request, reply) => {
           const book = await resolveBookOr404(db, deps, request.params.publicId);
 
-          // Downstream treats an empty normalized query as no matches, so reject it here.
+          // Downstream treats an empty normalized query as no matches, so reject it here. This is
+          // the only consumer of the local `query`; the ladder re-derives the same rung-1 text.
           const query = buildSearchQuery(book);
           if (!query) {
             return reply.status(400).send(envelope('BAD_REQUEST', 'Search query is empty after normalization'));
           }
 
-          // Discovery runs the full relaxation ladder without exposing rung metadata. Rung 1
-          // derives the same buildSearchQuery(book) text internally — the empty-check above is
-          // the only consumer of the local `query`.
-          const author = book.authors?.[0]?.name;
-          const ladder = buildQueryLadder({ title: book.title, author });
-          const { results: allResults } = await runQueryLadder(
-            ladder,
-            createAggregateExecutor(book, deps.indexerSearchService, NOOP_SINK, request.log),
-          );
-
-          // Match UI filtering/ranking; `total` counts filtered results and duration uses the shared resolver.
-          // This is presentation parity, not enforcement: stable no-TTL tokens are not re-searched on grab.
-          const { durationSeconds } = resolveBookQualityInputs(book);
-          const processed = await postProcessSearchResults(
-            allResults,
-            durationSeconds ?? undefined,
-            deps.blacklistService,
-            deps.settingsService,
-            deps.indexerService,
-            request.log,
-          );
-          return { data: processed.results.map((r) => toReleaseV1(r, signReleaseId)), total: processed.results.length };
+          const outcome = await runV1DiscoverySearch(book, deps, request.log);
+          if (outcome === null) {
+            // Worded apart from the pipeline's and the retry's in-flight lines so a debug trace can
+            // tell which surface refused.
+            request.log.info({ bookId: book.id }, 'v1 discovery search refused — this book already has a search in flight');
+            return reply.status(409).send(envelope('SEARCH_IN_PROGRESS', 'A search for this book is already in progress'));
+          }
+          if (outcome === SEARCH_TIMED_OUT) {
+            return reply.status(504).send(envelope('SEARCH_TIMEOUT', 'Search exceeded its time budget'));
+          }
+          return { data: outcome.results.map((r) => toReleaseV1(r, signReleaseId)), total: outcome.results.length };
         },
       );
 
