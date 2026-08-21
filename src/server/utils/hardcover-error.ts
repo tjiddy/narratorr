@@ -1,4 +1,5 @@
 import { RateLimitError, TransientError, MetadataError } from '@core/metadata/errors.js';
+import { scopeGuidanceSentence } from '@core/utils/hardcover-http.js';
 import { getErrorMessage } from './error-message.js';
 
 /**
@@ -15,12 +16,14 @@ function renderedDetail(message: string, key: string): string | null {
   return entry.slice(prefix.length).replace(/\)$/, '').trim() || null;
 }
 
-/** Names a scope only when the body supplied the dedicated top-level field. */
+/**
+ * Names a scope only when the body supplied the dedicated top-level field. The sentence itself is
+ * the shared `scopeGuidanceSentence` (#2554) so this surface, the health check, and the
+ * import-list Test button cannot drift apart; only the scope EXTRACTION differs here, because a
+ * MetadataError carries the value in its rendered message rather than structurally.
+ */
 function scopeGuidance(message: string): string {
-  const scope = renderedDetail(message, 'scope');
-  return scope
-    ? `Your Hardcover API key is missing a required scope (${scope}). Regenerate the token with that scope enabled.`
-    : 'Your Hardcover API key is missing a required scope. Regenerate the token with the scopes this feature needs.';
+  return scopeGuidanceSentence(renderedDetail(message, 'scope'));
 }
 
 // Keep settings-test and health-check guidance identical.

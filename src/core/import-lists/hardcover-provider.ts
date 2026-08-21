@@ -8,6 +8,7 @@ import {
   createRateLimitBudget,
   fetchHardcoverGraphQL,
   normalizeHardcoverApiKey,
+  scopeGuidanceSentence,
   TOP_LEVEL_LIMIT_EXCEEDED,
   type HardcoverFetchFailure,
   type HardcoverRateLimitBudget,
@@ -231,6 +232,9 @@ function probeFailureMessage(failure: HardcoverFetchFailure): string {
   if (failure.code === TOP_LEVEL_LIMIT_EXCEEDED) return failure.message;
   if (failure.status === 429) return 'Hardcover is rate-limiting requests. Try again shortly.';
   const suffix = failure.suffix ?? '';
+  // Before the 401/403 arm, which would shadow it: an under-scoped token is correctly typed, so
+  // "Invalid API key" misdirects the operator into regenerating a key that was never wrong (#2554).
+  if (failure.code === 'insufficient_scope') return `${scopeGuidanceSentence(failure.scope)}${suffix}`;
   if (failure.status === 401 || failure.status === 403) return `Invalid API key${suffix}`;
   return `API returned ${failure.status}: ${failure.statusText}${suffix}`;
 }

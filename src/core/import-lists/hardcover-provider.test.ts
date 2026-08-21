@@ -1445,9 +1445,13 @@ describe('HardcoverProvider', () => {
         const result = await shelfProvider().test();
 
         expect(result.success).toBe(false);
+        // The shared #2554 sentence must LEAD — an "Invalid API key" headline with the scope
+        // buried in the suffix misdirects the operator into regenerating a key that isn't wrong.
+        expect(result.message).toMatch(
+          /^Your Hardcover API key is missing a required scope \(read:lists\)\. Regenerate the token with that scope enabled\./,
+        );
         expect(result.message).toContain('insufficient_scope');
-        expect(result.message).toContain('read:lists');
-        expect(result.message).not.toBe('Invalid API key');
+        expect(result.message).not.toContain('Invalid API key');
       });
 
       it('names invalid_token on a 401', async () => {

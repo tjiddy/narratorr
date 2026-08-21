@@ -40,8 +40,21 @@ function renderDetailValue(value: string): string {
 export interface HardcoverErrorDetail {
   /** The top-level `error` value, for branching on disposition instead of substring-matching. */
   code: string | null;
+  /** The dedicated top-level `scope` field, never a value parsed out of prose (#2554). */
+  scope: string | null;
   /** Renderable detail, already prefixed with its own separator, or null when nothing survived. */
   suffix: string | null;
+}
+
+/**
+ * The one operator sentence for an under-scoped token, shared by the import-list probe and the
+ * server's mapHardcoverError so the two Test buttons cannot disagree on the identical upstream
+ * response (#2554). A valid-but-under-scoped PAT must never read as "Invalid API key".
+ */
+export function scopeGuidanceSentence(scope: string | null): string {
+  return scope
+    ? `Your Hardcover API key is missing a required scope (${scope}). Regenerate the token with that scope enabled.`
+    : 'Your Hardcover API key is missing a required scope. Regenerate the token with the scopes this feature needs.';
 }
 
 /** Users paste the documented `Bearer <token>` value; strip the optional prefix in one place. */
@@ -71,9 +84,10 @@ function parseTopLevelObject(bodyText: string): Record<string, unknown> | null {
  */
 export function describeHardcoverErrorBody(bodyText: string): HardcoverErrorDetail {
   const body = parseTopLevelObject(bodyText);
-  if (!body) return { code: null, suffix: null };
+  if (!body) return { code: null, scope: null, suffix: null };
 
   let code: string | null = null;
+  let scope: string | null = null;
   const parts: string[] = [];
   for (const key of ERROR_BODY_KEYS) {
     const value = body[key];
@@ -81,9 +95,10 @@ export function describeHardcoverErrorBody(bodyText: string): HardcoverErrorDeta
     const trimmed = value.trim();
     if (trimmed.length === 0) continue;
     if (key === 'error') code = trimmed;
+    if (key === 'scope') scope = trimmed;
     parts.push(`${key}: ${renderDetailValue(trimmed)}`);
   }
-  return { code, suffix: parts.length > 0 ? ` (${parts.join('; ')})` : null };
+  return { code, scope, suffix: parts.length > 0 ? ` (${parts.join('; ')})` : null };
 }
 
 /** Mutable wait allowance shared by every request one `fetchItems()` call makes. */
@@ -116,6 +131,7 @@ export interface HardcoverFetchFailure {
   statusText: string;
   retryAfterHeader: string | null;
   code: string | null;
+  scope: string | null;
   suffix: string | null;
   /** The free-form message for callers whose error type carries one. */
   message: string;
@@ -149,6 +165,7 @@ function describeFailure(
     statusText: response.statusText,
     retryAfterHeader: response.headers.get('Retry-After'),
     code: detail.code,
+    scope: detail.scope,
     suffix: detail.suffix,
     message: gaveUpOnRateLimit
       ? `${base} (rate limited; gave up after ${attempts} attempts)`

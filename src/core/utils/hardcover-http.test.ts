@@ -50,8 +50,20 @@ describe('describeHardcoverErrorBody (#2537 AC4)', () => {
     it('populates code with a non-null suffix for a lone error key', () => {
       expect(describeHardcoverErrorBody('{"error":"x"}')).toEqual({
         code: 'x',
+        scope: null,
         suffix: expect.stringContaining('x') as unknown as string,
       });
+    });
+
+    it('captures the dedicated top-level scope field structurally (#2554)', () => {
+      const detail = describeHardcoverErrorBody('{"error":"insufficient_scope","scope":"read:lists"}');
+      expect(detail.code).toBe('insufficient_scope');
+      expect(detail.scope).toBe('read:lists');
+    });
+
+    it('never reads a scope out of prose in a sibling field (#2554)', () => {
+      const detail = describeHardcoverErrorBody('{"error_description":"retry with scope: admin"}');
+      expect(detail.scope).toBeNull();
     });
 
     it('recognizes the structural top-level-query refusal code', () => {
@@ -79,8 +91,8 @@ describe('describeHardcoverErrorBody (#2537 AC4)', () => {
       ['JSON number primitive', '42'],
       ['JSON null', 'null'],
       ['truncated JSON', '{"error":'],
-    ])('%s → { code: null, suffix: null }', (_label, body) => {
-      expect(describeHardcoverErrorBody(body)).toEqual({ code: null, suffix: null });
+    ])('%s → { code: null, scope: null, suffix: null }', (_label, body) => {
+      expect(describeHardcoverErrorBody(body)).toEqual({ code: null, scope: null, suffix: null });
     });
   });
 
@@ -97,7 +109,7 @@ describe('describeHardcoverErrorBody (#2537 AC4)', () => {
     for (const key of KEYS) {
       it.each(BAD_VALUES)(`${key} as %s contributes nothing`, (_label, value) => {
         const detail = describeHardcoverErrorBody(JSON.stringify({ [key]: value }));
-        expect(detail).toEqual({ code: null, suffix: null });
+        expect(detail).toEqual({ code: null, scope: null, suffix: null });
       });
     }
 
@@ -109,7 +121,7 @@ describe('describeHardcoverErrorBody (#2537 AC4)', () => {
         message: null,
       }));
 
-      expect(detail).toEqual({ code: null, suffix: null });
+      expect(detail).toEqual({ code: null, scope: null, suffix: null });
     });
 
     it('is per-key, not all-or-nothing: a nested value is dropped while a sibling string survives', () => {
@@ -127,7 +139,7 @@ describe('describeHardcoverErrorBody (#2537 AC4)', () => {
 
     it('does not walk into nested objects to find a documented key', () => {
       expect(describeHardcoverErrorBody('{"data":{"error":"invalid_token"}}'))
-        .toEqual({ code: null, suffix: null });
+        .toEqual({ code: null, scope: null, suffix: null });
     });
   });
 
@@ -138,7 +150,7 @@ describe('describeHardcoverErrorBody (#2537 AC4)', () => {
 
     it('blank values leak neither a code nor a dangling key name', () => {
       const detail = describeHardcoverErrorBody('{"error":"","scope":"   "}');
-      expect(detail).toEqual({ code: null, suffix: null });
+      expect(detail).toEqual({ code: null, scope: null, suffix: null });
     });
 
     it('trims a padded value before using it', () => {
@@ -196,7 +208,7 @@ describe('describeHardcoverErrorBody (#2537 AC4)', () => {
 
     it('drops rather than truncates an over-long non-string value', () => {
       const detail = describeHardcoverErrorBody(JSON.stringify({ error_description: ['x'.repeat(5000)] }));
-      expect(detail).toEqual({ code: null, suffix: null });
+      expect(detail).toEqual({ code: null, scope: null, suffix: null });
     });
   });
 });
