@@ -241,16 +241,39 @@ export class BookDeletionService {
     });
   }
 
-  /** The post-commit half of every side-effect-free arm inside the transaction. */
+  /**
+   * The post-commit half of every side-effect-free arm inside the transaction.
+   *
+   * By here the deletion is durable, so nothing in this tail may reject into `deleteBook`: the throw
+   * would skip the cancellations for the download rows captured inside the transaction — and
+   * `downloads.book_id` is ON DELETE SET NULL, so no post-commit re-read can recover them — and make
+   * the sweep count a deleted book as failed. `safe-emit.ts` states the rule; `import-refused.ts`
+   * applies it to the same `logRecorded` call.
+   *
+   * Each arm carries its OWN catch rather than one wrapper around the body, so a wedged exclusion
+   * reporter cannot also suppress the event log — that trades one bookkeeping loss for two. The
+   * exclusion arm covers its info log too: a partial double resolving `{ inserted: true }` throws on
+   * the `row.id` deref, not inside `logRecorded`.
+   */
   private reportCommitted(id: number, committed: CommittedDeletion): void {
     if (committed.exclusion && this.exclusions) {
-      this.exclusions.logRecorded(committed.exclusion);
-      this.log.info({ bookId: id, exclusionId: committed.exclusion.row.id }, 'Recorded import list exclusion for deleted book');
+      try {
+        this.exclusions.logRecorded(committed.exclusion);
+        this.log.info({ bookId: id, exclusionId: committed.exclusion.row.id }, 'Recorded import list exclusion for deleted book');
+      } catch (error: unknown) {
+        this.log.debug({ bookId: id, error: serializeError(error) }, 'Failed to report the recorded import list exclusion');
+      }
     }
     if (committed.releasedAddLedgerRows > 0) {
       this.log.info({ bookId: id, removed: committed.releasedAddLedgerRows }, 'Released import list add-ledger rows for deleted book');
     }
-    if (committed.event && this.eventHistory) this.eventHistory.logRecorded(committed.event);
+    if (committed.event && this.eventHistory) {
+      try {
+        this.eventHistory.logRecorded(committed.event);
+      } catch (error: unknown) {
+        this.log.debug({ bookId: id, error: serializeError(error) }, 'Failed to report the recorded deleted event');
+      }
+    }
   }
 
   /** Managed-file failures are fatal; foreign files are preserved and reported by basename. */
