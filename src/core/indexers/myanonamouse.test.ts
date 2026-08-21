@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
+import { respondInFlightUntilAborted } from '../__tests__/dispatcher-capture.js';
 import type * as NetworkServiceModule from '../utils/network-service.js';
 
 // Keep MSW/fetch spies on this path; the dedicated routing test covers dispatchers.
@@ -2426,22 +2427,13 @@ describe('MyAnonamouseIndexer', () => {
       }
 
       /**
-       * Stubs the fetch boundary with a request that hangs until its signal aborts, and hands back a
-       * promise that resolves once the request is genuinely in flight. `HttpResponse.error()` could
-       * not stand in here: it carries neither an `AbortError` nor a reason.
+       * Stubs the fetch boundary — the seam this suite's rewired helper feeds — with a request that
+       * hangs until its signal aborts. An MSW handler could not stand in: `HttpResponse.error()`
+       * carries neither an `AbortError` nor a reason.
        */
       function stubInFlightUntilAborted(): { onTheWire: Promise<void> } {
-        let announce!: () => void;
-        const onTheWire = new Promise<void>((resolve) => { announce = resolve; });
-        vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => {
-          const signal = (init as RequestInit).signal!;
-          announce();
-          return new Promise((_resolve, reject) => {
-            // An `abort` event never re-fires, so subscribing to an already-aborted signal hangs.
-            if (signal.aborted) return reject(signal.reason);
-            signal.addEventListener('abort', () => reject(signal.reason), { once: true });
-          });
-        });
+        const { onTheWire, respond } = respondInFlightUntilAborted();
+        vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => respond(init as RequestInit));
         return { onTheWire };
       }
 
