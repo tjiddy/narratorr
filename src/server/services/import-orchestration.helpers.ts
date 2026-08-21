@@ -1,7 +1,7 @@
 import { stat } from 'node:fs/promises';
 import { resolve, normalize } from 'node:path';
 import { copyToLibrary as stageSourceAudio, stagedAudioReplace } from '../utils/import-steps.js';
-import { classifyImportSource } from '../utils/import-source-containment.js';
+import { classifyImportSourceResolved } from '../utils/import-source-containment.js';
 import type { Db } from '@db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { OwnedRecordingError, type BookService, type BookWithAuthor } from './book.service.js';
@@ -225,7 +225,7 @@ export async function copyToLibrary(
   // submission runner — cannot bypass it. Deliberately AFTER the same-path early return above,
   // which is a legitimate no-op the shared rule would otherwise refuse as inside-library, and
   // before every filesystem read on the source.
-  const containment = classifyImportSource(item.path, librarySettings.path);
+  const containment = await classifyImportSourceResolved(item.path, librarySettings.path);
   if (!containment.admissible) {
     throw new Error(containment.message);
   }
