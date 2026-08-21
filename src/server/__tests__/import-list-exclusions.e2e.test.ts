@@ -298,6 +298,36 @@ describe('import-list exclusions — the delete/re-add loop, end to end (#2305)'
       expect((await titlesInLibrary()).sort()).toEqual(['A Completely Different Book', 'The Reckoning']);
     });
 
+    it('leaves a deletion tombstone for the same identity untouched by a fix match', async () => {
+      // Re-matching one book must not silently un-refuse an identity the operator deleted.
+      const id = await syncedBookId();
+      await e2e.app.inject({ method: 'DELETE', url: `/api/books/${id}` });
+      const readded = await e2e.app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Reckoning', authors: [{ name: 'Jane Doe' }] },
+      });
+      expect(readded.statusCode).toBe(201);
+
+      vi.spyOn(e2e.services.metadata, 'lookupForFixMatch').mockResolvedValue({
+        kind: 'ok',
+        book: { asin: 'B0NEWMATCH', title: 'A Completely Different Book', authors: [{ name: 'Someone Else' }] },
+      } as unknown as Awaited<ReturnType<typeof e2e.services.metadata.lookupForFixMatch>>);
+
+      const res = await e2e.app.inject({
+        method: 'POST',
+        url: `/api/books/${readded.json().id as number}/fix-match`,
+        payload: { asin: 'B0NEWMATCH' },
+      });
+      expect(res.statusCode).toBe(200);
+
+      const { data } = await listExclusions();
+      expect(data.map((r) => [r.title, r.kind])).toEqual([['The Reckoning', 'deleted']]);
+
+      await sync();
+      expect(await titlesInLibrary()).toEqual(['A Completely Different Book']);
+    });
+
     it('surfaces the entry under kind=added and re-adds only after it is deleted — the whole loop', async () => {
       const id = await syncedBookId();
       await renameTo(id, 'General Thinking Concepts', 'Shane Parrish');

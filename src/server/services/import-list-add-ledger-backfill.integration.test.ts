@@ -169,6 +169,24 @@ describe('backfillImportListAddLedger (DB-backed, #2530)', () => {
     expect(await marker()).toBe(true);
   });
 
+  it('leaves the marker unset when the ledger value boundary rejects a row', async () => {
+    // The write-boundary guard's backfill arm: it propagates under this caller's existing rule —
+    // swallowed and warned, marker unset — with no handling of its own.
+    await seedBook({ title: 'The Reckoning' });
+    vi.spyOn(exclusions, 'buildExclusionValues').mockImplementation(() => {
+      throw new Error('Invalid enum value for kind');
+    });
+
+    await expect(run()).resolves.toBeUndefined();
+
+    expect(await ledger()).toHaveLength(0);
+    expect(await marker()).toBe(false);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ migration: ADD_LEDGER_BACKFILL_ID }),
+      'Import list add-ledger backfill failed — will retry on next boot',
+    );
+  });
+
   it('logs at warn, does not throw, and leaves the marker unset when the run fails', async () => {
     await seedBook({ title: 'The Reckoning' });
     vi.spyOn(db, 'transaction').mockRejectedValue(new Error('database is locked'));
