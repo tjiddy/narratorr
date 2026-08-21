@@ -2691,6 +2691,10 @@ describe('#257 merge observability — merge service', () => {
 
         expect(h.framesOf('merge_started', 43)).toHaveLength(1);
         expect(h.framesOf('merge_complete', 43)).toHaveLength(1);
+        // The shared harness scopes by book: 42's cancellation and 43's completion never cross accessors.
+        expect(h.framesOf('merge_complete', 42)).toHaveLength(0);
+        expect(h.framesOf('merge_failed', 42)).toHaveLength(1);
+        expect(h.framesOf('merge_failed', 43)).toHaveLength(0);
       });
 
       it('cancels even when the cancel-time history write rejects', async () => {
@@ -2816,10 +2820,12 @@ describe('#1838 merge origin — event provenance', () => {
 
   it('auto immediate-start success records merge_started and merged with source auto', async () => {
     setupHappyPath();
-    const { service, create } = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }], broadcaster: 'absent' });
+    const { service, create, frames } = createMergeHarness({ books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }], broadcaster: 'absent' });
 
     await service.enqueueMerge(42, 'auto');
     await settle();
+    // AC9: this arm has never exercised the emit paths; a silent swap to the recording harness would.
+    expect(frames).toEqual([]);
 
     expect(historyFor(create, 42, 'merge_started')[0]?.source).toBe('auto');
     expect(historyFor(create, 42, 'merged')[0]?.source).toBe('auto');
