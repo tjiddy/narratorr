@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, type Mock } from 'vitest';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -54,6 +54,9 @@ describe('genre marker sweep against a migrated database (#2535)', () => {
 
   const sweep = () => runGenreMarkerSweep(db, bookService, inject<FastifyBaseLogger>(log));
 
+  /** `createMockLogger` widens its members to `Mock | string`; the level field is the odd one out. */
+  const spy = (level: 'debug' | 'info'): Mock => log[level] as Mock;
+
   it('appends the inferred genre to the stored array and leaves the second run a no-op', async () => {
     const id = await seedBook({
       title: 'The Land: Founding',
@@ -67,8 +70,8 @@ describe('genre marker sweep against a migrated database (#2535)', () => {
       'Humor', 'Fantasy', 'Action & Adventure', 'Epic Fantasy', 'Satire', 'LitRPG',
     ]);
 
-    log.debug.mockClear();
-    log.info.mockClear();
+    spy('debug').mockClear();
+    spy('info').mockClear();
 
     await sweep();
 
@@ -77,8 +80,8 @@ describe('genre marker sweep against a migrated database (#2535)', () => {
     ]);
     // The converged row never reaches the lock loop, so the second run has no candidates at all —
     // a same-value rewrite would take the completion-log path instead.
-    expect(log.debug).toHaveBeenCalledWith(expect.anything(), 'Genre marker sweep: no books need inferred genres');
-    expect(log.info).not.toHaveBeenCalledWith(expect.anything(), 'Genre marker sweep complete');
+    expect(spy('debug')).toHaveBeenCalledWith(expect.anything(), 'Genre marker sweep: no books need inferred genres');
+    expect(spy('info')).not.toHaveBeenCalledWith(expect.anything(), 'Genre marker sweep complete');
   });
 
   it('leaves an unmarked book\'s null genres untouched rather than writing an empty array', async () => {
