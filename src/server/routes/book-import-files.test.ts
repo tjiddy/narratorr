@@ -34,7 +34,7 @@ vi.mock('../services/import-refused.js', async (importOriginal) => {
   return { ...actual, finalizeForcedImportRefusal: spies.finalizeForcedImportRefusal };
 });
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
@@ -42,6 +42,7 @@ import { createDb, runMigrations, type Db } from '@db/index.js';
 import { books, importJobs } from '@db/schema.js';
 import { BOOK_STATUSES } from '@shared/schemas/book.js';
 import { createMockLogger, createMockSettingsService, inject, type ZodTestApp } from '../__tests__/helpers.js';
+import { CAN_SYMLINK } from '../__tests__/windows-fs.js';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import { errorHandlerPlugin } from '../plugins/error-handler.js';
@@ -510,6 +511,107 @@ describe('POST /api/books/:id/import-files (#2435)', () => {
         expect(res.json().code).toBe('already_importing');
         expect((await rowOf(id)).status).toBe('wanted');
         expect(nudge).not.toHaveBeenCalled();
+      });
+    });
+
+    /**
+     * #2538 AC6/AC13 — the same route guard, now keyed on what the source RESOLVES to. Real on-disk
+     * links throughout: the whole property is that a lexically-innocent path is refused for where it
+     * points, which no string fixture can express.
+     */
+    describe('symlinked sources (#2538)', () => {
+      /** Links live outside the library so the LEXICAL rule admits every one of them. */
+      function linkTo(target: string, name: string): string {
+        const link = join(dir, name);
+        symlinkSync(target, link, 'dir');
+        return link;
+      }
+
+      it.skipIf(!CAN_SYMLINK)('400 source_inside_library for a link pointing at the library root', async () => {
+        const id = await seedBook();
+        writeFileSync(join(libraryRoot, 'book.m4b'), Buffer.alloc(1024));
+        const link = linkTo(libraryRoot, 'link-library');
+
+        const res = await post(id, { path: link, mode: 'copy' });
+
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toEqual({
+          error: 'Source path is inside the library root — it is already managed by the library',
+          code: 'source_inside_library',
+        });
+        // Still ahead of admission: the refusal must not have cost a filesystem walk.
+        expect(spies.admitAttachSource).not.toHaveBeenCalled();
+        await expectUntouched(id);
+      });
+
+      it.skipIf(!CAN_SYMLINK)('400 source_contains_library for a link pointing at an ancestor of the library root', async () => {
+        const id = await seedBook();
+        seedManagedBookInLibrary();
+        const link = linkTo(dir, 'link-ancestor');
+
+        const res = await post(id, { path: link, mode: 'move' });
+
+        expect(res.statusCode).toBe(400);
+        expect(res.json().code).toBe('source_contains_library');
+        expect(res.json().error).toMatch(/contains the library root/i);
+        expect(spies.admitAttachSource).not.toHaveBeenCalled();
+        await expectUntouched(id);
+      });
+
+      /**
+       * AC14's false-refusal control. `admitAttachSource` follows links on purpose, so symlinked
+       * media layouts stay supported — without this the whole describe would also pass against a
+       * route that refused every symlink.
+       */
+      it.skipIf(!CAN_SYMLINK)('202 for a link pointing at an ordinary outside folder that holds audio', async () => {
+        const id = await seedBook();
+        const link = linkTo(seedAudioDir('linked-source'), 'link-outside');
+
+        const res = await post(id, { path: link, mode: 'copy' });
+
+        expect(res.statusCode).toBe(202);
+        const [job] = await db.select().from(importJobs);
+        expect(res.json()).toEqual({ jobId: job!.id });
+        expect(job!.bookId).toBe(id);
+        expect(nudge).toHaveBeenCalled();
+      });
+
+      // #2478 AC12's precedence, re-run against a SYMLINKED refusal rather than a lexical one.
+      describe('precedence against the pre-existing guards', () => {
+        it.skipIf(!CAN_SYMLINK)('404s an unknown book id before a symlinked containment refusal', async () => {
+          const link = linkTo(libraryRoot, 'link-precedence-404');
+          const res = await post(999_999, { path: link, mode: 'move' });
+          expect(res.statusCode).toBe(404);
+          expect(await db.select().from(importJobs)).toHaveLength(0);
+        });
+
+        it.skipIf(!CAN_SYMLINK)('answers book_has_file ahead of a symlinked containment refusal', async () => {
+          const id = await seedBook({ path: join(libraryRoot, 'Existing'), status: 'imported' });
+          const link = linkTo(libraryRoot, 'link-precedence-has-file');
+          const res = await post(id, { path: link, mode: 'move' });
+          expect(res.statusCode).toBe(409);
+          expect(res.json().code).toBe('book_has_file');
+        });
+
+        it.skipIf(!CAN_SYMLINK)('answers status_not_attachable ahead of a symlinked containment refusal', async () => {
+          const id = await seedBook({ status: 'downloading' });
+          const link = linkTo(dir, 'link-precedence-status');
+          const res = await post(id, { path: link, mode: 'move' });
+          expect(res.statusCode).toBe(409);
+          expect(res.json().code).toBe('status_not_attachable');
+          await expectUntouched(id, 'downloading');
+        });
+
+        it.skipIf(!CAN_SYMLINK)('answers already_importing ahead of a symlinked containment refusal', async () => {
+          const id = await seedBook();
+          await db.insert(importJobs).values({ bookId: id, type: 'manual', status: 'pending', metadata: '{}' });
+          const link = linkTo(libraryRoot, 'link-precedence-active');
+          const res = await post(id, { path: link, mode: 'move' });
+          expect(res.statusCode).toBe(409);
+          expect(res.json().code).toBe('already_importing');
+          expect((await rowOf(id)).status).toBe('wanted');
+          expect(nudge).not.toHaveBeenCalled();
+        });
       });
     });
   });

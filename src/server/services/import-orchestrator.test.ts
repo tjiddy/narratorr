@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ImportOrchestrator } from './import-orchestrator.js';
-import type { ImportService, ImportResult, ImportContext } from './import.service.js';
+import { ImportService, type ImportResult, type ImportContext } from './import.service.js';
+import type { Db } from '@db/index.js';
+import type { DownloadClientService } from './download-client.service.js';
+import type { RemotePathMappingService } from './remote-path-mapping.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
 import type { TaggingService } from './tagging.service.js';
@@ -9,7 +12,7 @@ import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { RetrySearchDeps } from './retry-search.js';
-import { createMockLogger, createMockSettingsService, inject } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, createMockSettingsService, inject, mockDbChain } from '../__tests__/helpers.js';
 import { ContentFailureError } from '../utils/import-helpers.js';
 
 vi.mock('./rejection-helpers.js', () => ({
@@ -47,6 +50,8 @@ import {
   emitImportFailure, notifyImportComplete, notifyImportFailure,
   recordImportEvent, recordImportFailedEvent,
   embedTagsForImport, runImportPostProcessing,
+  // Real (the factory spreads `actual`) — the classification the no-blacklist test observes.
+  isContentFailure,
 } from '../utils/import-steps.js';
 
 // This suite owns OPF orchestration; opf-writer.test.ts owns reload, XML, and failure behavior.
@@ -89,6 +94,25 @@ const mockContext: ImportContext = {
   } as ImportContext['book'],
   infoHash: 'abc123',
   guid: null,
+};
+
+/**
+ * The download row the real-`ImportService` refusal case reads. `title` matches `mockContext`'s so
+ * both cases in that describe assert the same dispatch identity; `bookStatusAtGrab` is what the
+ * revert (and therefore `emitImportFailure`'s `revertedBookStatus`) restores.
+ */
+const realRefusalDownload = {
+  id: 1,
+  bookId: 1,
+  downloadClientId: 1,
+  externalId: 'ext-1',
+  title: 'The Way of Kings [2010]',
+  protocol: 'torrent' as const,
+  infoHash: 'abc123',
+  guid: null,
+  clientStatus: 'completed' as const,
+  pipelineStage: 'idle' as const,
+  bookStatusAtGrab: 'wanted' as const,
 };
 
 const mockResult: ImportResult = {
@@ -803,6 +827,109 @@ describe('ImportOrchestrator', () => {
       await expect(orchestrator.importDownload(1)).rejects.toThrow();
 
       expect(blacklistAndRetrySearch).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * #2538 AC10 — a containment refusal is a plain `Error`, so `isContentFailure` says no: the
+     * operator's mis-mapped save path must not blacklist the release and re-search, which would
+     * punish good content and spin on a fault only the operator can fix. The full side-effect set
+     * still fires, which is what distinguishes "not blacklisted" from "not dispatched at all".
+     */
+    it('containment refusal dispatches every failure signal but never blacklists or re-searches', async () => {
+      const refusal = new Error('Source path is inside the library root — it is already managed by the library');
+      (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(refusal);
+
+      await expect(orchestrator.importDownload(1)).rejects.toBe(refusal);
+
+      expect(emitImportFailure).toHaveBeenCalledWith(expect.objectContaining({
+        downloadId: 1, bookId: 1, revertedBookStatus: 'wanted',
+      }));
+      expect(notifyImportFailure).toHaveBeenCalledWith(expect.objectContaining({
+        downloadTitle: 'The Way of Kings [2010]', error: refusal,
+      }));
+      expect(recordImportFailedEvent).toHaveBeenCalledWith(expect.objectContaining({
+        bookId: 1, bookTitle: 'The Way of Kings', downloadId: 1, source: 'auto', error: refusal,
+      }));
+      expect(blacklistAndRetrySearch).not.toHaveBeenCalled();
+    });
+
+    /**
+     * #2538 AC10, wired end to end. The case above hands the orchestrator an error the TEST built, so
+     * it pins `isContentFailure(plain Error) === false` and nothing about what `runImportCommit`
+     * actually throws. Swapping the production `throw new Error(containment.message)` for a
+     * `ContentFailureError` leaves it — and every service-level `rejects.toThrow(message)` assertion,
+     * which matches on message alone — green while the release gets blacklisted and re-searched.
+     *
+     * So this one drives a REAL `ImportService` through a real remote-path-mapping refusal:
+     * `importDownload` → `runImportCommit` → containment → `handleImportFailure` → the orchestrator's
+     * own catch. `isContentFailure` is the real implementation in this suite, so the negative below
+     * is the classification itself, observed at the only place it has consequences.
+     *
+     * No filesystem double is needed: the mapped path is lexically inside the library, so the
+     * classifier short-circuits before `realpath`, and `handleImportFailure` touches nothing with
+     * `targetPath` still undefined.
+     */
+    it('a REAL runImportCommit containment refusal reaches dispatch as an environment fault', async () => {
+      const db = createMockDb();
+      // getImportContext and importDownload each read the row once.
+      db.select.mockReturnValueOnce(mockDbChain([realRefusalDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([realRefusalDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const realService = new ImportService(
+        inject<Db>(db),
+        inject<DownloadClientService>({
+          getAdapter: vi.fn().mockResolvedValue({
+            getDownload: vi.fn().mockResolvedValue({ savePath: '/downloads', name: 'The Way of Kings' }),
+            removeDownload: vi.fn(),
+          }),
+          getById: vi.fn().mockResolvedValue({ id: 1, name: 'qBit', type: 'qbittorrent', enabled: true }),
+        }),
+        createMockSettingsService({ library: { path: '/audiobooks' } }),
+        inject<FastifyBaseLogger>(createMockLogger()),
+        // The misconfiguration the issue names: the mapping lands the save path ON the library root.
+        inject<RemotePathMappingService>({
+          getByClientId: vi.fn().mockResolvedValue([
+            { id: 1, downloadClientId: 1, remotePath: '/downloads/The Way of Kings', localPath: '/audiobooks' },
+          ]),
+        }),
+        inject<BookService>({
+          getById: vi.fn().mockResolvedValue({
+            id: 1, title: 'The Way of Kings', status: 'downloading', path: null,
+            authors: [{ id: 1, name: 'Brandon Sanderson' }], narrators: [], editionLabel: null,
+          }),
+          update: vi.fn(),
+        }),
+      );
+
+      const realOrchestrator = new ImportOrchestrator(realService, settingsService, log, notifier, tagging, eventHistory, broadcaster);
+      realOrchestrator.wire({ bookImportService: {} as never, blacklistService, retrySearchDeps, nudgeImportWorker: vi.fn() });
+
+      const thrown = await realOrchestrator.importDownload(1).then(
+        () => { throw new Error('expected the containment refusal to reject'); },
+        (error: unknown) => error,
+      );
+
+      // The refusal production actually raised — message AND classification, not message alone.
+      expect((thrown as Error).message).toBe('Source path is inside the library root — it is already managed by the library');
+      expect(thrown).not.toBeInstanceOf(ContentFailureError);
+      expect(isContentFailure(thrown)).toBe(false);
+
+      // Dispatch ran in full: without these the negative below would also pass on a refusal that
+      // never reached `dispatchFailureSideEffects` at all.
+      expect(emitImportFailure).toHaveBeenCalledWith(expect.objectContaining({
+        downloadId: 1, bookId: 1, revertedBookStatus: 'wanted',
+      }));
+      expect(notifyImportFailure).toHaveBeenCalledWith(expect.objectContaining({
+        downloadTitle: 'The Way of Kings [2010]', error: thrown,
+      }));
+      expect(recordImportFailedEvent).toHaveBeenCalledWith(expect.objectContaining({
+        bookId: 1, bookTitle: 'The Way of Kings', downloadId: 1, source: 'auto', error: thrown,
+      }));
+
+      // The property AC10 exists for.
+      expect(blacklistAndRetrySearch).not.toHaveBeenCalled();
+      expect(blacklistService.create).not.toHaveBeenCalled();
     });
   });
 

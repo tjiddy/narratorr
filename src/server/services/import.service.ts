@@ -17,6 +17,7 @@ import type { BookStatus } from '@shared/schemas/book.js';
 import type { DownloadStatus } from '@shared/schemas/activity.js';
 import { canonicalPath } from '../utils/path-identity.js';
 import { resolveSavePath } from '../utils/download-path.js';
+import { classifyImportSourceResolved } from '../utils/import-source-containment.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
 import { toNamingOptions } from '@core/utils/naming.js';
 import {
@@ -171,6 +172,35 @@ export class ImportService {
     try {
       const { resolvedPath: savePath, originalPath } = await resolveSavePath(download, this.downloadClientService, this.remotePathMappingService);
       this.log.debug({ downloadId, bookTitle: book.title, resolvedPath: savePath, originalPath }, 'Resolved save path');
+
+      /**
+       * #2538 — the third adoption of the #2478 rule, on the MAPPED path `validateSource` and
+       * `copyToLibrary` actually consume. A path-mapping typo that lands the client's save path at or
+       * above the library root otherwise gets recursively copied into a staging dir inside the
+       * library and then flattened into a book folder.
+       *
+       * Position is load-bearing: `libraryRoot` and `targetPath` below are still `undefined` here, and
+       * `handleImportFailure` deletes managed files under `targetPath` whenever both are set and
+       * `protectTarget` is false. Refusing from here reaches `revertAndRethrow` having done zero
+       * filesystem work; a guard a few lines lower would make a REFUSAL delete whatever already
+       * occupies the computed target.
+       *
+       * A plain `Error`, never `ContentFailureError`: an operator misconfiguration is an environment
+       * fault, so `dispatchFailureSideEffects` must not blacklist the release and re-search — that
+       * would punish good content and spin on a fault only the operator can fix.
+       */
+      const containment = await classifyImportSourceResolved(savePath, librarySettings.path);
+      if (!containment.admissible) {
+        // The only record naming the paths: the refusal message is generic operator copy, and
+        // 'Resolved save path' above is debug-level — absent at the level a mapping typo is
+        // diagnosed at. `originalPath` identifies the pre-/post-mapping pair.
+        this.log.error(
+          { downloadId, bookId: book.id, originalPath, savePath, libraryRoot: librarySettings.path, reason: containment.reason },
+          'Refusing automatic import — source path fails library containment',
+        );
+        throw new Error(containment.message);
+      }
+
       const namingOptions = toNamingOptions(librarySettings);
       libraryRoot = librarySettings.path;
       targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, book, authorName, namingOptions, book.editionLabel);

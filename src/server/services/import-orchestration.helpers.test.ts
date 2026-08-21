@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { inject, createMockSettingsService } from '../__tests__/helpers.js';
+import { CAN_SYMLINK } from '../__tests__/windows-fs.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@db/index.js';
 import { BookService } from './book.service.js';
@@ -967,6 +968,46 @@ describe('copyToLibrary — source containment (#2478)', () => {
 
     await expect(copyWithRoot(item(escaped), null, 'move', buildDeps()))
       .rejects.toThrow(/inside the library root/i);
+  });
+
+  /**
+   * #2538 AC7/AC13 — the worker half of the resolved rule. `realpath` is real in this suite (the
+   * `node:fs/promises` mock spreads the actual module and overrides only rm/cp/readdir/stat), so the
+   * link below is genuinely followed.
+   */
+  it.skipIf(!CAN_SYMLINK)('refuses a symlinked source resolving into the library, before any filesystem mutation', async () => {
+    const managed = join(libraryRoot, 'Managed Book');
+    await mkdir(managed, { recursive: true });
+    await writeFile(join(managed, 'book.m4b'), Buffer.alloc(1024));
+    const link = join(baseDir, 'link-into-library');
+    await symlink(managed, link, 'dir');
+
+    await expect(copyWithRoot(item(link), null, 'move', buildDeps()))
+      .rejects.toThrow(/inside the library root/i);
+
+    // The source tree is intact and nothing was written or removed. `import-failure-cleanup-is-per-file`:
+    // the per-entry observation points, not a `recursive: true` negative, which is vacuous here.
+    expect(existsSync(join(managed, 'book.m4b'))).toBe(true);
+    expect(fsMocks.cp).not.toHaveBeenCalled();
+    expect(fsMocks.rm).not.toHaveBeenCalledWith(join(managed, 'book.m4b'), { force: true });
+    expect(fsMocks.rm).not.toHaveBeenCalled();
+    expect(fsMocks.stat).not.toHaveBeenCalled();
+    expect(fsMocks.readdir).not.toHaveBeenCalled();
+    expect(existsSync(join(libraryRoot, 'Author'))).toBe(false);
+  });
+
+  /**
+   * AC7's ordering under the resolved rule. The sibling case above uses a target that does not exist,
+   * where realpath would ENOENT back to the lexical verdict anyway; here the target is REAL, so the
+   * resolved form has a live opinion (inside-library) and the early return is the only thing that can
+   * still let this legitimate no-op through.
+   */
+  it('short-circuits the same-path case even when the target really exists on disk', async () => {
+    const target = join(libraryRoot, 'Author', 'Title');
+    await mkdir(target, { recursive: true });
+
+    await expect(copyWithRoot(item(target), null, 'copy', buildDeps()))
+      .resolves.toMatchObject({ targetPath: toPosix(target) });
   });
 });
 

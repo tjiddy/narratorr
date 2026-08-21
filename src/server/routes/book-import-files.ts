@@ -15,7 +15,7 @@ import {
   isAttachActiveJobConflict,
 } from '../services/attach-enqueue.js';
 import { admitAttachSource } from '../utils/attach-source.js';
-import { classifyImportSource } from '../utils/import-source-containment.js';
+import { classifyImportSourceResolved } from '../utils/import-source-containment.js';
 
 const paramsSchema = z.object({
   id: z.coerce.number().int().positive(),
@@ -96,7 +96,7 @@ export async function bookImportFilesRoute(
       // Ahead of admission on purpose (#2478): `admitAttachSource('/')` would recurse the whole
       // filesystem looking for one audio file before anything refused it.
       const librarySettings = await deps.settingsService.get('library');
-      const containment = classifyImportSource(sourcePath, librarySettings.path);
+      const containment = await classifyImportSourceResolved(sourcePath, librarySettings.path);
       if (!containment.admissible) {
         return reply.status(400).send({ error: containment.message, code: containment.reason });
       }
