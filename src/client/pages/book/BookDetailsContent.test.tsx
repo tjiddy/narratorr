@@ -163,7 +163,7 @@ describe('BookDetailsContent — series sidebar gate (#1071)', () => {
         hardcoverSeriesId: null,
         seriesAuthor: null,
         lastFetchedAt: null,
-        members: [{ hardcoverBookId: null, slug: null, title: seriesOnlyBook.title, position: 1, imageUrl: null, inLibrary: true, libraryBookId: seriesOnlyBook.id }],
+        members: [{ hardcoverBookId: null, slug: null, title: seriesOnlyBook.title, position: 1, imageUrl: null, inLibrary: true, libraryBookId: seriesOnlyBook.id, libraryBucket: 'imported' }],
       },
     });
     renderWithProviders(
@@ -185,7 +185,7 @@ describe('BookDetailsContent — series sidebar gate (#1071)', () => {
         seriesAuthor: 'Nicholas Eames',
         lastFetchedAt: '2026-05-11T00:00:00.000Z',
         members: [
-          { hardcoverBookId: 1001, slug: 'kings', title: 'Kings of the Wyld', position: 1, imageUrl: null, inLibrary: true, libraryBookId: 1 },
+          { hardcoverBookId: 1001, slug: 'kings', title: 'Kings of the Wyld', position: 1, imageUrl: null, inLibrary: true, libraryBookId: 1, libraryBucket: 'imported' },
         ],
       },
     });
