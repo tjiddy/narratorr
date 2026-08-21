@@ -177,8 +177,6 @@ export function registerFixMatchRoute(app: FastifyInstance, deps: BookRouteDeps)
       const updated = await deps.bookService.fixMatch(id, metadataToFixMatchUpdate(meta));
       if (!updated) return reply.status(404).send({ error: 'Book not found' });
 
-      await releaseAddLedger(deps, { title: oldTitle, asin: oldAsin, authorName: sourceBook.authors[0]?.name ?? null }, id, request.log);
-
       if (deps.eventHistory) {
         deps.eventHistory.create({
           bookId: id,
@@ -188,6 +186,8 @@ export function registerFixMatchRoute(app: FastifyInstance, deps: BookRouteDeps)
           reason: { oldAsin, newAsin: meta.asin ?? null, oldTitle, newTitle: meta.title },
         }).catch((err: unknown) => request.log.warn({ error: serializeError(err) }, 'Failed to record metadata_fixed event'));
       }
+
+      await releaseAddLedger(deps, { title: oldTitle, asin: oldAsin, authorName: sourceBook.authors[0]?.name ?? null }, id, request.log);
 
       const { retagged } = await runPostCommitRenameRetag(deps, id, !!updated.path, body, request.log);
       await refreshSidecarAndNotify(deps, id, updated, body, retagged, request.log);
