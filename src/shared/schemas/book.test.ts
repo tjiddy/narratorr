@@ -129,6 +129,87 @@ describe('bucketForStatus — derived status→bucket inverse (#2541)', () => {
   });
 });
 
+describe('invertLibraryFilterBuckets — duplicate membership guard (#2546)', () => {
+  // Which bucket is "first" follows object-literal iteration order, so each case asserts the
+  // presence of the status and both bucket keys rather than pinning one ordered sentence.
+  it('throws when a status is claimed by two different buckets, naming both', () => {
+    let thrown: unknown;
+    try {
+      invertLibraryFilterBuckets({ ...LIBRARY_FILTER_BUCKETS, wanted: ['wanted', 'imported'] });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    const message = (thrown as Error).message;
+    expect(message).toContain('duplicated');
+    expect(message).toContain('imported');
+    expect(message).toContain('wanted');
+  });
+
+  it('throws when a status is listed twice inside a single bucket', () => {
+    expect(() =>
+      invertLibraryFilterBuckets({ ...LIBRARY_FILTER_BUCKETS, wanted: ['wanted', 'wanted'] }),
+    ).toThrow(/duplicated: wanted in both wanted and wanted/);
+  });
+
+  it('names every duplicated status, not just the first one found', () => {
+    let message = '';
+    try {
+      invertLibraryFilterBuckets({
+        ...LIBRARY_FILTER_BUCKETS,
+        wanted: ['wanted', 'imported', 'failed'],
+      });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain('imported');
+    expect(message).toContain('failed');
+  });
+
+  it('catches a duplicate in the first array position as well as the last', () => {
+    expect(() =>
+      invertLibraryFilterBuckets({ ...LIBRARY_FILTER_BUCKETS, missing: ['wanted', 'missing'] }),
+    ).toThrow(/duplicated/);
+    expect(() =>
+      invertLibraryFilterBuckets({ ...LIBRARY_FILTER_BUCKETS, missing: ['missing', 'wanted'] }),
+    ).toThrow(/duplicated/);
+  });
+
+  it('reports the duplicate, not the orphan, when a partition has both', () => {
+    let thrown: unknown;
+    try {
+      invertLibraryFilterBuckets({
+        ...LIBRARY_FILTER_BUCKETS,
+        wanted: ['wanted', 'failed'],
+        missing: [],
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toContain('duplicated');
+    expect((thrown as Error).message).not.toContain('unbucketed');
+  });
+
+  it('accepts the production partition and returns one entry per canonical status', () => {
+    const inverse = invertLibraryFilterBuckets(LIBRARY_FILTER_BUCKETS);
+    expect(Object.keys(inverse).sort()).toEqual([...BOOK_STATUSES].sort());
+    for (const status of BOOK_STATUSES) {
+      expect(LIBRARY_FILTER_BUCKETS[inverse[status]]).toContain(status);
+    }
+  });
+
+  // An empty bucket is not by itself a defect: this is still a total, non-overlapping cover.
+  it('accepts an empty bucket whose status is covered elsewhere', () => {
+    const inverse = invertLibraryFilterBuckets({
+      ...LIBRARY_FILTER_BUCKETS,
+      wanted: ['wanted', 'missing'],
+      missing: [],
+    });
+    expect(inverse.missing).toBe('wanted');
+  });
+});
+
 describe('createBookBodySchema — series scalars (#1716)', () => {
   it('accepts scalar seriesName/seriesPosition', () => {
     const result = createBookBodySchema.safeParse({ ...validBook, seriesName: 'The Band', seriesPosition: 1 });
