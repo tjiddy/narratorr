@@ -833,17 +833,40 @@ describe('BookDeletionService — post-commit reporting isolation (#2536)', () =
       expect(debugRecords(log, EVENT_FAILED)).toHaveLength(1);
     });
 
-    it('serializes the caught error rather than logging the raw Error', async () => {
+    // Driven over both arms rather than written once: the two catches are deliberately separate
+    // statements, so an assertion on one proves nothing about the other. Asserting only the event
+    // arm left `serializeError` in the exclusion catch mutable with the whole suite green (#2564 F1).
+    const serializationArms: {
+      arm: string;
+      message: string;
+      thrown: string;
+      build: () => Parameters<typeof createService>[0];
+    }[] = [
+      {
+        arm: 'exclusion',
+        message: EXCLUSION_FAILED,
+        thrown: 'exclusion logger wedged',
+        build: () => ({ exclusions: { logRecorded: wedged('exclusion logger wedged') } }),
+      },
+      {
+        arm: 'event',
+        message: EVENT_FAILED,
+        thrown: 'event logger wedged',
+        build: () => ({ eventHistory: { logRecorded: wedged('event logger wedged') } }),
+      },
+    ];
+
+    it.each(serializationArms)('serializes the caught error rather than logging the raw Error ($arm arm)', async ({ message, thrown, build }) => {
       // `toMatchObject({ message })` reads through Error.prototype and passes against a raw Error,
       // so it would stay green with `serializeError` deleted. `type` is what discriminates.
-      const { service, log } = fromList({ eventHistory: { logRecorded: wedged('event logger wedged') } });
+      const { service, log } = fromList(build());
 
       await service.deleteBook(1, { deleteFiles: false });
 
-      const [record] = debugRecords(log, EVENT_FAILED);
+      const [record] = debugRecords(log, message);
       const logged = (record![0] as { bookId: number; error: unknown }).error;
       expect(logged).not.toBeInstanceOf(Error);
-      expect(logged).toMatchObject({ message: 'event logger wedged', type: 'Error' });
+      expect(logged).toMatchObject({ message: thrown, type: 'Error' });
       expect(record![0]).toMatchObject({ bookId: 1 });
     });
   });
@@ -950,7 +973,10 @@ describe('BookDeletionService — post-commit reporting isolation (#2536)', () =
       const result = await service.deleteBook(1, { deleteFiles: false });
 
       expect(result).toEqual({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
-      expect(debugRecords(log, EXCLUSION_FAILED)).toHaveLength(1);
+      const [record] = debugRecords(log, EXCLUSION_FAILED);
+      const logged = (record![0] as { error: unknown }).error;
+      expect(logged).not.toBeInstanceOf(Error);
+      expect(logged).toMatchObject({ type: 'TypeError' });
     });
   });
 
