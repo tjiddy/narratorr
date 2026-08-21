@@ -1,18 +1,25 @@
 import type { FastifyInstance } from 'fastify';
-import type { z } from 'zod';
+import { type z } from 'zod';
 import type { ImportListExclusionService } from '../services';
 import { getErrorMessage } from '../utils/error-message.js';
-import { idParamSchema, paginationParamsSchema, DEFAULT_LIMITS } from '@shared/schemas.js';
+import { idParamSchema, paginationParamsSchema, importListExclusionKindSchema, DEFAULT_LIMITS } from '@shared/schemas.js';
 import { serializeError } from '../utils/serialize-error.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
 
-const exclusionListQuerySchema = paginationParamsSchema;
+/**
+ * The FILTER vocabulary, reusing the shared enum so the two cannot drift. It is deliberately not
+ * the storage guard: no route writes a `kind`, so the persisted value's integrity lives at the
+ * service write boundary instead.
+ */
+const exclusionListQuerySchema = paginationParamsSchema.extend({
+  kind: importListExclusionKindSchema.optional(),
+});
 type ExclusionListQuery = z.infer<typeof exclusionListQuerySchema>;
 
 /**
- * List and undo only. Exclusions have exactly one writer — the book-deletion path — so no create
- * endpoint exists and no client-supplied identity contract needs specifying.
+ * List and undo only. Every exclusion writer is a service, so no create endpoint exists and no
+ * client-supplied identity contract needs specifying.
  */
 export async function importListExclusionsRoutes(
   app: FastifyInstance,
@@ -22,11 +29,12 @@ export async function importListExclusionsRoutes(
     '/api/import-list-exclusions',
     { schema: { querystring: exclusionListQuerySchema } },
     async (request) => {
-      const { limit, offset } = request.query;
-      request.log.debug({ limit, offset }, 'Fetching import list exclusions');
+      const { limit, offset, kind } = request.query;
+      request.log.debug({ limit, offset, kind }, 'Fetching import list exclusions');
       const pagination = {
         limit: limit ?? DEFAULT_LIMITS.importListExclusions,
         ...(offset !== undefined && { offset }),
+        ...(kind !== undefined && { kind }),
       };
       return exclusionService.getAll(pagination);
     },

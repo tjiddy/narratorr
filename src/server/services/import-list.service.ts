@@ -293,11 +293,16 @@ export class ImportListService {
       identity: 'adopt',
       onReview: 'record-and-hold',
       provenance: {
-        source: 'import_list', reason: { importListName: list.name }, eventShape: 'resolved', importListId: list.id,
+        source: 'import_list', reason: { importListName: list.name }, eventShape: 'resolved',
+        importListId: list.id, importListName: list.name,
       },
     }, this.log);
 
-    if (result.outcome === 'excluded') return { outcome: 'excluded' };
+    // An `added` refusal is exactly what `findDuplicate` used to report as a skip, so it keeps that
+    // bucket: only the operator's deletion tombstone counts as an exclusion (#2530).
+    if (result.outcome === 'excluded') {
+      return { outcome: result.kind === 'deleted' ? 'excluded' : 'skipped' };
+    }
     if (result.outcome === 'owned-race') return { outcome: 'skipped' };
     if (result.outcome === 'duplicate') return { outcome: result.verdict === 'review' ? 'held_review' : 'skipped' };
 

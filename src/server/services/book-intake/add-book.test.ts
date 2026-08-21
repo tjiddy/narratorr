@@ -1,6 +1,7 @@
 import { describe, it, expect, expectTypeOf, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { ProductionType } from '@shared/schemas/book.js';
+import type { ImportListExclusionKind } from '@shared/schemas/import-list-exclusion.js';
 import { addBook, unreachableExclusion } from './index.js';
 import type { AddBookDeps, AddBookItem, AddBookRequest, AddBookSeed, IntakeItem } from './index.js';
 import type { CreateBookInput } from '../book-create.js';
@@ -523,20 +524,36 @@ describe('addBook — error isolation', () => {
  * duplicate decision so it keys on the ASIN the row would carry, and it refuses before any write.
  */
 describe('addBook — the import-list exclusion gate (#2305)', () => {
-  const gate = (match: { id: number } | null) => ({ isExcluded: vi.fn().mockResolvedValue(match) });
+  const gate = (match: { id: number; kind: ImportListExclusionKind } | null) => ({
+    isExcluded: vi.fn().mockResolvedValue(match),
+    recordAdded: vi.fn().mockResolvedValue({ row: { id: 1 }, inserted: true }),
+  });
 
   it('refuses an excluded item with the matched exclusion id and creates nothing', async () => {
-    const exclusions = gate({ id: 7 });
+    const exclusions = gate({ id: 7, kind: 'deleted' });
     const deps = makeDeps({ exclusions });
     const log = makeLog();
 
     const result = await addBook(deps, request(), log);
 
-    expect(result).toEqual({ outcome: 'excluded', exclusionId: 7 });
+    expect(result).toEqual({ outcome: 'excluded', exclusionId: 7, kind: 'deleted' });
     expect(deps.bookService.create).not.toHaveBeenCalled();
     expect(deps.eventHistory.create).not.toHaveBeenCalled();
     expect(vi.mocked(log.info)).toHaveBeenCalledWith(
-      { title: 'Leviathan Wakes', asin: 'B0000TEST1', exclusionId: 7 },
+      { title: 'Leviathan Wakes', asin: 'B0000TEST1', exclusionId: 7, kind: 'deleted' },
+      'Import list item refused: book is excluded',
+    );
+  });
+
+  it('reports an added-kind refusal with its kind, and names it in the gate log', async () => {
+    const deps = makeDeps({ exclusions: gate({ id: 9, kind: 'added' }) });
+    const log = makeLog();
+
+    const result = await addBook(deps, request(), log);
+
+    expect(result).toEqual({ outcome: 'excluded', exclusionId: 9, kind: 'added' });
+    expect(vi.mocked(log.info)).toHaveBeenCalledWith(
+      expect.objectContaining({ exclusionId: 9, kind: 'added' }),
       'Import list item refused: book is excluded',
     );
   });
@@ -568,7 +585,7 @@ describe('addBook — the import-list exclusion gate (#2305)', () => {
   });
 
   it('refuses BEFORE the duplicate decision, so the incumbent is never consulted', async () => {
-    const deps = makeDeps({ exclusions: gate({ id: 3 }) });
+    const deps = makeDeps({ exclusions: gate({ id: 3, kind: 'deleted' }) });
 
     await addBook(deps, request(), makeLog());
 
@@ -594,7 +611,7 @@ describe('addBook — the import-list exclusion gate (#2305)', () => {
   });
 
   it('reports no book or verdict on the excluded arm', async () => {
-    const result = await addBook(makeDeps({ exclusions: gate({ id: 7 }) }), request(), makeLog());
+    const result = await addBook(makeDeps({ exclusions: gate({ id: 7, kind: 'deleted' }) }), request(), makeLog());
 
     expect(result).not.toHaveProperty('book');
     expect(result).not.toHaveProperty('verdict');
@@ -622,7 +639,10 @@ describe('addBook — the import-list exclusion gate (#2305)', () => {
   });
 
   it('propagates a gate read failure to the caller and creates nothing', async () => {
-    const exclusions = { isExcluded: vi.fn().mockRejectedValue(new Error('exclusions table locked')) };
+    const exclusions = {
+      isExcluded: vi.fn().mockRejectedValue(new Error('exclusions table locked')),
+      recordAdded: vi.fn(),
+    };
     const deps = makeDeps({ exclusions });
 
     await expect(addBook(deps, request(), makeLog())).rejects.toThrow('exclusions table locked');
@@ -630,9 +650,139 @@ describe('addBook — the import-list exclusion gate (#2305)', () => {
   });
 });
 
+describe('addBook — recording the add in the exclusion ledger (#2530)', () => {
+  const port = () => ({
+    isExcluded: vi.fn().mockResolvedValue(null),
+    recordAdded: vi.fn().mockResolvedValue({ row: { id: 1 }, inserted: true }),
+  });
+
+  /** The import-list caller's provenance: a list id and the display snapshot beside it. */
+  const listRequest = (overrides: Partial<Extract<AddBookRequest, { resolve: 'skip' }>> = {}): AddBookRequest =>
+    request({
+      onReview: 'record-and-hold',
+      provenance: {
+        source: 'import_list', eventShape: 'resolved', reason: { importListName: 'NYT Bestsellers' },
+        importListId: 5, importListName: 'NYT Bestsellers',
+      },
+      ...overrides,
+    });
+
+  it('records exactly one row carrying the item identity and the list provenance', async () => {
+    const exclusions = port();
+
+    const result = await addBook(makeDeps({ exclusions }), listRequest(), makeLog());
+
+    expect(result.outcome).toBe('created');
+    expect(exclusions.recordAdded).toHaveBeenCalledTimes(1);
+    expect(exclusions.recordAdded).toHaveBeenCalledWith(
+      { title: 'Leviathan Wakes', asin: 'B0000TEST1', authorName: 'James S. A. Corey' },
+      { importListId: 5, importListName: 'NYT Bestsellers' },
+    );
+  });
+
+  it('records the ENRICHED ASIN, not the one the provider item arrived with', async () => {
+    const exclusions = port();
+    const deps = makeDeps({
+      exclusions,
+      metadataService: { getBook: vi.fn().mockResolvedValue({ asin: 'B0ENRICHED' }) },
+    });
+
+    await addBook(deps, listRequest({ item: { ...item, asin: undefined, providerId: 'prov-1' } }), makeLog());
+
+    // A record built from the pre-enrichment item would carry `undefined` here, and the gate —
+    // which reads the enriched ASIN — would disagree with it on the very next sync.
+    expect(exclusions.recordAdded).toHaveBeenCalledWith(
+      expect.objectContaining({ asin: 'B0ENRICHED' }),
+      expect.anything(),
+    );
+  });
+
+  it('records nothing when the item was refused as a duplicate', async () => {
+    const exclusions = port();
+    const deps = makeDeps({ exclusions });
+    vi.mocked(deps.bookService.findDuplicate).mockResolvedValue({
+      verdict: 'same-recording', book: makeBook(), hasIncumbent: true, existingBookId: 9,
+    } as unknown as Awaited<ReturnType<AddBookDeps['bookService']['findDuplicate']>>);
+
+    const result = await addBook(deps, listRequest(), makeLog());
+
+    expect(result.outcome).toBe('duplicate');
+    expect(exclusions.recordAdded).not.toHaveBeenCalled();
+  });
+
+  it('records nothing when the create lost an ASIN race', async () => {
+    const exclusions = port();
+    const deps = makeDeps({ exclusions });
+    vi.mocked(deps.bookService.create).mockRejectedValue(
+      new OwnedRecordingError({ existingBookId: 9, title: 'Leviathan Wakes (owned)', reason: 'same-asin' }),
+    );
+
+    const result = await addBook(deps, listRequest(), makeLog());
+
+    expect(result.outcome).toBe('owned-race');
+    expect(exclusions.recordAdded).not.toHaveBeenCalled();
+  });
+
+  it('records nothing when the gate already refused the item', async () => {
+    const exclusions = port();
+    exclusions.isExcluded.mockResolvedValue({ id: 4, kind: 'added' });
+
+    const result = await addBook(makeDeps({ exclusions }), listRequest(), makeLog());
+
+    expect(result.outcome).toBe('excluded');
+    expect(exclusions.recordAdded).not.toHaveBeenCalled();
+  });
+
+  it('still reports the created book when the record rejects, and warns', async () => {
+    const exclusions = port();
+    exclusions.recordAdded.mockRejectedValue(new Error('exclusions table locked'));
+    const log = makeLog();
+
+    const result = await addBook(makeDeps({ exclusions }), listRequest(), log);
+
+    expect(result).toMatchObject({ outcome: 'created', book: expect.objectContaining({ id: 42 }) });
+    expect(vi.mocked(log.warn)).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Leviathan Wakes' }),
+      'Failed to record the import-list add ledger row',
+    );
+  });
+
+  it('records nothing for a caller that supplied no exclusion port', async () => {
+    const deps = makeDeps();
+
+    const result = await addBook(deps, request(), makeLog());
+
+    expect(result.outcome).toBe('created');
+    expect(deps).not.toHaveProperty('exclusions');
+  });
+
+  it('waits for the record to SETTLE, not merely to be issued, before resolving', async () => {
+    let release!: () => void;
+    const settled = { value: false };
+    const exclusions = port();
+    exclusions.recordAdded.mockImplementation(() => new Promise<void>((resolve) => {
+      release = () => { settled.value = true; resolve(); };
+    }));
+
+    let resolvedWith: string | null = null;
+    const pending = addBook(makeDeps({ exclusions }), listRequest(), makeLog())
+      .then((r) => { resolvedWith = r.outcome; });
+
+    // Drain every microtask the pipeline could still be sitting on; the only thing left is the gate.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(exclusions.recordAdded).toHaveBeenCalledTimes(1);
+    expect(resolvedWith).toBeNull();
+
+    release();
+    await pending;
+    expect(settled.value).toBe(true);
+    expect(resolvedWith).toBe('created');
+  });
+});
+
 describe('unreachableExclusion — the arm an ungated caller cannot receive', () => {
   it('throws naming the exclusion id rather than returning a disposition', () => {
-    expect(() => unreachableExclusion({ outcome: 'excluded', exclusionId: 12 }))
+    expect(() => unreachableExclusion({ outcome: 'excluded', exclusionId: 12, kind: 'deleted' }))
       .toThrow(/exclusion #12/);
   });
 });

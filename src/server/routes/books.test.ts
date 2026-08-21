@@ -4721,6 +4721,82 @@ describe('#1071 series routes', () => {
       expect(res.statusCode).toBe(400);
     });
 
+    describe('releasing the import-list add ledger (#2530)', () => {
+      /** A successful fix match with the ledger release configurable. */
+      function stubFixMatch(removeAdded: Mock): void {
+        (services.book.getById as Mock).mockResolvedValueOnce(sourceBook);
+        (services.book.findAsinCollision as Mock).mockResolvedValueOnce(null);
+        (services.metadata.lookupForFixMatch as Mock).mockResolvedValueOnce({ kind: 'ok', book: newMetaStandalone });
+        (services.book.fixMatch as Mock).mockResolvedValueOnce({ ...sourceBook, asin: 'B_STANDALONE', title: 'Standalone Title' });
+        (services.eventHistory.create as Mock).mockResolvedValue({ id: 1 });
+        (services.importListExclusion.removeAdded as Mock).mockImplementation(removeAdded);
+      }
+
+      it('removes the add-ledger rows keyed on the PRE-fix identity, after the write commits', async () => {
+        const order: string[] = [];
+        (services.book.getById as Mock).mockResolvedValueOnce(sourceBook);
+        (services.book.findAsinCollision as Mock).mockResolvedValueOnce(null);
+        (services.metadata.lookupForFixMatch as Mock).mockResolvedValueOnce({ kind: 'ok', book: newMetaStandalone });
+        (services.book.fixMatch as Mock).mockImplementation(() => {
+          order.push('fixMatch');
+          return Promise.resolve({ ...sourceBook, asin: 'B_STANDALONE', title: 'Standalone Title' });
+        });
+        (services.eventHistory.create as Mock).mockResolvedValue({ id: 1 });
+        (services.importListExclusion.removeAdded as Mock).mockImplementation(() => {
+          order.push('removeAdded');
+          return Promise.resolve(1);
+        });
+
+        const res = await app.inject({ method: 'POST', url: '/api/books/7/fix-match', payload: { asin: 'B_STANDALONE' } });
+
+        expect(res.statusCode).toBe(200);
+        expect(services.importListExclusion.removeAdded).toHaveBeenCalledWith({
+          title: 'Old Title',
+          asin: 'B_OLD',
+          authorName: sourceBook.authors[0]!.name,
+        });
+        expect(order).toEqual(['fixMatch', 'removeAdded']);
+      });
+
+      it('still answers 200 with the updated book when the release rejects', async () => {
+        stubFixMatch(vi.fn().mockRejectedValue(new Error('exclusions table locked')));
+
+        const res = await app.inject({ method: 'POST', url: '/api/books/7/fix-match', payload: { asin: 'B_STANDALONE' } });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.json()).toMatchObject({ id: 7, title: 'Standalone Title' });
+      });
+
+      it('releases nothing when the fixMatch write reports the row is gone', async () => {
+        (services.book.getById as Mock).mockResolvedValueOnce(sourceBook);
+        (services.book.findAsinCollision as Mock).mockResolvedValueOnce(null);
+        (services.metadata.lookupForFixMatch as Mock).mockResolvedValueOnce({ kind: 'ok', book: newMetaStandalone });
+        (services.book.fixMatch as Mock).mockResolvedValueOnce(null);
+
+        const res = await app.inject({ method: 'POST', url: '/api/books/7/fix-match', payload: { asin: 'B_STANDALONE' } });
+
+        expect(res.statusCode).toBe(404);
+        expect(services.importListExclusion.removeAdded).not.toHaveBeenCalled();
+      });
+
+      it('is a silent no-op when no ledger row matched, and reports when one went', async () => {
+        const { spies, restore } = installMockAppLog(app);
+        const released = 'Fix Match: released import list add-ledger rows';
+        const messages = () => spies.info.mock.calls.map((c) => c[1]);
+
+        stubFixMatch(vi.fn().mockResolvedValue(0));
+        expect((await app.inject({ method: 'POST', url: '/api/books/7/fix-match', payload: { asin: 'B_STANDALONE' } })).statusCode).toBe(200);
+        expect(messages()).not.toContain(released);
+
+        // Positive control: without it the negative above would pass on an unobservable logger.
+        stubFixMatch(vi.fn().mockResolvedValue(2));
+        await app.inject({ method: 'POST', url: '/api/books/7/fix-match', payload: { asin: 'B_STANDALONE' } });
+        expect(messages()).toContain(released);
+
+        restore();
+      });
+    });
+
     describe('post-commit rename/retag follow-up (F3)', () => {
       const sourceBookWithPath = { ...sourceBook, path: '/library/book-7' };
       const updatedWithPath = {

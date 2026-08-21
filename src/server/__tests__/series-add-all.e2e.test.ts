@@ -169,6 +169,7 @@ describe('Series card Add All, E2E (#2200)', () => {
     await e2e.services.importListExclusion.recordExclusion(
       { title: "Caliban's War", asin: 'B_CALIBAN', authorName: AUTHOR },
       { importListId: null, importListName: 'NYT Bestsellers' },
+      'deleted',
     );
     mockHardcover();
 

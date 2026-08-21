@@ -3,8 +3,11 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { eq, sql } from 'drizzle-orm';
+import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from './index.js';
 import { importListExclusions, importLists } from './schema.js';
+import { ImportListExclusionService } from '../server/services/import-list-exclusion.service.js';
+import { createMockLogger } from '../server/__tests__/helpers.js';
 
 // Real migrated libSQL: nullability, the DDL default, the FK action and the index set are the
 // subject, and none of them are observable through the ORM alone.
@@ -98,6 +101,53 @@ describe('import_list_exclusions schema (DB-backed, #2305)', () => {
     await db.insert(importListExclusions).values(values);
 
     expect(await db.select().from(importListExclusions)).toHaveLength(2);
+  });
+
+  describe('kind (#2530)', () => {
+    it('applies the kind DDL default when the column is never named', async () => {
+      // Raw SQL, naming neither the column nor a value: Drizzle inlines schema defaults into the
+      // INSERT, so the ORM half below would stay green with DEFAULT 'deleted' stripped from the
+      // migration. Only this half pins the DDL.
+      await db.run(sql`INSERT INTO import_list_exclusions (title) VALUES ('Raw')`);
+
+      const [row] = await db.select().from(importListExclusions);
+      expect(row!.kind).toBe('deleted');
+    });
+
+    it('applies the schema default through the ORM for an insert that omits the column', async () => {
+      const [row] = await db.insert(importListExclusions).values({ title: 'Typed' }).returning();
+
+      expect(row!.kind).toBe('deleted');
+      // Removing `.default('deleted')` from schema.ts makes the field required and reds typecheck.
+      expect(importListExclusions.kind.hasDefault).toBe(true);
+    });
+
+    it('rejects an explicit null kind', async () => {
+      const message = await rejectionMessage(() =>
+        db.run(sql`INSERT INTO import_list_exclusions (title, kind) VALUES ('Nulled', NULL)`),
+      );
+      expect(message).toContain('NOT NULL constraint failed: import_list_exclusions.kind');
+    });
+
+    it('leaves a pre-upgrade-shaped tombstone deleted, and still refusing', async () => {
+      // The shape a row written before the migration has: every column the old schema knew, and
+      // nothing about `kind`.
+      await db.run(sql`
+        INSERT INTO import_list_exclusions (asin, title, author_name, author_slug)
+        VALUES ('B0AAA11111', 'The Reckoning', 'Jane Doe', 'jane-doe')
+      `);
+
+      const service = new ImportListExclusionService(db, createMockLogger() as unknown as FastifyBaseLogger);
+      const match = await service.isExcluded({ title: 'The Reckoning', authorName: 'Jane Doe' });
+
+      expect(match?.kind).toBe('deleted');
+    });
+
+    it('stores an added row as added', async () => {
+      const [row] = await db.insert(importListExclusions).values({ title: 'Added', kind: 'added' }).returning();
+
+      expect(row!.kind).toBe('added');
+    });
   });
 
   it('creates exactly the three named narrowing indexes and nothing else', async () => {

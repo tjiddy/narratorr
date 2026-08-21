@@ -43,6 +43,8 @@ export interface BulkDeletionSummary {
 /** What the deletion transaction landed, handed back so their effects and logs run after commit. */
 interface CommittedDeletion {
   exclusion: ExclusionRecordResult | null;
+  /** Add-ledger rows the tombstone absorbed, so the undo page shows one entry, not two (#2530). */
+  releasedAddLedgerRows: number;
   event: BookEventRow | null;
   activeDownloads: DownloadWithBook[];
 }
@@ -228,13 +230,14 @@ export class BookDeletionService {
   private async commitDeletion(id: number, book: BookWithAuthor | null): Promise<CommittedDeletion> {
     return this.db.transaction(async (tx) => {
       const exclusion = await this.recordImportListExclusion(book, tx);
+      const releasedAddLedgerRows = await this.releaseAddLedger(book, tx);
       const activeDownloads = await this.downloadService.getActiveByBookId(id, tx);
       const event = await this.recordDeletedEvent(id, book, tx);
 
       const deleted = await this.bookService.delete(id, tx);
       if (!deleted) throw new BookRowVanishedError();
 
-      return { exclusion, event, activeDownloads };
+      return { exclusion, releasedAddLedgerRows, event, activeDownloads };
     });
   }
 
@@ -243,6 +246,9 @@ export class BookDeletionService {
     if (committed.exclusion && this.exclusions) {
       this.exclusions.logRecorded(committed.exclusion);
       this.log.info({ bookId: id, exclusionId: committed.exclusion.row.id }, 'Recorded import list exclusion for deleted book');
+    }
+    if (committed.releasedAddLedgerRows > 0) {
+      this.log.info({ bookId: id, removed: committed.releasedAddLedgerRows }, 'Released import list add-ledger rows for deleted book');
     }
     if (committed.event && this.eventHistory) this.eventHistory.logRecorded(committed.event);
   }
@@ -307,6 +313,22 @@ export class BookDeletionService {
     return this.exclusions.recordExclusion(
       { title: book.title, asin: book.asin, authorName: book.authors[0]?.name ?? null },
       { importListId: book.importListId, importListName: book.importListName ?? null },
+      'deleted',
+      tx,
+    );
+  }
+
+  /**
+   * Absorb the add-ledger row the tombstone now stands for, in the same transaction (#2530).
+   *
+   * Two rows for one book would make the undo page lie: removing the visible one would leave the
+   * other still refusing — the invisible permanent block the narrow trigger above exists to avoid.
+   * Same trigger as the tombstone, so a manually-added book is untouched.
+   */
+  private async releaseAddLedger(book: BookWithAuthor | null, tx: DbOrTx): Promise<number> {
+    if (!book || !this.exclusions || book.importListId === null) return 0;
+    return this.exclusions.removeAdded(
+      { title: book.title, asin: book.asin, authorName: book.authors[0]?.name ?? null },
       tx,
     );
   }

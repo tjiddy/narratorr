@@ -91,6 +91,7 @@ function createService(opts?: {
     ? undefined
     : inject<ImportListExclusionService>({
       recordExclusion: vi.fn().mockResolvedValue({ row: { id: 99 }, inserted: true }),
+      removeAdded: vi.fn().mockResolvedValue(0),
       logRecorded: vi.fn(),
       ...opts?.exclusions,
     });
@@ -572,6 +573,7 @@ describe('BookDeletionService — the import-list exclusion (#2305)', () => {
     expect(exclusions!.recordExclusion).toHaveBeenCalledWith(
       { title: 'The Way of Kings', asin: 'B0ABC12345', authorName: 'Brandon Sanderson' },
       { importListId: 5, importListName: 'NYT Bestsellers' },
+      'deleted',
       db,
     );
   });
@@ -591,6 +593,7 @@ describe('BookDeletionService — the import-list exclusion (#2305)', () => {
     expect(exclusions!.recordExclusion).toHaveBeenCalledWith(
       expect.objectContaining({ authorName: 'Brandon Sanderson' }),
       expect.anything(),
+      'deleted',
       expect.anything(),
     );
   });
@@ -605,6 +608,7 @@ describe('BookDeletionService — the import-list exclusion (#2305)', () => {
     expect(exclusions!.recordExclusion).toHaveBeenCalledWith(
       expect.objectContaining({ authorName: null }),
       expect.anything(),
+      'deleted',
       expect.anything(),
     );
   });
@@ -645,6 +649,27 @@ describe('BookDeletionService — the import-list exclusion (#2305)', () => {
 
     expect(result).toEqual({ outcome: 'not_found' });
     expect(exclusions!.recordExclusion).not.toHaveBeenCalled();
+  });
+
+  it('releases the add-ledger rows for the same identity, on the caller-owned transaction (#2530)', async () => {
+    const { service, exclusions, db } = createService({
+      bookService: { getById: vi.fn().mockResolvedValue(importedBook) },
+    });
+
+    await service.deleteBook(1, { deleteFiles: false });
+
+    expect(exclusions!.removeAdded).toHaveBeenCalledWith(
+      { title: 'The Way of Kings', asin: 'B0ABC12345', authorName: 'Brandon Sanderson' },
+      db,
+    );
+  });
+
+  it('releases NO add-ledger row for a manually added book (#2530)', async () => {
+    const { service, exclusions } = createService();
+
+    await service.deleteBook(1, { deleteFiles: false });
+
+    expect(exclusions!.removeAdded).not.toHaveBeenCalled();
   });
 
   it('records NO exclusion when managed file deletion fails', async () => {

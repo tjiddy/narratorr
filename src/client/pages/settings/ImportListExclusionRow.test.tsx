@@ -12,8 +12,11 @@ const entry: ImportListExclusion = {
   authorSlug: 'jane-doe',
   importListId: 5,
   importListName: 'NYT Bestsellers',
+  kind: 'deleted',
   createdAt: '2026-06-15T12:00:00Z',
 };
+
+const added: ImportListExclusion = { ...entry, id: 3, title: 'General Thinking Concepts', kind: 'added' };
 
 const bare: ImportListExclusion = {
   ...entry,
@@ -42,6 +45,17 @@ describe('ImportListExclusionRow', () => {
     expect(screen.getByText('Jane Doe')).toBeInTheDocument();
     expect(screen.getByText('NYT Bestsellers')).toBeInTheDocument();
     expect(screen.getByText('B0ABC12345')).toBeInTheDocument();
+  });
+
+  it('names the kind on the card so a mixed reading of the page is impossible (#2530)', () => {
+    const { rerender } = render(<ImportListExclusionRow entry={entry} index={0} onRemove={vi.fn()} />);
+    expect(screen.getByText('Deleted')).toBeInTheDocument();
+    expect(screen.queryByText('Added by a list')).not.toBeInTheDocument();
+
+    rerender(<ImportListExclusionRow entry={added} index={0} onRemove={vi.fn()} />);
+
+    expect(screen.getByText('Added by a list')).toBeInTheDocument();
+    expect(screen.queryByText('Deleted')).not.toBeInTheDocument();
   });
 
   it('omits the author and ASIN chips and names the source when the row carries neither', () => {

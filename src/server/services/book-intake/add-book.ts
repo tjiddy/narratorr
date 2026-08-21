@@ -4,6 +4,7 @@ import type { RecordingReviewReason } from '@core/utils/recording-identity.js';
 import type { ProductionType } from '@shared/schemas/book.js';
 import type { DedupIdentity } from '@shared/dedup.js';
 import type { EventSource } from '@shared/schemas/event-history.js';
+import type { ImportListExclusionKind } from '@shared/schemas/import-list-exclusion.js';
 import { announceBookAdded, bookAddedSnapshotEvent } from '../../utils/event-helpers.js';
 import { serializeError } from '../../utils/serialize-error.js';
 import { OwnedRecordingError } from '../book-dedup.js';
@@ -45,6 +46,8 @@ export interface AddBookProvenance {
   eventShape: AddBookEventShape;
   /** Stamped onto a resolved row so the library can name the list that introduced it. */
   importListId?: number | undefined;
+  /** The add-ledger row's display snapshot, typed rather than dug out of the `reason` blob. */
+  importListName?: string | undefined;
 }
 
 /**
@@ -100,11 +103,19 @@ export type AddBookRequest =
 export type AddBookResolve = AddBookRequest['resolve'];
 
 /**
- * The read half of the import-list exclusion list, as much of it as the gate needs. A matched row
- * is returned rather than a boolean because the refusal reports which exclusion refused it.
+ * The import-list exclusion ledger, as much of it as this pipeline needs.
+ *
+ * A matched row is returned rather than a boolean because the refusal reports which exclusion
+ * refused it and of which kind. `recordAdded` is the write half (#2530): the answer to "has a list
+ * already added this?" is recorded when it was true, so no later edit to the book's identity can
+ * make the next sync forget it.
  */
-export interface ExclusionGate {
-  isExcluded: (identity: DedupIdentity) => Promise<{ id: number } | null>;
+export interface ExclusionPort {
+  isExcluded: (identity: DedupIdentity) => Promise<{ id: number; kind: ImportListExclusionKind } | null>;
+  recordAdded: (
+    identity: DedupIdentity,
+    provenance: { importListId: number | null; importListName: string | null },
+  ) => Promise<unknown>;
 }
 
 export interface AddBookDeps extends AsinEnrichmentDeps {
@@ -112,9 +123,9 @@ export interface AddBookDeps extends AsinEnrichmentDeps {
   eventHistory: { create: (event: AddBookEvent) => Promise<unknown> };
   /** Only the `resolve: 'required'` arm reads it, and only when the operator configured one. */
   resolver?: Pick<MetadataService, 'resolveBook'> | undefined;
-  /** Supplied only by `ImportListService`: the manual add surfaces stay ungated, so an operator
-   * can still add an excluded book by hand (#2305). */
-  exclusions?: ExclusionGate | undefined;
+  /** Supplied only by `ImportListService`: the manual add surfaces stay ungated and record no
+   * ledger row, so an operator can still add an excluded book by hand (#2305). */
+  exclusions?: ExclusionPort | undefined;
 }
 
 export type AddBookResult =
@@ -131,8 +142,9 @@ export type AddBookResult =
   // authorName is the primary author the row was created under, which under `adopt` is the resolved
   // one rather than anything the caller holds — and what its own search trigger must key on.
   | { outcome: 'created'; book: BookDetail; authorName: string | null }
-  // Reachable only for a caller that supplied `AddBookDeps.exclusions`; carries the row that refused.
-  | { outcome: 'excluded'; exclusionId: number };
+  // Reachable only for a caller that supplied `AddBookDeps.exclusions`; carries the row that
+  // refused and its kind, which is what decides whether the caller counts the refusal.
+  | { outcome: 'excluded'; exclusionId: number; kind: ImportListExclusionKind };
 
 type DuplicateResult = Extract<AddBookResult, { outcome: 'duplicate' }>;
 
@@ -340,10 +352,44 @@ async function refuseExcluded(
   });
   if (!match) return null;
   log.info(
-    { title: item.title, asin: item.asin, exclusionId: match.id },
+    { title: item.title, asin: item.asin, exclusionId: match.id, kind: match.kind },
     'Import list item refused: book is excluded',
   );
-  return { outcome: 'excluded', exclusionId: match.id };
+  return { outcome: 'excluded', exclusionId: match.id, kind: match.kind };
+}
+
+/**
+ * Record that a list added this identity, so no later edit to the book can hide the fact (#2530).
+ *
+ * The identity is the POST-enrichment `item` the gate read, not the caller's seed and not the
+ * created row: a record keyed on an ASIN the gate does not key on would disagree with it on the
+ * very next sync (#2249, applied to the write side).
+ *
+ * Awaited so the row is durable before the caller reports a create, but a rejection is contained:
+ * the book exists, and throwing here would report a contained per-item failure for a book that was
+ * in fact created.
+ */
+async function recordListAdd(
+  deps: AddBookDeps,
+  item: AddBookItem,
+  provenance: AddBookProvenance,
+  log: FastifyBaseLogger,
+): Promise<void> {
+  if (!deps.exclusions) return;
+  try {
+    await deps.exclusions.recordAdded(
+      { title: item.title, asin: item.asin, authorName: primaryAuthorOf(item) },
+      {
+        importListId: provenance.importListId ?? null,
+        importListName: provenance.importListName ?? null,
+      },
+    );
+  } catch (error: unknown) {
+    log.warn(
+      { title: item.title, asin: item.asin, error: serializeError(error) },
+      'Failed to record the import-list add ledger row',
+    );
+  }
 }
 
 /** The write item, resolved against the provider first when the caller holds only a seed. */
@@ -397,5 +443,7 @@ export async function addBook(
     return refusal;
   }
 
-  return createAndAnnounce(deps, item, productionType, provenance, lookupAttempted, log);
+  const result = await createAndAnnounce(deps, item, productionType, provenance, lookupAttempted, log);
+  if (result.outcome === 'created') await recordListAdd(deps, item, provenance, log);
+  return result;
 }

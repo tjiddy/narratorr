@@ -254,6 +254,11 @@ export function createMockServices(overrides?: Partial<Record<keyof Services, Re
       // sees the no-op rather than a 500 from the rejecting default.
       presets.deleteMissingBooks = vi.fn().mockResolvedValue({ deleted: 0, failed: 0 });
     }
+    if (name === 'importListExclusion') {
+      // Every fix-match releases the add ledger (#2530); an unrelated route test should see the
+      // nothing-to-release answer rather than the contained-failure warn path.
+      presets.removeAdded = vi.fn().mockResolvedValue(0);
+    }
     services[name] = new Proxy({ ...presets, ...overrides?.[name] } as Record<string | symbol, unknown>, {
       get(target, prop) {
         if (prop in target) return target[prop];
@@ -289,6 +294,8 @@ export function resetMockServices(services: Services) {
           mock.mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() });
         } else if (serviceName === 'bookDeletion' && methodName === 'deleteMissingBooks') {
           mock.mockResolvedValue({ deleted: 0, failed: 0 });
+        } else if (serviceName === 'importListExclusion' && methodName === 'removeAdded') {
+          mock.mockResolvedValue(0);
         } else {
           mock.mockRejectedValue(new Error(`mock not configured: ${serviceName}.${methodName}`));
         }
