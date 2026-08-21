@@ -3359,3 +3359,58 @@ describe('#2099 durable merge_started before staging (AC1)', () => {
   });
 });
 
+describe('#2540 shared merge harness — caller-supplied terminal observer', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('runs the hook inside the merge_complete emit, handed the constructed service with the book already dropped', async () => {
+    setupHappyPath();
+    const seen: Array<{ event: string; bookId: number; active: number[]; queued: number[]; sameService: boolean }> = [];
+    let snapshotFramesAtHook = -1;
+    const h = createMergeHarness({
+      books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }],
+      onTerminal: (service, frame) => {
+        const snapshot = service.getMergeStateSnapshot();
+        snapshotFramesAtHook = h.snapshots().length;
+        seen.push({
+          event: frame.event,
+          bookId: frame.payload.book_id as number,
+          active: snapshot.active.map((e) => e.book_id),
+          queued: snapshot.queued.map((e) => e.book_id),
+          sameService: service === h.service,
+        });
+      },
+    });
+
+    await h.service.enqueueMerge(42);
+    await settle();
+
+    expect(seen).toEqual([{ event: 'merge_complete', bookId: 42, active: [], queued: [], sameService: true }]);
+    // Mid-emit, not after: exactly one cleared snapshot frame is still owed when the hook runs.
+    expect(h.snapshots().length - snapshotFramesAtHook).toBe(1);
+  });
+
+  it('runs the hook on the merge_failed arm, and on no other frame', async () => {
+    setupHappyPath();
+    (processAudioFiles as Mock).mockResolvedValue({ success: false, error: 'ffmpeg error' });
+    const seen: Array<{ event: string; bookId: number; active: number[] }> = [];
+    const h = createMergeHarness({
+      books: [{ id: 42, title: 'The Way of Kings', path: BOOK_PATH }],
+      onTerminal: (service, frame) => {
+        seen.push({
+          event: frame.event,
+          bookId: frame.payload.book_id as number,
+          active: service.getMergeStateSnapshot().active.map((e) => e.book_id),
+        });
+      },
+    });
+
+    await h.service.enqueueMerge(42);
+    await settle();
+
+    expect(seen).toEqual([{ event: 'merge_failed', bookId: 42, active: [] }]);
+    // Both non-terminal frame kinds were emitted on this run; neither reached the hook.
+    expect(h.events()).toEqual(expect.arrayContaining(['merge_state', 'merge_started']));
+  });
+});

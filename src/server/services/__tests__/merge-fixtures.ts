@@ -116,6 +116,12 @@ function mergeHarnessRow(book: MergeHarnessBook) {
 
 export type MergeHarnessRow = ReturnType<typeof mergeHarnessRow>;
 
+/**
+ * Runs synchronously inside a `merge_complete` / `merge_failed` emit — before the cleared snapshot
+ * frame — so `service.getMergeStateSnapshot()` reads the state the terminal event was emitted against.
+ */
+export type MergeTerminalObserver = (service: MergeService, frame: MergeHarnessFrame) => void;
+
 /** `| undefined` on every key so callers can spread a conditional override under exactOptionalPropertyTypes. */
 export type MergeHarnessOptions = {
   books?: MergeHarnessBook[] | undefined;
@@ -123,6 +129,8 @@ export type MergeHarnessOptions = {
   maxConcurrentProcessing?: number | undefined;
   /** `absent` constructs the service with no broadcaster: safeEmit no-ops and no frame is ever recorded. */
   broadcaster?: 'recording' | 'absent' | undefined;
+  /** Caller-side twin of `stateAtTerminal`, for observations the built-in map cannot express. */
+  onTerminal?: MergeTerminalObserver | undefined;
 };
 
 /** Concrete shape so a missing accessor fails typecheck rather than one runtime assertion (#2540 F1). */
@@ -154,6 +162,7 @@ export function createMergeHarness(opts?: MergeHarnessOptions): MergeHarness {
       frames.push({ event, payload });
       if (event === 'merge_complete' || event === 'merge_failed') {
         stateAtTerminal.set(payload.book_id as number, holder.service!.getMergeStateSnapshot());
+        opts?.onTerminal?.(holder.service!, { event, payload });
       }
     }),
   });
