@@ -2259,8 +2259,6 @@ describe('#257 merge observability — merge service', () => {
         await service.enqueueMerge(42);
         await new Promise((r) => setTimeout(r, 50));
 
-        const bookService43 = createService().bookService;
-        (bookService43.getById as Mock).mockResolvedValue({ ...mockBook, id: 43, title: 'Book 43' });
         // Push directly to the queue to isolate cancellation.
         (service as unknown as { queue: number[] }).queue.push(43);
 
@@ -2268,10 +2266,10 @@ describe('#257 merge observability — merge service', () => {
         expect(result.status).toBe('cancelled');
         expect((service as unknown as { queue: number[] }).queue).not.toContain(43);
 
-        const failedEvents = emitted.filter(e => e.event === 'merge_failed');
-        expect(failedEvents.length).toBeGreaterThanOrEqual(1);
-        const lastFailed = failedEvents[failedEvents.length - 1]!.payload as { reason: string };
-        expect(lastFailed.reason).toBe('cancelled');
+        // Book-scoped: book 42's blocking merge shares `emitted`, so an unscoped count would flake.
+        const failedEvents = emitted.filter(e => e.event === 'merge_failed' && (e.payload as { book_id: number }).book_id === 43);
+        expect(failedEvents).toHaveLength(1);
+        expect((failedEvents[0]!.payload as { reason: string }).reason).toBe('cancelled');
 
         blocking.resolve();
         await new Promise((r) => setTimeout(r, 50));
@@ -2310,9 +2308,9 @@ describe('#257 merge observability — merge service', () => {
 
         await new Promise((r) => setTimeout(r, 100));
 
-        const failedEvents = emitted.filter(e => e.event === 'merge_failed');
-        expect(failedEvents.length).toBeGreaterThanOrEqual(1);
-        const payload = failedEvents[failedEvents.length - 1]!.payload as { reason: string; error: string };
+        const failedEvents = emitted.filter(e => e.event === 'merge_failed' && (e.payload as { book_id: number }).book_id === 42);
+        expect(failedEvents).toHaveLength(1);
+        const payload = failedEvents[0]!.payload as { reason: string; error: string };
         expect(payload.reason).toBe('cancelled');
       });
 
@@ -2337,8 +2335,9 @@ describe('#257 merge observability — merge service', () => {
         expect(result.status).toBe('cancelled');
         await new Promise((r) => setTimeout(r, 100));
 
-        const failedEvents = emitted.filter(e => e.event === 'merge_failed');
-        const payload = failedEvents[failedEvents.length - 1]!.payload as { reason: string; error: string };
+        const failedEvents = emitted.filter(e => e.event === 'merge_failed' && (e.payload as { book_id: number }).book_id === 42);
+        expect(failedEvents).toHaveLength(1);
+        const payload = failedEvents[0]!.payload as { reason: string; error: string };
         expect(payload.reason).toBe('cancelled');
         expect(payload.error).not.toContain('Cover art');
       });
