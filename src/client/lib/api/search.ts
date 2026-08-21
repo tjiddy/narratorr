@@ -26,6 +26,8 @@ export interface SearchResponse {
   relaxedQuery?: string;
   /** Why an empty result list is empty; absent when the filters removed nothing. */
   filteredOut?: SearchDropSummary;
+  /** The run was torn down at its deadline; absent when the empty list is a genuine answer. */
+  timedOut?: boolean;
 }
 
 export const searchApi = {

@@ -13,6 +13,9 @@ import { DEFAULT_SETTINGS } from '@shared/schemas/settings/registry.js';
 import authPlugin from '../plugins/auth.js';
 import * as searchPipeline from '../services/search-pipeline.js';
 import { fetchSseEvents } from '../__tests__/sse-helpers.js';
+import { captureDeadlineTimers, type ArmedDeadlineTimer } from '../__tests__/helpers.js';
+import { withSearchDeadline, _resetSearchRegistryForTesting } from '../services/search-deadline.js';
+import { SEARCH_DEADLINE_MS } from '@core/utils/constants.js';
 import { HEARTBEAT_INTERVAL_MS } from '../utils/sse-stream.js';
 
 const HB_FRAME = 'event: hb\ndata: {}\n\n';
@@ -806,8 +809,44 @@ describe('searchStreamRoutes — unmocked postProcessSearchResults', () => {
   });
 });
 
+const STREAM_TOKEN = 'valid-stream-token';
+
+function authService(): AuthService {
+  return {
+    validateApiKey: vi.fn().mockResolvedValue(true),
+    getSessionSecret: vi.fn().mockResolvedValue('test-secret'),
+    verifyStreamToken: vi.fn().mockImplementation((token: string) =>
+      token === STREAM_TOKEN ? { kind: 'stream', issuedAt: Date.now(), expiresAt: Date.now() + 60_000 } : null),
+    verifySessionCookie: vi.fn().mockReturnValue(null),
+    getStatus: vi.fn().mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false }),
+    hasUser: vi.fn().mockResolvedValue(true),
+  } as unknown as AuthService;
+}
+
+/** The one real-HTTP app for this route: real authPlugin over a stubbed AuthService, never hand-rolled. */
+async function buildApp(indexerSearchService: IndexerSearchService, overrides: {
+  blacklistService?: BlacklistService;
+  indexerService?: IndexerService;
+} = {}) {
+  const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+  await app.register(cookie);
+  await app.register(authPlugin, { authService: authService() });
+  const { searchStreamRoutes } = await import('./search-stream.js');
+  await searchStreamRoutes(
+    app,
+    indexerSearchService,
+    overrides.blacklistService ?? createMockBlacklistService(),
+    createMockSettingsService(),
+    overrides.indexerService ?? mockIndexer,
+    new SearchSessionManager(),
+  );
+  return app;
+}
+
 describe('GET /api/search/stream — query ladder (#2104)', () => {
-  const VALID_STREAM_TOKEN = 'valid-stream-token';
+  const VALID_STREAM_TOKEN = STREAM_TOKEN;
   const BOOK_TITLE = 'The Churn: An Expanse Novella';
   const AUTHOR = 'James S. A. Corey';
   const CANONICAL_Q = 'The Churn An Expanse Novella James S A Corey';
@@ -820,36 +859,6 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
     'the churn',
     'an expanse novella',
   ];
-
-  function authService(): AuthService {
-    return {
-      validateApiKey: vi.fn().mockResolvedValue(true),
-      getSessionSecret: vi.fn().mockResolvedValue('test-secret'),
-      verifyStreamToken: vi.fn().mockImplementation((token: string) =>
-        token === VALID_STREAM_TOKEN ? { kind: 'stream', issuedAt: Date.now(), expiresAt: Date.now() + 60_000 } : null),
-      verifySessionCookie: vi.fn().mockReturnValue(null),
-      getStatus: vi.fn().mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false }),
-      hasUser: vi.fn().mockResolvedValue(true),
-    } as unknown as AuthService;
-  }
-
-  async function buildApp(indexerSearchService: IndexerSearchService) {
-    const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
-    app.setValidatorCompiler(validatorCompiler);
-    app.setSerializerCompiler(serializerCompiler);
-    await app.register(cookie);
-    await app.register(authPlugin, { authService: authService() });
-    const { searchStreamRoutes } = await import('./search-stream.js');
-    await searchStreamRoutes(
-      app,
-      indexerSearchService,
-      createMockBlacklistService(),
-      createMockSettingsService(),
-      mockIndexer,
-      new SearchSessionManager(),
-    );
-    return app;
-  }
 
   // Completion callbacks distinguish a genuine zero-result rung from a total outage.
   function serviceAnswering(hitQuery: string | null, resultCount = 2) {
@@ -1189,6 +1198,602 @@ describe('GET /api/search/stream — query ladder (#2104)', () => {
         ...RUNGS.slice(1),
       ]);
     } finally {
+      await app.close();
+    }
+  });
+});
+
+// ─── #2568: the interactive stream's own deadline ────────────────────────────
+// Every describe above is the success-path parity baseline (case 5) and stays green UNMODIFIED;
+// nothing below edits one. If one of them needs editing, the contract has drifted.
+
+const DEADLINE_FIXTURE = {
+  title: 'The Churn: An Expanse Novella',
+  author: 'James S. A. Corey',
+  q: 'The Churn An Expanse Novella James S A Corey',
+};
+/**
+ * Pinned rung count for the fixture above. A colon-free title yields 2 rungs however many words it
+ * has, which would make "no further rung ran" vacuous; pinning it reds here if the variant
+ * generator changes rather than silently shortening every count that depends on it.
+ */
+const DEADLINE_LADDER_RUNGS = 6;
+
+type SseFrame = { event: string; data: Record<string, unknown> };
+
+function framesOf(write: ReturnType<typeof vi.fn>): SseFrame[] {
+  return write.mock.calls
+    .map((c: unknown[]) => c[0])
+    .filter((f: unknown): f is string => typeof f === 'string' && f.startsWith('event: '))
+    .map((frame: string) => {
+      const event = frame.slice('event: '.length, frame.indexOf('\n'));
+      const dataLine = frame.split('\n').find((l: string) => l.startsWith('data: '))!;
+      return { event, data: JSON.parse(dataLine.slice('data: '.length)) as Record<string, unknown> };
+    });
+}
+
+/** Heartbeats are cadence noise on a terminal-payload assertion; every other frame is contract. */
+const namedFrames = (write: ReturnType<typeof vi.fn>) => framesOf(write).filter(f => f.event !== 'hb');
+const completeFrame = (write: ReturnType<typeof vi.fn>) =>
+  namedFrames(write).find(f => f.event === 'search-complete')?.data;
+
+function freshIndexerService() {
+  return {
+    getLanAllowlist: vi.fn().mockResolvedValue({ hostPort: new Set<string>(), hostname: new Set<string>() }),
+    recordSearchFailure: vi.fn(),
+  } as unknown as IndexerService & { getLanAllowlist: ReturnType<typeof vi.fn>; recordSearchFailure: ReturnType<typeof vi.fn> };
+}
+
+/** Sized to survive the default quality gates (minSeeders 1, 50 MB–5 GB) under real post-processing. */
+const survivingResult = (overrides: Record<string, unknown> = {}) => ({
+  title: 'The Churn',
+  protocol: 'torrent',
+  indexer: 'AudioBookBay',
+  indexerId: 1,
+  size: 500 * 1024 * 1024,
+  seeders: 10,
+  ...overrides,
+});
+
+interface StreamingServiceOptions {
+  /** 1-based rung to park on a barrier the case releases; omit to never park. */
+  parkAt?: number;
+  /** The transport query that answers with results; every other rung answers a genuine zero. */
+  hitQuery?: string;
+  results?: Array<Record<string, unknown>>;
+  /** Rungs (1-based) that report a total indexer outage instead of a genuine zero. */
+  outageAt?: number[];
+  indexers?: Array<{ id: number; name: string }>;
+}
+
+/**
+ * A `searchAllStreaming` double faithful to the two behaviours this change depends on
+ * (`indexer-search.service.ts:447-456,487`): an aborted OUTER signal rejects with an ordinary
+ * adapter-shaped error and invokes no callback, while a per-indexer cancellation routes through
+ * `onCancelled`. Modelling both is what makes case 9 red if the deadline is threaded in as a
+ * session controller instead of the outer signal.
+ */
+function streamingService(opts: StreamingServiceOptions = {}) {
+  const indexers = opts.indexers ?? [{ id: 1, name: 'AudioBookBay' }];
+  let admit!: () => void;
+  const entered = new Promise<void>((resolve) => { admit = resolve; });
+  let open!: () => void;
+  const barrier = new Promise<void>((resolve) => { open = resolve; });
+  let calls = 0;
+
+  const searchAllStreaming = vi.fn().mockImplementation(async (
+    query: string,
+    _options: unknown,
+    controllers: Map<number, AbortController>,
+    callbacks: {
+      onComplete: (id: number, name: string, count: number, ms: number) => void;
+      onError: (id: number, name: string, error: string, ms: number) => void;
+      onCancelled?: (id: number, name: string) => void;
+    },
+    outerSignal?: AbortSignal,
+  ) => {
+    const rung = ++calls;
+    if (opts.parkAt === rung) { admit(); await barrier; }
+
+    // Guard before subscribing: an already-aborted signal never re-fires its abort event.
+    // The message is deliberately an ordinary transport failure — textually indistinguishable from
+    // a real one, which is why the route's verdict cannot key on the error's shape (AC5).
+    if (outerSignal?.aborted) throw new Error('ECONNRESET while the leg was in flight');
+
+    for (const [id, controller] of controllers) {
+      if (!controller.signal.aborted) continue;
+      callbacks.onCancelled?.(id, indexers.find(i => i.id === id)?.name ?? `Indexer-${id}`);
+    }
+
+    if (opts.outageAt?.includes(rung)) {
+      for (const indexer of indexers) callbacks.onError(indexer.id, indexer.name, 'ECONNREFUSED', 10);
+      return [];
+    }
+
+    const results = query === opts.hitQuery ? (opts.results ?? []) : [];
+    for (const indexer of indexers) {
+      callbacks.onComplete(indexer.id, indexer.name, indexer.id === indexers[0]!.id ? results.length : 0, 10);
+    }
+    return results;
+  });
+
+  return {
+    service: {
+      getEnabledIndexers: vi.fn().mockResolvedValue(indexers),
+      searchAllStreaming,
+    } as unknown as IndexerSearchService,
+    searchAllStreaming,
+    entered,
+    release: () => open(),
+  };
+}
+
+/** The signal the route handed the executor, read positionally — presence and identity, not a matcher. */
+const outerSignalOf = (fn: ReturnType<typeof vi.fn>, call = 0) =>
+  fn.mock.calls[call]![4] as AbortSignal | undefined;
+
+describe('GET /api/search/stream — deadline (#2568)', () => {
+  let armed: ArmedDeadlineTimer[];
+  let clearTimeoutSpy: MockInstance;
+
+  beforeEach(() => {
+    armed = captureDeadlineTimers();
+    clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  async function buildHandler(overrides: {
+    indexerSearchService?: IndexerSearchService;
+    blacklistService?: BlacklistService;
+    indexerService?: IndexerService;
+  } = {}) {
+    let handler!: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
+    const { searchStreamRoutes } = await import('./search-stream.js');
+    await searchStreamRoutes(
+      {
+        get: (_p: string, _o: unknown, h: (req: FastifyRequest, reply: FastifyReply) => Promise<void>) => { handler = h; },
+        post: vi.fn(),
+      } as never,
+      overrides.indexerSearchService ?? createMockIndexerSearchService(),
+      overrides.blacklistService ?? createMockBlacklistService(),
+      createMockSettingsService(),
+      overrides.indexerService ?? freshIndexerService(),
+      new SearchSessionManager(),
+    );
+    return handler;
+  }
+
+  function streamRequest(query: Record<string, unknown> = { ...DEADLINE_FIXTURE, limit: 50 }) {
+    const ctx = createMockReplyAndRequest();
+    (ctx.request as { query: Record<string, unknown> }).query = query;
+    return ctx;
+  }
+
+  const logOf = (request: FastifyRequest, level: 'warn' | 'error') =>
+    request.log[level] as unknown as ReturnType<typeof vi.fn>;
+
+  // ── arming ────────────────────────────────────────────────────────────────
+
+  it('arms exactly one deadline timer, at the shared constant, per hijacked request (AC1)', async () => {
+    const handler = await buildHandler();
+    const { reply, request, hijack } = streamRequest();
+
+    await handler(request, reply);
+
+    expect(hijack).toHaveBeenCalled();
+    // captureDeadlineTimers only parks a SEARCH_DEADLINE_MS delay, so a length of 1 is both the
+    // cardinality and the constant. An inlined budget, a per-rung arm, or a nested wrap all red.
+    expect(armed).toHaveLength(1);
+  });
+
+  it.each([
+    ['a null bookDuration', { ...DEADLINE_FIXTURE, bookDuration: null }, /bookDuration/],
+    ['a parens-only q', { q: '()', limit: 50 }, /empty/i],
+    ['a dots-only q', { q: '...', limit: 50 }, /empty/i],
+    ['a "?!"-only q (#1904)', { q: '?!', limit: 50 }, /empty/i],
+  ])('arms zero timers and keeps today\'s 400 for %s (AC1)', async (_name, query, message) => {
+    const handler = await buildHandler();
+    const { reply, request, writeHead, hijack } = streamRequest(query as Record<string, unknown>);
+
+    await handler(request, reply);
+
+    expect(reply.status).toHaveBeenCalledWith(400);
+    expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ error: expect.stringMatching(message) }));
+    expect(writeHead).not.toHaveBeenCalled();
+    expect(hijack).not.toHaveBeenCalled();
+    expect(armed).toHaveLength(0);
+  });
+
+  it('arms zero timers when getEnabledIndexers rejects, because that return precedes the hijack (AC1)', async () => {
+    const indexerSearchService = {
+      getEnabledIndexers: vi.fn().mockRejectedValue(new Error('indexer table unavailable')),
+      searchAllStreaming: vi.fn(),
+    } as unknown as IndexerSearchService;
+    const handler = await buildHandler({ indexerSearchService });
+    const { reply, request, writeHead, hijack } = streamRequest();
+
+    await expect(handler(request, reply)).rejects.toThrow('indexer table unavailable');
+
+    expect(writeHead).not.toHaveBeenCalled();
+    expect(hijack).not.toHaveBeenCalled();
+    expect(armed).toHaveLength(0);
+  });
+
+  it('hands every rung the same non-aborted signal as searchAllStreaming\'s fifth argument (AC2)', async () => {
+    const { service, searchAllStreaming } = streamingService();
+    const handler = await buildHandler({ indexerSearchService: service });
+    const { reply, request } = streamRequest();
+
+    await handler(request, reply);
+
+    expect(searchAllStreaming).toHaveBeenCalledTimes(DEADLINE_LADDER_RUNGS);
+    const signals = searchAllStreaming.mock.calls.map((_c, i) => outerSignalOf(searchAllStreaming, i));
+    for (const signal of signals) {
+      // Read positionally: a not.objectContaining form cannot separate absent from present-undefined.
+      expect(signal).toBeInstanceOf(AbortSignal);
+      expect(signal!.aborted).toBe(false);
+    }
+    // One controller for the whole run, so a rung cannot outlive the deadline by getting a fresh one.
+    expect(new Set(signals).size).toBe(1);
+  });
+
+  it('arms and releases exactly one timer for a zero-indexer run (AC1/AC12)', async () => {
+    const indexerSearchService = {
+      getEnabledIndexers: vi.fn().mockResolvedValue([]),
+      searchAllStreaming: vi.fn().mockResolvedValue([]),
+    } as unknown as IndexerSearchService;
+    const handler = await buildHandler({ indexerSearchService });
+    const { reply, request, write } = streamRequest();
+
+    await handler(request, reply);
+
+    expect(armed).toHaveLength(1);
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(armed[0]!.handle);
+    expect(completeFrame(write)).not.toHaveProperty('timedOut');
+  });
+
+  // ── expiry ────────────────────────────────────────────────────────────────
+
+  /** Park rung 1, expire, then release — the only ordering in which the abort is observable. */
+  async function runToExpiry(overrides: Partial<StreamingServiceOptions> = {}) {
+    const svc = streamingService({ parkAt: 1, ...overrides });
+    const indexerService = freshIndexerService();
+    const handler = await buildHandler({ indexerSearchService: svc.service, indexerService });
+    const ctx = streamRequest();
+
+    const settled = handler(ctx.request, ctx.reply);
+    await svc.entered;
+    const callsBeforeExpiry = svc.searchAllStreaming.mock.calls.length;
+
+    armed[0]!();
+    svc.release();
+    await settled;
+
+    return { ...svc, ...ctx, indexerService, callsBeforeExpiry };
+  }
+
+  it('ends the ladder at the parked rung and never reaches post-processing (AC3)', async () => {
+    const { searchAllStreaming, indexerService, callsBeforeExpiry } = await runToExpiry();
+
+    expect(callsBeforeExpiry).toBe(1);
+    // Without the deadline this fixture runs DEADLINE_LADDER_RUNGS rungs, so the freeze is real.
+    expect(searchAllStreaming).toHaveBeenCalledTimes(1);
+    expect(indexerService.getLanAllowlist).not.toHaveBeenCalled();
+  });
+
+  it('aborts the very signal it handed the executor (AC2/AC3)', async () => {
+    const { searchAllStreaming } = await runToExpiry();
+
+    expect(outerSignalOf(searchAllStreaming)!.aborted).toBe(true);
+  });
+
+  it('discloses the expiry on the terminal payload instead of spelling it as a genuine zero (AC4)', async () => {
+    const { write } = await runToExpiry();
+
+    expect(completeFrame(write)).toEqual({
+      results: [],
+      durationUnknown: true,
+      unsupportedResults: { count: 0, titles: [] },
+      timedOut: true,
+    });
+    expect(completeFrame(write)).not.toHaveProperty('relaxedQuery');
+    // No sixth event name reaches the wire; the flag rides the payload the client already validates.
+    expect(namedFrames(write).map(f => f.event)).toEqual(['search-start', 'search-complete']);
+  });
+
+  it('does not blame the indexers for a leg the deadline tore (AC8)', async () => {
+    const { write, indexerService } = await runToExpiry();
+
+    const events = namedFrames(write).map(f => f.event);
+    expect(events).not.toContain('indexer-cancelled');
+    expect(events).not.toContain('indexer-error');
+    expect(indexerService.recordSearchFailure).not.toHaveBeenCalled();
+  });
+
+  it('logs the expiry once, at warn, under its own pinned message with a sibling budgetMs (AC9)', async () => {
+    const { request } = await runToExpiry();
+
+    expect(logOf(request, 'error')).not.toHaveBeenCalled();
+    expect(logOf(request, 'warn')).toHaveBeenCalledTimes(1);
+
+    const [payload, message] = logOf(request, 'warn').mock.calls[0]! as [Record<string, unknown>, string];
+    // The literal itself, not merely "differs from 'Search stream error'": inequality with one line
+    // does not stop an implementation from reusing another surface's wording.
+    expect(message).toBe('Search stream deadline exceeded');
+    // A sibling, because serializeError emits a fixed key set that would drop it.
+    expect(payload.budgetMs).toBe(SEARCH_DEADLINE_MS);
+    // objectContaining/toMatchObject read through to Error.prototype; the own-key set does not.
+    expect(payload.error).not.toBeInstanceOf(Error);
+    expect(Object.keys(payload.error as object).sort()).toEqual(['message', 'stack', 'type']);
+  });
+
+  it('releases the timer on a normal completion, and a re-fire writes nothing further (AC10)', async () => {
+    const handler = await buildHandler();
+    const { reply, request, write } = streamRequest();
+
+    await handler(request, reply);
+
+    expect(armed).toHaveLength(1);
+    expect(armed[0]!.unrefCount).toBeGreaterThan(0);
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(armed[0]!.handle);
+    const framesBefore = write.mock.calls.length;
+    armed[0]!();
+    expect(write.mock.calls).toHaveLength(framesBefore);
+  });
+
+  it('releases the timer on an expiry, and a re-fire writes nothing further (AC10)', async () => {
+    const { write } = await runToExpiry();
+
+    expect(armed[0]!.unrefCount).toBeGreaterThan(0);
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(armed[0]!.handle);
+    const framesBefore = write.mock.calls.length;
+    armed[0]!();
+    expect(write.mock.calls).toHaveLength(framesBefore);
+  });
+
+  it('releases the timer on a non-deadline rejection (AC10)', async () => {
+    const indexerSearchService = {
+      getEnabledIndexers: vi.fn().mockResolvedValue([{ id: 1, name: 'AudioBookBay' }]),
+      searchAllStreaming: vi.fn().mockRejectedValue(new Error('boom')),
+    } as unknown as IndexerSearchService;
+    const handler = await buildHandler({ indexerSearchService });
+    const { reply, request, write } = streamRequest();
+
+    await handler(request, reply);
+
+    expect(armed[0]!.unrefCount).toBeGreaterThan(0);
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(armed[0]!.handle);
+    const framesBefore = write.mock.calls.length;
+    armed[0]!();
+    expect(write.mock.calls).toHaveLength(framesBefore);
+  });
+
+  it('releases the timer when the client disconnects mid-search (AC10)', async () => {
+    const svc = streamingService({ parkAt: 1 });
+    const handler = await buildHandler({ indexerSearchService: svc.service });
+    const { reply, request, write, onClose } = streamRequest();
+
+    const settled = handler(request, reply);
+    await svc.entered;
+
+    const closeHandler = onClose.mock.calls[0]![1] as () => void;
+    closeHandler();
+
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(armed[0]!.handle);
+    const framesBefore = write.mock.calls.length;
+    armed[0]!();
+    expect(write.mock.calls).toHaveLength(framesBefore);
+
+    svc.release();
+    await settled;
+  });
+
+  // ── discrimination: the control cases that give the expiry cases their meaning ──
+
+  it('leaves timedOut off a genuine answered zero across every rung (AC4/AC6 control)', async () => {
+    const { service, searchAllStreaming } = streamingService();
+    const handler = await buildHandler({ indexerSearchService: service });
+    const { reply, request, write } = streamRequest();
+
+    await handler(request, reply);
+
+    expect(searchAllStreaming).toHaveBeenCalledTimes(DEADLINE_LADDER_RUNGS);
+    expect(completeFrame(write)!.results).toEqual([]);
+    expect(completeFrame(write)).not.toHaveProperty('timedOut');
+  });
+
+  it('leaves timedOut off a total indexer outage (AC4/AC6 control)', async () => {
+    const { service, searchAllStreaming } = streamingService({ outageAt: [2] });
+    const handler = await buildHandler({ indexerSearchService: service });
+    const { reply, request, write } = streamRequest();
+
+    await handler(request, reply);
+
+    expect(searchAllStreaming).toHaveBeenCalledTimes(2);
+    expect(completeFrame(write)!.results).toEqual([]);
+    expect(completeFrame(write)).not.toHaveProperty('timedOut');
+  });
+
+  it('leaves timedOut off a non-deadline rejection and keeps today\'s error log (AC6)', async () => {
+    const indexerSearchService = {
+      getEnabledIndexers: vi.fn().mockResolvedValue([{ id: 1, name: 'AudioBookBay' }]),
+      searchAllStreaming: vi.fn().mockRejectedValue(new Error('boom')),
+    } as unknown as IndexerSearchService;
+    const handler = await buildHandler({ indexerSearchService });
+    const { reply, request, write } = streamRequest();
+
+    await handler(request, reply);
+
+    expect(completeFrame(write)).toEqual({
+      results: [],
+      durationUnknown: true,
+      unsupportedResults: { count: 0, titles: [] },
+    });
+    expect(completeFrame(write)).not.toHaveProperty('timedOut');
+    expect(logOf(request, 'warn')).not.toHaveBeenCalled();
+    expect(logOf(request, 'error')).toHaveBeenCalledTimes(1);
+    expect(logOf(request, 'error').mock.calls[0]![1]).toBe('Search stream error');
+    expect(reply.raw.end).toHaveBeenCalled();
+  });
+
+  it('does not falsify a good answer when the timer fires during post-processing (AC7)', async () => {
+    const { service } = streamingService({
+      hitQuery: DEADLINE_FIXTURE.q,
+      results: [survivingResult({ infoHash: 'a'.repeat(40) })],
+    });
+
+    // postProcessSearchResults takes no signal, so the deadline cannot tear it; getLanAllowlist is
+    // its cleanest seam. This is the case that separates "attach timedOut in the catch" from
+    // "attach it whenever `expired`" — the latter passes the AC4 case and reds only here.
+    let openAllowlist!: () => void;
+    const allowlistParked = new Promise<void>((resolve) => { openAllowlist = resolve; });
+    let allowlistEntered!: () => void;
+    const enteredAllowlist = new Promise<void>((resolve) => { allowlistEntered = resolve; });
+    const indexerService = freshIndexerService();
+    indexerService.getLanAllowlist.mockImplementation(async () => {
+      allowlistEntered();
+      await allowlistParked;
+      return { hostPort: new Set<string>(), hostname: new Set<string>() };
+    });
+
+    const handler = await buildHandler({ indexerSearchService: service, indexerService });
+    const { reply, request, write } = streamRequest();
+
+    const settled = handler(request, reply);
+    await enteredAllowlist;
+    armed[0]!();
+    openAllowlist();
+    await settled;
+
+    const complete = completeFrame(write)!;
+    expect((complete.results as Array<{ title: string }>).map(r => r.title)).toEqual(['The Churn']);
+    expect(complete).not.toHaveProperty('timedOut');
+    expect(logOf(request, 'warn')).not.toHaveBeenCalled();
+  });
+
+  it('keeps the catch un-widened when post-processing itself rejects (AC6)', async () => {
+    const { service } = streamingService({
+      hitQuery: DEADLINE_FIXTURE.q,
+      results: [survivingResult({ infoHash: 'b'.repeat(40) })],
+    });
+    const blacklistService = {
+      getBlacklistedIdentifiers: vi.fn().mockRejectedValue(new Error('blacklist table locked')),
+    } as unknown as BlacklistService;
+
+    const handler = await buildHandler({ indexerSearchService: service, blacklistService });
+    const { reply, request, write } = streamRequest();
+
+    await handler(request, reply);
+
+    expect(blacklistService.getBlacklistedIdentifiers).toHaveBeenCalled();
+    expect(completeFrame(write)).toEqual({
+      results: [],
+      durationUnknown: true,
+      unsupportedResults: { count: 0, titles: [] },
+    });
+    expect(logOf(request, 'error').mock.calls[0]![1]).toBe('Search stream error');
+    expect(logOf(request, 'warn')).not.toHaveBeenCalled();
+    expect(reply.raw.end).toHaveBeenCalled();
+  });
+});
+
+describe('GET /api/search/stream — deadline over real HTTP (#2568)', () => {
+  let armed: ArmedDeadlineTimer[];
+
+  beforeEach(() => {
+    _resetSearchRegistryForTesting();
+    armed = captureDeadlineTimers();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    _resetSearchRegistryForTesting();
+  });
+
+  const url = (params: Record<string, string>) =>
+    `/api/search/stream?${new URLSearchParams({ token: STREAM_TOKEN, ...params }).toString()}`;
+
+  it('carries the expiry to the wire as one timed-out search-complete and nothing else (AC3/AC4/AC8)', async () => {
+    const svc = streamingService({ parkAt: 1 });
+    const app = await buildApp(svc.service, { indexerService: freshIndexerService() });
+    try {
+      const pending = fetchSseEvents(app, url({ q: DEADLINE_FIXTURE.q, title: DEADLINE_FIXTURE.title, author: DEADLINE_FIXTURE.author }));
+      await svc.entered;
+      armed[0]!();
+      svc.release();
+
+      const { status, events } = await pending;
+
+      expect(status).toBe(200);
+      expect(events.filter(e => e.event !== 'hb').map(e => e.event)).toEqual(['search-start', 'search-complete']);
+      expect(events.find(e => e.event === 'search-complete')!.data).toEqual({
+        results: [],
+        durationUnknown: true,
+        unsupportedResults: { count: 0, titles: [] },
+        timedOut: true,
+      });
+      expect(svc.searchAllStreaming).toHaveBeenCalledTimes(1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('runs two concurrent streams for the same query independently — no collision gate either way (AC11)', async () => {
+    const svc = streamingService();
+    const app = await buildApp(svc.service, { indexerService: freshIndexerService() });
+    const target = url({ q: DEADLINE_FIXTURE.q, title: DEADLINE_FIXTURE.title, author: DEADLINE_FIXTURE.author });
+
+    try {
+      // Listen once up front so the two concurrent fetches cannot race on the helper's lazy bind.
+      await app.listen({ port: 0, host: '127.0.0.1' });
+      const [a, b] = await Promise.all([fetchSseEvents(app, target), fetchSseEvents(app, target)]);
+
+      for (const result of [a, b]) {
+        expect(result.events.find(e => e.event === 'search-complete')!.data).toMatchObject({ results: [] });
+        expect(result.events.some(e => e.event === 'indexer-error')).toBe(false);
+      }
+      // Both ladders ran in full: neither stream refused, joined, or truncated the other.
+      expect(svc.searchAllStreaming).toHaveBeenCalledTimes(DEADLINE_LADDER_RUNGS * 2);
+    } finally {
+      await app.close();
+    }
+  });
+
+  /**
+   * `inFlightSearches` is module-level state shared with other suites, so this asserts the DELTA
+   * across its own action. The case deliberately makes this the third route-directory TEST file
+   * naming the registry helpers — a test exercising the real registry from outside is not a
+   * registration, which is exactly why AC11's grep is scoped to production modules.
+   */
+  it('is neither gated by nor visible to a registered in-flight search for the same book (AC11)', async () => {
+    const BOOK_ID = 4242;
+    const svc = streamingService();
+    const app = await buildApp(svc.service, { indexerService: freshIndexerService() });
+    const log = { debug: vi.fn(), warn: vi.fn() } as never;
+
+    let releaseRegistered!: () => void;
+    const registered = withSearchDeadline(
+      { budgetMs: SEARCH_DEADLINE_MS, bookId: BOOK_ID, log },
+      () => new Promise<null>((resolve) => { releaseRegistered = () => resolve(null); }),
+    );
+
+    try {
+      // The registered operation is still held; a registry member would refuse or queue here.
+      const { events } = await fetchSseEvents(app, url({
+        q: DEADLINE_FIXTURE.q, title: DEADLINE_FIXTURE.title, author: DEADLINE_FIXTURE.author,
+      }));
+
+      expect(svc.searchAllStreaming).toHaveBeenCalledTimes(DEADLINE_LADDER_RUNGS);
+      expect(events.find(e => e.event === 'search-complete')!.data).toMatchObject({ results: [] });
+      // And the stream registered nothing of its own: the held slot is still the only member, so
+      // the same book is still refusable — proof the route did not join and did not evict.
+      expect(await withSearchDeadline({ budgetMs: SEARCH_DEADLINE_MS, bookId: BOOK_ID, log }, async () => 'ran')).toBeNull();
+    } finally {
+      releaseRegistered();
+      await registered;
       await app.close();
     }
   });

@@ -3067,8 +3067,9 @@ type TightenOptional<T> = {
 
 describe('postProcessSearchResults — search-complete payload schema compatibility (#734 AC1)', () => {
   it('return type is structurally compatible with searchResponseSchema', () => {
-    // Only the SSE route knows the winning rung, so post-processing cannot return relaxedQuery.
-    type TightSearchResponse = Omit<SearchResponsePayload, 'results' | 'relaxedQuery'> & { results: TightenOptional<SearchResultPayload>[] };
+    // Only the SSE route knows the winning rung or that the run was torn at its deadline, so
+    // post-processing returns neither relaxedQuery nor timedOut.
+    type TightSearchResponse = Omit<SearchResponsePayload, 'results' | 'relaxedQuery' | 'timedOut'> & { results: TightenOptional<SearchResultPayload>[] };
     expectTypeOf<Awaited<ReturnType<typeof postProcessSearchResults>>>()
       .branded.toEqualTypeOf<TightSearchResponse>();
   });
