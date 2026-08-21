@@ -1198,7 +1198,9 @@ describe('BookDeletionService.deleteMissingBooks — the sweep (#2329)', () => {
       expect(result).toEqual({ deleted: 2, failed: 1 });
       expect((bookService.delete as Mock).mock.calls.map((c) => c[0])).toEqual([1, 2, 3]);
       expect(log.error).toHaveBeenCalledWith(
-        expect.objectContaining({ bookId: 1, error: expect.objectContaining({ message: 'row 1 locked' }) }),
+        // `type` included (#2566): `message` alone reads through a raw Error's non-enumerable own
+        // property, so it cannot detect a regression that drops serializeError at the call site.
+        expect.objectContaining({ bookId: 1, error: expect.objectContaining({ type: 'Error', message: 'row 1 locked' }) }),
         'Failed to delete missing book',
       );
     });
