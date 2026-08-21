@@ -38,6 +38,15 @@ Or run them all at once:
 pnpm verify
 ```
 
+The `lint` script invokes ESLint through `node --max-old-space-size=4096` rather than the `eslint`
+bin directly, and that is not decoration. `eslint.config.js` runs type-aware rules over the whole
+project (`projectService: true`), which peaks around 1.9 GB — close enough to Node's ~2.2 GB default
+heap ceiling that the run dies with `FATAL ERROR: Ineffective mark-compacts near heap limit` on
+roughly half of all invocations, on the same commit, with no lint error to show for it. Because the
+crash is GC-timing dependent it reads as a flaky CI box rather than a memory ceiling. Invoking
+`node` explicitly (instead of prefixing `NODE_OPTIONS=`) keeps this working on Windows, where a
+shell variable prefix is not valid `cmd` syntax.
+
 ## Architecture Overview
 
 ```
