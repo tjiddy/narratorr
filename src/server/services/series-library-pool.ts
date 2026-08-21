@@ -2,6 +2,7 @@ import { asc, isNotNull } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
 import type { DbOrTx } from '@db/index.js';
 import { books } from '@db/schema.js';
+import type { BookStatus } from '@shared/schemas/book.js';
 import type { LibraryBookSummary } from './series-title-match.js';
 import { buildSeriesNameTargets, seriesNameMatchesTargets } from '../utils/series-name-targets.js';
 import { parseClearedFields } from '../utils/cleared-fields.js';
@@ -13,6 +14,7 @@ import { parseClearedFields } from '../utils/cleared-fields.js';
  */
 export interface PoolBook extends LibraryBookSummary {
   seriesName: string;
+  status: BookStatus;
 }
 
 // Keep tombstones separate so the matcher's LibraryBookSummary contract stays narrow.
@@ -47,7 +49,7 @@ export async function loadLibraryBooksForSeriesNames(
   // ORDER BY id is a matcher contract: greedy first-claim matching makes order
   // observable, and a covering index can otherwise change which book bind rewrites.
   const rows = await executor
-    .select({ id: books.id, title: books.title, seriesPosition: books.seriesPosition, userClearedFields: books.userClearedFields, seriesName: books.seriesName })
+    .select({ id: books.id, title: books.title, seriesPosition: books.seriesPosition, userClearedFields: books.userClearedFields, seriesName: books.seriesName, status: books.status })
     .from(books)
     .where(isNotNull(books.seriesName))
     .orderBy(asc(books.id));
@@ -55,7 +57,7 @@ export async function loadLibraryBooksForSeriesNames(
   const pool: PoolBook[] = [];
   for (const row of rows) {
     if (!seriesNameMatchesTargets(targets, row.seriesName!)) continue;
-    pool.push({ id: row.id, title: row.title, seriesPosition: row.seriesPosition, seriesName: row.seriesName! });
+    pool.push({ id: row.id, title: row.title, seriesPosition: row.seriesPosition, seriesName: row.seriesName!, status: row.status });
     if (parseClearedFields(row.userClearedFields, log, row.id).includes('seriesPosition')) {
       positionClearedIds.add(row.id);
     }

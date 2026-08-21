@@ -21,7 +21,7 @@ function seriesCard(overrides: Record<string, unknown> = {}) {
     seriesAuthor: 'James S. A. Corey',
     lastFetchedAt: null,
     members: [
-      { hardcoverBookId: 1, slug: null, title: 'Leviathan Wakes', position: 1, imageUrl: null, inLibrary: false, libraryBookId: null },
+      { hardcoverBookId: 1, slug: null, title: 'Leviathan Wakes', position: 1, imageUrl: null, inLibrary: false, libraryBookId: null, libraryBucket: null },
     ],
     ...overrides,
   };

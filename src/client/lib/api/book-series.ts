@@ -1,3 +1,6 @@
+import type { LibraryFilterBucket } from '@shared/schemas/book.js';
+
+/** Hand-mirrors the server's BookSeriesMemberCard; the connected-harness test pins the two together. */
 export interface BookSeriesMemberCard {
   hardcoverBookId: number | null;
   slug: string | null;
@@ -6,6 +9,8 @@ export interface BookSeriesMemberCard {
   imageUrl: string | null;
   inLibrary: boolean;
   libraryBookId: number | null;
+  /** Non-null exactly when the member resolves to a library book. */
+  libraryBucket: LibraryFilterBucket | null;
 }
 
 export interface BookSeriesCardData {

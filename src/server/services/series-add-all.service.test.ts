@@ -18,7 +18,7 @@ import type { BookDetail } from './book.service.js';
 function member(overrides: Partial<BookSeriesMemberCard> & { title: string }): BookSeriesMemberCard {
   return {
     hardcoverBookId: null, slug: null, position: 1, imageUrl: null,
-    inLibrary: false, libraryBookId: null, ...overrides,
+    inLibrary: false, libraryBookId: null, libraryBucket: null, ...overrides,
   };
 }
 

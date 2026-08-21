@@ -1,4 +1,5 @@
 import type { seriesMembers } from '@db/schema.js';
+import { bucketForStatus, type BookStatus, type LibraryFilterBucket } from '@shared/schemas/book.js';
 import { findInLibraryMatch, type LibraryBookSummary } from './series-title-match.js';
 
 /**
@@ -13,13 +14,24 @@ export interface BookSeriesMemberCard {
   imageUrl: string | null;
   inLibrary: boolean;
   libraryBookId: number | null;
+  /** Non-null exactly when the member resolves to a library book. */
+  libraryBucket: LibraryFilterBucket | null;
 }
 
 export type SeriesMemberRow = typeof seriesMembers.$inferSelect;
 
+/**
+ * The projection needs a status the matcher must not see. Widening here instead of in
+ * LibraryBookSummary keeps `findInLibraryMatch`'s candidate contract narrow; PoolBook satisfies
+ * this structurally, and the matcher still accepts the same pool by width.
+ */
+export interface MemberPoolBook extends LibraryBookSummary {
+  status: BookStatus;
+}
+
 export interface MemberState {
   rows: SeriesMemberRow[];
-  pool: LibraryBookSummary[];
+  pool: MemberPoolBook[];
   /**
    * Position tombstones gate projection only, after matching, so claim behavior is unchanged.
    */
@@ -29,7 +41,7 @@ export interface MemberState {
 export interface BuiltMembers {
   members: BookSeriesMemberCard[];
   /** Pool books no member row claims, used by seeding. */
-  unclaimed: LibraryBookSummary[];
+  unclaimed: MemberPoolBook[];
 }
 
 /**
@@ -54,7 +66,7 @@ export function compareLibraryMembers(a: BookSeriesMemberCard, b: BookSeriesMemb
  */
 function hardcoverMemberCard(
   row: SeriesMemberRow,
-  match: LibraryBookSummary | null,
+  match: MemberPoolBook | null,
   positionClearedIds: ReadonlySet<number>,
 ): BookSeriesMemberCard {
   return {
@@ -65,10 +77,11 @@ function hardcoverMemberCard(
     imageUrl: row.imageUrl,
     inLibrary: match !== null,
     libraryBookId: match?.id ?? null,
+    libraryBucket: match ? bucketForStatus(match.status) : null,
   };
 }
 
-export function libraryMemberCard(book: LibraryBookSummary): BookSeriesMemberCard {
+export function libraryMemberCard(book: MemberPoolBook): BookSeriesMemberCard {
   return {
     hardcoverBookId: null,
     slug: null,
@@ -77,6 +90,7 @@ export function libraryMemberCard(book: LibraryBookSummary): BookSeriesMemberCar
     imageUrl: null,
     inLibrary: true,
     libraryBookId: book.id,
+    libraryBucket: bucketForStatus(book.status),
   };
 }
 
@@ -105,10 +119,12 @@ export function buildMembersFromState({ rows, pool, positionClearedIds }: Member
     if (row.source === 'local') continue;
     const match = findInLibraryMatch({ title: row.title, position: row.position }, pool, claimed);
     if (match) claimed.add(match.id);
-    members.push(hardcoverMemberCard(row, match, positionClearedIds));
+    // The matcher returns one of `pool`, so this re-entry is total; it recovers the status the
+    // narrow candidate summary deliberately hides.
+    members.push(hardcoverMemberCard(row, match ? booksById.get(match.id) ?? null : null, positionClearedIds));
   }
 
-  const unclaimed: LibraryBookSummary[] = [];
+  const unclaimed: MemberPoolBook[] = [];
   for (const book of pool) {
     if (claimed.has(book.id) && !claimedByLocal.has(book.id)) continue;
     if (!claimedByLocal.has(book.id)) unclaimed.push(book);
