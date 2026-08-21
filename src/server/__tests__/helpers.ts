@@ -364,14 +364,31 @@ export function answeringSearchStatus<T>(byQuery: Record<string, T[]>, overrides
  * `AbortSignal.timeout` schedules on a native timer the spy never sees. Restore with
  * `vi.restoreAllMocks()`.
  */
-export function captureDeadlineTimers(): Array<() => void> {
-  const captured: Array<() => void> = [];
+export interface ArmedDeadlineTimer {
+  /** Fire the parked callback, i.e. expire the deadline. */
+  (): void;
+  /** The handle production received, so a suite can pin `clearTimeout`'s argument rather than its count. */
+  handle: ReturnType<typeof setTimeout>;
+  /** How many times production called `.unref()` on that handle; the park's own call is excluded. */
+  unrefCount: number;
+}
+
+export function captureDeadlineTimers(): ArmedDeadlineTimer[] {
+  const captured: ArmedDeadlineTimer[] = [];
   const original = globalThis.setTimeout;
   vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, delay?: number, ...rest: unknown[]) => {
     if (delay !== SEARCH_DEADLINE_MS) return original(fn as never, delay as never, ...rest as never[]);
-    captured.push(fn);
     const parked = original(() => { /* never fires within a test */ }, 2 ** 30);
     parked.unref();
+
+    const armed = (() => { fn(); }) as ArmedDeadlineTimer;
+    armed.handle = parked;
+    armed.unrefCount = 0;
+    // Patched after the park's own unref, so the count reports production's calls only.
+    const parkedUnref = parked.unref.bind(parked);
+    parked.unref = () => { armed.unrefCount++; return parkedUnref(); };
+
+    captured.push(armed);
     return parked;
   }) as never);
   return captured;

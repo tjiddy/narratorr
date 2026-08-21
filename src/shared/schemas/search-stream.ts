@@ -102,6 +102,10 @@ export const searchResponseSchema = z.object({
   relaxedQuery: z.string().optional(),
   // Present only when the quality gates actually removed something; a contract we own, so .optional().
   filteredOut: searchDropSummarySchema.optional(),
+  // Present only when the run was torn down at its deadline, so an outage cannot read as an
+  // answered zero. A flag rather than a sixth event: an older client ignores an unknown event name
+  // entirely, but degrades gracefully on an unknown field of a payload it already validates.
+  timedOut: z.boolean().optional(),
 });
 
 export type SearchStartEvent = z.infer<typeof searchStartEventSchema>;

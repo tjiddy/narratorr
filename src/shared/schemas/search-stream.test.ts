@@ -196,6 +196,32 @@ describe('searchResponseSchema — filteredOut (#2325)', () => {
   });
 });
 
+describe('searchResponseSchema — timedOut (#2568)', () => {
+  const base = { results: [], durationUnknown: true, unsupportedResults: { count: 0, titles: [] } };
+
+  it('accepts and round-trips timedOut: true', () => {
+    const result = searchResponseSchema.safeParse({ ...base, timedOut: true });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.timedOut).toBe(true);
+  });
+
+  it('accepts a payload without the key and leaves it off the parsed output', () => {
+    const result = searchResponseSchema.safeParse(base);
+
+    expect(result.success).toBe(true);
+    expect(result.data).not.toHaveProperty('timedOut');
+  });
+
+  it('rejects a null timedOut — the contract is .optional(), not .nullish()', () => {
+    expect(searchResponseSchema.safeParse({ ...base, timedOut: null }).success).toBe(false);
+  });
+
+  it.each([['true'], [1]])('rejects a non-boolean timedOut (%s)', (value) => {
+    expect(searchResponseSchema.safeParse({ ...base, timedOut: value }).success).toBe(false);
+  });
+});
+
 describe('searchResultSchema — rawSize (#2316)', () => {
   const base = { title: 'Play of Shadows', protocol: 'torrent', indexer: 'MAM' };
 
