@@ -1013,7 +1013,7 @@ describe('HardcoverProvider', () => {
 
     afterEach(() => { vi.restoreAllMocks(); });
 
-    function tooMany(opts: { retryAfter?: string; body?: string } = {}): HttpResponse {
+    function tooMany(opts: { retryAfter?: string; body?: string } = {}): Response {
       return new HttpResponse(opts.body ?? null, {
         status: 429,
         statusText: 'Too Many Requests',
@@ -1022,7 +1022,7 @@ describe('HardcoverProvider', () => {
     }
 
     /** Serves the scripted responses in arrival order, repeating the last one thereafter. */
-    function scripted(responses: Array<() => HttpResponse>, onRequest?: (vars: Record<string, unknown>) => void) {
+    function scripted(responses: Array<() => Response>, onRequest?: (vars: Record<string, unknown>) => void) {
       let i = 0;
       return http.post(GQL_URL, async ({ request }) => {
         const body = await request.json() as GqlBody;
@@ -1158,7 +1158,7 @@ describe('HardcoverProvider', () => {
       const WAIT_HEADER = '30';
 
       /** Two full pages that each need two retries, then the caller-supplied tail. */
-      function twoThrottledPagesThen(tail: () => HttpResponse) {
+      function twoThrottledPagesThen(tail: () => Response) {
         return scripted([
           () => tooMany({ retryAfter: WAIT_HEADER }),
           () => tooMany({ retryAfter: WAIT_HEADER }),
@@ -1199,7 +1199,7 @@ describe('HardcoverProvider', () => {
       it('gives a second sequential fetchItems() on the same instance a full budget', async () => {
         const delays = recordSleeps();
         // One call's worth of script, twice: each spends the full 4 × 30s allowance.
-        const oneCall: Array<() => HttpResponse> = [
+        const oneCall: Array<() => Response> = [
           () => tooMany({ retryAfter: '30' }),
           () => tooMany({ retryAfter: '30' }),
           () => listPage(0, PAGE_SIZE, 200),
