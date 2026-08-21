@@ -14,6 +14,7 @@ import { runBackupJob } from './backup.js';
 import { checkForUpdate } from './version-check.js';
 import { runDiscoveryJob } from './discovery.js';
 import { runCoverBackfill } from './cover-backfill.js';
+import { runGenreMarkerSweep } from './genre-marker-sweep.js';
 import { runSeriesRefreshJob } from './series-refresh.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
@@ -173,6 +174,8 @@ async function runStartupRecovery(db: Db, services: Services, log: FastifyBaseLo
   await services.importOrchestrator.processCompletedDownloads();
 
   await runCoverBackfill(db, log, services.connector);
+  await runGenreMarkerSweep(db, services.book, log);
+
 }
 
 // Croner owns both firing and the next-run timestamp exposed by TaskRegistry.
