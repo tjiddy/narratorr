@@ -130,20 +130,20 @@ describe('bucketForStatus — derived status→bucket inverse (#2541)', () => {
 });
 
 describe('invertLibraryFilterBuckets — duplicate membership guard (#2546)', () => {
-  // Which bucket is "first" follows object-literal iteration order, so each case asserts the
-  // presence of the status and both bucket keys rather than pinning one ordered sentence.
-  it('throws when a status is claimed by two different buckets, naming both', () => {
-    let thrown: unknown;
-    try {
-      invertLibraryFilterBuckets({ ...LIBRARY_FILTER_BUCKETS, wanted: ['wanted', 'imported'] });
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toBeInstanceOf(Error);
-    const message = (thrown as Error).message;
-    expect(message).toContain('duplicated');
-    expect(message).toContain('imported');
-    expect(message).toContain('wanted');
+  // Each case pins the whole ordered clause. Token-presence assertions cannot distinguish the two
+  // bucket positions, and `searching`/`importing` are the only statuses that are not also bucket
+  // keys — so a fixture built on them makes status, first bucket and second bucket three distinct
+  // tokens, and no position can be satisfied by another position's value.
+  it('throws when a status is claimed by two different buckets, naming both in order', () => {
+    expect(() =>
+      invertLibraryFilterBuckets({ ...LIBRARY_FILTER_BUCKETS, failed: ['failed', 'importing'] }),
+    ).toThrow('duplicated: importing in both imported and failed');
+  });
+
+  it('names the later bucket even when it shares its key with the duplicated status', () => {
+    expect(() =>
+      invertLibraryFilterBuckets({ ...LIBRARY_FILTER_BUCKETS, wanted: ['wanted', 'imported'] }),
+    ).toThrow('duplicated: imported in both wanted and imported');
   });
 
   it('throws when a status is listed twice inside a single bucket', () => {
@@ -153,26 +153,23 @@ describe('invertLibraryFilterBuckets — duplicate membership guard (#2546)', ()
   });
 
   it('names every duplicated status, not just the first one found', () => {
-    let message = '';
-    try {
+    expect(() =>
       invertLibraryFilterBuckets({
         ...LIBRARY_FILTER_BUCKETS,
         wanted: ['wanted', 'imported', 'failed'],
-      });
-    } catch (error) {
-      message = (error as Error).message;
-    }
-    expect(message).toContain('imported');
-    expect(message).toContain('failed');
+      }),
+    ).toThrow('duplicated: imported in both wanted and imported, failed in both wanted and failed');
   });
 
+  // The two fixtures differ only in which array index carries the duplicate, so an implementation
+  // that skipped either index would drop this clause.
   it('catches a duplicate in the first array position as well as the last', () => {
     expect(() =>
-      invertLibraryFilterBuckets({ ...LIBRARY_FILTER_BUCKETS, missing: ['wanted', 'missing'] }),
-    ).toThrow(/duplicated/);
+      invertLibraryFilterBuckets({ ...LIBRARY_FILTER_BUCKETS, missing: ['searching', 'missing'] }),
+    ).toThrow('duplicated: searching in both downloading and missing');
     expect(() =>
-      invertLibraryFilterBuckets({ ...LIBRARY_FILTER_BUCKETS, missing: ['missing', 'wanted'] }),
-    ).toThrow(/duplicated/);
+      invertLibraryFilterBuckets({ ...LIBRARY_FILTER_BUCKETS, missing: ['missing', 'searching'] }),
+    ).toThrow('duplicated: searching in both downloading and missing');
   });
 
   it('reports the duplicate, not the orphan, when a partition has both', () => {
@@ -180,15 +177,18 @@ describe('invertLibraryFilterBuckets — duplicate membership guard (#2546)', ()
     try {
       invertLibraryFilterBuckets({
         ...LIBRARY_FILTER_BUCKETS,
-        wanted: ['wanted', 'failed'],
+        failed: ['failed', 'searching'],
         missing: [],
       });
     } catch (error) {
       thrown = error;
     }
     expect(thrown).toBeInstanceOf(Error);
-    expect((thrown as Error).message).toContain('duplicated');
-    expect((thrown as Error).message).not.toContain('unbucketed');
+    const message = (thrown as Error).message;
+    expect(message).toContain('duplicated: searching in both downloading and failed');
+    expect(message).not.toContain('unbucketed');
+    // `missing` is the orphan this fixture creates; its absence proves the orphan arm never ran.
+    expect(message).not.toContain('missing');
   });
 
   it('accepts the production partition and returns one entry per canonical status', () => {
