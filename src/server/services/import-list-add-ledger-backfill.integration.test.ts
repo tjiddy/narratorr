@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -151,22 +151,46 @@ describe('backfillImportListAddLedger (DB-backed, #2530)', () => {
 
   it('commits neither the ledger rows nor the marker when the run fails partway', async () => {
     await seedBook({ title: 'The Reckoning' });
-    // The marker insert is the transaction's LAST statement, so hiding its table makes the failure
-    // land after every ledger row was already issued — the only stimulus that reaches rollback
-    // after issuance rather than before it.
-    await db.run(sql`ALTER TABLE settings_migrations RENAME TO settings_migrations_hidden`);
+    // Reject the marker INSERT while leaving the marker read working, so the failure lands after
+    // every ledger row was already issued — the only stimulus that reaches rollback after issuance
+    // rather than before it. Hiding the whole table would fail the guard read first and leave
+    // nothing issued to roll back, which is a vacuous version of this case.
+    await db.run(sql`
+      CREATE TRIGGER reject_backfill_marker BEFORE INSERT ON settings_migrations
+      BEGIN SELECT RAISE(ABORT, 'settings_migrations locked'); END
+    `);
 
     await run();
 
     expect(await ledger()).toHaveLength(0);
-
-    await db.run(sql`ALTER TABLE settings_migrations_hidden RENAME TO settings_migrations`);
     expect(await marker()).toBe(false);
 
     // And the retry seeds everything, so the rollback cost nothing but a boot.
+    await db.run(sql`DROP TRIGGER reject_backfill_marker`);
     await run();
     expect((await ledger()).map((r) => r.title)).toEqual(['The Reckoning']);
     expect(await marker()).toBe(true);
+  });
+
+  it('seeds one ledger set, not two, when a second backfill overlaps the first (F1)', async () => {
+    await seedBook({ title: 'The Reckoning' });
+    await seedBook({ title: 'The Awakening', author: 'John Roe' });
+
+    await Promise.all([run(), run()]);
+
+    // With the marker read outside the transaction both calls observe it absent and each seeds a
+    // full ledger, and `onConflictDoNothing` suppresses only the duplicate marker — the operator's
+    // undo page then lists every book twice.
+    expect((await ledger()).map((r) => r.title).sort()).toEqual(['The Awakening', 'The Reckoning']);
+    expect(await marker()).toBe(true);
+
+    // Exactly one of the two did the work; the loser short-circuited rather than failing.
+    const seededLogs = (log.info as Mock).mock.calls.filter(
+      (c: unknown[]) => c[1] === 'Seeded the import list add ledger from existing list-sourced books',
+    );
+    expect(seededLogs).toHaveLength(1);
+    expect(seededLogs[0]![0]).toMatchObject({ seeded: 2 });
+    expect(log.warn).not.toHaveBeenCalled();
   });
 
   it('leaves the marker unset when the ledger value boundary rejects a row', async () => {
