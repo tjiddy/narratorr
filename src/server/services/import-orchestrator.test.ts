@@ -804,6 +804,30 @@ describe('ImportOrchestrator', () => {
 
       expect(blacklistAndRetrySearch).toHaveBeenCalledTimes(1);
     });
+
+    /**
+     * #2538 AC10 — a containment refusal is a plain `Error`, so `isContentFailure` says no: the
+     * operator's mis-mapped save path must not blacklist the release and re-search, which would
+     * punish good content and spin on a fault only the operator can fix. The full side-effect set
+     * still fires, which is what distinguishes "not blacklisted" from "not dispatched at all".
+     */
+    it('containment refusal dispatches every failure signal but never blacklists or re-searches', async () => {
+      const refusal = new Error('Source path is inside the library root — it is already managed by the library');
+      (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValue(refusal);
+
+      await expect(orchestrator.importDownload(1)).rejects.toBe(refusal);
+
+      expect(emitImportFailure).toHaveBeenCalledWith(expect.objectContaining({
+        downloadId: 1, bookId: 1, revertedBookStatus: 'wanted',
+      }));
+      expect(notifyImportFailure).toHaveBeenCalledWith(expect.objectContaining({
+        downloadTitle: 'The Way of Kings [2010]', error: refusal,
+      }));
+      expect(recordImportFailedEvent).toHaveBeenCalledWith(expect.objectContaining({
+        bookId: 1, bookTitle: 'The Way of Kings', downloadId: 1, source: 'auto', error: refusal,
+      }));
+      expect(blacklistAndRetrySearch).not.toHaveBeenCalled();
+    });
   });
 
   describe('required-wiring contract', () => {
