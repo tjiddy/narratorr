@@ -92,8 +92,9 @@ export async function searchStreamRoutes(
       // value, so they abandon the loser and it keeps spending paced requests. A socket writer can
       // tear the run instead — every in-flight adapter call rejects, the ABB/MAM throttle and
       // solver-slot waiters are evicted, and the ladder ends at that rung.
-      // Deliberately NOT a member of `inFlightSearches`: it is keyed on bookId, which this route
-      // has no usable value for, and a refused interactive search costs the operator a real answer.
+      // Deliberately not a member of the per-book search registry: that registry keys on a book id,
+      // which this route has no usable value for (`q` is operator-editable), and a refusal costs an
+      // interactive searcher a real answer where it costs a scheduled one nothing.
       const deadline = new AbortController();
       let expired = false;
       let deadlineTimer: NodeJS.Timeout | null = setTimeout(() => {

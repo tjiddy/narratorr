@@ -325,3 +325,68 @@ describe('SearchReleasesContent — quality-filtered empty state (#2325)', () =>
     }
   });
 });
+
+describe('SearchReleasesContent — timed-out empty state (#2568)', () => {
+  // Two builders rather than one taking `timedOut: undefined`: under exactOptionalPropertyTypes an
+  // explicit undefined is not the same as an omitted key, and the omitted key is the contract here.
+  const emptyResponse = (overrides: Partial<SearchResponse> = {}): SearchResponse => ({
+    results: [],
+    durationUnknown: true,
+    unsupportedResults: { count: 0, titles: [] },
+    ...overrides,
+  });
+  const timedOutResponse = (overrides: Partial<SearchResponse> = {}): SearchResponse =>
+    emptyResponse({ timedOut: true, ...overrides });
+
+  it('tells the operator the search ran out of time instead of that nothing exists', () => {
+    renderContent({ phase: 'results', searchResponse: timedOutResponse() });
+
+    expect(screen.getByText(/search ran out of time/i)).toBeInTheDocument();
+    expect(screen.queryByText('No releases found')).not.toBeInTheDocument();
+  });
+
+  // A torn run has no filter verdict to report: the gates never saw the results the ladder abandoned.
+  it('wins over the filteredOut state when the payload carries both', () => {
+    renderContent({
+      phase: 'results',
+      searchResponse: timedOutResponse({
+        filteredOut: { total: 4, reasons: [{ reason: 'below-min-size', count: 4, threshold: '50 MB' }] },
+      }),
+    });
+
+    expect(screen.getByText(/search ran out of time/i)).toBeInTheDocument();
+    expect(screen.queryByText(/quality filters/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('No releases found')).not.toBeInTheDocument();
+  });
+
+  it('leaves the plain empty state in place when timedOut is absent', () => {
+    renderContent({ phase: 'results', searchResponse: emptyResponse() });
+
+    expect(screen.getByText('No releases found')).toBeInTheDocument();
+    expect(screen.queryByText(/ran out of time/i)).not.toBeInTheDocument();
+  });
+
+  it('leaves the filteredOut state in place when only filteredOut is present', () => {
+    renderContent({
+      phase: 'results',
+      searchResponse: emptyResponse({
+        filteredOut: { total: 2, reasons: [{ reason: 'below-min-seeders', count: 2, threshold: '5 seeders' }] },
+      }),
+    });
+
+    expect(screen.getByText(/quality filters/i)).toBeInTheDocument();
+    expect(screen.queryByText(/ran out of time/i)).not.toBeInTheDocument();
+  });
+
+  it('renders results as today when the list is non-empty and timedOut is absent', () => {
+    renderContent({
+      phase: 'results',
+      resultKeys: ['key-0'],
+      searchResponse: emptyResponse({ results: [mockResult] }),
+    });
+
+    expect(screen.getByText('Found 1 release')).toBeInTheDocument();
+    expect(screen.queryByText(/ran out of time/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('No releases found')).not.toBeInTheDocument();
+  });
+});

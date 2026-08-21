@@ -13,6 +13,7 @@ import {
 } from '@/components/icons';
 import { UnsupportedSection } from '@/components/UnsupportedSection';
 import { FilteredOutEmptyState } from '@/components/FilteredOutEmptyState';
+import { TimedOutEmptyState } from '@/components/TimedOutEmptyState';
 import { ReleaseCard } from '@/components/ReleaseCard';
 
 function IndexerStatusIcon({ status }: { status: IndexerState['status'] }) {
@@ -107,6 +108,10 @@ function SearchingPhase({
 
 /** A genuine indexer miss and "your settings hid everything" are different answers to the same screen. */
 function EmptyResultsState({ searchResponse }: { searchResponse: SearchResponse }) {
+  // Ahead of the filter branch: a run torn at its deadline never reached the gates.
+  if (searchResponse.timedOut) {
+    return <TimedOutEmptyState />;
+  }
   const filteredOut = searchResponse.filteredOut;
   if (filteredOut && filteredOut.total > 0) {
     return <FilteredOutEmptyState filteredOut={filteredOut} />;
