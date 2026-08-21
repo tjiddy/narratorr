@@ -29,8 +29,19 @@ export function invertLibraryFilterBuckets(
   buckets: Record<LibraryFilterBucket, readonly BookLifecycle[]>,
 ): Record<BookLifecycle, LibraryFilterBucket> {
   const inverse = {} as Record<BookLifecycle, LibraryFilterBucket>;
+  const duplicates: string[] = [];
   for (const [bucket, statuses] of Object.entries(buckets) as [LibraryFilterBucket, readonly BookLifecycle[]][]) {
-    for (const status of statuses) inverse[status] = bucket;
+    for (const status of statuses) {
+      const claimedBy = inverse[status];
+      // First claim wins, so a status in three buckets names the first against each later one.
+      if (claimedBy === undefined) inverse[status] = bucket;
+      else duplicates.push(`${status} in both ${claimedBy} and ${bucket}`);
+    }
+  }
+  // Checked before orphans: a partition broken both ways reports the overlap, which is the defect
+  // that would otherwise survive silently as a double-counted bucket.
+  if (duplicates.length > 0) {
+    throw new Error(`LIBRARY_FILTER_BUCKETS no longer partitions BOOK_STATUSES; duplicated: ${duplicates.join(', ')}`);
   }
   const orphans = BOOK_STATUSES.filter((status) => inverse[status] === undefined);
   if (orphans.length > 0) {
