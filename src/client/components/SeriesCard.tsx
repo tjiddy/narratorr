@@ -11,6 +11,7 @@ import {
 } from '@/lib/api';
 import { selectAddAllMembers } from '@shared/series-add-all.js';
 import { queryKeys } from '@/lib/queryKeys';
+import { seriesMemberBucketStyles } from '@/lib/status';
 import { useGenerationGuard, type GenerationContext } from '@/hooks/useGenerationGuard';
 import { RefreshIcon, LoadingSpinner, PencilIcon } from '@/components/icons';
 import { AddBookPopover } from '@/components/AddBookPopover';
@@ -101,11 +102,15 @@ interface MemberRowProps {
 }
 
 function MemberRow({ member, card }: MemberRowProps) {
+  // A payload cached before #2541 carries no bucket; render the badge it used to render rather
+  // than demoting an owned member to '+ Add'.
+  const badge = seriesMemberBucketStyles[member.libraryBucket ?? 'imported'];
   return (
     <li
       className="flex items-center justify-between py-2"
       data-testid="series-card-member"
       data-in-library={member.inLibrary ? 'true' : 'false'}
+      data-bucket={member.libraryBucket ?? undefined}
     >
       <span className="flex items-center gap-2 min-w-0">
         <span className="text-xs text-muted-foreground tabular-nums w-8 shrink-0 text-right">
@@ -128,13 +133,13 @@ function MemberRow({ member, card }: MemberRowProps) {
           member.libraryBookId !== null ? (
             <Link
               to={`/books/${member.libraryBookId}`}
-              className="text-xs text-emerald-500 hover:underline focus-ring rounded"
+              className={`text-xs ${badge.textClass} hover:underline focus-ring rounded`}
               data-testid="series-card-member-badge-link"
             >
-              In Library
+              {badge.label}
             </Link>
           ) : (
-            <span className="text-xs text-emerald-500">In Library</span>
+            <span className={`text-xs ${badge.textClass}`}>{badge.label}</span>
           )
         ) : (
           <Link
