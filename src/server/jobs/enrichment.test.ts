@@ -1963,3 +1963,126 @@ describe('enrichment job — user-cleared fields (#2069)', () => {
     });
   });
 });
+
+// The scheduled sweep's arm of #2535. The provider fill-empty rule is unchanged; the marker
+// inference lands on top of whatever the row ends up holding.
+describe('enrichment job — litRPG marker inference (#2535)', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let metadataService: { resolveBook: ReturnType<typeof vi.fn> };
+  let bookService: { update: ReturnType<typeof vi.fn>; findAsinCollision: ReturnType<typeof vi.fn>; trackUnmatchedGenres: ReturnType<typeof vi.fn> };
+  let log: ReturnType<typeof createMockLogger>;
+  let updateChain: ReturnType<typeof mockDbChain>;
+
+  const existingRow = (overrides: Record<string, unknown>) => ({
+    duration: 600, genres: null, title: 'Some Book', subtitle: null, description: null,
+    publisher: null, coverUrl: null, publishedDate: null, seriesName: null, seriesPosition: null,
+    ...overrides,
+  });
+
+  async function run(
+    existing: Record<string, unknown>,
+    result: Record<string, unknown>,
+    clearedFields: string | null = null,
+  ): Promise<void> {
+    db.select
+      .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_MARKER' }]))
+      .mockReturnValueOnce(mockDbChain([existing]))
+      .mockReturnValueOnce(mockDbChain([{ asin: 'B_MARKER', userClearedFields: clearedFields }]));
+    metadataService.resolveBook.mockResolvedValueOnce({ title: 'Some Book', authors: [], ...result });
+
+    await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+  }
+
+  const genreCalls = () => bookService.update.mock.calls.filter((c) => 'genres' in (c[1] as object));
+
+  beforeEach(() => {
+    db = createMockDb();
+    metadataService = { resolveBook: vi.fn().mockResolvedValue(null) };
+    bookService = { update: vi.fn().mockResolvedValue(null), findAsinCollision: vi.fn().mockResolvedValue(null), trackUnmatchedGenres: vi.fn().mockResolvedValue(undefined) };
+    log = createMockLogger();
+    updateChain = mockDbChain([{ id: 1 }]);
+    db.update.mockReturnValue(updateChain);
+  });
+
+  it('AC21: appends the inferred genre to a row the fill-empty rule refuses', async () => {
+    await run(
+      existingRow({ title: 'Mage Tank 2: A LitRPG Adventure', genres: ['Humor', 'Fantasy'] }),
+      { genres: ['Ignored'] },
+    );
+
+    expect(genreCalls()).toEqual([[1, { genres: ['Humor', 'Fantasy', 'LitRPG'] }, { tx: expect.anything() }]]);
+  });
+
+  // AC23: filledGenres counts provider fill-empty writes only, but the telemetry still fires.
+  it('AC23: an inference-only write leaves filledGenres at 0 while the genres still land', async () => {
+    await run(existingRow({ title: 'A LitRPG Adventure', genres: ['Fantasy'] }), {});
+
+    expect(genreCalls()).toEqual([[1, { genres: ['Fantasy', 'LitRPG'] }, { tx: expect.anything() }]]);
+    expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ filledGenres: 0 }), 'Enrichment batch completed');
+    expect(bookService.trackUnmatchedGenres).toHaveBeenCalledWith(['Fantasy', 'LitRPG']);
+  });
+
+  it('AC23: a provider fill-empty write still reports filledGenres 1, with the marker appended', async () => {
+    await run(existingRow({ title: 'A LitRPG Adventure', genres: null }), { genres: ['Fantasy'] });
+
+    expect(genreCalls()).toEqual([[1, { genres: ['Fantasy', 'LitRPG'] }, { tx: expect.anything() }]]);
+    expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ filledGenres: 1 }), 'Enrichment batch completed');
+  });
+
+  // buildMetadataUpdates replaces an ALL-CAPS title in this same pass; the replacement is the input.
+  it('infers against the all-caps title replacement this pass writes', async () => {
+    await run(existingRow({ title: 'MAGE TANK 2', genres: ['Fantasy'] }), { title: 'Mage Tank 2: A LitRPG Adventure' });
+
+    expect((updateChain.set.mock.calls[0]![0] as Record<string, unknown>).title).toBe('Mage Tank 2: A LitRPG Adventure');
+    expect(genreCalls()).toEqual([[1, { genres: ['Fantasy', 'LitRPG'] }, { tx: expect.anything() }]]);
+  });
+
+  it('infers against a subtitle and series name this pass fills', async () => {
+    await run(
+      existingRow({ title: 'Chaos Seeds', genres: ['Fantasy'] }),
+      { subtitle: 'A LitRPG Saga', seriesPrimary: { name: 'Chrysalis: A GameLit Saga', position: 1 } },
+    );
+
+    expect(genreCalls()).toEqual([[1, { genres: ['Fantasy', 'LitRPG', 'GameLit'] }, { tx: expect.anything() }]]);
+  });
+
+  // A tombstoned subtitle is deleted from the set inside the transaction, so it never becomes effective.
+  it('does not infer from a subtitle a tombstone suppresses in the same pass', async () => {
+    await run(
+      existingRow({ title: 'Chaos Seeds', genres: ['Fantasy'] }),
+      { subtitle: 'A LitRPG Saga' },
+      '["subtitle"]',
+    );
+
+    expect(updateChain.set.mock.calls[0]![0]).not.toHaveProperty('subtitle');
+    expect(genreCalls()).toEqual([]);
+  });
+
+  it('AC22: a genres tombstone suppresses the inferred write', async () => {
+    await run(existingRow({ title: 'A LitRPG Adventure', genres: ['Fantasy'] }), {}, '["genres"]');
+
+    expect(genreCalls()).toEqual([]);
+    expect(bookService.trackUnmatchedGenres).not.toHaveBeenCalled();
+  });
+
+  it('AC22: a stale identity drops the inferred write, its counters and its telemetry', async () => {
+    db.select
+      .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_MARKER' }]))
+      .mockReturnValueOnce(mockDbChain([existingRow({ title: 'A LitRPG Adventure', genres: ['Fantasy'] })]))
+      .mockReturnValueOnce(mockDbChain([{ asin: 'B_REIDENTIFIED', userClearedFields: null }]));
+    metadataService.resolveBook.mockResolvedValueOnce({ title: 'Some Book', authors: [] });
+
+    await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<BookService>(bookService), inject<FastifyBaseLogger>(log));
+
+    expect(genreCalls()).toEqual([]);
+    expect(bookService.trackUnmatchedGenres).not.toHaveBeenCalled();
+    expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ filledGenres: 0 }), 'Enrichment batch completed');
+  });
+
+  it('issues no genres write at all for an unmarked book that already has genres', async () => {
+    await run(existingRow({ title: 'Dungeon Crawler Carl', genres: ['Humor'] }), { genres: ['Fantasy'] });
+
+    expect(genreCalls()).toEqual([]);
+    expect(bookService.trackUnmatchedGenres).not.toHaveBeenCalled();
+  });
+});
