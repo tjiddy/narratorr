@@ -10,6 +10,7 @@ import type {
 import { fetchWithTimeout } from '../utils/network-service.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
 import { DownloadClientAuthError, DownloadClientError, DownloadClientTimeoutError, isTimeoutError } from './errors.js';
+import { externalIdRefusal, normalizeExternalId } from './external-id.js';
 import { getErrorMessage } from '@shared/error-message.js';
 import {
   sabnzbdQueueResponseSchema,
@@ -148,14 +149,30 @@ export class SABnzbdClient implements DownloadClientAdapter {
     return parsed.data;
   }
 
+  /**
+   * SABnzbd's widening token on the delete axis is the word `all` (plus `failed` on history), not
+   * blankness, so a blank `value` selects nothing today — the refusal keeps production from
+   * depending on that and makes the read free rather than two full-list fetches that cannot
+   * match (#2488). Reads return `null`; `monitor` escalates a thrown read via
+   * `blacklistOnInfraError`.
+   */
+  private requireNzoId(id: string): string {
+    const nzoId = normalizeExternalId(id);
+    if (!nzoId) throw externalIdRefusal(this.name);
+    return nzoId;
+  }
+
   async getDownload(id: string): Promise<DownloadItemInfo | null> {
+    const nzoId = normalizeExternalId(id);
+    if (!nzoId) return null;
+
     const queueResponse = this.parseQueueResponse(await this.request<unknown>({
       mode: 'queue',
       limit: SABNZBD_LIST_LIMIT,
     }));
 
     const queueSlot = queueResponse.queue.slots.find(
-      (s) => s.nzo_id === id,
+      (s) => s.nzo_id === nzoId,
     );
     if (queueSlot) {
       return this.mapQueueSlot(queueSlot);
@@ -167,7 +184,7 @@ export class SABnzbdClient implements DownloadClientAdapter {
     }));
 
     const historySlot = historyResponse.history.slots.find(
-      (s) => s.nzo_id === id,
+      (s) => s.nzo_id === nzoId,
     );
     if (historySlot) {
       return this.mapHistorySlot(historySlot);
@@ -237,18 +254,20 @@ export class SABnzbdClient implements DownloadClientAdapter {
   }
 
   async pauseDownload(id: string): Promise<void> {
-    await this.request({ mode: 'queue', name: 'pause', value: id });
+    await this.request({ mode: 'queue', name: 'pause', value: this.requireNzoId(id) });
   }
 
   async resumeDownload(id: string): Promise<void> {
-    await this.request({ mode: 'queue', name: 'resume', value: id });
+    await this.request({ mode: 'queue', name: 'resume', value: this.requireNzoId(id) });
   }
 
   async removeDownload(id: string, deleteFiles = false): Promise<void> {
+    const nzoId = this.requireNzoId(id);
+
     await this.request({
       mode: 'queue',
       name: 'delete',
-      value: id,
+      value: nzoId,
       del_files: deleteFiles ? '1' : '0',
     });
 
@@ -256,7 +275,7 @@ export class SABnzbdClient implements DownloadClientAdapter {
     await this.request({
       mode: 'history',
       name: 'delete',
-      value: id,
+      value: nzoId,
       del_files: deleteFiles ? '1' : '0',
     });
   }

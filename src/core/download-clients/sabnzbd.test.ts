@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
+import { sabnzbdSelects } from '../__tests__/download-client-id-semantics.js';
 import { SABnzbdClient } from './sabnzbd.js';
 import type { DownloadArtifact } from './types.js';
 import { DownloadClientAuthError, DownloadClientError, DownloadClientTimeoutError } from './errors.js';
@@ -1360,6 +1361,194 @@ describe('SABnzbdClient', () => {
 
       const item = await client.getDownload('SABnzbd_nzo_abc123');
       expect(item!.id).toBe('SABnzbd_nzo_abc123');
+    });
+  });
+
+  /**
+   * #2488 — SABnzbd's widening token on the delete axis is the literal word `all` (plus `failed`
+   * on history), NOT blankness, so a blank `value` selects nothing today. The refusal keeps that
+   * from being something production depends on and makes the READ free: `getDownload` otherwise
+   * fetches the queue and the history in full before failing to match `nzo_id === ''`.
+   *
+   * The observable is the request COUNT and what the modelled server actually deleted, never a
+   * param readback ([[url-strips-trailing-query-whitespace]]).
+   */
+  describe('blank external-id refusal (#2488)', () => {
+    const BLANKS = [
+      ['empty', ''],
+      ['spaces', '   '],
+      ['tab', '\t'],
+      ['newline', '\n '],
+      ['mixed whitespace', ' \t\n '],
+    ] as const;
+
+    /**
+     * Serves both list axes and routes every delete through the shared selection model, so a
+     * request carrying an ineffective `value` has real jobs available to widen onto.
+     */
+    function trackApi() {
+      const urls: string[] = [];
+      const deleted: string[] = [];
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          urls.push(request.url);
+          const params = new URL(request.url).searchParams;
+          const mode = params.get('mode');
+          const axis = mode === 'history' ? 'history' : 'queue';
+
+          if (params.get('name') === 'delete') {
+            // Each axis holds only its own jobs, so a per-axis delete cannot double-count.
+            const slots = axis === 'history' ? [historySlot] : [queueSlot];
+            for (const slot of sabnzbdSelects(axis, params.get('value'), slots)) {
+              deleted.push(slot.nzo_id);
+            }
+            return HttpResponse.json({ status: true });
+          }
+          if (mode === 'queue') return HttpResponse.json({ queue: { slots: [queueSlot] } });
+          if (mode === 'history') return HttpResponse.json({ history: { slots: [historySlot] } });
+          return HttpResponse.json({ status: true });
+        }),
+      );
+      return {
+        urls,
+        deleted,
+        of: (name: string) => urls.filter((u) => new URL(u).searchParams.get('name') === name),
+      };
+    }
+
+    it.each(BLANKS)('getDownload returns null and issues zero requests for a %s id', async (_label, blank) => {
+      const api = trackApi();
+
+      expect(await client.getDownload(blank)).toBeNull();
+
+      expect(api.urls).toEqual([]);
+    });
+
+    it('stays free on repeated blank calls', async () => {
+      const api = trackApi();
+
+      expect(await client.getDownload('   ')).toBeNull();
+      expect(await client.getDownload('   ')).toBeNull();
+
+      expect(api.urls).toEqual([]);
+    });
+
+    it.each([['pauseDownload'], ['resumeDownload']] as const)(
+      '%s throws a typed error and issues zero requests',
+      async (method) => {
+        const api = trackApi();
+
+        await expect(client[method]('   ')).rejects.toThrow(DownloadClientError);
+
+        expect(api.urls).toEqual([]);
+      },
+    );
+
+    it.each(BLANKS)('removeDownload(%s, true) throws and deletes nothing on either axis', async (_label, blank) => {
+      const api = trackApi();
+
+      await expect(client.removeDownload(blank, true)).rejects.toThrow(DownloadClientError);
+
+      expect(api.of('delete')).toEqual([]);
+      expect(api.deleted).toEqual([]);
+      expect(api.urls).toEqual([]);
+    });
+
+    it('removeDownload refuses the default del_files=0 arm too', async () => {
+      const api = trackApi();
+
+      await expect(client.removeDownload('   ')).rejects.toThrow(DownloadClientError);
+
+      expect(api.deleted).toEqual([]);
+      expect(api.urls).toEqual([]);
+    });
+
+    it('names the blank stored external ID so an operator can repair the record', async () => {
+      trackApi();
+
+      const error = await client.removeDownload('', true).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(DownloadClientError);
+      expect((error as DownloadClientError).message).toMatch(/blank/i);
+      expect((error as DownloadClientError).message).toMatch(/external id/i);
+    });
+
+    /** Positive controls — the empty arrays above otherwise prove only that nothing was wired. */
+    it.each([
+      ['pause', (c: SABnzbdClient) => c.pauseDownload(queueSlot.nzo_id)],
+      ['resume', (c: SABnzbdClient) => c.resumeDownload(queueSlot.nzo_id)],
+    ] as const)('control: the same tracker collects one %s for a valid id', async (name, call) => {
+      const api = trackApi();
+
+      await call(client);
+
+      expect(api.of(name)).toHaveLength(1);
+    });
+
+    it.each([[true, '1'], [false, '0']])(
+      'control: a valid id deletes on both axes with del_files=%s',
+      async (deleteFiles, flag) => {
+        const api = trackApi();
+
+        await client.removeDownload(queueSlot.nzo_id, deleteFiles);
+
+        expect(api.of('delete')).toHaveLength(2);
+        expect(api.deleted).toEqual([queueSlot.nzo_id]);
+        expect(new URL(api.of('delete')[0]!).searchParams.get('del_files')).toBe(flag);
+      },
+    );
+
+    it('control: the same tracker serves the job for a valid read', async () => {
+      const api = trackApi();
+
+      expect((await client.getDownload(queueSlot.nzo_id))!.id).toBe(queueSlot.nzo_id);
+
+      expect(api.urls).toHaveLength(1);
+    });
+
+    /**
+     * The boundary that separates "blank" from "unresolvable": this is a blankness guard, not
+     * nzo_id format validation, so non-blank garbage keeps scanning both lists.
+     */
+    it.each([['a'], ['0'], ['SABnzbd_nzo_missing']])(
+      'takes the normal two-list scan for the non-blank unknown id %s',
+      async (unknown) => {
+        const api = trackApi();
+
+        expect(await client.getDownload(unknown)).toBeNull();
+
+        expect(api.urls).toHaveLength(2);
+      },
+    );
+
+    it('sends the TRIMMED value on the controls for a padded valid id', async () => {
+      const api = trackApi();
+
+      await client.removeDownload(`  ${queueSlot.nzo_id}  `, true);
+
+      expect(api.deleted).toEqual([queueSlot.nzo_id]);
+      expect(new URL(api.of('delete')[0]!).searchParams.get('value')).toBe(queueSlot.nzo_id);
+    });
+
+    it('resolves a padded valid id on the read exactly like its trimmed form', async () => {
+      const api = trackApi();
+
+      expect((await client.getDownload(`  ${queueSlot.nzo_id}  `))!.id).toBe(queueSlot.nzo_id);
+
+      expect(api.urls).toHaveLength(1);
+    });
+
+    it('leaves the blank call out of a race with a valid resolution', async () => {
+      const api = trackApi();
+
+      const [blank, valid] = await Promise.all([
+        client.getDownload('   '),
+        client.getDownload(queueSlot.nzo_id),
+      ]);
+
+      expect(blank).toBeNull();
+      expect(valid!.id).toBe(queueSlot.nzo_id);
+      expect(api.urls).toHaveLength(1);
     });
   });
 });
