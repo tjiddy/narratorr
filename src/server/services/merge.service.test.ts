@@ -1047,6 +1047,11 @@ describe('MergeService', () => {
 });
 
 describe('#257 merge observability — merge service', () => {
+  // resetAllMocks, not clearAllMocks: this describe queues `*Once` implementations, which clearAllMocks leaves undrained.
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
   describe('merge_started event', () => {
     it('recorded immediately after pre-flight checks pass (before ffmpeg runs)', async () => {
       let startedRecorded = false;
@@ -1193,8 +1198,6 @@ describe('#257 merge observability — merge service', () => {
     });
 
     it('a rejected merge_started insert aborts the merge before staging (#2099 AC1)', async () => {
-      // This describe has no per-test reset; clear earlier staging calls before negative assertions.
-      vi.clearAllMocks();
       setupHappyPath();
       const eventHistory = {
         create: vi.fn().mockImplementation((input: { eventType: string }) =>
@@ -2371,12 +2374,6 @@ describe('#257 merge observability — merge service', () => {
      * only way to reproduce the wait is to hold the book's admission chain from the test.
      */
     describe('cancel while waiting for the admission lock (#2462)', () => {
-      // This describe's parent has no reset hook, so the module-level fs/encoder mocks otherwise
-      // carry call history in from every earlier case — and "ran nothing" is a count assertion.
-      beforeEach(() => {
-        vi.resetAllMocks();
-      });
-
       type Frame = { event: string; payload: Record<string, unknown> };
       type HistoryRow = { bookId: number; eventType: string; source: string; reason?: { error: string } };
 
@@ -2844,6 +2841,11 @@ describe('#257 merge observability — merge service', () => {
 });
 
 describe('#1838 merge origin — event provenance', () => {
+  // resetAllMocks, not clearAllMocks: the queued-path case queues a `*Once` implementation.
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
   function historyFor(create: Mock, bookId: number, eventType: string) {
     return create.mock.calls
       .map((c) => c[0] as { bookId: number; eventType: string; source: string })
