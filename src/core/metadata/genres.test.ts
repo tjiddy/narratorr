@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeGenres, findUnmatchedGenres } from './genres.js';
+import {
+  normalizeGenres,
+  findUnmatchedGenres,
+  inferGenresFromTitleMarkers,
+  mergeInferredGenres,
+} from './genres.js';
 
 describe('normalizeGenres', () => {
   describe('BISAC path splitting', () => {
@@ -267,7 +272,8 @@ describe('findUnmatchedGenres', () => {
 
     expect(unmatched).not.toContain('Fantasy');
     expect(unmatched).toContain('Cozy Mystery');
-    expect(unmatched).toContain('Progression Fantasy');
+    // #2535 made Progression Fantasy canonical; Cozy Mystery keeps the genuinely-unknown arm honest.
+    expect(unmatched).not.toContain('Progression Fantasy');
   });
 
   it('returns empty for null input', () => {
@@ -351,5 +357,203 @@ describe('findUnmatchedGenres', () => {
       'Space Opera', 'Crime Thrillers', 'Young Adult', 'Epic Fantasy', 'Fantasy', 'Thriller',
     ]);
     expect(findUnmatchedGenres(normalizeGenres(raw))).toEqual([]);
+  });
+});
+
+// #2535: Audible's category ladder never carries a litRPG-family string, so the title/subtitle
+// marker publishers fall back on is the only signal that exists.
+describe('inferGenresFromTitleMarkers', () => {
+  describe('positive — one marked field at a time', () => {
+    it('reads a marker in the title', () => {
+      expect(inferGenresFromTitleMarkers('Mage Tank 2: A LitRPG Adventure', null, null)).toEqual(['LitRPG']);
+    });
+
+    it('reads a marker in the subtitle', () => {
+      expect(inferGenresFromTitleMarkers('Mage Tank 2', 'A LitRPG Saga (Chaos Seeds, Book 8)', null)).toEqual(['LitRPG']);
+    });
+
+    it('reads a marker in the series name', () => {
+      expect(inferGenresFromTitleMarkers('Book One', null, 'The Land: Founding: A LitRPG Saga')).toEqual(['LitRPG']);
+    });
+  });
+
+  describe('positive — one case per marker-table row', () => {
+    it('maps litrpg', () => {
+      expect(inferGenresFromTitleMarkers('A LitRPG Adventure', null, null)).toEqual(['LitRPG']);
+    });
+
+    it('maps gamelit', () => {
+      expect(inferGenresFromTitleMarkers('A GameLit Adventure', null, null)).toEqual(['GameLit']);
+    });
+
+    it('maps progression fantasy', () => {
+      expect(inferGenresFromTitleMarkers('A Progression Fantasy Epic', null, null)).toEqual(['Progression Fantasy']);
+    });
+
+    it('maps dungeon core onto LitRPG — the one cross-mapping', () => {
+      expect(inferGenresFromTitleMarkers('A Dungeon Core Story', null, null)).toEqual(['LitRPG']);
+    });
+
+    it('reads both sides of a slash-joined pair', () => {
+      expect(inferGenresFromTitleMarkers('A LitRPG/Gamelit Adventure', null, null)).toEqual(['LitRPG', 'GameLit']);
+    });
+
+    it('does not let progression fantasy imply LitRPG', () => {
+      expect(inferGenresFromTitleMarkers('A Progression Fantasy Epic', null, null)).not.toContain('LitRPG');
+    });
+  });
+
+  describe('case and separator variants', () => {
+    it.each(['litrpg', 'LITRPG', 'LitRpg', 'Lit RPG', 'Lit-RPG', 'LitRPGs'])(
+      'accepts %s as LitRPG',
+      (variant) => {
+        expect(inferGenresFromTitleMarkers(`A ${variant} Adventure`, null, null)).toEqual(['LitRPG']);
+      },
+    );
+
+    it.each(['GameLit', 'Game Lit', 'Game-Lit', 'gamelits'])('accepts %s as GameLit', (variant) => {
+      expect(inferGenresFromTitleMarkers(`A ${variant} Adventure`, null, null)).toEqual(['GameLit']);
+    });
+  });
+
+  describe('negatives', () => {
+    it.each([
+      'Moonlit RPG Nights',
+      'Dungeon Crawler Carl',
+      'The Dungeon Corridor',
+      'Splitrpg',
+      'Game Little Things',
+    ])('refuses %s', (title) => {
+      expect(inferGenresFromTitleMarkers(title, null, null)).toEqual([]);
+    });
+
+    // AC6: bare tokens false-positive on ordinary titles, so the table admits none of them.
+    it.each(['cultivation', 'system', 'rpg', 'game', 'progression', 'dungeon', 'core'])(
+      'refuses the bare token %s',
+      (token) => {
+        expect(inferGenresFromTitleMarkers(`The ${token} of Things`, null, null)).toEqual([]);
+      },
+    );
+  });
+
+  describe('null and missing fields', () => {
+    it('accepts three undefined arguments', () => {
+      expect(inferGenresFromTitleMarkers(undefined, undefined, undefined)).toEqual([]);
+    });
+
+    it('accepts three null arguments', () => {
+      expect(inferGenresFromTitleMarkers(null, null, null)).toEqual([]);
+    });
+
+    it('accepts empty and whitespace-only strings', () => {
+      expect(inferGenresFromTitleMarkers('', '   ', '')).toEqual([]);
+    });
+
+    it('matches the third field when the first two are absent', () => {
+      expect(inferGenresFromTitleMarkers(undefined, null, 'A LitRPG Saga')).toEqual(['LitRPG']);
+    });
+  });
+
+  describe('dedup and ordering', () => {
+    it('yields a genre once when title and subtitle both carry the marker', () => {
+      expect(inferGenresFromTitleMarkers('A LitRPG Adventure', 'A LitRPG Saga', null)).toEqual(['LitRPG']);
+    });
+
+    it('yields a genre once when two patterns map to it', () => {
+      expect(inferGenresFromTitleMarkers('A LitRPG Dungeon Core Tale', null, null)).toEqual(['LitRPG']);
+    });
+
+    // AC4: marker-table declaration order, not the order the fields matched in.
+    it('orders by the marker table, not by input field', () => {
+      expect(inferGenresFromTitleMarkers('A Progression Fantasy Epic', 'A LitRPG Saga', null))
+        .toEqual(['LitRPG', 'Progression Fantasy']);
+    });
+  });
+
+  // AC5: a hoisted regex carrying `g` advances lastIndex, so the second call would miss.
+  it('returns identical results on a repeated call with identical input', () => {
+    const first = inferGenresFromTitleMarkers('A LitRPG/Gamelit Adventure', 'A Progression Fantasy Saga', null);
+    const second = inferGenresFromTitleMarkers('A LitRPG/Gamelit Adventure', 'A Progression Fantasy Saga', null);
+    expect(second).toEqual(first);
+    expect(second).toEqual(['LitRPG', 'GameLit', 'Progression Fantasy']);
+  });
+});
+
+describe('mergeInferredGenres', () => {
+  it('appends to a populated list without disturbing it', () => {
+    const existing = ['Humor', 'Fantasy', 'Action & Adventure', 'Epic Fantasy', 'Satire'];
+    const merged = mergeInferredGenres(existing, ['LitRPG']);
+
+    expect(merged.changed).toBe(true);
+    expect(merged.genres).toEqual(['Humor', 'Fantasy', 'Action & Adventure', 'Epic Fantasy', 'Satire', 'LitRPG']);
+  });
+
+  // AC7: the comparison is case-insensitive, but a stored value keeps its own casing.
+  it('treats a differently-cased existing entry as present and preserves its casing', () => {
+    const merged = mergeInferredGenres(['litrpg'], ['LitRPG']);
+
+    expect(merged.changed).toBe(false);
+    expect(merged.genres).toEqual(['litrpg']);
+  });
+
+  it('produces the inferred list from an absent or empty existing value', () => {
+    expect(mergeInferredGenres(undefined, ['LitRPG'])).toEqual({ genres: ['LitRPG'], changed: true });
+    expect(mergeInferredGenres([], ['LitRPG'])).toEqual({ genres: ['LitRPG'], changed: true });
+    expect(mergeInferredGenres(null, ['LitRPG'])).toEqual({ genres: ['LitRPG'], changed: true });
+  });
+
+  // AC11: books.genres is nullable and an empty array is a clear signal, so absent must stay absent.
+  it('reports no change and does not manufacture an empty array when nothing was inferred', () => {
+    const merged = mergeInferredGenres(undefined, []);
+
+    expect(merged.changed).toBe(false);
+    expect(merged.genres).toBeUndefined();
+  });
+
+  it('is idempotent', () => {
+    const once = mergeInferredGenres(['Fantasy'], ['LitRPG']);
+    const twice = mergeInferredGenres(once.genres, ['LitRPG']);
+
+    expect(twice.changed).toBe(false);
+    expect(twice.genres).toEqual(once.genres);
+  });
+
+  // AC8: no re-normalization — a parent the taxonomy would collapse survives a marker write.
+  it('never removes an existing entry', () => {
+    const merged = mergeInferredGenres(['Fiction', 'LitRPG'], ['LitRPG']);
+
+    expect(merged.changed).toBe(false);
+    expect(merged.genres).toEqual(['Fiction', 'LitRPG']);
+  });
+
+  it('appends only the inferred genres the list is missing', () => {
+    const merged = mergeInferredGenres(['LitRPG'], ['LitRPG', 'GameLit']);
+
+    expect(merged.changed).toBe(true);
+    expect(merged.genres).toEqual(['LitRPG', 'GameLit']);
+  });
+});
+
+describe('litRPG-family taxonomy (#2535)', () => {
+  it.each([
+    [['GameLit'], 'GameLit'],
+    [['Game Lit'], 'GameLit'],
+    [['Progression Fantasy'], 'Progression Fantasy'],
+    [['Dungeon Core'], 'LitRPG'],
+  ])('normalizes %j to %s', (raw, canonical) => {
+    expect(normalizeGenres(raw as string[])).toEqual([canonical]);
+  });
+
+  it.each(['GameLit', 'Progression Fantasy', 'LitRPG'])('does not flag %s as unmatched', (genre) => {
+    expect(findUnmatchedGenres(normalizeGenres([genre]))).toEqual([]);
+  });
+
+  it.each([
+    ['Fiction', 'GameLit'],
+    ['Fiction', 'Progression Fantasy'],
+    ['Science Fiction & Fantasy', 'LitRPG'],
+  ])('drops the generic parent %s beside %s', (parent, child) => {
+    const result = normalizeGenres([parent, child]);
+    expect(result).toEqual([child]);
   });
 });

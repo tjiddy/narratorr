@@ -7,6 +7,12 @@ const SYNONYM_MAP = new Map<string, string>([
   ['non fiction', 'Non-Fiction'],
   ['lit rpg', 'LitRPG'],
   ['litrpg', 'LitRPG'],
+  // Provider-side twins of the #2535 title markers, so a string that ever does arrive from a
+  // provider normalizes to the value the inference already produces.
+  ['gamelit', 'GameLit'],
+  ['game lit', 'GameLit'],
+  ['progression fantasy', 'Progression Fantasy'],
+  ['dungeon core', 'LitRPG'],
   ['ya', 'Young Adult'],
   ['young adult fiction', 'Young Adult'],
   ['hi-fi', 'High Fantasy'],
@@ -68,7 +74,7 @@ const GENRE_CHILDREN = new Set([
   'crime', 'suspense', 'drama', 'humor', 'satire', 'western',
   'dystopian', 'urban fantasy', 'epic fantasy', 'high fantasy',
   'dark fantasy', 'paranormal', 'contemporary', 'action & adventure',
-  'young adult', 'litrpg',
+  'young adult', 'litrpg', 'gamelit', 'progression fantasy',
   'space opera', 'hard science fiction', 'sword & sorcery', 'military',
   'classics', "women's fiction", 'family life', 'psychological',
   'domestic thrillers', 'crime thrillers', 'espionage', 'fairy tales',
@@ -168,6 +174,71 @@ export function normalizeGenres(genres: string[] | undefined | null): string[] |
   result = removeGenericParents(result);
 
   return result.length > 0 ? result : undefined;
+}
+
+/**
+ * Genre markers that reach us only inside a title, subtitle or series name, because Audible's
+ * category ladder never emits a litRPG-family string at all (#2535). Each pattern maps to exactly
+ * one canonical genre, and declaration order is the output order.
+ *
+ * Precision over recall by construction: no bare `system`/`cultivation`/`rpg` token is admissible —
+ * those false-positive on ordinary titles, while nobody titles a non-litRPG book "A LitRPG
+ * Adventure". Every pattern carries `i` and never `g`: a hoisted global regex advances `lastIndex`
+ * between calls, so the same input would stop matching on the second call.
+ */
+const TITLE_GENRE_MARKERS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\blit[\s-]?rpgs?\b/i, 'LitRPG'],
+  [/\bgame[\s-]?lits?\b/i, 'GameLit'],
+  [/\bprogression fantasy\b/i, 'Progression Fantasy'],
+  // The one cross-mapping: dungeon core is a LitRPG subgenre with no independent shelf value.
+  [/\bdungeon core\b/i, 'LitRPG'],
+];
+
+/** Canonical genres a book's own text advertises; empty when nothing matched. Pure. */
+export function inferGenresFromTitleMarkers(
+  title?: string | null,
+  subtitle?: string | null,
+  seriesName?: string | null,
+): string[] {
+  const fields = [title, subtitle, seriesName].filter((value): value is string => !!value);
+  if (fields.length === 0) return [];
+
+  const matched: string[] = [];
+  for (const [pattern, genre] of TITLE_GENRE_MARKERS) {
+    if (matched.includes(genre)) continue;
+    if (fields.some((field) => pattern.test(field))) matched.push(genre);
+  }
+  return matched;
+}
+
+export interface InferredGenreMerge {
+  /** `undefined` is preserved rather than widened to `[]`, which the tombstone recompute reads as a clear. */
+  genres: string[] | undefined;
+  changed: boolean;
+}
+
+/**
+ * Append-only merge of marker-inferred genres onto whatever is already stored: missing entries land
+ * at the end, and nothing existing is removed, reordered or re-cased. Deliberately does NOT re-run
+ * `normalizeGenres` — a stored value may be an operator edit, and a marker write must not rewrite it.
+ */
+export function mergeInferredGenres(
+  existing: readonly string[] | null | undefined,
+  inferred: readonly string[],
+): InferredGenreMerge {
+  const unchanged = { genres: existing ? [...existing] : undefined, changed: false };
+  if (inferred.length === 0) return unchanged;
+
+  const seen = new Set((existing ?? []).map((genre) => genre.toLowerCase()));
+  const additions = inferred.filter((genre) => {
+    const lower = genre.toLowerCase();
+    if (seen.has(lower)) return false;
+    seen.add(lower);
+    return true;
+  });
+  if (additions.length === 0) return unchanged;
+
+  return { genres: [...(existing ?? []), ...additions], changed: true };
 }
 
 /** Returns normalized genres no rule handled, for synonym-map telemetry. */
