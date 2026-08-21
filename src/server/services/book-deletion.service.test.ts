@@ -258,6 +258,8 @@ describe('BookDeletionService', () => {
       expect(eventLog).not.toHaveBeenCalled();
       expect(log.info).not.toHaveBeenCalledWith(expect.anything(), 'Recorded import list exclusion for deleted book');
       expect(log.info).not.toHaveBeenCalledWith(expect.anything(), 'Book deleted');
+      // A catch that had wrapped `commitDeletion` rather than only the reporting tail shows up here.
+      expect((log.debug as Mock).mock.calls.map((c: unknown[]) => c[1])).not.toContain('Failed to report the recorded deleted event');
     });
   });
 
@@ -753,6 +755,321 @@ describe('BookDeletionService — the import-list exclusion (#2305)', () => {
 });
 
 /**
+ * Both `logRecorded` calls run AFTER the deletion transaction has durably committed, so neither may
+ * reject into `deleteBook`: the throw would skip download cancellation (the rows were captured
+ * inside the transaction precisely because `downloads.book_id` is ON DELETE SET NULL, so no
+ * post-commit re-read can recover them), skip cover-cache cleanup, and make the sweep count a
+ * deleted book as failed.
+ *
+ * Every case here keeps the throw inside the reporting tail. Nothing inside the transaction gains a
+ * catch — the rollback negatives below are what prove the isolation did not leak backwards.
+ */
+describe('BookDeletionService — post-commit reporting isolation (#2536)', () => {
+  const EXCLUSION_FAILED = 'Failed to report the recorded import list exclusion';
+  const EVENT_FAILED = 'Failed to report the recorded deleted event';
+
+  const listBook = {
+    ...deletableBook,
+    importListId: 5,
+    importListName: 'NYT Bestsellers',
+    asin: 'B0ABC12345',
+  };
+
+  /** Every case needs list provenance, or `committed.exclusion` is null and the arm never runs. */
+  const fromList = (opts?: Parameters<typeof createService>[0]) =>
+    createService({ ...opts, bookService: { getById: vi.fn().mockResolvedValue(listBook), ...opts?.bookService } });
+
+  const debugRecords = (log: ReturnType<typeof createMockLogger>, message: string) =>
+    (log.debug as Mock).mock.calls.filter((call: unknown[]) => call[1] === message);
+
+  const infoMessages = (log: ReturnType<typeof createMockLogger>) =>
+    (log.info as Mock).mock.calls.map((call: unknown[]) => call[1]);
+
+  const wedged = (message: string) => vi.fn(() => { throw new Error(message); });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe('a throwing reporter never reaches the caller', () => {
+    it('still resolves deleted, cancels the captured downloads, cleans the cover cache and logs the deletion when the EXCLUSION reporter throws', async () => {
+      const { service, log, downloadOrchestrator } = fromList({
+        downloadService: { getActiveByBookId: vi.fn().mockResolvedValue([{ id: 42 }]) },
+        exclusions: { logRecorded: wedged('exclusion logger wedged') },
+      });
+
+      const result = await service.deleteBook(1, { deleteFiles: false });
+
+      expect(result).toEqual({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
+      expect(downloadOrchestrator.cancel).toHaveBeenCalledWith(42);
+      expect(cleanCoverCache).toHaveBeenCalledWith(1, '/test-config', expect.anything());
+      expect(log.info).toHaveBeenCalledWith({ id: 1, deleteFiles: false, title: 'The Way of Kings' }, 'Book deleted');
+    });
+
+    it('still resolves deleted, cancels the captured downloads, cleans the cover cache and logs the deletion when the EVENT reporter throws', async () => {
+      const { service, log, downloadOrchestrator } = fromList({
+        downloadService: { getActiveByBookId: vi.fn().mockResolvedValue([{ id: 42 }]) },
+        eventHistory: { logRecorded: wedged('event logger wedged') },
+      });
+
+      const result = await service.deleteBook(1, { deleteFiles: false });
+
+      expect(result).toEqual({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
+      expect(downloadOrchestrator.cancel).toHaveBeenCalledWith(42);
+      expect(cleanCoverCache).toHaveBeenCalledWith(1, '/test-config', expect.anything());
+      expect(log.info).toHaveBeenCalledWith({ id: 1, deleteFiles: false, title: 'The Way of Kings' }, 'Book deleted');
+    });
+
+    it('records BOTH bookkeeping misses, once each, when both reporters throw', async () => {
+      const { service, log } = fromList({
+        exclusions: { logRecorded: wedged('exclusion logger wedged') },
+        eventHistory: { logRecorded: wedged('event logger wedged') },
+      });
+
+      const result = await service.deleteBook(1, { deleteFiles: false });
+
+      expect(result).toEqual({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
+      expect(debugRecords(log, EXCLUSION_FAILED)).toHaveLength(1);
+      expect(debugRecords(log, EVENT_FAILED)).toHaveLength(1);
+    });
+
+    it('serializes the caught error rather than logging the raw Error', async () => {
+      // `toMatchObject({ message })` reads through Error.prototype and passes against a raw Error,
+      // so it would stay green with `serializeError` deleted. `type` is what discriminates.
+      const { service, log } = fromList({ eventHistory: { logRecorded: wedged('event logger wedged') } });
+
+      await service.deleteBook(1, { deleteFiles: false });
+
+      const [record] = debugRecords(log, EVENT_FAILED);
+      const logged = (record![0] as { bookId: number; error: unknown }).error;
+      expect(logged).not.toBeInstanceOf(Error);
+      expect(logged).toMatchObject({ message: 'event logger wedged', type: 'Error' });
+      expect(record![0]).toMatchObject({ bookId: 1 });
+    });
+  });
+
+  describe('the two arms are isolated independently, not by one shared wrapper', () => {
+    it('still runs the event arm with the committed row when the exclusion arm throws', async () => {
+      const eventLog = vi.fn();
+      const { service } = fromList({
+        exclusions: { logRecorded: wedged('exclusion logger wedged') },
+        eventHistory: { logRecorded: eventLog },
+      });
+
+      await service.deleteBook(1, { deleteFiles: false });
+
+      expect(eventLog).toHaveBeenCalledWith({ id: 7, bookId: 1, eventType: 'deleted', bookTitle: 'The Way of Kings' });
+    });
+
+    it('keeps the exclusion arm\'s own info log when the event arm throws', async () => {
+      const { service, log } = fromList({ eventHistory: { logRecorded: wedged('event logger wedged') } });
+
+      await service.deleteBook(1, { deleteFiles: false });
+
+      expect(log.info).toHaveBeenCalledWith({ bookId: 1, exclusionId: 99 }, 'Recorded import list exclusion for deleted book');
+      expect(debugRecords(log, EXCLUSION_FAILED)).toHaveLength(0);
+    });
+
+    it('still releases and reports the add-ledger rows when the exclusion arm throws', async () => {
+      // A single wrapper around the whole body would swallow this line with the exclusion arm.
+      const { service, log } = fromList({
+        exclusions: {
+          logRecorded: wedged('exclusion logger wedged'),
+          removeAdded: vi.fn().mockResolvedValue(2),
+        },
+      });
+
+      await service.deleteBook(1, { deleteFiles: false });
+
+      expect(log.info).toHaveBeenCalledWith({ bookId: 1, removed: 2 }, 'Released import list add-ledger rows for deleted book');
+    });
+
+    it('reports no add-ledger release when nothing was absorbed', async () => {
+      const { service, log } = fromList({ exclusions: { logRecorded: wedged('exclusion logger wedged') } });
+
+      await service.deleteBook(1, { deleteFiles: false });
+
+      expect(infoMessages(log)).not.toContain('Released import list add-ledger rows for deleted book');
+    });
+  });
+
+  /**
+   * `createService` spreads a `logRecorded: vi.fn()` default over the caller's override, and
+   * `exactOptionalPropertyTypes` refuses `{ logRecorded: undefined }`, so the genuinely method-less
+   * double the `event-history-tx-arm-partial-doubles` learning describes has to be constructed here.
+   */
+  describe('a partial double with no logRecorded at all degrades to the logged miss', () => {
+    function serviceWithRawDoubles(opts: {
+      eventHistory?: Partial<EventHistoryService>;
+      exclusions?: Partial<ImportListExclusionService>;
+    }) {
+      const log = createMockLogger();
+      const service = new BookDeletionService(
+        inject<Db>(createMockDb()),
+        inject<BookService>({
+          getById: vi.fn().mockResolvedValue(listBook),
+          delete: vi.fn().mockResolvedValue(true),
+        }),
+        inject<DownloadService>({ getActiveByBookId: vi.fn().mockResolvedValue([]) }),
+        inject<DownloadOrchestrator>({ cancel: vi.fn().mockResolvedValue(true) }),
+        inject<SettingsService>({ get: vi.fn().mockResolvedValue({ path: '/audiobooks' }) }),
+        inject<FastifyBaseLogger>(log),
+        inject<EventHistoryService>(opts.eventHistory ?? {
+          create: vi.fn().mockResolvedValue({ id: 7, bookId: 1, eventType: 'deleted', bookTitle: 'The Way of Kings' }),
+          logRecorded: vi.fn(),
+        }),
+        inject<ImportListExclusionService>(opts.exclusions ?? {
+          recordExclusion: vi.fn().mockResolvedValue({ row: { id: 99 }, inserted: true }),
+          removeAdded: vi.fn().mockResolvedValue(0),
+          logRecorded: vi.fn(),
+        }),
+      );
+      return { service, log };
+    }
+
+    it('survives an EventHistoryService faked as { create } alone', async () => {
+      const { service, log } = serviceWithRawDoubles({
+        eventHistory: { create: vi.fn().mockResolvedValue({ id: 7, bookId: 1, eventType: 'deleted', bookTitle: 'The Way of Kings' }) },
+      });
+
+      const result = await service.deleteBook(1, { deleteFiles: false });
+
+      expect(result).toEqual({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
+      const [record] = debugRecords(log, EVENT_FAILED);
+      expect((record![0] as { error: { type: string } }).error).toMatchObject({ type: 'TypeError' });
+    });
+
+    it('survives an ImportListExclusionService faked as { recordExclusion, removeAdded } alone', async () => {
+      const { service, log } = serviceWithRawDoubles({
+        exclusions: {
+          recordExclusion: vi.fn().mockResolvedValue({ row: { id: 99 }, inserted: true }),
+          removeAdded: vi.fn().mockResolvedValue(0),
+        },
+      });
+
+      const result = await service.deleteBook(1, { deleteFiles: false });
+
+      expect(result).toEqual({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
+      expect(debugRecords(log, EXCLUSION_FAILED)).toHaveLength(1);
+    });
+  });
+
+  it('catches a row-less exclusion result in the same arm as the reporter it feeds', async () => {
+    // `{ inserted: true }` with no `row` throws on the info log's `committed.exclusion.row.id`
+    // deref, not inside `logRecorded` — the arm has to cover both statements.
+    const { service, log } = fromList({
+      exclusions: { recordExclusion: vi.fn().mockResolvedValue({ inserted: true }) },
+    });
+
+    const result = await service.deleteBook(1, { deleteFiles: false });
+
+    expect(result).toEqual({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
+    expect(debugRecords(log, EXCLUSION_FAILED)).toHaveLength(1);
+    expect(infoMessages(log)).not.toContain('Recorded import list exclusion for deleted book');
+  });
+
+  describe('the arms stay gated on their dependency and their committed value', () => {
+    it('reports nothing and logs no miss when no eventHistory is wired', async () => {
+      const { service, log } = fromList({ eventHistory: null });
+
+      const result = await service.deleteBook(1, { deleteFiles: false });
+
+      expect(result).toEqual({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
+      expect(debugRecords(log, EVENT_FAILED)).toHaveLength(0);
+    });
+
+    it('reports nothing and logs no miss when no exclusion service is wired', async () => {
+      const { service, log } = fromList({ exclusions: null });
+
+      const result = await service.deleteBook(1, { deleteFiles: false });
+
+      expect(result).toEqual({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
+      expect(debugRecords(log, EXCLUSION_FAILED)).toHaveLength(0);
+    });
+
+    it('skips the exclusion arm for a manually added book and still runs the event arm', async () => {
+      const eventLog = vi.fn();
+      const { service, log, exclusions } = createService({ eventHistory: { logRecorded: eventLog } });
+
+      await service.deleteBook(1, { deleteFiles: false });
+
+      expect(exclusions!.logRecorded).not.toHaveBeenCalled();
+      expect(debugRecords(log, EXCLUSION_FAILED)).toHaveLength(0);
+      expect(eventLog).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips the event arm when the in-transaction event write was swallowed to null', async () => {
+      const eventLog = vi.fn();
+      const { service, log } = fromList({
+        eventHistory: { create: vi.fn().mockRejectedValue(new Error('event DB write failed')), logRecorded: eventLog },
+      });
+
+      const result = await service.deleteBook(1, { deleteFiles: false });
+
+      expect(result).toEqual({ outcome: 'deleted', bookTitle: 'The Way of Kings' });
+      expect(eventLog).not.toHaveBeenCalled();
+      expect(debugRecords(log, EVENT_FAILED)).toHaveLength(0);
+    });
+  });
+
+  describe('the isolation does not reorder or defer the tail', () => {
+    it('keeps the post-commit sequence intact with the exclusion arm throwing', async () => {
+      const { db, order } = tracingDb();
+      const { service } = fromList({
+        db,
+        downloadService: { getActiveByBookId: vi.fn().mockResolvedValue([{ id: 42 }]) },
+        downloadOrchestrator: { cancel: vi.fn(() => { order.push('cancel'); return Promise.resolve(true); }) },
+        exclusions: { logRecorded: vi.fn(() => { order.push('exclusion-log'); throw new Error('exclusion logger wedged'); }) },
+        eventHistory: { logRecorded: vi.fn(() => { order.push('event-log'); }) },
+      });
+
+      await service.deleteBook(1, { deleteFiles: false });
+
+      expect(order).toEqual(['tx-committed', 'exclusion-log', 'event-log', 'cancel']);
+    });
+
+    it('still starts cover-cache cleanup after the transaction resolves with a throwing arm', async () => {
+      const { db, order } = tracingDb();
+      (cleanCoverCache as Mock).mockImplementationOnce(() => { order.push('cover-cache'); return Promise.resolve(); });
+      const { service } = fromList({ db, eventHistory: { logRecorded: wedged('event logger wedged') } });
+
+      await service.deleteBook(1, { deleteFiles: false });
+
+      expect(order).toEqual(['tx-committed', 'cover-cache']);
+    });
+  });
+
+  describe('the isolation does not leak backwards into the transaction', () => {
+    it('still rejects deleteBook on rollback, with neither reporter run and no miss logged', async () => {
+      const { service, log, exclusions, eventHistory } = fromList({
+        bookService: { delete: vi.fn().mockRejectedValue(new Error('books table locked')) },
+      });
+
+      await expect(service.deleteBook(1, { deleteFiles: false })).rejects.toThrow('books table locked');
+
+      expect(exclusions!.logRecorded).not.toHaveBeenCalled();
+      expect(eventHistory!.logRecorded).not.toHaveBeenCalled();
+      expect(debugRecords(log, EXCLUSION_FAILED)).toHaveLength(0);
+      expect(debugRecords(log, EVENT_FAILED)).toHaveLength(0);
+    });
+
+    it('reports nothing when the row vanished before the transaction deleted it', async () => {
+      const { service, log, exclusions, eventHistory } = fromList({
+        bookService: { delete: vi.fn().mockResolvedValue(false) },
+      });
+
+      const result = await service.deleteBook(1, { deleteFiles: false });
+
+      expect(result).toEqual({ outcome: 'not_found' });
+      expect(exclusions!.logRecorded).not.toHaveBeenCalled();
+      expect(eventHistory!.logRecorded).not.toHaveBeenCalled();
+      expect(debugRecords(log, EXCLUSION_FAILED)).toHaveLength(0);
+      expect(debugRecords(log, EVENT_FAILED)).toHaveLength(0);
+    });
+  });
+});
+
+/**
  * The bulk sweep. It owns enumeration, the delete-time membership re-check and the counters —
  * nothing else. Every durable decision belongs to `deleteBook`, which is why these cases assert
  * delegation and isolation rather than re-testing the exclusion policy.
@@ -877,6 +1194,26 @@ describe('BookDeletionService.deleteMissingBooks — the sweep (#2329)', () => {
 
       expect(result).toEqual({ deleted: 2, failed: 1 });
       expect((bookService.delete as Mock).mock.calls.map((c) => c[0])).toEqual([1, 3]);
+    });
+
+    it('counts a book whose post-commit reporting throws as DELETED, not failed (#2536)', async () => {
+      // Pre-fix this yielded { deleted: 2, failed: 1 } — the sweep summary reporting a failure for
+      // a book that is in fact gone.
+      const logRecorded = vi.fn((row: { bookId: number | null }) => {
+        if (row.bookId === 2) throw new Error('event logger wedged');
+      });
+      const { service, log, bookService } = sweep([1, 2, 3], {
+        eventHistory: {
+          create: vi.fn().mockImplementation(async (input: { bookId: number }) => ({ id: input.bookId, bookId: input.bookId })),
+          logRecorded,
+        },
+      });
+
+      const result = await service.deleteMissingBooks();
+
+      expect(result).toEqual({ deleted: 3, failed: 0 });
+      expect((bookService.delete as Mock).mock.calls.map((c) => c[0])).toEqual([1, 2, 3]);
+      expect(log.error).not.toHaveBeenCalledWith(expect.anything(), 'Failed to delete missing book');
     });
 
     it('propagates a rejected enumeration — there is no sweep to isolate', async () => {

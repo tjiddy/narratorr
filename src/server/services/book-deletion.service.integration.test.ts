@@ -475,6 +475,52 @@ describe('BookDeletionService — durable artifacts commit or roll back together
     });
   });
 
+  /**
+   * Persistence, not issuance: the reporting tail runs after the transaction has committed, so the
+   * proof that a throw there is harmless is that every durable artifact is still on disk afterwards.
+   */
+  describe('a throwing post-commit reporter leaves the durable half intact (#2536)', () => {
+    it('commits the row delete, the deleted event and the tombstone when the event reporter throws', async () => {
+      const id = await seed({ title: 'The Reckoning', asin: 'B0AAA11111' });
+      vi.spyOn(eventHistory, 'logRecorded').mockImplementation(() => { throw new Error('logger wedged'); });
+
+      const result = await service.deleteBook(id, { deleteFiles: false });
+
+      expect(result).toMatchObject({ outcome: 'deleted' });
+      expect(await bookRow(id)).toBeNull();
+      const events = await deletedEvents();
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ bookId: null, bookTitle: 'The Reckoning' });
+      expect((await exclusionRows()).map((r) => r.kind)).toEqual(['deleted']);
+    });
+
+    it('commits the same three artifacts when the exclusion reporter throws', async () => {
+      const id = await seed({ title: 'The Reckoning', asin: 'B0AAA11111' });
+      vi.spyOn(exclusions, 'logRecorded').mockImplementation(() => { throw new Error('logger wedged'); });
+
+      const result = await service.deleteBook(id, { deleteFiles: false });
+
+      expect(result).toMatchObject({ outcome: 'deleted' });
+      expect(await bookRow(id)).toBeNull();
+      expect(await deletedEvents()).toHaveLength(1);
+      expect((await exclusionRows()).map((r) => r.kind)).toEqual(['deleted']);
+    });
+
+    it('sweeps every book and counts none failed when the event reporter throws throughout', async () => {
+      const first = await seed({ title: 'First Book' });
+      const second = await seed({ title: 'Second Book', author: 'Ada Lovelace' });
+      vi.spyOn(eventHistory, 'logRecorded').mockImplementation(() => { throw new Error('logger wedged'); });
+
+      const result = await service.deleteMissingBooks();
+
+      expect(result).toEqual({ deleted: 2, failed: 0 });
+      expect(await bookRow(first)).toBeNull();
+      expect(await bookRow(second)).toBeNull();
+      expect(await db.select().from(books)).toHaveLength(0);
+      expect(log.error).not.toHaveBeenCalledWith(expect.anything(), 'Failed to delete missing book');
+    });
+  });
+
   describe('the delete-time membership re-check', () => {
     it('skips a book a concurrent scan restored between enumeration and its turn', async () => {
       const first = await seed({ title: 'First Book' });
