@@ -170,7 +170,10 @@ export function SeriesCard({ bookId }: SeriesCardProps) {
     onMutate: async () => {
       await queryClient.cancelQueries({ queryKey });
     },
-    onSuccess: (response: RefreshBookSeriesResponse) => {
+    onSuccess: async (response: RefreshBookSeriesResponse) => {
+      // A status event arriving mid-refresh invalidates the singular root and starts a refetch of
+      // this very key (#2541); without cancelling it, its pre-refresh body lands after this write.
+      await queryClient.cancelQueries({ queryKey });
       queryClient.setQueryData(queryKey, { series: response.series });
     },
   });
