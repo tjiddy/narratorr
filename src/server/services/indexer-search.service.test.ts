@@ -1151,6 +1151,51 @@ describe('IndexerSearchService', () => {
           .rejects.toBe(boom);
       });
 
+      /**
+       * #2539's downstream half. Now that a proxied adapter rethrows the caller's abort reason
+       * verbatim instead of dressing it as a ProxyError, the service must still read it as a
+       * cancellation — and it does, because the verdict is keyed on `signal.aborted`, never on the
+       * error. A stub adapter is honest here for exactly that reason: nothing in this half depends
+       * on the transport. The real-adapter, real-tunnel half lives in the SOCKS5 contract suite.
+       */
+      it('reports a rethrown abort reason as cancelled and records no indexer failure', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const outer = new AbortController();
+        const reason = new Error('search deadline reached');
+        vi.spyOn(service, 'getAdapter').mockResolvedValue({
+          search: vi.fn().mockImplementation(() => { outer.abort(reason); return Promise.reject(reason); }),
+          test: vi.fn(),
+        } as never);
+        const recordFailure = vi.spyOn(service, 'recordSearchFailure');
+        const onOutcome = vi.fn();
+
+        await expect(searchService.searchAllWithStatus('test', { title: 'test', signal: outer.signal }, { onOutcome }))
+          .rejects.toBe(reason);
+
+        expect(onOutcome).toHaveBeenCalledWith(mockIndexer.id, mockIndexer.name, { kind: 'cancelled' });
+        expect(recordFailure).not.toHaveBeenCalled();
+      });
+
+      // Control: without it, a "treat everything as cancelled" regression is invisible — the
+      // cancelled arm's assertions above pass just as well when nothing is ever a failure.
+      it('control: a leg failing under a LIVE signal still records the failure and advances the breaker', async () => {
+        db.select.mockReturnValue(mockDbChain([mockIndexer]));
+        const outer = new AbortController();
+        const boom = new Error('socket hang up');
+        vi.spyOn(service, 'getAdapter').mockResolvedValue({
+          search: vi.fn().mockRejectedValue(boom),
+          test: vi.fn(),
+        } as never);
+        const recordFailure = vi.spyOn(service, 'recordSearchFailure');
+        const onOutcome = vi.fn();
+
+        await searchService.searchAllWithStatus('test', { title: 'test', signal: outer.signal }, { onOutcome });
+
+        expect(outer.signal.aborted).toBe(false);
+        expect(onOutcome).toHaveBeenCalledWith(mockIndexer.id, mockIndexer.name, expect.objectContaining({ kind: 'failed' }));
+        expect(recordFailure).toHaveBeenCalledWith(mockIndexer.id, boom, expect.any(Number));
+      });
+
       // F1: the aggregate twin of the streaming case above — no rejected settlement exists to find.
       it('rejects even when every adapter FULFILS after the signal flips', async () => {
         db.select.mockReturnValue(mockDbChain([mockIndexer]));
