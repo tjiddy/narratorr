@@ -15,29 +15,22 @@ import {
   type SearchBooksOptions,
   type SearchBooksResult,
 } from '@core/index.js';
-import { filterByLanguage } from '@core/utils/index.js';
 // Direct path, not the barrel: `src/core/utils/index.ts` is Vite-facing and deliberately curated.
 import { IntervalGate } from '@core/utils/interval-gate.js';
-import { parseWordList, matchesWord } from '@shared/parse-word-list.js';
 import type { SettingsService } from './settings.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { lookupForFixMatch as runFixMatchLookup, type FixMatchLookupResult } from './metadata-fix-match.js';
 import { resolveBook as runResolveBook, type ResolveBookInput } from './metadata-resolve-book.js';
-import { collapseDuplicateRecordings } from './metadata-recording-collapse.js';
+import { applyBookFilters as runBookFilters, KNOWN_PODCAST_TYPES } from './metadata-book-filters.js';
 import { createChapterCorroborator, type ChapterCorroborator } from './chapter-corroboration.js';
 import type { ChapterRuntimeSeconds } from './match-job.helpers.js';
 export type { FixMatchLookupResult } from './metadata-fix-match.js';
 export type { ResolveBookInput } from './metadata-resolve-book.js';
+export { DUPLICATE_EDITIONS_COLLAPSED, PSEUDO_NARRATORS, isRejectedByWords } from './metadata-book-filters.js';
 
 
 const DEFAULT_THROTTLE_MS = 200;
-
-/**
- * Log message for the search-path collapse. `debug` rather than `info`: a collapse is the ordinary
- * success case, and this line exists so a suspected false merge can be diagnosed from logs alone.
- */
-export const DUPLICATE_EDITIONS_COLLAPSED = 'Duplicate catalog editions collapsed — one recording kept';
 
 export interface MetadataServiceConfig {
   audibleRegion?: string;
@@ -49,31 +42,7 @@ export interface MetadataServiceConfig {
   throttleIntervalMs?: number;
 }
 
-// Deliberately narrower than NARRATOR_PLACEHOLDERS: widening this set changes the
-// reject-word surface. metadata.service.test.ts pins the subset relationship.
-export const PSEUDO_NARRATORS = new Set(['full cast', 'various', 'unknown']);
-
-function isPseudoNarrator(name: string): boolean {
-  return PSEUDO_NARRATORS.has(name.trim().toLowerCase().replace(/\s+/g, ' '));
-}
-
-// Shared by search and v1 add-by-ASIN so reject-word behavior cannot drift;
-// settings reads and fail-open handling remain at each call site.
-export function isRejectedByWords(book: BookMetadata, rejectWords: string): boolean {
-  const rejectList = parseWordList(rejectWords);
-  if (rejectList.length === 0) return false;
-
-  const authorNames = (book.authors ?? []).map((a) => a.name).join(' ');
-  const narrators = (book.narrators ?? [])
-    .filter((n) => !isPseudoNarrator(n))
-    .join(' ');
-  const surface = `${book.title} ${book.subtitle ?? ''} ${authorNames} ${narrators} ${book.formatType ?? ''}`.toLowerCase();
-  return rejectList.some((word) => matchesWord(surface, word));
-}
-
 export class MetadataService {
-  private static readonly KNOWN_PODCAST_TYPES = new Set(['PodcastParent', 'Periodical']);
-
   private providers: MetadataSearchProvider[] = [];
   private audnexus: MetadataEnrichmentProvider;
   // One floor for every provider this instance talks to, and per-instance for the same reason the
@@ -263,80 +232,10 @@ export class MetadataService {
     return this.applyBookFilters(result.books);
   }
 
-  // Each filter owns its settings read and fails open independently (#1004).
-  private async applyBookFilters(books: BookMetadata[], preferAsin?: string | undefined): Promise<BookMetadata[]> {
-    if (books.length === 0) return books;
-    const audiobooksOnly = this.filterToAudiobooksOnly(books);
-    const rejectFiltered = await this.filterRejectedBooks(audiobooksOnly);
-    const languageFiltered = await this.filterBooksByLanguage(rejectFiltered);
-    const filtered = await this.filterByMinDuration(languageFiltered);
-    // Terminal on purpose (#1597): a listing the filters above rejected must be able neither to
-    // become the canonical nor to donate its ASIN to one. `preferAsin` is threaded only from the
-    // resolver, whose own requested-ASIN override this collapse would otherwise pre-empt.
-    const { books: collapsed, collapses } = collapseDuplicateRecordings(filtered, preferAsin);
-    collapses.forEach((collapse) => this.log.debug(collapse, DUPLICATE_EDITIONS_COLLAPSED));
-    return collapsed;
-  }
-
-  private filterToAudiobooksOnly(books: BookMetadata[]): BookMetadata[] {
-    return books.filter((book) => {
-      if (book.contentDeliveryType === undefined) return true;
-      if (!MetadataService.KNOWN_PODCAST_TYPES.has(book.contentDeliveryType)) return true;
-      this.log.debug(
-        { title: book.title, contentDeliveryType: book.contentDeliveryType },
-        'Dropping non-audiobook from search results',
-      );
-      return false;
-    });
-  }
-
-  private async filterBooksByLanguage(books: BookMetadata[]): Promise<BookMetadata[]> {
-    if (!this.settingsService) return books;
-
-    let languages: readonly string[];
-    try {
-      const metadata = await this.settingsService.get('metadata');
-      languages = metadata.languages;
-    } catch (error: unknown) {
-      this.log.warn({ error: serializeError(error) }, 'Failed to read language settings for search filtering — returning unfiltered results');
-      return books;
-    }
-
-    return filterByLanguage(books, languages).kept;
-  }
-
-  private async filterRejectedBooks(books: BookMetadata[]): Promise<BookMetadata[]> {
-    if (!this.settingsService) return books;
-    if (books.length === 0) return books;
-
-    let rejectWords: string;
-    try {
-      const quality = await this.settingsService.get('quality');
-      rejectWords = quality.rejectWords;
-    } catch (error: unknown) {
-      this.log.warn({ error: serializeError(error) }, 'Failed to read reject-words setting — returning unfiltered results');
-      return books;
-    }
-
-    return books.filter((book) => !isRejectedByWords(book, rejectWords));
-  }
-
-  private async filterByMinDuration(books: BookMetadata[]): Promise<BookMetadata[]> {
-    if (!this.settingsService) return books;
-    if (books.length === 0) return books;
-
-    let minDurationMinutes: number;
-    try {
-      const metadata = await this.settingsService.get('metadata');
-      minDurationMinutes = metadata.minDurationMinutes;
-    } catch (error: unknown) {
-      this.log.warn({ error: serializeError(error) }, 'Failed to read minDurationMinutes setting — returning unfiltered results');
-      return books;
-    }
-
-    if (minDurationMinutes <= 0) return books;
-
-    return books.filter((book) => book.duration == null || book.duration >= minDurationMinutes);
+  // Chain + collapse live in metadata-book-filters.ts (#2590); the deps object keeps the
+  // per-filter settings reads and fail-open behavior (#1004) with the extracted code.
+  private applyBookFilters(books: BookMetadata[], preferAsin?: string | undefined): Promise<BookMetadata[]> {
+    return runBookFilters({ settingsService: this.settingsService, log: this.log }, books, preferAsin);
   }
 
   async getBook(id: string): Promise<BookMetadata | null> {
@@ -344,7 +243,7 @@ export class MetadataService {
     if (
       result
       && result.contentDeliveryType !== undefined
-      && MetadataService.KNOWN_PODCAST_TYPES.has(result.contentDeliveryType)
+      && KNOWN_PODCAST_TYPES.has(result.contentDeliveryType)
     ) {
       this.log.debug(
         { id, title: result.title, contentDeliveryType: result.contentDeliveryType },
