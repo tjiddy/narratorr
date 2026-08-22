@@ -1347,6 +1347,82 @@ function streamingService(opts: StreamingServiceOptions = {}) {
 const outerSignalOf = (fn: ReturnType<typeof vi.fn>, call = 0) =>
   fn.mock.calls[call]![4] as AbortSignal | undefined;
 
+/** The per-indexer reporting bundle the route handed the executor, read positionally. */
+const callbacksOf = (fn: ReturnType<typeof vi.fn>, call = 0) => fn.mock.calls[call]![3] as {
+  onComplete: (id: number, name: string, count: number, ms: number) => void;
+  onError: (id: number, name: string, error: string, ms: number) => void;
+  onCancelled: (id: number, name: string) => void;
+};
+
+/** The route's own `req` close listener, invoked the way Node would invoke it. */
+const closeOf = (onClose: ReturnType<typeof vi.fn>) => onClose.mock.calls[0]![1] as () => void;
+
+/** Poll a server-side observable that a real socket event drives, instead of guessing at a delay. */
+async function waitUntil(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = performance.now() + timeoutMs;
+  while (!predicate()) {
+    if (performance.now() > deadline) throw new Error('timed out waiting for the server to observe the disconnect');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+// ─── the enrichment tail's doubles, shared by the deadline (#2573) and disconnect (#2577) cases ──
+
+/** Mirrors NZB_FETCH_CONCURRENCY: the wave that is already on the wire when the abort lands. */
+const WAVE = 5;
+const mockNzbFetch = vi.mocked(fetchWithSsrfRedirect);
+
+const PLAIN_NZB = `<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+      <file poster="t" date="1" subject="Plain English Audiobook MP3">
+        <groups><group>alt.binaries.audiobooks</group></groups>
+        <segments><segment bytes="1" number="1">id@e</segment></segments>
+      </file>
+    </nzb>`;
+
+/** Usenet counterpart to `survivingResult`: a downloadUrl and no language is what reaches phase 2. */
+const usenetCandidate = (tag: string, i: number) => ({
+  title: 'The Churn',
+  protocol: 'usenet',
+  indexer: 'Newznab',
+  indexerId: 2,
+  guid: `${tag}-${i}`,
+  downloadUrl: `http://nzb.test/${tag}-${i}`,
+  size: 500 * 1024 * 1024,
+  seeders: 10,
+  grabs: 10,
+});
+
+const candidates = (tag: string, n: number) => Array.from({ length: n }, (_, i) => usenetCandidate(tag, i));
+
+function resetEnrichmentDoubles(): void {
+  // Process-wide, so a warm entry from a sibling case would silently remove a fetch.
+  enrichmentCache.clear();
+  mockNzbFetch.mockReset();
+  vi.mocked(createSsrfSafeDispatcher).mockImplementation(
+    () => ({ close: vi.fn().mockResolvedValue(undefined) }) as never,
+  );
+}
+
+/**
+ * Parks every NZB fetch and reports when `WAVE` of them are genuinely on the wire — the only
+ * window in which the abort reaches a queued waiter rather than the pre-acquire guard.
+ */
+function parkNzbFetches() {
+  let open!: () => void;
+  const barrier = new Promise<void>((resolve) => { open = resolve; });
+  let admit!: () => void;
+  const onWire = new Promise<void>((resolve) => { admit = resolve; });
+  let started = 0;
+  // A `Response` handed to mockResolvedValue is one instance whose body the first read consumes,
+  // and enrichment swallows the resulting TypeError — construct a fresh one per call.
+  mockNzbFetch.mockImplementation(async () => {
+    if (++started >= WAVE) admit();
+    await barrier;
+    return new Response(PLAIN_NZB, { status: 200 });
+  });
+  return { onWire, release: () => open() };
+}
+
 describe('GET /api/search/stream — deadline (#2568)', () => {
   let armed: ArmedDeadlineTimer[];
   let clearTimeoutSpy: MockInstance;
@@ -1364,6 +1440,7 @@ describe('GET /api/search/stream — deadline (#2568)', () => {
     indexerSearchService?: IndexerSearchService;
     blacklistService?: BlacklistService;
     indexerService?: IndexerService;
+    sessionManager?: SearchSessionManager;
   } = {}) {
     let handler!: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
     const { searchStreamRoutes } = await import('./search-stream.js');
@@ -1376,7 +1453,7 @@ describe('GET /api/search/stream — deadline (#2568)', () => {
       overrides.blacklistService ?? createMockBlacklistService(),
       createMockSettingsService(),
       overrides.indexerService ?? freshIndexerService(),
-      new SearchSessionManager(),
+      overrides.sessionManager ?? new SearchSessionManager(),
     );
     return handler;
   }
@@ -1387,7 +1464,7 @@ describe('GET /api/search/stream — deadline (#2568)', () => {
     return ctx;
   }
 
-  const logOf = (request: FastifyRequest, level: 'warn' | 'error') =>
+  const logOf = (request: FastifyRequest, level: 'warn' | 'error' | 'debug') =>
     request.log[level] as unknown as ReturnType<typeof vi.fn>;
 
   // ── arming ────────────────────────────────────────────────────────────────
@@ -1594,8 +1671,7 @@ describe('GET /api/search/stream — deadline (#2568)', () => {
     const settled = handler(request, reply);
     await svc.entered;
 
-    const closeHandler = onClose.mock.calls[0]![1] as () => void;
-    closeHandler();
+    closeOf(onClose)();
 
     expect(clearTimeoutSpy).toHaveBeenCalledWith(armed[0]!.handle);
     const framesBefore = write.mock.calls.length;
@@ -1604,6 +1680,9 @@ describe('GET /api/search/stream — deadline (#2568)', () => {
 
     svc.release();
     await settled;
+    // #2577: the released rung rejects on the disconnect's abort, and that terminal path writes
+    // nothing either — the close-then-expire order must not deliver a timedOut frame to a dead socket.
+    expect(write.mock.calls).toHaveLength(framesBefore);
   });
 
   // ── discrimination: the control cases that give the expiry cases their meaning ──
@@ -1717,58 +1796,7 @@ describe('GET /api/search/stream — deadline (#2568)', () => {
 
   // ── #2573: the post-processing tail is bounded by the same controller ──────
   describe('the enrichment tail is bounded by the deadline (#2573)', () => {
-    /** Mirrors NZB_FETCH_CONCURRENCY: the wave that is already on the wire when the abort lands. */
-    const WAVE = 5;
-    const mockNzbFetch = vi.mocked(fetchWithSsrfRedirect);
-
-    const PLAIN_NZB = `<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
-      <file poster="t" date="1" subject="Plain English Audiobook MP3">
-        <groups><group>alt.binaries.audiobooks</group></groups>
-        <segments><segment bytes="1" number="1">id@e</segment></segments>
-      </file>
-    </nzb>`;
-
-    /** Usenet counterpart to `survivingResult`: a downloadUrl and no language is what reaches phase 2. */
-    const usenetCandidate = (tag: string, i: number) => ({
-      title: 'The Churn',
-      protocol: 'usenet',
-      indexer: 'Newznab',
-      indexerId: 2,
-      guid: `${tag}-${i}`,
-      downloadUrl: `http://nzb.test/${tag}-${i}`,
-      size: 500 * 1024 * 1024,
-      seeders: 10,
-      grabs: 10,
-    });
-
-    const candidates = (tag: string, n: number) => Array.from({ length: n }, (_, i) => usenetCandidate(tag, i));
-
-    beforeEach(() => {
-      // Process-wide, so a warm entry from a sibling case would silently remove a fetch.
-      enrichmentCache.clear();
-      mockNzbFetch.mockReset();
-      vi.mocked(createSsrfSafeDispatcher).mockImplementation(
-        () => ({ close: vi.fn().mockResolvedValue(undefined) }) as never,
-      );
-    });
-
-    /**
-     * Parks every NZB fetch and reports when `WAVE` of them are genuinely on the wire — the only
-     * window in which the abort reaches a queued waiter rather than the pre-acquire guard.
-     */
-    function parkNzbFetches() {
-      let open!: () => void;
-      const barrier = new Promise<void>((resolve) => { open = resolve; });
-      let admit!: () => void;
-      const onWire = new Promise<void>((resolve) => { admit = resolve; });
-      let started = 0;
-      mockNzbFetch.mockImplementation(async () => {
-        if (++started >= WAVE) admit();
-        await barrier;
-        return new Response(PLAIN_NZB, { status: 200 });
-      });
-      return { onWire, release: () => open() };
-    }
+    beforeEach(resetEnrichmentDoubles);
 
     it('does not falsify a good answer when the timer fires during enrichment (AC11)', async () => {
       const { service } = streamingService({ hitQuery: DEADLINE_FIXTURE.q, results: candidates('ac11', 12) });
@@ -1849,6 +1877,364 @@ describe('GET /api/search/stream — deadline (#2568)', () => {
       expect(logOf(request, 'warn')).not.toHaveBeenCalled();
     });
   });
+
+  // ── #2577: a client that disconnects tears the run the way the deadline does ──
+  describe('the client disconnect tears the run (#2577)', () => {
+    const DISCONNECT_LOG = 'Search stream abandoned by client';
+    /** Rung 2 of the shared fixture's ladder — a relaxed rung answering is what sets relaxedQuery. */
+    const RELAXED_RUNG = 'the churn James S A Corey';
+
+    /** Disconnect while the first `searchAllStreaming` call is pending, before it settles. */
+    async function runToDisconnect(overrides: Partial<StreamingServiceOptions> = {}) {
+      const svc = streamingService({ parkAt: 1, ...overrides });
+      const indexerService = freshIndexerService();
+      const handler = await buildHandler({ indexerSearchService: svc.service, indexerService });
+      const ctx = streamRequest();
+
+      const settled = handler(ctx.request, ctx.reply);
+      await svc.entered;
+      closeOf(ctx.onClose)();
+      svc.release();
+      await settled;
+
+      return { ...svc, ...ctx, indexerService };
+    }
+
+    /**
+     * `getLanAllowlist` is the post-processing seam no abort can tear — it takes no signal even
+     * after #2573. Parking it is what puts the disconnect *after* the ladder resolved, so the run
+     * reaches the SUCCESS arm and only a write guard can keep the socket quiet.
+     */
+    async function runToDisconnectDuringPostProcessing(opts: StreamingServiceOptions = {}) {
+      const svc = streamingService(opts);
+      let open!: () => void;
+      const parked = new Promise<void>((resolve) => { open = resolve; });
+      let admit!: () => void;
+      const entered = new Promise<void>((resolve) => { admit = resolve; });
+      const indexerService = freshIndexerService();
+      indexerService.getLanAllowlist.mockImplementation(async () => {
+        admit();
+        await parked;
+        return { hostPort: new Set<string>(), hostname: new Set<string>() };
+      });
+
+      const handler = await buildHandler({ indexerSearchService: svc.service, indexerService });
+      const ctx = streamRequest();
+
+      const settled = handler(ctx.request, ctx.reply);
+      await entered;
+      closeOf(ctx.onClose)();
+      open();
+      await settled;
+
+      return { ...svc, ...ctx, indexerService };
+    }
+
+    // ── the abort wiring ──────────────────────────────────────────────────────
+
+    it('aborts the very signal it handed the executor (AC1)', async () => {
+      const { searchAllStreaming } = await runToDisconnect();
+
+      const signal = outerSignalOf(searchAllStreaming);
+      expect(signal).toBeInstanceOf(AbortSignal);
+      expect(signal!.aborted).toBe(true);
+      // Identity, not "some signal aborted": a second controller aborted on close would leave the
+      // one the executor is actually watching live.
+      const signals = searchAllStreaming.mock.calls.map((_c, i) => outerSignalOf(searchAllStreaming, i));
+      expect(new Set(signals).size).toBe(1);
+    });
+
+    it('rejects the pending leg and terminates through the catch, not the zero-succeeded ladder stop (AC1/AC3)', async () => {
+      const { searchAllStreaming, request, write, indexerService } = await runToDisconnect();
+
+      expect(searchAllStreaming).toHaveBeenCalledTimes(1);
+      // The catch is the only writer of this line; the pre-fix run stopped at `succeeded === 0`,
+      // ran post-processing and reached the success arm instead — which is why "the ladder stopped
+      // after one rung" is vacuous here and this pair is not.
+      expect(logOf(request, 'debug').mock.calls.map(c => c[1])).toEqual([DISCONNECT_LOG]);
+      expect(indexerService.getLanAllowlist).not.toHaveBeenCalled();
+      expect(namedFrames(write).map(f => f.event)).toEqual(['search-start']);
+    });
+
+    it('sets the disconnected flag before aborting, so a synchronous abort listener cannot write (AC2)', async () => {
+      const svc = streamingService({ parkAt: 1 });
+      const handler = await buildHandler({ indexerSearchService: svc.service });
+      const { reply, request, write, onClose } = streamRequest();
+
+      const settled = handler(request, reply);
+      await svc.entered;
+
+      // Abort listeners run synchronously inside abort(). This one reports through the route's own
+      // per-indexer callback, so abort-then-flag lets the frame out and reds here alone.
+      const callbacks = callbacksOf(svc.searchAllStreaming);
+      outerSignalOf(svc.searchAllStreaming)!.addEventListener('abort', () => {
+        callbacks.onComplete(1, 'AudioBookBay', 0, 10);
+      });
+
+      closeOf(onClose)();
+      expect(namedFrames(write).map(f => f.event)).toEqual(['search-start']);
+
+      svc.release();
+      await settled;
+    });
+
+    // ── the catch arm and its logging ─────────────────────────────────────────
+
+    it('logs the abandonment once, at debug, under its own pinned message (AC3)', async () => {
+      const { request, write } = await runToDisconnect();
+
+      expect(logOf(request, 'debug')).toHaveBeenCalledTimes(1);
+      // The literal itself: inequality with 'Search stream error' would not stop an implementation
+      // from reusing another surface's wording.
+      expect(logOf(request, 'debug').mock.calls[0]![1]).toBe(DISCONNECT_LOG);
+      expect(logOf(request, 'error')).not.toHaveBeenCalled();
+      expect(logOf(request, 'warn')).not.toHaveBeenCalled();
+      expect(namedFrames(write).map(f => f.event)).toEqual(['search-start']);
+      expect(completeFrame(write)).toBeUndefined();
+    });
+
+    it('serializes the caught error on the debug payload (AC3)', async () => {
+      const { request } = await runToDisconnect();
+
+      const payload = logOf(request, 'debug').mock.calls[0]![0] as Record<string, unknown>;
+      // objectContaining/toMatchObject read through to Error.prototype; the own-key set does not.
+      expect(payload.error).not.toBeInstanceOf(Error);
+      expect(Object.keys(payload.error as object).sort()).toEqual(['message', 'stack', 'type']);
+    });
+
+    it('takes the disconnected arm even when the deadline expired first (AC4)', async () => {
+      const svc = streamingService({ parkAt: 1 });
+      const handler = await buildHandler({ indexerSearchService: svc.service });
+      const { reply, request, write, onClose } = streamRequest();
+
+      const settled = handler(request, reply);
+      await svc.entered;
+      armed[0]!();
+      closeOf(onClose)();
+      svc.release();
+      await settled;
+
+      expect(logOf(request, 'debug').mock.calls.map(c => c[1])).toEqual([DISCONNECT_LOG]);
+      // The accepted tradeoff: an expired-and-abandoned run loses its budget warn.
+      expect(logOf(request, 'warn')).not.toHaveBeenCalled();
+      expect(completeFrame(write)).toBeUndefined();
+      // Key absence, not value absence: a present-but-undefined key survives not.objectContaining.
+      for (const frame of namedFrames(write)) expect(frame.data).not.toHaveProperty('timedOut');
+    });
+
+    it('routes a post-processing rejection that follows the disconnect to the disconnected arm (AC3)', async () => {
+      const { service } = streamingService({
+        hitQuery: DEADLINE_FIXTURE.q,
+        results: [survivingResult({ infoHash: 'c'.repeat(40) })],
+      });
+      const ctx = streamRequest();
+      const blacklistService = {
+        getBlacklistedIdentifiers: vi.fn().mockImplementation(async () => {
+          closeOf(ctx.onClose)();
+          throw new Error('blacklist table locked');
+        }),
+      } as unknown as BlacklistService;
+      const handler = await buildHandler({ indexerSearchService: service, blacklistService });
+
+      await handler(ctx.request, ctx.reply);
+
+      expect(blacklistService.getBlacklistedIdentifiers).toHaveBeenCalled();
+      expect(logOf(ctx.request, 'debug').mock.calls.map(c => c[1])).toEqual([DISCONNECT_LOG]);
+      expect(logOf(ctx.request, 'error')).not.toHaveBeenCalled();
+      expect(completeFrame(ctx.write)).toBeUndefined();
+    });
+
+    // ── write suppression, including the success path ─────────────────────────
+
+    it('writes no terminal frame when the disconnect lands during post-processing of a real answer (AC5)', async () => {
+      const results = Array.from({ length: 12 }, (_v, i) => survivingResult({ infoHash: String(i).padStart(40, 'a') }));
+      const postProcessSpy = vi.spyOn(searchPipeline, 'postProcessSearchResults');
+
+      const { reply, request, write } = await runToDisconnectDuringPostProcessing({
+        hitQuery: DEADLINE_FIXTURE.q,
+        results,
+      });
+
+      // Enrichment degrades rather than rejecting, so the run really does reach the SUCCESS arm
+      // holding twelve results: a catch-only guard is green everywhere else and red only here.
+      const processed = await postProcessSpy.mock.results[0]!.value as { results: unknown[] };
+      expect(processed.results).toHaveLength(12);
+      expect(completeFrame(write)).toBeUndefined();
+      expect(logOf(request, 'error')).not.toHaveBeenCalled();
+      expect(reply.raw.end).toHaveBeenCalled();
+    });
+
+    it('emits nothing for a leg that reports after the disconnect (AC5)', async () => {
+      const { searchAllStreaming, write } = await runToDisconnect();
+
+      const callbacks = callbacksOf(searchAllStreaming);
+      callbacks.onComplete(1, 'AudioBookBay', 3, 10);
+      callbacks.onError(1, 'AudioBookBay', 'ECONNREFUSED', 10);
+      callbacks.onCancelled(1, 'AudioBookBay');
+
+      expect(namedFrames(write).map(f => f.event)).toEqual(['search-start']);
+    });
+
+    it('never discloses a relaxed query the client is no longer there to read (AC5)', async () => {
+      const { write } = await runToDisconnectDuringPostProcessing({
+        hitQuery: RELAXED_RUNG,
+        results: [survivingResult({ infoHash: 'b'.repeat(40) })],
+      });
+
+      expect(namedFrames(write).map(f => f.event)).not.toContain('search-complete');
+      // Byte-level, because relaxedQuery only ever rides a frame that must not exist at all.
+      expect(write.mock.calls.map(c => String(c[0])).join('')).not.toContain('relaxedQuery');
+    });
+
+    it('writes nothing rather than delivering a genuine zero to a closed socket (AC5)', async () => {
+      const { searchAllStreaming, write, indexerService } = await runToDisconnectDuringPostProcessing();
+
+      expect(searchAllStreaming).toHaveBeenCalledTimes(DEADLINE_LADDER_RUNGS);
+      expect(indexerService.getLanAllowlist).toHaveBeenCalled();
+      expect(completeFrame(write)).toBeUndefined();
+    });
+
+    it('refuses the heartbeat frame itself once the client is gone (AC5)', async () => {
+      // Capture the interval CALLBACK, not the timer: clearing the interval is the other half of
+      // teardown and an unguarded heartbeat is green under it. Invoking the callback directly is
+      // what separates "the timer was stopped" from "the write is gated".
+      let beat!: () => void;
+      vi.spyOn(globalThis, 'setInterval')
+        .mockImplementation(((fn: () => void) => { beat = fn; return { unref: vi.fn() }; }) as never);
+      vi.spyOn(globalThis, 'clearInterval').mockImplementation(() => {});
+
+      const svc = streamingService({ parkAt: 1 });
+      const handler = await buildHandler({ indexerSearchService: svc.service });
+      const { reply, request, write, onClose } = streamRequest();
+
+      const settled = handler(request, reply);
+      await svc.entered;
+
+      beat();
+      const hb = () => write.mock.calls.filter((c: unknown[]) => c[0] === HB_FRAME).length;
+      expect(hb()).toBe(1);
+
+      closeOf(onClose)();
+      write.mockImplementation(() => { throw new Error('write after end / broken pipe'); });
+      expect(() => beat()).not.toThrow();
+      expect(hb()).toBe(1);
+
+      svc.release();
+      await settled;
+    });
+
+    // ── the enrichment tail (AC6) ─────────────────────────────────────────────
+
+    describe('the enrichment tail is torn by the disconnect too (AC6)', () => {
+      beforeEach(resetEnrichmentDoubles);
+
+      it.each([8, 20])('starts no NZB fetch beyond the wave on the wire at %i candidates', async (n) => {
+        const svc = streamingService({ hitQuery: DEADLINE_FIXTURE.q, results: candidates(`dc${n}`, n) });
+        const { onWire, release } = parkNzbFetches();
+        const handler = await buildHandler({ indexerSearchService: svc.service });
+        const { reply, request, write, onClose } = streamRequest();
+
+        const settled = handler(request, reply);
+        await onWire;
+        const atAbort = mockNzbFetch.mock.calls.length;
+        closeOf(onClose)();
+        release();
+        await settled;
+
+        // Identical at 8 and at 20 is what separates "some fetches were skipped" from "the tail is
+        // constant in N" — the #2573 property, now reachable from the disconnect path.
+        expect(atAbort).toBe(WAVE);
+        expect(mockNzbFetch.mock.calls.length - atAbort).toBe(0);
+        expect(completeFrame(write)).toBeUndefined();
+      });
+
+      it('leaves enrichment\'s own truncation warn intact (AC6)', async () => {
+        const svc = streamingService({ hitQuery: DEADLINE_FIXTURE.q, results: candidates('dcwarn', 12) });
+        const { onWire, release } = parkNzbFetches();
+        const handler = await buildHandler({ indexerSearchService: svc.service });
+        const { reply, request, write, onClose } = streamRequest();
+
+        const settled = handler(request, reply);
+        await onWire;
+        closeOf(onClose)();
+        release();
+        await settled;
+
+        // It belongs to enrichment, not to the route, so the route's own "no warn" ACs are scoped
+        // to the route's pinned messages rather than to "no warn at all".
+        expect(logOf(request, 'warn').mock.calls.map(c => c[1])).toEqual(['Usenet enrichment truncated by abort']);
+        expect(logOf(request, 'warn').mock.calls[0]![0]).toMatchObject({ abortSkipped: 7, nzbFetched: WAVE });
+        expect(completeFrame(write)).toBeUndefined();
+        expect(reply.raw.end).toHaveBeenCalled();
+      });
+    });
+
+    // ── teardown, isolation and the normal-completion control ─────────────────
+
+    it('survives a disconnect on a zero-indexer run and still releases its one timer (AC8)', async () => {
+      const { write, request } = await runToDisconnect({ indexers: [] });
+
+      expect(armed).toHaveLength(1);
+      expect(clearTimeoutSpy).toHaveBeenCalledWith(armed[0]!.handle);
+      expect(namedFrames(write).map(f => f.event)).toEqual(['search-start']);
+      expect(logOf(request, 'debug')).toHaveBeenCalledTimes(1);
+    });
+
+    it('tolerates a second close and leaves the session cleaned (AC8)', async () => {
+      const sessionManager = new SearchSessionManager();
+      const svc = streamingService({ parkAt: 1 });
+      const handler = await buildHandler({ indexerSearchService: svc.service, sessionManager });
+      const { reply, request, write, onClose } = streamRequest();
+
+      const settled = handler(request, reply);
+      await svc.entered;
+      const sessionId = namedFrames(write)[0]!.data.sessionId as string;
+      expect(sessionManager.get(sessionId)).toBeDefined();
+      const close = closeOf(onClose);
+
+      close();
+      expect(() => close()).not.toThrow();
+      expect(sessionManager.get(sessionId)).toBeUndefined();
+
+      svc.release();
+      await settled;
+      expect(namedFrames(write).map(f => f.event)).toEqual(['search-start']);
+    });
+
+    it('keeps the disconnected verdict per request, with no residue for the next one (AC8)', async () => {
+      const svc = streamingService({ parkAt: 1 });
+      const handler = await buildHandler({ indexerSearchService: svc.service });
+      const first = streamRequest();
+
+      const settled = handler(first.request, first.reply);
+      await svc.entered;
+      closeOf(first.onClose)();
+      svc.release();
+      await settled;
+
+      const second = streamRequest();
+      await handler(second.request, second.reply);
+
+      expect(namedFrames(first.write).map(f => f.event)).toEqual(['search-start']);
+      expect(completeFrame(second.write)).toBeDefined();
+      expect(logOf(second.request, 'debug')).not.toHaveBeenCalled();
+    });
+
+    it('writes the terminal frame on a normal completion, and a late close adds nothing (AC7)', async () => {
+      const handler = await buildHandler();
+      const { reply, request, write, onClose } = streamRequest();
+
+      await handler(request, reply);
+
+      // Node emits req 'close' AFTER res.end() on a successful response, so the flag flips inert.
+      expect(completeFrame(write)).toBeDefined();
+      expect(logOf(request, 'debug')).not.toHaveBeenCalled();
+
+      const framesBefore = write.mock.calls.length;
+      expect(() => closeOf(onClose)()).not.toThrow();
+      expect(write.mock.calls).toHaveLength(framesBefore);
+    });
+  });
 });
 
 describe('GET /api/search/stream — deadline over real HTTP (#2568)', () => {
@@ -1887,6 +2273,42 @@ describe('GET /api/search/stream — deadline over real HTTP (#2568)', () => {
         timedOut: true,
       });
       expect(svc.searchAllStreaming).toHaveBeenCalledTimes(1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  /**
+   * #2577's route-level proof. `buildApp` constructs Fastify with `logger: false`, so the debug
+   * line is not observable here — this case is deliberately behavioural, and the log assertions
+   * stay in the unit describe.
+   */
+  it('tears the run and settles cleanly when the client aborts the request mid-rung (#2577)', async () => {
+    const svc = streamingService({ parkAt: 1 });
+    const app = await buildApp(svc.service, { indexerService: freshIndexerService() });
+    const client = new AbortController();
+
+    try {
+      const pending = fetchSseEvents(
+        app,
+        url({ q: DEADLINE_FIXTURE.q, title: DEADLINE_FIXTURE.title, author: DEADLINE_FIXTURE.author }),
+        { signal: client.signal },
+      );
+      await svc.entered;
+      client.abort();
+
+      await expect(pending).rejects.toThrow();
+      // The close listener runs on the server's own tick; poll the observable it sets rather than
+      // guessing at a delay.
+      await waitUntil(() => outerSignalOf(svc.searchAllStreaming)?.aborted === true);
+      svc.release();
+      // Let the released rung reject and the handler run its catch + finally before the app closes
+      // underneath it; an unhandled rejection or a throw from a post-close write would surface here.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      // The ladder froze at the parked rung: a run that kept going would call the executor again.
+      expect(svc.searchAllStreaming).toHaveBeenCalledTimes(1);
+      expect(outerSignalOf(svc.searchAllStreaming)!.aborted).toBe(true);
     } finally {
       await app.close();
     }

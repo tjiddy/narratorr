@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { FastifyReply } from 'fastify';
 import type { SSEEventType, SSEEventPayloads } from '@shared/schemas/sse-events.js';
-import { HEARTBEAT_INTERVAL_MS, SSE_HEARTBEAT_FRAME } from '../utils/sse-stream.js';
+import { HEARTBEAT_INTERVAL_MS, SSE_HEARTBEAT_FRAME, sseFrame } from '../utils/sse-stream.js';
 
 // Compatibility re-export; the implementation source is utils/sse-stream.ts.
 export { HEARTBEAT_INTERVAL_MS };
@@ -14,10 +14,6 @@ export interface SSEClient {
 
 // SSE auth is connect-time only; bound lifetime across logout, password change, and secret rotation.
 export const MAX_STREAM_AGE_MS = 45 * 60 * 1_000;
-
-function frameEvent<T extends SSEEventType>(type: T, data: SSEEventPayloads[T]): string {
-  return `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
-}
 
 export class EventBroadcasterService {
   private clients = new Set<SSEClient>();
@@ -49,14 +45,14 @@ export class EventBroadcasterService {
 
   emit<T extends SSEEventType>(type: T, data: SSEEventPayloads[T]): void {
     if (this.clients.size === 0) return;
-    this.writeToAll(frameEvent(type, data));
+    this.writeToAll(sseFrame(type, data));
   }
 
   // Refuse unregistered clients because shutdown may already have ended their reply.
   emitTo<T extends SSEEventType>(client: SSEClient, type: T, data: SSEEventPayloads[T]): void {
     if (!this.clients.has(client)) return;
     try {
-      client.reply.raw.write(frameEvent(type, data));
+      client.reply.raw.write(sseFrame(type, data));
     } catch {
       this.pruneAfterWriteFailure(client);
     }
