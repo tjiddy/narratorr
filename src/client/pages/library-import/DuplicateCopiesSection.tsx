@@ -1,5 +1,6 @@
 import { ImportCard, type ImportRow } from '@/components/manual-import';
 import { makeRelativePath } from '@/lib/pathUtils.js';
+import { buildCopyAnnotation } from './copyAnnotation.js';
 
 interface DuplicateCopiesSectionProps {
   rows: ImportRow[];
@@ -34,15 +35,9 @@ export function DuplicateCopiesSection({ rows, libraryRoot, onEdit, paused }: Du
           <ImportCard
             key={row.book.path}
             row={row}
-            onToggle={() => {}}
             onEdit={() => onEdit(row)}
             lockDuplicates
-            copyAtOtherPath
-            // An incumbent outside the configured root has no relative spelling; show it whole
-            // rather than dropping the one fact the row exists to convey.
-            {...(row.book.existingPath !== undefined && {
-              existingPath: makeRelativePath(row.book.existingPath, libraryRoot) ?? row.book.existingPath,
-            })}
+            annotation={buildCopyAnnotation(row.book, libraryRoot) ?? undefined}
             relativePath={makeRelativePath(row.book.path, libraryRoot)}
             paused={paused}
           />

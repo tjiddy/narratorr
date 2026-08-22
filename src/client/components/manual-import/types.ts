@@ -1,4 +1,15 @@
+import type { BadgeVariant } from '@/components/Badge';
 import type { BookMetadata, DiscoveredBook, MatchResult } from '@/lib/api';
+
+/**
+ * Caller-supplied display override for a single card: a badge that outranks the card's own
+ * ownership ladder, plus an optional note line. Generic by construction — the card renders the
+ * label as given and owns no knowledge of which surface produced it.
+ */
+export interface ImportCardAnnotation {
+  badge: { label: string; variant: BadgeVariant };
+  note?: string | undefined;
+}
 
 export interface BookEditState {
   title: string;
