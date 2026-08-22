@@ -15,11 +15,8 @@ function bookLink(existingBookId: number, label: string) {
   );
 }
 
-function SkippedTarget({ row }: { row: Skipped }) {
-  if (row.reason === 'already-importing') {
-    return <span className="text-muted-foreground">already importing</span>;
-  }
-  // ID and title are independently optional after the referenced book is deleted.
+/** ID and title are independently optional after the referenced book is deleted. */
+function IncumbentLabel({ row }: { row: Skipped }) {
   if (row.existingBookId != null && row.existingTitle != null) {
     return bookLink(row.existingBookId, row.existingTitle);
   }
@@ -30,6 +27,26 @@ function SkippedTarget({ row }: { row: Skipped }) {
     return bookLink(row.existingBookId, 'existing book');
   }
   return <span className="text-muted-foreground">already in library</span>;
+}
+
+function SkippedTarget({ row }: { row: Skipped }) {
+  if (row.reason === 'already-importing') {
+    return <span className="text-muted-foreground">already importing</span>;
+  }
+  // #2091: the point of the distinct reason is that BOTH folders are named — the candidate that
+  // was skipped and the library copy it duplicates. The path is a snapshot, so it survives the
+  // incumbent's deletion even when the id and title do not.
+  if (row.reason === 'duplicate-copy-at-other-path') {
+    return (
+      <>
+        duplicate copy at <span className="break-all">{row.path}</span>
+        {' — library copy is '}
+        <IncumbentLabel row={row} />
+        {row.existingPath != null && <> at <span className="break-all">{row.existingPath}</span></>}
+      </>
+    );
+  }
+  return <IncumbentLabel row={row} />;
 }
 
 function AttentionRow({ label, title, children }: { label: string; title: string; children: React.ReactNode }) {

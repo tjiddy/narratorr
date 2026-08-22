@@ -13,6 +13,7 @@ import { upgradeMatchConfidence } from '@/lib/upgrade-match-confidence.js';
 import { needsChapterCorroboration, stampRow, useRepickCorroboration } from '@/lib/repick-corroboration.js';
 import { useStagedSubmission } from '@/lib/staged-import/useStagedSubmission.js';
 import { isLibraryDbDuplicate } from './isLibraryDbDuplicate.js';
+import { libraryImportSection } from './libraryImportSection.js';
 
 export type Step = 'scanning' | 'review' | 'error';
 
@@ -98,7 +99,9 @@ export function useLibraryImport() {
   const scanMutation = useMutation({
     mutationFn: (path: string) => api.scanDirectory(path),
     onSuccess: (result) => {
-      if (result.discoveries.length === 0 || result.discoveries.every(d => isLibraryDbDuplicate(d))) {
+      // #2091: an all-duplicate scan is only "caught up" when nothing in it is actionable. A copy
+      // at another path is, so it keeps the review list — and its section — on screen.
+      if (result.discoveries.length === 0 || result.discoveries.every(d => libraryImportSection(d) === 'existing-path')) {
         setEmptyResult(true);
         setStep('review');
         return;
@@ -246,7 +249,11 @@ export function useLibraryImport() {
   const noMatchCount = rows.filter(r => r.matchResult?.confidence === 'none').length;
   const pendingCount = rows.filter(r => !r.matchResult && !isLibraryDbDuplicate(r.book)).length;
   const selectedPendingCount = rows.filter(r => r.selected && !r.matchResult && !isLibraryDbDuplicate(r.book)).length;
+  // duplicateCount stays the whole owned class (the summary bar's total); the two below partition
+  // it for display only — the toggle hides one, the #2091 section shows the other.
   const duplicateCount = rows.filter(r => isLibraryDbDuplicate(r.book)).length;
+  const pathDuplicateCount = rows.filter(r => libraryImportSection(r.book) === 'existing-path').length;
+  const copyDuplicateCount = rows.filter(r => libraryImportSection(r.book) === 'duplicate-copy').length;
   const allSelected = rows.length > 0 && rows.filter(r => !isLibraryDbDuplicate(r.book)).every(r => r.selected);
 
   const libraryRoot = settings?.library.path ?? '';
@@ -297,6 +304,8 @@ export function useLibraryImport() {
       pendingCount,
       selectedPendingCount,
       duplicateCount,
+      pathDuplicateCount,
+      copyDuplicateCount,
       allSelected,
     },
   };

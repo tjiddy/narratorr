@@ -39,6 +39,22 @@ describe('importSkipSummary (#1822)', () => {
     expect(importSkipSummary([{ reason: 'already-in-library' }, { reason: 'already-importing' }]))
       .toBe('1 already in your library · 1 already being imported');
   });
+
+  // #2091 AC19 — the narrower reason is still an owned skip. Dropping it would let a batch of
+  // nothing but copy-at-other-path skips report as a clean import.
+  it('counts duplicate-copy-at-other-path as an owned skip', () => {
+    expect(importSkipSummary([{ reason: 'duplicate-copy-at-other-path' }])).toBe('1 already in your library');
+    expect(importSkipSummary([{ reason: 'duplicate-copy-at-other-path', existingTitle: 'Royal Assassin' }]))
+      .toBe("already in your library as 'Royal Assassin'");
+  });
+
+  it('pools duplicate-copy-at-other-path with already-in-library in a mixed batch', () => {
+    expect(importSkipSummary([
+      { reason: 'already-in-library' },
+      { reason: 'duplicate-copy-at-other-path' },
+      { reason: 'already-importing' },
+    ])).toBe('2 already in your library · 1 already being imported');
+  });
 });
 
 describe('confirmErrorMessage (#1831)', () => {

@@ -76,4 +76,36 @@ describe('library scan ASIN map carries the file-holding fact (DB-backed, #2435)
     expect(owned?.isDuplicate).toBe(true);
     expect(owned?.duplicateReason).toBe('slug');
   });
+
+  // #2091: the same projection must reach the review list, or the section cannot name the incumbent.
+  it('carries the file-holding incumbent path onto the slug duplicate, and onto nothing else', async () => {
+    const incumbentPath = join(dir, 'library', 'Owned One');
+    await db.insert(books).values([
+      { publicId: 'bk_wanted_00000000000', title: 'Wanted One', asin: 'B0WANTED01', status: 'wanted', path: null },
+      { publicId: 'bk_owned_000000000000', title: 'Owned One', asin: 'B0OWNED001', status: 'imported', path: incumbentPath },
+    ]);
+    seedFolder('Wanted One [B0WANTED01]');
+    seedFolder('Owned One [B0OWNED001]');
+
+    const { discoveries } = await service.scanDirectory(scanRoot);
+
+    const owned = discoveries.find((d) => d.parsedTitle === 'Owned One');
+    expect(owned?.existingPath?.split('\\').join('/')).toBe(incumbentPath.split('\\').join('/'));
+    // A fileless incumbent has no folder to name, and the row is not a duplicate anyway.
+    expect(discoveries.find((d) => d.parsedTitle === 'Wanted One')?.existingPath).toBeUndefined();
+  });
+
+  it('leaves a path duplicate without existingPath — the folder IS the incumbent', async () => {
+    const ownedFolder = join(scanRoot, 'Author', 'Owned One');
+    await db.insert(books).values({
+      publicId: 'bk_owned_000000000000', title: 'Owned One', asin: null, status: 'imported', path: ownedFolder,
+    });
+    seedFolder('Owned One');
+
+    const { discoveries } = await service.scanDirectory(scanRoot);
+
+    const owned = discoveries.find((d) => d.parsedTitle === 'Owned One');
+    expect(owned?.duplicateReason).toBe('path');
+    expect(owned?.existingPath).toBeUndefined();
+  });
 });

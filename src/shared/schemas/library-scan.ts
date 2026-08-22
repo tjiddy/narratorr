@@ -22,6 +22,9 @@ export const discoveredBookSchema = z.object({
   isDuplicate: z.boolean(),
   existingBookId: z.number().optional(),
   duplicateReason: duplicateReasonSchema.optional(),
+  // #2091: the incumbent's own folder, carried only for `slug` duplicates so the review list can
+  // name what this folder duplicates. A `path` duplicate IS the incumbent's folder, so it has none.
+  existingPath: z.string().optional(),
   previewUrl: z.string().optional(),
   // Display-only discovery warning; it does not block import.
   reviewReason: z.string().optional(),
@@ -61,8 +64,13 @@ export const heldReviewItemSchema = z.object({
 export type HeldReviewItem = z.infer<typeof heldReviewItemSchema>;
 
 // already-in-library includes recording dedup and ASIN-race collisions;
-// already-importing means an active job owns the item.
-export const importSkipReasonSchema = z.enum(['already-in-library', 'already-importing']);
+// already-importing means an active job owns the item. duplicate-copy-at-other-path (#2091)
+// narrows the first: the same recording, but the incumbent's folder is not this one.
+export const importSkipReasonSchema = z.enum([
+  'already-in-library',
+  'already-importing',
+  'duplicate-copy-at-other-path',
+]);
 export type ImportSkipReason = z.infer<typeof importSkipReasonSchema>;
 
 export const matchCandidateSchema = z.object({

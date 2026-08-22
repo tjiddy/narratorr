@@ -47,4 +47,63 @@ describe('ImportAttentionRows (#1894, F19)', () => {
     expect(screen.getByText('already in library')).toBeInTheDocument();
     expect(screen.getByText('already importing')).toBeInTheDocument();
   });
+
+  /**
+   * #2091 AC18 — the whole value of the distinct reason is that the report names BOTH folders:
+   * the candidate that was skipped and the library copy that made it a duplicate. The incumbent's
+   * id and title remain independently optional, so the link-vs-text ladder still applies.
+   */
+  describe('duplicate-copy-at-other-path skips (#2091)', () => {
+    const row = (ordinal: number, extra: Record<string, unknown>): StagedItemResultDto => ({
+      disposition: 'skipped', ordinal,
+      path: '/library/Robin Hobb/Realms of the Elderlings/02 - Royal Assassin',
+      title: 'Royal Assassin',
+      reason: 'duplicate-copy-at-other-path',
+      ...extra,
+    } as StagedItemResultDto);
+
+    it('names the candidate folder and the snapshotted library path, linking a surviving book', () => {
+      renderWithProviders(<ImportAttentionRows items={[row(0, {
+        existingBookId: 9, existingTitle: 'Royal Assassin (Farseer)',
+        existingPath: '/library/Robin Hobb/Farseer Trilogy/02 - Royal Assassin',
+      })]} />);
+
+      const item = screen.getByRole('listitem');
+      expect(within(item).getByText('/library/Robin Hobb/Realms of the Elderlings/02 - Royal Assassin')).toBeInTheDocument();
+      expect(within(item).getByText('/library/Robin Hobb/Farseer Trilogy/02 - Royal Assassin')).toBeInTheDocument();
+      expect(within(item).getByRole('link', { name: 'Royal Assassin (Farseer)' })).toHaveAttribute('href', '/books/9');
+      expect(within(item).queryByText('already in library')).not.toBeInTheDocument();
+    });
+
+    it('renders the incumbent as plain text once the book id is gone (set-null FK)', () => {
+      renderWithProviders(<ImportAttentionRows items={[row(0, {
+        existingTitle: 'Royal Assassin (Farseer)',
+        existingPath: '/library/Robin Hobb/Farseer Trilogy/02 - Royal Assassin',
+      })]} />);
+
+      const item = screen.getByRole('listitem');
+      expect(within(item).getByText('Royal Assassin (Farseer)')).toBeInTheDocument();
+      expect(within(item).queryByRole('link')).not.toBeInTheDocument();
+      expect(within(item).getByText('/library/Robin Hobb/Farseer Trilogy/02 - Royal Assassin')).toBeInTheDocument();
+    });
+
+    it('falls back to the generic incumbent label when neither id nor title survived', () => {
+      renderWithProviders(<ImportAttentionRows items={[row(0, {
+        existingPath: '/library/Robin Hobb/Farseer Trilogy/02 - Royal Assassin',
+      })]} />);
+
+      const item = screen.getByRole('listitem');
+      expect(within(item).getByText('already in library')).toBeInTheDocument();
+      expect(within(item).getByText('/library/Robin Hobb/Farseer Trilogy/02 - Royal Assassin')).toBeInTheDocument();
+    });
+
+    it('still renders the candidate folder when no incumbent path was snapshotted', () => {
+      renderWithProviders(<ImportAttentionRows items={[row(0, { existingBookId: 9, existingTitle: 'Elsewhere' })]} />);
+
+      const item = screen.getByRole('listitem');
+      expect(within(item).getByText('/library/Robin Hobb/Realms of the Elderlings/02 - Royal Assassin')).toBeInTheDocument();
+      expect(within(item).getByRole('link', { name: 'Elsewhere' })).toHaveAttribute('href', '/books/9');
+      expect(within(item).queryByText(/undefined/)).not.toBeInTheDocument();
+    });
+  });
 });
