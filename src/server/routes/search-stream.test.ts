@@ -12,11 +12,26 @@ import type { AuthService } from '../services/auth.service.js';
 import { DEFAULT_SETTINGS } from '@shared/schemas/settings/registry.js';
 import authPlugin from '../plugins/auth.js';
 import * as searchPipeline from '../services/search-pipeline.js';
+import * as enrichModule from '../utils/enrich-usenet-languages.js';
+import { enrichmentCache } from '../utils/enrichment-cache.js';
 import { fetchSseEvents } from '../__tests__/sse-helpers.js';
 import { captureDeadlineTimers, type ArmedDeadlineTimer } from '../__tests__/helpers.js';
 import { withSearchDeadline, _resetSearchRegistryForTesting } from '../services/search-deadline.js';
 import { SEARCH_DEADLINE_MS } from '@core/utils/constants.js';
 import { HEARTBEAT_INTERVAL_MS } from '../utils/sse-stream.js';
+
+// The enrichment tail's only network boundary. Mocked file-wide so the #2573 cases can count NZB
+// fetches; every describe above searches torrents, which never reach phase 2.
+vi.mock('@core/utils/network-service.js', async (importActual) => {
+  const actual = await importActual<typeof import('@core/utils/network-service.js')>();
+  return {
+    ...actual,
+    fetchWithSsrfRedirect: vi.fn(),
+    createSsrfSafeDispatcher: vi.fn(() => ({ close: vi.fn().mockResolvedValue(undefined) })),
+  };
+});
+
+import { fetchWithSsrfRedirect, createSsrfSafeDispatcher } from '@core/utils/network-service.js';
 
 const HB_FRAME = 'event: hb\ndata: {}\n\n';
 
@@ -1645,9 +1660,10 @@ describe('GET /api/search/stream — deadline (#2568)', () => {
       results: [survivingResult({ infoHash: 'a'.repeat(40) })],
     });
 
-    // postProcessSearchResults takes no signal, so the deadline cannot tear it; getLanAllowlist is
-    // its cleanest seam. This is the case that separates "attach timedOut in the catch" from
-    // "attach it whenever `expired`" — the latter passes the AC4 case and reds only here.
+    // getLanAllowlist is the cleanest seam in post-processing that the deadline cannot tear — it
+    // takes no signal even after #2573, which bounded only the enrichment tail below it. This is the
+    // case that separates "attach timedOut in the catch" from "attach it whenever `expired`" — the
+    // latter passes the AC4 case and reds only here.
     let openAllowlist!: () => void;
     const allowlistParked = new Promise<void>((resolve) => { openAllowlist = resolve; });
     let allowlistEntered!: () => void;
@@ -1697,6 +1713,141 @@ describe('GET /api/search/stream — deadline (#2568)', () => {
     expect(logOf(request, 'error').mock.calls[0]![1]).toBe('Search stream error');
     expect(logOf(request, 'warn')).not.toHaveBeenCalled();
     expect(reply.raw.end).toHaveBeenCalled();
+  });
+
+  // ── #2573: the post-processing tail is bounded by the same controller ──────
+  describe('the enrichment tail is bounded by the deadline (#2573)', () => {
+    /** Mirrors NZB_FETCH_CONCURRENCY: the wave that is already on the wire when the abort lands. */
+    const WAVE = 5;
+    const mockNzbFetch = vi.mocked(fetchWithSsrfRedirect);
+
+    const PLAIN_NZB = `<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+      <file poster="t" date="1" subject="Plain English Audiobook MP3">
+        <groups><group>alt.binaries.audiobooks</group></groups>
+        <segments><segment bytes="1" number="1">id@e</segment></segments>
+      </file>
+    </nzb>`;
+
+    /** Usenet counterpart to `survivingResult`: a downloadUrl and no language is what reaches phase 2. */
+    const usenetCandidate = (tag: string, i: number) => ({
+      title: 'The Churn',
+      protocol: 'usenet',
+      indexer: 'Newznab',
+      indexerId: 2,
+      guid: `${tag}-${i}`,
+      downloadUrl: `http://nzb.test/${tag}-${i}`,
+      size: 500 * 1024 * 1024,
+      seeders: 10,
+      grabs: 10,
+    });
+
+    const candidates = (tag: string, n: number) => Array.from({ length: n }, (_, i) => usenetCandidate(tag, i));
+
+    beforeEach(() => {
+      // Process-wide, so a warm entry from a sibling case would silently remove a fetch.
+      enrichmentCache.clear();
+      mockNzbFetch.mockReset();
+      vi.mocked(createSsrfSafeDispatcher).mockImplementation(
+        () => ({ close: vi.fn().mockResolvedValue(undefined) }) as never,
+      );
+    });
+
+    /**
+     * Parks every NZB fetch and reports when `WAVE` of them are genuinely on the wire — the only
+     * window in which the abort reaches a queued waiter rather than the pre-acquire guard.
+     */
+    function parkNzbFetches() {
+      let open!: () => void;
+      const barrier = new Promise<void>((resolve) => { open = resolve; });
+      let admit!: () => void;
+      const onWire = new Promise<void>((resolve) => { admit = resolve; });
+      let started = 0;
+      mockNzbFetch.mockImplementation(async () => {
+        if (++started >= WAVE) admit();
+        await barrier;
+        return new Response(PLAIN_NZB, { status: 200 });
+      });
+      return { onWire, release: () => open() };
+    }
+
+    it('does not falsify a good answer when the timer fires during enrichment (AC11)', async () => {
+      const { service } = streamingService({ hitQuery: DEADLINE_FIXTURE.q, results: candidates('ac11', 12) });
+      const { onWire, release } = parkNzbFetches();
+      const handler = await buildHandler({ indexerSearchService: service });
+      const { reply, request, write } = streamRequest();
+
+      const settled = handler(request, reply);
+      await onWire;
+      armed[0]!();
+      release();
+      await settled;
+
+      // Reds if enrichment rethrows on abort: the run would route into the `expired` catch, which
+      // replaces these twelve real results with `[]` and `timedOut: true`.
+      const complete = completeFrame(write)!;
+      expect(complete.results as unknown[]).toHaveLength(12);
+      expect(complete).not.toHaveProperty('timedOut');
+      expect(logOf(request, 'error')).not.toHaveBeenCalled();
+      expect(reply.raw.end).toHaveBeenCalled();
+      // The expiry is disclosed in the log and nowhere else (AC4/AC7): the truncation line fires,
+      // the deadline-exceeded line — which only the failure arm writes — does not.
+      expect(logOf(request, 'warn').mock.calls.map((c) => c[1]))
+        .toEqual(['Usenet enrichment truncated by abort']);
+      expect(logOf(request, 'warn').mock.calls[0]![0]).toMatchObject({ abortSkipped: 7, nzbFetched: WAVE });
+    });
+
+    it.each([8, 20])('collapses the tail to one wave at %i candidates, so it no longer grows with N', async (n) => {
+      const { service } = streamingService({ hitQuery: DEADLINE_FIXTURE.q, results: candidates(`n${n}`, n) });
+      const { onWire, release } = parkNzbFetches();
+      const handler = await buildHandler({ indexerSearchService: service });
+      const { reply, request } = streamRequest();
+
+      const settled = handler(request, reply);
+      await onWire;
+      const atAbort = mockNzbFetch.mock.calls.length;
+      armed[0]!();
+      release();
+      await settled;
+
+      // The delta is the property: a bare total is satisfiable by a run that never got that far.
+      // Identical at 8 and at 20 is what separates "some fetches were skipped" from "the tail is
+      // constant in N". No elapsed-time claim belongs here — the mock stands in for up to
+      // MAX_REDIRECTS + 1 real hops plus un-timed DNS, pinned upstream in network-service.test.ts.
+      expect(atAbort).toBe(WAVE);
+      expect(mockNzbFetch.mock.calls.length - atAbort).toBe(0);
+    });
+
+    it('hands enrichment the very signal the ladder received, not a second controller (AC9)', async () => {
+      mockNzbFetch.mockImplementation(async () => new Response(PLAIN_NZB, { status: 200 }));
+      const enrichSpy = vi.spyOn(enrichModule, 'enrichUsenetLanguages');
+      const { service, searchAllStreaming } = streamingService({ hitQuery: DEADLINE_FIXTURE.q, results: candidates('same', 3) });
+      const handler = await buildHandler({ indexerSearchService: service });
+      const { reply, request } = streamRequest();
+
+      await handler(request, reply);
+
+      const options = enrichSpy.mock.calls[0]![3]!;
+      expect(options.signal).toBe(outerSignalOf(searchAllStreaming));
+      expect(options.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it('leaves a non-expiring run fully enriched and uncapped (AC12 parity)', async () => {
+      mockNzbFetch.mockImplementation(async () => new Response(PLAIN_NZB, { status: 200 }));
+      const enrichSpy = vi.spyOn(enrichModule, 'enrichUsenetLanguages');
+      const { service } = streamingService({ hitQuery: DEADLINE_FIXTURE.q, results: candidates('parity', 12) });
+      const handler = await buildHandler({ indexerSearchService: service });
+      const { reply, request, write } = streamRequest();
+
+      await handler(request, reply);
+
+      // Uncapped: every candidate is fetched however many there are (#1315/#1330 unchanged).
+      expect(mockNzbFetch).toHaveBeenCalledTimes(12);
+      expect(enrichSpy.mock.calls[0]![3]).not.toHaveProperty('maxPhase2Fetches');
+      const complete = completeFrame(write)!;
+      expect(complete.results as unknown[]).toHaveLength(12);
+      expect(complete).not.toHaveProperty('timedOut');
+      expect(logOf(request, 'warn')).not.toHaveBeenCalled();
+    });
   });
 });
 

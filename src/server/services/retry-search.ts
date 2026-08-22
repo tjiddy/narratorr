@@ -142,7 +142,8 @@ async function runBoundedRetryLadder(
       log.info({ bookId, title: book.title, attempt, ...describeBlacklistEmptiedSet(rawResults.length, rawResults.length) }, BLACKLIST_EMPTIED_MESSAGE);
     }
 
-    // Permit configured private indexers and cap auto-grab phase-2 NZB fetches.
+    // Permit configured private indexers and cap auto-grab phase-2 NZB fetches. No signal, per
+    // #2310 AC8: the cap bounds this tail at two waves and the deadline already released the caller.
     await enrichUsenetLanguages(filteredResults, log, await indexerService.getLanAllowlist(), { maxPhase2Fetches: AUTO_GRAB_PHASE2_CAP });
 
     const qualitySettings = await settingsService.get('quality');

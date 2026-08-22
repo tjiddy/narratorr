@@ -2749,7 +2749,7 @@ vi.mock('../utils/enrich-usenet-languages.js', async (importActual) => ({
   enrichUsenetLanguages: vi.fn(),
 }));
 
-import { enrichUsenetLanguages } from '../utils/enrich-usenet-languages.js';
+import { enrichUsenetLanguages, AUTO_GRAB_PHASE2_CAP } from '../utils/enrich-usenet-languages.js';
 const mockEnrichUsenet = vi.mocked(enrichUsenetLanguages);
 
 describe('#502 searchAndGrabForBook — enrichment before filtering', () => {
@@ -3055,6 +3055,25 @@ describe('postProcessSearchResults — interactive path stays uncapped (#1330)',
     // Copying AUTO_GRAB_PHASE2_CAP from auto-grab would add a forbidden fourth argument (#1330).
     expect(mockEnrichUsenet.mock.calls[0]).toHaveLength(3);
     expect(mockEnrichUsenet.mock.calls[0]![3]).toBeUndefined();
+  });
+
+  it('spreads the seventh-argument signal, and nothing at all without one (#2573 AC8)', async () => {
+    const log = createMockLogger();
+    const controller = new AbortController();
+    const unsigned = [makeResult({ protocol: 'usenet', title: 'A Book', downloadUrl: 'http://nzb.test/1' })];
+    const signed = [makeResult({ protocol: 'usenet', title: 'B Book', downloadUrl: 'http://nzb.test/2' })];
+
+    await postProcessSearchResults(unsigned, 3600, createBlacklist(), createSettings(), mockIndexer, log);
+    await postProcessSearchResults(signed, 3600, createBlacklist(), createSettings(), mockIndexer, log, controller.signal);
+
+    // An unconditional `{ signal }` would give the first call a fourth argument and red #1330 above.
+    expect(mockEnrichUsenet.mock.calls[0]).toHaveLength(3);
+    expect(mockEnrichUsenet.mock.calls[1]).toHaveLength(4);
+    // Identity, not merely "an options object": a second controller would satisfy a shape matcher.
+    const options = mockEnrichUsenet.mock.calls[1]![3]!;
+    expect(options.signal).toBe(controller.signal);
+    // The #1315/#1330 uncapped decision is unchanged by the signal.
+    expect(options).not.toHaveProperty('maxPhase2Fetches');
   });
 });
 
@@ -4701,6 +4720,26 @@ describe('#2310 search deadline', () => {
       const enrichArgs = mockEnrichUsenet.mock.calls[0]!;
       expect(enrichArgs).toHaveLength(4);
       expect(enrichArgs[3]).not.toHaveProperty('signal');
+    });
+
+    // #2573 AC10: "unchanged" asserted rather than inferred from the absence above. With no signal
+    // reaching it, the abandoned enrichment keeps running past the deadline exactly as it does today.
+    it('leaves an abandoned auto-grab enrichment running after its deadline (#2573 AC10)', async () => {
+      mockEnrichUsenet.mockReset();
+      const entered = vi.fn();
+      let releaseEnrich!: () => void;
+      const parked = new Promise<void>((resolve) => { releaseEnrich = resolve; });
+      mockEnrichUsenet.mockImplementationOnce(async () => { entered(); await parked; });
+
+      const running = searchAndGrabForBook(book, baseDeps());
+      await vi.waitFor(() => expect(entered).toHaveBeenCalledTimes(1));
+      armed[0]!.fire();
+
+      await expect(running).rejects.toBeInstanceOf(SearchDeadlineError);
+      const options = mockEnrichUsenet.mock.calls[0]![3] as Record<string, unknown>;
+      expect(options).not.toHaveProperty('signal');
+      expect(options).toEqual({ maxPhase2Fetches: AUTO_GRAB_PHASE2_CAP });
+      releaseEnrich();
     });
   });
 

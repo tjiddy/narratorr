@@ -17,6 +17,7 @@ import type { BlacklistService } from '../../services/blacklist.service.js';
 import type { SettingsService } from '../../services/settings.service.js';
 import type { IndexerService } from '../../services/indexer.service.js';
 import * as searchPipeline from '../../services/search-pipeline.js';
+import * as enrichModule from '../../utils/enrich-usenet-languages.js';
 import { DuplicateDownloadError } from '../../services/download.service.js';
 import { DownloadClientError, DownloadClientAuthError, DownloadClientTimeoutError } from '@core/download-clients/errors.js';
 import { createMockDb, mockDbChain, inject, searchStatus, answeringSearchStatus, captureDeadlineTimers, installMockAppLog } from '../../__tests__/helpers.js';
@@ -702,6 +703,44 @@ describe('v1 action routes (search + grab)', () => {
         await run();
 
         await expectFreshLadderServed();
+      });
+
+      // #2573 — the wrap already covered post-processing; now its enrichment tail carries the signal.
+      it('hands post-processing the deadline signal as its seventh argument (#2573 AC9)', async () => {
+        const spy = vi.spyOn(searchPipeline, 'postProcessSearchResults').mockResolvedValue({
+          results: [], durationUnknown: false, unsupportedResults: { count: 0, titles: [] },
+        });
+        try {
+          await search();
+
+          expect(spy).toHaveBeenCalledTimes(1);
+          // Identity against the signal the ladder executor received, not merely "an AbortSignal".
+          expect(spy.mock.calls[0]![6]).toBe(optionsOf(0).signal);
+          expect(spy.mock.calls[0]![6]!.aborted).toBe(false);
+        } finally {
+          spy.mockRestore();
+        }
+      });
+
+      it('still answers 504 when the deadline fires during enrichment (#2573 AC10)', async () => {
+        // Enrichment no longer rejects on abort, which must not be mistaken for "the deadline no
+        // longer applies" — the client verdict is `withSearchDeadline`'s, exactly as before.
+        searchMock().mockResolvedValue(searchStatus([searchResult()]));
+        const entered = vi.fn();
+        let releaseEnrich!: () => void;
+        const parked = new Promise<void>((resolve) => { releaseEnrich = resolve; });
+        const spy = vi.spyOn(enrichModule, 'enrichUsenetLanguages')
+          .mockImplementation(async () => { entered(); await parked; });
+
+        const pending = search();
+        await vi.waitFor(() => expect(entered).toHaveBeenCalledTimes(1));
+        armed[0]!();
+        const res = await pending;
+
+        expect(res.statusCode).toBe(504);
+        expect(res.json()).toEqual({ error: { code: 'SEARCH_TIMEOUT', message: expect.any(String) } });
+        releaseEnrich();
+        spy.mockRestore();
       });
 
       it('keeps a non-deadline rejection a 500 INTERNAL_ERROR — not a 504 and not a 409', async () => {

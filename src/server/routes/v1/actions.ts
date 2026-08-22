@@ -180,6 +180,7 @@ async function runV1DiscoverySearch(
         deps.settingsService,
         deps.indexerService,
         log,
+        signal,
       );
     },
   ).catch((error: unknown) => {

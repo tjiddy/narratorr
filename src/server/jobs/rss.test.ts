@@ -1090,6 +1090,26 @@ describe('#502 runRssJob — enrichment before filtering', () => {
     expect(mockEnrichUsenet.mock.calls[0]![3]).toEqual({ maxPhase2Fetches: 10 });
   });
 
+  // #2573 decision 5: the RSS cycle has no deadline of any kind, so there is no signal to forward.
+  it('passes no signal into the enrichment options (#2573 AC9)', async () => {
+    const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
+    const rssResults = [
+      makeResult('The Way of Kings', 'Brandon Sanderson', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/matched' }),
+    ];
+    const settings = createMockSettingsService({ rss: { enabled: true } });
+    const { bookList } = createMockBookServices(wantedBooks);
+    const indexer = createMockIndexerService(rssResults);
+    const download = createMockDownloadOrchestrator();
+    const blacklist = createMockBlacklistService();
+
+    await runRssJob(settings, bookList, indexer, download, blacklist, mockIndexer, inject<FastifyBaseLogger>(log));
+
+    const options = mockEnrichUsenet.mock.calls[0]![3] as Record<string, unknown>;
+    // `not.objectContaining({ signal: anything() })` passes against a present-but-undefined key.
+    expect(options).not.toHaveProperty('signal');
+    expect(options).toEqual({ maxPhase2Fetches: 10 });
+  });
+
   it('matched count includes books whose candidates were all multi-part rejected', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
     const rssResults = [makeResult('Test Book', 'Author', { protocol: 'usenet' as const, downloadUrl: 'http://nzb.test/8' })];
