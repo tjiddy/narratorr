@@ -1857,8 +1857,10 @@ describe('enrichUsenetLanguages', () => {
     const calls = (level: 'debug' | 'info' | 'warn') => (logger[level] as unknown as ReturnType<typeof vi.fn>).mock.calls;
     const truncationWarns = () => calls('warn').filter((c) => c[1] === 'Usenet enrichment truncated by abort');
     const taggedDebug = (tag: string) => calls('debug').filter((c) => (c[0] as { signal?: string }).signal === tag);
-    const completionLog = () =>
-      calls('info').findLast((c) => c[1] === 'Usenet language detection complete')![0] as Record<string, number>;
+    const completionLog = () => {
+      const lines = calls('info').filter((c) => c[1] === 'Usenet language detection complete');
+      return lines[lines.length - 1]![0] as Record<string, number>;
+    };
 
     /** Drives one aborted run to completion: park, let the first wave reach the wire, tear, drain. */
     async function tornRun(results: SearchResult[], options: { maxPhase2Fetches?: number } = {}) {

@@ -287,6 +287,7 @@ export async function postProcessSearchResults(
   settingsService: SettingsService,
   indexerService: IndexerService,
   logger: FastifyBaseLogger,
+  signal?: AbortSignal | undefined,
 ): Promise<{
   results: SearchResult[];
   durationUnknown: boolean;
@@ -298,8 +299,10 @@ export async function postProcessSearchResults(
   const blacklistedCount = allResults.length - filteredResults.length;
 
   // Forward the configured private-indexer allowlist; this interactive path intentionally has no phase-2 cap.
+  // The signal spread stays conditional: a signal-less caller must still make the three-argument
+  // call #1330 pins, and the abort is the only thing bounding a tail that grows with the result count.
   const lanAllowlist = await indexerService.getLanAllowlist();
-  await enrichUsenetLanguages(filteredResults, logger, lanAllowlist);
+  await enrichUsenetLanguages(filteredResults, logger, lanAllowlist, ...(signal !== undefined ? [{ signal }] : []));
 
   const qualitySettings = await settingsService.get('quality');
   const metadataSettings = await settingsService.get('metadata');
@@ -390,6 +393,8 @@ async function runSearchAndGrab(
     return { result: 'no_results' };
   }
 
+  // No signal, per #2310 AC8: the cap fixes this tail at two waves whatever the candidate count, and
+  // `withSearchDeadline` has already released the caller, so there is nobody left waiting on it.
   await enrichUsenetLanguages(afterBlacklist, log, await indexerService.getLanAllowlist(), { maxPhase2Fetches: AUTO_GRAB_PHASE2_CAP });
 
   // books.duration is minutes; the quality chain requires seconds or its MB/hour floor is inert.

@@ -149,7 +149,9 @@ export async function searchStreamRoutes(
           return { results, succeeded };
         });
 
-        const processed = await postProcessSearchResults(ran.results, bookDuration, blacklistService, settingsService, indexerService, request.log);
+        // The same controller the ladder got, so the tail stops starting NZB fetches at the moment
+        // the ladder is torn. It degrades rather than rejecting, which is what keeps AC7 below true.
+        const processed = await postProcessSearchResults(ran.results, bookDuration, blacklistService, settingsService, indexerService, request.log, deadline.signal);
         // ran.index is the last attempted rung even after exhaustion; post-processing may remove every hit.
         // Disclose relaxation only with displayed results: relaxedQuery implies results is non-empty.
         const relaxed = ran.index > 0 && processed.results.length > 0;

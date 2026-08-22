@@ -148,6 +148,7 @@ export async function runRssJob(
     matched++;
 
     // Enrichment must precede filters that inspect NZB-derived fields; cap its Phase-2 fetches.
+    // No signal to forward: the RSS cycle has no deadline of any kind.
     await enrichUsenetLanguages(bookResults, log, lanAllowlist, { maxPhase2Fetches: AUTO_GRAB_PHASE2_CAP });
 
     // Preserve canonical audioDuration ?? duration*60 precedence across grab paths.
