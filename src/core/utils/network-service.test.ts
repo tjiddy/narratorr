@@ -1208,6 +1208,261 @@ describe('fetchWithSsrfRedirect', () => {
       expect(headersOfCall(fetchSpy, 1)).toEqual(expect.objectContaining({ 'User-Agent': 'undici' }));
     });
   });
+
+  // ─── #2578: a caller signal bounds the redirect walk ────────────────────────
+  // Every describe above is the no-signal parity baseline and stays green UNMODIFIED.
+  describe('caller signal (#2578)', () => {
+    /** Rejects with the request signal's own reason, the way undici settles an aborted fetch. */
+    function fetchRejectingOnAbort(onCall?: (signal: AbortSignal) => void) {
+      return vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => {
+        const signal = (init as RequestInit | undefined)?.signal;
+        return new Promise<Response>((_resolve, reject) => {
+          if (!signal) {
+            reject(new Error('test setup: no signal attached to fetch'));
+            return;
+          }
+          signal.addEventListener('abort', () => reject(signal.reason as Error));
+          onCall?.(signal);
+        });
+      });
+    }
+
+    const initOf = (spy: { mock: { calls: unknown[][] } }, nth: number) => spy.mock.calls[nth]![1] as RequestInit;
+
+    it('aborts the in-flight hop when the caller aborts (AC2)', async () => {
+      const controller = new AbortController();
+      let composed!: AbortSignal;
+      fetchRejectingOnAbort((signal) => {
+        composed = signal;
+        controller.abort();
+      });
+
+      const error = await fetchWithSsrfRedirect('https://cdn.example.com/file', { signal: controller.signal })
+        .catch((e: unknown) => e);
+
+      expect(composed.aborted).toBe(true);
+      expect((error as DOMException).name).toBe('AbortError');
+    });
+
+    it('keeps the per-hop timeout live under a caller signal, and never aborts that signal (AC2)', async () => {
+      const controller = new AbortController();
+      vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => {
+        const signal = (init as RequestInit | undefined)!.signal!;
+        return new Promise<Response>((_resolve, reject) => {
+          signal.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+          });
+        });
+      });
+
+      const error = await fetchWithSsrfRedirect('https://cdn.example.com/file', { timeoutMs: 25, signal: controller.signal })
+        .catch((e: unknown) => e);
+
+      // The timeout was composed with the caller's signal, not replaced by it...
+      expect((error as DOMException).name).toBe('TimeoutError');
+      // ...and the composite aborting must not travel back up to the caller's own controller.
+      expect(controller.signal.aborted).toBe(false);
+    });
+
+    it('completes the whole chain normally while the signal stays live (AC2 parity control)', async () => {
+      const controller = new AbortController();
+      const fetchSpy = vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(makeRedirect('https://cdn.example.com/mid'))
+        .mockResolvedValueOnce(makeRedirect('https://cdn.example.com/final'))
+        .mockResolvedValueOnce(new Response('done', { status: 200 }));
+
+      const response = await fetchWithSsrfRedirect('https://cdn.example.com/start', { signal: controller.signal });
+
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe('done');
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
+    });
+
+    it.each([
+      ['omitted', {}],
+      ['explicitly undefined', { signal: undefined }],
+    ])('hands fetch the bare timeout signal when signal is %s (AC3)', async (_label, extra) => {
+      const anySpy = vi.spyOn(AbortSignal, 'any');
+      const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));
+
+      await fetchWithSsrfRedirect('https://cdn.example.com/file', { timeoutMs: 1234, ...extra });
+
+      expect(anySpy).not.toHaveBeenCalled();
+      // Identity, not shape: an `AbortSignal.any([timeout])` wrapper would satisfy any looser check.
+      expect(initOf(fetchSpy, 0).signal).toBe(timeoutSpy.mock.results[0]!.value);
+    });
+
+    it('rebuilds the composite per hop rather than accumulating one (AC2)', async () => {
+      const controller = new AbortController();
+      const anySpy = vi.spyOn(AbortSignal, 'any');
+      const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+      const fetchSpy = vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(makeRedirect('https://cdn.example.com/final'))
+        .mockResolvedValueOnce(new Response('done', { status: 200 }));
+
+      await fetchWithSsrfRedirect('https://cdn.example.com/start', { timeoutMs: 7777, signal: controller.signal });
+
+      expect(timeoutSpy.mock.calls.filter(([ms]) => ms === 7777)).toHaveLength(2);
+      expect(anySpy).toHaveBeenCalledTimes(2);
+      // Each hop composes its OWN fresh timeout with the one caller signal.
+      for (const [sources] of anySpy.mock.calls) {
+        expect(sources).toHaveLength(2);
+        expect(sources[1]).toBe(controller.signal);
+      }
+      expect(initOf(fetchSpy, 0).signal).not.toBe(initOf(fetchSpy, 1).signal);
+    });
+
+    it('costs no DNS resolution and no fetch under an already-aborted signal (AC4 boundary)', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+      await expect(
+        fetchWithSsrfRedirect('https://cdn.example.com/file', { signal: AbortSignal.abort() }),
+      ).rejects.toThrow();
+
+      expect(mockedLookup).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('resolves no further DNS once the abort lands between hops (AC4)', async () => {
+      const controller = new AbortController();
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+        controller.abort();
+        return makeRedirect('https://cdn.example.com/final');
+      });
+
+      await expect(
+        fetchWithSsrfRedirect('https://cdn.example.com/start', { signal: controller.signal }),
+      ).rejects.toThrow();
+
+      // Pre-change this is 2 and 2: the hop-1 lookup is un-timed and takes no signal, so composing
+      // the signal alone would still pay for it. The guard is what makes both counts 1.
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(mockedLookup).toHaveBeenCalledTimes(1);
+    });
+
+    it('walks both hops when the signal never aborts (AC4 counterfactual)', async () => {
+      const controller = new AbortController();
+      const fetchSpy = vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(makeRedirect('https://cdn.example.com/final'))
+        .mockResolvedValueOnce(new Response('done', { status: 200 }));
+
+      await fetchWithSsrfRedirect('https://cdn.example.com/start', { signal: controller.signal });
+
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(mockedLookup).toHaveBeenCalledTimes(2);
+    });
+
+    it('still enforces the hop cap under a live signal (AC4 parity)', async () => {
+      const controller = new AbortController();
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      for (let i = 0; i < 6; i++) {
+        fetchSpy.mockResolvedValueOnce(makeRedirect(`https://hop${i}.example.com/`));
+      }
+
+      await expect(
+        fetchWithSsrfRedirect('https://start.example.com/', { signal: controller.signal }),
+      ).rejects.toThrow(/Too many redirects/);
+      expect(fetchSpy).toHaveBeenCalledTimes(MAX_REDIRECTS + 1);
+    });
+
+    it('rejects with the abort\'s own reason, unmapped (AC5)', async () => {
+      const reason = new Error('deadline');
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+      // `mapNetworkError` would replace this with its own connection-shaped Error.
+      await expect(
+        fetchWithSsrfRedirect('https://cdn.example.com/file', { signal: AbortSignal.abort(reason) }),
+      ).rejects.toBe(reason);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('surfaces a bare abort() as AbortError, distinguishable from a timeout (AC5)', async () => {
+      const controller = new AbortController();
+      controller.abort();
+
+      const error = await fetchWithSsrfRedirect('https://cdn.example.com/file', { signal: controller.signal })
+        .catch((e: unknown) => e);
+
+      // Both real producers abort with no argument; `name` is what separates the two tear sources,
+      // and undici's DOMException does not survive an `instanceof` check across realms.
+      expect((error as DOMException).name).toBe('AbortError');
+    });
+
+    it('leaves credential stripping and the LAN preflight untouched under a live signal (AC2)', async () => {
+      const controller = new AbortController();
+      const fetchSpy = vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(makeRedirect('http://192.168.0.99:9696/admin'));
+
+      await expect(
+        fetchWithSsrfRedirect('http://192.168.0.22:9696/dl/foo.nzb', {
+          lanAllowlist: new Set(['192.168.0.22:9696']),
+          headers: { 'User-Agent': 'X/1.0', 'Authorization': 'Bearer t' },
+          signal: controller.signal,
+        }),
+      ).rejects.toThrow(/Refused/);
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const headers = (initOf(fetchSpy, 0) as { headers: Record<string, string> }).headers;
+      expect(headers).toEqual(expect.objectContaining({ 'User-Agent': 'X/1.0', 'Authorization': 'Bearer t' }));
+    });
+
+    it('reaches the undici branch with the composed signal too (AC2)', async () => {
+      let arrive!: () => void;
+      const arrived = new Promise<void>((resolve) => { arrive = resolve; });
+      const server = http.createServer(() => { arrive(); /* never responds */ });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+      const port = (server.address() as AddressInfo).port;
+      const dispatcher = createSsrfSafeDispatcher(new Set(['127.0.0.1']));
+      const controller = new AbortController();
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+      try {
+        // A minute of timeout budget the test cannot reach: only the caller's abort can settle this.
+        const running = fetchWithSsrfRedirect(`http://127.0.0.1:${port}/nzb`, {
+          dispatcher,
+          timeoutMs: 60_000,
+          lanAllowlist: new Set([`127.0.0.1:${port}`]),
+          signal: controller.signal,
+        });
+        await arrived;
+        controller.abort();
+
+        const error = await running.catch((e: unknown) => e);
+        expect((error as Error).name).toBe('AbortError');
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        await dispatcher.close();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    });
+
+    it.each([
+      ['magnet:?xt=urn:btih:abc', /unsupported scheme/],
+      ['', /Location/i],
+    ])('surfaces the redirect error for Location %s unchanged under a live signal (AC5)', async (location, expected) => {
+      const controller = new AbortController();
+      const redirect = makeRedirect(location);
+      const cancelSpy = (redirect as unknown as { __cancelSpy: ReturnType<typeof vi.fn> }).__cancelSpy;
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(redirect);
+
+      await expect(
+        fetchWithSsrfRedirect('https://cdn.example.com/start', { signal: controller.signal }),
+      ).rejects.toThrow(expected);
+      expect(cancelSpy).toHaveBeenCalled();
+    });
+
+    it('surfaces a redirect loop unchanged under a live signal (AC5)', async () => {
+      const controller = new AbortController();
+      vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(makeRedirect('https://b.example.com/'))
+        .mockResolvedValueOnce(makeRedirect('https://a.example.com/'));
+
+      await expect(
+        fetchWithSsrfRedirect('https://a.example.com/', { signal: controller.signal }),
+      ).rejects.toThrow(/Redirect loop detected/);
+    });
+  });
 });
 
 describe('stripCrossOriginCredentialHeaders', () => {

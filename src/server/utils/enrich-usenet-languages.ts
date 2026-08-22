@@ -212,6 +212,28 @@ function tryTitleFallback(result: SearchResult, logger: FastifyBaseLogger): bool
   return true;
 }
 
+/** The non-OK and the thrown arm degrade identically; each logs its own warn first. */
+function recordFailedFetch(result: SearchResult, cacheKey: string, logger: FastifyBaseLogger): boolean {
+  const detected = tryTitleFallback(result, logger);
+  // Cache title fallback but leave nzbName empty so a later successful fetch can populate it.
+  enrichmentCache.set(cacheKey, { outcome: 'fetch-failed', language: result.language, nzbName: undefined });
+  return detected;
+}
+
+/**
+ * The tear's counterpart to `acquireUnlessAborted`, and the reason the catch needs an abort verdict
+ * at all: writing a `fetch-failed` entry here would serve for FAILURE_TTL_MS, so a later run would
+ * never re-fetch a release nobody ever answered for. Cleanup stays in the caller's `finally`.
+ */
+function recordTornFetch(result: SearchResult, safeUrl: string, logger: FastifyBaseLogger): boolean {
+  const detected = tryTitleFallback(result, logger);
+  logger.debug(
+    { title: result.title, url: safeUrl, signal: 'nzb-fetch-torn' },
+    'Phase-2: NZB fetch torn by abort',
+  );
+  return detected;
+}
+
 // First match wins: newsgroup → NZB name → title.
 function detectPhase2Source(
   result: SearchResult,
@@ -242,6 +264,39 @@ function detectPhase2Source(
   }
 
   return 'unresolved';
+}
+
+/** Parses one NZB body into the result and caches the outcome; reports whether a language landed. */
+function applyNzbXml(result: SearchResult, xml: string, cacheKey: string, logger: FastifyBaseLogger): boolean {
+  const nzbName = parseNzbName(xml) || parseNzbFileSubject(xml);
+  if (nzbName) result.nzbName = nzbName;
+  const groups = parseNzbGroups(xml);
+
+  // Never log NZB XML; it commonly contains archive passwords.
+  logger.debug({
+    title: result.title,
+    groupCount: groups.length,
+    groups,
+    parsedNzbName: parseNzbName(xml) || null,
+    fileSubject: result.nzbName,
+  }, 'Phase-2: NZB parsed');
+
+  const source = detectPhase2Source(result, groups, logger);
+
+  // Cache unresolved results too; undefined language is still a hit.
+  enrichmentCache.set(cacheKey, {
+    outcome: source === 'unresolved' ? 'unresolved' : 'resolved',
+    language: result.language,
+    nzbName: result.nzbName,
+  });
+
+  logger.debug({
+    title: result.title,
+    finalLanguage: result.language ?? null,
+    source,
+  }, 'Phase-2: enrichment complete');
+
+  return source !== 'unresolved';
 }
 
 /**
@@ -321,10 +376,19 @@ export async function enrichUsenetLanguages(
   const semaphore = new BoundedSemaphore(NZB_FETCH_CONCURRENCY);
   const signal = options?.signal;
   const abortSkipped: SearchResult[] = [];
+  let abortTorn = 0;
 
   async function fetchAndEnrich(result: SearchResult): Promise<void> {
     const release = await acquireUnlessAborted(semaphore, signal);
     if (release === null) {
+      abortSkipped.push(result);
+      return;
+    }
+    // Sibling of `acquireUnlessAborted`: a candidate holding an idle slot never reached the
+    // network, so it belongs to the skip arm rather than the tear arm. Ahead of nzbFetched++ and
+    // the dispatcher, and safe beside the `finally` release because SlotRelease is idempotent.
+    if (signal?.aborted) {
+      release();
       abortSkipped.push(result);
       return;
     }
@@ -339,6 +403,7 @@ export async function enrichUsenetLanguages(
         timeoutMs: NZB_FETCH_TIMEOUT_MS,
         headers: { 'User-Agent': userAgent },
         ...(lanAllowlist && { lanAllowlist: lanAllowlist.hostPort }),
+        ...(signal && { signal }),
       });
       logger.debug({
         title: result.title,
@@ -350,48 +415,25 @@ export async function enrichUsenetLanguages(
           { title: result.title, status: response.status, url: safeUrl },
           'NZB fetch failed with non-OK status',
         );
-        if (tryTitleFallback(result, logger)) languagesDetected++;
-        // Cache title fallback but leave nzbName empty so a later successful fetch can populate it.
-        enrichmentCache.set(cacheKey, { outcome: 'fetch-failed', language: result.language, nzbName: undefined });
+        if (recordFailedFetch(result, cacheKey, logger)) languagesDetected++;
         return;
       }
       const xml = await response.text();
-
-      const nzbName = parseNzbName(xml) || parseNzbFileSubject(xml);
-      if (nzbName) result.nzbName = nzbName;
-      const groups = parseNzbGroups(xml);
-
-      // Never log NZB XML; it commonly contains archive passwords.
-      logger.debug({
-        title: result.title,
-        groupCount: groups.length,
-        groups,
-        parsedNzbName: parseNzbName(xml) || null,
-        fileSubject: result.nzbName,
-      }, 'Phase-2: NZB parsed');
-
-      const source = detectPhase2Source(result, groups, logger);
-      if (source !== 'unresolved') languagesDetected++;
-
-      // Cache unresolved results too; undefined language is still a hit.
-      enrichmentCache.set(cacheKey, {
-        outcome: source === 'unresolved' ? 'unresolved' : 'resolved',
-        language: result.language,
-        nzbName: result.nzbName,
-      });
-
-      logger.debug({
-        title: result.title,
-        finalLanguage: result.language ?? null,
-        source,
-      }, 'Phase-2: enrichment complete');
+      if (applyNzbXml(result, xml, cacheKey, logger)) languagesDetected++;
     } catch (error: unknown) {
+      // Keyed on `signal.aborted`, never the rejection's shape: one tear surfaces as a pre-hop
+      // `signal.reason` throw, an undici AbortError and a torn body read, and only some are
+      // recognisable by name.
+      if (signal?.aborted) {
+        abortTorn++;
+        if (recordTornFetch(result, safeUrl, logger)) languagesDetected++;
+        return;
+      }
       logger.warn(
         { title: result.title, url: safeUrl, error: serializeError(error) },
         'NZB fetch failed',
       );
-      if (tryTitleFallback(result, logger)) languagesDetected++;
-      enrichmentCache.set(cacheKey, { outcome: 'fetch-failed', language: result.language, nzbName: undefined });
+      if (recordFailedFetch(result, cacheKey, logger)) languagesDetected++;
     } finally {
       await dispatcher.close().catch(() => { /* best-effort cleanup */ });
       release();
@@ -406,15 +448,17 @@ export async function enrichUsenetLanguages(
 
   languagesDetected += propagateDuplicates(representatives, groups, logger);
 
-  if (abortSkipped.length > 0) {
-    logger.warn({ abortSkipped: abortSkipped.length, nzbFetched }, 'Usenet enrichment truncated by abort');
+  // Either arm alone makes the tear real: at N <= NZB_FETCH_CONCURRENCY nothing ever queues, so a
+  // wave torn in flight leaves abortSkipped at zero and would otherwise go unlogged.
+  if (abortSkipped.length > 0 || abortTorn > 0) {
+    logger.warn({ abortSkipped: abortSkipped.length, abortTorn, nzbFetched }, 'Usenet enrichment truncated by abort');
   }
 
   const totalFetchMs = Date.now() - startMs;
   logger.info(
     {
       usenetResults: usenetResults.length, nzbFetched, languagesDetected, cacheHits,
-      capSkipped, abortSkipped: abortSkipped.length, totalFetchMs,
+      capSkipped, abortSkipped: abortSkipped.length, abortTorn, totalFetchMs,
     },
     'Usenet language detection complete',
   );
