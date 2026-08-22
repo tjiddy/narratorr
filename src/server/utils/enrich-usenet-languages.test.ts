@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '@core/indexers/types.js';
 import type * as NetworkServiceModule from '@core/utils/network-service.js';
-import { BoundedSemaphore } from '@core/utils/bounded-semaphore.js';
+import { BoundedSemaphore, type AcquireSlotOptions } from '@core/utils/bounded-semaphore.js';
 import { enrichUsenetLanguages } from './enrich-usenet-languages.js';
 
 const mockDispatcher = { close: vi.fn().mockResolvedValue(undefined) };
@@ -56,6 +56,29 @@ describe('enrichUsenetLanguages', () => {
     // The process-wide cache must start cold for fetch-count assertions.
     enrichmentCache.clear();
   });
+
+  // ─── shared by the abort describes (#2573 skip semantics, #2578 tear semantics) ───
+
+  /** Mirrors NZB_FETCH_CONCURRENCY: a candidate set at or below it never queues a waiter. */
+  const CONCURRENCY = 5;
+
+  function miss(i: number, overrides: Partial<SearchResult> = {}): SearchResult {
+    return makeResult({
+      protocol: 'usenet',
+      guid: `ab-${i}`,
+      downloadUrl: `http://nzb.test/ab-${i}`,
+      title: `Plain Audiobook ${i}`,
+      ...overrides,
+    });
+  }
+
+  const calls = (level: 'debug' | 'info' | 'warn') => (logger[level] as unknown as ReturnType<typeof vi.fn>).mock.calls;
+  const truncationWarns = () => calls('warn').filter((c) => c[1] === 'Usenet enrichment truncated by abort');
+  const taggedDebug = (tag: string) => calls('debug').filter((c) => (c[0] as { signal?: string }).signal === tag);
+  const completionLog = () => {
+    const lines = calls('info').filter((c) => c[1] === 'Usenet language detection complete');
+    return lines[lines.length - 1]![0] as Record<string, number>;
+  };
 
   describe('newsgroup short-circuit', () => {
     it('detects language from existing newsgroup field without NZB fetch', async () => {
@@ -1822,19 +1845,6 @@ describe('enrichUsenetLanguages', () => {
   // ─── #2573: the caller's abort bounds phase 2 ───────────────────────────────
   // Every describe above is the no-signal parity baseline and stays green UNMODIFIED.
   describe('abort-bounded phase 2 (#2573)', () => {
-    /** Mirrors NZB_FETCH_CONCURRENCY: a candidate set at or below it never queues a waiter. */
-    const CONCURRENCY = 5;
-
-    function miss(i: number, overrides: Partial<SearchResult> = {}): SearchResult {
-      return makeResult({
-        protocol: 'usenet',
-        guid: `ab-${i}`,
-        downloadUrl: `http://nzb.test/ab-${i}`,
-        title: `Plain Audiobook ${i}`,
-        ...overrides,
-      });
-    }
-
     /**
      * Parks every fetch on one barrier and resolves `onWire` once `target` of them are genuinely on
      * the wire. Aborting before that point reaches only the pre-acquire guard, never the queued
@@ -1853,14 +1863,6 @@ describe('enrichUsenetLanguages', () => {
       });
       return { onWire, release: () => open() };
     }
-
-    const calls = (level: 'debug' | 'info' | 'warn') => (logger[level] as unknown as ReturnType<typeof vi.fn>).mock.calls;
-    const truncationWarns = () => calls('warn').filter((c) => c[1] === 'Usenet enrichment truncated by abort');
-    const taggedDebug = (tag: string) => calls('debug').filter((c) => (c[0] as { signal?: string }).signal === tag);
-    const completionLog = () => {
-      const lines = calls('info').filter((c) => c[1] === 'Usenet language detection complete');
-      return lines[lines.length - 1]![0] as Record<string, number>;
-    };
 
     /** Drives one aborted run to completion: park, let the first wave reach the wire, tear, drain. */
     async function tornRun(results: SearchResult[], options: { maxPhase2Fetches?: number } = {}) {
@@ -2089,6 +2091,342 @@ describe('enrichUsenetLanguages', () => {
       const warns = truncationWarns();
       expect(warns).toHaveLength(1);
       expect(warns[0]![0]).toMatchObject({ abortSkipped: 7, nzbFetched: 5 });
+    });
+  });
+
+  // ─── #2578: the wave already on the wire is torn, not left to run out its hops ───
+  describe('the in-flight wave is torn too (#2578)', () => {
+    const TEAR_TAG = 'nzb-fetch-torn';
+
+    beforeEach(() => {
+      // Neither double is reset by the outer hook, and both carry call counts these cases assert.
+      mockCreateSsrfSafeDispatcher.mockClear();
+      mockDispatcher.close.mockClear();
+    });
+
+    const optionsOfCall = (nth: number) => mockFetchWithSsrfRedirect.mock.calls[nth]![1] ?? {};
+
+    /**
+     * Parks every fetch on the signal the CALL SITE forwarded — never on a controller the test
+     * holds directly — so a run that forgets to forward one parks forever instead of passing.
+     * `onWire` resolves once `target` fetches are genuinely dispatched.
+     */
+    function parkOnForwardedSignal(target: number, tear: (signal: AbortSignal) => unknown = () => new DOMException('This operation was aborted', 'AbortError')) {
+      let admit!: () => void;
+      const onWire = new Promise<void>((resolve) => { admit = resolve; });
+      let started = 0;
+      mockFetchWithSsrfRedirect.mockImplementation(async (_url, opts) => {
+        // Admit before the guard, so a run that forwards nothing fails loudly instead of hanging.
+        if (++started >= target) admit();
+        const signal = opts?.signal;
+        if (!signal) throw new Error('test setup: the call site forwarded no signal');
+        return new Promise<Response>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(tear(signal)));
+        });
+      });
+      return { onWire };
+    }
+
+    /** Park, let `target` reach the wire, tear them, drain. */
+    async function tornWave(results: SearchResult[], target = CONCURRENCY, tear?: (signal: AbortSignal) => unknown) {
+      const { onWire } = parkOnForwardedSignal(target, tear);
+      const controller = new AbortController();
+      const running = enrichUsenetLanguages(results, logger, undefined, { signal: controller.signal });
+      await onWire;
+      controller.abort();
+      await running;
+    }
+
+    /**
+     * Captures the run's own semaphore so slot accounting can be asserted once it settles, and
+     * optionally aborts from inside the resolution of the `n`th `acquire()`. That resolution is the
+     * only deterministic way to land an abort in the post-acquire/pre-dispatch window: production
+     * delivers it from a timer or a `'close'` handler, and no `await` separates that continuation
+     * from the dispatch, so it cannot be reached by timing alone.
+     */
+    function watchAcquire(abortAt?: { n: number; controller: AbortController }) {
+      const original = BoundedSemaphore.prototype.acquire;
+      let seen = 0;
+      const instances: BoundedSemaphore[] = [];
+      const spy = vi.spyOn(BoundedSemaphore.prototype, 'acquire')
+        .mockImplementation(function (this: BoundedSemaphore, options?: AcquireSlotOptions) {
+          instances.push(this);
+          const index = seen++;
+          return original.call(this, options).then((release) => {
+            if (abortAt && index === abortAt.n) abortAt.controller.abort();
+            return release;
+          });
+        });
+      return { spy, semaphore: () => instances[0]! };
+    }
+
+    /** Every slot the run took is back, and the pool was never widened by the early release. */
+    function expectDrained(semaphore: BoundedSemaphore): void {
+      for (let i = 0; i < CONCURRENCY; i++) expect(semaphore.tryAcquire()).not.toBeNull();
+      expect(semaphore.tryAcquire()).toBeNull();
+    }
+
+    // ── forwarding (AC10) ─────────────────────────────────────────────────────
+
+    it('forwards the caller\'s very signal to every hop walk (AC10)', async () => {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(plainNzbXml(), { status: 200 }));
+      const live = new AbortController();
+
+      await enrichUsenetLanguages([miss(1), miss(2), miss(3)], logger, undefined, { signal: live.signal });
+
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(3);
+      for (let i = 0; i < 3; i++) expect(optionsOfCall(i).signal).toBe(live.signal);
+    });
+
+    it('passes no signal key at all when the caller supplied none (AC10)', async () => {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(plainNzbXml(), { status: 200 }));
+
+      await enrichUsenetLanguages([miss(1)], logger, undefined, { signal: undefined });
+
+      // key-absence-needs-tohaveproperty: a present-but-undefined key passes every looser matcher.
+      expect(optionsOfCall(0)).not.toHaveProperty('signal');
+    });
+
+    // ── the catch stops poisoning the cache (AC6) ─────────────────────────────
+
+    it.each([
+      ['an AbortError', () => new DOMException('This operation was aborted', 'AbortError')],
+      ['a plain Error', () => new Error('aborted')],
+      ['a torn body read', () => new TypeError('terminated')],
+    ])('writes no cache entry for a wave torn with %s (AC6)', async (_label, tear) => {
+      const results = Array.from({ length: CONCURRENCY }, (_, i) => miss(i));
+
+      await tornWave(results, CONCURRENCY, tear);
+
+      // Keying the verdict on the error's shape would pass one row and poison the other two for an
+      // hour apiece (abort-verdict-not-error-shape).
+      for (let i = 0; i < CONCURRENCY; i++) expect(enrichmentCache.get(`test:ab-${i}`)).toBeUndefined();
+      expect(calls('warn').map((c) => c[1])).not.toContain('NZB fetch failed');
+    });
+
+    it('re-fetches a torn candidate on the next run, because nothing was cached (AC6)', async () => {
+      await tornWave(Array.from({ length: CONCURRENCY }, (_, i) => miss(i)));
+
+      mockFetchWithSsrfRedirect.mockReset();
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(plainNzbXml(), { status: 200 }));
+      await enrichUsenetLanguages(Array.from({ length: CONCURRENCY }, (_, i) => miss(i)), logger);
+
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(CONCURRENCY);
+    });
+
+    it('takes the non-caching arm when the body read tears mid-parse (AC6)', async () => {
+      const controller = new AbortController();
+      mockFetchWithSsrfRedirect.mockImplementation(async () => {
+        const response = new Response(plainNzbXml(), { status: 200 });
+        // The composed signal aborts the body stream too, so a 200 whose text() throws is real.
+        Object.defineProperty(response, 'text', {
+          value: async () => { controller.abort(); throw new TypeError('terminated'); },
+        });
+        return response;
+      });
+
+      await enrichUsenetLanguages([miss(1)], logger, undefined, { signal: controller.signal });
+
+      expect(enrichmentCache.get('test:ab-1')).toBeUndefined();
+      expect(calls('warn').map((c) => c[1])).not.toContain('NZB fetch failed');
+      expect(taggedDebug(TEAR_TAG)).toHaveLength(1);
+    });
+
+    it('still caches and warns on a genuine failure under a LIVE signal (AC6 control)', async () => {
+      const live = new AbortController();
+      mockFetchWithSsrfRedirect.mockImplementation(async () => { throw new Error('ECONNREFUSED'); });
+
+      await enrichUsenetLanguages([miss(1, { title: 'Der Hobbit (Ungekürzt)' })], logger, undefined, { signal: live.signal });
+
+      // Without this control, a blanket "never cache in the catch" regression is invisible.
+      expect(enrichmentCache.get('test:ab-1')).toMatchObject({ outcome: 'fetch-failed', language: 'german' });
+      expect(calls('warn').map((c) => c[1])).toEqual(['NZB fetch failed']);
+      expect(taggedDebug(TEAR_TAG)).toHaveLength(0);
+    });
+
+    it('still caches and warns on a genuine failure with no signal at all (AC6 control)', async () => {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => { throw new Error('ECONNREFUSED'); });
+
+      await enrichUsenetLanguages([miss(1, { title: 'Der Hobbit (Ungekürzt)' })], logger);
+
+      expect(enrichmentCache.get('test:ab-1')).toMatchObject({ outcome: 'fetch-failed' });
+      expect(calls('warn').map((c) => c[1])).toEqual(['NZB fetch failed']);
+    });
+
+    it('keeps free title detection for a torn candidate, without a second skip line (AC6, AC7)', async () => {
+      const results = [
+        miss(0, { title: 'Der Hobbit (Ungekürzt)' }),
+        ...Array.from({ length: CONCURRENCY - 1 }, (_, i) => miss(i + 1)),
+      ];
+
+      await tornWave(results);
+
+      expect(results[0]!.language).toBe('german');
+      // Torn, not skipped: detectSkippedTitles must not re-walk a candidate the catch already handled.
+      expect(taggedDebug('title-abort-skipped')).toHaveLength(0);
+      expect(taggedDebug('title-after-fetch-fail')).toHaveLength(1);
+    });
+
+    it('propagates a torn representative\'s recovered language to its duplicates (AC6)', async () => {
+      const fillers = Array.from({ length: CONCURRENCY - 1 }, (_, i) => miss(i));
+      const rep = miss(99, { guid: 'dup', downloadUrl: 'http://nzb.test/dup-high', matchScore: 9, title: 'Der Hobbit (Ungekürzt)' });
+      const member = miss(98, { guid: 'dup', downloadUrl: 'http://nzb.test/dup-low', matchScore: 1, title: 'The Hobbit' });
+
+      await tornWave([...fillers, rep, member]);
+
+      expect(rep.language).toBe('german');
+      expect(member.language).toBe('german');
+    });
+
+    // ── counters, the warn and the completion log (AC7, AC8) ──────────────────
+
+    it('counts a torn candidate as fetched-and-torn, never as skipped (AC7)', async () => {
+      await tornWave([miss(1)], 1);
+
+      const log = completionLog();
+      expect(log).toMatchObject({ nzbFetched: 1, abortTorn: 1, abortSkipped: 0 });
+    });
+
+    it('fires the truncation warn when the whole wave was torn and nothing queued (AC8)', async () => {
+      // N === NZB_FETCH_CONCURRENCY: nothing ever queues, so `abortSkipped > 0` alone would leave
+      // this tear entirely invisible in the log.
+      await tornWave(Array.from({ length: CONCURRENCY }, (_, i) => miss(i)));
+
+      const warns = truncationWarns();
+      expect(warns).toHaveLength(1);
+      expect(warns[0]![0]).toMatchObject({ abortSkipped: 0, abortTorn: CONCURRENCY, nzbFetched: CONCURRENCY });
+      expect(completionLog()).toMatchObject({ abortSkipped: 0, abortTorn: CONCURRENCY, nzbFetched: CONCURRENCY });
+    });
+
+    it('counts both arms disjointly when the wave is torn and the queue is evicted (AC7, AC8)', async () => {
+      const results = Array.from({ length: 8 }, (_, i) => miss(i));
+
+      await tornWave(results);
+
+      const log = completionLog();
+      expect(log).toMatchObject({ nzbFetched: CONCURRENCY, abortTorn: CONCURRENCY, abortSkipped: 3 });
+      expect(log.abortSkipped! + log.nzbFetched!).toBe(results.length);
+      expect(truncationWarns()).toHaveLength(1);
+    });
+
+    it('reports zero of both on a clean run (AC8 control)', async () => {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(plainNzbXml(), { status: 200 }));
+
+      await enrichUsenetLanguages(Array.from({ length: 8 }, (_, i) => miss(i)), logger, undefined, { signal: new AbortController().signal });
+
+      expect(completionLog()).toMatchObject({ abortTorn: 0, abortSkipped: 0, nzbFetched: 8 });
+      expect(truncationWarns()).toHaveLength(0);
+    });
+
+    it('reports no tear for an abort that arrives after every fetch settled (AC7 boundary)', async () => {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(plainNzbXml(), { status: 200 }));
+      const controller = new AbortController();
+
+      await enrichUsenetLanguages([miss(1), miss(2)], logger, undefined, { signal: controller.signal });
+      controller.abort();
+
+      expect(completionLog()).toMatchObject({ abortTorn: 0, abortSkipped: 0, nzbFetched: 2 });
+      expect(truncationWarns()).toHaveLength(0);
+      expect(enrichmentCache.get('test:ab-1')).toBeDefined();
+    });
+
+    it('resolves rather than rejects when the tear reaches the catch (AC9)', async () => {
+      const { onWire } = parkOnForwardedSignal(CONCURRENCY);
+      const controller = new AbortController();
+
+      const running = enrichUsenetLanguages(
+        Array.from({ length: 8 }, (_, i) => miss(i)), logger, undefined, { signal: controller.signal },
+      );
+      await onWire;
+      controller.abort();
+
+      // If the tear escaped, search-stream's `expired` catch would replace a real answer with [].
+      await expect(running).resolves.toBeUndefined();
+    });
+
+    // ── the post-acquire checkpoint (AC7's middle row) ────────────────────────
+
+    it('classifies an abort between acquire and dispatch as skipped, never torn (AC7)', async () => {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(plainNzbXml(), { status: 200 }));
+      const controller = new AbortController();
+      // The 6th acquire is the one candidate that queues behind the wave and is admitted by a
+      // release, so its slot is live and idle at the instant the abort lands.
+      const { spy, semaphore } = watchAcquire({ n: CONCURRENCY, controller });
+      const late = miss(CONCURRENCY, { title: 'Der Hobbit (Ungekürzt)' });
+      const results = [...Array.from({ length: CONCURRENCY }, (_, i) => miss(i)), late];
+
+      try {
+        await enrichUsenetLanguages(results, logger, undefined, { signal: controller.signal });
+      } finally {
+        spy.mockRestore();
+      }
+
+      const log = completionLog();
+      expect(log).toMatchObject({ nzbFetched: CONCURRENCY, abortSkipped: 1, abortTorn: 0 });
+      // It never reached the network, so it neither inflates nzbFetched nor builds an Agent.
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(CONCURRENCY);
+      expect(mockCreateSsrfSafeDispatcher).toHaveBeenCalledTimes(CONCURRENCY);
+      expect(enrichmentCache.get(`test:ab-${CONCURRENCY}`)).toBeUndefined();
+      // Behaviourally identical to a never-admitted candidate: same counter, same free detection.
+      expect(late.language).toBe('german');
+      expect(taggedDebug('title-abort-skipped')).toHaveLength(1);
+      // The early release() composes with the `finally` arm rather than widening the pool.
+      expectDrained(semaphore());
+    });
+
+    it('classifies an abort at or after dispatch as torn, never skipped (AC7 counterfactual)', async () => {
+      const { spy, semaphore } = watchAcquire();
+      try {
+        await tornWave([miss(1)], 1);
+      } finally {
+        spy.mockRestore();
+      }
+
+      expect(completionLog()).toMatchObject({ nzbFetched: 1, abortTorn: 1, abortSkipped: 0 });
+      // A count would read 2 for one production call here (undici-dispatcher-close-reentrant),
+      // but this double is a plain stub, and the contract is that cleanup still ran.
+      expect(mockDispatcher.close).toHaveBeenCalled();
+      expectDrained(semaphore());
+    });
+
+    it.each([
+      ['before acquire', async (results: SearchResult[]) => {
+        mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(plainNzbXml(), { status: 200 }));
+        await enrichUsenetLanguages(results, logger, undefined, { signal: AbortSignal.abort() });
+      }],
+      ['while queued for a slot', async (results: SearchResult[]) => {
+        await tornWave(results);
+      }],
+      ['on the in-flight hop', async (results: SearchResult[]) => {
+        await tornWave(results, 1);
+      }],
+      ['during the body read', async (results: SearchResult[]) => {
+        const controller = new AbortController();
+        mockFetchWithSsrfRedirect.mockImplementation(async () => {
+          const response = new Response(plainNzbXml(), { status: 200 });
+          Object.defineProperty(response, 'text', {
+            value: async () => { controller.abort(); throw new TypeError('terminated'); },
+          });
+          return response;
+        });
+        await enrichUsenetLanguages(results, logger, undefined, { signal: controller.signal });
+      }],
+      ['after every fetch settled', async (results: SearchResult[]) => {
+        mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(plainNzbXml(), { status: 200 }));
+        const controller = new AbortController();
+        await enrichUsenetLanguages(results, logger, undefined, { signal: controller.signal });
+        controller.abort();
+      }],
+    ])('leaves every candidate in exactly one category when the abort lands %s (AC7)', async (_label, drive) => {
+      const results = Array.from({ length: 8 }, (_, i) => miss(i));
+
+      await drive(results);
+
+      // There is no fourth state: skipped + fetched (torn or completed) accounts for all of them.
+      const log = completionLog();
+      expect(log.abortSkipped! + log.nzbFetched!).toBe(results.length);
+      expect(log.abortTorn!).toBeLessThanOrEqual(log.nzbFetched!);
+      expect(log.capSkipped).toBe(0);
     });
   });
 });

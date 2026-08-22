@@ -7,8 +7,8 @@ import type { FastifyBaseLogger } from 'fastify';
 import { createDb, runMigrations, type Db } from '@db/index.js';
 import { books } from '@db/schema.js';
 import { BookService } from '../services/book.service.js';
-import { MetadataService } from '../services/metadata.service.js';
-import { AMBIGUOUS_WINDOW_COLLAPSED, AMBIGUOUS_WINDOW_HELD } from '../services/metadata-resolve-book.js';
+import { DUPLICATE_EDITIONS_COLLAPSED, MetadataService } from '../services/metadata.service.js';
+import { AMBIGUOUS_WINDOW_HELD } from '../services/metadata-resolve-book.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import { runEnrichment } from './enrichment.js';
 
@@ -187,9 +187,11 @@ describe('scheduled enrichment over an ambiguous resolver window — integration
     expect(heldRow!.enrichmentAttempts).toBe(1);
     expect(heldRow!.asin).toBeNull();
 
+    // Since #1597 the filter chain collapses this pair before the resolver assembles its window, so
+    // the collapse is recorded there; the row's durable disposition above is unchanged either way.
     expect(log.debug).toHaveBeenCalledWith(
-      expect.objectContaining({ selectedAsin: 'B08REGIONA', equivalentAsins: ['B08REGIONA', 'B09REGIONB'] }),
-      AMBIGUOUS_WINDOW_COLLAPSED,
+      { canonicalAsin: 'B08REGIONA', collapsedAsins: ['B09REGIONB'] },
+      DUPLICATE_EDITIONS_COLLAPSED,
     );
     expect(log.info).toHaveBeenCalledWith(
       expect.objectContaining({ passing: 2, window: 5 }),
