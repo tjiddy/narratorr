@@ -23,7 +23,8 @@ export interface EnrichUsenetOptions {
   maxPhase2Fetches?: number;
   /**
    * Stops phase-2 fetches from STARTING; composes with the cap rather than replacing it. Explicitly
-   * `| undefined` so an eopt caller can spread one in. Aborting never rejects — see `fetchAndEnrich`.
+   * `| undefined` so an eopt caller can spread one in. Aborting never rejects — see
+   * `acquireUnlessAborted`.
    */
   signal?: AbortSignal | undefined;
 }
