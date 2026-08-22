@@ -1,11 +1,13 @@
 /**
- * Collapse policy for a resolver window that names the SAME recording twice — Audible lists regional
- * variants of one production under different ASINs, and #2202's ambiguous-window hold would otherwise
- * block such a book from ever enriching (#2219).
+ * Collapse policy for a candidate set that names the SAME recording twice — Audible lists territorial
+ * publisher editions of one production under different ASINs, and #2202's ambiguous-window hold would
+ * otherwise block such a book from ever enriching (#2219).
  *
  * The identity question is answered by `resolveRecordingIdentity`; this module only decides which
- * sets are admissible for a collapse and which member of an admissible set is kept. The eligibility
- * gate deliberately lives in the caller's exact-title subset, never over the whole passing window.
+ * sets are admissible for a collapse and which member of an admissible set is kept. On the resolver
+ * path the eligibility gate deliberately lives in the caller's exact-title subset, never over the
+ * whole passing window; on the search path (#1597) `collapseDuplicateRecordings` supplies its own
+ * bucketing, which is a partition and never a verdict.
  */
 
 import { slugify, type BookMetadata } from '@core/index.js';
@@ -133,6 +135,115 @@ export function selectCanonicalRecording(candidates: BookMetadata[], inputAsin: 
   }
 
   return [...candidates].sort(compareRichness)[0]!;
+}
+
+/**
+ * Every collapsed peer's ASIN reaches the canonical, because `applyAudnexusEnrichment` walks
+ * `[primaryAsin, ...alternateAsins]` — so a twin's record can still backfill the series or cover the
+ * kept listing never carried. Sorted and canonicalized for the same reason the pick is: neither the
+ * value nor its order may depend on provider ordering.
+ */
+export function mergeAlternateAsins(canonical: BookMetadata, members: readonly BookMetadata[]): BookMetadata {
+  const own = canonicalizeAsin(canonical.asin);
+  const merged = new Set<string>();
+  for (const member of members) {
+    for (const raw of [member.asin, ...(member.alternateAsins ?? [])]) {
+      const asin = canonicalizeAsin(raw);
+      if (asin === null || asin === own) continue;
+      merged.add(asin);
+    }
+  }
+  if (merged.size === 0) return canonical;
+  return { ...canonical, alternateAsins: [...merged].sort() };
+}
+
+/** One performed collapse, shaped for the caller's `debug` record. */
+export interface RecordingCollapse {
+  canonicalAsin: string;
+  collapsedAsins: string[];
+}
+
+export interface RecordingCollapseResult {
+  books: BookMetadata[];
+  collapses: RecordingCollapse[];
+}
+
+/**
+ * Cheap invariants every member of a collapsible group must share. This is a PARTITION, not a
+ * verdict: it only bounds the pairwise work `collapsesToOneRecording` then does over each bucket.
+ * Narrator and author slugs are sorted so provider ordering cannot split a group, and the production
+ * form is part of the key so an abridged listing never buckets with its unabridged twin.
+ */
+function recordingBucketKey(book: BookMetadata): string {
+  // `authors` is schema-required but this runs over every raw search result, and the provider
+  // mappers are the only thing standing between a malformed payload and this key.
+  const authors = (book.authors ?? []).map((author) => slugify(author.name)).sort();
+  const narrators = (book.narrators ?? []).map((narrator) => slugify(narrator)).sort();
+  return JSON.stringify([slugify(book.title), authors, narrators, normalizeProductionType(book.formatType)]);
+}
+
+/**
+ * Collapses each bucket that is provably one recording down to its canonical member, merging the
+ * peers' ASINs onto it (#1597). Pure: no I/O and no settings read, so the caller owns the logging.
+ *
+ * A bucket is decided all-or-nothing, mirroring the resolver path — the relation is non-transitive,
+ * so any failing pair leaves the whole bucket alone rather than collapsing a subset. `preferAsin`
+ * exists for the resolver call site alone: an upstream collapse that did not know the requested ASIN
+ * would silently defeat that site's override before the window ever reached it.
+ */
+export function collapseDuplicateRecordings(
+  books: BookMetadata[],
+  preferAsin?: string | undefined,
+): RecordingCollapseResult {
+  if (books.length < 2) return { books, collapses: [] };
+
+  const keys = books.map(recordingBucketKey);
+  const buckets = new Map<string, BookMetadata[]>();
+  keys.forEach((key, index) => {
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(books[index]!);
+    else buckets.set(key, [books[index]!]);
+  });
+
+  const canonicals = new Map<string, BookMetadata>();
+  const collapses: RecordingCollapse[] = [];
+  for (const [key, bucket] of buckets) {
+    if (!collapsesToOneRecording(bucket)) continue;
+    const canonical = selectCanonicalRecording(bucket, preferAsin);
+    canonicals.set(key, mergeAlternateAsins(canonical, bucket));
+    // Admission already required a canonicalizable ASIN on every member, so none of these are null.
+    collapses.push({
+      canonicalAsin: canonicalizeAsin(canonical.asin)!,
+      collapsedAsins: bucket.filter((peer) => peer !== canonical).map((peer) => canonicalizeAsin(peer.asin)!).sort(),
+    });
+  }
+  if (collapses.length === 0) return { books, collapses };
+
+  return { books: emitInInputOrder(books, keys, canonicals), collapses };
+}
+
+/**
+ * A collapsed group takes the earliest slot any of its members held: provider order is the only
+ * relevance signal the search path has, so the group keeps its best rank.
+ */
+function emitInInputOrder(
+  books: BookMetadata[],
+  keys: string[],
+  canonicals: ReadonlyMap<string, BookMetadata>,
+): BookMetadata[] {
+  const emitted = new Set<string>();
+  const collapsed: BookMetadata[] = [];
+  keys.forEach((key, index) => {
+    const canonical = canonicals.get(key);
+    if (canonical === undefined) {
+      collapsed.push(books[index]!);
+      return;
+    }
+    if (emitted.has(key)) return;
+    emitted.add(key);
+    collapsed.push(canonical);
+  });
+  return collapsed;
 }
 
 function compareRichness(a: BookMetadata, b: BookMetadata): number {

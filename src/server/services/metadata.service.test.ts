@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vite
 import { RateLimitError, TransientError, METADATA_SEARCH_PROVIDER_FACTORIES, NARRATOR_PLACEHOLDERS } from '@core/index.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { MetadataService, isRejectedByWords, PSEUDO_NARRATORS } from './metadata.service.js';
+import { DUPLICATE_EDITIONS_COLLAPSED, MetadataService, isRejectedByWords, PSEUDO_NARRATORS } from './metadata.service.js';
 import { AMBIGUOUS_WINDOW_COLLAPSED, AMBIGUOUS_WINDOW_HELD, exactTitleCandidates } from './metadata-resolve-book.js';
 import type { BookMetadata } from '@core/index.js';
 
@@ -3184,6 +3184,15 @@ describe('MetadataService.resolveBook — collapsing proven-equivalent duplicate
     });
   }
 
+  /**
+   * #1597 put a collapse in the filter chain that runs BEFORE this window is assembled, and its
+   * bucket key includes the normalized production form. A pair that differs there reaches the
+   * resolver intact — the pairwise veto still tolerates a one-sided `unknown` — which is how these
+   * tests keep observing THIS branch rather than the chain's. `formatType` is in neither the
+   * eligibility gate nor the richness list, so it perturbs nothing else.
+   */
+  const BUCKET_SPLIT = { formatType: 'unabridged' } as const;
+
   function window(...books: BookMetadata[]): void {
     mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books });
   }
@@ -3208,12 +3217,12 @@ describe('MetadataService.resolveBook — collapsing proven-equivalent duplicate
     it('a same-recording sibling whose ASIN sorts first is never selected', async () => {
       const sibling = candidate('Saga Book 2', 'A B', { asin: 'B00000000', duration: 600, narrators: ['Jim Dale'] });
       const first = candidate('Saga Book 1', 'A B', { asin: 'B00000001', duration: 600, narrators: ['Jim Dale'] });
-      const second = candidate('Saga Book 1', 'A B', { asin: 'B00000009', duration: 600, narrators: ['Jim Dale'] });
+      const second = candidate('Saga Book 1', 'A B', { asin: 'B00000009', duration: 600, narrators: ['Jim Dale'], ...BUCKET_SPLIT });
       window(sibling, first, second);
 
       const result = await service.resolveBook({ title: 'Saga Book 1', author: 'A B' });
 
-      expect(result).toEqual(first);
+      expect(result).toEqual({ ...first, alternateAsins: ['B00000009'] });
       expect(collapseLogCalls()).toEqual([
         [
           expect.objectContaining({ selectedAsin: 'B00000001', equivalentAsins: ['B00000001', 'B00000009'] }),
@@ -3226,13 +3235,23 @@ describe('MetadataService.resolveBook — collapsing proven-equivalent duplicate
 
   describe('the Bear Head specimen (AC1)', () => {
     it('two regional listings of one recording — same narrators in a different order — resolve instead of holding', async () => {
-      const regionA = listing('B08REGIONA');
+      const regionA = listing('B08REGIONA', BUCKET_SPLIT);
       const regionB = listing('B09REGIONB', { narrators: [...BEAR_HEAD_NARRATORS].reverse() });
       window(regionA, regionB);
 
       const result = await resolveBearHead();
 
-      expect(result).toEqual(regionA);
+      expect(result).toEqual({ ...regionA, alternateAsins: ['B09REGIONB'] });
+      expect(holdLogCalls()).toHaveLength(0);
+    });
+
+    // Same specimen without the production-form split: the #1597 chain collapses it before the
+    // resolver assembles a window, so the row still resolves and this branch never runs.
+    it('identical regional listings never reach the ambiguous window at all', async () => {
+      window(listing('B08REGIONA'), listing('B09REGIONB'));
+
+      expect((await resolveBearHead())?.asin).toBe('B08REGIONA');
+      expect(collapseLogCalls()).toHaveLength(0);
       expect(holdLogCalls()).toHaveLength(0);
     });
   });
@@ -3302,15 +3321,16 @@ describe('MetadataService.resolveBook — collapsing proven-equivalent duplicate
   describe('selection among the collapsed set (AC8, AC9, AC10)', () => {
     it('the pick and the debug payload are independent of provider order', async () => {
       const rich = listing('B_ZZZ', { coverUrl: 'https://example.com/z.jpg' });
-      const plain = listing('B_AAA');
+      const plain = listing('B_AAA', BUCKET_SPLIT);
+      const merged = { ...rich, alternateAsins: ['B_AAA'] };
 
       window(rich, plain);
       const forwards = await resolveBearHead();
       window(plain, rich);
       const backwards = await resolveBearHead();
 
-      expect(forwards).toEqual(rich);
-      expect(backwards).toEqual(rich);
+      expect(forwards).toEqual(merged);
+      expect(backwards).toEqual(merged);
       expect(collapseLogCalls()).toEqual([
         [expect.objectContaining({ selectedAsin: 'B_ZZZ', equivalentAsins: ['B_AAA', 'B_ZZZ'] }), AMBIGUOUS_WINDOW_COLLAPSED],
         [expect.objectContaining({ selectedAsin: 'B_ZZZ', equivalentAsins: ['B_AAA', 'B_ZZZ'] }), AMBIGUOUS_WINDOW_COLLAPSED],
@@ -3413,14 +3433,16 @@ describe('MetadataService.resolveBook — collapsing proven-equivalent duplicate
       expect(result?.asin).toBe('B_ZZZ');
     });
 
-    it('AC10 the selected object is returned verbatim — no peer field is merged in', async () => {
+    // #1597 AC7 adds the peers' ASINs and NOTHING else: the sparse-pick problem is still solved by
+    // the enrichment fallback walking them, never by merging a peer's metadata into the winner.
+    it('AC10 the selected object carries only its peer’s ASIN — no peer field is merged in', async () => {
       const rich = listing('B_ZZZ', { coverUrl: 'https://example.com/z.jpg', description: 'Blurb' });
-      const plain = listing('B_AAA', { publisher: 'Tor' });
+      const plain = listing('B_AAA', { publisher: 'Tor', ...BUCKET_SPLIT });
       window(rich, plain);
 
       const result = await resolveBearHead();
 
-      expect(result).toEqual(rich);
+      expect(result).toEqual({ ...rich, alternateAsins: ['B_AAA'] });
       expect(result).not.toHaveProperty('publisher');
     });
   });
@@ -3428,7 +3450,7 @@ describe('MetadataService.resolveBook — collapsing proven-equivalent duplicate
   describe('observability (AC15, AC16, AC17)', () => {
     it('a collapse emits exactly one debug line with the full payload and no hold line', async () => {
       window(
-        listing('B_AAA'),
+        listing('B_AAA', BUCKET_SPLIT),
         listing('B_ZZZ'),
         candidate('Bear Head Companion', TCHAIKOVSKY, { asin: 'B_COMP', duration: 100, narrators: ['Someone Else'] }),
       );
@@ -3451,7 +3473,7 @@ describe('MetadataService.resolveBook — collapsing proven-equivalent duplicate
     });
 
     it('equivalentAsins is sorted, so the payload is identical from either provider order', async () => {
-      window(listing('B_ZZZ'), listing('B_AAA'));
+      window(listing('B_ZZZ'), listing('B_AAA', BUCKET_SPLIT));
       await resolveBearHead();
 
       expect(collapseLogCalls()[0]![0]).toEqual(
@@ -3513,5 +3535,188 @@ describe('narrator-placeholder vocabulary subset consistency (#1657)', () => {
 
   it('PSEUDO_NARRATORS stays its current narrow 3-value reject-word set (behavior unchanged)', () => {
     expect([...PSEUDO_NARRATORS].sort()).toEqual(['full cast', 'unknown', 'various']);
+  });
+});
+
+/**
+ * The collapse is the terminal stage of the shared filter chain (#1597), so it is observed through
+ * the public consumers rather than called directly — that placement is the whole guarantee that a
+ * rejected listing can neither win the canonical slot nor donate its ASIN to the winner.
+ */
+describe('MetadataService — collapsing duplicate catalog editions (#1597)', () => {
+  let service: MetadataService;
+  let mockLog: ReturnType<typeof createMockLogger>;
+
+  const settings = { get: vi.fn(), getAll: vi.fn(), set: vi.fn() };
+
+  function configureSettings(overrides: { languages?: string[]; minDurationMinutes?: number } = {}): void {
+    settings.get.mockImplementation((key: string) => {
+      if (key === 'quality') return Promise.resolve({ rejectWords: '', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false });
+      if (key === 'metadata') {
+        return Promise.resolve({
+          audibleRegion: 'us',
+          languages: overrides.languages ?? [],
+          minDurationMinutes: overrides.minDurationMinutes ?? 0,
+        });
+      }
+      return Promise.resolve({});
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAudibleProvider.searchBooks.mockReset().mockResolvedValue({ books: [] });
+    mockAudnexus.getAuthor.mockReset().mockResolvedValue(null);
+    settings.get.mockReset();
+    configureSettings();
+    mockLog = createMockLogger();
+    service = new MetadataService(inject<FastifyBaseLogger>(mockLog), undefined, settings as never);
+  });
+
+  const CHAN = 'Eliza Chan';
+  const ZELLER = ['Emily Woo Zeller'];
+  /** 12h35m in MINUTES, the live runtime on both Tideborn listings. */
+  const TIDEBORN_MINUTES = 755;
+
+  function edition(asin: string, overrides: Partial<BookMetadata> = {}): BookMetadata {
+    return {
+      title: 'Tideborn',
+      authors: [{ name: CHAN }],
+      asin,
+      duration: TIDEBORN_MINUTES,
+      narrators: ZELLER,
+      formatType: 'unabridged',
+      ...overrides,
+    };
+  }
+
+  const US = edition('B0D9HK2KR4');
+  const UK = edition('B0DMTHDKGK', { series: [{ name: 'Drowned World', position: 2 }] });
+
+  function results(...books: BookMetadata[]): void {
+    mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books });
+  }
+
+  function collapseLogCalls(): unknown[][] {
+    return (mockLog.debug as Mock).mock.calls.filter((call) => call[1] === DUPLICATE_EDITIONS_COLLAPSED);
+  }
+
+  describe('AC1 — the Tideborn specimen through search()', () => {
+    it('returns one card, the series-bearing one, carrying its twin’s ASIN', async () => {
+      results(US, UK);
+
+      const { books } = await service.search('Tideborn');
+
+      expect(books).toHaveLength(1);
+      expect(books[0]?.asin).toBe('B0DMTHDKGK');
+      expect(books[0]?.alternateAsins).toEqual(['B0D9HK2KR4']);
+    });
+
+    // Reference derivation runs on the filtered list, so a discarded twin's independently-entered
+    // series name must not survive as a second entity.
+    it('derives references from the collapsed list, not from the raw provider response', async () => {
+      const mislabeled = edition('B_MISLABELED', { series: [{ name: 'Drowned World Omnibus' }] });
+      const canonical = edition('B_CANONICAL', {
+        series: [{ name: 'Drowned World', position: 2 }],
+        coverUrl: 'https://example.com/c.jpg',
+      });
+      results(mislabeled, canonical);
+
+      const { books, series } = await service.search('Tideborn');
+
+      expect(books.map((b) => b.asin)).toEqual(['B_CANONICAL']);
+      expect(series.map((s) => s.name)).toEqual(['Drowned World']);
+    });
+  });
+
+  describe('AC8 — every consumer of the filter chain gets it', () => {
+    it.each([
+      ['search', async (s: MetadataService) => (await s.search('Tideborn')).books],
+      ['searchBooks', (s: MetadataService) => s.searchBooks('Tideborn')],
+      ['searchBooksForDiscovery', async (s: MetadataService) => (await s.searchBooksForDiscovery('Tideborn')).books],
+    ])('%s collapses without calling the helper itself', async (_label, run) => {
+      results(US, UK);
+
+      expect((await run(service)).map((b) => b.asin)).toEqual(['B0DMTHDKGK']);
+    });
+
+    it('getAuthorBooks collapses too', async () => {
+      mockAudnexus.getAuthor.mockResolvedValueOnce({ name: CHAN });
+      results(US, UK);
+
+      expect((await service.getAuthorBooks('AUTH1')).map((b) => b.asin)).toEqual(['B0DMTHDKGK']);
+    });
+  });
+
+  describe('AC8 — the collapse is terminal, after the existing filters', () => {
+    it('a language-rejected twin neither becomes canonical nor donates its ASIN', async () => {
+      configureSettings({ languages: ['english'] });
+      // The German listing is RICHER, so it would win the canonical slot if it survived to the bucket.
+      results(
+        edition('B_GERMAN', { language: 'german', coverUrl: 'https://example.com/de.jpg', description: 'Klappentext' }),
+        edition('B_ENGLISH', { language: 'english' }),
+      );
+
+      const { books } = await service.search('Tideborn');
+
+      expect(books.map((b) => b.asin)).toEqual(['B_ENGLISH']);
+      expect(books[0]).not.toHaveProperty('alternateAsins');
+    });
+
+    it('a too-short twin neither becomes canonical nor donates its ASIN', async () => {
+      configureSettings({ minDurationMinutes: 60 });
+      results(
+        edition('B_SHORT', { duration: 30, coverUrl: 'https://example.com/s.jpg', description: 'Sample' }),
+        edition('B_FULL'),
+      );
+
+      const { books } = await service.search('Tideborn');
+
+      expect(books.map((b) => b.asin)).toEqual(['B_FULL']);
+      expect(books[0]).not.toHaveProperty('alternateAsins');
+    });
+
+    it('a reject-word twin neither becomes canonical nor donates its ASIN', async () => {
+      settings.get.mockImplementation((key: string) => {
+        if (key === 'quality') return Promise.resolve({ rejectWords: 'sampler', requiredWords: '', grabFloor: 0, minSeeders: 1, protocolPreference: 'any', searchImmediately: false });
+        return Promise.resolve({ audibleRegion: 'us', languages: [], minDurationMinutes: 0 });
+      });
+      results(edition('B_SAMPLER', { subtitle: 'Sampler' }), edition('B_REAL'));
+
+      const { books } = await service.search('Tideborn');
+
+      expect(books.map((b) => b.asin)).toEqual(['B_REAL']);
+      expect(books[0]).not.toHaveProperty('alternateAsins');
+    });
+  });
+
+  describe('AC4 — distinct recordings still both appear', () => {
+    it('a second narration survives beside the collapsed twins', async () => {
+      results(US, UK, edition('B_NAUDUS', { narrators: ['Natalie Naudus'] }));
+
+      const { books } = await service.search('Tideborn');
+
+      expect(books.map((b) => b.asin)).toEqual(['B0DMTHDKGK', 'B_NAUDUS']);
+    });
+  });
+
+  describe('AC10 — observability', () => {
+    it('emits one debug line naming the canonical and the collapsed ASINs', async () => {
+      results(US, UK);
+
+      await service.search('Tideborn');
+
+      expect(collapseLogCalls()).toEqual([
+        [{ canonicalAsin: 'B0DMTHDKGK', collapsedAsins: ['B0D9HK2KR4'] }, DUPLICATE_EDITIONS_COLLAPSED],
+      ]);
+    });
+
+    it('says nothing when there is nothing to collapse', async () => {
+      results(US, edition('B_NAUDUS', { narrators: ['Natalie Naudus'] }));
+
+      await service.search('Tideborn');
+
+      expect(collapseLogCalls()).toEqual([]);
+    });
   });
 });

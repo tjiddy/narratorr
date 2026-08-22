@@ -9,7 +9,11 @@ import { normalizeTitleLosslessly } from '@core/utils/title-variants.js';
 import { canonicalizeAsin } from '@shared/asin.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { matchPassesValidation, type MatchValidationItem } from './match-validation.js';
-import { collapsesToOneRecording, selectCanonicalRecording } from './metadata-recording-collapse.js';
+import {
+  collapsesToOneRecording,
+  mergeAlternateAsins,
+  selectCanonicalRecording,
+} from './metadata-recording-collapse.js';
 
 export interface ResolveBookInput {
   asin?: string | undefined;
@@ -43,7 +47,7 @@ export interface ResolveBookDeps {
   isRateLimited(providerName: string): boolean;
   getRateLimitRemainingMs(providerName: string): number;
   setRateLimited(providerName: string, durationMs: number): void;
-  applyBookFilters(books: BookMetadata[]): Promise<BookMetadata[]>;
+  applyBookFilters(books: BookMetadata[], preferAsin?: string | undefined): Promise<BookMetadata[]>;
   logParseDrop(result: SearchBooksResult, providerName: string | undefined): void;
   log: FastifyBaseLogger;
 }
@@ -66,7 +70,9 @@ export async function resolveBook(deps: ResolveBookDeps, input: ResolveBookInput
 
   const author = input.author?.trim() || undefined;
   const query = author ? `${input.title} ${author}` : input.title;
-  const books = await searchBooksThrowing(deps, query);
+  // The filter chain now collapses duplicate listings itself (#1597); handing it the requested ASIN
+  // keeps this call site's override authoritative over the richness ranking, as it was before.
+  const books = await searchBooksThrowing(deps, query, input.asin);
 
   const passing = distinctPassingCandidates(books.slice(0, VALIDATION_WINDOW), { title: input.title, author });
   if (passing.length === 0) return null;
@@ -99,7 +105,9 @@ function disambiguateWindow(
       // Sorted so the payload is independent of provider order, like the pick itself.
       equivalentAsins: exact.map((candidate) => canonicalizeAsin(candidate.asin)).sort(),
     }, AMBIGUOUS_WINDOW_COLLAPSED);
-    return selected;
+    // The peers are still discarded, but their ASINs ride along so the enrichment fallback chain can
+    // recover a series or cover this window's canonical never carried (#1597 AC7).
+    return mergeAlternateAsins(selected, exact);
   }
 
   // `exact` splits the surviving holds into the two populations that need opposite fixes: 0 means
@@ -158,7 +166,11 @@ export function exactTitleCandidates(candidates: BookMetadata[], title: string):
  * Unlike discovery search, propagate provider failures; reserve an empty array for no provider or
  * a genuine empty result.
  */
-async function searchBooksThrowing(deps: ResolveBookDeps, query: string): Promise<BookMetadata[]> {
+async function searchBooksThrowing(
+  deps: ResolveBookDeps,
+  query: string,
+  preferAsin: string | undefined,
+): Promise<BookMetadata[]> {
   const { provider } = deps;
   if (!provider) return [];
 
@@ -170,7 +182,7 @@ async function searchBooksThrowing(deps: ResolveBookDeps, query: string): Promis
     await deps.acquireThrottle();
     const result = await provider.searchBooks(query);
     deps.logParseDrop(result, provider.name);
-    return await deps.applyBookFilters(result.books);
+    return await deps.applyBookFilters(result.books, preferAsin);
   } catch (error: unknown) {
     if (error instanceof RateLimitError) {
       deps.setRateLimited(error.provider, error.retryAfterMs);
