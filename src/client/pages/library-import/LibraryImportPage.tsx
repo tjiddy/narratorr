@@ -7,6 +7,8 @@ import { PageHeader } from '@/components/PageHeader.js';
 import { makeRelativePath } from '@/lib/pathUtils.js';
 import { useLibraryImport } from './useLibraryImport.js';
 import { isLibraryDbDuplicate } from './isLibraryDbDuplicate.js';
+import { libraryImportSection } from './libraryImportSection.js';
+import { DuplicateCopiesSection } from './DuplicateCopiesSection.js';
 import { LastImportPanel } from '@/components/import-report/LastImportPanel';
 import { ImportAttentionBanner } from '@/components/import-report/ImportAttentionBanner';
 import { StagedSubmitBanner } from '@/components/import-report/StagedSubmitBanner';
@@ -24,11 +26,15 @@ export function LibraryImportPage() {
   } = actions;
   const { registerMutation } = mutations;
   const {
-    selectedCount, selectedUnmatchedCount, selectedPendingCount, readyCount, reviewCount, noMatchCount, pendingCount, duplicateCount, allSelected,
+    selectedCount, selectedUnmatchedCount, selectedPendingCount, readyCount, reviewCount, noMatchCount, pendingCount,
+    duplicateCount, pathDuplicateCount, copyDuplicateCount, allSelected,
   } = counts;
 
   const [showExisting, setShowExisting] = useState(false);
-  const displayedRows = rows.filter(r => showExisting || !isLibraryDbDuplicate(r.book));
+  // Section membership is presentational only; `isLibraryDbDuplicate` still owns eligibility.
+  const sectionOf = (row: typeof rows[number]) => libraryImportSection(row.book);
+  const mainRows = rows.filter(r => sectionOf(r) === 'new' || (showExisting && sectionOf(r) === 'existing-path'));
+  const copyRows = rows.filter(r => sectionOf(r) === 'duplicate-copy');
   const rowIndexMap = new Map(rows.map((r, i) => [r, i]));
 
   return (
@@ -159,19 +165,26 @@ export function LibraryImportPage() {
                   Deselect {selectedPendingCount} pending
                 </button>
               )}
-              {duplicateCount > 0 && (
+              {/* #2091: the toggle counts only folders that ARE a book's own path. Copies at
+                  other paths get their own always-visible section and their own count. */}
+              {copyDuplicateCount > 0 && (
+                <span className="text-xs text-amber-500/80" data-testid="copy-duplicate-count">
+                  {copyDuplicateCount} duplicate cop{copyDuplicateCount === 1 ? 'y' : 'ies'}
+                </span>
+              )}
+              {pathDuplicateCount > 0 && (
                 <button
                   type="button"
                   onClick={() => setShowExisting(v => !v)}
                   className="text-xs text-muted-foreground/50 ml-auto hover:text-muted-foreground transition-colors"
                 >
-                  {duplicateCount} existing ({showExisting ? 'shown' : 'hidden'})
+                  {pathDuplicateCount} existing ({showExisting ? 'shown' : 'hidden'})
                 </button>
               )}
             </div>
 
             <div className="max-h-[55vh] overflow-y-auto divide-y divide-white/5">
-              {displayedRows.map((row) => (
+              {mainRows.map((row) => (
                 <ImportCard
                   key={row.book.path}
                   row={row}
@@ -183,6 +196,13 @@ export function LibraryImportPage() {
                 />
               ))}
             </div>
+
+            <DuplicateCopiesSection
+              rows={copyRows}
+              libraryRoot={libraryRoot ?? ''}
+              onEdit={(row) => setEditIndex(rowIndexMap.get(row) ?? -1)}
+              paused={paused}
+            />
 
             <ImportSummaryBar
               readyCount={readyCount}

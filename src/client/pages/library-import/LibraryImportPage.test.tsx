@@ -1081,11 +1081,13 @@ describe('LibraryImportPage (#133)', () => {
   });
 
   describe('former within-scan rows — visibility and toggle (#1925)', () => {
+    // The DB duplicate here is `path` since #2091: a `slug` duplicate is a copy at another path
+    // and now renders in its own visible section, which is not what this describe is about.
     const scanResultWithWithinScan = {
       discoveries: [
         { path: '/audiobooks/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
         { path: '/audiobooks/Copy/Author/Book', parsedTitle: 'Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false, reviewReason: 'Possible duplicate folder in this scan' },
-        { path: '/audiobooks/DbDup/DbBook', parsedTitle: 'DbBook', parsedAuthor: 'DbAuthor', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: true, duplicateReason: 'slug' },
+        { path: '/audiobooks/DbDup/DbBook', parsedTitle: 'DbBook', parsedAuthor: 'DbAuthor', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: true, duplicateReason: 'path' },
       ],
       totalFolders: 3,
     };
@@ -1138,6 +1140,182 @@ describe('LibraryImportPage (#133)', () => {
       await waitFor(() => {
         expect(screen.getByText(/2 of 2 new selected/)).toBeInTheDocument();
       });
+    });
+  });
+
+  /**
+   * #2091 — the visible split. Every membership assertion queries WITHIN the section container:
+   * a bare `getByText` passes just as happily for a row rendered in the main list.
+   */
+  describe('duplicate copies at other paths (#2091)', () => {
+    const NEW_ROW = { path: '/audiobooks/AuthorA/New Book', parsedTitle: 'New Book', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false };
+    const PATH_DUP = { path: '/audiobooks/AuthorB/Owned Here', parsedTitle: 'Owned Here', parsedAuthor: 'Author B', parsedSeries: null, fileCount: 2, totalSize: 80000, isDuplicate: true, duplicateReason: 'path' as const };
+    const COPY_DUP = {
+      path: '/audiobooks/Robin Hobb/Realms of the Elderlings/02 - Royal Assassin',
+      parsedTitle: 'Royal Assassin', parsedAuthor: 'Robin Hobb', parsedSeries: 'Realms of the Elderlings',
+      fileCount: 1, totalSize: 60000, isDuplicate: true, duplicateReason: 'slug' as const,
+      existingBookId: 9, existingPath: '/audiobooks/Robin Hobb/Farseer Trilogy/02 - Royal Assassin',
+      recordingVerdict: 'same-recording' as const,
+    };
+
+    async function renderScan(discoveries: unknown[]) {
+      mockApi.scanDirectory!.mockResolvedValue({ discoveries, totalFolders: discoveries.length });
+      mockApi.startMatchJob!.mockResolvedValue({ jobId: 'job-1' });
+      mockApi.getMatchJob!.mockResolvedValue({ id: 'job-1', status: 'completed', total: 1, matched: 1, results: [] });
+      renderWithProviders(<LibraryImportPage />);
+      await waitFor(() => expect(mockApi.scanDirectory).toHaveBeenCalled());
+    }
+
+    const section = () => screen.getByTestId('duplicate-copies-section');
+
+    it('renders the copy duplicate inside the section with the incumbent path (AC1)', async () => {
+      await renderScan([NEW_ROW, PATH_DUP, COPY_DUP]);
+
+      const heading = await screen.findByText('Duplicate copies at other paths');
+      expect(heading).toBeInTheDocument();
+      expect(within(section()).getByText('Royal Assassin')).toBeInTheDocument();
+      expect(within(section()).getByText('Same recording as Robin Hobb/Farseer Trilogy/02 - Royal Assassin')).toBeInTheDocument();
+      // The new row and the path duplicate are NOT in the section.
+      expect(within(section()).queryByText('New Book')).not.toBeInTheDocument();
+      expect(within(section()).queryByText('Owned Here')).not.toBeInTheDocument();
+    });
+
+    it('keeps the section visible in both toggle states while the path duplicate follows the toggle (AC1/AC2)', async () => {
+      const user = userEvent.setup();
+      await renderScan([NEW_ROW, PATH_DUP, COPY_DUP]);
+      await screen.findByText('New Book');
+
+      expect(within(section()).getByText('Royal Assassin')).toBeInTheDocument();
+      expect(screen.queryByText('Owned Here')).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /1 existing/ }));
+
+      expect(screen.getByText('Owned Here')).toBeInTheDocument();
+      expect(within(section()).getByText('Royal Assassin')).toBeInTheDocument();
+      expect(within(section()).queryByText('Owned Here')).not.toBeInTheDocument();
+    });
+
+    it('counts the two classes separately and neither twice (AC5/AC6)', async () => {
+      await renderScan([NEW_ROW, PATH_DUP, COPY_DUP]);
+      await screen.findByText('New Book');
+
+      // The toggle counts path duplicates only.
+      expect(screen.getByRole('button', { name: /1 existing \(hidden\)/ })).toBeInTheDocument();
+      // The copy rows get their own visible count.
+      expect(screen.getByTestId('copy-duplicate-count')).toHaveTextContent('1 duplicate copy');
+      // The summary bar's owned total still covers both, and the denominator is unchanged.
+      expect(screen.getByText('2 already in library')).toBeInTheDocument();
+      expect(screen.getByText(/1 of 1 new selected/)).toBeInTheDocument();
+    });
+
+    it('gives section rows no checkbox but keeps the edit affordance (AC3)', async () => {
+      await renderScan([NEW_ROW, COPY_DUP]);
+      await screen.findByText('New Book');
+
+      expect(within(section()).queryByRole('button', { name: /select|deselect/i })).not.toBeInTheDocument();
+      expect(within(section()).getByRole('button', { name: /edit metadata/i })).toBeInTheDocument();
+    });
+
+    it('badges section rows distinctly and never promises a recording check (AC4)', async () => {
+      await renderScan([NEW_ROW, COPY_DUP]);
+      await screen.findByText('New Book');
+
+      expect(within(section()).getByText('Duplicate copy')).toBeInTheDocument();
+      expect(within(section()).queryByText('Already owned')).not.toBeInTheDocument();
+      expect(within(section()).queryByText(/checking recording/i)).not.toBeInTheDocument();
+    });
+
+    it('degrades to generic wording when the row carries no incumbent path (AC12)', async () => {
+      const { existingPath: _omitted, ...noPath } = COPY_DUP;
+      await renderScan([NEW_ROW, noPath]);
+      await screen.findByText('New Book');
+
+      expect(within(section()).getByText('Same recording as a book already in your library')).toBeInTheDocument();
+      expect(within(section()).queryByText(/undefined/)).not.toBeInTheDocument();
+    });
+
+    it('renders the review list with the section, not All caught up, when every row is a duplicate (AC7)', async () => {
+      await renderScan([PATH_DUP, COPY_DUP]);
+
+      await screen.findByText('Duplicate copies at other paths');
+      expect(screen.queryByText('All caught up')).not.toBeInTheDocument();
+      expect(within(section()).getByText('Royal Assassin')).toBeInTheDocument();
+    });
+
+    it('still renders All caught up when every row is the library book\'s own path (AC7)', async () => {
+      await renderScan([PATH_DUP]);
+
+      expect(await screen.findByText('All caught up')).toBeInTheDocument();
+      expect(screen.queryByTestId('duplicate-copies-section')).not.toBeInTheDocument();
+    });
+
+    it('renders no section at all when the scan has no copy duplicates (AC9 shape)', async () => {
+      await renderScan([NEW_ROW, PATH_DUP]);
+      await screen.findByText('New Book');
+
+      expect(screen.queryByTestId('duplicate-copies-section')).not.toBeInTheDocument();
+    });
+
+    // AC20/21/22: three rows that a naive "same recording" read would sweep into the section.
+    it.each([
+      ['a review verdict', { ...NEW_ROW, path: '/audiobooks/A/Review', parsedTitle: 'Review Row', isDuplicate: false, recordingVerdict: 'review' as const, existingBookId: 3 }],
+      ['a different recording', { ...NEW_ROW, path: '/audiobooks/A/Diff', parsedTitle: 'Diff Row', isDuplicate: false, recordingVerdict: 'different-recording' as const }],
+      ['a fileless-incumbent attach', { ...NEW_ROW, path: '/audiobooks/A/Attach', parsedTitle: 'Attach Row', isDuplicate: false, existingBookId: 4 }],
+    ])('keeps %s in the main list, selectable, and out of the section', async (_label, row) => {
+      await renderScan([row, COPY_DUP]);
+      const title = await screen.findByText(row.parsedTitle);
+
+      expect(within(section()).queryByText(row.parsedTitle)).not.toBeInTheDocument();
+      // Selectable: the row's own card still owns a checkbox.
+      const card = title.closest('div.group');
+      expect(within(card as HTMLElement).getByRole('button', { name: /select|deselect/i })).toBeInTheDocument();
+    });
+
+    it('moves a row into the section and deselects it when the match job flags it slug (AC8)', async () => {
+      mockApi.scanDirectory!.mockResolvedValue({ discoveries: [NEW_ROW], totalFolders: 1 });
+      mockApi.startMatchJob!.mockResolvedValue({ jobId: 'job-1' });
+      mockApi.getMatchJob!.mockResolvedValue({
+        id: 'job-1', status: 'completed', total: 1, matched: 1,
+        results: [{
+          path: NEW_ROW.path, confidence: 'high', bestMatch: { title: 'New Book', authors: [{ name: 'Author A' }] }, alternatives: [],
+          isDuplicate: true, existingBookId: 9, duplicateReason: 'slug', recordingVerdict: 'same-recording',
+          existingPath: '/audiobooks/AuthorA/Elsewhere',
+        }],
+      });
+      renderWithProviders(<LibraryImportPage />);
+      await screen.findByText('New Book');
+
+      await firePoll();
+
+      await waitFor(() => expect(screen.queryByTestId('duplicate-copies-section')).toBeInTheDocument());
+      expect(within(section()).getByText('New Book')).toBeInTheDocument();
+      expect(within(section()).getByText('Same recording as AuthorA/Elsewhere')).toBeInTheDocument();
+      expect(screen.getByText(/0 of 0 new selected/)).toBeInTheDocument();
+    });
+
+    // AC8 second half + AC23: the edit modal is the deliberate override for a wrong verdict.
+    it('returns a section row to the main list once the edit-modal recheck clears the duplicate', async () => {
+      const user = userEvent.setup();
+      mockApi.getBookIdentifiers!.mockResolvedValue([
+        { id: 9, asin: null, title: 'Royal Assassin', authorName: 'Robin Hobb', authorSlug: 'robin-hobb' },
+      ]);
+      await renderScan([COPY_DUP]);
+      await screen.findByText('Duplicate copies at other paths');
+
+      await user.click(within(section()).getByRole('button', { name: /edit metadata/i }));
+      const titleField = await screen.findByLabelText(/title/i);
+      await user.clear(titleField);
+      await user.type(titleField, 'A Completely Different Book');
+      await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+      await waitFor(() => expect(screen.queryByTestId('duplicate-copies-section')).not.toBeInTheDocument());
+      // Back in the main list and counted in the denominator. A title-only edit carries no
+      // metadata, so the row is not auto-checked — but it is now selectable, which it was not.
+      const title = screen.getByText('A Completely Different Book');
+      expect(screen.getByText(/of 1 new selected/)).toBeInTheDocument();
+      const checkbox = within(title.closest('div.group') as HTMLElement).getByRole('button', { name: /select/i });
+      await user.click(checkbox);
+      expect(screen.getByText(/1 of 1 new selected/)).toBeInTheDocument();
     });
   });
 

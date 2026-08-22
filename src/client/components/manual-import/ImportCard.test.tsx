@@ -655,6 +655,73 @@ describe('ImportCard — lockDuplicates prop (#133)', () => {
   });
 });
 
+/**
+ * #2091 — the distinct badge is opt-in so Manual Import, which shares this card, is byte-identical.
+ * The copy states the observed fact and must not promise a recording check at import time: the
+ * edit-modal escape hatch force-imports past the ladder, so such a promise would be a lie.
+ */
+describe('ImportCard — copyAtOtherPath opt-in (#2091)', () => {
+  const slugRow = () => makeRow({
+    book: makeBook({ isDuplicate: true, duplicateReason: 'slug', recordingVerdict: 'same-recording' }),
+  });
+
+  it('renders the distinct badge and the incumbent path instead of "Already owned"', () => {
+    render(
+      <ImportCard row={slugRow()} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates copyAtOtherPath existingPath="Robin Hobb/Farseer Trilogy/02" />,
+    );
+    expect(screen.getByText('Duplicate copy')).toBeInTheDocument();
+    expect(screen.queryByText('Already owned')).not.toBeInTheDocument();
+    expect(screen.getByText('Same recording as Robin Hobb/Farseer Trilogy/02')).toBeInTheDocument();
+  });
+
+  it('never claims the recording is checked at import', () => {
+    render(
+      <ImportCard row={slugRow()} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates copyAtOtherPath existingPath="A/B" />,
+    );
+    expect(screen.queryByText(/checking recording|checked on import|will be checked/i)).not.toBeInTheDocument();
+  });
+
+  // AC12: the path is optional on the wire, so an absent one degrades rather than rendering blank.
+  it('degrades to generic wording when no incumbent path is known', () => {
+    render(<ImportCard row={slugRow()} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates copyAtOtherPath />);
+    expect(screen.getByText('Duplicate copy')).toBeInTheDocument();
+    expect(screen.getByText('Same recording as a book already in your library')).toBeInTheDocument();
+    expect(screen.queryByText(/Same recording as\s*$/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/undefined/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the row unselectable and the edit affordance available (AC3)', () => {
+    render(
+      <ImportCard row={slugRow()} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates copyAtOtherPath existingPath="A/B" />,
+    );
+    expect(screen.queryByRole('button', { name: /select|deselect/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /edit/i })).toBeInTheDocument();
+  });
+
+  it('leaves the badge and copy alone when the caller does not opt in (AC9)', () => {
+    render(
+      <ImportCard row={slugRow()} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates existingPath="A/B" />,
+    );
+    expect(screen.getByText('Already owned')).toBeInTheDocument();
+    expect(screen.queryByText('Duplicate copy')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Same recording as/)).not.toBeInTheDocument();
+  });
+
+  // The opt-in is a rendering hint, not a reclassification: a row that is not a slug duplicate
+  // must keep its own badge even if the caller passes the flag.
+  it.each([
+    ['a review verdict', { isDuplicate: false, recordingVerdict: 'review' as const }, 'Possible duplicate (review)'],
+    ['a different recording', { isDuplicate: false, recordingVerdict: 'different-recording' as const }, 'New version of an owned title'],
+    ['a path duplicate', { isDuplicate: true, duplicateReason: 'path' as const }, 'Already owned'],
+  ])('does not hijack the badge for %s', (_label, bookOverrides, expected) => {
+    render(
+      <ImportCard row={makeRow({ book: makeBook(bookOverrides) })} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates copyAtOtherPath existingPath="A/B" />,
+    );
+    expect(screen.getByText(expected)).toBeInTheDocument();
+    expect(screen.queryByText('Duplicate copy')).not.toBeInTheDocument();
+  });
+});
+
 describe('ImportCard — relativePath prop (#133)', () => {
   it('renders relative path when relativePath prop provided', () => {
     const row = makeRow({ book: makeBook({ path: '/media/audiobooks/Author/Book' }) });
