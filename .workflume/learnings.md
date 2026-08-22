@@ -3884,3 +3884,22 @@ Undeclaring a status in a v1 route's `response` map fails `pnpm typecheck` — `
 Measured on #2527: removing the `409`/`504` entries from `src/server/routes/v1/actions.ts`'s search route left every case in `actions.test.ts` green (vite transpiles without typechecking) and red exactly two cases in `src/server/routes/v1/openapi.test.ts`, which reads `app.swagger().paths` and therefore sees the response map directly.
 
 **Rule:** when an AC says 'this status must be declared', put the observation point in the OpenAPI suite (and lean on typecheck), not in a response-body parse. Keep the body-parse case, but scope its claim to what it can see — that the envelope is strict-clean and leaks no ids or URLs. The declaration only becomes body-observable on a status whose declared schema differs from every sibling's. An instance of [[vacuous-assertion-observation-points]].
+
+## save-path-resolution-gates-import-removal
+
+**source:** #2488  
+**added:** 2026-08-21  
+**files:** src/server/utils/download-path.ts  
+**tags:** import-pipeline, download-clients, external-id
+
+---
+
+`resolveSavePath` (src/server/utils/download-path.ts:21-23) throws `Download <id> not found in client` on a `null` adapter read, and `ImportService.runImportCommit` calls it unconditionally (import.service.ts:173) BEFORE the `deleteAfterImport` branch (import.service.ts:262-263) that reaches the private `handleTorrentRemoval`.
+
+**Consequence:** for any row whose `externalId` the adapter cannot resolve — blank/whitespace-only after #2488's adapter guards, or simply gone from the client — `importDownload` aborts at save-path resolution and the immediate-removal outcomes are UNREACHABLE. Neither `applyImportRemovalResult`'s `remove-failed` log ('Failed to remove torrent after import') nor its `pendingCleanup` write can fire. A test plan asking for either on such a row is asking for a state the code cannot enter; #2488's AC7 did exactly that and the case had to be rewritten to pin the abort instead.
+
+**Where those outcomes ARE reachable for an unresolvable id:** `removeOrDeferTorrent` called directly (src/server/services/torrent-removal.helpers.ts), and `ImportService.cleanupDeferredImports`, which is public and catches per row (import.service.ts:369-380) so one bad row cannot starve the cycle.
+
+**The ratio arm is different and IS reachable through `importDownload`:** when the save-path read succeeds but a later ratio read does not, `deferOnUnavailableRatio` is true for torrents, so the `null` ratio yields `live-state-unavailable`, which logs the deferral and sets `pendingCleanup`. Exercising it needs a double that answers the FIRST read and misses the second.
+
+**Rule.** Before planning a test around post-import cleanup, check whether the row can still be located in the download client — the save-path read is an earlier, unconditional gate on the same identifier. Exemplars: the `#2488` describe in src/server/services/import.service.test.ts drives the real TransmissionClient over MSW and pins both the abort boundary and the reachable ratio deferral. Related: [[degrading-adapter-invisible-to-mock-suite]] — a mock adapter set to reject hides this entirely, because it never models the read that fails first.
