@@ -1423,6 +1423,27 @@ function parkNzbFetches() {
   return { onWire, release: () => open() };
 }
 
+/**
+ * The tear counterpart to `parkNzbFetches` (#2578): each hop walk parks on the signal the
+ * enrichment call site actually forwarded and rejects the way undici settles an aborted fetch, so
+ * the abort reaches the wave already on the wire and not just the queue behind it. A run that
+ * forwards no signal fails on the guard rather than quietly behaving like the parked fixture.
+ */
+function tearableNzbFetches() {
+  let admit!: () => void;
+  const onWire = new Promise<void>((resolve) => { admit = resolve; });
+  let started = 0;
+  mockNzbFetch.mockImplementation(async (_url, opts) => {
+    if (++started >= WAVE) admit();
+    const signal = opts?.signal;
+    if (!signal) throw new Error('test setup: enrichment forwarded no signal to the hop walk');
+    return new Promise<Response>((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new DOMException('This operation was aborted', 'AbortError')));
+    });
+  });
+  return { onWire };
+}
+
 describe('GET /api/search/stream — deadline (#2568)', () => {
   let armed: ArmedDeadlineTimer[];
   let clearTimeoutSpy: MockInstance;
@@ -1464,8 +1485,11 @@ describe('GET /api/search/stream — deadline (#2568)', () => {
     return ctx;
   }
 
-  const logOf = (request: FastifyRequest, level: 'warn' | 'error' | 'debug') =>
+  const logOf = (request: FastifyRequest, level: 'warn' | 'error' | 'debug' | 'info') =>
     request.log[level] as unknown as ReturnType<typeof vi.fn>;
+
+  const enrichmentSummary = (request: FastifyRequest) =>
+    logOf(request, 'info').mock.calls.find(c => c[1] === 'Usenet language detection complete')![0] as Record<string, number>;
 
   // ── arming ────────────────────────────────────────────────────────────────
 
@@ -1876,6 +1900,46 @@ describe('GET /api/search/stream — deadline (#2568)', () => {
       expect(complete).not.toHaveProperty('timedOut');
       expect(logOf(request, 'warn')).not.toHaveBeenCalled();
     });
+
+    // ── #2578: the wave on the wire is torn, not left to run out its hops ────
+
+    it('tears the hops already on the wire and still emits the real answer (#2578)', async () => {
+      const { service } = streamingService({ hitQuery: DEADLINE_FIXTURE.q, results: candidates('tear', 12) });
+      const { onWire } = tearableNzbFetches();
+      const handler = await buildHandler({ indexerSearchService: service });
+      const { reply, request, write } = streamRequest();
+
+      const settled = handler(request, reply);
+      await onWire;
+      armed[0]!();
+      await settled;
+
+      // The tear reaches the enrichment catch for the first time; if it escaped, the `expired` arm
+      // would replace these twelve real results with `[]` and `timedOut: true` (#2568 AC7).
+      const complete = completeFrame(write)!;
+      expect(complete.results as unknown[]).toHaveLength(12);
+      expect(complete).not.toHaveProperty('timedOut');
+      expect(logOf(request, 'error')).not.toHaveBeenCalled();
+      expect(logOf(request, 'warn').mock.calls.map(c => c[1])).toEqual(['Usenet enrichment truncated by abort']);
+      expect(enrichmentSummary(request)).toMatchObject({ nzbFetched: WAVE, abortTorn: WAVE, abortSkipped: 7 });
+      // Nothing the tear abandoned may be served from cache on the next search.
+      for (let i = 0; i < 12; i++) expect(enrichmentCache.get(`2:tear-${i}`)).toBeUndefined();
+    });
+
+    it('leaves a non-expiring run with no abort fields on any log line (#2578 control)', async () => {
+      mockNzbFetch.mockImplementation(async () => new Response(PLAIN_NZB, { status: 200 }));
+      const { service } = streamingService({ hitQuery: DEADLINE_FIXTURE.q, results: candidates('notear', 12) });
+      const handler = await buildHandler({ indexerSearchService: service });
+      const { reply, request, write } = streamRequest();
+
+      await handler(request, reply);
+
+      expect(mockNzbFetch).toHaveBeenCalledTimes(12);
+      expect(enrichmentSummary(request)).toMatchObject({ nzbFetched: 12, abortTorn: 0, abortSkipped: 0 });
+      expect(logOf(request, 'warn')).not.toHaveBeenCalled();
+      expect((completeFrame(write)!.results as unknown[])).toHaveLength(12);
+      expect(enrichmentCache.get('2:notear-0')).toBeDefined();
+    });
   });
 
   // ── #2577: a client that disconnects tears the run the way the deadline does ──
@@ -2166,6 +2230,23 @@ describe('GET /api/search/stream — deadline (#2568)', () => {
         expect(logOf(request, 'warn').mock.calls[0]![0]).toMatchObject({ abortSkipped: 7, nzbFetched: WAVE });
         expect(completeFrame(write)).toBeUndefined();
         expect(reply.raw.end).toHaveBeenCalled();
+      });
+
+      it('tears the hops already on the wire and writes nothing to the socket (#2578)', async () => {
+        const svc = streamingService({ hitQuery: DEADLINE_FIXTURE.q, results: candidates('dctear', 12) });
+        const { onWire } = tearableNzbFetches();
+        const handler = await buildHandler({ indexerSearchService: svc.service });
+        const { reply, request, write, onClose } = streamRequest();
+
+        const settled = handler(request, reply);
+        await onWire;
+        closeOf(onClose)();
+        await settled;
+
+        expect(enrichmentSummary(request)).toMatchObject({ nzbFetched: WAVE, abortTorn: WAVE, abortSkipped: 7 });
+        expect(completeFrame(write)).toBeUndefined();
+        expect(reply.raw.end).toHaveBeenCalled();
+        for (let i = 0; i < 12; i++) expect(enrichmentCache.get(`2:dctear-${i}`)).toBeUndefined();
       });
     });
 
