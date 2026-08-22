@@ -212,7 +212,7 @@ function tryTitleFallback(result: SearchResult, logger: FastifyBaseLogger): bool
   return true;
 }
 
-/** Both failure arms degrade identically; only whether the entry is written differs. */
+/** The non-OK and the thrown arm degrade identically; each logs its own warn first. */
 function recordFailedFetch(result: SearchResult, cacheKey: string, logger: FastifyBaseLogger): boolean {
   const detected = tryTitleFallback(result, logger);
   // Cache title fallback but leave nzbName empty so a later successful fetch can populate it.
@@ -418,7 +418,8 @@ export async function enrichUsenetLanguages(
         if (recordFailedFetch(result, cacheKey, logger)) languagesDetected++;
         return;
       }
-      if (applyNzbXml(result, await response.text(), cacheKey, logger)) languagesDetected++;
+      const xml = await response.text();
+      if (applyNzbXml(result, xml, cacheKey, logger)) languagesDetected++;
     } catch (error: unknown) {
       // Keyed on `signal.aborted`, never the rejection's shape: one tear surfaces as a pre-hop
       // `signal.reason` throw, an undici AbortError and a torn body read, and only some are
