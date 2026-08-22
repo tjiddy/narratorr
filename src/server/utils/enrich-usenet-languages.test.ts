@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '@core/indexers/types.js';
 import type * as NetworkServiceModule from '@core/utils/network-service.js';
+import { BoundedSemaphore } from '@core/utils/bounded-semaphore.js';
 import { enrichUsenetLanguages } from './enrich-usenet-languages.js';
 
 const mockDispatcher = { close: vi.fn().mockResolvedValue(undefined) };
@@ -1815,6 +1816,277 @@ describe('enrichUsenetLanguages', () => {
         expect.objectContaining({ cacheHits: 1, languagesDetected: 0, nzbFetched: 0 }),
         'Usenet language detection complete',
       );
+    });
+  });
+
+  // ─── #2573: the caller's abort bounds phase 2 ───────────────────────────────
+  // Every describe above is the no-signal parity baseline and stays green UNMODIFIED.
+  describe('abort-bounded phase 2 (#2573)', () => {
+    /** Mirrors NZB_FETCH_CONCURRENCY: a candidate set at or below it never queues a waiter. */
+    const CONCURRENCY = 5;
+
+    function miss(i: number, overrides: Partial<SearchResult> = {}): SearchResult {
+      return makeResult({
+        protocol: 'usenet',
+        guid: `ab-${i}`,
+        downloadUrl: `http://nzb.test/ab-${i}`,
+        title: `Plain Audiobook ${i}`,
+        ...overrides,
+      });
+    }
+
+    /**
+     * Parks every fetch on one barrier and resolves `onWire` once `target` of them are genuinely on
+     * the wire. Aborting before that point reaches only the pre-acquire guard, never the queued
+     * waiters this bound exists to evict (solver-abort-after-slot-not-after-call).
+     */
+    function parkFetches(target: number, xml: () => string = plainNzbXml) {
+      let open!: () => void;
+      const barrier = new Promise<void>((resolve) => { open = resolve; });
+      let admit!: () => void;
+      const onWire = new Promise<void>((resolve) => { admit = resolve; });
+      let started = 0;
+      mockFetchWithSsrfRedirect.mockImplementation(async () => {
+        if (++started >= target) admit();
+        await barrier;
+        return new Response(xml(), { status: 200 });
+      });
+      return { onWire, release: () => open() };
+    }
+
+    const calls = (level: 'debug' | 'info' | 'warn') => (logger[level] as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    const truncationWarns = () => calls('warn').filter((c) => c[1] === 'Usenet enrichment truncated by abort');
+    const taggedDebug = (tag: string) => calls('debug').filter((c) => (c[0] as { signal?: string }).signal === tag);
+    const completionLog = () =>
+      calls('info').findLast((c) => c[1] === 'Usenet language detection complete')![0] as Record<string, number>;
+
+    /** Drives one aborted run to completion: park, let the first wave reach the wire, tear, drain. */
+    async function tornRun(results: SearchResult[], options: { maxPhase2Fetches?: number } = {}) {
+      const { onWire, release } = parkFetches(CONCURRENCY);
+      const controller = new AbortController();
+      const running = enrichUsenetLanguages(results, logger, undefined, { ...options, signal: controller.signal });
+      await onWire;
+      controller.abort();
+      release();
+      await running;
+    }
+
+    it('accepts the signal alone, beside the cap, and explicitly undefined (AC1)', async () => {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(plainNzbXml(), { status: 200 }));
+      const live = new AbortController();
+
+      await expect(enrichUsenetLanguages([miss(1)], logger, undefined, { signal: live.signal })).resolves.toBeUndefined();
+      await expect(enrichUsenetLanguages([miss(2)], logger, undefined, { maxPhase2Fetches: 10, signal: live.signal })).resolves.toBeUndefined();
+      await expect(enrichUsenetLanguages([miss(3)], logger, undefined, { maxPhase2Fetches: 10 })).resolves.toBeUndefined();
+      await expect(enrichUsenetLanguages([miss(4)], logger, undefined, {})).resolves.toBeUndefined();
+      // A bare `signal?: AbortSignal` — without the explicit `| undefined` — reds this line under eopt.
+      await expect(enrichUsenetLanguages([miss(5)], logger, undefined, { signal: undefined })).resolves.toBeUndefined();
+    });
+
+    it('is byte-identical to the no-signal run while the signal stays live (AC1 control)', async () => {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(germanNzbXml(), { status: 200 }));
+      const live = new AbortController();
+      const results = Array.from({ length: 12 }, (_, i) => miss(i));
+
+      await enrichUsenetLanguages(results, logger, undefined, { signal: live.signal });
+
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(12);
+      expect(results.map((r) => r.language)).toEqual(Array.from({ length: 12 }, () => 'german'));
+      expect(completionLog()).toMatchObject({ nzbFetched: 12, abortSkipped: 0 });
+      expect(truncationWarns()).toHaveLength(0);
+    });
+
+    it('evicts the queued waiters and nothing else when the abort lands mid-wave (AC2, AC6)', async () => {
+      const results = Array.from({ length: 12 }, (_, i) => miss(i));
+
+      await tornRun(results);
+
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(CONCURRENCY);
+      expect(completionLog()).toMatchObject({ nzbFetched: 5, abortSkipped: 7 });
+      // The five already on the wire ran to completion on their own terms and cached normally.
+      for (let i = 0; i < CONCURRENCY; i++) expect(enrichmentCache.get(`test:ab-${i}`)).toBeDefined();
+    });
+
+    it('starts no fetch at all under an already-aborted signal (AC2 boundary)', async () => {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(plainNzbXml(), { status: 200 }));
+      const results = Array.from({ length: 8 }, (_, i) => miss(i));
+
+      await expect(
+        enrichUsenetLanguages(results, logger, undefined, { signal: AbortSignal.abort() }),
+      ).resolves.toBeUndefined();
+
+      expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
+      expect(completionLog()).toMatchObject({ nzbFetched: 0, abortSkipped: 8 });
+    });
+
+    it('skips nothing when every candidate was already admitted (AC2 race boundary)', async () => {
+      // Four candidates sit under NZB_FETCH_CONCURRENCY, so none of them ever queues and all four
+      // are past `acquire()` when the abort fires. An implementation that derives abort-skipping
+      // from an end-of-run `signal.aborted` reds here and nowhere else.
+      const { onWire, release } = parkFetches(4, germanNzbXml);
+      const controller = new AbortController();
+      const results = Array.from({ length: 4 }, (_, i) => miss(i));
+
+      const running = enrichUsenetLanguages(results, logger, undefined, { signal: controller.signal });
+      await onWire;
+      controller.abort();
+      release();
+      await running;
+
+      expect(mockFetchWithSsrfRedirect).toHaveBeenCalledTimes(4);
+      expect(results.map((r) => r.language)).toEqual(['german', 'german', 'german', 'german']);
+      expect(completionLog()).toMatchObject({ nzbFetched: 4, abortSkipped: 0 });
+      expect(truncationWarns()).toHaveLength(0);
+    });
+
+    it('resolves rather than rejects when the abort races a failing in-flight fetch (AC3)', async () => {
+      let open!: () => void;
+      const barrier = new Promise<void>((resolve) => { open = resolve; });
+      let admit!: () => void;
+      const onWire = new Promise<void>((resolve) => { admit = resolve; });
+      let started = 0;
+      mockFetchWithSsrfRedirect.mockImplementation(async () => {
+        if (++started >= CONCURRENCY) admit();
+        await barrier;
+        throw new Error('ECONNRESET while the NZB was in flight');
+      });
+      const controller = new AbortController();
+      const results = Array.from({ length: 12 }, (_, i) => miss(i));
+
+      const running = enrichUsenetLanguages(results, logger, undefined, { signal: controller.signal });
+      await onWire;
+      controller.abort();
+      open();
+
+      await expect(running).resolves.toBeUndefined();
+      expect(completionLog()).toMatchObject({ nzbFetched: 5, abortSkipped: 7 });
+    });
+
+    it('propagates a non-abort acquire failure under a live signal (AC2 counterfactual)', async () => {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(plainNzbXml(), { status: 200 }));
+      // A bare `catch { return; }` would swallow this — the inverted shape of abort-verdict-not-error-shape.
+      const acquire = vi.spyOn(BoundedSemaphore.prototype, 'acquire')
+        .mockRejectedValueOnce(new Error('slot queue drained'));
+      const live = new AbortController();
+
+      try {
+        await expect(
+          enrichUsenetLanguages([miss(1)], logger, undefined, { signal: live.signal }),
+        ).rejects.toThrow('slot queue drained');
+      } finally {
+        acquire.mockRestore();
+      }
+
+      expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
+    });
+
+    it('writes no cache entry for an abort-skipped candidate, so a later run still fetches it (AC4)', async () => {
+      await tornRun(Array.from({ length: 12 }, (_, i) => miss(i)));
+
+      for (let i = CONCURRENCY; i < 12; i++) expect(enrichmentCache.get(`test:ab-${i}`)).toBeUndefined();
+
+      mockFetchWithSsrfRedirect.mockReset();
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(plainNzbXml(), { status: 200 }));
+      await enrichUsenetLanguages(Array.from({ length: 12 }, (_, i) => miss(i)), logger);
+
+      const refetched = mockFetchWithSsrfRedirect.mock.calls.map((c) => c[0]);
+      for (let i = CONCURRENCY; i < 12; i++) expect(refetched).toContain(`http://nzb.test/ab-${i}`);
+    });
+
+    it('gives abort-skipped candidates free title detection under a distinct tag (AC4)', async () => {
+      const results = [
+        ...Array.from({ length: CONCURRENCY }, (_, i) => miss(i)),
+        miss(5, { title: 'Der Hobbit (Ungekürzt)' }),
+        miss(6, { title: 'A Perfectly Ordinary Audiobook' }),
+        ...Array.from({ length: 5 }, (_, i) => miss(i + 7)),
+      ];
+
+      await tornRun(results);
+
+      expect(results[5]!.language).toBe('german');
+      expect(results[6]!.language).toBeUndefined();
+      const tagged = taggedDebug('title-abort-skipped');
+      expect(tagged).toHaveLength(1);
+      expect(tagged[0]![0]).toMatchObject({ title: 'Der Hobbit (Ungekürzt)', matched: 'german' });
+      // A trace has to tell a tear from a cap, and this run applied no cap at all.
+      expect(taggedDebug('title-cap-skipped')).toHaveLength(0);
+    });
+
+    it('still degrades a genuine fetch failure under a live signal (AC3 control)', async () => {
+      const live = new AbortController();
+      mockFetchWithSsrfRedirect
+        .mockResolvedValueOnce(new Response('nope', { status: 500 }))
+        .mockRejectedValueOnce(new Error('ECONNREFUSED'));
+      const nonOk = miss(1, { title: 'Der Hobbit (Ungekürzt)' });
+      const threw = miss(2, { title: 'Das Rad der Zeit (Ungekürzt)' });
+
+      await enrichUsenetLanguages([nonOk, threw], logger, undefined, { signal: live.signal });
+
+      expect(nonOk.language).toBe('german');
+      expect(threw.language).toBe('german');
+      expect(enrichmentCache.get('test:ab-1')).toMatchObject({ outcome: 'fetch-failed' });
+      expect(enrichmentCache.get('test:ab-2')).toMatchObject({ outcome: 'fetch-failed' });
+      expect(calls('warn').map((c) => c[1]))
+        .toEqual(['NZB fetch failed with non-OK status', 'NZB fetch failed']);
+    });
+
+    it('counts cap-skipped and abort-skipped candidates disjointly (AC1, AC6)', async () => {
+      // A cap at or below NZB_FETCH_CONCURRENCY leaves no selected-but-unstarted candidate, so the
+      // two counters could never be observed together; 8 of 12 selected leaves 3 queued.
+      const results = Array.from({ length: 12 }, (_, i) => miss(i, { matchScore: 12 - i }));
+
+      await tornRun(results, { maxPhase2Fetches: 8 });
+
+      const log = completionLog();
+      expect(log).toMatchObject({ nzbFetched: 5, abortSkipped: 3, capSkipped: 4 });
+      expect(log.nzbFetched! + log.abortSkipped! + log.capSkipped!).toBe(12);
+    });
+
+    it('leaves abortSkipped at zero when the cap already skipped everything (AC6 boundary)', async () => {
+      mockFetchWithSsrfRedirect.mockImplementation(async () => new Response(plainNzbXml(), { status: 200 }));
+      const results = Array.from({ length: 6 }, (_, i) => miss(i));
+
+      await enrichUsenetLanguages(results, logger, undefined, { maxPhase2Fetches: 0, signal: AbortSignal.abort() });
+
+      expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
+      expect(completionLog()).toMatchObject({ capSkipped: 6, abortSkipped: 0, nzbFetched: 0 });
+      expect(truncationWarns()).toHaveLength(0);
+    });
+
+    it('propagates a language an abort-skipped representative recovered to its duplicates (AC5)', async () => {
+      const fillers = Array.from({ length: CONCURRENCY }, (_, i) => miss(i));
+      const rep = miss(99, { guid: 'dup', downloadUrl: 'http://nzb.test/dup-high', matchScore: 9, title: 'Der Hobbit (Ungekürzt)' });
+      const member = miss(98, { guid: 'dup', downloadUrl: 'http://nzb.test/dup-low', matchScore: 1, title: 'The Hobbit' });
+
+      await tornRun([...fillers, rep, member]);
+
+      expect(rep.language).toBe('german');
+      // Reds if abort-skipped title detection is placed AFTER propagateDuplicates.
+      expect(member.language).toBe('german');
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'The Hobbit', signal: 'within-run-dup', language: 'german' }),
+        expect.any(String),
+      );
+    });
+
+    it('resolves with no fetch on empty and torrent-only inputs under an aborted signal', async () => {
+      const aborted = AbortSignal.abort();
+
+      await expect(enrichUsenetLanguages([], logger, undefined, { signal: aborted })).resolves.toBeUndefined();
+      await expect(
+        enrichUsenetLanguages([makeResult({ title: 'Torrent Only' })], logger, undefined, { signal: aborted }),
+      ).resolves.toBeUndefined();
+
+      expect(mockFetchWithSsrfRedirect).not.toHaveBeenCalled();
+      expect(truncationWarns()).toHaveLength(0);
+    });
+
+    it('logs the truncation exactly once, with its sibling counters (AC7)', async () => {
+      await tornRun(Array.from({ length: 12 }, (_, i) => miss(i)));
+
+      const warns = truncationWarns();
+      expect(warns).toHaveLength(1);
+      expect(warns[0]![0]).toMatchObject({ abortSkipped: 7, nzbFetched: 5 });
     });
   });
 });

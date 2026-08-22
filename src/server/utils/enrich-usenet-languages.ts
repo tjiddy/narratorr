@@ -5,7 +5,7 @@ import { detectLanguageFromNewsgroup, detectLanguageFromText, parseNzbGroups, pa
 import { createSsrfSafeDispatcher, fetchWithSsrfRedirect } from '@core/utils/network-service.js';
 import type { LanAllowlist } from '@core/utils/download-url.js';
 import { getUserAgent } from '@shared/user-agent.js';
-import { BoundedSemaphore } from '@core/utils/bounded-semaphore.js';
+import { BoundedSemaphore, type SlotRelease } from '@core/utils/bounded-semaphore.js';
 import { serializeError } from './serialize-error.js';
 import { sanitizeLogUrl } from './sanitize-log-url.js';
 import { enrichmentCache, type EnrichmentCacheValue } from './enrichment-cache.js';
@@ -21,7 +21,15 @@ type Phase2Source = 'newsgroup' | 'name' | 'title' | 'unresolved';
 export interface EnrichUsenetOptions {
   /** After cache lookup, fetch only the top N by matchScore, seeders, then grabs; omit for uncapped. */
   maxPhase2Fetches?: number;
+  /**
+   * Stops phase-2 fetches from STARTING; composes with the cap rather than replacing it. Explicitly
+   * `| undefined` so an eopt caller can spread one in. Aborting never rejects — see `fetchAndEnrich`.
+   */
+  signal?: AbortSignal | undefined;
 }
+
+/** Distinguishes a cap from a tear in the phase-2 trace; both skip network, neither is cached. */
+type SkipTag = 'title-cap-skipped' | 'title-abort-skipped';
 
 // Namespace free-form GUIDs by indexer to prevent cross-indexer cache collisions.
 // `||` intentionally falls back from an empty GUID to URL; no release key means no cache entry.
@@ -149,9 +157,9 @@ function propagateDuplicates(
   return detected;
 }
 
-// The cap limits network only; skipped candidates still get free title detection.
+// The cap and the abort limit network only; skipped candidates still get free title detection.
 // Do not cache title-only outcomes—a later run must still fetch NZB metadata.
-function detectCapSkippedTitles(skipped: SearchResult[], logger: FastifyBaseLogger): number {
+function detectSkippedTitles(skipped: SearchResult[], logger: FastifyBaseLogger, tag: SkipTag): number {
   let detected = 0;
   for (const result of skipped) {
     if (result.language) continue;
@@ -160,8 +168,10 @@ function detectCapSkippedTitles(skipped: SearchResult[], logger: FastifyBaseLogg
     result.language = titleLang;
     detected++;
     logger.debug(
-      { title: result.title, signal: 'title-cap-skipped', matched: titleLang },
-      'Language detected from title for cap-skipped candidate (no NZB fetch)',
+      { title: result.title, signal: tag, matched: titleLang },
+      tag === 'title-cap-skipped'
+        ? 'Language detected from title for cap-skipped candidate (no NZB fetch)'
+        : 'Language detected from title for abort-skipped candidate (no NZB fetch)',
     );
   }
   return detected;
@@ -284,12 +294,33 @@ export async function enrichUsenetLanguages(
   const { toFetch, skipped } = selectCappedCandidates(representatives, options?.maxPhase2Fetches, logger);
   const capSkipped = skipped.length;
 
-  languagesDetected += detectCapSkippedTitles(skipped, logger);
+  languagesDetected += detectSkippedTitles(skipped, logger, 'title-cap-skipped');
 
   const semaphore = new BoundedSemaphore(NZB_FETCH_CONCURRENCY);
+  const signal = options?.signal;
+  const abortSkipped: SearchResult[] = [];
 
   async function fetchAndEnrich(result: SearchResult): Promise<void> {
-    const release = await semaphore.acquire();
+    // A deliberate exception to abort-verdict-not-error-shape: the abort BOUNDS this tail rather
+    // than failing it. Rethrowing would let the stream's `expired` catch replace an answer the
+    // ladder already produced with `results: []` — the regression #2568 AC7 forbids.
+    // Guard before subscribing: an already-aborted signal never re-fires `abort`, so a waiter
+    // registered against one would never settle.
+    if (signal?.aborted) {
+      abortSkipped.push(result);
+      return;
+    }
+    let release: SlotRelease;
+    try {
+      release = await semaphore.acquire({ signal });
+    } catch (error: unknown) {
+      // Keyed on `signal.aborted`, never the rejection's shape: a drain still propagates.
+      if (signal?.aborted) {
+        abortSkipped.push(result);
+        return;
+      }
+      throw error;
+    }
     nzbFetched++;
     const cacheKey = cacheKeyFor(result)!;
     const dispatcher = createSsrfSafeDispatcher(lanAllowlist?.hostname);
@@ -362,11 +393,22 @@ export async function enrichUsenetLanguages(
 
   await Promise.all(toFetch.map((r) => fetchAndEnrich(r)));
 
+  // Before propagation, so a representative that recovered its language from its title after being
+  // torn still reaches its within-run duplicate group — the cap path's ordering, one phase later.
+  languagesDetected += detectSkippedTitles(abortSkipped, logger, 'title-abort-skipped');
+
   languagesDetected += propagateDuplicates(representatives, groups, logger);
+
+  if (abortSkipped.length > 0) {
+    logger.warn({ abortSkipped: abortSkipped.length, nzbFetched }, 'Usenet enrichment truncated by abort');
+  }
 
   const totalFetchMs = Date.now() - startMs;
   logger.info(
-    { usenetResults: usenetResults.length, nzbFetched, languagesDetected, cacheHits, capSkipped, totalFetchMs },
+    {
+      usenetResults: usenetResults.length, nzbFetched, languagesDetected, cacheHits,
+      capSkipped, abortSkipped: abortSkipped.length, totalFetchMs,
+    },
     'Usenet language detection complete',
   );
 }
