@@ -106,10 +106,8 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
   const showCheckbox = onToggle !== undefined && !isPathDuplicate && !isSlugDuplicate;
   const showEditButton = !isDuplicate || isSlugDuplicate;
   const ownership = annotation?.badge ?? ownershipBadge(row.book);
-  // Trim only to classify, preserving displayed whitespace: a blank note is no note at all,
-  // while a note with incidental padding renders as the caller spelled it. This line is the sole
-  // presence decision — the JSX below tests `!== null`, so a truthiness gate there cannot silently
-  // absorb the empty-string case and make this rule untestable.
+  // Trim only to classify, preserving displayed whitespace. Sole presence decision: the JSX tests
+  // `!== null`, because a truthiness gate there would re-decide `''` and make this line untestable.
   const note = annotation?.note?.trim() ? annotation.note : null;
 
   const borderClass = confidence === 'none'
