@@ -37,6 +37,8 @@ interface TerminalWrite {
   reason?: string;
   existingBookId?: number;
   existingTitle?: string;
+  /** #2091 snapshot of the incumbent's folder, taken at confirm time and never re-resolved. */
+  existingPath?: string;
 }
 
 /** Returned only to the winning completion CAS so notification dispatch happens post-commit. */
@@ -201,9 +203,10 @@ export class ImportSubmissionRunner {
       if (classification !== 'proceed' && 'skip' in classification) {
         await this.writeTerminal(sub, row, {
           disposition: 'skipped',
-          reason: 'already-in-library',
+          reason: classification.reason,
           ...(classification.existingBookId !== undefined && { existingBookId: classification.existingBookId }),
           ...(classification.existingTitle !== undefined && { existingTitle: classification.existingTitle }),
+          ...(classification.existingPath !== undefined && { existingPath: classification.existingPath }),
         });
         return true;
       }
@@ -366,6 +369,7 @@ export class ImportSubmissionRunner {
           reason: write.reason ?? null,
           existingBookId: write.existingBookId ?? null,
           existingTitle: write.existingTitle ?? null,
+          existingPath: write.existingPath ?? null,
           updatedAt: new Date(),
         })
         .where(and(eq(importSubmissionItems.id, row.id), eq(importSubmissionItems.disposition, 'pending')));

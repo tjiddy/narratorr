@@ -1,5 +1,5 @@
 import type { importSubmissions, importSubmissionItems } from '@db/schema.js';
-import type { ImportMode } from '@shared/schemas/library-scan.js';
+import { importSkipReasonSchema, type ImportMode, type ImportSkipReason } from '@shared/schemas/library-scan.js';
 import {
   aggregateDispositions,
   type ItemDisposition,
@@ -98,10 +98,21 @@ export const REPORT_ITEM_COLUMNS = [
   'reason',
   'existingBookId',
   'existingTitle',
+  'existingPath',
   'bookId',
 ] as const;
 
 export type ReportItemRow = Pick<ItemRow, (typeof REPORT_ITEM_COLUMNS)[number]>;
+
+/**
+ * Validate the persisted reason instead of enumerating the live ones. Rows written before a reason
+ * existed — and any legacy spelling — fall back to the generic owned skip; a reason the schema
+ * knows survives verbatim, so #2091's narrower one is not flattened back into already-in-library.
+ */
+function readSkipReason(reason: string | null): ImportSkipReason {
+  const parsed = importSkipReasonSchema.safeParse(reason);
+  return parsed.success ? parsed.data : 'already-in-library';
+}
 
 /** Map projected rows without accepted payloads; derive failed messages from reason. */
 export function reportRowToDto(row: ReportItemRow): StagedItemResultDto {
@@ -120,9 +131,10 @@ export function reportRowToDto(row: ReportItemRow): StagedItemResultDto {
       return {
         disposition: 'skipped',
         ...base,
-        reason: row.reason === 'already-importing' ? 'already-importing' : 'already-in-library',
+        reason: readSkipReason(row.reason),
         ...(row.existingBookId != null ? { existingBookId: row.existingBookId } : {}),
         ...(row.existingTitle != null ? { existingTitle: row.existingTitle } : {}),
+        ...(row.existingPath != null ? { existingPath: row.existingPath } : {}),
       };
     case 'failed':
       return { disposition: 'failed', ...base, message: row.reason ?? 'Import failed — see server logs for details.' };

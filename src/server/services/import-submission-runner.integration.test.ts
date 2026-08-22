@@ -11,6 +11,7 @@ import { BookService } from './book.service.js';
 import { BookImportService } from './book-import.service.js';
 import { ImportSubmissionRunner } from './import-submission-runner.js';
 import { ImportStagingService } from './import-staging.service.js';
+import { ImportSubmissionReportService } from './import-submission-report.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { NotifierService } from './notifier.service.js';
 import { serializeSubmissionForDigest, type StagedImportItem } from '@core/import-staging/schemas.js';
@@ -388,7 +389,9 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       expect(row!.status).toBe('wanted');
     });
 
-    it('still skips a file-holding incumbent as already-in-library (AC9 regression)', async () => {
+    // The #2091 split renamed the reason for the offered-elsewhere case; the disposition, the
+    // incumbent link, and the refusal to enqueue are the AC9 properties and stay pinned.
+    it('still skips a file-holding incumbent and enqueues nothing (AC9 regression)', async () => {
       const incId = await seedIncumbent({ status: 'imported', path: '/library/Incumbent' });
       const bs = bookServiceReturning({ id: incId, title: 'Incumbent', path: '/library/Incumbent', status: 'imported' });
       const subId = await seedProcessing([stagedItem()], { source: 'manual', mode: 'copy' });
@@ -397,7 +400,7 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
 
       const [item] = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId));
       expect(item!.disposition).toBe('skipped');
-      expect(item!.reason).toBe('already-in-library');
+      expect(item!.reason).toBe('duplicate-copy-at-other-path');
       expect(item!.existingBookId).toBe(incId);
       expect(await db.select().from(importJobs)).toHaveLength(0);
     });
@@ -423,6 +426,91 @@ describe('ImportSubmissionRunner (DB-backed, #1893)', () => {
       // The attach counts as accepted, so the outcome toast reports no false skip.
       expect(header!.acceptedCount).toBe(2);
       expect(header!.skippedCount).toBe(1);
+    });
+  });
+
+  /**
+   * #2091 — the worked example: an untracked folder holding the same recording as an owned book
+   * that lives elsewhere. DB-backed because the whole point is a snapshot that outlives the
+   * incumbent, which only a real set-null FK can demonstrate.
+   */
+  describe('copy-at-other-path skip (#2091)', () => {
+    const CANDIDATE = '/library/Robin Hobb/Realms of the Elderlings/02 - Royal Assassin';
+    const INCUMBENT_PATH = '/library/Robin Hobb/Farseer Trilogy/02 - Royal Assassin';
+
+    async function seedOwned(path: string | null): Promise<number> {
+      const [b] = await db.insert(books).values({
+        publicId: `cp-${Math.round(performance.now())}-${Math.random()}`,
+        title: 'Royal Assassin', status: 'imported', path,
+      }).returning();
+      return b!.id;
+    }
+
+    /** `findDuplicate` is the only double; the real classifier and runner decide everything else. */
+    function sameRecordingAgainst(id: number, path: string | null): BookService {
+      const bs = new BookService(db, inject(log));
+      vi.spyOn(bs, 'findDuplicate').mockResolvedValue({
+        verdict: 'same-recording',
+        book: { id, title: 'Royal Assassin', path, status: 'imported' } as never,
+        hasIncumbent: true,
+      });
+      return bs;
+    }
+
+    const candidateItem = (path = CANDIDATE) =>
+      ({ path, title: 'Royal Assassin', metadata: { title: 'Royal Assassin', authors: [{ name: 'Robin Hobb' }] } });
+
+    it('persists the full skip payload — reason, incumbent id, title and path snapshot', async () => {
+      const incId = await seedOwned(INCUMBENT_PATH);
+      const subId = await seedProcessing([candidateItem()], { source: 'library' });
+
+      await drainRunner(makeRunner(sameRecordingAgainst(incId, INCUMBENT_PATH)));
+
+      const [item] = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId));
+      expect(item).toMatchObject({
+        disposition: 'skipped',
+        reason: 'duplicate-copy-at-other-path',
+        existingBookId: incId,
+        existingTitle: 'Royal Assassin',
+        existingPath: INCUMBENT_PATH,
+        path: CANDIDATE,
+      });
+      // AC19: the batch must not read as a clean import.
+      const [header] = await db.select().from(importSubmissions).where(eq(importSubmissions.id, subId));
+      expect(header).toMatchObject({ status: 'complete', skippedCount: 1, acceptedCount: 0 });
+    });
+
+    it('writes NO existing_path when the incumbent already sits at the candidate folder', async () => {
+      const incId = await seedOwned(CANDIDATE);
+      const subId = await seedProcessing([candidateItem()], { source: 'library' });
+
+      await drainRunner(makeRunner(sameRecordingAgainst(incId, CANDIDATE)));
+
+      const [item] = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId));
+      expect(item).toMatchObject({ disposition: 'skipped', reason: 'already-in-library', existingBookId: incId });
+      expect(item!.existingPath).toBeNull();
+    });
+
+    it('keeps the reason and path snapshot after the incumbent book is deleted', async () => {
+      const incId = await seedOwned(INCUMBENT_PATH);
+      const subId = await seedProcessing([candidateItem()], { source: 'library' });
+      await drainRunner(makeRunner(sameRecordingAgainst(incId, INCUMBENT_PATH)));
+
+      await db.delete(books).where(eq(books.id, incId));
+
+      const [item] = await db.select().from(importSubmissionItems).where(eq(importSubmissionItems.submissionId, subId));
+      // The set-null FK takes the id; the snapshot is deliberately not an FK read.
+      expect(item!.existingBookId).toBeNull();
+      expect(item).toMatchObject({ reason: 'duplicate-copy-at-other-path', existingPath: INCUMBENT_PATH });
+
+      const detail = await new ImportSubmissionReportService(db).reportDetail(subId);
+      expect(detail.itemsIncluded && detail.items[0]).toMatchObject({
+        disposition: 'skipped',
+        reason: 'duplicate-copy-at-other-path',
+        path: CANDIDATE,
+        existingPath: INCUMBENT_PATH,
+      });
+      expect(detail.itemsIncluded && detail.items[0]).not.toHaveProperty('existingBookId');
     });
   });
 
