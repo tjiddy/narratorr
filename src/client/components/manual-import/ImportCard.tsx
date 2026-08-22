@@ -1,5 +1,5 @@
 import { type Confidence, formatBytes } from '@/lib/api';
-import type { ImportRow } from './types.js';
+import type { ImportCardAnnotation, ImportRow } from './types.js';
 import {
   CheckIcon,
   CheckCircleIcon,
@@ -16,20 +16,16 @@ export type { ImportRow } from './types.js';
 
 interface ImportCardProps {
   row: ImportRow;
-  onToggle: () => void;
+  /** Omitted for read-only rows, which then render no checkbox at all. */
+  onToggle?: (() => void) | undefined;
   onEdit: () => void;
   /** Locks path duplicates completely; slug duplicates remain editable. */
   lockDuplicates?: boolean | undefined;
   relativePath?: string | undefined;
   /** Replaces a pending Matching spinner with Paused; ownership badges still win. */
   paused?: boolean | undefined;
-  /**
-   * #2091 Library Import opt-in: render a slug duplicate as a copy of a book the library owns
-   * elsewhere. Omitted by Manual Import, which renders exactly as it did before.
-   */
-  copyAtOtherPath?: boolean | undefined;
-  /** Display spelling of the incumbent's folder; optional on the wire, so absence must degrade. */
-  existingPath?: string | undefined;
+  /** Caller-owned display override; its badge outranks every badge this card computes itself. */
+  annotation?: ImportCardAnnotation | undefined;
 }
 
 const confidenceVariant = {
@@ -50,23 +46,11 @@ const confidenceLabel = {
   none: 'No Match',
 } as const;
 
-/** #2091: exactly the rows the Library Import section is defined by. */
-function isCopyAtOtherPath(book: ImportRow['book'], optedIn: boolean | undefined): boolean {
-  return Boolean(optedIn) && book.isDuplicate && book.duplicateReason === 'slug';
-}
-
 /**
  * Recording verdicts win; scan-time duplicates fall back to duplicate flags.
  * `reviewReason` is a separate warning, never an ownership-badge rung.
- *
- * The #2091 opt-in outranks the verdict rung: a copy-at-other-path row IS a `same-recording` hit,
- * so it would otherwise read "Already owned" — the exact conflation the section exists to undo.
  */
-function ownershipBadge(
-  book: ImportRow['book'],
-  copyAtOtherPath?: boolean | undefined,
-): { label: string; variant: 'muted' | 'warning' } | null {
-  if (isCopyAtOtherPath(book, copyAtOtherPath)) return { label: 'Duplicate copy', variant: 'warning' };
+function ownershipBadge(book: ImportRow['book']): { label: string; variant: 'muted' | 'warning' } | null {
   switch (book.recordingVerdict) {
     case 'same-recording': return { label: 'Already owned', variant: 'muted' };
     case 'different-recording': return { label: 'New version of an owned title', variant: 'muted' };
@@ -99,7 +83,7 @@ function ConfidenceBadge({ confidence, reason, paused }: { confidence?: Confiden
 }
 
 // eslint-disable-next-line complexity -- confidence scoring display with conditional styles and layouts
-export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath, paused, copyAtOtherPath, existingPath }: ImportCardProps) {
+export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath, paused, annotation }: ImportCardProps) {
   const isDuplicate = row.book.isDuplicate;
   const confidence = row.matchResult?.confidence;
   const showPencilAlways = !confidence || confidence === 'medium' || confidence === 'none';
@@ -119,14 +103,14 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
 
   const isPathDuplicate = lockDuplicates && isDuplicate && row.book.duplicateReason === 'path';
   const isSlugDuplicate = lockDuplicates && isDuplicate && row.book.duplicateReason === 'slug';
-  const showCheckbox = !isPathDuplicate && !isSlugDuplicate;
+  const showCheckbox = onToggle !== undefined && !isPathDuplicate && !isSlugDuplicate;
   const showEditButton = !isDuplicate || isSlugDuplicate;
-  const ownership = ownershipBadge(row.book, copyAtOtherPath);
-  // State the observed fact only. The edit-modal escape hatch force-imports past the confirm
-  // ladder, so any wording promising a recording check at import would be false for that path.
-  const copyNote = isCopyAtOtherPath(row.book, copyAtOtherPath)
-    ? (existingPath ? `Same recording as ${existingPath}` : 'Same recording as a book already in your library')
-    : null;
+  const ownership = annotation?.badge ?? ownershipBadge(row.book);
+  // Trim only to classify, preserving displayed whitespace: a blank note is no note at all,
+  // while a note with incidental padding renders as the caller spelled it. This line is the sole
+  // presence decision — the JSX below tests `!== null`, so a truthiness gate there cannot silently
+  // absorb the empty-string case and make this rule untestable.
+  const note = annotation?.note?.trim() ? annotation.note : null;
 
   const borderClass = confidence === 'none'
     ? 'border-l-[3px] border-l-amber-500'
@@ -164,9 +148,9 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
         <p className="text-xs text-muted-foreground/50 truncate" title={row.book.path}>
           {shortPath}
         </p>
-        {copyNote && (
-          <p className="text-xs text-amber-500/80 truncate" title={copyNote}>
-            {copyNote}
+        {note !== null && (
+          <p data-testid="import-card-note" className="text-xs text-amber-500/80 truncate" title={note}>
+            {note}
           </p>
         )}
       </div>

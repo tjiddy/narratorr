@@ -656,69 +656,148 @@ describe('ImportCard — lockDuplicates prop (#133)', () => {
 });
 
 /**
- * #2091 — the distinct badge is opt-in so Manual Import, which shares this card, is byte-identical.
- * The copy states the observed fact and must not promise a recording check at import time: the
- * edit-modal escape hatch force-imports past the ladder, so such a promise would be a lie.
+ * #2581 — the generic annotation slot that replaced #2091's `copyAtOtherPath`/`existingPath` pair.
+ * The card renders whatever the caller hands it; deciding WHICH rows get a copy annotation is the
+ * Library Import surface's job and is pinned in `copyAnnotation.test.ts`.
  */
-describe('ImportCard — copyAtOtherPath opt-in (#2091)', () => {
+describe('ImportCard — annotation slot (#2581)', () => {
   const slugRow = () => makeRow({
     book: makeBook({ isDuplicate: true, duplicateReason: 'slug', recordingVerdict: 'same-recording' }),
   });
+  const copyBadge = { label: 'Duplicate copy', variant: 'warning' } as const;
 
-  it('renders the distinct badge and the incumbent path instead of "Already owned"', () => {
+  // B1
+  it('renders the annotation badge instead of the ownership ladder rung it would have shown', () => {
     render(
-      <ImportCard row={slugRow()} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates copyAtOtherPath existingPath="Robin Hobb/Farseer Trilogy/02" />,
+      <ImportCard row={slugRow()} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates annotation={{ badge: copyBadge }} />,
     );
     expect(screen.getByText('Duplicate copy')).toBeInTheDocument();
     expect(screen.queryByText('Already owned')).not.toBeInTheDocument();
-    expect(screen.getByText('Same recording as Robin Hobb/Farseer Trilogy/02')).toBeInTheDocument();
   });
 
-  it('never claims the recording is checked at import', () => {
+  // B2
+  it('renders the note beneath the path with the full text as its tooltip', () => {
+    const note = 'Same recording as Robin Hobb/Farseer Trilogy/02 - Royal Assassin';
     render(
-      <ImportCard row={slugRow()} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates copyAtOtherPath existingPath="A/B" />,
+      <ImportCard row={slugRow()} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates annotation={{ badge: copyBadge, note }} />,
     );
-    expect(screen.queryByText(/checking recording|checked on import|will be checked/i)).not.toBeInTheDocument();
+    expect(screen.getByText(note)).toBeInTheDocument();
+    expect(screen.getByTestId('import-card-note')).toHaveAttribute('title', note);
   });
 
-  // AC12: the path is optional on the wire, so an absent one degrades rather than rendering blank.
-  it('degrades to generic wording when no incumbent path is known', () => {
-    render(<ImportCard row={slugRow()} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates copyAtOtherPath />);
-    expect(screen.getByText('Duplicate copy')).toBeInTheDocument();
-    expect(screen.getByText('Same recording as a book already in your library')).toBeInTheDocument();
-    expect(screen.queryByText(/Same recording as\s*$/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/undefined/)).not.toBeInTheDocument();
-  });
-
-  it('keeps the row unselectable and the edit affordance available (AC3)', () => {
+  // B3
+  it('outranks a resolved ConfidenceBadge on an otherwise plain row', () => {
     render(
-      <ImportCard row={slugRow()} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates copyAtOtherPath existingPath="A/B" />,
+      <ImportCard row={makeRow({ matchResult: makeMatchResult() })} onToggle={vi.fn()} onEdit={vi.fn()} annotation={{ badge: copyBadge }} />,
+    );
+    expect(screen.getByText('Duplicate copy')).toBeInTheDocument();
+    expect(screen.queryByText('Matched')).not.toBeInTheDocument();
+  });
+
+  it('outranks both the pending spinner and the paused badge (annotation x paused)', () => {
+    render(
+      <ImportCard row={makeRow()} onToggle={vi.fn()} onEdit={vi.fn()} paused annotation={{ badge: copyBadge }} />,
+    );
+    expect(screen.getByText('Duplicate copy')).toBeInTheDocument();
+    expect(screen.queryByText('Matching')).not.toBeInTheDocument();
+    expect(screen.queryByText('Paused')).not.toBeInTheDocument();
+  });
+
+  // B4 / B4a / B4b — absent, empty, and blank are three distinct inputs the slot's type admits,
+  // and no single production mutation separates all three.
+  it.each([
+    ['an omitted note', undefined],
+    ['an empty note', ''],
+    ['a whitespace-only note', '   '],
+  ])('renders no note element at all for %s', (_label, note) => {
+    render(
+      <ImportCard
+        row={slugRow()}
+        onToggle={vi.fn()}
+        onEdit={vi.fn()}
+        lockDuplicates
+        annotation={{ badge: copyBadge, ...(note !== undefined && { note }) }}
+      />,
+    );
+    expect(screen.queryByTestId('import-card-note')).not.toBeInTheDocument();
+  });
+
+  // B4c
+  it('renders a note carrying incidental whitespace VERBATIM (trim classifies only)', () => {
+    const padded = '  Same recording as A/B  ';
+    render(
+      <ImportCard row={slugRow()} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates annotation={{ badge: copyBadge, note: padded }} />,
+    );
+    // getByText normalizes for the lookup; textContent is the raw, un-normalized render.
+    const noteEl = screen.getByTestId('import-card-note');
+    expect(noteEl.textContent).toBe(padded);
+    expect(noteEl).toHaveAttribute('title', padded);
+  });
+
+  // B5 — this spec's AC3: without an annotation the card is exactly what it was.
+  it('leaves the ownership ladder and the note-free layout intact when no annotation is supplied', () => {
+    render(<ImportCard row={slugRow()} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates />);
+    expect(screen.getByText('Already owned')).toBeInTheDocument();
+    expect(screen.queryByText('Duplicate copy')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('import-card-note')).not.toBeInTheDocument();
+  });
+
+  // B6 — independent channels.
+  it('renders the review-reason indicator alongside an annotation', () => {
+    const row = makeRow({ book: makeBook({ reviewReason: 'Runtime differs by 40%' }) });
+    render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} annotation={{ badge: copyBadge }} />);
+    expect(screen.getByText('Duplicate copy')).toBeInTheDocument();
+    expect(screen.getByTestId('review-reason-indicator')).toBeInTheDocument();
+  });
+
+  // B7 — the slot is display-only; it must not reopen selection the duplicate rules closed.
+  it('keeps a locked slug duplicate unselectable while retaining the edit affordance', () => {
+    render(
+      <ImportCard row={slugRow()} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates annotation={{ badge: copyBadge, note: 'Same recording as A/B' }} />,
     );
     expect(screen.queryByRole('button', { name: /select|deselect/i })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /edit/i })).toBeInTheDocument();
   });
 
-  it('leaves the badge and copy alone when the caller does not opt in (AC9)', () => {
+  // B8 — the slot is generic, not the two-variant ownership enum in disguise.
+  it('renders a badge variant the internal ladder never produces', () => {
     render(
-      <ImportCard row={slugRow()} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates existingPath="A/B" />,
+      <ImportCard row={makeRow()} onToggle={vi.fn()} onEdit={vi.fn()} annotation={{ badge: { label: 'Queued elsewhere', variant: 'info' } }} />,
     );
-    expect(screen.getByText('Already owned')).toBeInTheDocument();
-    expect(screen.queryByText('Duplicate copy')).not.toBeInTheDocument();
-    expect(screen.queryByText(/Same recording as/)).not.toBeInTheDocument();
+    const badge = screen.getByText('Queued elsewhere');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveClass('text-blue-400');
+  });
+});
+
+/**
+ * #2581 AC8/AC9 — `onToggle` is optional so a read-only row does not have to invent a noop.
+ * These pins deliberately sit on a row the duplicate rules do NOT already suppress: on a
+ * `lockDuplicates` slug row the checkbox is absent for the pre-existing reason, so the assertion
+ * would pass whether or not the `onToggle` guard exists.
+ */
+describe('ImportCard — optional onToggle (#2581)', () => {
+  const selectableRow = () => makeRow({ matchResult: makeMatchResult() });
+
+  // B9
+  it('renders no checkbox on a genuinely selectable row when onToggle is omitted', () => {
+    render(<ImportCard row={selectableRow()} onEdit={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /^select$|^deselect$/i })).not.toBeInTheDocument();
+    // Every other affordance is untouched.
+    expect(screen.getByText('Book Title')).toBeInTheDocument();
+    expect(screen.getByText('Author Name/Series Name/Book Title')).toBeInTheDocument();
+    expect(screen.getByText('Matched')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /edit metadata/i })).toBeInTheDocument();
   });
 
-  // The opt-in is a rendering hint, not a reclassification: a row that is not a slug duplicate
-  // must keep its own badge even if the caller passes the flag.
-  it.each([
-    ['a review verdict', { isDuplicate: false, recordingVerdict: 'review' as const }, 'Possible duplicate (review)'],
-    ['a different recording', { isDuplicate: false, recordingVerdict: 'different-recording' as const }, 'New version of an owned title'],
-    ['a path duplicate', { isDuplicate: true, duplicateReason: 'path' as const }, 'Already owned'],
-  ])('does not hijack the badge for %s', (_label, bookOverrides, expected) => {
-    render(
-      <ImportCard row={makeRow({ book: makeBook(bookOverrides) })} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates copyAtOtherPath existingPath="A/B" />,
-    );
-    expect(screen.getByText(expected)).toBeInTheDocument();
-    expect(screen.queryByText('Duplicate copy')).not.toBeInTheDocument();
+  // B10 — the positive half, so B9's negative is not a solo observation.
+  it('renders a working checkbox on that same row when onToggle IS supplied', async () => {
+    const onToggle = vi.fn();
+    render(<ImportCard row={selectableRow()} onToggle={onToggle} onEdit={vi.fn()} />);
+
+    const checkbox = screen.getByRole('button', { name: /^deselect$/i });
+    await userEvent.click(checkbox);
+    expect(onToggle).toHaveBeenCalledOnce();
   });
 });
 
