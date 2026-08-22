@@ -24,6 +24,7 @@ import { getErrorMessage } from '../utils/error-message.js';
 import { serializeError } from '../utils/serialize-error.js';
 import { lookupForFixMatch as runFixMatchLookup, type FixMatchLookupResult } from './metadata-fix-match.js';
 import { resolveBook as runResolveBook, type ResolveBookInput } from './metadata-resolve-book.js';
+import { collapseDuplicateRecordings } from './metadata-recording-collapse.js';
 import { createChapterCorroborator, type ChapterCorroborator } from './chapter-corroboration.js';
 import type { ChapterRuntimeSeconds } from './match-job.helpers.js';
 export type { FixMatchLookupResult } from './metadata-fix-match.js';
@@ -31,6 +32,12 @@ export type { ResolveBookInput } from './metadata-resolve-book.js';
 
 
 const DEFAULT_THROTTLE_MS = 200;
+
+/**
+ * Log message for the search-path collapse. `debug` rather than `info`: a collapse is the ordinary
+ * success case, and this line exists so a suspected false merge can be diagnosed from logs alone.
+ */
+export const DUPLICATE_EDITIONS_COLLAPSED = 'Duplicate catalog editions collapsed — one recording kept';
 
 export interface MetadataServiceConfig {
   audibleRegion?: string;
@@ -257,12 +264,18 @@ export class MetadataService {
   }
 
   // Each filter owns its settings read and fails open independently (#1004).
-  private async applyBookFilters(books: BookMetadata[]): Promise<BookMetadata[]> {
+  private async applyBookFilters(books: BookMetadata[], preferAsin?: string | undefined): Promise<BookMetadata[]> {
     if (books.length === 0) return books;
     const audiobooksOnly = this.filterToAudiobooksOnly(books);
     const rejectFiltered = await this.filterRejectedBooks(audiobooksOnly);
     const languageFiltered = await this.filterBooksByLanguage(rejectFiltered);
-    return this.filterByMinDuration(languageFiltered);
+    const filtered = await this.filterByMinDuration(languageFiltered);
+    // Terminal on purpose (#1597): a listing the filters above rejected must be able neither to
+    // become the canonical nor to donate its ASIN to one. `preferAsin` is threaded only from the
+    // resolver, whose own requested-ASIN override this collapse would otherwise pre-empt.
+    const { books: collapsed, collapses } = collapseDuplicateRecordings(filtered, preferAsin);
+    collapses.forEach((collapse) => this.log.debug(collapse, DUPLICATE_EDITIONS_COLLAPSED));
+    return collapsed;
   }
 
   private filterToAudiobooksOnly(books: BookMetadata[]): BookMetadata[] {
@@ -390,7 +403,7 @@ export class MetadataService {
       provider: this.providers[0],
       enrichBook: (asin) => this.enrichBook(asin),
       ...this.throttleCollaborators(),
-      applyBookFilters: (books) => this.applyBookFilters(books),
+      applyBookFilters: (books, preferAsin) => this.applyBookFilters(books, preferAsin),
       logParseDrop: (result, name) => this.logParseDrop(result, name),
       log: this.log,
     }, input);

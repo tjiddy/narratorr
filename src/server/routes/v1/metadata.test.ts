@@ -166,6 +166,43 @@ describe('v1 metadata routes', () => {
     });
   });
 
+  /**
+   * The service collapses territorial editions before the route sees them (#1597), so the route's
+   * contract is that the surviving `alternateAsins` stays server-side and `total` counts cards.
+   */
+  describe('collapsed duplicate editions (#1597 AC9)', () => {
+    const collapsed = providerBook({
+      asin: 'B0DMTHDKGK',
+      title: 'Tideborn',
+      alternateAsins: ['B0D9HK2KR4'],
+    });
+
+    it('returns one card whose body carries no alternateAsins key', async () => {
+      (metadataService.search as Mock).mockResolvedValue({ books: [collapsed], authors: [], series: [] });
+
+      const res = await app.inject({ method: 'GET', url: '/api/v1/metadata/search?q=tideborn', headers: keyHeaders });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.total).toBe(1);
+      expect(body.data).toHaveLength(1);
+      expect(body.data[0]).not.toHaveProperty('alternateAsins');
+      expect(v1ListResponseSchema(metadataSearchResultV1Schema).safeParse(body).success).toBe(true);
+    });
+
+    it('annotates the collapsed card when the CANONICAL asin is in the library', async () => {
+      (metadataService.search as Mock).mockResolvedValue({ books: [collapsed], authors: [], series: [] });
+      (bookService.findLibraryStatusByAsins as Mock).mockResolvedValue(
+        new Map([['B0DMTHDKGK', annotation()]]),
+      );
+
+      const res = await app.inject({ method: 'GET', url: '/api/v1/metadata/search?q=tideborn', headers: keyHeaders });
+
+      expect(bookService.findLibraryStatusByAsins as Mock).toHaveBeenCalledWith(['B0DMTHDKGK'], { companionEnabled: false });
+      expect(res.json().data[0].library).toEqual(annotation());
+    });
+  });
+
   describe('library cross-reference (#1537)', () => {
     it('annotates a result whose ASIN matches an imported library book', async () => {
       (metadataService.search as Mock).mockResolvedValue({ books: [providerBook()], authors: [], series: [] });
