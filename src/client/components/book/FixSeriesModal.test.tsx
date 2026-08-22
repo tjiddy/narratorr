@@ -22,9 +22,7 @@ import { api } from '@/lib/api';
 
 function renderModal(currentSeriesName = 'The Earthsea Cycle') {
   const onClose = vi.fn();
-  // `refetchOnWindowFocus: false` mirrors the app client (src/client/main.tsx); without it the
-  // modal's own focus trap counts as a window focus and fires a second search on mount.
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } });
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
       <FixSeriesModal bookId={1} currentSeriesName={currentSeriesName} onClose={onClose} />
