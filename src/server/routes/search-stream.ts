@@ -17,11 +17,9 @@ import type {
   SearchResponsePayload,
 } from '@shared/schemas/search-stream.js';
 import { serializeError } from '../utils/serialize-error.js';
-import { SSE_HEARTBEAT_FRAME, startHeartbeat, stopHeartbeat } from '../utils/sse-stream.js';
+import { SSE_HEARTBEAT_FRAME, sseFrame, startHeartbeat, stopHeartbeat } from '../utils/sse-stream.js';
 import { SEARCH_DEADLINE_MS } from '@core/utils/constants.js';
 
-
-const sseFrame = (event: string, data: unknown): string => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 
 export async function searchStreamRoutes(
   app: FastifyInstance,
