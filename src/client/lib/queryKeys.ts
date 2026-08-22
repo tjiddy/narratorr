@@ -23,7 +23,10 @@ export const queryKeys = {
   bookSeries: (id: number) => ['book', id, 'series'] as const,
   /** The whole singular namespace; see the status-event enrollment in useEventSource (#2541). */
   singularBookRoot: () => ['book'] as const,
-  // Extends `bookSeries(id)` so base-key invalidation refreshes active searches.
+  // Extends `bookSeries(id)` so base-key invalidation refreshes active searches. Both halves of
+  // that rule are load-bearing: the four mutation-driven `bookSeries(id)` invalidations still
+  // cascade here, while status-event invalidation of the root deliberately excludes this subtree —
+  // a provider search cannot change because a book row's status did (#2592).
   bookSeriesSearch: (id: number, query: string) => ['book', id, 'series', 'search', query] as const,
   bookRenamePreview: (id: number) => ['books', id, 'rename-preview'] as const,
   bulkRenamePreview: () => ['books', 'bulk', 'rename-preview'] as const,
@@ -98,3 +101,11 @@ export const queryKeys = {
     detail: (id: number) => ['importSubmissions', 'detail', id] as const,
   },
 } as const;
+
+/**
+ * True for the `bookSeriesSearch` subtree, whatever the id or query. Length is unknown — the
+ * predicate receives any cached key in the client, including shorter singular-book keys.
+ */
+export function isBookSeriesSearchKey(key: readonly unknown[]): boolean {
+  return key[0] === 'book' && key[2] === 'series' && key[3] === 'search';
+}

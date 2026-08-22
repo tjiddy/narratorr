@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useSyncExternalStore } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { queryKeys } from '@/lib/queryKeys';
+import { queryKeys, isBookSeriesSearchKey } from '@/lib/queryKeys';
 import { URL_BASE } from '@/lib/api/client';
 import type { Download } from '@/lib/api';
 import {
@@ -120,7 +120,14 @@ function invalidateFromRule(
     // not the open page's — a targeted key would need the sibling→series→page mapping the client
     // deliberately does not hold. The whole singular root is cheap instead: react-query refetches
     // active queries only, so one open book page is one local getBookSeries call (#2541).
-    queryClient.invalidateQueries({ queryKey: queryKeys.singularBookRoot() });
+    // The Fix Series search is the one descendant that isn't cheap — refetching it re-runs a live
+    // Hardcover search that a status change cannot have altered, once per tick of a download, and
+    // blanks the open modal while it flies (#2592). Both filters are required: matchQuery ANDs
+    // them, and the predicate alone would reach every namespace.
+    queryClient.invalidateQueries({
+      queryKey: queryKeys.singularBookRoot(),
+      predicate: (query) => !isBookSeriesSearchKey(query.queryKey),
+    });
   }
   if (rule.eventHistory) {
     queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.root() });

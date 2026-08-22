@@ -446,7 +446,7 @@ describe('useEventSource', () => {
 
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 42] });
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['book'] });
+      expect(invalidateSpy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ['book'] }));
     });
 
     it('invalidates activity, activityCounts, eventHistory on grab_started', () => {
@@ -483,7 +483,7 @@ describe('useEventSource', () => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.book(7) });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.eventHistory.root() });
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.singularBookRoot() });
+      expect(invalidateSpy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: queryKeys.singularBookRoot() }));
     });
 
     it('invalidates activity and activityCounts on review_needed', () => {
@@ -519,7 +519,7 @@ describe('useEventSource', () => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.book(42) });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.eventHistory.root() });
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.singularBookRoot() });
+      expect(invalidateSpy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: queryKeys.singularBookRoot() }));
     });
   });
 
@@ -709,7 +709,7 @@ describe('#257 merge observability — useEventSource', () => {
 
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['eventHistory'] });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['book'] });
+      expect(invalidateSpy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: ['book'] }));
     });
   });
 
@@ -1445,7 +1445,7 @@ describe('#637 import SSE cache/toast behaviors', () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['importJobs'] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.eventHistory.root() });
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.singularBookRoot() });
+    expect(invalidateSpy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: queryKeys.singularBookRoot() }));
     expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('Failed Book'), expect.any(Object));
   });
 
@@ -2223,7 +2223,9 @@ describe('#2129 merge_state — snapshot handling in useEventSource', () => {
 });
 
 describe('#2541 — the singular book root rides the status-bearing events', () => {
-  const SINGULAR_ROOT = { queryKey: ['book'] };
+  // Matched loosely: the status arm also carries the #2592 predicate, whose behavior is pinned by
+  // the block below rather than by this call shape.
+  const SINGULAR_ROOT = expect.objectContaining({ queryKey: ['book'] });
 
   // Independent of CACHE_INVALIDATION_MATRIX on purpose: a rule flipped in production must fail
   // here, not silently redefine the expectation.
@@ -2309,5 +2311,59 @@ describe('#2541 — the singular book root rides the status-bearing events', () 
     expect(queryClient.getQueryState(seriesKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(seriesKey)?.fetchStatus).toBe('idle');
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('#2592 — the status-event carve-out spares the series-search subtree', () => {
+  const BOOK_ID = 42;
+
+  // Independent of CACHE_INVALIDATION_MATRIX on purpose, same as the #2541 block above.
+  const STATUS_BEARING: [SSEEventType, Record<string, unknown>][] = [
+    ['book_status_change', { book_id: BOOK_ID, old_status: 'wanted', new_status: 'downloading' }],
+    ['import_complete', { download_id: 7, book_id: BOOK_ID, book_title: 'Test', job_id: 1, elapsed_ms: 1000 }],
+    ['import_failed', { job_id: 1, book_id: BOOK_ID, book_title: 'Test', phase: 'copying', error_message: 'fail' }],
+    ['merge_complete', { book_id: BOOK_ID, book_title: 'Test', success: true, message: 'msg' }],
+    ['merge_failed', { book_id: BOOK_ID, book_title: 'Test', error: 'err', reason: 'error' }],
+  ];
+
+  // Asserting cache STATE, not the shape of the invalidateQueries call, so the expectation survives
+  // a refactor of how the filter is expressed.
+  it.each(STATUS_BEARING)('%s invalidates the series card but not its search', async (type, payload) => {
+    const { wrapper, queryClient } = createWrapper();
+    const seriesKey = queryKeys.bookSeries(BOOK_ID);
+    const searchKey = queryKeys.bookSeriesSearch(BOOK_ID, 'q');
+    const retryKey = ['book', BOOK_ID, 'retry-import-available'];
+    queryClient.setQueryData(seriesKey, { series: null });
+    queryClient.setQueryData(searchKey, { candidates: [] });
+    queryClient.setQueryData(retryKey, { available: false });
+
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0];
+    await act(async () => {
+      es!.simulateOpen();
+      es!.simulateEvent(type, payload);
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(queryClient.getQueryState(seriesKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(retryKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(searchKey)?.isInvalidated).toBe(false);
+  });
+
+  it('carries both filters, so no key outside the singular root is invalidated', () => {
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    renderHook(() => useEventSource('key'), { wrapper });
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es!.simulateOpen();
+      es!.simulateEvent('book_status_change', { book_id: BOOK_ID, old_status: 'wanted', new_status: 'downloading' });
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: queryKeys.singularBookRoot(),
+      predicate: expect.any(Function),
+    });
   });
 });
