@@ -884,6 +884,29 @@ describe('#502 retrySearch — enrichment before filtering', () => {
     );
   });
 
+  // #2573 decision 5 / #2310 AC8: the retry path stays cap-only. Its tail is fixed at two waves
+  // whatever the candidate count, and `withSearchDeadline` has already released the caller.
+  it('passes no signal into the enrichment options (#2573 AC9)', async () => {
+    const usenetResult = {
+      ...mockSearchResult,
+      protocol: 'usenet' as const,
+      downloadUrl: 'http://nzb.test/1',
+      infoHash: undefined,
+    };
+    const deps = createDeps({
+      indexerSearchService: inject<IndexerSearchService>({
+        searchAllWithStatus: mockSearchAllWithStatus([usenetResult]),
+      }),
+    });
+
+    await retrySearch(1, deps);
+
+    const options = mockEnrichUsenet.mock.calls[0]![3] as Record<string, unknown>;
+    // `not.objectContaining({ signal: anything() })` passes against a present-but-undefined key.
+    expect(options).not.toHaveProperty('signal');
+    expect(options).toEqual({ maxPhase2Fetches: 10 });
+  });
+
   it('usenet result with reject word in NZB name is filtered out before grab', async () => {
     const usenetResult = {
       ...mockSearchResult,
